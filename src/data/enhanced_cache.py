@@ -577,10 +577,10 @@ class CacheAdapter:
         key = self._make_key("news", ticker)
         return self._cache.get(key)
 
-    def set_company_news(self, ticker: str, data: list[dict]):
+    def set_company_news(self, ticker: str, data: list[dict], ttl: int | None = None):
         """设置公司新闻"""
         key = self._make_key("news", ticker)
-        self._cache.set(key, data, ttl=10800)
+        self._cache.set(key, data, ttl=10800 if ttl is None else ttl)
 
 
 _enhanced_cache: EnhancedCache | None = None

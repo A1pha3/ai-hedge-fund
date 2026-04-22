@@ -31,17 +31,20 @@ def load_merge_approved_tickers(
     merge_ranking_path: str | Path | None = DEFAULT_MERGE_RANKING_PATH,
 ) -> set[str]:
     tickers = {str(ticker).strip() for ticker in list(explicit_tickers or set()) if str(ticker).strip()}
+    ranking_fallback_allowed = True
 
     resolved_merge_review_path = Path(merge_review_path).expanduser().resolve() if merge_review_path else DEFAULT_MERGE_REVIEW_PATH
     if resolved_merge_review_path.exists():
         merge_review = _load_json(resolved_merge_review_path)
         focus_ticker = str(merge_review.get("focus_ticker") or "").strip()
         merge_review_verdict = str(merge_review.get("merge_review_verdict") or "").strip()
+        if focus_ticker and merge_review_verdict:
+            ranking_fallback_allowed = merge_review_verdict == READY_FOR_DEFAULT_BTST_MERGE_REVIEW
         if focus_ticker and merge_review_verdict == READY_FOR_DEFAULT_BTST_MERGE_REVIEW:
             tickers.add(focus_ticker)
 
     resolved_merge_ranking_path = Path(merge_ranking_path).expanduser().resolve() if merge_ranking_path else DEFAULT_MERGE_RANKING_PATH
-    if resolved_merge_ranking_path.exists():
+    if ranking_fallback_allowed and resolved_merge_ranking_path.exists():
         merge_ranking = _load_json(resolved_merge_ranking_path)
         top_candidate = dict(merge_ranking.get("top_candidate") or {})
         top_ticker = str(top_candidate.get("ticker") or "").strip()

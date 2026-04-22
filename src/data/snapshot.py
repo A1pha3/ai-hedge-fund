@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from src.data.models import FinancialMetrics, LineItem, Price
+from src.data.models import CompanyNews, FinancialMetrics, LineItem, Price
 from src.tools.tushare_api import get_stock_name
 
 logger = logging.getLogger(__name__)
@@ -162,6 +162,29 @@ class DataSnapshotExporter:
         except Exception as e:
             logger.warning("[Snapshot] 财务报表快照导出失败: %s/%s - %s", ticker, end_date, e)
 
+    def export_company_news(self, ticker: str, end_date: str, news_items: list[CompanyNews], data_source: str = "unknown") -> None:
+        """导出公司新闻快照"""
+        if not self.config.enabled or not news_items:
+            return
+        try:
+            snapshot_dir = self._ensure_dir(ticker, end_date)
+            news_file = snapshot_dir / "company_news.json"
+            serialized_news = [item.model_dump() for item in news_items]
+
+            need_update = True
+            if news_file.exists():
+                existing_data = self._read_json(news_file, [])
+                if existing_data == serialized_news:
+                    need_update = False
+
+            if need_update:
+                self._write_json(news_file, serialized_news)
+                self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
+                self._update_index(ticker, end_date, snapshot_dir, data_source)
+                logger.info("[Snapshot] 公司新闻快照已导出: %s/%s, %d 条", ticker, end_date, len(news_items))
+        except Exception as e:
+            logger.warning("[Snapshot] 公司新闻快照导出失败: %s/%s - %s", ticker, end_date, e)
+
     # =========================================================================
     # 文件 I/O
     # =========================================================================
@@ -222,10 +245,20 @@ class DataSnapshotExporter:
         """从 JSON 文件重新生成 summary.md"""
         prices: list[dict[str, Any]] = self._read_json(snapshot_dir / "prices.json", [])
         financials: dict[str, Any] = self._read_json(snapshot_dir / "financials.json", {"financial_metrics": [], "line_items": []})
-        md = self._render_markdown(ticker, date, data_source, prices, financials.get("financial_metrics", []), financials.get("line_items", []))
+        company_news: list[dict[str, Any]] = self._read_json(snapshot_dir / "company_news.json", [])
+        md = self._render_markdown(ticker, date, data_source, prices, financials.get("financial_metrics", []), financials.get("line_items", []), company_news)
         (snapshot_dir / "summary.md").write_text(md, encoding="utf-8")
 
-    def _render_markdown(self, ticker: str, date: str, data_source: str, prices: list[dict[str, Any]], metrics: list[dict[str, Any]], line_items: list[dict[str, Any]]) -> str:
+    def _render_markdown(
+        self,
+        ticker: str,
+        date: str,
+        data_source: str,
+        prices: list[dict[str, Any]],
+        metrics: list[dict[str, Any]],
+        line_items: list[dict[str, Any]],
+        company_news: list[dict[str, Any]],
+    ) -> str:
         """渲染完整的 summary.md 内容"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         parts: list[str] = []
@@ -269,7 +302,15 @@ class DataSnapshotExporter:
             parts.extend(_render_line_items_table(line_items))
             parts.append("")
 
-        if not prices and not metrics and not line_items:
+        if company_news:
+            parts.append("## 公司新闻\n")
+            for item in company_news[:10]:
+                parts.append(f"- {item.get('date', '-')} | {item.get('title', '-')}")
+            if len(company_news) > 10:
+                parts.append(f"\n> 仅展示最近 10 条，完整数据共 {len(company_news)} 条，详见 company_news.json")
+            parts.append("")
+
+        if not prices and not metrics and not line_items and not company_news:
             parts.append("> 暂无数据\n")
 
         return "\n".join(parts)

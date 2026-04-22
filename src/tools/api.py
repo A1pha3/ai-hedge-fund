@@ -21,7 +21,7 @@ from src.data.snapshot import get_snapshot_exporter
 
 # Import A-share data module
 from src.tools.akshare_api import get_ashare_company_news, is_ashare
-from src.tools.api_company_news_helpers import build_company_news_cache_key, cache_company_news, fetch_remote_company_news, load_cached_company_news
+from src.tools.api_company_news_helpers import build_company_news_cache_key, cache_company_news, fetch_remote_company_news, load_cached_company_news, resolve_company_news_cache_ttl
 from src.tools.api_insider_trade_helpers import build_financial_datasets_headers, build_insider_trade_cache_key, cache_insider_trades, fetch_remote_insider_trades, load_cached_insider_trades
 from src.tools.tushare_api import (
     get_ashare_financial_metrics_with_tushare,
@@ -315,14 +315,17 @@ def get_company_news(
     if is_ashare(ticker):
         cache_key = build_company_news_cache_key(ticker, start_date, end_date, limit, ashare=True)
         if cached_news := load_cached_company_news(_cache, cache_key):
+            _get_snapshot().export_company_news(ticker, end_date, cached_news, "cache")
             return cached_news
         news = get_ashare_company_news(ticker, end_date, start_date, limit)
         if news:
-            cache_company_news(_cache, cache_key, news)
+            cache_company_news(_cache, cache_key, news, ttl=resolve_company_news_cache_ttl(start_date, end_date))
+            _get_snapshot().export_company_news(ticker, end_date, news, "akshare")
         return news
 
     cache_key = build_company_news_cache_key(ticker, start_date, end_date, limit)
     if cached_news := load_cached_company_news(_cache, cache_key):
+        _get_snapshot().export_company_news(ticker, end_date, cached_news, "cache")
         return cached_news
 
     all_news = fetch_remote_company_news(
@@ -337,7 +340,9 @@ def get_company_news(
     if not all_news:
         return []
 
-    return cache_company_news(_cache, cache_key, all_news)
+    cached_news = cache_company_news(_cache, cache_key, all_news, ttl=resolve_company_news_cache_ttl(start_date, end_date))
+    _get_snapshot().export_company_news(ticker, end_date, cached_news, "financial_datasets")
+    return cached_news
 
 
 def get_market_cap(

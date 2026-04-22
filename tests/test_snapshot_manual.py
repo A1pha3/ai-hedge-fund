@@ -27,7 +27,7 @@ from src.data.snapshot import DataSnapshotExporter
 
 DataSnapshotExporter._instance = None  # type: ignore[attr-defined]
 
-from src.data.models import FinancialMetrics, LineItem, Price
+from src.data.models import CompanyNews, FinancialMetrics, LineItem, Price
 from src.data.snapshot import get_snapshot_exporter
 
 
@@ -121,6 +121,23 @@ def make_line_items(n: int = 3) -> list[LineItem]:
     ]
 
 
+def make_company_news(n: int = 3) -> list[CompanyNews]:
+    """生成测试公司新闻"""
+    return [
+        CompanyNews(
+            ticker="TEST",
+            title=f"测试新闻 {i}",
+            author="记者",
+            source="测试来源",
+            date=f"2025-01-{15 - i:02d}T09:30:00",
+            url=f"https://example.com/news/{i}",
+            sentiment="positive" if i == 0 else "neutral",
+            content=f"测试内容 {i}",
+        )
+        for i in range(n)
+    ]
+
+
 def test_config():
     """测试 1: SnapshotConfig 正确读取环境变量"""
     exporter = get_snapshot_exporter()
@@ -195,6 +212,28 @@ def test_export_line_items():
     assert "财务报表数据" in md, "❌ summary.md 缺少财务报表区"
 
     print("✅ 测试 4: 财务报表导出正确")
+
+
+def test_export_company_news():
+    """测试: 公司新闻导出"""
+    exporter = get_snapshot_exporter()
+    news = make_company_news(3)
+    exporter.export_company_news("TEST", "2025-01-15", news, "test_source")
+
+    snapshot_dir = Path(_tmp_dir) / "TEST" / "2025-01-15"
+    news_file = snapshot_dir / "company_news.json"
+
+    assert news_file.exists(), "❌ company_news.json 未生成"
+
+    data = json.loads(news_file.read_text(encoding="utf-8"))
+    assert len(data) == 3, f"❌ 公司新闻条数不对: {len(data)} != 3"
+    assert data[0]["title"] == "测试新闻 0", "❌ 第一条新闻标题不正确"
+
+    md = (snapshot_dir / "summary.md").read_text(encoding="utf-8")
+    assert "公司新闻" in md, "❌ summary.md 缺少公司新闻区"
+    assert "测试新闻 0" in md, "❌ summary.md 未渲染新闻标题"
+
+    print("✅ 测试: 公司新闻导出正确")
 
 
 def test_idempotency():

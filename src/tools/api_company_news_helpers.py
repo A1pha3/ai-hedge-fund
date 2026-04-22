@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from src.data.models import CompanyNews, CompanyNewsResponse
 
 
@@ -13,8 +15,22 @@ def load_cached_company_news(cache, cache_key: str) -> list[CompanyNews] | None:
     return [CompanyNews(**news) for news in cached_data]
 
 
-def cache_company_news(cache, cache_key: str, news_items: list[CompanyNews]) -> list[CompanyNews]:
-    cache.set_company_news(cache_key, [item.model_dump() for item in news_items])
+def resolve_company_news_cache_ttl(start_date: str | None, end_date: str) -> int:
+    reference_date = str(end_date or start_date or "").replace("-", "")
+    today = datetime.now().strftime("%Y%m%d")
+    is_historical = bool(reference_date) and reference_date < today
+    return 30 * 86400 if is_historical else 10800
+
+
+def cache_company_news(cache, cache_key: str, news_items: list[CompanyNews], *, ttl: int | None = None) -> list[CompanyNews]:
+    payload = [item.model_dump() for item in news_items]
+    if ttl is None:
+        cache.set_company_news(cache_key, payload)
+        return news_items
+    try:
+        cache.set_company_news(cache_key, payload, ttl=ttl)
+    except TypeError:
+        cache.set_company_news(cache_key, payload)
     return news_items
 
 

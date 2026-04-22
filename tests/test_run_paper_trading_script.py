@@ -572,6 +572,8 @@ def test_derive_shadow_focus_tickers_from_reports_manifest_excludes_low_gate_tai
 
 def test_main_passes_selected_analysts_and_concurrency_limit(monkeypatch, capsys) -> None:
     captured: dict = {}
+    original_snapshot_enabled = os.environ.get("DATA_SNAPSHOT_ENABLED")
+    original_snapshot_path = os.environ.get("DATA_SNAPSHOT_PATH")
 
     monkeypatch.setattr(
         run_paper_trading_script,
@@ -631,44 +633,268 @@ def test_main_passes_selected_analysts_and_concurrency_limit(monkeypatch, capsys
     monkeypatch.setattr(run_paper_trading_script, "_run_paper_trading_session", _fake_run_paper_trading_session)
     monkeypatch.delenv("ANALYST_CONCURRENCY_LIMIT", raising=False)
 
-    run_paper_trading_script.main()
+    try:
+        run_paper_trading_script.main()
 
-    assert captured["selected_analysts"] == ["technical_analyst", "fundamentals_analyst"]
-    assert captured["fast_selected_analysts"] == ["technical_analyst"]
-    assert captured["short_trade_target_profile_name"] == "aggressive"
-    assert captured["short_trade_target_profile_overrides"] == {"select_threshold": 0.52, "near_miss_threshold": 0.44}
-    assert captured["selection_target"] == "research_only"
-    assert captured["model_name"] == "test-model"
-    assert captured["model_provider"] == "test-provider"
-    assert captured["output_dir"].name == "test_paper_trading"
-    assert captured["disable_data_snapshots"] is True
-    assert os.getenv("ANALYST_CONCURRENCY_LIMIT") == "1"
-    assert os.getenv("DATA_SNAPSHOT_ENABLED") == "false"
-    assert os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS") == "300720"
-    assert os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS") == "300720"
-    assert os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS") == "300720"
-    assert os.getenv("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_LIQUIDITY_CORRIDOR_TICKERS") == "300720"
-    assert os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_TICKERS") == "300720"
-    assert os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS") == "300720"
-    assert os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS") == "300720"
+        assert captured["selected_analysts"] == ["technical_analyst", "fundamentals_analyst"]
+        assert captured["fast_selected_analysts"] == ["technical_analyst"]
+        assert captured["short_trade_target_profile_name"] == "aggressive"
+        assert captured["short_trade_target_profile_overrides"] == {"select_threshold": 0.52, "near_miss_threshold": 0.44}
+        assert captured["selection_target"] == "research_only"
+        assert captured["model_name"] == "test-model"
+        assert captured["model_provider"] == "test-provider"
+        assert captured["output_dir"].name == "test_paper_trading"
+        assert captured["disable_data_snapshots"] is True
+        assert os.getenv("ANALYST_CONCURRENCY_LIMIT") == "1"
+        assert os.getenv("DATA_SNAPSHOT_ENABLED") == "false"
+        assert os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS") == "300720"
+        assert os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS") == "300720"
+        assert os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS") == "300720"
+        assert os.getenv("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_LIQUIDITY_CORRIDOR_TICKERS") == "300720"
+        assert os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_TICKERS") == "300720"
+        assert os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS") == "300720"
+        assert os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS") == "300720"
 
-    stdout = capsys.readouterr().out
-    assert "paper_trading_selected_analysts=technical_analyst,fundamentals_analyst" in stdout
-    assert "paper_trading_fast_selected_analysts=technical_analyst" in stdout
-    assert "paper_trading_short_trade_target_profile=aggressive" in stdout
-    assert 'paper_trading_short_trade_target_overrides={"near_miss_threshold": 0.44, "select_threshold": 0.52}' in stdout
-    assert (
-        'paper_trading_auto_shadow_focus={"all": ["300720"], "layer_a_liquidity_corridor": ["300720"], '
-        '"post_gate_liquidity_competition": ["300720"], "release_priority_layer_a_liquidity_corridor": ["300720"], '
-        '"release_priority_post_gate_liquidity_competition": [], "visibility_gap_all": ["300720"], '
-        '"visibility_gap_layer_a_liquidity_corridor": ["300720"], "visibility_gap_post_gate_liquidity_competition": ["300720"]}'
-    ) in stdout
-    assert "paper_trading_shadow_focus_tickers=300720" in stdout
-    assert "paper_trading_shadow_corridor_focus_tickers=300720" in stdout
-    assert "paper_trading_shadow_rebucket_focus_tickers=300720" in stdout
-    assert "paper_trading_shadow_release_priority_corridor_tickers=300720" in stdout
-    assert "paper_trading_shadow_visibility_gap_tickers=300720" in stdout
-    assert "paper_trading_shadow_visibility_gap_corridor_tickers=300720" in stdout
-    assert "paper_trading_shadow_visibility_gap_rebucket_tickers=300720" in stdout
-    assert "paper_trading_analyst_concurrency_limit=1" in stdout
-    assert "paper_trading_data_snapshots=disabled" in stdout
+        stdout = capsys.readouterr().out
+        assert "paper_trading_selected_analysts=technical_analyst,fundamentals_analyst" in stdout
+        assert "paper_trading_fast_selected_analysts=technical_analyst" in stdout
+        assert "paper_trading_short_trade_target_profile=aggressive" in stdout
+        assert 'paper_trading_short_trade_target_overrides={"near_miss_threshold": 0.44, "select_threshold": 0.52}' in stdout
+        assert (
+            'paper_trading_auto_shadow_focus={"all": ["300720"], "layer_a_liquidity_corridor": ["300720"], '
+            '"post_gate_liquidity_competition": ["300720"], "release_priority_layer_a_liquidity_corridor": ["300720"], '
+            '"release_priority_post_gate_liquidity_competition": [], "visibility_gap_all": ["300720"], '
+            '"visibility_gap_layer_a_liquidity_corridor": ["300720"], "visibility_gap_post_gate_liquidity_competition": ["300720"]}'
+        ) in stdout
+        assert "paper_trading_shadow_focus_tickers=300720" in stdout
+        assert "paper_trading_shadow_corridor_focus_tickers=300720" in stdout
+        assert "paper_trading_shadow_rebucket_focus_tickers=300720" in stdout
+        assert "paper_trading_shadow_release_priority_corridor_tickers=300720" in stdout
+        assert "paper_trading_shadow_visibility_gap_tickers=300720" in stdout
+        assert "paper_trading_shadow_visibility_gap_corridor_tickers=300720" in stdout
+        assert "paper_trading_shadow_visibility_gap_rebucket_tickers=300720" in stdout
+        assert "paper_trading_analyst_concurrency_limit=1" in stdout
+        assert "paper_trading_data_snapshots=disabled" in stdout
+    finally:
+        if original_snapshot_enabled is None:
+            os.environ.pop("DATA_SNAPSHOT_ENABLED", None)
+        else:
+            os.environ["DATA_SNAPSHOT_ENABLED"] = original_snapshot_enabled
+        if original_snapshot_path is None:
+            os.environ.pop("DATA_SNAPSHOT_PATH", None)
+        else:
+            os.environ["DATA_SNAPSHOT_PATH"] = original_snapshot_path
+
+
+def test_main_can_enable_data_snapshots(monkeypatch, capsys) -> None:
+    captured: dict = {}
+    original_snapshot_enabled = os.environ.get("DATA_SNAPSHOT_ENABLED")
+    original_snapshot_path = os.environ.get("DATA_SNAPSHOT_PATH")
+
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "parse_args",
+        lambda: SimpleNamespace(
+            start_date="2026-03-23",
+            end_date="2026-03-26",
+            tickers="",
+            initial_capital=100000.0,
+            model_name=None,
+            model_provider=None,
+            selection_target="research_only",
+            output_dir="data/reports/test_paper_trading_enable_snapshots",
+            frozen_plan_source=None,
+            cache_benchmark=False,
+            cache_benchmark_ticker=None,
+            cache_benchmark_clear_first=False,
+            analysts=None,
+            fast_analysts=None,
+            short_trade_target_profile="aggressive",
+            short_trade_target_overrides=None,
+            analysts_all=False,
+            analyst_concurrency_limit=None,
+            enable_data_snapshots=True,
+            disable_data_snapshots=False,
+            candidate_pool_shadow_focus_tickers=None,
+            candidate_pool_shadow_corridor_focus_tickers=None,
+            candidate_pool_shadow_rebucket_focus_tickers=None,
+            upstream_shadow_release_liquidity_corridor_score_min=None,
+            upstream_shadow_release_post_gate_rebucket_score_min=None,
+        ),
+    )
+    monkeypatch.setattr(run_paper_trading_script, "_resolve_model_route", lambda model_name, model_provider: ("test-model", "test-provider"))
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+
+    def _fake_run_paper_trading_session(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output_dir="data/reports/test_paper_trading_enable_snapshots",
+            daily_events_path="data/reports/test_paper_trading_enable_snapshots/daily_events.jsonl",
+            timing_log_path="data/reports/test_paper_trading_enable_snapshots/pipeline_timings.jsonl",
+            summary_path="data/reports/test_paper_trading_enable_snapshots/session_summary.json",
+        )
+
+    monkeypatch.setattr(run_paper_trading_script, "_run_paper_trading_session", _fake_run_paper_trading_session)
+    monkeypatch.delenv("DATA_SNAPSHOT_ENABLED", raising=False)
+    monkeypatch.delenv("DATA_SNAPSHOT_PATH", raising=False)
+
+    try:
+        run_paper_trading_script.main()
+
+        assert captured["disable_data_snapshots"] is False
+        assert os.getenv("DATA_SNAPSHOT_ENABLED") == "true"
+        assert os.getenv("DATA_SNAPSHOT_PATH", "").endswith("data/reports/test_paper_trading_enable_snapshots/data_snapshots")
+
+        stdout = capsys.readouterr().out
+        assert "paper_trading_data_snapshots=enabled" in stdout
+    finally:
+        if original_snapshot_enabled is None:
+            os.environ.pop("DATA_SNAPSHOT_ENABLED", None)
+        else:
+            os.environ["DATA_SNAPSHOT_ENABLED"] = original_snapshot_enabled
+        if original_snapshot_path is None:
+            os.environ.pop("DATA_SNAPSHOT_PATH", None)
+        else:
+            os.environ["DATA_SNAPSHOT_PATH"] = original_snapshot_path
+
+
+def test_main_enable_data_snapshots_overrides_ambient_snapshot_path(monkeypatch, capsys) -> None:
+    captured: dict = {}
+    original_snapshot_enabled = os.environ.get("DATA_SNAPSHOT_ENABLED")
+    original_snapshot_path = os.environ.get("DATA_SNAPSHOT_PATH")
+
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "parse_args",
+        lambda: SimpleNamespace(
+            start_date="2026-03-25",
+            end_date="2026-03-26",
+            tickers="",
+            initial_capital=100000.0,
+            model_name=None,
+            model_provider=None,
+            selection_target="research_only",
+            output_dir="data/reports/test_paper_trading_enable_snapshots_override",
+            frozen_plan_source=None,
+            cache_benchmark=False,
+            cache_benchmark_ticker=None,
+            cache_benchmark_clear_first=False,
+            analysts=None,
+            fast_analysts=None,
+            short_trade_target_profile="momentum_tuned",
+            short_trade_target_overrides=None,
+            analysts_all=False,
+            analyst_concurrency_limit=None,
+            enable_data_snapshots=True,
+            disable_data_snapshots=False,
+            candidate_pool_shadow_focus_tickers=None,
+            candidate_pool_shadow_corridor_focus_tickers=None,
+            candidate_pool_shadow_rebucket_focus_tickers=None,
+            upstream_shadow_release_liquidity_corridor_score_min=None,
+            upstream_shadow_release_post_gate_rebucket_score_min=None,
+        ),
+    )
+    monkeypatch.setattr(run_paper_trading_script, "_resolve_model_route", lambda model_name, model_provider: ("test-model", "test-provider"))
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+
+    def _fake_run_paper_trading_session(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output_dir="data/reports/test_paper_trading_enable_snapshots_override",
+            daily_events_path="data/reports/test_paper_trading_enable_snapshots_override/daily_events.jsonl",
+            timing_log_path="data/reports/test_paper_trading_enable_snapshots_override/pipeline_timings.jsonl",
+            summary_path="data/reports/test_paper_trading_enable_snapshots_override/session_summary.json",
+        )
+
+    monkeypatch.setattr(run_paper_trading_script, "_run_paper_trading_session", _fake_run_paper_trading_session)
+    monkeypatch.setenv("DATA_SNAPSHOT_ENABLED", "true")
+    monkeypatch.setenv("DATA_SNAPSHOT_PATH", "data/snapshots")
+
+    try:
+        run_paper_trading_script.main()
+
+        assert captured["disable_data_snapshots"] is False
+        assert os.getenv("DATA_SNAPSHOT_ENABLED") == "true"
+        assert os.getenv("DATA_SNAPSHOT_PATH", "").endswith("data/reports/test_paper_trading_enable_snapshots_override/data_snapshots")
+
+        stdout = capsys.readouterr().out
+        assert "paper_trading_data_snapshots=enabled" in stdout
+    finally:
+        if original_snapshot_enabled is None:
+            os.environ.pop("DATA_SNAPSHOT_ENABLED", None)
+        else:
+            os.environ["DATA_SNAPSHOT_ENABLED"] = original_snapshot_enabled
+        if original_snapshot_path is None:
+            os.environ.pop("DATA_SNAPSHOT_PATH", None)
+        else:
+            os.environ["DATA_SNAPSHOT_PATH"] = original_snapshot_path
+
+
+def test_run_paper_trading_session_reasserts_snapshot_path_after_runtime_import(monkeypatch) -> None:
+    output_dir = Path("data/reports/test_paper_trading_runtime_import_snapshots")
+    original_snapshot_enabled = os.environ.get("DATA_SNAPSHOT_ENABLED")
+    original_snapshot_path = os.environ.get("DATA_SNAPSHOT_PATH")
+    captured: dict[str, str] = {}
+
+    class _FakeSnapshotExporter:
+        _instance = "stale"
+
+    fake_snapshot_module = SimpleNamespace(DataSnapshotExporter=_FakeSnapshotExporter)
+
+    def _fake_runtime_run(**kwargs):
+        captured["snapshot_path"] = os.getenv("DATA_SNAPSHOT_PATH", "")
+        return SimpleNamespace()
+
+    fake_runtime_module = SimpleNamespace(run_paper_trading_session=_fake_runtime_run)
+
+    def _fake_import_module(name: str):
+        if name == "src.paper_trading.runtime":
+            os.environ["DATA_SNAPSHOT_PATH"] = "data/snapshots"
+            return fake_runtime_module
+        if name == "src.data.snapshot":
+            return fake_snapshot_module
+        raise AssertionError(f"Unexpected import: {name}")
+
+    monkeypatch.setattr(run_paper_trading_script.importlib, "import_module", _fake_import_module)
+    monkeypatch.setenv("DATA_SNAPSHOT_ENABLED", "true")
+    monkeypatch.setenv("DATA_SNAPSHOT_PATH", str(output_dir / "data_snapshots"))
+
+    try:
+        run_paper_trading_script._run_paper_trading_session(output_dir=output_dir)
+
+        assert captured["snapshot_path"].endswith("data/reports/test_paper_trading_runtime_import_snapshots/data_snapshots")
+    finally:
+        if original_snapshot_enabled is None:
+            os.environ.pop("DATA_SNAPSHOT_ENABLED", None)
+        else:
+            os.environ["DATA_SNAPSHOT_ENABLED"] = original_snapshot_enabled
+        if original_snapshot_path is None:
+            os.environ.pop("DATA_SNAPSHOT_PATH", None)
+        else:
+            os.environ["DATA_SNAPSHOT_PATH"] = original_snapshot_path

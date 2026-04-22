@@ -25,6 +25,31 @@ class _DummyCache:
         self.company_news[key] = value
 
 
+class _DummyTTLCompanyNewsCache(_DummyCache):
+    def __init__(self):
+        super().__init__()
+        self.company_news_ttl = {}
+
+    def set_company_news(self, key, value, ttl=None):
+        self.company_news[key] = value
+        self.company_news_ttl[key] = ttl
+
+
+class _DummySnapshotExporter:
+    def __init__(self):
+        self.calls = []
+
+    def export_company_news(self, ticker, end_date, news_items, data_source):
+        self.calls.append(
+            {
+                "ticker": ticker,
+                "end_date": end_date,
+                "news_items": news_items,
+                "data_source": data_source,
+            }
+        )
+
+
 def test_get_insider_trades_ashare_uses_tushare_and_caches(monkeypatch):
     cache = _DummyCache()
     sentinel = [
@@ -116,6 +141,63 @@ def test_get_company_news_ashare_uses_akshare_and_caches(monkeypatch):
 
     assert news is sentinel
     assert cache.company_news["000001_2026-04-01_2026-04-10_5_ashare"] == [item.model_dump() for item in sentinel]
+
+
+def test_get_company_news_ashare_caches_historical_windows_for_30_days(monkeypatch):
+    cache = _DummyTTLCompanyNewsCache()
+    sentinel = [
+        api.CompanyNews(
+            ticker="300724",
+            title="headline",
+            author="author",
+            source="source",
+            date="2026-03-25",
+            url="https://example.com",
+            sentiment="positive",
+            content="body",
+        )
+    ]
+    monkeypatch.setattr(api, "_cache", cache)
+    monkeypatch.setattr(api, "is_ashare", lambda ticker: True)
+    monkeypatch.setattr(api, "get_ashare_company_news", lambda *args: sentinel)
+
+    news = api.get_company_news("300724", "2026-03-25", "2026-03-18", 20)
+
+    assert news is sentinel
+    assert cache.company_news_ttl["300724_2026-03-18_2026-03-25_20_ashare"] == 30 * 86400
+
+
+def test_get_company_news_ashare_exports_snapshot(monkeypatch):
+    cache = _DummyCache()
+    exporter = _DummySnapshotExporter()
+    sentinel = [
+        api.CompanyNews(
+            ticker="000001",
+            title="headline",
+            author="author",
+            source="source",
+            date="2026-04-03",
+            url="https://example.com",
+            sentiment="neutral",
+            content="body",
+        )
+    ]
+    monkeypatch.setattr(api, "_cache", cache)
+    monkeypatch.setattr(api, "_get_snapshot", lambda: exporter)
+    monkeypatch.setattr(api, "is_ashare", lambda ticker: True)
+    monkeypatch.setattr(api, "get_ashare_company_news", lambda *args: sentinel)
+
+    news = api.get_company_news("000001", "2026-04-10", "2026-04-01", 5)
+
+    assert news is sentinel
+    assert exporter.calls == [
+        {
+            "ticker": "000001",
+            "end_date": "2026-04-10",
+            "news_items": sentinel,
+            "data_source": "akshare",
+        }
+    ]
 
 
 def test_get_company_news_remote_sorts_descending_and_caches(monkeypatch):

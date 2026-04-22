@@ -105,6 +105,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--short-trade-target-overrides", default=None, help="JSON object with short-trade target profile overrides")
     parser.add_argument("--analysts-all", action="store_true", help="Use all analysts explicitly")
     parser.add_argument("--analyst-concurrency-limit", type=int, default=None, help="Optional ANALYST_CONCURRENCY_LIMIT override for replay throughput control")
+    parser.add_argument("--enable-data-snapshots", action="store_true", help="Enable data snapshot exports and store them under the report output directory by default")
     parser.add_argument("--disable-data-snapshots", action="store_true", help="Disable data snapshot exports for faster replay runs")
     parser.add_argument("--candidate-pool-shadow-focus-tickers", default=None, help="Comma-separated tickers pinned into shadow recall selection across all lanes")
     parser.add_argument("--candidate-pool-shadow-corridor-focus-tickers", default=None, help="Comma-separated tickers pinned into layer_a_liquidity_corridor shadow selection")
@@ -159,6 +160,21 @@ def _resolve_reports_root_from_output_dir(output_dir: Path) -> Path | None:
     if reports_root.name != "reports":
         return None
     return reports_root
+
+
+def _reset_snapshot_exporter_singleton() -> None:
+    snapshot_module = importlib.import_module("src.data.snapshot")
+    snapshot_module.DataSnapshotExporter._instance = None
+
+
+def _configure_data_snapshots(args: argparse.Namespace, output_dir: Path) -> None:
+    if getattr(args, "enable_data_snapshots", False):
+        os.environ["DATA_SNAPSHOT_ENABLED"] = "true"
+        os.environ["DATA_SNAPSHOT_PATH"] = str(output_dir / "data_snapshots")
+        _reset_snapshot_exporter_singleton()
+    if args.disable_data_snapshots:
+        os.environ["DATA_SNAPSHOT_ENABLED"] = "false"
+        _reset_snapshot_exporter_singleton()
 
 
 def _load_json_if_exists(path: Path) -> dict[str, Any]:
@@ -493,7 +509,17 @@ def _derive_shadow_focus_tickers_from_reports(reports_root: Path | None) -> dict
 
 
 def _run_paper_trading_session(*, disable_data_snapshots: bool = False, **kwargs):
+    snapshot_output_dir: Path | None = None
+    if not disable_data_snapshots and str(os.getenv("DATA_SNAPSHOT_ENABLED", "")).strip().lower() == "true":
+        output_dir = kwargs.get("output_dir")
+        if output_dir is not None:
+            snapshot_output_dir = Path(output_dir) / "data_snapshots"
     runtime_module = importlib.import_module("src.paper_trading.runtime")
+    if snapshot_output_dir is not None:
+        os.environ["DATA_SNAPSHOT_ENABLED"] = "true"
+        os.environ["DATA_SNAPSHOT_PATH"] = str(snapshot_output_dir)
+        snapshot_module = importlib.import_module("src.data.snapshot")
+        snapshot_module.DataSnapshotExporter._instance = None
     if disable_data_snapshots:
         os.environ["DATA_SNAPSHOT_ENABLED"] = "false"
         snapshot_module = importlib.import_module("src.data.snapshot")
@@ -584,6 +610,8 @@ def _print_paper_trading_run_summary(
         print(f"paper_trading_fast_selected_analysts={','.join(fast_selected_analysts)}")
     if args.analyst_concurrency_limit is not None:
         print(f"paper_trading_analyst_concurrency_limit={args.analyst_concurrency_limit}")
+    if getattr(args, "enable_data_snapshots", False) and not args.disable_data_snapshots:
+        print("paper_trading_data_snapshots=enabled")
     if args.disable_data_snapshots:
         print("paper_trading_data_snapshots=disabled")
 
@@ -671,8 +699,7 @@ def main() -> None:
     auto_shadow_focus = runtime_inputs["auto_shadow_focus"]
     shadow_focus_env = _apply_shadow_focus_env_overrides(args, auto_shadow_focus)
     _apply_optional_env_override("ANALYST_CONCURRENCY_LIMIT", args.analyst_concurrency_limit)
-    if args.disable_data_snapshots:
-        _apply_optional_env_override("DATA_SNAPSHOT_ENABLED", "false")
+    _configure_data_snapshots(args, output_dir)
     _apply_optional_env_override(
         "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LIQUIDITY_CORRIDOR_SCORE_MIN",
         args.upstream_shadow_release_liquidity_corridor_score_min,
