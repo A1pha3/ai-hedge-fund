@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime as real_datetime
+
 import pandas as pd
 import pytest
 
+import scripts.btst_20day_backtest as btst_20day_backtest
 from scripts.btst_20day_backtest import (
     _apply_rank_caps_to_scored_results,
     _build_profile_leaderboard,
@@ -15,6 +18,46 @@ from scripts.btst_20day_backtest import (
     summarize_return_stats,
 )
 from src.targets import build_short_trade_target_profile, get_short_trade_target_profile
+
+
+def test_main_falls_back_to_akshare_trade_calendar_when_tushare_calendar_missing(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    class FixedDateTime:
+        @classmethod
+        def now(cls) -> real_datetime:
+            return real_datetime(2026, 4, 22)
+
+    class FakePro:
+        def trade_cal(self, **kwargs) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def stock_basic(self, **kwargs) -> pd.DataFrame:
+            raise RuntimeError("after-calendar")
+
+    monkeypatch.setattr(btst_20day_backtest, "datetime", FixedDateTime)
+    monkeypatch.setenv("TUSHARE_TOKEN", "")
+
+    import tushare as ts
+    import akshare as ak
+
+    monkeypatch.setattr(ts, "set_token", lambda _token: None)
+    monkeypatch.setattr(ts, "pro_api", lambda: FakePro())
+    monkeypatch.setattr(
+        ak,
+        "tool_trade_date_hist_sina",
+        lambda: pd.DataFrame({"trade_date": pd.to_datetime(["2026-04-20", "2026-04-21", "2026-04-22"])}),
+    )
+    monkeypatch.setattr(
+        btst_20day_backtest.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: btst_20day_backtest.argparse.Namespace(
+            profiles="default",
+            output_json=str(tmp_path / "backtest.json"),
+            profile_overrides_json=None,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="after-calendar"):
+        btst_20day_backtest.main()
 
 
 def test_build_profiles_uses_live_short_trade_profile_thresholds_and_weights() -> None:

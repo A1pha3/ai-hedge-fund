@@ -98,13 +98,20 @@ def _resolve_akshare_cache_ttl(api_name: str, **kwargs) -> int:
     return _resolve_akshare_cache_ttl_impl(api_name, **kwargs)
 
 
-def _cached_akshare_dataframe_call(api_name: str, func, ttl: int | None = None, **kwargs) -> pd.DataFrame | None:
+def _cached_akshare_dataframe_call(
+    api_name: str,
+    func,
+    ttl: int | None = None,
+    cache_key_kwargs: dict[str, Any] | None = None,
+    **kwargs,
+) -> pd.DataFrame | None:
     return _cached_akshare_dataframe_call_impl(
         api_name,
         func,
         persistent_cache=_persistent_cache,
         stock_news_timeout_seconds=AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS,
         ttl=ttl,
+        cache_key_kwargs=cache_key_kwargs,
         **kwargs,
     )
 
@@ -557,7 +564,16 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str | None =
             end_date=end_date,
             start_date=start_date,
             limit=limit,
-            fetch_news_df_fn=lambda: _cached_akshare_dataframe_call("stock_news_em", ak.stock_news_em, symbol=symbol),
+            fetch_news_df_fn=lambda: _cached_akshare_dataframe_call(
+                "stock_news_em",
+                ak.stock_news_em,
+                symbol=symbol,
+                cache_key_kwargs={
+                    "symbol": symbol,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            ),
             resolve_stock_name_fn=lambda: resolve_stock_name(get_stock_name, ticker),
             sort_news_dataframe_fn=sort_news_dataframe,
             build_filtered_company_news_fn=lambda **kwargs: build_filtered_company_news(

@@ -49,7 +49,7 @@ def resolve_akshare_cache_ttl(api_name: str, **kwargs) -> int:
     if api_name in {"stock_financial_analysis_indicator", "stock_financial_report_sina"}:
         return 14 * 86400
     if api_name in {"stock_news_em"}:
-        return 6 * 3600
+        return 30 * 86400 if is_historical else 6 * 3600
     return 24 * 3600
 
 
@@ -60,9 +60,11 @@ def cached_akshare_dataframe_call(
     persistent_cache,
     stock_news_timeout_seconds: float,
     ttl: int | None = None,
+    cache_key_kwargs: dict[str, Any] | None = None,
     **kwargs,
 ) -> pd.DataFrame | None:
-    cache_key = make_akshare_df_cache_key(api_name, **kwargs)
+    cache_identity = dict(cache_key_kwargs or kwargs)
+    cache_key = make_akshare_df_cache_key(api_name, **cache_identity)
     cached_df = persistent_cache.get(cache_key)
     if isinstance(cached_df, pd.DataFrame):
         return cached_df.copy()
@@ -81,7 +83,7 @@ def cached_akshare_dataframe_call(
         persistent_cache.set(
             cache_key,
             df,
-            ttl=ttl if ttl is not None else resolve_akshare_cache_ttl(api_name, **kwargs),
+            ttl=ttl if ttl is not None else resolve_akshare_cache_ttl(api_name, **cache_identity),
         )
         return df.copy()
     return None

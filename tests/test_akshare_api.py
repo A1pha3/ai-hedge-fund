@@ -79,6 +79,33 @@ def test_get_ashare_company_news_returns_empty_when_stock_news_times_out(monkeyp
     assert news == []
 
 
+def test_resolve_akshare_cache_ttl_treats_historical_stock_news_as_long_lived():
+    assert akshare_api._resolve_akshare_cache_ttl("stock_news_em", end_date="2026-03-25") == 30 * 86400
+
+
+def test_get_ashare_company_news_scopes_cache_identity_by_date_window(monkeypatch):
+    monkeypatch.setattr(akshare_api, "_akshare_available", True)
+
+    captured_kwargs: dict[str, object] = {}
+
+    def _fake_cached_dataframe_call(*_args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return pd.DataFrame([])
+
+    monkeypatch.setattr(akshare_api, "_cached_akshare_dataframe_call", _fake_cached_dataframe_call)
+    monkeypatch.setattr(akshare_api, "ak", SimpleNamespace(stock_news_em=object()))
+
+    news = akshare_api.get_ashare_company_news("300438", "2026-03-30", start_date="2026-03-25", limit=5)
+
+    assert news == []
+    assert captured_kwargs["symbol"] == "300438"
+    assert captured_kwargs["cache_key_kwargs"] == {
+        "symbol": "300438",
+        "start_date": "2026-03-25",
+        "end_date": "2026-03-30",
+    }
+
+
 def test_get_prices_returns_mock_data_when_requested(monkeypatch):
     sentinel = [akshare_api.Price(time="2026-04-01", open=1, high=1, low=1, close=1, volume=1)]
     monkeypatch.setattr(akshare_api, "_cache", _DummyPriceCache())
