@@ -29,6 +29,47 @@ from src.targets import build_short_trade_target_profile, get_short_trade_target
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
+def _compact_trade_date_value(value) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y%m%d")
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return text[:10].replace("-", "")
+    return text.replace("-", "")
+
+
+def _extract_open_trade_dates_from_calendar_frame(cal: pd.DataFrame, start_date: str, end_date: str) -> list[str]:
+    if cal is None or cal.empty:
+        return []
+    for column in ("cal_date", "trade_date"):
+        if column in cal.columns:
+            values = [_compact_trade_date_value(value) for value in cal[column].tolist()]
+            return sorted({value for value in values if value and start_date <= value <= end_date})
+    return []
+
+
+def _load_open_trade_dates(pro, start_date: str, end_date: str) -> list[str]:
+    try:
+        cal = pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date, is_open="1")
+    except Exception:
+        cal = None
+    all_dates = _extract_open_trade_dates_from_calendar_frame(cal, start_date, end_date)
+    if all_dates:
+        return all_dates
+
+    import akshare as ak
+
+    fallback_cal = ak.tool_trade_date_hist_sina()
+    all_dates = _extract_open_trade_dates_from_calendar_frame(fallback_cal, start_date, end_date)
+    if all_dates:
+        return all_dates
+    raise ValueError(f"Unable to load open trade dates between {start_date} and {end_date}")
+
+
 def spearman_ic(x, y):
     x, y = np.array(x, dtype=float), np.array(y, dtype=float)
     mask = np.isfinite(x) & np.isfinite(y)
@@ -325,6 +366,30 @@ PROFILE_WEIGHT_FIELDS = {
     "reversal_2d": "reversal_2d_weight",
 }
 
+SUPPORTED_PROFILE_OVERRIDE_FIELDS = {
+    "select_threshold",
+    "near_miss_threshold",
+    "selected_rank_cap",
+    "near_miss_rank_cap",
+    "selected_rank_cap_ratio",
+    "near_miss_rank_cap_ratio",
+    "selected_rank_cap_relief_score_margin_min",
+    "selected_rank_cap_relief_rank_buffer",
+    "selected_rank_cap_relief_rank_buffer_ratio",
+    "selected_rank_cap_relief_sector_resonance_min",
+    "selected_rank_cap_relief_close_strength_max",
+    "selected_rank_cap_relief_require_confirmed_breakout",
+    "selected_rank_cap_relief_allow_risk_off",
+    "selected_rank_cap_relief_allow_crisis",
+    "selected_breakout_freshness_min",
+    "selected_trend_acceleration_min",
+    "selected_close_retention_min",
+    "selected_close_retention_threshold_lift",
+    "selected_breakout_close_gap_max",
+    "selected_breakout_close_gap_threshold_lift",
+    "selected_close_retention_penalty_weight",
+    *PROFILE_WEIGHT_FIELDS.values(),
+}
 DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "momentum_tuned", "btst_precision_v1", "btst_precision_v2", "btst_precision_v3", "ic_v3", "ic_v4", "ic_v5")
 
 
@@ -344,6 +409,12 @@ def _parse_profile_names(raw: str | None) -> tuple[str, ...]:
 
 def _build_profiles(profile_names: tuple[str, ...] = DEFAULT_PROFILE_NAMES, profile_overrides: dict[str, object] | None = None) -> dict[str, dict[str, object]]:
     profiles: dict[str, dict[str, object]] = {}
+    unsupported_override_fields = sorted(set((profile_overrides or {}).keys()) - SUPPORTED_PROFILE_OVERRIDE_FIELDS)
+    if unsupported_override_fields:
+        unsupported_fields_text = ", ".join(str(field) for field in unsupported_override_fields)
+        raise ValueError(
+            f"Profile overrides not modeled by btst_20day_backtest.py: {unsupported_fields_text}"
+        )
     for profile_name in profile_names:
         profile = build_short_trade_target_profile(profile_name, overrides=profile_overrides)
         profiles[profile_name] = {
@@ -656,8 +727,7 @@ def main():
     # 获取交易日历
     cal_end = datetime.now().strftime("%Y%m%d")
     cal_start = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
-    cal = pro.trade_cal(exchange="SSE", start_date=cal_start, end_date=cal_end, is_open="1")
-    all_dates = sorted(cal["cal_date"].tolist())
+    all_dates = _load_open_trade_dates(pro, cal_start, cal_end)
     # 构建 next_date 映射
     next_map = {d: all_dates[i + 1] for i, d in enumerate(all_dates) if i + 1 < len(all_dates)}
     next2_map = {d: all_dates[i + 2] for i, d in enumerate(all_dates) if i + 2 < len(all_dates)}

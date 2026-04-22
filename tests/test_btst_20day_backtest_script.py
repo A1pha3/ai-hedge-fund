@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime as real_datetime
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -36,11 +38,8 @@ def test_main_falls_back_to_akshare_trade_calendar_when_tushare_calendar_missing
     monkeypatch.setattr(btst_20day_backtest, "datetime", FixedDateTime)
     monkeypatch.setenv("TUSHARE_TOKEN", "")
 
-    import tushare as ts
     import akshare as ak
-
-    monkeypatch.setattr(ts, "set_token", lambda _token: None)
-    monkeypatch.setattr(ts, "pro_api", lambda: FakePro())
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace(set_token=lambda _token: None, pro_api=lambda: FakePro()))
     monkeypatch.setattr(
         ak,
         "tool_trade_date_hist_sina",
@@ -58,6 +57,29 @@ def test_main_falls_back_to_akshare_trade_calendar_when_tushare_calendar_missing
 
     with pytest.raises(RuntimeError, match="after-calendar"):
         btst_20day_backtest.main()
+
+
+def test_momentum_tuned_profile_uses_rank_cap_for_executability() -> None:
+    profile = get_short_trade_target_profile("momentum_tuned")
+
+    assert profile.select_threshold == 0.38
+    assert profile.near_miss_threshold == 0.24
+    assert profile.selected_rank_cap_ratio == 0.50
+
+
+def test_build_profiles_rejects_unmodeled_penalty_overrides() -> None:
+    with pytest.raises(ValueError, match="not modeled by btst_20day_backtest.py"):
+        _build_profiles(("momentum_tuned",), profile_overrides={"overhead_score_penalty_weight": 0.07})
+
+
+def test_build_profiles_keeps_inherited_close_retention_and_gap_controls_for_momentum_tuned() -> None:
+    config = _build_profiles(("momentum_tuned",))["momentum_tuned"]
+    source_profile = get_short_trade_target_profile("momentum_tuned")
+
+    assert config["selected_close_retention_min"] == source_profile.selected_close_retention_min
+    assert config["selected_close_retention_threshold_lift"] == source_profile.selected_close_retention_threshold_lift
+    assert config["selected_breakout_close_gap_max"] == source_profile.selected_breakout_close_gap_max
+    assert config["selected_breakout_close_gap_threshold_lift"] == source_profile.selected_breakout_close_gap_threshold_lift
 
 
 def test_build_profiles_uses_live_short_trade_profile_thresholds_and_weights() -> None:

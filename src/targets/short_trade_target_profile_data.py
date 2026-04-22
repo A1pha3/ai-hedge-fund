@@ -1132,4 +1132,5 @@ SHORT_TRADE_TARGET_PROFILES["momentum_tuned"] = replace(
     name="momentum_tuned",
     select_threshold=0.38,
     near_miss_threshold=0.24,
+    selected_rank_cap_ratio=0.50,
 )
