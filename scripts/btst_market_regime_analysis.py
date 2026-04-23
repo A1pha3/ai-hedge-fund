@@ -12,6 +12,11 @@ import pandas as pd
 from dotenv import load_dotenv
 from pathlib import Path
 
+try:
+    from scripts.btst_data_utils import build_beijing_exchange_mask
+except ModuleNotFoundError:
+    from btst_data_utils import build_beijing_exchange_mask
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
@@ -93,7 +98,7 @@ def main():
         if df is None or df.empty:
             continue
 
-        df = df[~df["ts_code"].str.startswith(("688", "8", "4"))]
+        df = df[~build_beijing_exchange_mask(df["ts_code"])]
         df = df[df["amount"] >= 100000]
         n_stocks = len(df)
 

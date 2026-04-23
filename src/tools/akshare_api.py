@@ -20,6 +20,7 @@ from src.data.models import (
     FinancialMetrics,
     Price,
 )
+from src.tools.ashare_board_utils import detect_ashare_exchange, get_ashare_symbol, to_prefixed_ashare_code
 from src.tools.akshare_news_helpers import (
     build_filtered_company_news,
     classify_news_sentiment as _classify_news_sentiment_impl,
@@ -131,32 +132,14 @@ class AShareTicker(BaseModel):
         支持格式：
         - 600000（自动判断上交所）
         - 000001（自动判断深交所）
+        - 920001（自动判断北交所）
         - sh600000（带交易所前缀）
         - sz000001（带交易所前缀）
+        - bj920001（带交易所前缀）
         """
-        symbol = symbol.strip().lower()
-
-        # 如果已经带交易所前缀
-        if symbol.startswith(("sh", "sz", "bj")):
-            exchange = symbol[:2]
-            code = symbol[2:]
-            return cls(symbol=code, exchange=exchange, full_code=symbol)
-
-        # 根据代码规则判断交易所
-        # 上交所：600/601/603/605/688（主板/科创板）
-        # 深交所：000/001/002/003/300（主板/中小板/创业板）
-        # 北交所：43/83/87
-        if symbol.startswith(("6", "68", "51", "56", "58", "60")):
-            exchange = "sh"
-        elif symbol.startswith(("0", "3", "15", "16", "18", "20")):
-            exchange = "sz"
-        elif symbol.startswith(("4", "8", "43", "83", "87")):
-            exchange = "bj"
-        else:
-            # 默认深交所
-            exchange = "sz"
-
-        return cls(symbol=symbol, exchange=exchange, full_code=f"{exchange}{symbol}")
+        code = get_ashare_symbol(symbol)
+        exchange = detect_ashare_exchange(symbol)
+        return cls(symbol=code, exchange=exchange, full_code=to_prefixed_ashare_code(symbol))
 
 
 def _get_akshare():

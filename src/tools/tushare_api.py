@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.data.enhanced_cache import get_enhanced_cache
 from src.data.models import FinancialMetrics, InsiderTrade, LineItem, Price
+from src.tools.ashare_board_utils import to_tushare_code
 from src.tools.tushare_daily_basic_helpers import load_daily_basic_batch, select_latest_daily_basic_row
 from src.tools.tushare_daily_gainers_helpers import (
     build_daily_gainer_item,
@@ -201,20 +202,7 @@ def _to_ts_code(ticker: str) -> str:
     """
     转换为 Tushare 代码格式
     """
-    ticker = ticker.strip().lower()
-    if ticker.startswith("sh"):
-        return f"{ticker[2:]}.SH"
-    if ticker.startswith("sz"):
-        return f"{ticker[2:]}.SZ"
-    if ticker.startswith("bj"):
-        return f"{ticker[2:]}.BJ"
-    if ticker.startswith(("6", "68", "51", "56", "58", "60")):
-        return f"{ticker}.SH"
-    if ticker.startswith(("0", "3", "15", "16", "18", "20")):
-        return f"{ticker}.SZ"
-    if ticker.startswith(("4", "8", "43", "83", "87", "92")):
-        return f"{ticker}.BJ"
-    return f"{ticker}.SZ"
+    return to_tushare_code(ticker)
 
 
 def get_stock_name(ticker: str) -> str:

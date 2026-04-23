@@ -64,6 +64,7 @@ from src.screening.candidate_pool_persistence_helpers import (
     write_candidate_pool_snapshot as write_candidate_pool_snapshot_helper,
 )
 from src.screening.models import CandidateStock
+from src.tools.ashare_board_utils import BEIJING_EXCHANGE_SYMBOL_PREFIXES, build_beijing_exchange_mask, is_beijing_exchange_stock
 from src.tools.tushare_api import (
     _get_pro,
     _cached_tushare_dataframe_call,
@@ -114,7 +115,6 @@ SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS = {
 SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS = {
     item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", "").split(",") if item.strip()
 }
-BEIJING_EXCHANGE_SYMBOL_PREFIXES: tuple[str, ...] = ("4", "8", "92")
 
 
 def _candidate_pool_snapshot_path(trade_date: str, pool_size: int | None = None) -> Path:
@@ -488,41 +488,6 @@ def get_cooled_tickers(trade_date: str) -> set[str]:
         trade_date,
         load_cooldown_registry_fn=load_cooldown_registry,
         save_cooldown_registry_fn=save_cooldown_registry,
-    )
-
-
-def is_beijing_exchange_stock(*, ts_code: str | None = None, symbol: str | None = None, market: str | None = None) -> bool:
-    """判断标的是否属于北交所。"""
-    market_text = str(market or "").strip()
-    if market_text.upper() == "BJ" or market_text == "北交所":
-        return True
-
-    ts_code_text = str(ts_code or "").strip().upper()
-    if ts_code_text.endswith(".BJ"):
-        return True
-
-    symbol_text = str(symbol or "").strip()
-    return symbol_text.startswith(BEIJING_EXCHANGE_SYMBOL_PREFIXES)
-
-
-def build_beijing_exchange_mask(stock_df: pd.DataFrame) -> pd.Series:
-    """构建全量股票表中的北交所掩码。"""
-    if stock_df.empty:
-        return pd.Series(dtype=bool)
-
-    market_series = stock_df["market"] if "market" in stock_df else pd.Series("", index=stock_df.index, dtype="object")
-    ts_code_series = stock_df["ts_code"] if "ts_code" in stock_df else pd.Series("", index=stock_df.index, dtype="object")
-    symbol_series = stock_df["symbol"] if "symbol" in stock_df else pd.Series("", index=stock_df.index, dtype="object")
-
-    normalized_market = market_series.fillna("").astype(str).str.strip()
-    normalized_ts_code = ts_code_series.fillna("").astype(str).str.strip().str.upper()
-    normalized_symbol = symbol_series.fillna("").astype(str).str.strip()
-
-    return (
-        normalized_market.str.upper().eq("BJ")
-        | normalized_market.eq("北交所")
-        | normalized_ts_code.str.endswith(".BJ")
-        | normalized_symbol.str.startswith(BEIJING_EXCHANGE_SYMBOL_PREFIXES)
     )
 
 

@@ -17,6 +17,11 @@ from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
+try:
+    from scripts.btst_data_utils import build_beijing_exchange_mask
+except ModuleNotFoundError:
+    from btst_data_utils import build_beijing_exchange_mask
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
@@ -196,7 +201,7 @@ def main():
     total = len(df)
     df = df[df['amount'] >= 100000]
     df = df[~df['name'].str.contains('ST|退', na=False)]
-    df = df[~df['ts_code'].str.startswith(('688', '8', '4'))]
+    df = df[~build_beijing_exchange_mask(df['ts_code'])]
     # 不排除涨停股（新策略）
     print(f"\n候选池: 全市场{total}只 → 过滤后{len(df)}只 (含涨停股)")
 

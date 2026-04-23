@@ -26,6 +26,11 @@ from dotenv import load_dotenv
 
 from src.targets import build_short_trade_target_profile, get_short_trade_target_profile
 
+try:
+    from scripts.btst_data_utils import build_beijing_exchange_mask
+except ModuleNotFoundError:
+    from btst_data_utils import build_beijing_exchange_mask
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
@@ -762,7 +767,7 @@ def main():
         # 候选池过滤
         df = df[df["amount"] >= 100000]
         df = df[~df["name"].str.contains("ST|退", na=False)]
-        df = df[~df["ts_code"].str.startswith(("688", "8", "4"))]
+        df = df[~build_beijing_exchange_mask(df["ts_code"])]
         df = df[df["pct_chg"].between(-9.5, 9.5)]
 
         # 获取次日收益

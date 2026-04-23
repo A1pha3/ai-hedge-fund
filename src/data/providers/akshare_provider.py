@@ -16,6 +16,7 @@ from src.data.base_provider import (
     DataResponse,
 )
 from src.data.models import CompanyNews, FinancialMetrics, Price
+from src.tools.ashare_board_utils import detect_ashare_exchange, get_ashare_symbol
 
 
 class AKShareProvider(BaseDataProvider):
@@ -71,10 +72,7 @@ class AKShareProvider(BaseDataProvider):
         Returns:
             纯数字代码（如 600519）
         """
-        ticker = ticker.strip().lower()
-        if ticker.startswith(("sh", "sz", "bj")):
-            return ticker[2:]
-        return ticker
+        return get_ashare_symbol(ticker)
 
     def _get_exchange(self, ticker: str) -> str:
         """
@@ -86,20 +84,7 @@ class AKShareProvider(BaseDataProvider):
         Returns:
             交易所代码（sh/sz/bj）
         """
-        ticker = ticker.strip().lower()
-
-        if ticker.startswith(("sh", "sz", "bj")):
-            return ticker[:2]
-
-        # 根据代码规则判断
-        if ticker.startswith(("6", "68", "51", "56", "58", "60")):
-            return "sh"
-        if ticker.startswith(("0", "3", "15", "16", "18", "20")):
-            return "sz"
-        if ticker.startswith(("4", "8", "43", "83", "87")):
-            return "bj"
-
-        return "sz"  # 默认深交所
+        return detect_ashare_exchange(ticker)
 
     async def _run_sync(self, func, *args, **kwargs):
         """

@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from scripts.btst_data_utils import load_json, normalize_price_frame, round_or_none, safe_float
+from scripts.btst_data_utils import (
+    build_beijing_exchange_mask,
+    is_beijing_exchange_ts_code,
+    load_json,
+    normalize_price_frame,
+    round_or_none,
+    safe_float,
+)
 
 
 def test_btst_data_utils_json_and_numeric_helpers(tmp_path: Path) -> None:
@@ -46,3 +53,13 @@ def test_btst_data_utils_normalize_price_frame_supports_date_columns_and_index()
 def test_btst_data_utils_normalize_price_frame_handles_none_and_empty() -> None:
     assert normalize_price_frame(None).empty
     assert normalize_price_frame(pd.DataFrame()).empty
+
+
+def test_btst_data_utils_beijing_exchange_detection() -> None:
+    codes = pd.Series(["688001.SH", "920001.BJ", "830001.BJ", "000001.SZ", "920002"])
+    mask = build_beijing_exchange_mask(codes)
+
+    assert mask.tolist() == [False, True, True, False, True]
+    assert is_beijing_exchange_ts_code("688001.SH") is False
+    assert is_beijing_exchange_ts_code("920001.BJ") is True
+    assert is_beijing_exchange_ts_code("920002") is True

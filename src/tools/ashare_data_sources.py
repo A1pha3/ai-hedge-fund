@@ -6,6 +6,7 @@ A股多数据源模块
 import os
 
 from src.data.models import FinancialMetrics, Price
+from src.tools.ashare_board_utils import to_baostock_code, to_tushare_code
 
 
 class DataSourceError(Exception):
@@ -79,12 +80,9 @@ class TushareDataSource(BaseDataSource):
             raise DataSourceError("Tushare 不可用，请设置 TUSHARE_TOKEN 环境变量")
 
         try:
-            from src.tools.akshare_api import AShareTicker
             from src.tools.tushare_api import _cached_tushare_dataframe_call
 
-            ashare = AShareTicker.from_symbol(ticker)
-
-            ts_code = f"{ashare.symbol}.SH" if ashare.exchange == "sh" else f"{ashare.symbol}.SZ"
+            ts_code = to_tushare_code(ticker)
             start_date_fmt = start_date.replace("-", "")
             end_date_fmt = end_date.replace("-", "")
 
@@ -147,10 +145,7 @@ class BaoStockDataSource(BaseDataSource):
         try:
             import baostock as bs
 
-            from src.tools.akshare_api import AShareTicker
-
-            ashare = AShareTicker.from_symbol(ticker)
-            bs_code = f"sh.{ashare.symbol}" if ashare.exchange == "sh" else f"sz.{ashare.symbol}"
+            bs_code = to_baostock_code(ticker)
 
             lg = bs.login()
             if lg.error_code != "0":

@@ -29,6 +29,8 @@ class _FakePro:
         return pd.DataFrame(
             [
                 {"ts_code": "000001.SZ", "name": "平安银行", "industry": "银行", "list_date": "19910403"},
+                {"ts_code": "688001.SH", "name": "科创样本", "industry": "半导体", "list_date": "20200101"},
+                {"ts_code": "920001.BJ", "name": "北交样本", "industry": "机械", "list_date": "20200101"},
                 {"ts_code": "000002.SZ", "name": "万科A", "industry": "全国地产", "list_date": "19910129"},
             ]
         )
@@ -49,6 +51,26 @@ class _FakePro:
                     "amount": 250000.0 + day_offset * 10000.0,
                     "vol": 1500000 + day_offset * 1000,
                     "pct_chg": 3.2 + day_offset * 0.1,
+                },
+                {
+                    "ts_code": "688001.SH",
+                    "open": 15.0 + day_offset * 0.15,
+                    "high": 15.5 + day_offset * 0.15,
+                    "low": 14.9 + day_offset * 0.15,
+                    "close": 15.4 + day_offset * 0.15,
+                    "amount": 320000.0 + day_offset * 12000.0,
+                    "vol": 1800000 + day_offset * 1200,
+                    "pct_chg": 4.6 + day_offset * 0.1,
+                },
+                {
+                    "ts_code": "920001.BJ",
+                    "open": 8.0 + day_offset * 0.1,
+                    "high": 8.3 + day_offset * 0.1,
+                    "low": 7.9 + day_offset * 0.1,
+                    "close": 8.2 + day_offset * 0.1,
+                    "amount": 260000.0 + day_offset * 9000.0,
+                    "vol": 900000 + day_offset * 800,
+                    "pct_chg": 5.1 + day_offset * 0.1,
                 },
                 {
                     "ts_code": "000002.SZ",
@@ -81,6 +103,26 @@ class _FakePro:
                         "vol": 1000000 + index * 1000,
                     },
                     {
+                        "ts_code": "688001.SH",
+                        "trade_date": trade_date,
+                        "open": 12.0 + index * 0.12,
+                        "high": 12.4 + index * 0.12,
+                        "low": 11.9 + index * 0.12,
+                        "close": 12.3 + index * 0.12,
+                        "amount": 240000.0 + index * 4500.0,
+                        "vol": 1200000 + index * 1100,
+                    },
+                    {
+                        "ts_code": "920001.BJ",
+                        "trade_date": trade_date,
+                        "open": 6.0 + index * 0.08,
+                        "high": 6.2 + index * 0.08,
+                        "low": 5.9 + index * 0.08,
+                        "close": 6.1 + index * 0.08,
+                        "amount": 210000.0 + index * 3500.0,
+                        "vol": 700000 + index * 900,
+                    },
+                    {
                         "ts_code": "000002.SZ",
                         "trade_date": trade_date,
                         "open": 18.0 + index * 0.05,
@@ -106,5 +148,12 @@ def test_btst_full_report_main_writes_requested_trade_date_outputs(monkeypatch, 
     btst_full_report.main()
 
     reports_dir = tmp_path / "data" / "reports"
-    assert (reports_dir / "btst_full_report_20260417.md").exists()
+    report_path = reports_dir / "btst_full_report_20260417.md"
+    assert report_path.exists()
     assert (reports_dir / "btst_full_report_20260417.json").exists()
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "688001" in report_text
+    assert "920001" not in report_text
+    assert "排除北交:" in report_text
+    assert "排除科创/北交" not in report_text

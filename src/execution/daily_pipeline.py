@@ -158,6 +158,7 @@ from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
 from src.targets.profiles import build_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets, summarize_selection_targets
+from src.tools.ashare_board_utils import to_tushare_code
 from src.tools.tushare_api import get_daily_basic_batch
 
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
@@ -353,20 +354,7 @@ def _build_reentry_filter_entry(
 
 
 def _to_ts_code_for_price_lookup(ticker: str) -> str:
-    ticker = ticker.strip().lower()
-    if ticker.startswith("sh"):
-        return f"{ticker[2:]}.SH"
-    if ticker.startswith("sz"):
-        return f"{ticker[2:]}.SZ"
-    if ticker.startswith("bj"):
-        return f"{ticker[2:]}.BJ"
-    if ticker.startswith(("6", "68", "51", "56", "58", "60")):
-        return f"{ticker}.SH"
-    if ticker.startswith(("0", "3", "15", "16", "18", "20")):
-        return f"{ticker}.SZ"
-    if ticker.startswith(("4", "8", "43", "83", "87", "92")):
-        return f"{ticker}.BJ"
-    return f"{ticker}.SZ"
+    return to_tushare_code(ticker)
 
 
 def build_watchlist_price_map(trade_date: str, tickers: list[str]) -> dict[str, float]:

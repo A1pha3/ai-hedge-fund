@@ -18,6 +18,11 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+try:
+    from scripts.btst_data_utils import build_beijing_exchange_mask
+except ModuleNotFoundError:
+    from btst_data_utils import build_beijing_exchange_mask
+
 
 def _spearmanr(x: np.ndarray, y: np.ndarray) -> float:
     """纯numpy实现Spearman rank相关系数，无需scipy依赖。"""
@@ -63,7 +68,7 @@ def get_liquid_stock_pool(date: str, min_amount: float = 100000) -> pd.DataFrame
     # 过滤条件
     df = df[df["amount"] >= min_amount]  # 成交额 > 1亿（千元单位）
     df = df[~df["name"].str.contains("ST|退", na=False)]  # 剔除ST和退市
-    df = df[~df["ts_code"].str.startswith(("688", "8", "4"))]  # 剔除科创板和北交所（流动性差）
+    df = df[~build_beijing_exchange_mask(df["ts_code"])]  # 保留科创板，仅剔除北交所
     df = df[df["pct_chg"].between(-9.5, 9.5)]  # 剔除涨跌停
     df = df.sort_values("amount", ascending=False).head(500)  # 取成交额前500
 

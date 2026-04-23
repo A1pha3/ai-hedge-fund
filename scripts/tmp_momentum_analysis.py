@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 """多日动量因子分析：用真实历史数据量化mom5/mom10的最优阈值。"""
-import tushare as ts, os, pandas as pd, numpy as np
+import os
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import tushare as ts
 from dotenv import load_dotenv
+
+try:
+    from scripts.btst_data_utils import build_beijing_exchange_mask
+except ModuleNotFoundError:
+    from btst_data_utils import build_beijing_exchange_mask
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 ts.set_token(os.getenv('TUSHARE_TOKEN'))
 pro = ts.pro_api()
@@ -17,7 +27,7 @@ for test_date, label in [('20260408','Apr08'), ('20260410','Apr10')]:
     df = pro.daily(trade_date=test_date).merge(sb, on='ts_code', how='left')
     df = df[df['amount']>=100000]
     df = df[~df['name'].str.contains('ST|退',na=False)]
-    df = df[~df['ts_code'].str.startswith(('688','8','4'))]
+    df = df[~build_beijing_exchange_mask(df['ts_code'])]
     df = df[df['pct_chg'].between(-9.5,9.5)]
     dfn = pro.daily(trade_date=next1)[['ts_code','pct_chg']].rename(columns={'pct_chg':'next1_pct'})
     df = df.merge(dfn, on='ts_code')

@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from src.tools.ashare_board_utils import (
+    BEIJING_EXCHANGE_SYMBOL_PREFIXES,
+    build_beijing_exchange_mask_from_series,
+    is_beijing_exchange_ts_code,
+)
 
 
 def load_json(path: str | Path) -> dict[str, Any]:
@@ -43,3 +48,7 @@ def normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
     normalized = normalized.sort_index()
     normalized.columns = [str(column).lower() for column in normalized.columns]
     return normalized
+
+
+def build_beijing_exchange_mask(series: pd.Series) -> pd.Series:
+    return build_beijing_exchange_mask_from_series(series)

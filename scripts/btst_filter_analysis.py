@@ -6,6 +6,11 @@ import pandas as pd
 from pathlib import Path
 from dotenv import load_dotenv
 
+try:
+    from scripts.btst_data_utils import build_beijing_exchange_mask
+except ModuleNotFoundError:
+    from btst_data_utils import build_beijing_exchange_mask
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
@@ -57,7 +62,7 @@ def main():
         # 逐层过滤
         filters = [
             ("1.ST排除", lambda d: d['name'].str.contains('ST|退', na=False)),
-            ("2.北交所排除", lambda d: d['ts_code'].str.startswith(('4', '8')) | d['ts_code'].str.endswith('.BJ')),
+            ("2.北交所排除", lambda d: build_beijing_exchange_mask(d['ts_code'])),
             ("3.次新股(<60天)", lambda d: _is_new_stock(d, test_date)),
             ("4.涨跌停排除", lambda d: ~d['pct_chg'].between(-9.5, 9.5)),
             ("5.低额过滤(<10万千元=10万)", lambda d: d['amount'] < 100000),

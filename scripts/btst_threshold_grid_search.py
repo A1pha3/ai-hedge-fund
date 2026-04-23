@@ -14,6 +14,11 @@ import pandas as pd
 from dotenv import load_dotenv
 from pathlib import Path
 
+try:
+    from scripts.btst_data_utils import build_beijing_exchange_mask
+except ModuleNotFoundError:
+    from btst_data_utils import build_beijing_exchange_mask
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # Import factor computation from 20day backtest
@@ -165,7 +170,7 @@ def main():
         df = df.merge(sb, on="ts_code", how="left")
         df = df[df["amount"] >= 100000]
         df = df[~df["name"].str.contains("ST|退", na=False)]
-        df = df[~df["ts_code"].str.startswith(("688", "8", "4"))]
+        df = df[~build_beijing_exchange_mask(df["ts_code"])]
         df = df[df["pct_chg"].between(-9.5, 9.5)]
 
         try:

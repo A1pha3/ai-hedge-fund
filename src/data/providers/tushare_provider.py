@@ -17,6 +17,7 @@ from src.data.base_provider import (
     DataResponse,
 )
 from src.data.models import FinancialMetrics, Price
+from src.tools.ashare_board_utils import to_tushare_code
 
 
 class TushareProvider(BaseDataProvider):
@@ -80,24 +81,7 @@ class TushareProvider(BaseDataProvider):
         Returns:
             Tushare 格式代码（如 600519.SH）
         """
-        ticker = ticker.strip().lower()
-
-        if ticker.startswith("sh"):
-            return f"{ticker[2:]}.SH"
-        if ticker.startswith("sz"):
-            return f"{ticker[2:]}.SZ"
-        if ticker.startswith("bj"):
-            return f"{ticker[2:]}.BJ"
-
-        # 根据代码规则判断交易所
-        if ticker.startswith(("6", "68", "51", "56", "58", "60")):
-            return f"{ticker}.SH"
-        if ticker.startswith(("0", "3", "15", "16", "18", "20")):
-            return f"{ticker}.SZ"
-        if ticker.startswith(("4", "8", "43", "83", "87")):
-            return f"{ticker}.BJ"
-
-        return f"{ticker}.SZ"  # 默认深交所
+        return to_tushare_code(ticker)
 
     async def _run_sync(self, func, *args, **kwargs):
         """

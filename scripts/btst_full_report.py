@@ -12,6 +12,11 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from collections import defaultdict
 
+try:
+    from scripts.btst_data_utils import build_beijing_exchange_mask
+except ModuleNotFoundError:
+    from btst_data_utils import build_beijing_exchange_mask
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 def spearman_ic(x, y):
@@ -230,19 +235,20 @@ def main():
     df = pro.daily(trade_date=trade_date)
     df = df.merge(sb, on='ts_code', how='left')
     total = len(df)
+    beijing_mask = build_beijing_exchange_mask(df['ts_code'])
     df_st = df[df['name'].str.contains('ST|退', na=False)]
-    df_bj = df[df['ts_code'].str.startswith(('688','8','4'))]
-    df_low = df[(df['amount'] < 100000) & ~df['name'].str.contains('ST|退', na=False) & ~df['ts_code'].str.startswith(('688','8','4'))]
+    df_bj = df[beijing_mask]
+    df_low = df[(df['amount'] < 100000) & ~df['name'].str.contains('ST|退', na=False) & ~beijing_mask]
     df = df[df['amount'] >= 100000]
     df = df[~df['name'].str.contains('ST|退', na=False)]
-    df = df[~df['ts_code'].str.startswith(('688','8','4'))]
+    df = df[~build_beijing_exchange_mask(df['ts_code'])]
 
     p(f'\n{"─"*90}')
     p(f'  第1部分: 候选池构建')
     p(f'{"─"*90}')
     p(f'  全市场:        {total:>5}只')
     p(f'  排除ST/退:     {len(df_st):>5}只 (剩{total-len(df_st)})')
-    p(f'  排除科创/北交: {len(df_bj):>5}只 (剩{total-len(df_st)-len(df_bj)})')
+    p(f'  排除北交:       {len(df_bj):>5}只 (剩{total-len(df_st)-len(df_bj)})')
     p(f'  排除低额(<1亿): {len(df_low):>5}只 (剩{len(df)})')
     p(f'  最终候选池:    {len(df):>5}只 (含涨停股)')
 
@@ -443,7 +449,7 @@ def main():
         hd = hd.merge(sb[['ts_code','name']], on='ts_code', how='left')
         hd = hd[hd['amount'] >= 100000]
         hd = hd[~hd['name'].str.contains('ST|退', na=False)]
-        hd = hd[~hd['ts_code'].str.startswith(('688','8','4'))]
+        hd = hd[~build_beijing_exchange_mask(hd['ts_code'])]
         hn_ret = hn[['ts_code','pct_chg']].rename(columns={'pct_chg':'next_ret'})
         hd = hd.merge(hn_ret, on='ts_code', how='left')
 
