@@ -100,13 +100,18 @@ from src.execution.daily_pipeline_settings import (
     MERGE_APPROVED_TICKERS,
     MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION,
     PRECISE_AGENT_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,  # noqa: F401 — re-exported for tests
     UPSTREAM_SHADOW_WATCHLIST_PROMOTION_LANES,  # noqa: F401 — re-exported for tests
     UPSTREAM_SHADOW_WATCHLIST_PROMOTION_MAX_TICKERS,  # noqa: F401 — re-exported for tests
     WATCHLIST_SCORE_THRESHOLD,
 )
+from src.execution.daily_pipeline_phase4_test_adapter import run_with_phase4_test_overrides, sync_phase4_test_overrides
 from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
-    _qualifies_short_trade_boundary_candidate,  # noqa: F401 — re-exported for scripts/tests
-    build_short_trade_candidate_diagnostics_with_defaults as _build_short_trade_candidate_diagnostics,
+    _qualifies_short_trade_boundary_candidate as _qualifies_short_trade_boundary_candidate_impl,
+    build_short_trade_candidate_diagnostics_with_defaults as _build_short_trade_candidate_diagnostics_impl,
 )
 from src.execution.daily_pipeline_phase4_entry_helpers import (  # noqa: F401 — re-exported for scripts
     _build_upstream_shadow_observation_entry,
@@ -132,10 +137,10 @@ from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
     _resolve_upstream_shadow_release_max_tickers,
     _resolve_upstream_shadow_release_priority_rank,
     _resolve_upstream_shadow_selected_threshold,
-    _select_upstream_shadow_release_entries,
+    _select_upstream_shadow_release_entries as _select_upstream_shadow_release_entries_impl,
     _select_upstream_shadow_watchlist_entries,
     _should_promote_upstream_shadow_release_to_watchlist,
-    _should_release_upstream_shadow_candidate,
+    _should_release_upstream_shadow_candidate as _should_release_upstream_shadow_candidate_impl,
     _summarize_upstream_shadow_release_historical_support,
     _supports_upstream_shadow_catalyst_relief_history,
     _upstream_shadow_watchlist_promotion_sort_key,
@@ -158,6 +163,7 @@ from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
 from src.targets.profiles import build_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets, summarize_selection_targets
+from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry  # noqa: F401 — re-exported for scripts/tests
 from src.tools.ashare_board_utils import to_tushare_code
 from src.tools.tushare_api import get_daily_basic_batch
 
@@ -177,6 +183,22 @@ WEAK_CONFIRMATION_REENTRY_GUARD_KEYS = (
     "watchlist_zero_catalyst_crowded_guard",
     "watchlist_zero_catalyst_flat_trend_guard",
 )
+
+
+def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
+    return run_with_phase4_test_overrides(_qualifies_short_trade_boundary_candidate_impl, globals(), trade_date=trade_date, entry=entry)
+
+
+def _build_short_trade_candidate_diagnostics(*args, **kwargs):
+    return run_with_phase4_test_overrides(_build_short_trade_candidate_diagnostics_impl, globals(), *args, **kwargs)
+
+
+def _should_release_upstream_shadow_candidate(*args, **kwargs):
+    return run_with_phase4_test_overrides(_should_release_upstream_shadow_candidate_impl, globals(), *args, **kwargs)
+
+
+def _select_upstream_shadow_release_entries(*args, **kwargs):
+    return run_with_phase4_test_overrides(_select_upstream_shadow_release_entries_impl, globals(), *args, **kwargs)
 
 
 def _load_candidate_pool_bundle(trade_date: str) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
@@ -643,6 +665,7 @@ class DailyPipeline:
         return plan
 
     def run_post_market(self, trade_date: str, portfolio_snapshot: dict | None = None, blocked_buy_tickers: dict[str, dict] | None = None) -> ExecutionPlan:
+        sync_phase4_test_overrides(globals())
         blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
         if self.frozen_post_market_plans is not None:
             frozen_plan = self.frozen_post_market_plans.get(trade_date)
