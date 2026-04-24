@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.targets.short_trade_target_prior_helpers import (
+    resolve_btst_prior_shrinkage_p4_mode,
+    resolve_effective_prior_metrics,
     score_short_trade_historical_continuation_prior,
 )
 
@@ -318,7 +320,11 @@ def _resolve_selected_close_retention_adjustment(
     close_retention_lift = max(0.0, float(getattr(profile, "selected_close_retention_threshold_lift", 0.0) or 0.0))
     breakout_close_gap_lift = max(0.0, float(getattr(profile, "selected_breakout_close_gap_threshold_lift", 0.0) or 0.0))
     enabled = close_retention_lift > 0.0 or breakout_close_gap_lift > 0.0
-    calibrated_next_close_positive_rate = clamp_unit_interval(float(state.historical_prior.get("calibrated_next_close_positive_rate", state.historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
+    if resolve_btst_prior_shrinkage_p4_mode() == "enforce":
+        effective_prior_metrics = resolve_effective_prior_metrics(state.historical_prior)
+        calibrated_next_close_positive_rate = clamp_unit_interval(float(effective_prior_metrics.get("next_close_positive_rate", 0.0) or 0.0))
+    else:
+        calibrated_next_close_positive_rate = clamp_unit_interval(float(state.historical_prior.get("calibrated_next_close_positive_rate", state.historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
     trap_close_retention_score = clamp_unit_interval(float(breakout_trap_guard.get("close_retention_score", 0.0) or 0.0))
     close_retention_score = clamp_unit_interval((0.85 * trap_close_retention_score) + (0.15 * calibrated_next_close_positive_rate))
     breakout_close_gap = clamp_unit_interval(
@@ -897,9 +903,7 @@ def _build_snapshot_score_payload(
     positive_score_weights: dict[str, float],
     clamp_unit_interval: Callable[[float], float],
 ) -> dict[str, Any]:
-    historical_continuation_prior_score = score_short_trade_historical_continuation_prior(
-        state.historical_prior
-    )
+    historical_continuation_prior_score = score_short_trade_historical_continuation_prior(state.historical_prior)
     weighted_positive_contributions = {
         "breakout_freshness": round(positive_score_weights["breakout_freshness"] * threshold_state.breakout_freshness, 4),
         "trend_acceleration": round(positive_score_weights["trend_acceleration"] * threshold_state.trend_acceleration, 4),
@@ -909,8 +913,7 @@ def _build_snapshot_score_payload(
         "catalyst_freshness": round(positive_score_weights["catalyst_freshness"] * threshold_state.catalyst_freshness, 4),
         "layer_c_alignment": round(positive_score_weights["layer_c_alignment"] * state.layer_c_alignment, 4),
         "historical_continuation_score": round(
-            positive_score_weights.get("historical_continuation_score", 0.0)
-            * float(historical_continuation_prior_score["score"]),
+            positive_score_weights.get("historical_continuation_score", 0.0) * float(historical_continuation_prior_score["score"]),
             4,
         ),
         "momentum_strength": round(positive_score_weights.get("momentum_strength", 0.0) * state.momentum_strength, 4),
@@ -950,10 +953,7 @@ def _build_snapshot_score_payload(
         + (positive_score_weights["sector_resonance"] * state.sector_resonance)
         + (positive_score_weights["catalyst_freshness"] * threshold_state.catalyst_freshness)
         + (positive_score_weights["layer_c_alignment"] * state.layer_c_alignment)
-        + (
-            positive_score_weights.get("historical_continuation_score", 0.0)
-            * float(historical_continuation_prior_score["score"])
-        )
+        + (positive_score_weights.get("historical_continuation_score", 0.0) * float(historical_continuation_prior_score["score"]))
         + (positive_score_weights.get("momentum_strength", 0.0) * state.momentum_strength)
         + (positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal)
         + (positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength)

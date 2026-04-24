@@ -1,0 +1,45 @@
+{
+  "trade_date": "2026-04-22",
+  "selection_targets": {
+    "300724": {
+      "ticker": "300724",
+      "candidate_source": "layer_c_watchlist",
+      "execution_eligible": true,
+      "historical_prior_quality_level": "execution_ready",
+      "btst_regime_gate": "normal_trade",
+      "short_trade": {
+        "decision": "selected",
+        "metrics_payload": {
+          "p6_risk_budget": {
+            "mode": "enforce",
+            "risk_budget_ratio": 0.6,
+            "formal_exposure_bucket": "reduced",
+            "execution_contract_bucket": "formal_capped",
+            "risk_budget_gate": "normal_trade",
+            "prior_quality_label": "execution_ready"
+          }
+        }
+      }
+    },
+    "688313": {
+      "ticker": "688313",
+      "candidate_source": "layer_c_watchlist",
+      "execution_eligible": false,
+      "historical_prior_quality_level": "watch_only",
+      "btst_regime_gate": "shadow_only",
+      "short_trade": {
+        "decision": "near_miss",
+        "metrics_payload": {
+          "p6_risk_budget": {
+            "mode": "enforce",
+            "risk_budget_ratio": 0.0,
+            "formal_exposure_bucket": "zero_budget",
+            "execution_contract_bucket": "watch_only",
+            "risk_budget_gate": "shadow_only",
+            "prior_quality_label": "watch_only"
+          }
+        }
+      }
+    }
+  }
+}

@@ -377,6 +377,9 @@ def _accumulate_dual_target_day(summary: dict, payload: dict) -> None:
     target_summary = dict(current_plan.get("dual_target_summary") or {})
     _accumulate_dual_target_counts(summary, target_summary)
     _accumulate_delta_classification_counts(summary, target_summary)
+    risk_metrics = dict(current_plan.get("risk_metrics") or {})
+    _accumulate_btst_regime_gate_counts(summary, risk_metrics)
+    _accumulate_btst_risk_budget_p6_counts(summary, risk_metrics)
 
 
 def _accumulate_dual_target_counts(summary: dict, target_summary: dict) -> None:
@@ -399,3 +402,55 @@ def _accumulate_dual_target_counts(summary: dict, target_summary: dict) -> None:
 def _accumulate_delta_classification_counts(summary: dict, target_summary: dict) -> None:
     for key, value in dict(target_summary.get("delta_classification_counts") or {}).items():
         summary["delta_classification_counts"][str(key)] = int(summary["delta_classification_counts"].get(str(key)) or 0) + int(value or 0)
+
+
+def _accumulate_btst_regime_gate_counts(summary: dict, risk_metrics: dict[str, Any]) -> None:
+    gate_payload = dict(risk_metrics.get("btst_regime_gate", {}) or {})
+    if not gate_payload:
+        return
+    gate_summary = summary.setdefault(
+        "btst_regime_gate_summary",
+        {
+            "gate_counts": {},
+            "mode_counts": {},
+            "reason_code_counts": {},
+        },
+    )
+    gate_name = str(gate_payload.get("gate") or "unknown")
+    gate_summary["gate_counts"][gate_name] = int(gate_summary["gate_counts"].get(gate_name) or 0) + 1
+    mode_name = str(gate_payload.get("mode") or "unknown")
+    gate_summary["mode_counts"][mode_name] = int(gate_summary["mode_counts"].get(mode_name) or 0) + 1
+    for reason_code in list(gate_payload.get("reason_codes") or []):
+        normalized = str(reason_code or "").strip()
+        if not normalized:
+            continue
+        gate_summary["reason_code_counts"][normalized] = int(gate_summary["reason_code_counts"].get(normalized) or 0) + 1
+
+
+def _accumulate_btst_risk_budget_p6_counts(summary: dict, risk_metrics: dict[str, Any]) -> None:
+    p6_payload = dict(risk_metrics.get("btst_risk_budget_p6_enforcement", {}) or {})
+    if not p6_payload:
+        funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+        p6_payload = dict(dict(dict(funnel_diagnostics.get("filters", {}) or {}).get("buy_orders", {}) or {}).get("btst_risk_budget_overlay", {}) or {})
+    if not p6_payload:
+        return
+    if str(p6_payload.get("mode") or "off").strip().lower() != "enforce":
+        return
+    p6_summary = summary.setdefault(
+        "btst_risk_budget_p6_summary",
+        {
+            "gate_distribution": {},
+            "formal_exposure_distribution": {},
+            "suppressed_position_summary": {
+                "zero_budget_count": 0,
+                "reduced_budget_count": 0,
+            },
+        },
+    )
+    for key, value in dict(p6_payload.get("gate_distribution") or {}).items():
+        p6_summary["gate_distribution"][str(key)] = int(p6_summary["gate_distribution"].get(str(key)) or 0) + int(value or 0)
+    for key, value in dict(p6_payload.get("formal_exposure_distribution") or {}).items():
+        p6_summary["formal_exposure_distribution"][str(key)] = int(p6_summary["formal_exposure_distribution"].get(str(key)) or 0) + int(value or 0)
+    suppressed = dict(p6_payload.get("suppressed_position_summary") or {})
+    p6_summary["suppressed_position_summary"]["zero_budget_count"] += int(suppressed.get("zero_budget_count") or 0)
+    p6_summary["suppressed_position_summary"]["reduced_budget_count"] += int(suppressed.get("reduced_budget_count") or 0)

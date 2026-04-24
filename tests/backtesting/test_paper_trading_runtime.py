@@ -257,11 +257,168 @@ def test_build_dual_target_session_summary_aggregates_paper_trading_days(tmp_pat
     assert summary["delta_classification_counts"] == {"upgraded": 3, "downgraded": 3}
 
 
+def test_build_dual_target_session_summary_accumulates_p6_risk_budget_overlay(tmp_path: Path):
+    daily_events_path = tmp_path / "daily_events.jsonl"
+    daily_events_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "event": "paper_trading_day",
+                        "current_plan": {
+                            "selection_targets": {"300724": {}},
+                            "risk_metrics": {
+                                "btst_risk_budget_p6_enforcement": {
+                                    "mode": "enforce",
+                                    "gate_distribution": {"normal_trade": 1},
+                                    "formal_exposure_distribution": {"reduced": 1},
+                                    "suppressed_position_summary": {"zero_budget_count": 0, "reduced_budget_count": 1},
+                                }
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "paper_trading_day",
+                        "current_plan": {
+                            "selection_targets": {"688313": {}},
+                            "risk_metrics": {
+                                "btst_risk_budget_p6_enforcement": {
+                                    "mode": "enforce",
+                                    "gate_distribution": {"shadow_only": 1},
+                                    "formal_exposure_distribution": {"zero_budget": 1},
+                                    "suppressed_position_summary": {"zero_budget_count": 1, "reduced_budget_count": 0},
+                                }
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = _build_dual_target_session_summary(daily_events_path)
+
+    assert summary["btst_risk_budget_p6_summary"]["gate_distribution"] == {"normal_trade": 1, "shadow_only": 1}
+    assert summary["btst_risk_budget_p6_summary"]["formal_exposure_distribution"] == {"reduced": 1, "zero_budget": 1}
+    assert summary["btst_risk_budget_p6_summary"]["suppressed_position_summary"] == {"zero_budget_count": 1, "reduced_budget_count": 1}
+
+
+def test_build_dual_target_session_summary_ignores_p6_risk_budget_overlay_when_mode_off(tmp_path: Path):
+    daily_events_path = tmp_path / "daily_events.jsonl"
+    daily_events_path.write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "current_plan": {
+                    "selection_targets": {"300724": {}},
+                    "risk_metrics": {
+                        "btst_risk_budget_p6_enforcement": {
+                            "mode": "off",
+                            "gate_distribution": {"normal_trade": 1},
+                            "formal_exposure_distribution": {"full": 1},
+                            "suppressed_position_summary": {"zero_budget_count": 0, "reduced_budget_count": 0},
+                        }
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = _build_dual_target_session_summary(daily_events_path)
+
+    assert "btst_risk_budget_p6_summary" not in summary
+
+
 def test_build_dual_target_session_summary_returns_default_for_missing_file(tmp_path: Path):
     summary = _build_dual_target_session_summary(tmp_path / "missing.jsonl")
 
     assert summary["day_count"] == 0
     assert summary["target_mode_counts"] == {}
+
+
+def test_build_dual_target_session_summary_aggregates_btst_regime_gate_counts(tmp_path: Path):
+    daily_events_path = tmp_path / "daily_events.jsonl"
+    daily_events_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "event": "paper_trading_day",
+                        "current_plan": {
+                            "target_mode": "short_trade_only",
+                            "selection_targets": {"000001": {}},
+                            "risk_metrics": {
+                                "btst_regime_gate": {
+                                    "mode": "shadow",
+                                    "gate": "halt",
+                                    "reason_codes": ["regime_gate_level_risk_off"],
+                                }
+                            },
+                            "dual_target_summary": {
+                                "research_target_count": 0,
+                                "short_trade_target_count": 1,
+                                "research_selected_count": 0,
+                                "research_near_miss_count": 0,
+                                "research_rejected_count": 0,
+                                "short_trade_selected_count": 0,
+                                "short_trade_near_miss_count": 1,
+                                "short_trade_blocked_count": 0,
+                                "short_trade_rejected_count": 0,
+                                "shell_target_count": 0,
+                                "delta_classification_counts": {},
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "paper_trading_day",
+                        "current_plan": {
+                            "target_mode": "short_trade_only",
+                            "selection_targets": {"000002": {}},
+                            "risk_metrics": {
+                                "btst_regime_gate": {
+                                    "mode": "shadow",
+                                    "gate": "aggressive_trade",
+                                    "reason_codes": ["breadth_strong"],
+                                }
+                            },
+                            "dual_target_summary": {
+                                "research_target_count": 0,
+                                "short_trade_target_count": 1,
+                                "research_selected_count": 0,
+                                "research_near_miss_count": 0,
+                                "research_rejected_count": 0,
+                                "short_trade_selected_count": 1,
+                                "short_trade_near_miss_count": 0,
+                                "short_trade_blocked_count": 0,
+                                "short_trade_rejected_count": 0,
+                                "shell_target_count": 0,
+                                "delta_classification_counts": {},
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = _build_dual_target_session_summary(daily_events_path)
+
+    assert summary["btst_regime_gate_summary"]["gate_counts"] == {"aggressive_trade": 1, "halt": 1}
+    assert summary["btst_regime_gate_summary"]["mode_counts"] == {"shadow": 2}
+    assert summary["btst_regime_gate_summary"]["reason_code_counts"] == {
+        "breadth_strong": 1,
+        "regime_gate_level_risk_off": 1,
+    }
 
 
 def test_build_llm_route_provenance_reads_summary_file(tmp_path: Path):

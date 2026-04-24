@@ -21,6 +21,36 @@ from src.targets.short_trade_target import (
 )
 
 
+_P2_BLOCKED_GATES = frozenset({"halt", "shadow_only"})
+
+
+def _is_execution_eligible(evaluation: DualTargetEvaluation) -> bool:
+    """Return True if any target result is formally selected (execution-eligible)."""
+    research_selected = evaluation.research is not None and evaluation.research.decision == "selected"
+    short_trade_selected = evaluation.short_trade is not None and evaluation.short_trade.decision == "selected"
+    return research_selected or short_trade_selected
+
+
+def apply_p2_regime_gate_enforcement_to_selection_targets(
+    selection_targets: dict[str, DualTargetEvaluation],
+    gate: str | None,
+) -> None:
+    """Mark formally selected items in selection_targets as p2_execution_blocked when gate is halt/shadow_only.
+
+    Formal execution eligibility is blocked; research visibility (decision field) is preserved.
+    Only items with decision="selected" in any target result are blocked — near_miss/rejected items
+    are already not execution-eligible and do not need this flag.
+    Modifies targets in-place.
+    """
+    if not gate or gate not in _P2_BLOCKED_GATES:
+        return
+    block_reason = f"p2_regime_gate_enforce:{gate}"
+    for evaluation in selection_targets.values():
+        if _is_execution_eligible(evaluation):
+            evaluation.p2_execution_blocked = True
+            evaluation.p2_execution_block_reason = block_reason
+
+
 def _classify_delta(evaluation: DualTargetEvaluation) -> str | None:
     research_result = evaluation.research
     short_trade_result = evaluation.short_trade

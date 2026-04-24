@@ -87,6 +87,22 @@ def _render_target_summary(snapshot: SelectionSnapshot) -> list[str]:
     return lines
 
 
+def _render_btst_regime_gate(snapshot: SelectionSnapshot) -> list[str]:
+    gate_payload = dict(snapshot.btst_regime_gate or {})
+    lines = ["## BTST 择日门控", ""]
+    if not gate_payload:
+        lines.append("- none")
+        lines.append("")
+        return lines
+    lines.append(f"- mode: {gate_payload.get('mode') or 'n/a'}")
+    lines.append(f"- gate: {gate_payload.get('gate') or 'n/a'}")
+    lines.append(f"- profile_hint: {gate_payload.get('profile_hint') or 'n/a'}")
+    reason_codes = list(gate_payload.get("reason_codes") or [])
+    lines.append(f"- reason_codes: {', '.join(reason_codes) if reason_codes else 'none'}")
+    lines.append("")
+    return lines
+
+
 def _render_symbol_list(label: str, values: list[str]) -> str:
     return f"- {label}: {', '.join(values)}" if values else f"- {label}: none"
 
@@ -244,6 +260,7 @@ def render_selection_review(snapshot: SelectionSnapshot) -> str:
         f"- buy_order_count: {counts.get('buy_order_count', 0)}",
         "",
     ]
+    lines.extend(_render_btst_regime_gate(snapshot))
     lines.extend(_render_target_summary(snapshot))
     lines.extend(_render_research_target_summary(snapshot))
     lines.extend(_render_short_trade_target_summary(snapshot))

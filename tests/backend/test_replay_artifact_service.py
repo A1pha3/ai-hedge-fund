@@ -211,6 +211,53 @@ def test_sync_workflow_items_preserves_assigned_final_and_reopens_unassigned_dra
     assert reopened_item.latest_review_status == "final"
 
 
+def test_get_selection_artifact_day_accepts_p5_contract_fields(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    report_dir = tmp_path / "demo_report"
+    artifact_root = report_dir / "selection_artifacts" / "2026-04-22"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "artifacts": {"selection_artifact_root": str(report_dir / "selection_artifacts")},
+        },
+    )
+    _write_json(
+        artifact_root / "selection_snapshot.json",
+        {
+            "trade_date": "2026-04-22",
+            "selected": [
+                {
+                    "symbol": "300724",
+                    "execution_bridge": {"included_in_buy_orders": False},
+                    "target_context": {
+                        "execution_eligible": False,
+                        "downgrade_reasons": ["btst_regime_gate_not_tradeable"],
+                        "historical_prior_quality_level": "watch_only",
+                        "btst_regime_gate": "shadow_only",
+                    },
+                    "target_decisions": {
+                        "short_trade": {
+                            "decision": "near_miss",
+                            "execution_eligible": False,
+                            "downgrade_reasons": ["btst_regime_gate_not_tradeable"],
+                        }
+                    },
+                }
+            ],
+            "rejected": [],
+        },
+    )
+    (artifact_root / "selection_review.md").write_text("# review\n", encoding="utf-8")
+    (artifact_root / "research_feedback.jsonl").write_text("", encoding="utf-8")
+
+    payload = service.get_selection_artifact_day("demo_report", "2026-04-22")
+
+    selected_entry = payload["snapshot"]["selected"][0]
+    assert selected_entry["target_context"]["execution_eligible"] is False
+    assert selected_entry["target_context"]["downgrade_reasons"] == ["btst_regime_gate_not_tradeable"]
+    assert payload["review_markdown"] == "# review\n"
+
+
 def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None:
     report_dir = tmp_path / "demo_report"
     artifact_root = report_dir / "selection_artifacts"

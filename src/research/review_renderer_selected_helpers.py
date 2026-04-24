@@ -12,7 +12,9 @@ def render_selected_candidate(candidate: SelectedCandidate, index: int, format_t
     lines.extend(_render_target_decisions(candidate, format_target_decision))
     lines.extend(_render_execution_bridge(candidate))
     lines.extend(_render_layer_b_summary(candidate, format_layer_b_factor))
-    lines.extend(_render_prompt_section(candidate=candidate, label="入选原因", key="why_selected", limit=3))
+    lines.extend(_render_prompt_section(candidate=candidate, label="为什么入选", key="why_selected", limit=3))
+    lines.extend(_render_downgrade_section(candidate))
+    lines.extend(_render_execution_eligibility_section(candidate))
     lines.extend(_render_prompt_section(candidate=candidate, label="建议重点复核", key="what_to_check", limit=2))
     lines.append("")
     return lines
@@ -51,3 +53,21 @@ def _render_layer_b_summary(candidate: SelectedCandidate, format_layer_b_factor)
 
 def _render_prompt_section(*, candidate: SelectedCandidate, label: str, key: str, limit: int) -> list[str]:
     return [f"- {label}:"] + [f"  - {reason}" for reason in list(candidate.research_prompts.get(key, []))[:limit]]
+
+
+def _render_downgrade_section(candidate: SelectedCandidate) -> list[str]:
+    downgrade_reasons = [str(reason) for reason in list((candidate.target_context or {}).get("downgrade_reasons", []) or []) if str(reason or "").strip()]
+    if not downgrade_reasons:
+        downgrade_reasons = ["无，保留正式执行资格"]
+    return ["- 为何被降级:"] + [f"  - {reason}" for reason in downgrade_reasons[:3]]
+
+
+def _render_execution_eligibility_section(candidate: SelectedCandidate) -> list[str]:
+    target_context = dict(candidate.target_context or {})
+    details: list[str] = []
+    if target_context.get("btst_regime_gate"):
+        details.append(f"gate={target_context['btst_regime_gate']}")
+    if target_context.get("historical_prior_quality_level"):
+        details.append(f"prior={target_context['historical_prior_quality_level']}")
+    status = "是" if target_context.get("execution_eligible") else "否"
+    return [f"- 是否可执行:", f"  - {status}" + (f" ({', '.join(details)})" if details else "")]

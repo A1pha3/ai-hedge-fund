@@ -1,0 +1,16 @@
+{
+  "btst_risk_budget_p6_summary": {
+    "gate_distribution": {
+      "normal_trade": 1,
+      "shadow_only": 1
+    },
+    "formal_exposure_distribution": {
+      "reduced": 1,
+      "zero_budget": 1
+    },
+    "suppressed_position_summary": {
+      "zero_budget_count": 1,
+      "reduced_budget_count": 1
+    }
+  }
+}

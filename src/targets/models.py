@@ -30,6 +30,7 @@ class TargetEvaluationInput(BaseModel):
 class TargetEvaluationResult(BaseModel):
     target_type: SelectionTargetType
     decision: TargetDecision | None = None
+    execution_eligible: bool = False
     score_target: float = 0.0
     confidence: float = 0.0
     rank_hint: int | None = None
@@ -38,7 +39,10 @@ class TargetEvaluationResult(BaseModel):
     blockers: list[str] = Field(default_factory=list)
     top_reasons: list[str] = Field(default_factory=list)
     rejection_reasons: list[str] = Field(default_factory=list)
+    downgrade_reasons: list[str] = Field(default_factory=list)
     gate_status: dict[str, str] = Field(default_factory=dict)
+    historical_prior_quality_level: str | None = None
+    btst_regime_gate: str | None = None
     expected_holding_window: str | None = None
     preferred_entry_mode: str | None = None
     candidate_source: str | None = None
@@ -64,15 +68,28 @@ class DualTargetEvaluation(BaseModel):
     trade_date: str
     research: TargetEvaluationResult | None = None
     short_trade: TargetEvaluationResult | None = None
+    execution_eligible: bool = False
+    downgrade_reasons: list[str] = Field(default_factory=list)
+    historical_prior_quality_level: str | None = None
+    btst_regime_gate: str | None = None
     candidate_source: str | None = None
     candidate_reason_codes: list[str] = Field(default_factory=list)
     delta_classification: str | None = None
     delta_summary: list[str] = Field(default_factory=list)
+    # P2 regime gate: formal execution blocked while research visibility is preserved.
+    p2_execution_blocked: bool = False
+    p2_execution_block_reason: str | None = None
+    # P3 prior quality gate: prior classified and execution blocked when quality fails hard thresholds.
+    p3_prior_quality_label: str | None = None
+    p3_sample_size: int | None = None
+    p3_execution_blocked: bool = False
+    p3_execution_block_reason: str | None = None
 
 
 class DualTargetSummary(BaseModel):
     target_mode: TargetMode = "research_only"
     selection_target_count: int = 0
+    execution_eligible_count: int = 0
     research_target_count: int = 0
     short_trade_target_count: int = 0
     research_selected_count: int = 0
@@ -84,3 +101,8 @@ class DualTargetSummary(BaseModel):
     short_trade_rejected_count: int = 0
     shell_target_count: int = 0
     delta_classification_counts: dict[str, int] = Field(default_factory=dict)
+    # P2 regime gate: count of items where formal execution is blocked (research visibility kept).
+    p2_execution_blocked_count: int = 0
+    # P3 prior quality gate: counts.
+    p3_execution_blocked_count: int = 0
+    p3_prior_quality_distribution: dict[str, int] = Field(default_factory=dict)
