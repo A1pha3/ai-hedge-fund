@@ -1,0 +1,30 @@
+{
+  "report_type": "p3_btst_historical_prior_quality_audit",
+  "generated_on": "2026-04-24",
+  "snapshot_count": 2,
+  "prior_quality_distribution": {
+    "execution_ready": 1,
+    "watch_only": 3
+  },
+  "selected_sample_quality_before": {
+    "description": "All formally-selected entries regardless of prior quality",
+    "total_selected": 2,
+    "by_quality": {
+      "execution_ready": 1,
+      "watch_only": 1
+    }
+  },
+  "selected_sample_quality_after": {
+    "description": "Selected entries that would survive P3 hard gate (execution_ready only)",
+    "total_selected": 1,
+    "by_quality": {
+      "execution_ready": 1
+    }
+  },
+  "downgrade_reasons": {
+    "sample_small_n4_lt_5": 1,
+    "sample_small_n3_lt_5": 1,
+    "low_close_positive_rate": 1,
+    "sample_too_small_n2_lt_3": 1
+  }
+}

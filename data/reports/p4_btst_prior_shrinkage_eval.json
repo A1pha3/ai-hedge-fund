@@ -1,0 +1,51 @@
+{
+  "report_type": "p4_btst_prior_shrinkage_eval",
+  "generated_on": "2026-04-24",
+  "snapshot_count": 1,
+  "comparison_summary": {
+    "prior_count": 3,
+    "avg_sample_reliability": 0.377778,
+    "avg_raw_high_hit_rate": 0.923333,
+    "avg_shrunk_high_hit_rate": 0.756667,
+    "avg_raw_close_positive_rate": 0.886667,
+    "avg_shrunk_close_positive_rate": 0.693333
+  },
+  "raw_vs_shrunk_comparison_samples": [
+    {
+      "ticker": "300724",
+      "decision": "selected",
+      "evaluable_count": 2,
+      "sample_reliability": 0.2,
+      "raw_next_high_hit_rate_at_threshold": 1.0,
+      "shrunk_high_hit_rate": 0.72,
+      "raw_next_close_positive_rate": 1.0,
+      "shrunk_close_positive_rate": 0.66,
+      "high_hit_delta": 0.28,
+      "close_positive_delta": 0.34
+    },
+    {
+      "ticker": "300750",
+      "decision": "near_miss",
+      "evaluable_count": 4,
+      "sample_reliability": 0.333333,
+      "raw_next_high_hit_rate_at_threshold": 0.95,
+      "shrunk_high_hit_rate": 0.77,
+      "raw_next_close_positive_rate": 0.9,
+      "shrunk_close_positive_rate": 0.7,
+      "high_hit_delta": 0.18,
+      "close_positive_delta": 0.2
+    },
+    {
+      "ticker": "002594",
+      "decision": "near_miss",
+      "evaluable_count": 12,
+      "sample_reliability": 0.6,
+      "raw_next_high_hit_rate_at_threshold": 0.82,
+      "shrunk_high_hit_rate": 0.78,
+      "raw_next_close_positive_rate": 0.76,
+      "shrunk_close_positive_rate": 0.72,
+      "high_hit_delta": 0.04,
+      "close_positive_delta": 0.04
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "report_type": "p4_btst_selected_nearmiss_separation",
+  "generated_on": "2026-04-24",
+  "snapshot_count": 1,
+  "decision_counts": {
+    "selected": 1,
+    "near_miss": 2
+  },
+  "gate_counts": {
+    "unknown": 3
+  },
+  "decision_gate_counts": {
+    "selected": {
+      "unknown": 1
+    },
+    "near_miss": {
+      "unknown": 2
+    }
+  },
+  "selected_minus_near_miss": -1,
+  "recommendation": "shadow_only"
+}

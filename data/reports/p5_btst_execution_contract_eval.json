@@ -1,0 +1,68 @@
+{
+  "report_type": "p5_btst_execution_contract_eval",
+  "generated_on": "2026-04-24",
+  "snapshot_count": 1,
+  "contract_summary": {
+    "target_count": 3,
+    "execution_eligible_count": 1,
+    "selected_count": 1,
+    "near_miss_count": 1,
+    "research_only_count": 1
+  },
+  "semantics_comparison": {
+    "selected": {
+      "definition": "score passed + gate allowed + prior quality qualified + formal execution eligible",
+      "formal_buy_flow": true
+    },
+    "near_miss": {
+      "definition": "observation only; keeps visibility but never enters formal buy-order flow",
+      "formal_buy_flow": false
+    },
+    "research_only": {
+      "definition": "research or upgrade queue only; excluded from formal BTST performance stats",
+      "formal_buy_flow": false
+    }
+  },
+  "downgrade_reason_counts": {
+    "historical_prior_not_execution_ready": 1,
+    "research_only_source_not_formal_execution": 1,
+    "btst_regime_gate_not_tradeable": 1
+  },
+  "comparison_samples": [
+    {
+      "ticker": "002028",
+      "candidate_source": "research_only",
+      "decision": "rejected",
+      "execution_eligible": false,
+      "downgrade_reasons": [
+        "research_only_source_not_formal_execution",
+        "btst_regime_gate_not_tradeable"
+      ],
+      "historical_prior_quality_level": "reject",
+      "btst_regime_gate": "shadow_only",
+      "semantic_bucket": "research_only"
+    },
+    {
+      "ticker": "688313",
+      "candidate_source": "layer_c_watchlist",
+      "decision": "near_miss",
+      "execution_eligible": false,
+      "downgrade_reasons": [
+        "historical_prior_not_execution_ready"
+      ],
+      "historical_prior_quality_level": "watch_only",
+      "btst_regime_gate": "normal_trade",
+      "semantic_bucket": "near_miss"
+    },
+    {
+      "ticker": "300724",
+      "candidate_source": "layer_c_watchlist",
+      "decision": "selected",
+      "execution_eligible": true,
+      "downgrade_reasons": [],
+      "historical_prior_quality_level": "execution_ready",
+      "btst_regime_gate": "normal_trade",
+      "semantic_bucket": "selected"
+    }
+  ]
+}

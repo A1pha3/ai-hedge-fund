@@ -1,0 +1,187 @@
+{
+  "generated_on": "2026-04-24",
+  "inputs": {
+    "evidence_doc": "docs/zh-cn/factors/BTST/optimize0422/01-0422-实盘复盘与数据证据.md"
+  },
+  "report_names": {
+    "baseline_json": "p0_btst_0422_baseline_freeze.json",
+    "baseline_markdown": "p0_btst_0422_baseline_freeze.md",
+    "p1_shadow_eval_json": "p1_btst_regime_gate_shadow_eval.json",
+    "p1_shadow_eval_markdown": "p1_btst_regime_gate_shadow_eval.md"
+  },
+  "baseline_metrics": {
+    "selected_close_win_rate": 47.27,
+    "selected_payoff_ratio": 1.282,
+    "selected_expectation": -0.0448,
+    "post_fee_expectation_low": -0.16,
+    "post_fee_expectation_high": -0.12,
+    "regime_breakdown": {
+      "strong": {
+        "day_count": 7,
+        "close_win_rate": 76.0,
+        "payoff_ratio": 1.66,
+        "relative_profit_contribution": 6749.0
+      },
+      "weak": {
+        "day_count": 8,
+        "close_win_rate": 22.6,
+        "payoff_ratio": 0.93,
+        "relative_profit_contribution": -7502.0
+      },
+      "neutral": {
+        "day_count": 5,
+        "close_win_rate": 46.4,
+        "payoff_ratio": 1.29,
+        "relative_profit_contribution": 500.0
+      }
+    },
+    "near_miss_comparison": {
+      "selected_win_rate": 47.2,
+      "near_miss_win_rate": 45.2,
+      "selected_payoff_ratio": 1.27,
+      "near_miss_payoff_ratio": 1.28
+    }
+  },
+  "field_inventory": {
+    "selection_snapshot": {
+      "fields": [
+        "artifact_status",
+        "artifact_version",
+        "btst_regime_gate",
+        "buy_orders",
+        "catalyst_theme_candidates",
+        "catalyst_theme_shadow_candidates",
+        "data_available_until",
+        "decision_timestamp",
+        "dual_target_delta",
+        "experiment_id",
+        "funnel_diagnostics",
+        "market",
+        "market_state",
+        "pipeline_config_snapshot",
+        "rejected",
+        "research_view",
+        "run_id",
+        "selected",
+        "selection_targets",
+        "sell_orders",
+        "short_trade_view",
+        "target_mode",
+        "target_summary",
+        "trade_date",
+        "universe_summary"
+      ],
+      "planned_extensions": [
+        "btst_regime_gate",
+        "pipeline_config_snapshot.btst_0422_flags"
+      ]
+    },
+    "selection_target_replay_input": {
+      "fields": [
+        "artifact_version",
+        "btst_regime_gate",
+        "buy_order_tickers",
+        "experiment_id",
+        "market",
+        "market_state",
+        "pipeline_config_snapshot",
+        "rejected_entries",
+        "run_id",
+        "selection_targets",
+        "source_summary",
+        "supplemental_catalyst_theme_entries",
+        "supplemental_short_trade_entries",
+        "target_mode",
+        "target_summary",
+        "trade_date",
+        "upstream_shadow_observation_entries",
+        "watchlist"
+      ],
+      "planned_extensions": [
+        "btst_regime_gate"
+      ]
+    },
+    "session_summary": {
+      "fields": [
+        "artifacts",
+        "btst_0422_flags",
+        "daily_event_stats",
+        "data_cache",
+        "data_cache_benchmark",
+        "data_cache_benchmark_status",
+        "dual_target_summary",
+        "end_date",
+        "execution_plan_provenance",
+        "fast_selected_analysts",
+        "final_portfolio_snapshot",
+        "initial_capital",
+        "llm_error_digest",
+        "llm_observability_summary",
+        "llm_route_provenance",
+        "mode",
+        "model_name",
+        "model_provider",
+        "performance_metrics",
+        "plan_generation",
+        "portfolio_values",
+        "research_feedback_summary",
+        "selected_analysts",
+        "short_trade_target_profile_name",
+        "short_trade_target_profile_overrides",
+        "start_date",
+        "tickers"
+      ],
+      "planned_extensions": [
+        "btst_regime_gate_summary"
+      ]
+    },
+    "selection_review": {
+      "sections": [
+        "运行概览",
+        "双目标空壳状态",
+        "Research Target Summary",
+        "Short Trade Target Summary",
+        "Target Delta Highlights",
+        "题材催化研究池",
+        "今日入选股票",
+        "接近入选但落选",
+        "当日漏斗观察"
+      ],
+      "planned_extensions": [
+        "BTST 择日门控"
+      ]
+    }
+  },
+  "feature_flag_injection_points": {
+    "p1_regime_gate_shadow": {
+      "default_mode": "off",
+      "planned_flag": "BTST_0422_P1_REGIME_GATE_MODE",
+      "injection_point": "src/execution/daily_pipeline.py::run_post_market"
+    },
+    "p2_regime_gate_enforce": {
+      "default_mode": "off",
+      "planned_flag": "BTST_0422_P2_REGIME_GATE_MODE",
+      "injection_point": "src/execution/daily_pipeline.py::run_post_market"
+    },
+    "p3_prior_quality_hard_gate": {
+      "default_mode": "off",
+      "planned_flag": "BTST_0422_P3_PRIOR_QUALITY_MODE",
+      "injection_point": "src/targets/router.py::build_selection_targets"
+    },
+    "p4_prior_shrinkage": {
+      "default_mode": "off",
+      "planned_flag": "BTST_0422_P4_PRIOR_SHRINKAGE_MODE",
+      "injection_point": "src/targets/profiles.py::ShortTradeTargetProfile"
+    },
+    "p5_execution_contract": {
+      "default_mode": "off",
+      "planned_flag": "BTST_0422_P5_EXECUTION_CONTRACT_MODE",
+      "injection_point": "src/targets/router.py::build_selection_targets"
+    },
+    "p6_risk_budget_overlay": {
+      "default_mode": "off",
+      "planned_flag": "BTST_0422_P6_RISK_BUDGET_MODE",
+      "injection_point": "src/execution/daily_pipeline.py::build_buy_orders_with_diagnostics"
+    }
+  }
+}

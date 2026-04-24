@@ -1,0 +1,45 @@
+{
+  "trade_date": "2026-04-21",
+  "market_state": {
+    "breadth_ratio": 0.66,
+    "daily_return": -0.004,
+    "style_dispersion": 0.18,
+    "regime_flip_risk": 0.08,
+    "regime_gate_level": "normal"
+  },
+  "universe_summary": {
+    "buy_order_count": 2
+  },
+  "target_summary": {
+    "short_trade_selected_count": 1,
+    "short_trade_near_miss_count": 1
+  },
+  "target_context": [
+    {
+      "ticker": "300724",
+      "short_trade": {
+        "decision": "selected"
+      },
+      "replay_context": {
+        "historical_prior": {
+          "evaluable_count": 8,
+          "next_high_hit_rate_at_threshold": 0.52,
+          "next_close_positive_rate": 0.66
+        }
+      }
+    },
+    {
+      "ticker": "300750",
+      "short_trade": {
+        "decision": "near_miss"
+      },
+      "replay_context": {
+        "historical_prior": {
+          "evaluable_count": 4,
+          "next_high_hit_rate_at_threshold": 0.43,
+          "next_close_positive_rate": 0.58
+        }
+      }
+    }
+  ]
+}

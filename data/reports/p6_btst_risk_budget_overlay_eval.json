@@ -1,0 +1,83 @@
+{
+  "report_type": "p6_btst_risk_budget_overlay_eval",
+  "generated_on": "2026-04-24",
+  "snapshot_count": 1,
+  "risk_budget_matrix": [
+    {
+      "condition": "halt × any × any",
+      "risk_budget_ratio": 0.0,
+      "explanation": "停止正式持仓；只保留观察或空仓。"
+    },
+    {
+      "condition": "shadow_only × any × any",
+      "risk_budget_ratio": 0.0,
+      "explanation": "仅 paper/shadow，正式仓位为 0。"
+    },
+    {
+      "condition": "normal_trade × execution_ready × formal_full",
+      "risk_budget_ratio": 1.0,
+      "explanation": "保持默认正式仓位。"
+    },
+    {
+      "condition": "normal_trade × execution_ready × formal_capped",
+      "risk_budget_ratio": 0.6,
+      "explanation": "执行合格但质量偏弱，降配而非满仓。"
+    },
+    {
+      "condition": "aggressive_trade × execution_ready × formal_full",
+      "risk_budget_ratio": 1.15,
+      "explanation": "强势窗口允许放大到上限。"
+    },
+    {
+      "condition": "aggressive_trade × execution_ready × formal_capped",
+      "risk_budget_ratio": 0.75,
+      "explanation": "强势窗口下仍保留折价风险预算。"
+    },
+    {
+      "condition": "any × watch_only/reject/research_only × any",
+      "risk_budget_ratio": 0.0,
+      "explanation": "观察层或不合格样本不进入正式持仓。"
+    }
+  ],
+  "gate_distribution": {
+    "normal_trade": 1,
+    "shadow_only": 1
+  },
+  "formal_exposure_distribution": {
+    "reduced": 1,
+    "zero_budget": 1
+  },
+  "suppressed_position_summary": {
+    "zero_budget_count": 1,
+    "reduced_budget_count": 1
+  },
+  "strong_day_retention_summary": {
+    "strong_day_candidate_count": 1,
+    "retained_formal_exposure_count": 1,
+    "retained_formal_exposure_rate": 1.0
+  },
+  "comparison_samples": [
+    {
+      "ticker": "688313",
+      "candidate_source": "layer_c_watchlist",
+      "decision": "near_miss",
+      "execution_eligible": false,
+      "gate": "shadow_only",
+      "prior_quality_label": "watch_only",
+      "risk_budget_ratio": 0.0,
+      "formal_exposure_bucket": "zero_budget",
+      "execution_contract_bucket": "watch_only"
+    },
+    {
+      "ticker": "300724",
+      "candidate_source": "layer_c_watchlist",
+      "decision": "selected",
+      "execution_eligible": true,
+      "gate": "normal_trade",
+      "prior_quality_label": "execution_ready",
+      "risk_budget_ratio": 0.6,
+      "formal_exposure_bucket": "reduced",
+      "execution_contract_bucket": "formal_capped"
+    }
+  ]
+}

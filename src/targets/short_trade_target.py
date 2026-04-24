@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.execution.models import LayerCResult
+from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state
 from src.screening.models import StrategySignal
 from src.targets.explainability import clamp_unit_interval
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
@@ -166,6 +167,14 @@ def _historical_prior(input_data: TargetEvaluationInput) -> dict[str, Any]:
         return {}
     profile = get_active_short_trade_target_profile()
     historical_prior.setdefault("p4_prior_shrinkage_k", float(getattr(profile, "p4_prior_shrinkage_k", 0.0) or 0.0))
+    historical_prior.setdefault("selected_use_shrunk_prior_rates", bool(getattr(profile, "selected_use_shrunk_prior_rates", True)))
+    explicit_btst_regime_gate = str(input_data.replay_context.get("btst_regime_gate") or historical_prior.get("btst_regime_gate") or "").strip()
+    if explicit_btst_regime_gate:
+        historical_prior["btst_regime_gate"] = explicit_btst_regime_gate
+    else:
+        btst_regime_gate_payload = classify_btst_regime_gate_from_market_state(dict(input_data.market_state or {}))
+        if btst_regime_gate_payload:
+            historical_prior["btst_regime_gate"] = str(btst_regime_gate_payload.get("gate") or "")
     return calibrate_short_trade_historical_prior(historical_prior)
 
 

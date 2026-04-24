@@ -210,6 +210,7 @@ class ShortTradeTargetProfile:
     p3_prior_quality_high_hit_reject_threshold: float = 0.0  # high_hit_rate <= this → reject
     # P4 prior shrinkage controls
     p4_prior_shrinkage_k: float = 8.0
+    selected_use_shrunk_prior_rates: bool = True
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:
