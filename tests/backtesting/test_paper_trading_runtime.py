@@ -9,9 +9,11 @@ import pandas as pd
 
 from src.execution.models import ExecutionPlan
 from src.execution.models import LayerCResult
+from src.execution.daily_pipeline import _serialize_short_trade_target_profile
 from src.paper_trading.runtime import _build_dual_target_session_summary, _build_llm_error_digest, _build_llm_observability_summary, _build_llm_route_provenance, _build_paper_trading_engine, _build_runtime_recorder_and_engine, _finalize_paper_trading_session, _prepare_session_runtime_context, run_paper_trading_session
 from src.portfolio.models import PositionPlan
-from src.targets.models import DualTargetEvaluation, DualTargetSummary
+from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
+from src.targets.profiles import build_short_trade_target_profile
 
 
 class StubPipeline:
@@ -1884,3 +1886,122 @@ def test_run_paper_trading_session_frozen_replay_long_window_preserves_artifact_
     assert summary["research_feedback_summary"]["trade_date_count"] == 5
     assert sorted(summary["research_feedback_summary"]["by_trade_date"].keys()) == expected_artifact_dates
     assert summary["execution_plan_provenance"] == {"observation_count": 0, "observations": []}
+
+
+def test_run_paper_trading_session_applies_p2_regime_gate_enforcement_during_frozen_replay(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {"2024-03-01": 10.0, "2024-03-04": 11.0},
+            "SPY": {"2024-03-01": 100.0, "2024-03-04": 101.0},
+        },
+    )
+
+    source_path = tmp_path / "p2_frozen_daily_events.jsonl"
+    frozen_plan = ExecutionPlan(
+        date="20240301",
+        target_mode="short_trade_only",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"buy_order_count": 1}},
+        market_state={
+            "breadth_ratio": 0.38,
+            "daily_return": -0.002,
+            "style_dispersion": 0.55,
+            "regime_flip_risk": 0.65,
+            "regime_gate_level": "risk_off",
+        },
+    )
+    source_path.write_text(
+        json.dumps({"event": "paper_trading_day", "trade_date": "20240301", "current_plan": frozen_plan.model_dump()}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        output_dir=tmp_path / "paper_trading_p2_frozen_replay",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=source_path,
+        selection_target="short_trade_only",
+    )
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    current_plan = lines[0]["current_plan"]
+    assert current_plan["buy_orders"] == []
+    assert current_plan["risk_metrics"]["btst_regime_gate_enforcement"] == {
+        "enforced": True,
+        "gate": "halt",
+        "mode": "enforce",
+        "buy_orders_cleared": True,
+        "buy_orders_cleared_count": 1,
+    }
+
+
+def test_run_paper_trading_session_applies_p3_prior_quality_enforcement_during_frozen_replay(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTST_0422_P3_PRIOR_QUALITY_MODE", "enforce")
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {"2024-03-01": 10.0, "2024-03-04": 11.0},
+            "SPY": {"2024-03-01": 100.0, "2024-03-04": 101.0},
+        },
+    )
+
+    source_path = tmp_path / "p3_frozen_daily_events.jsonl"
+    profile = build_short_trade_target_profile("default")
+    frozen_plan = ExecutionPlan(
+        date="20240301",
+        target_mode="short_trade_only",
+        short_trade_target_profile_name=profile.name,
+        short_trade_target_profile_config=_serialize_short_trade_target_profile(profile),
+        selection_targets={
+            "AAPL": DualTargetEvaluation(
+                ticker="AAPL",
+                trade_date="20240301",
+                short_trade=TargetEvaluationResult(target_type="short_trade", decision="selected"),
+            )
+        },
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"buy_order_count": 1},
+            "historical_prior_by_ticker": {
+                "AAPL": {
+                    "evaluable_count": 3,
+                    "next_high_hit_rate_at_threshold": 0.25,
+                    "next_close_positive_rate": 0.46,
+                }
+            },
+        },
+    )
+    source_path.write_text(
+        json.dumps({"event": "paper_trading_day", "trade_date": "20240301", "current_plan": frozen_plan.model_dump()}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        output_dir=tmp_path / "paper_trading_p3_frozen_replay",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=source_path,
+        selection_target="short_trade_only",
+    )
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    current_plan = lines[0]["current_plan"]
+    assert current_plan["buy_orders"] == []
+    assert current_plan["selection_targets"]["AAPL"]["p3_execution_blocked"] is True
+    assert current_plan["risk_metrics"]["btst_prior_quality_p3_enforcement"] == {
+        "mode": "enforce",
+        "p3_execution_blocked_count": 1,
+        "buy_orders_removed": 1,
+    }

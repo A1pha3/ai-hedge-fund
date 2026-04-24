@@ -435,6 +435,26 @@ def _resolve_btst_prior_quality_p3_mode() -> str:
     return normalized_mode if normalized_mode in BTST_0422_P3_PRIOR_QUALITY_MODES else "off"
 
 
+def _extract_frozen_prior_by_ticker(plan: ExecutionPlan) -> dict[str, dict[str, Any]]:
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    explicit_mapping = dict(risk_metrics.get("historical_prior_by_ticker", {}) or {})
+    if explicit_mapping:
+        return {
+            str(ticker): dict(payload or {})
+            for ticker, payload in explicit_mapping.items()
+            if str(ticker or "").strip() and isinstance(payload, dict)
+        }
+
+    recovered: dict[str, dict[str, Any]] = {}
+    for ticker, evaluation in dict(getattr(plan, "selection_targets", {}) or {}).items():
+        short_trade = getattr(evaluation, "short_trade", None)
+        metrics_payload = dict(getattr(short_trade, "metrics_payload", {}) or {}) if short_trade is not None else {}
+        historical_prior = dict(metrics_payload.get("historical_prior", {}) or {})
+        if historical_prior:
+            recovered[str(ticker)] = historical_prior
+    return recovered
+
+
 def _enforce_btst_prior_quality_p3(plan: ExecutionPlan, *, prior_by_ticker: dict[str, dict[str, Any]]) -> ExecutionPlan:
     """P3 prior quality hard gate: annotate and block selection_targets with poor historical priors.
 
@@ -1099,7 +1119,12 @@ class DailyPipeline:
             frozen_plan = self.frozen_post_market_plans.get(trade_date)
             if frozen_plan is None:
                 raise ValueError(f"Missing frozen current_plan for trade_date={trade_date}")
-            return self._apply_frozen_buy_order_filters(frozen_plan, trade_date, blocked_buy_tickers)
+            plan = self._apply_frozen_buy_order_filters(frozen_plan, trade_date, blocked_buy_tickers)
+            plan = _enforce_btst_regime_gate_p2(_attach_btst_regime_gate_shadow(plan))
+            return _enforce_btst_prior_quality_p3(
+                plan,
+                prior_by_ticker=_extract_frozen_prior_by_ticker(plan),
+            )
 
         total_started_at = perf_counter()
         portfolio_snapshot = portfolio_snapshot or {"cash": 1_000_000, "positions": {}}
@@ -1195,6 +1220,14 @@ class DailyPipeline:
             )
             )
         )
+        if watchlist_context.historical_prior_by_ticker:
+            risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+            risk_metrics["historical_prior_by_ticker"] = {
+                str(ticker): dict(payload or {})
+                for ticker, payload in watchlist_context.historical_prior_by_ticker.items()
+                if str(ticker or "").strip() and isinstance(payload, dict)
+            }
+            plan.risk_metrics = risk_metrics
         return plan
 
     def _collect_post_market_candidate_context(self, trade_date: str) -> tuple[PostMarketCandidateContext, dict[str, float]]:
