@@ -84,6 +84,7 @@ class SelectionSnapshot(BaseModel):
     trade_date: str
     market: str = "CN"
     market_state: dict[str, Any] = Field(default_factory=dict)
+    btst_regime_gate: dict[str, Any] = Field(default_factory=dict)
     decision_timestamp: str
     data_available_until: str
     target_mode: str = "research_only"
@@ -111,6 +112,7 @@ class SelectionTargetReplayInput(BaseModel):
     trade_date: str
     market: str = "CN"
     market_state: dict[str, Any] = Field(default_factory=dict)
+    btst_regime_gate: dict[str, Any] = Field(default_factory=dict)
     target_mode: str = "research_only"
     pipeline_config_snapshot: dict[str, Any] = Field(default_factory=dict)
     source_summary: dict[str, Any] = Field(default_factory=dict)

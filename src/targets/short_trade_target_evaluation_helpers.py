@@ -9,51 +9,53 @@ from src.targets.explainability import (
     trim_reasons,
 )
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
+from src.targets.short_trade_metrics_payload_builders import (  # noqa: F401
+    _build_breakout_trap_guard_metrics_payload,
+    _build_carryover_evidence_deficiency_metrics_payload,
+    _build_historical_execution_relief_metrics_payload,
+    _build_market_state_threshold_adjustment_metrics_payload,
+    _build_merge_approved_continuation_relief_metrics_payload,
+    _build_prepared_breakout_catalyst_relief_metrics_payload,
+    _build_prepared_breakout_catalyst_threshold_metrics_payload,
+    _build_prepared_breakout_continuation_relief_metrics_payload,
+    _build_prepared_breakout_continuation_threshold_metrics_payload,
+    _build_prepared_breakout_metrics_payload,
+    _build_prepared_breakout_penalty_relief_metrics_payload,
+    _build_prepared_breakout_penalty_threshold_metrics_payload,
+    _build_prepared_breakout_selected_catalyst_relief_metrics_payload,
+    _build_prepared_breakout_selected_catalyst_threshold_metrics_payload,
+    _build_prepared_breakout_volume_relief_metrics_payload,
+    _build_prepared_breakout_volume_threshold_metrics_payload,
+    _build_profitability_explainability_payload,
+    _build_profitability_hard_cliff_boundary_relief_metrics_payload,
+    _build_profitability_metrics_payload,
+    _build_selected_historical_proof_deficiency_metrics_payload,
+    _build_short_trade_context_metrics_payload,
+    _build_short_trade_core_metrics_payload,
+    _build_short_trade_penalty_metrics_payload,
+    _build_short_trade_penalty_threshold_metrics_payload,
+    _build_short_trade_relief_metrics_payload,
+    _build_short_trade_threshold_core_metrics_payload,
+    _build_short_trade_threshold_metrics_payload,
+    _build_short_trade_threshold_profitability_metrics_payload,
+    _build_t_plus_2_and_merge_threshold_metrics_payload,
+    _build_t_plus_2_continuation_candidate_metrics_payload,
+    _build_upstream_shadow_and_visibility_threshold_metrics_payload,
+    _build_upstream_shadow_metrics_payload,
+    _build_visibility_gap_continuation_relief_metrics_payload,
+    _build_watchlist_guard_metrics_payload,
+    _build_watchlist_metrics_payload,
+    _build_watchlist_threshold_metrics_payload,
+    _collect_short_trade_metrics_payload_inputs,
+)
 from src.targets.short_trade_target_prior_helpers import (
     calibrate_short_trade_historical_prior,
+    resolve_btst_prior_shrinkage_p4_mode,
+    resolve_effective_prior_metrics,
 )
 from src.targets.short_trade_target_rank_helpers import (
     _apply_rank_based_decision_cap,
     _apply_rank_based_threshold_tightening,
-)
-from src.targets.short_trade_metrics_payload_builders import (  # noqa: F401
-    _build_historical_execution_relief_metrics_payload,
-    _build_carryover_evidence_deficiency_metrics_payload,
-    _build_selected_historical_proof_deficiency_metrics_payload,
-    _build_profitability_metrics_payload,
-    _build_profitability_hard_cliff_boundary_relief_metrics_payload,
-    _build_t_plus_2_continuation_candidate_metrics_payload,
-    _build_watchlist_guard_metrics_payload,
-    _build_market_state_threshold_adjustment_metrics_payload,
-    _build_breakout_trap_guard_metrics_payload,
-    _build_watchlist_metrics_payload,
-    _build_prepared_breakout_penalty_relief_metrics_payload,
-    _build_prepared_breakout_catalyst_relief_metrics_payload,
-    _build_prepared_breakout_volume_relief_metrics_payload,
-    _build_prepared_breakout_continuation_relief_metrics_payload,
-    _build_prepared_breakout_selected_catalyst_relief_metrics_payload,
-    _build_prepared_breakout_metrics_payload,
-    _build_short_trade_threshold_core_metrics_payload,
-    _build_short_trade_threshold_profitability_metrics_payload,
-    _build_prepared_breakout_penalty_threshold_metrics_payload,
-    _build_prepared_breakout_catalyst_threshold_metrics_payload,
-    _build_prepared_breakout_volume_threshold_metrics_payload,
-    _build_prepared_breakout_continuation_threshold_metrics_payload,
-    _build_prepared_breakout_selected_catalyst_threshold_metrics_payload,
-    _build_short_trade_penalty_threshold_metrics_payload,
-    _build_watchlist_threshold_metrics_payload,
-    _build_t_plus_2_and_merge_threshold_metrics_payload,
-    _build_upstream_shadow_and_visibility_threshold_metrics_payload,
-    _build_short_trade_threshold_metrics_payload,
-    _build_short_trade_core_metrics_payload,
-    _build_short_trade_context_metrics_payload,
-    _build_visibility_gap_continuation_relief_metrics_payload,
-    _build_merge_approved_continuation_relief_metrics_payload,
-    _build_upstream_shadow_metrics_payload,
-    _build_short_trade_penalty_metrics_payload,
-    _collect_short_trade_metrics_payload_inputs,
-    _build_short_trade_relief_metrics_payload,
-    _build_profitability_explainability_payload,
 )
 
 
@@ -231,16 +233,21 @@ def _preferred_entry_mode_from_historical_prior(historical_prior: dict[str, Any]
     evaluable_count = int(prior.get("evaluable_count") or 0)
     prior_strength = float(prior.get("prior_shrinkage_strength", 3.0) or 3.0)
     execution_quality_label = str(prior.get("execution_quality_label") or "unknown")
-    calibrated_next_close_positive_rate = clamp_unit_interval(float(prior.get("calibrated_next_close_positive_rate", prior.get("next_close_positive_rate", 0.0)) or 0.0))
-    evidence_weight = clamp_unit_interval(
-        float(
-            prior.get(
-                "prior_evidence_weight",
-                (float(evaluable_count) / (float(evaluable_count) + prior_strength)) if (float(evaluable_count) + prior_strength) > 0 else 0.0,
+    if resolve_btst_prior_shrinkage_p4_mode() == "enforce":
+        effective_metrics = resolve_effective_prior_metrics(prior)
+        calibrated_next_close_positive_rate = clamp_unit_interval(float(effective_metrics.get("next_close_positive_rate", 0.0) or 0.0))
+        evidence_weight = clamp_unit_interval(float(effective_metrics.get("reliability", 0.0) or 0.0))
+    else:
+        calibrated_next_close_positive_rate = clamp_unit_interval(float(prior.get("calibrated_next_close_positive_rate", prior.get("next_close_positive_rate", 0.0)) or 0.0))
+        evidence_weight = clamp_unit_interval(
+            float(
+                prior.get(
+                    "prior_evidence_weight",
+                    (float(evaluable_count) / (float(evaluable_count) + prior_strength)) if (float(evaluable_count) + prior_strength) > 0 else 0.0,
+                )
+                or 0.0
             )
-            or 0.0
         )
-    )
     if execution_quality_label == "intraday_only":
         return "intraday_confirmation_only"
     if execution_quality_label == "gap_chase_risk":
@@ -534,8 +541,6 @@ def _build_short_trade_rejection_reasons(
     return rejection_reasons
 
 
-
-
 def _build_upstream_shadow_explainability_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "enabled": bool(snapshot["upstream_shadow_catalyst_relief_enabled"]),
@@ -798,7 +803,6 @@ def _build_short_trade_explainability_payload(
     }
 
 
-
 def _build_short_trade_mutable_verdict_state(snapshot: dict[str, Any]) -> ShortTradeMutableVerdictState:
     return ShortTradeMutableVerdictState(
         gate_status=dict(snapshot["gate_status"]),
@@ -871,7 +875,6 @@ def _build_short_trade_explainability_state(snapshot: dict[str, Any]) -> ShortTr
         watchlist_filter_diagnostics_flat_trend_guard=dict(snapshot["watchlist_filter_diagnostics_flat_trend_guard"]),
         t_plus_2_continuation_candidate=dict(snapshot["t_plus_2_continuation_candidate"]),
     )
-
 
 
 def build_short_trade_metrics_payload(
@@ -1024,9 +1027,15 @@ def _build_short_trade_verdict(
     rejection_reasons: list[str],
 ) -> ShortTradeVerdict:
     historical_prior = calibrate_short_trade_historical_prior(dict(input_data.replay_context.get("historical_prior") or {}))
-    calibrated_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_close_positive_rate", historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
-    calibrated_next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_high_hit_rate_at_threshold", historical_prior.get("next_high_hit_rate_at_threshold", 0.0)) or 0.0))
-    evidence_weight = clamp_unit_interval(float(historical_prior.get("prior_evidence_weight", 0.0) or 0.0))
+    if resolve_btst_prior_shrinkage_p4_mode() == "enforce":
+        effective_metrics = resolve_effective_prior_metrics(historical_prior)
+        calibrated_next_close_positive_rate = clamp_unit_interval(float(effective_metrics.get("next_close_positive_rate", 0.0) or 0.0))
+        calibrated_next_high_hit_rate = clamp_unit_interval(float(effective_metrics.get("next_high_hit_rate_at_threshold", 0.0) or 0.0))
+        evidence_weight = clamp_unit_interval(float(effective_metrics.get("reliability", 0.0) or 0.0))
+    else:
+        calibrated_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_close_positive_rate", historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
+        calibrated_next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_high_hit_rate_at_threshold", historical_prior.get("next_high_hit_rate_at_threshold", 0.0)) or 0.0))
+        evidence_weight = clamp_unit_interval(float(historical_prior.get("prior_evidence_weight", 0.0) or 0.0))
     structural_confidence = (0.30 * clamp_unit_interval(decision_snapshot.score_target)) + (0.20 * clamp_unit_interval(decision_snapshot.breakout_freshness)) + (0.18 * clamp_unit_interval(decision_snapshot.trend_acceleration)) + (0.12 * clamp_unit_interval(decision_snapshot.catalyst_freshness)) + (0.20 * clamp_unit_interval(float(input_data.quality_score or 0.0)))
     historical_confidence = (0.60 * calibrated_next_close_positive_rate) + (0.40 * calibrated_next_high_hit_rate)
     confidence = clamp_unit_interval((structural_confidence * (1.0 - (0.35 * evidence_weight))) + (historical_confidence * (0.35 * evidence_weight)))

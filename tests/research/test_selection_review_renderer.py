@@ -33,9 +33,24 @@ def test_render_selection_review_contains_key_sections():
                     "why_selected": ["Layer B 综合分数高"],
                     "what_to_check": ["确认逻辑不是事件噪声"],
                 },
+                target_context={
+                    "execution_eligible": False,
+                    "downgrade_reasons": ["btst_regime_gate_not_tradeable", "historical_prior_not_execution_ready"],
+                    "historical_prior_quality_level": "watch_only",
+                    "btst_regime_gate": "shadow_only",
+                },
                 target_decisions={
                     "research": TargetEvaluationResult(target_type="research", decision="selected", score_target=0.72),
-                    "short_trade": TargetEvaluationResult(target_type="short_trade", decision="blocked", score_target=0.31, blockers=["missing_trend_signal"]),
+                    "short_trade": TargetEvaluationResult(
+                        target_type="short_trade",
+                        decision="blocked",
+                        score_target=0.31,
+                        blockers=["missing_trend_signal"],
+                        execution_eligible=False,
+                        downgrade_reasons=["btst_regime_gate_not_tradeable"],
+                        historical_prior_quality_level="watch_only",
+                        btst_regime_gate="shadow_only",
+                    ),
                 },
             )
         ],
@@ -148,5 +163,10 @@ def test_render_selection_review_contains_key_sections():
     assert "attached_target_tickers: 000001" in markdown
     assert "research_target: selected (score=0.7200)" in markdown
     assert "short_trade_target: blocked (score=0.3100, blockers=missing_trend_signal)" in markdown
+    assert "为什么入选" in markdown
+    assert "为何被降级" in markdown
+    assert "是否可执行" in markdown
+    assert "historical_prior_not_execution_ready" in markdown
+    assert "否" in markdown
     assert "## 接近入选但落选" in markdown
     assert "300750" in markdown

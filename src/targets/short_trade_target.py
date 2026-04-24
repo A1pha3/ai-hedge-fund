@@ -42,6 +42,8 @@ from src.targets.short_trade_target_input_helpers import (
 )
 from src.targets.short_trade_target_prior_helpers import (
     calibrate_short_trade_historical_prior,
+    resolve_btst_prior_shrinkage_p4_mode,
+    resolve_effective_prior_metrics,
 )
 from src.targets.short_trade_target_profitability_helpers import (
     resolve_profitability_hard_cliff_boundary_relief_impl,
@@ -71,8 +73,8 @@ from src.targets.short_trade_target_snapshot_payload_helpers import (
 from src.targets.short_trade_target_watchlist_helpers import (
     resolve_catalyst_theme_penalty_impl,
     resolve_t_plus_2_continuation_candidate_impl,
-    resolve_watchlist_zero_catalyst_crowded_penalty_impl,
     resolve_watchlist_filter_diagnostics_flat_trend_penalty_impl,
+    resolve_watchlist_zero_catalyst_crowded_penalty_impl,
     resolve_watchlist_zero_catalyst_flat_trend_penalty_impl,
     resolve_watchlist_zero_catalyst_penalty_impl,
 )
@@ -159,7 +161,12 @@ def _profitability_snapshot(signal: StrategySignal | None) -> dict[str, Any]:
 
 
 def _historical_prior(input_data: TargetEvaluationInput) -> dict[str, Any]:
-    return calibrate_short_trade_historical_prior(dict(input_data.replay_context.get("historical_prior") or {}))
+    historical_prior = dict(input_data.replay_context.get("historical_prior") or {})
+    if not historical_prior:
+        return {}
+    profile = get_active_short_trade_target_profile()
+    historical_prior.setdefault("p4_prior_shrinkage_k", float(getattr(profile, "p4_prior_shrinkage_k", 0.0) or 0.0))
+    return calibrate_short_trade_historical_prior(historical_prior)
 
 
 def _normalized_reason_codes(values: Any) -> list[str]:
@@ -279,17 +286,23 @@ def _is_eligible_for_carryover_tolerance(
 
 def _extract_prior_metrics(historical_prior: dict[str, Any], evaluable_count: int) -> dict[str, float]:
     prior_strength = float(historical_prior.get("prior_shrinkage_strength", 3.0) or 3.0)
-    evidence_weight = clamp_unit_interval(
-        float(
-            historical_prior.get(
-                "prior_evidence_weight",
-                (float(evaluable_count) / (float(evaluable_count) + prior_strength)) if (float(evaluable_count) + prior_strength) > 0 else 0.0,
+    if resolve_btst_prior_shrinkage_p4_mode() == "enforce":
+        effective_metrics = resolve_effective_prior_metrics(historical_prior)
+        evidence_weight = clamp_unit_interval(float(effective_metrics.get("reliability", 0.0) or 0.0))
+        next_close_positive_rate = clamp_unit_interval(float(effective_metrics.get("next_close_positive_rate", 0.0) or 0.0))
+        next_high_hit_rate = clamp_unit_interval(float(effective_metrics.get("next_high_hit_rate_at_threshold", 0.0) or 0.0))
+    else:
+        evidence_weight = clamp_unit_interval(
+            float(
+                historical_prior.get(
+                    "prior_evidence_weight",
+                    (float(evaluable_count) / (float(evaluable_count) + prior_strength)) if (float(evaluable_count) + prior_strength) > 0 else 0.0,
+                )
+                or 0.0
             )
-            or 0.0
         )
-    )
-    next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_close_positive_rate", historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
-    next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_high_hit_rate_at_threshold", historical_prior.get("next_high_hit_rate_at_threshold", 0.0)) or 0.0))
+        next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_close_positive_rate", historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
+        next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_high_hit_rate_at_threshold", historical_prior.get("next_high_hit_rate_at_threshold", 0.0)) or 0.0))
     next_open_to_close_return_mean = float(historical_prior.get("calibrated_next_open_to_close_return_mean", historical_prior.get("next_open_to_close_return_mean", 0.0)) or 0.0)
     return {
         "evidence_weight": evidence_weight,
@@ -321,11 +334,7 @@ def _meets_calibrated_thresholds(metrics: dict[str, float]) -> bool:
 
 
 def _meets_uncalibrated_thresholds(metrics: dict[str, float]) -> bool:
-    return (
-        metrics["next_close_positive_rate"] >= 0.8
-        and metrics["next_high_hit_rate"] >= 0.8
-        and metrics["next_open_to_close_return_mean"] >= 0.02
-    )
+    return metrics["next_close_positive_rate"] >= 0.8 and metrics["next_high_hit_rate"] >= 0.8 and metrics["next_open_to_close_return_mean"] >= 0.02
 
 
 def _resolve_profitability_relief(

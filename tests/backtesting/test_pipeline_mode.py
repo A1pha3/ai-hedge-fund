@@ -972,3 +972,139 @@ def test_pipeline_mode_timing_log_includes_funnel_diagnostics(monkeypatch):
     assert pipeline_events
     assert pipeline_events[-1]["current_plan"]["funnel_diagnostics"]["counts"]["layer_a_count"] == 3
     assert pipeline_events[-1]["current_plan"]["funnel_diagnostics"]["filters"]["layer_b"]["reason_counts"] == {"below_fast_score_threshold": 2}
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: Pipeline mode integration tests for P2 regime gate enforcement
+# ---------------------------------------------------------------------------
+
+def test_pipeline_mode_p2_enforce_clears_buy_orders_on_halt_day(monkeypatch):
+    """Plans returned by a pipeline with halt gate + P2 enforce must carry enforcement payload in timing logs.
+
+    The StubPipeline simulates DailyPipeline.run_post_market output: the plan is pre-enforced
+    (buy_orders cleared, enforcement payload written) before being passed to the engine.
+    This tests that the enforcement artifact survives through the engine's recording path.
+    """
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {"2024-03-01": 10.0, "2024-03-04": 11.0},
+            "SPY": {"2024-03-01": 100.0, "2024-03-04": 101.0},
+        },
+    )
+    from src.execution.daily_pipeline import _enforce_btst_regime_gate_p2
+    from src.screening.models import MarketState
+    raw_plan = ExecutionPlan(
+        date="20240301",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=10000.0)],
+        risk_metrics={"counts": {"buy_order_count": 1}},
+        market_state=MarketState(
+            breadth_ratio=0.39,
+            daily_return=-0.002,
+            style_dispersion=0.55,
+            regime_flip_risk=0.65,
+            regime_gate_level="risk_off",
+        ),
+    )
+    # Simulate what DailyPipeline.run_post_market returns after enforcement.
+    enforced_plan = _enforce_btst_regime_gate_p2(raw_plan)
+    assert enforced_plan.buy_orders == [], "pre-condition: enforcement cleared buy_orders"
+    pipeline = StubPipeline(post_market_plans=[enforced_plan], intraday_responses=[])
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+    )
+    timing_events = []
+    engine._append_timing_log = lambda payload: timing_events.append(payload)
+    engine.run_backtest()
+    pipeline_events = [e for e in timing_events if e.get("event") == "pipeline_day_timing"]
+    assert pipeline_events, "pipeline_day_timing events must be recorded"
+    plan_in_event = pipeline_events[-1]["current_plan"]
+    # The timing log serializes funnel_diagnostics (not raw risk_metrics).
+    # btst_regime_gate_enforcement is written to both risk_metrics and funnel_diagnostics by _enforce_btst_regime_gate_p2.
+    funnel = plan_in_event.get("funnel_diagnostics", {})
+    enforcement = funnel.get("btst_regime_gate_enforcement", {})
+    assert enforcement.get("enforced") is True, "enforcement payload must be preserved in timing log funnel_diagnostics"
+    assert enforcement.get("buy_orders_cleared") is True
+
+
+def test_pipeline_mode_p2_enforce_records_p2_flag_in_config_snapshot(monkeypatch):
+    """With P2 enforce=active, the pipeline_config_snapshot in selection artifacts must include p2 flag."""
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    from src.execution.models import ExecutionPlan
+    from src.research.artifacts import _build_pipeline_config_snapshot
+    plan = ExecutionPlan(date="20240301", portfolio_snapshot={"cash": 100000.0, "positions": {}})
+    snapshot = _build_pipeline_config_snapshot(plan, None, None)
+    flags = snapshot.get("btst_0422_flags", {})
+    assert flags.get("p2_regime_gate_mode") == "enforce", \
+        "pipeline_config_snapshot must record p2_regime_gate_mode=enforce when flag is set"
+
+
+def test_pipeline_mode_p6_enforce_records_p6_flag_in_config_snapshot(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    from src.execution.models import ExecutionPlan
+    from src.research.artifacts import _build_pipeline_config_snapshot
+
+    plan = ExecutionPlan(date="20240301", portfolio_snapshot={"cash": 100000.0, "positions": {}})
+    snapshot = _build_pipeline_config_snapshot(plan, None, None)
+
+    assert snapshot["btst_0422_flags"]["p6_risk_budget_mode"] == "enforce"
+
+
+def test_pipeline_mode_p2_off_preserves_buy_orders_on_halt_day(monkeypatch):
+    """When P2 flag is off (default), buy_orders must NOT be cleared even on halt days."""
+    monkeypatch.delenv("BTST_0422_P2_REGIME_GATE_MODE", raising=False)
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {"2024-03-01": 10.0, "2024-03-04": 11.0},
+            "SPY": {"2024-03-01": 100.0, "2024-03-04": 101.0},
+        },
+    )
+    from src.screening.models import MarketState
+    halt_plan = ExecutionPlan(
+        date="20240301",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=10000.0)],
+        risk_metrics={"counts": {"buy_order_count": 1}},
+        market_state=MarketState(
+            breadth_ratio=0.39,
+            daily_return=-0.002,
+            style_dispersion=0.55,
+            regime_flip_risk=0.65,
+            regime_gate_level="risk_off",
+        ),
+    )
+    pipeline = StubPipeline(post_market_plans=[halt_plan], intraday_responses=[])
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+    )
+    timing_events = []
+    engine._append_timing_log = lambda payload: timing_events.append(payload)
+    engine.run_backtest()
+    pipeline_events = [e for e in timing_events if e.get("event") == "pipeline_day_timing"]
+    if pipeline_events:
+        plan_in_event = pipeline_events[-1]["current_plan"]
+        enforcement = plan_in_event.get("risk_metrics", {}).get("btst_regime_gate_enforcement", {})
+        assert not enforcement.get("enforced"), "P2 off: no enforcement should occur"

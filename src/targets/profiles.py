@@ -203,13 +203,22 @@ class ShortTradeTargetProfile:
     overhead_conflict_penalty_conflicts: frozenset[str] = frozenset({"b_positive_c_strong_bearish", "b_strong_buy_c_negative"})
     hard_block_conflict_score_b_relief_min: float | None = 0.50
     hard_block_conflict_score_c_relief_min: float | None = -0.08
+    # P3 prior quality hard-gate thresholds (config for profile-level overrides; defaults match spec)
+    p3_prior_quality_min_n_selected: int = 5  # n < this → selected blocked
+    p3_prior_quality_min_n_near_miss: int = 3  # n < this → near_miss blocked
+    p3_prior_quality_close_positive_min: float = 0.50  # close+ < this → downgrade to watch_only
+    p3_prior_quality_high_hit_reject_threshold: float = 0.0  # high_hit_rate <= this → reject
+    # P4 prior shrinkage controls
+    p4_prior_shrinkage_k: float = 8.0
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:
         return self.hard_block_bearish_conflicts
 
 
-from src.targets.short_trade_target_profile_data import SHORT_TRADE_TARGET_PROFILES  # noqa: E402
+from src.targets.short_trade_target_profile_data import (  # noqa: E402
+    SHORT_TRADE_TARGET_PROFILES,
+)
 
 _ACTIVE_SHORT_TRADE_TARGET_PROFILE: ContextVar[ShortTradeTargetProfile] = ContextVar(
     "active_short_trade_target_profile",

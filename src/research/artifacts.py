@@ -169,6 +169,13 @@ def _build_execution_bridge(plan: ExecutionPlan, item: LayerCResult, nav: float,
         execution_bridge["exit_trade_date"] = str(blocked_details.get("exit_trade_date"))
     if blocked_details.get("trigger_reason"):
         execution_bridge["trigger_reason"] = str(blocked_details.get("trigger_reason"))
+    if matching_order is not None:
+        execution_bridge["risk_budget_ratio"] = round(float(getattr(matching_order, "risk_budget_ratio", 1.0) or 0.0), 4)
+        execution_bridge["base_amount_before_risk_budget"] = round(float(getattr(matching_order, "base_amount_before_risk_budget", 0.0) or 0.0), 4)
+        execution_bridge["base_shares_before_risk_budget"] = int(getattr(matching_order, "base_shares_before_risk_budget", 0) or 0)
+        execution_bridge["formal_exposure_bucket"] = str(getattr(matching_order, "formal_exposure_bucket", "") or "")
+        execution_bridge["risk_budget_gate"] = str(getattr(matching_order, "risk_budget_gate", "") or "")
+        execution_bridge["execution_contract_bucket"] = str(getattr(matching_order, "execution_contract_bucket", "") or "")
     return execution_bridge
 
 
@@ -176,7 +183,12 @@ def _build_target_context(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
     target_context = {
         "target_mode": str(getattr(plan, "target_mode", "research_only") or "research_only"),
         "selection_target_attached": False,
+        "execution_eligible": False,
     }
+    btst_regime_gate = _build_btst_regime_gate_payload(plan)
+    if btst_regime_gate:
+        target_context["btst_regime_gate"] = str(btst_regime_gate.get("gate") or "")
+        target_context["btst_regime_gate_mode"] = str(btst_regime_gate.get("mode") or "")
     evaluation = dict(getattr(plan, "selection_targets", {}) or {}).get(ticker)
     if evaluation is None:
         return target_context
@@ -197,6 +209,48 @@ def _build_target_context(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
     delta_classification = getattr(evaluation, "delta_classification", None)
     if delta_classification:
         target_context["delta_classification"] = str(delta_classification)
+    target_context["execution_eligible"] = bool(getattr(evaluation, "execution_eligible", False))
+    downgrade_reasons = [str(reason) for reason in list(getattr(evaluation, "downgrade_reasons", []) or []) if str(reason or "").strip()]
+    if downgrade_reasons:
+        target_context["downgrade_reasons"] = downgrade_reasons
+    historical_prior_quality_level = getattr(evaluation, "historical_prior_quality_level", None)
+    if historical_prior_quality_level is not None:
+        target_context["historical_prior_quality_level"] = str(historical_prior_quality_level)
+    evaluation_btst_regime_gate = getattr(evaluation, "btst_regime_gate", None)
+    if evaluation_btst_regime_gate is not None:
+        target_context["btst_regime_gate"] = str(evaluation_btst_regime_gate)
+    p3_prior_quality_label = getattr(evaluation, "p3_prior_quality_label", None)
+    if p3_prior_quality_label is not None:
+        target_context["p3_prior_quality_label"] = str(p3_prior_quality_label)
+    p3_sample_size = getattr(evaluation, "p3_sample_size", None)
+    if p3_sample_size is not None:
+        target_context["p3_sample_size"] = int(p3_sample_size)
+    p3_execution_block_reason = getattr(evaluation, "p3_execution_block_reason", None)
+    if p3_execution_block_reason is not None:
+        target_context["p3_execution_block_reason"] = str(p3_execution_block_reason)
+    short_trade_result = getattr(evaluation, "short_trade", None)
+    prior_payload = {}
+    if short_trade_result is not None:
+        prior_payload = dict(getattr(short_trade_result, "metrics_payload", {}).get("historical_prior", {}) or {})
+        if not prior_payload:
+            prior_payload = dict(getattr(short_trade_result, "explainability_payload", {}).get("historical_prior", {}) or {})
+    for key in (
+        "raw_next_high_hit_rate_at_threshold",
+        "raw_next_close_positive_rate",
+        "sample_reliability",
+        "shrunk_high_hit_rate",
+        "shrunk_close_positive_rate",
+        "effective_prior_rate_source",
+    ):
+        if key in prior_payload and prior_payload.get(key) is not None:
+            target_context[key] = prior_payload[key]
+    p6_risk_budget = {}
+    if short_trade_result is not None:
+        p6_risk_budget = dict(getattr(short_trade_result, "metrics_payload", {}).get("p6_risk_budget", {}) or {})
+        if not p6_risk_budget:
+            p6_risk_budget = dict(getattr(short_trade_result, "explainability_payload", {}).get("p6_risk_budget", {}) or {})
+    if p6_risk_budget:
+        target_context["p6_risk_budget"] = p6_risk_budget
     return target_context
 
 
@@ -385,7 +439,24 @@ def _build_pipeline_config_snapshot(plan: ExecutionPlan, pipeline: DailyPipeline
             "replay_mode": bool(getattr(pipeline, "frozen_post_market_plans", None)),
             "frozen_plan_source": getattr(pipeline, "frozen_plan_source", None),
         },
+        "btst_0422_flags": {
+            "p1_regime_gate_mode": str(os.getenv("BTST_0422_P1_REGIME_GATE_MODE", "off") or "off").strip().lower() or "off",
+            "p2_regime_gate_mode": str(os.getenv("BTST_0422_P2_REGIME_GATE_MODE", "off") or "off").strip().lower() or "off",
+            "p3_prior_quality_mode": str(os.getenv("BTST_0422_P3_PRIOR_QUALITY_MODE", "off") or "off").strip().lower() or "off",
+            "p4_prior_shrinkage_mode": str(os.getenv("BTST_0422_P4_PRIOR_SHRINKAGE_MODE", "off") or "off").strip().lower() or "off",
+            "p5_execution_contract_mode": str(os.getenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "off") or "off").strip().lower() or "off",
+            "p6_risk_budget_mode": str(os.getenv("BTST_0422_P6_RISK_BUDGET_MODE", "off") or "off").strip().lower() or "off",
+        },
     }
+
+
+def _build_btst_regime_gate_payload(plan: ExecutionPlan) -> dict[str, Any]:
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    explicit_payload = dict(risk_metrics.get("btst_regime_gate", {}) or {})
+    if explicit_payload:
+        return explicit_payload
+    funnel_payload = dict(dict(risk_metrics.get("funnel_diagnostics", {}) or {}).get("btst_regime_gate", {}) or {})
+    return funnel_payload
 
 
 def _serialize_strategy_signals(strategy_signals: dict[str, Any] | None) -> dict[str, Any]:
@@ -443,6 +514,7 @@ def build_selection_target_replay_input(
 ) -> SelectionTargetReplayInput:
     formatted_trade_date = _format_trade_date(trade_date)
     market_state_payload = _serialize_market_state_payload(getattr(plan, "market_state", None))
+    btst_regime_gate_payload = _build_btst_regime_gate_payload(plan)
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
     rejected_entries = _attach_market_state_to_entries(
@@ -485,6 +557,7 @@ def build_selection_target_replay_input(
         trade_date=formatted_trade_date,
         market=market,
         market_state=market_state_payload,
+        btst_regime_gate=btst_regime_gate_payload,
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
         pipeline_config_snapshot=_build_pipeline_config_snapshot(plan, pipeline, selected_analysts),
         source_summary={
@@ -519,6 +592,7 @@ def build_selection_snapshot(
 ) -> SelectionSnapshot:
     formatted_trade_date = _format_trade_date(trade_date)
     market_state_payload = _serialize_market_state_payload(getattr(plan, "market_state", None))
+    btst_regime_gate_payload = _build_btst_regime_gate_payload(plan)
     counts = dict((plan.risk_metrics or {}).get("counts", {}) or {})
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
@@ -531,6 +605,7 @@ def build_selection_snapshot(
         trade_date=formatted_trade_date,
         market=market,
         market_state=market_state_payload,
+        btst_regime_gate=btst_regime_gate_payload,
         decision_timestamp=f"{formatted_trade_date}T15:05:00+08:00",
         data_available_until=f"{formatted_trade_date}T15:00:00+08:00",
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),

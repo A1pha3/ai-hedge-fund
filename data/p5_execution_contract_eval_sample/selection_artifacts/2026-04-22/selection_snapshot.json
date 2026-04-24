@@ -1,0 +1,60 @@
+{
+  "trade_date": "2026-04-22",
+  "selection_targets": {
+    "300724": {
+      "ticker": "300724",
+      "candidate_source": "layer_c_watchlist",
+      "execution_eligible": true,
+      "downgrade_reasons": [],
+      "historical_prior_quality_level": "execution_ready",
+      "btst_regime_gate": "normal_trade",
+      "short_trade": {
+        "decision": "selected",
+        "execution_eligible": true,
+        "downgrade_reasons": [],
+        "historical_prior_quality_level": "execution_ready",
+        "btst_regime_gate": "normal_trade"
+      }
+    },
+    "688313": {
+      "ticker": "688313",
+      "candidate_source": "layer_c_watchlist",
+      "execution_eligible": false,
+      "downgrade_reasons": [
+        "historical_prior_not_execution_ready"
+      ],
+      "historical_prior_quality_level": "watch_only",
+      "btst_regime_gate": "normal_trade",
+      "short_trade": {
+        "decision": "near_miss",
+        "execution_eligible": false,
+        "downgrade_reasons": [
+          "historical_prior_not_execution_ready"
+        ],
+        "historical_prior_quality_level": "watch_only",
+        "btst_regime_gate": "normal_trade"
+      }
+    },
+    "002028": {
+      "ticker": "002028",
+      "candidate_source": "research_only",
+      "execution_eligible": false,
+      "downgrade_reasons": [
+        "research_only_source_not_formal_execution",
+        "btst_regime_gate_not_tradeable"
+      ],
+      "historical_prior_quality_level": "reject",
+      "btst_regime_gate": "shadow_only",
+      "short_trade": {
+        "decision": "rejected",
+        "execution_eligible": false,
+        "downgrade_reasons": [
+          "research_only_source_not_formal_execution",
+          "btst_regime_gate_not_tradeable"
+        ],
+        "historical_prior_quality_level": "reject",
+        "btst_regime_gate": "shadow_only"
+      }
+    }
+  }
+}

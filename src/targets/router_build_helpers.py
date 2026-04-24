@@ -15,12 +15,21 @@ from src.targets.models import (
 def build_dual_target_summary(*, selection_targets: dict[str, DualTargetEvaluation], target_mode: TargetMode) -> DualTargetSummary:
     summary = DualTargetSummary(target_mode=target_mode, selection_target_count=len(selection_targets))
     for evaluation in selection_targets.values():
+        if evaluation.execution_eligible:
+            summary.execution_eligible_count += 1
         _accumulate_target_result(summary=summary, result=evaluation.research, target_type="research")
         _accumulate_target_result(summary=summary, result=evaluation.short_trade, target_type="short_trade")
         if evaluation.research is None and evaluation.short_trade is None:
             summary.shell_target_count += 1
         if evaluation.delta_classification:
             summary.delta_classification_counts[evaluation.delta_classification] = int(summary.delta_classification_counts.get(evaluation.delta_classification) or 0) + 1
+        if evaluation.p2_execution_blocked:
+            summary.p2_execution_blocked_count += 1
+        if evaluation.p3_execution_blocked:
+            summary.p3_execution_blocked_count += 1
+        if evaluation.p3_prior_quality_label:
+            label = evaluation.p3_prior_quality_label
+            summary.p3_prior_quality_distribution[label] = int(summary.p3_prior_quality_distribution.get(label) or 0) + 1
     return summary
 
 

@@ -1,0 +1,57 @@
+{
+  "trade_date": "2026-04-22",
+  "note": "Representative synthetic sample for P4 prior shrinkage evaluation because no persisted selection artifacts were available in this worktree.",
+  "selection_targets": {
+    "300724": {
+      "ticker": "300724",
+      "trade_date": "2026-04-22",
+      "short_trade": {
+        "decision": "selected",
+        "metrics_payload": {
+          "historical_prior": {
+            "evaluable_count": 2,
+            "sample_reliability": 0.2,
+            "raw_next_high_hit_rate_at_threshold": 1.0,
+            "shrunk_high_hit_rate": 0.72,
+            "raw_next_close_positive_rate": 1.0,
+            "shrunk_close_positive_rate": 0.66
+          }
+        }
+      }
+    },
+    "300750": {
+      "ticker": "300750",
+      "trade_date": "2026-04-22",
+      "short_trade": {
+        "decision": "near_miss",
+        "metrics_payload": {
+          "historical_prior": {
+            "evaluable_count": 4,
+            "sample_reliability": 0.333333,
+            "raw_next_high_hit_rate_at_threshold": 0.95,
+            "shrunk_high_hit_rate": 0.77,
+            "raw_next_close_positive_rate": 0.9,
+            "shrunk_close_positive_rate": 0.7
+          }
+        }
+      }
+    },
+    "002594": {
+      "ticker": "002594",
+      "trade_date": "2026-04-22",
+      "short_trade": {
+        "decision": "near_miss",
+        "metrics_payload": {
+          "historical_prior": {
+            "evaluable_count": 12,
+            "sample_reliability": 0.6,
+            "raw_next_high_hit_rate_at_threshold": 0.82,
+            "shrunk_high_hit_rate": 0.78,
+            "raw_next_close_positive_rate": 0.76,
+            "shrunk_close_positive_rate": 0.72
+          }
+        }
+      }
+    }
+  }
+}

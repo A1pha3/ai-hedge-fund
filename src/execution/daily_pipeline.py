@@ -10,10 +10,15 @@ from inspect import signature
 from time import perf_counter
 from typing import Any
 
-from scripts.btst_latest_followup_utils import load_latest_btst_historical_prior_by_ticker
+from scripts.btst_latest_followup_utils import (
+    load_latest_btst_historical_prior_by_ticker,
+)
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     build_buy_orders_with_diagnostics as build_buy_orders_with_diagnostics_impl,
+)
+from src.execution.daily_pipeline_buy_diagnostics_helpers import (
+    _resolve_btst_position_budget,
     build_reentry_filter_payload,
 )
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
@@ -33,6 +38,8 @@ from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
 )
 from src.execution.daily_pipeline_historical_prior_attachment import (
     attach_historical_prior_to_entries as _attach_historical_prior_to_entries_impl,
+)
+from src.execution.daily_pipeline_historical_prior_attachment import (
     attach_historical_prior_to_watchlist as _attach_historical_prior_to_watchlist,
 )
 from src.execution.daily_pipeline_merge_approved_wrappers import (
@@ -45,28 +52,69 @@ from src.execution.daily_pipeline_merge_approved_wrappers import (
     _build_watchlist_filter_diagnostics,
     _tag_merge_approved_layer_c_results,
 )
+from src.execution.daily_pipeline_phase4_entry_helpers import (  # noqa: F401 — re-exported for scripts
+    _build_upstream_shadow_observation_entry,
+)
+from src.execution.daily_pipeline_phase4_test_adapter import (
+    run_with_phase4_test_overrides,
+    sync_phase4_test_overrides,
+)
 from src.execution.daily_pipeline_post_market_helpers import (
+    aggregate_post_market_diagnostics,
+    build_high_pool,
+    build_post_market_execution_plan,
+    build_selection_target_inputs,
+)
+from src.execution.daily_pipeline_post_market_helpers import (
+    build_sell_order_diagnostics as build_sell_order_diagnostics_impl,
+)
+from src.execution.daily_pipeline_post_market_helpers import (
+    build_watchlist_price_map as build_watchlist_price_map_impl,
+)
+from src.execution.daily_pipeline_post_market_helpers import (
+    ensure_plan_target_shells as ensure_plan_target_shells_impl,
+)
+from src.execution.daily_pipeline_post_market_helpers import (
+    merge_agent_results,
     PostMarketCandidateContext,
     PostMarketDiagnosticsAggregation,
     PostMarketOrderContext,
     PostMarketSelectionResolution,
     PostMarketWatchlistContext,
-    aggregate_post_market_diagnostics,
-    build_high_pool,
-    build_post_market_execution_plan,
-    build_selection_target_inputs,
-    build_sell_order_diagnostics as build_sell_order_diagnostics_impl,
-    build_watchlist_price_map as build_watchlist_price_map_impl,
-    ensure_plan_target_shells as ensure_plan_target_shells_impl,
-    merge_agent_results,
     resolve_post_market_selection_targets,
 )
 from src.execution.daily_pipeline_runtime_helpers import (
     build_filter_summary as _build_filter_summary_impl,
+)
+from src.execution.daily_pipeline_runtime_helpers import (
     default_exit_checker as _default_exit_checker_impl,
+)
+from src.execution.daily_pipeline_runtime_helpers import (
     load_candidate_pool_bundle as _load_candidate_pool_bundle_impl,
+)
+from src.execution.daily_pipeline_runtime_helpers import (
     load_latest_historical_prior_by_ticker as _load_latest_historical_prior_by_ticker_impl,
+)
+from src.execution.daily_pipeline_runtime_helpers import (
     resolve_historical_prior_for_ticker as _resolve_historical_prior_for_ticker_impl,
+)
+from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
+)
+from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
+)
+from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
+)
+from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
+)
+from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_LANES,
+)
+from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_MAX_TICKERS,
 )
 from src.execution.daily_pipeline_settings import (
     BTST_REPORTS_ROOT,
@@ -100,24 +148,17 @@ from src.execution.daily_pipeline_settings import (
     MERGE_APPROVED_TICKERS,
     MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION,
     PRECISE_AGENT_MAX_TICKERS,
-    UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_LANES,  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_MAX_TICKERS,  # noqa: F401 — re-exported for tests
     WATCHLIST_SCORE_THRESHOLD,
 )
-from src.execution.daily_pipeline_phase4_test_adapter import run_with_phase4_test_overrides, sync_phase4_test_overrides
 from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
     _qualifies_short_trade_boundary_candidate as _qualifies_short_trade_boundary_candidate_impl,
+)
+from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
     build_short_trade_candidate_diagnostics_with_defaults as _build_short_trade_candidate_diagnostics_impl,
 )
-from src.execution.daily_pipeline_phase4_entry_helpers import (  # noqa: F401 — re-exported for scripts
-    _build_upstream_shadow_observation_entry,
-)
+
 # Re-exported for test access (tests/execution/test_phase4_execution.py)
-from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
+from src.execution.daily_pipeline_upstream_shadow_helpers import (
     _build_catalyst_theme_short_trade_carryover_relief_config,
     _build_upstream_shadow_catalyst_relief_config,
     _build_upstream_shadow_catalyst_relief_payload_kwargs,
@@ -137,10 +178,18 @@ from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
     _resolve_upstream_shadow_release_max_tickers,
     _resolve_upstream_shadow_release_priority_rank,
     _resolve_upstream_shadow_selected_threshold,
+)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
     _select_upstream_shadow_release_entries as _select_upstream_shadow_release_entries_impl,
+)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (
     _select_upstream_shadow_watchlist_entries,
     _should_promote_upstream_shadow_release_to_watchlist,
+)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (
     _should_release_upstream_shadow_candidate as _should_release_upstream_shadow_candidate_impl,
+)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (
     _summarize_upstream_shadow_release_historical_support,
     _supports_upstream_shadow_catalyst_relief_history,
     _upstream_shadow_watchlist_promotion_sort_key,
@@ -154,16 +203,32 @@ from src.execution.t1_confirmation import confirm_buy_signal
 from src.llm.defaults import get_default_model_config
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
-from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
-from src.screening.candidate_pool import build_candidate_pool, build_candidate_pool_with_shadow
+from src.portfolio.position_calculator import (
+    calculate_position,
+    enforce_daily_trade_limit,
+)
+from src.screening.candidate_pool import (
+    build_candidate_pool,
+    build_candidate_pool_with_shadow,
+)
 from src.screening.market_state import detect_market_state
 from src.screening.models import CandidateStock
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
-from src.targets.profiles import build_short_trade_target_profile, use_short_trade_target_profile
-from src.targets.router import build_selection_targets, summarize_selection_targets
-from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry  # noqa: F401 — re-exported for scripts/tests
+from src.targets.profiles import (
+    build_short_trade_target_profile,
+    use_short_trade_target_profile,
+)
+from src.targets.router import (
+    _P2_BLOCKED_GATES,
+    apply_p2_regime_gate_enforcement_to_selection_targets,
+    build_selection_targets,
+    summarize_selection_targets,
+)
+from src.targets.short_trade_target import (  # noqa: F401 — re-exported for scripts/tests
+    build_short_trade_target_snapshot_from_entry,
+)
 from src.tools.ashare_board_utils import to_tushare_code
 from src.tools.tushare_api import get_daily_basic_batch
 
@@ -183,6 +248,19 @@ WEAK_CONFIRMATION_REENTRY_GUARD_KEYS = (
     "watchlist_zero_catalyst_crowded_guard",
     "watchlist_zero_catalyst_flat_trend_guard",
 )
+BTST_0422_P1_REGIME_GATE_MODE_ENV = "BTST_0422_P1_REGIME_GATE_MODE"
+BTST_0422_P1_REGIME_GATE_MODES = frozenset({"off", "shadow"})
+BTST_0422_P2_REGIME_GATE_MODE_ENV = "BTST_0422_P2_REGIME_GATE_MODE"
+BTST_0422_P2_REGIME_GATE_MODES = frozenset({"off", "enforce"})
+# _P2_BLOCKED_GATES is imported from src.targets.router (single source of truth)
+BTST_0422_P3_PRIOR_QUALITY_MODE_ENV = "BTST_0422_P3_PRIOR_QUALITY_MODE"
+BTST_0422_P3_PRIOR_QUALITY_MODES = frozenset({"off", "enforce"})
+BTST_0422_P4_PRIOR_SHRINKAGE_MODE_ENV = "BTST_0422_P4_PRIOR_SHRINKAGE_MODE"
+BTST_0422_P4_PRIOR_SHRINKAGE_MODES = frozenset({"off", "enforce"})
+BTST_0422_P5_EXECUTION_CONTRACT_MODE_ENV = "BTST_0422_P5_EXECUTION_CONTRACT_MODE"
+BTST_0422_P5_EXECUTION_CONTRACT_MODES = frozenset({"off", "enforce"})
+BTST_0422_P6_RISK_BUDGET_MODE_ENV = "BTST_0422_P6_RISK_BUDGET_MODE"
+BTST_0422_P6_RISK_BUDGET_MODES = frozenset({"off", "enforce"})
 
 
 def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
@@ -245,6 +323,354 @@ def _build_logic_score_map(layer_c_results: list[LayerCResult]) -> dict[str, flo
     return {item.ticker: float(item.score_final) for item in layer_c_results}
 
 
+def _resolve_btst_regime_gate_mode() -> str:
+    normalized_mode = str(os.getenv(BTST_0422_P1_REGIME_GATE_MODE_ENV, "off") or "off").strip().lower()
+    return normalized_mode if normalized_mode in BTST_0422_P1_REGIME_GATE_MODES else "off"
+
+
+def _build_btst_regime_gate_payload(market_state: Any | None) -> dict[str, Any]:
+    if _resolve_btst_regime_gate_mode() == "off":
+        return {}
+    from src.screening.market_state_helpers import (
+        classify_btst_regime_gate_from_market_state,
+    )
+
+    gate_payload = dict(classify_btst_regime_gate_from_market_state(market_state) or {})
+    if not gate_payload:
+        return {}
+    gate_payload["mode"] = _resolve_btst_regime_gate_mode()
+    return gate_payload
+
+
+def _attach_btst_regime_gate_shadow(plan: ExecutionPlan) -> ExecutionPlan:
+    gate_payload = _build_btst_regime_gate_payload(getattr(plan, "market_state", None))
+    if not gate_payload:
+        return plan
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    risk_metrics["btst_regime_gate"] = gate_payload
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+    funnel_diagnostics["btst_regime_gate"] = gate_payload
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    plan.risk_metrics = risk_metrics
+    return plan
+
+
+def _resolve_btst_regime_gate_p2_mode() -> str:
+    normalized_mode = str(os.getenv(BTST_0422_P2_REGIME_GATE_MODE_ENV, "off") or "off").strip().lower()
+    return normalized_mode if normalized_mode in BTST_0422_P2_REGIME_GATE_MODES else "off"
+
+
+def _get_or_classify_gate(plan: ExecutionPlan) -> str | None:
+    """Return the gate string for P2 enforcement.
+
+    Reuses the P1 gate payload already stored in risk_metrics when available;
+    otherwise classifies independently from the plan's market_state.
+    """
+    existing_gate = str((plan.risk_metrics or {}).get("btst_regime_gate", {}).get("gate", "") or "").strip()
+    if existing_gate:
+        return existing_gate
+    from src.screening.market_state_helpers import (
+        classify_btst_regime_gate_from_market_state,
+    )
+
+    result = classify_btst_regime_gate_from_market_state(getattr(plan, "market_state", None))
+    if not result:
+        return None
+    return str(result.get("gate", "") or "").strip() or None
+
+
+def _enforce_btst_regime_gate_p2(plan: ExecutionPlan) -> ExecutionPlan:
+    """P2 hard enforcement: clear buy_orders and mark selection_targets for halt / shadow_only days.
+
+    Only active when BTST_0422_P2_REGIME_GATE_MODE=enforce.
+    Preserves backward compatibility — off by default.
+    Reuses the P1 gate payload from risk_metrics when already computed.
+    Also updates plan.selection_targets to mark items as p2_execution_blocked (router-level semantic).
+    """
+    if _resolve_btst_regime_gate_p2_mode() != "enforce":
+        return plan
+
+    gate = _get_or_classify_gate(plan)
+    if gate is None:
+        return plan
+
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+
+    if gate in _P2_BLOCKED_GATES:
+        cleared_count = len(plan.buy_orders)
+        cleared = cleared_count > 0
+        plan.buy_orders = []
+        enforcement_payload: dict[str, Any] = {
+            "enforced": True,
+            "gate": gate,
+            "mode": "enforce",
+            "buy_orders_cleared": cleared,
+            "buy_orders_cleared_count": cleared_count,
+        }
+        counts = dict(risk_metrics.get("counts", {}))
+        counts["buy_order_count"] = 0
+        risk_metrics["counts"] = counts
+        # Router-level: mark formal execution eligibility as blocked in selection_targets.
+        if plan.selection_targets:
+            apply_p2_regime_gate_enforcement_to_selection_targets(plan.selection_targets, gate=gate)
+    else:
+        enforcement_payload = {
+            "enforced": False,
+            "gate": gate,
+            "mode": "enforce",
+            "buy_orders_cleared": False,
+            "buy_orders_cleared_count": 0,
+        }
+
+    risk_metrics["btst_regime_gate_enforcement"] = enforcement_payload
+    funnel_diagnostics["btst_regime_gate_enforcement"] = enforcement_payload
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    plan.risk_metrics = risk_metrics
+    return plan
+
+
+def _resolve_btst_prior_quality_p3_mode() -> str:
+    normalized_mode = str(os.getenv(BTST_0422_P3_PRIOR_QUALITY_MODE_ENV, "off") or "off").strip().lower()
+    return normalized_mode if normalized_mode in BTST_0422_P3_PRIOR_QUALITY_MODES else "off"
+
+
+def _enforce_btst_prior_quality_p3(plan: ExecutionPlan, *, prior_by_ticker: dict[str, dict[str, Any]]) -> ExecutionPlan:
+    """P3 prior quality hard gate: annotate and block selection_targets with poor historical priors.
+
+    Only active when BTST_0422_P3_PRIOR_QUALITY_MODE=enforce.
+    Preserves backward compatibility — off by default.
+    Reuses prior_by_ticker already loaded during post-market watchlist context construction.
+
+    In enforce mode:
+      1. Classifies each selection target's historical prior and marks p3_execution_blocked.
+      2. Removes buy orders for P3-blocked tickers from plan.buy_orders.
+      3. Rebuilds plan.dual_target_summary to reflect post-enforcement P3 counts.
+    """
+    from src.targets.prior_quality import (
+        apply_p3_prior_quality_gate_to_selection_targets,
+    )
+    from src.targets.router_build_helpers import build_dual_target_summary
+
+    mode = _resolve_btst_prior_quality_p3_mode()
+    if mode != "enforce":
+        return plan
+
+    selection_targets = plan.selection_targets or {}
+    if selection_targets:
+        apply_p3_prior_quality_gate_to_selection_targets(
+            selection_targets,
+            mode=mode,
+            prior_by_ticker=prior_by_ticker,
+        )
+
+    # Gap 1 fix: filter buy_orders to remove P3-blocked tickers.
+    blocked_tickers = {ticker for ticker, ev in selection_targets.items() if ev.p3_execution_blocked}
+    if blocked_tickers and plan.buy_orders:
+        original_count = len(plan.buy_orders)
+        plan.buy_orders = [o for o in plan.buy_orders if o.ticker not in blocked_tickers]
+        buy_orders_removed = original_count - len(plan.buy_orders)
+    else:
+        buy_orders_removed = 0
+
+    p3_blocked_count = len(blocked_tickers)
+    enforcement_payload: dict[str, Any] = {
+        "mode": "enforce",
+        "p3_execution_blocked_count": p3_blocked_count,
+        "buy_orders_removed": buy_orders_removed,
+    }
+
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+    risk_metrics["btst_prior_quality_p3_enforcement"] = enforcement_payload
+    funnel_diagnostics["btst_prior_quality_p3_enforcement"] = enforcement_payload
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    # Keep buy_order_count in sync with the actual post-enforcement list length.
+    if buy_orders_removed:
+        counts = dict(risk_metrics.get("counts", {}))
+        counts["buy_order_count"] = len(plan.buy_orders)
+        risk_metrics["counts"] = counts
+    plan.risk_metrics = risk_metrics
+
+    # Gap 2 fix: rebuild dual_target_summary so P3 counts are live (not pre-enforcement stale).
+    if selection_targets:
+        plan.dual_target_summary = build_dual_target_summary(
+            selection_targets=selection_targets,
+            target_mode=plan.target_mode,
+        )
+
+    return plan
+
+
+def _resolve_btst_execution_contract_p5_mode() -> str:
+    normalized_mode = str(os.getenv(BTST_0422_P5_EXECUTION_CONTRACT_MODE_ENV, "off") or "off").strip().lower()
+    return normalized_mode if normalized_mode in BTST_0422_P5_EXECUTION_CONTRACT_MODES else "off"
+
+
+def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
+    from src.targets.router_build_helpers import build_dual_target_summary
+
+    if _resolve_btst_execution_contract_p5_mode() != "enforce":
+        return plan
+
+    selection_targets = plan.selection_targets or {}
+    if not selection_targets:
+        return plan
+
+    gate = _get_or_classify_gate(plan) or ""
+    allowed_gate = gate in {"", "normal_trade", "aggressive_trade"}
+    downgrade_reason_counts: dict[str, int] = {}
+    downgraded_tickers: set[str] = set()
+
+    for ticker, evaluation in selection_targets.items():
+        short_trade_result = evaluation.short_trade
+        prior_quality_level = str(evaluation.p3_prior_quality_label or evaluation.historical_prior_quality_level or "").strip() or None
+        downgrade_reasons: list[str] = []
+        if short_trade_result is not None and short_trade_result.decision == "selected":
+            if not allowed_gate:
+                downgrade_reasons.append("btst_regime_gate_not_tradeable")
+            if prior_quality_level not in {None, "", "execution_ready"}:
+                downgrade_reasons.append("historical_prior_not_execution_ready")
+            if str(evaluation.candidate_source or "").strip() in {"upgrade_only", "research_only"}:
+                downgrade_reasons.append("research_only_source_not_formal_execution")
+            if downgrade_reasons:
+                short_trade_result.decision = "near_miss"
+                downgraded_tickers.add(str(ticker))
+
+        execution_eligible = bool(short_trade_result is not None and short_trade_result.decision == "selected")
+        evaluation.execution_eligible = execution_eligible
+        evaluation.downgrade_reasons = list(downgrade_reasons)
+        evaluation.historical_prior_quality_level = prior_quality_level
+        evaluation.btst_regime_gate = gate or None
+
+        if short_trade_result is not None:
+            short_trade_result.execution_eligible = execution_eligible
+            short_trade_result.downgrade_reasons = list(downgrade_reasons)
+            short_trade_result.historical_prior_quality_level = prior_quality_level
+            short_trade_result.btst_regime_gate = gate or None
+            metrics_payload = dict(short_trade_result.metrics_payload or {})
+            explainability_payload = dict(short_trade_result.explainability_payload or {})
+            metrics_payload.update(
+                {
+                    "execution_eligible": execution_eligible,
+                    "downgrade_reasons": list(downgrade_reasons),
+                    "historical_prior_quality_level": prior_quality_level,
+                    "btst_regime_gate": gate or None,
+                }
+            )
+            explainability_payload.update(
+                {
+                    "execution_eligible": execution_eligible,
+                    "downgrade_reasons": list(downgrade_reasons),
+                    "historical_prior_quality_level": prior_quality_level,
+                    "btst_regime_gate": gate or None,
+                }
+            )
+            short_trade_result.metrics_payload = metrics_payload
+            short_trade_result.explainability_payload = explainability_payload
+
+        for reason in downgrade_reasons:
+            downgrade_reason_counts[reason] = int(downgrade_reason_counts.get(reason) or 0) + 1
+
+    original_buy_order_count = len(plan.buy_orders)
+    eligible_tickers = {ticker for ticker, evaluation in selection_targets.items() if evaluation.execution_eligible}
+    plan.buy_orders = [order for order in plan.buy_orders if order.ticker in eligible_tickers]
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    p2_enforcement = dict(risk_metrics.get("btst_regime_gate_enforcement", {}) or {})
+    upstream_cleared_count = int(p2_enforcement.get("buy_orders_cleared_count") or 0)
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+    enforcement_payload = {
+        "mode": "enforce",
+        "gate": gate or None,
+        "execution_eligible_count": len(eligible_tickers),
+        "downgraded_to_near_miss_count": len(downgraded_tickers),
+        "buy_orders_removed": max(0, original_buy_order_count - len(plan.buy_orders)),
+        "buy_orders_already_cleared_upstream_count": upstream_cleared_count,
+        "downgrade_reason_counts": downgrade_reason_counts,
+    }
+    risk_metrics["btst_execution_contract_p5_enforcement"] = enforcement_payload
+    funnel_diagnostics["btst_execution_contract_p5_enforcement"] = enforcement_payload
+    counts = dict(risk_metrics.get("counts", {}) or {})
+    counts["buy_order_count"] = len(plan.buy_orders)
+    risk_metrics["counts"] = counts
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    plan.risk_metrics = risk_metrics
+    plan.dual_target_summary = build_dual_target_summary(selection_targets=selection_targets, target_mode=plan.target_mode)
+    return plan
+
+
+def _resolve_btst_risk_budget_p6_mode() -> str:
+    normalized_mode = str(os.getenv(BTST_0422_P6_RISK_BUDGET_MODE_ENV, "off") or "off").strip().lower()
+    return normalized_mode if normalized_mode in BTST_0422_P6_RISK_BUDGET_MODES else "off"
+
+
+def _attach_btst_risk_budget_p6(plan: ExecutionPlan) -> ExecutionPlan:
+    mode = _resolve_btst_risk_budget_p6_mode()
+    if mode != "enforce":
+        return plan
+    selection_targets = dict(getattr(plan, "selection_targets", {}) or {})
+    watchlist_by_ticker = {str(item.ticker): item for item in list(getattr(plan, "watchlist", []) or [])}
+    buy_order_by_ticker = {str(order.ticker): order for order in list(getattr(plan, "buy_orders", []) or [])}
+    nav = float((plan.portfolio_snapshot or {}).get("cash", 0.0) or 0.0)
+    nav += sum(float(position.get("long", 0) or 0) * float(position.get("long_cost_basis", 0.0) or 0.0) for position in dict((plan.portfolio_snapshot or {}).get("positions", {}) or {}).values())
+    summary = {
+        "mode": mode,
+        "gate_distribution": {},
+        "formal_exposure_distribution": {},
+        "suppressed_position_summary": {
+            "zero_budget_count": 0,
+            "reduced_budget_count": 0,
+        },
+    }
+    for ticker, evaluation in selection_targets.items():
+        item = watchlist_by_ticker.get(str(ticker))
+        if item is None:
+            continue
+        budget = _resolve_btst_position_budget(
+            item=item,
+            selection_target=evaluation,
+            candidate=None,
+            nav=nav if nav > 0 else 1.0,
+        )
+        p6_payload = {
+            "mode": str(budget.get("risk_budget_mode") or mode),
+            "risk_budget_ratio": float(budget.get("formal_risk_budget_ratio", 1.0) or 0.0),
+            "formal_exposure_bucket": str(budget.get("formal_exposure_bucket") or ""),
+            "execution_contract_bucket": str(budget.get("execution_contract_bucket") or ""),
+            "risk_budget_gate": str(budget.get("risk_budget_gate") or ""),
+            "prior_quality_label": str(budget.get("prior_quality_label") or ""),
+        }
+        matching_order = buy_order_by_ticker.get(str(ticker))
+        if matching_order is not None:
+            p6_payload["planned_amount"] = round(float(getattr(matching_order, "amount", 0.0) or 0.0), 4)
+            p6_payload["planned_shares"] = int(getattr(matching_order, "shares", 0) or 0)
+            p6_payload["risk_budget_ratio_applied"] = round(float(getattr(matching_order, "risk_budget_ratio", 1.0) or 0.0), 4)
+        short_trade_result = getattr(evaluation, "short_trade", None)
+        if short_trade_result is not None:
+            metrics_payload = dict(short_trade_result.metrics_payload or {})
+            explainability_payload = dict(short_trade_result.explainability_payload or {})
+            metrics_payload["p6_risk_budget"] = p6_payload
+            explainability_payload["p6_risk_budget"] = p6_payload
+            short_trade_result.metrics_payload = metrics_payload
+            short_trade_result.explainability_payload = explainability_payload
+        gate_name = p6_payload["risk_budget_gate"] or "unknown"
+        bucket = p6_payload["formal_exposure_bucket"] or "unknown"
+        summary["gate_distribution"][gate_name] = int(summary["gate_distribution"].get(gate_name) or 0) + 1
+        summary["formal_exposure_distribution"][bucket] = int(summary["formal_exposure_distribution"].get(bucket) or 0) + 1
+        if bucket == "zero_budget":
+            summary["suppressed_position_summary"]["zero_budget_count"] += 1
+        if bucket == "reduced":
+            summary["suppressed_position_summary"]["reduced_budget_count"] += 1
+
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+    risk_metrics["btst_risk_budget_p6_enforcement"] = summary
+    funnel_diagnostics["btst_risk_budget_p6_enforcement"] = summary
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    plan.risk_metrics = risk_metrics
+    return plan
+
+
 def _default_exit_checker(portfolio_snapshot: dict, trade_date: str, logic_scores: dict[str, float] | None = None) -> list:
     return _default_exit_checker_impl(
         portfolio_snapshot,
@@ -300,6 +726,8 @@ def _build_watchlist_filter_diagnostics_wrapper(
 
 from src.execution.daily_pipeline_historical_prior_attachment import (
     attach_historical_prior_to_entries as _attach_historical_prior_to_entries_impl,
+)
+from src.execution.daily_pipeline_historical_prior_attachment import (
     attach_historical_prior_to_watchlist as _attach_historical_prior_to_watchlist,
 )
 
@@ -740,7 +1168,7 @@ class DailyPipeline:
         funnel_diagnostics = selection_resolution.funnel_diagnostics
         selection_targets = selection_resolution.selection_targets
         dual_target_summary = selection_resolution.dual_target_summary
-        return build_post_market_execution_plan(
+        plan = build_post_market_execution_plan(
             trade_date=trade_date,
             candidate_context=candidate_context,
             watchlist_context=watchlist_context,
@@ -759,6 +1187,15 @@ class DailyPipeline:
             serialize_short_trade_target_profile_fn=_serialize_short_trade_target_profile,
             generate_execution_plan_fn=generate_execution_plan,
         )
+        plan = _attach_btst_risk_budget_p6(
+            _enforce_btst_execution_contract_p5(
+            _enforce_btst_prior_quality_p3(
+                _enforce_btst_regime_gate_p2(_attach_btst_regime_gate_shadow(plan)),
+                prior_by_ticker=watchlist_context.historical_prior_by_ticker,
+            )
+            )
+        )
+        return plan
 
     def _collect_post_market_candidate_context(self, trade_date: str) -> tuple[PostMarketCandidateContext, dict[str, float]]:
         stage_started_at = perf_counter()

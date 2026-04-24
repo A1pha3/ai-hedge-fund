@@ -5,7 +5,7 @@ from src.execution.models import ExecutionPlan, LayerCResult
 from src.portfolio.models import ExitSignal, PositionPlan
 from src.research.artifacts import FileSelectionArtifactWriter
 from src.screening.models import MarketState, StrategySignal
-from src.targets.models import DualTargetEvaluation, DualTargetSummary
+from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
 from src.targets.router import build_selection_targets
 
 
@@ -750,6 +750,56 @@ def test_file_selection_artifact_writer_returns_failed_when_directory_creation_f
     assert "mkdir failed" in str(result.error_message)
 
 
+def test_file_selection_artifact_writer_renders_btst_regime_gate_shadow_metadata(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_btst_gate")
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {
+                "layer_a_count": 10,
+                "layer_b_count": 2,
+                "watchlist_count": 1,
+                "buy_order_count": 1,
+                "sell_order_count": 0,
+            },
+            "btst_regime_gate": {
+                "mode": "shadow",
+                "gate": "shadow_only",
+                "profile_hint": "conservative",
+                "reason_codes": ["profile_conservative", "regime_flip_risk_elevated"],
+            },
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="000001",
+                score_b=0.72,
+                score_c=0.64,
+                score_final=0.68,
+                quality_score=0.61,
+                decision="watch",
+            )
+        ],
+        selection_targets={"000001": DualTargetEvaluation(ticker="000001", trade_date="20260322")},
+        target_mode="research_only",
+        dual_target_summary=DualTargetSummary(target_mode="research_only", selection_target_count=1, shell_target_count=1),
+        buy_orders=[PositionPlan(ticker="000001", shares=100, amount=10000.0, score_final=0.68, quality_score=0.61)],
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    snapshot = json.loads((tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    review_text = (tmp_path / "2026-03-22" / "selection_review.md").read_text(encoding="utf-8")
+    replay_input = json.loads((tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+
+    assert snapshot["btst_regime_gate"]["gate"] == "shadow_only"
+    assert snapshot["selected"][0]["target_context"]["btst_regime_gate"] == "shadow_only"
+    assert replay_input["btst_regime_gate"]["mode"] == "shadow"
+    assert "## BTST 择日门控" in review_text
+    assert "shadow_only" in review_text
+
+
 def test_file_selection_artifact_writer_captures_buy_order_blocker_details(tmp_path):
     writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_blocker")
     plan = ExecutionPlan(
@@ -810,3 +860,133 @@ def test_file_selection_artifact_writer_captures_buy_order_blocker_details(tmp_p
     assert '"reentry_review_until": "20260312"' in snapshot_text
     assert "buy_order_blocker: blocked_by_reentry_score_confirmation (binding=score)" in review_text
     assert "reentry_review_until: 20260312" in review_text
+
+
+def test_file_selection_artifact_writer_surfaces_p3_metadata_in_target_context(tmp_path):
+    """P3 prior-quality fields must appear verbatim in snapshot target_context for each ticker.
+
+    Regression guard: _build_target_context() must surface p3_prior_quality_label,
+    p3_sample_size, and p3_execution_block_reason so that downstream review/audit
+    tooling can inspect per-ticker P3 gate decisions without re-querying raw data.
+    """
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_p3_meta")
+    evaluation = DualTargetEvaluation(
+        ticker="000001",
+        trade_date="20260401",
+        p3_prior_quality_label="watch_only",
+        p3_sample_size=3,
+        p3_execution_blocked=True,
+        p3_execution_block_reason="p3_prior_quality:watch_only:n_selected=3<5",
+        research=None,
+        short_trade=None,
+    )
+    plan = ExecutionPlan(
+        date="20260401",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {
+                "layer_a_count": 10,
+                "layer_b_count": 1,
+                "watchlist_count": 1,
+                "buy_order_count": 0,
+            },
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="000001",
+                score_b=0.65,
+                score_c=0.55,
+                score_final=0.60,
+                quality_score=0.58,
+                decision="watch",
+            )
+        ],
+        selection_targets={"000001": evaluation},
+        target_mode="research_only",
+        dual_target_summary=DualTargetSummary(target_mode="research_only", selection_target_count=1),
+        buy_orders=[],
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260401", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    snapshot = json.loads((tmp_path / "2026-04-01" / "selection_snapshot.json").read_text(encoding="utf-8"))
+
+    # 000001 is in watchlist → appears under snapshot["selected"]
+    selected_entries = snapshot.get("selected", [])
+    entry_000001 = next((e for e in selected_entries if e.get("symbol") == "000001"), None)
+    assert entry_000001 is not None, f"000001 should appear in snapshot selected; got symbols={[e.get('symbol') for e in selected_entries]}"
+
+    tc = entry_000001.get("target_context", {})
+    assert tc.get("p3_prior_quality_label") == "watch_only", f"missing/wrong p3_prior_quality_label in {tc}"
+    assert tc.get("p3_sample_size") == 3, f"missing/wrong p3_sample_size in {tc}"
+    assert tc.get("p3_execution_block_reason") == "p3_prior_quality:watch_only:n_selected=3<5", f"missing/wrong p3_execution_block_reason in {tc}"
+
+
+def test_file_selection_artifact_writer_surfaces_p5_contract_metadata_and_review_explanations(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_p5_contract")
+    evaluation = DualTargetEvaluation(
+        ticker="300724",
+        trade_date="20260422",
+        execution_eligible=False,
+        downgrade_reasons=["btst_regime_gate_not_tradeable", "historical_prior_not_execution_ready"],
+        historical_prior_quality_level="watch_only",
+        btst_regime_gate="shadow_only",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="near_miss",
+            score_target=0.73,
+            execution_eligible=False,
+            downgrade_reasons=["btst_regime_gate_not_tradeable", "historical_prior_not_execution_ready"],
+            historical_prior_quality_level="watch_only",
+            btst_regime_gate="shadow_only",
+            metrics_payload={
+                "historical_prior": {
+                    "raw_next_high_hit_rate_at_threshold": 0.9,
+                    "raw_next_close_positive_rate": 0.45,
+                    "sample_reliability": 0.2,
+                    "shrunk_high_hit_rate": 0.68,
+                    "shrunk_close_positive_rate": 0.52,
+                }
+            },
+        ),
+    )
+    plan = ExecutionPlan(
+        date="20260422",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"layer_a_count": 10, "layer_b_count": 1, "watchlist_count": 1, "buy_order_count": 0},
+            "btst_regime_gate": {"mode": "enforce", "gate": "shadow_only", "reason_codes": ["profile_conservative"]},
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="300724",
+                score_b=0.8,
+                score_c=0.71,
+                score_final=0.76,
+                quality_score=0.65,
+                decision="watch",
+            )
+        ],
+        selection_targets={"300724": evaluation},
+        target_mode="short_trade_only",
+        dual_target_summary=DualTargetSummary(target_mode="short_trade_only", selection_target_count=1, short_trade_near_miss_count=1),
+        buy_orders=[],
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260422", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    snapshot = json.loads((tmp_path / "2026-04-22" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    review_text = (tmp_path / "2026-04-22" / "selection_review.md").read_text(encoding="utf-8")
+
+    selected_entry = snapshot["selected"][0]
+    target_context = selected_entry["target_context"]
+    assert target_context["execution_eligible"] is False
+    assert target_context["downgrade_reasons"] == ["btst_regime_gate_not_tradeable", "historical_prior_not_execution_ready"]
+    assert target_context["historical_prior_quality_level"] == "watch_only"
+    assert target_context["btst_regime_gate"] == "shadow_only"
+    assert selected_entry["target_decisions"]["short_trade"]["execution_eligible"] is False
+    assert "为什么入选" in review_text
+    assert "为何被降级" in review_text
+    assert "是否可执行" in review_text

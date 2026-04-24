@@ -12,6 +12,12 @@ class PositionPlan(BaseModel):
     score_final: float = 0.0
     execution_ratio: float = 0.0
     quality_score: float = Field(ge=0, le=1, default=0.5)
+    risk_budget_ratio: float = Field(ge=0, default=1.0)
+    base_shares_before_risk_budget: int = 0
+    base_amount_before_risk_budget: float = 0.0
+    formal_exposure_bucket: str = ""
+    risk_budget_gate: str = ""
+    execution_contract_bucket: str = ""
 
 
 class ExitSignal(BaseModel):

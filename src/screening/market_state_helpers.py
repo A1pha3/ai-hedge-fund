@@ -172,6 +172,81 @@ def recommend_short_trade_profile(
     return "btst_precision_v2"
 
 
+def classify_btst_regime_gate(
+    *,
+    breadth_ratio: float,
+    daily_return: float,
+    style_dispersion: float,
+    regime_flip_risk: float,
+    regime_gate_level: str | None = None,
+) -> dict[str, object]:
+    normalized_regime_gate_level = str(regime_gate_level or "normal").strip().lower() or "normal"
+    profile_hint = recommend_short_trade_profile(
+        breadth_ratio=breadth_ratio,
+        daily_return=daily_return,
+        limit_ratio=1.0,
+        adx=20.0,
+        style_dispersion=style_dispersion,
+        regime_flip_risk=regime_flip_risk,
+        regime_gate_level=normalized_regime_gate_level,
+    )
+    reason_codes: list[str] = []
+    if normalized_regime_gate_level in {"risk_off", "crisis"}:
+        reason_codes.append(f"regime_gate_level_{normalized_regime_gate_level}")
+    if profile_hint == "conservative":
+        reason_codes.append("profile_conservative")
+    if breadth_ratio <= 0.42:
+        reason_codes.append("breadth_weak")
+    if breadth_ratio >= 0.60:
+        reason_codes.append("breadth_strong")
+    if style_dispersion >= 0.45:
+        reason_codes.append("style_dispersion_elevated")
+    if regime_flip_risk >= 0.58:
+        reason_codes.append("regime_flip_risk_elevated")
+
+    if normalized_regime_gate_level in {"risk_off", "crisis"}:
+        gate = "halt"
+    elif profile_hint == "conservative":
+        gate = "shadow_only"
+    elif breadth_ratio >= 0.60 and style_dispersion <= 0.25 and regime_flip_risk <= 0.20:
+        gate = "aggressive_trade"
+    else:
+        gate = "normal_trade"
+
+    return {
+        "gate": gate,
+        "profile_hint": profile_hint,
+        "reason_codes": reason_codes,
+        "metrics": {
+            "breadth_ratio": round(float(breadth_ratio), 6),
+            "daily_return": round(float(daily_return), 6),
+            "style_dispersion": round(float(style_dispersion), 6),
+            "regime_flip_risk": round(float(regime_flip_risk), 6),
+            "regime_gate_level": normalized_regime_gate_level,
+        },
+    }
+
+
+def classify_btst_regime_gate_from_market_state(market_state: MarketState | dict | None) -> dict[str, object] | None:
+    if market_state is None:
+        return None
+    if isinstance(market_state, dict):
+        payload = market_state
+    elif hasattr(market_state, "model_dump"):
+        payload = dict(market_state.model_dump(mode="json") or {})
+    else:
+        return None
+    if not payload:
+        return None
+    return classify_btst_regime_gate(
+        breadth_ratio=float(payload.get("breadth_ratio", 0.5) or 0.5),
+        daily_return=float(payload.get("daily_return", 0.0) or 0.0),
+        style_dispersion=float(payload.get("style_dispersion", 0.0) or 0.0),
+        regime_flip_risk=float(payload.get("regime_flip_risk", 0.0) or 0.0),
+        regime_gate_level=str(payload.get("regime_gate_level", "normal") or "normal"),
+    )
+
+
 def build_market_state_from_metrics(*, metrics: MarketStateMetrics, normalize_weights: callable) -> MarketState:
     adjusted = DEFAULT_STRATEGY_WEIGHTS.copy()
     position_scale = 0.5 if metrics.is_low_volume else 1.0

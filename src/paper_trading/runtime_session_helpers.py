@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -189,7 +190,7 @@ def build_session_summary(
     cache_benchmark_artifacts: dict[str, str],
     llm_metrics_artifacts: dict[str, str],
 ) -> dict[str, Any]:
-    return {
+    summary = {
         "mode": "paper_trading",
         "start_date": start_date,
         "end_date": end_date,
@@ -205,6 +206,10 @@ def build_session_summary(
             "mode": "frozen_current_plan_replay" if frozen_plan_source_path is not None else "live_pipeline",
             "frozen_plan_source": str(frozen_plan_source_path) if frozen_plan_source_path is not None else None,
             "selection_target": selection_target,
+        },
+        "btst_0422_flags": {
+            "p5_execution_contract_mode": str(os.getenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "off") or "off").strip().lower() or "off",
+            "p6_risk_budget_mode": str(os.getenv("BTST_0422_P6_RISK_BUDGET_MODE", "off") or "off").strip().lower() or "off",
         },
         "performance_metrics": dict(metrics),
         "portfolio_values": portfolio_values,
@@ -234,3 +239,10 @@ def build_session_summary(
             **llm_metrics_artifacts,
         },
     }
+    btst_regime_gate_summary = dict((dual_target_summary or {}).get("btst_regime_gate_summary", {}) or {})
+    if btst_regime_gate_summary:
+        summary["btst_regime_gate_summary"] = btst_regime_gate_summary
+    btst_risk_budget_p6_summary = dict((dual_target_summary or {}).get("btst_risk_budget_p6_summary", {}) or {})
+    if btst_risk_budget_p6_summary:
+        summary["btst_risk_budget_p6_summary"] = btst_risk_budget_p6_summary
+    return summary
