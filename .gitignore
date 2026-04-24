@@ -1,6 +1,24 @@
 # data
 # Generated reports are local runtime artifacts, not source-of-truth.
 data/reports/
+!data/reports/
+data/reports/*
+!data/reports/p0_btst_0422_baseline_freeze.json
+!data/reports/p0_btst_0422_baseline_freeze.md
+!data/reports/p1_btst_regime_gate_shadow_eval.json
+!data/reports/p1_btst_regime_gate_shadow_eval.md
+!data/reports/p2_btst_regime_gate_enforced_window_compare.json
+!data/reports/p2_btst_regime_gate_enforced_window_compare.md
+!data/reports/p3_btst_historical_prior_quality_audit.json
+!data/reports/p3_btst_historical_prior_quality_audit.md
+!data/reports/p4_btst_prior_shrinkage_eval.json
+!data/reports/p4_btst_prior_shrinkage_eval.md
+!data/reports/p4_btst_selected_nearmiss_separation.json
+!data/reports/p4_btst_selected_nearmiss_separation.md
+!data/reports/p5_btst_execution_contract_eval.json
+!data/reports/p5_btst_execution_contract_eval.md
+!data/reports/p6_btst_risk_budget_overlay_eval.json
+!data/reports/p6_btst_risk_budget_overlay_eval.md
 data/snapshots
 
 # Python

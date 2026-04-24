@@ -42,8 +42,6 @@
 2. 再读 [02 路线](./02-0422-优化路线设计.md) — 评估各方向的落地成本与预期收益
 3. 再读 [03 清单](./03-0422-开发任务清单.md) — 按阶段推进开发、测试、报表与回滚
 4. 可选：对比 [optimize0415](../optimize0415/gpt-5.4-analyze-0415.md) — 上一次强→弱转折日的系统失误分析
-3. 可选：先读 [03 清单](./03-0422-开发任务清单.md) — 查看按 P0-P6 拆开的开发、测试、报表与回滚要求
-4. 可选：对比 [optimize0415](../optimize0415/gpt-5.4-analyze-0415.md) — 上一次强→弱转折日的系统失误分析
 
 ---
 
@@ -62,6 +60,7 @@
 |------|------|
 | P2 择日门控强制上线多窗口对比 JSON | `data/reports/p2_btst_regime_gate_enforced_window_compare.json` |
 | P2 择日门控强制上线多窗口对比 Markdown | `data/reports/p2_btst_regime_gate_enforced_window_compare.md` |
+| P2 生成脚本 | `scripts/analyze_btst_regime_gate_effect.py` |
 
 ### 回滚说明
 
@@ -80,6 +79,7 @@ export BTST_0422_P2_REGIME_GATE_MODE=off
 |------|------|
 | P3 先验质量历史审计 JSON | `data/reports/p3_btst_historical_prior_quality_audit.json` |
 | P3 先验质量历史审计 Markdown | `data/reports/p3_btst_historical_prior_quality_audit.md` |
+| P3 生成脚本 | `scripts/analyze_btst_historical_prior_quality.py` |
 
 ### 回滚说明
 
@@ -98,6 +98,10 @@ export BTST_0422_P3_PRIOR_QUALITY_MODE=off
 |------|------|
 | P4 先验收缩评估 JSON | `data/reports/p4_btst_prior_shrinkage_eval.json` |
 | P4 先验收缩评估 Markdown | `data/reports/p4_btst_prior_shrinkage_eval.md` |
+| P4 selected vs near_miss separation JSON | `data/reports/p4_btst_selected_nearmiss_separation.json` |
+| P4 selected vs near_miss separation Markdown | `data/reports/p4_btst_selected_nearmiss_separation.md` |
+| P4 生成脚本 | `scripts/analyze_btst_prior_shrinkage_eval.py` |
+| P4 separation 脚本 | `scripts/analyze_btst_selected_nearmiss_separation.py` |
 
 ### 回滚说明
 
@@ -113,6 +117,7 @@ export BTST_0422_P4_PRIOR_SHRINKAGE_MODE=off
 |------|------|
 | P5 执行契约评估 JSON | `data/reports/p5_btst_execution_contract_eval.json` |
 | P5 执行契约评估 Markdown | `data/reports/p5_btst_execution_contract_eval.md` |
+| P5 生成脚本 | `scripts/analyze_btst_execution_contract_eval.py` |
 
 ### 回滚说明
 
@@ -128,6 +133,7 @@ export BTST_0422_P5_EXECUTION_CONTRACT_MODE=off
 |------|------|
 | P6 风险预算 overlay 评估 JSON | `data/reports/p6_btst_risk_budget_overlay_eval.json` |
 | P6 风险预算 overlay 评估 Markdown | `data/reports/p6_btst_risk_budget_overlay_eval.md` |
+| P6 生成脚本 | `scripts/analyze_btst_risk_budget_overlay_eval.py` |
 
 ### 回滚说明
 
@@ -136,3 +142,12 @@ export BTST_0422_P5_EXECUTION_CONTRACT_MODE=off
 ```bash
 export BTST_0422_P6_RISK_BUDGET_MODE=off
 ```
+
+## 报表生成输入样例
+
+| 用途 | 路径 |
+|------|------|
+| P1 / P2 / P3 默认样例窗口 | `data/paper_trading_window_sample/` |
+| P4 默认样例窗口 | `data/p4_prior_shrinkage_eval_sample/` |
+| P5 默认样例窗口 | `data/p5_execution_contract_eval_sample/` |
+| P6 默认样例窗口 | `data/p6_risk_budget_overlay_eval_sample/` |

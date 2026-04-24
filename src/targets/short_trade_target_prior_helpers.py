@@ -25,7 +25,18 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _resolve_quality_label_baseline(*, execution_quality_label: str, entry_timing_bias: str) -> dict[str, float]:
+def _safe_bool(value: Any, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or "").strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    return default
+
+
+def _resolve_quality_label_baseline(*, execution_quality_label: str, entry_timing_bias: str, btst_regime_gate: str) -> dict[str, float]:
     baseline_by_quality = {
         "close_continuation": {
             "next_close_positive_rate": 0.58,
@@ -63,6 +74,20 @@ def _resolve_quality_label_baseline(*, execution_quality_label: str, entry_timin
         baseline["next_open_to_close_return_mean"] += 0.002
     elif entry_timing_bias in {"confirm_then_review", "avoid_open_chase", "avoid_open_chase_confirmation"}:
         baseline["next_high_hit_rate_at_threshold"] = clamp_unit_interval(baseline["next_high_hit_rate_at_threshold"] - 0.02)
+
+    normalized_gate = str(btst_regime_gate or "normal_trade").strip().lower()
+    if normalized_gate == "aggressive_trade":
+        baseline["next_close_positive_rate"] = clamp_unit_interval(baseline["next_close_positive_rate"] + 0.03)
+        baseline["next_high_hit_rate_at_threshold"] = clamp_unit_interval(baseline["next_high_hit_rate_at_threshold"] + 0.03)
+        baseline["next_open_to_close_return_mean"] += 0.003
+    elif normalized_gate == "shadow_only":
+        baseline["next_close_positive_rate"] = clamp_unit_interval(baseline["next_close_positive_rate"] - 0.03)
+        baseline["next_high_hit_rate_at_threshold"] = clamp_unit_interval(baseline["next_high_hit_rate_at_threshold"] - 0.03)
+        baseline["next_open_to_close_return_mean"] -= 0.002
+    elif normalized_gate == "halt":
+        baseline["next_close_positive_rate"] = clamp_unit_interval(baseline["next_close_positive_rate"] - 0.05)
+        baseline["next_high_hit_rate_at_threshold"] = clamp_unit_interval(baseline["next_high_hit_rate_at_threshold"] - 0.05)
+        baseline["next_open_to_close_return_mean"] -= 0.004
     return baseline
 
 
@@ -111,7 +136,9 @@ def _resolve_effective_prior_metrics_from_calibrated(prior: dict[str, Any] | Non
             "reliability": 0.0,
         }
 
-    if resolve_btst_prior_shrinkage_p4_mode() == "enforce":
+    use_shrunk_prior_rates = _safe_bool(prior.get("selected_use_shrunk_prior_rates"), True)
+
+    if resolve_btst_prior_shrinkage_p4_mode() == "enforce" and use_shrunk_prior_rates:
         return {
             "mode": "enforce",
             "rate_source": "shrunk",
@@ -122,7 +149,7 @@ def _resolve_effective_prior_metrics_from_calibrated(prior: dict[str, Any] | Non
         }
 
     return {
-        "mode": "off",
+        "mode": "enforce" if resolve_btst_prior_shrinkage_p4_mode() == "enforce" else "off",
         "rate_source": "calibrated",
         "reliability_source": "prior_evidence_weight",
         "next_close_positive_rate": clamp_unit_interval(_safe_float(prior.get("calibrated_next_close_positive_rate"), 0.0)),
@@ -142,6 +169,7 @@ def calibrate_short_trade_historical_prior(historical_prior: dict[str, Any] | No
 
     execution_quality_label = str(prior.get("execution_quality_label") or "unknown").strip()
     entry_timing_bias = str(prior.get("entry_timing_bias") or "unknown").strip()
+    btst_regime_gate = str(prior.get("btst_regime_gate") or "normal_trade").strip()
     evaluable_count = max(0, _safe_int(prior.get("evaluable_count"), 0))
     same_ticker_sample_count = max(0, _safe_int(prior.get("same_ticker_sample_count"), evaluable_count))
     evidence_count = max(evaluable_count, same_ticker_sample_count)
@@ -149,6 +177,7 @@ def calibrate_short_trade_historical_prior(historical_prior: dict[str, Any] | No
     baseline = _resolve_quality_label_baseline(
         execution_quality_label=execution_quality_label,
         entry_timing_bias=entry_timing_bias,
+        btst_regime_gate=btst_regime_gate,
     )
 
     raw_next_close_positive_rate = clamp_unit_interval(_safe_float(prior.get("next_close_positive_rate"), baseline["next_close_positive_rate"]))
@@ -175,6 +204,7 @@ def calibrate_short_trade_historical_prior(historical_prior: dict[str, Any] | No
     )
     evidence_weight = (float(evidence_count) / (float(evidence_count) + prior_strength)) if (float(evidence_count) + prior_strength) > 0 else 0.0
     p4_shrinkage_k = _resolve_p4_shrinkage_k(prior)
+    use_shrunk_prior_rates = _safe_bool(prior.get("selected_use_shrunk_prior_rates"), True)
     sample_reliability = _sample_reliability(evidence_count=evidence_count, shrinkage_k=p4_shrinkage_k)
     shrunk_next_close_positive_rate = _shrink_rate(
         raw_value=raw_next_close_positive_rate,
@@ -200,10 +230,12 @@ def calibrate_short_trade_historical_prior(historical_prior: dict[str, Any] | No
             "prior_baseline_next_close_positive_rate": round(float(baseline["next_close_positive_rate"]), 6),
             "prior_baseline_next_high_hit_rate_at_threshold": round(float(baseline["next_high_hit_rate_at_threshold"]), 6),
             "prior_baseline_next_open_to_close_return_mean": round(float(baseline["next_open_to_close_return_mean"]), 6),
+            "prior_baseline_btst_regime_gate": btst_regime_gate,
             "prior_evidence_count": evidence_count,
             "prior_evidence_weight": round(evidence_weight, 6),
             "prior_shrinkage_strength": round(prior_strength, 6),
             "p4_prior_shrinkage_k": round(p4_shrinkage_k, 6),
+            "selected_use_shrunk_prior_rates": use_shrunk_prior_rates,
             "sample_reliability": round(sample_reliability, 6),
             "shrunk_close_positive_rate": round(shrunk_next_close_positive_rate, 6),
             "shrunk_high_hit_rate": round(shrunk_next_high_hit_rate, 6),

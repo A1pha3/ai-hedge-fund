@@ -196,6 +196,40 @@ class TestP4DecisionPath:
         assert shrunk_result.score_target < baseline_result.score_target
         assert shrunk_result.metrics_payload["historical_continuation_prior_score"]["next_close_positive_rate"] == pytest.approx(shrunk_result.explainability_payload["historical_prior"]["shrunk_close_positive_rate"])
 
+    def test_p4_enforce_can_keep_calibrated_rates_when_profile_disables_shrunk_prior_usage(self, monkeypatch: pytest.MonkeyPatch, catalyst_theme_entry: dict[str, object]) -> None:
+        monkeypatch.setenv(BTST_0422_P4_PRIOR_SHRINKAGE_MODE_ENV, "enforce")
+        profile_overrides = {
+            "select_threshold": 0.8,
+            "near_miss_threshold": 0.65,
+            "selected_breakout_freshness_min": 0.0,
+            "selected_trend_acceleration_min": 0.0,
+            "near_miss_breakout_freshness_min": 0.0,
+            "near_miss_trend_acceleration_min": 0.0,
+            "breakout_freshness_weight": 0.0,
+            "trend_acceleration_weight": 0.0,
+            "volume_expansion_quality_weight": 0.0,
+            "close_strength_weight": 0.0,
+            "sector_resonance_weight": 0.0,
+            "catalyst_freshness_weight": 0.0,
+            "layer_c_alignment_weight": 0.0,
+            "historical_continuation_score_weight": 1.0,
+            "stale_score_penalty_weight": 0.0,
+            "overhead_score_penalty_weight": 0.0,
+            "extension_score_penalty_weight": 0.0,
+            "layer_c_avoid_penalty": 0.0,
+            "p4_prior_shrinkage_k": 20.0,
+            "selected_use_shrunk_prior_rates": False,
+        }
+
+        with use_short_trade_target_profile(profile_name="default", overrides=profile_overrides):
+            result = evaluate_short_trade_rejected_target(trade_date="20260422", entry=catalyst_theme_entry)
+
+        assert result.decision == "selected"
+        assert result.explainability_payload["historical_prior"]["effective_prior_rate_source"] == "calibrated"
+        assert result.metrics_payload["historical_continuation_prior_score"]["next_close_positive_rate"] == pytest.approx(
+            result.explainability_payload["historical_prior"]["calibrated_next_close_positive_rate"]
+        )
+
     def test_p3_hard_reject_still_wins_when_p4_is_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(BTST_0422_P4_PRIOR_SHRINKAGE_MODE_ENV, "enforce")
         monkeypatch.setenv("BTST_0422_P3_PRIOR_QUALITY_MODE", "enforce")
@@ -227,6 +261,23 @@ class TestP4DecisionPath:
 
 
 class TestArtifactObservability:
+    def test_p4_baseline_becomes_gate_aware_for_same_quality_bucket(self) -> None:
+        common_prior = {
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 2,
+            "same_ticker_sample_count": 2,
+            "next_high_hit_rate_at_threshold": 0.55,
+            "next_close_positive_rate": 0.55,
+            "next_open_to_close_return_mean": 0.01,
+        }
+
+        aggressive_prior = calibrate_short_trade_historical_prior({**common_prior, "btst_regime_gate": "aggressive_trade"})
+        halt_prior = calibrate_short_trade_historical_prior({**common_prior, "btst_regime_gate": "halt"})
+
+        assert aggressive_prior["prior_baseline_next_close_positive_rate"] > halt_prior["prior_baseline_next_close_positive_rate"]
+        assert aggressive_prior["prior_baseline_next_high_hit_rate_at_threshold"] > halt_prior["prior_baseline_next_high_hit_rate_at_threshold"]
+
     def test_selection_artifact_surfaces_raw_and_shrunk_prior_metrics(self, tmp_path: Path) -> None:
         writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_p4_meta")
         short_trade = TargetEvaluationResult(
