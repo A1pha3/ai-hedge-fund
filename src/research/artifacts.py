@@ -5,11 +5,17 @@ import os
 from pathlib import Path
 from typing import Any, Protocol, TYPE_CHECKING
 
+from src.execution.daily_pipeline_candidate_helpers import (
+    qualify_short_trade_boundary_candidate_from_snapshot,
+)
 from src.execution.daily_pipeline import (
     FAST_AGENT_MAX_TICKERS,
     FAST_AGENT_SCORE_THRESHOLD,
     PRECISE_AGENT_MAX_TICKERS,
     WATCHLIST_SCORE_THRESHOLD,
+)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (
+    _compute_short_trade_boundary_candidate_score,
 )
 from src.research.models import (
     DualTargetDeltaView,
@@ -22,6 +28,7 @@ from src.research.models import (
     ShortTradeTargetView,
 )
 from src.research.review_renderer import render_selection_review
+from src.utils.env_helpers import get_env_float
 
 if TYPE_CHECKING:
     from src.execution.daily_pipeline import DailyPipeline
@@ -484,6 +491,45 @@ def _attach_market_state_to_entries(entries: list[dict[str, Any]], *, market_sta
     return attached_entries
 
 
+def _resolve_short_trade_boundary_thresholds_for_replay() -> dict[str, float]:
+    return {
+        "candidate_score_min": get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN", 0.20),
+        "breakout_freshness_min": get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_BREAKOUT_MIN", 0.08),
+        "trend_acceleration_min": get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_TREND_MIN", 0.18),
+        "volume_expansion_quality_min": get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_VOLUME_MIN", 0.10),
+        "catalyst_freshness_min": get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN", 0.08),
+    }
+
+
+def _recompute_frozen_sidecar_supplemental_short_trade_entries(plan: ExecutionPlan) -> list[dict[str, Any]] | None:
+    risk_metrics = dict((plan.risk_metrics or {}) or {})
+    sidecar_payload = dict(risk_metrics.get("frozen_selection_target_replay_input", {}) or {})
+    sidecar_entries = list(sidecar_payload.get("supplemental_short_trade_entries") or [])
+    if not sidecar_entries:
+        return None
+
+    thresholds = _resolve_short_trade_boundary_thresholds_for_replay()
+    retained_entries: list[dict[str, Any]] = []
+    for entry in sidecar_entries:
+        normalized_entry = dict(entry or {})
+        if str(normalized_entry.get("candidate_source") or "") != "short_trade_boundary":
+            retained_entries.append(normalized_entry)
+            continue
+        snapshot = dict(normalized_entry.get("short_trade_boundary_metrics") or normalized_entry.get("metrics") or {})
+        qualified, _, _ = qualify_short_trade_boundary_candidate_from_snapshot(
+            snapshot=snapshot,
+            compute_candidate_score_fn=_compute_short_trade_boundary_candidate_score,
+            breakout_min=float(thresholds["breakout_freshness_min"]),
+            trend_min=float(thresholds["trend_acceleration_min"]),
+            volume_min=float(thresholds["volume_expansion_quality_min"]),
+            catalyst_min=float(thresholds["catalyst_freshness_min"]),
+            candidate_score_min=float(thresholds["candidate_score_min"]),
+        )
+        if qualified:
+            retained_entries.append(normalized_entry)
+    return retained_entries
+
+
 def _serialize_layer_c_result_for_replay(item: LayerCResult, *, candidate_source: str, market_state_payload: dict[str, Any]) -> dict[str, Any]:
     item_market_state = _serialize_market_state_payload(getattr(item, "market_state", None))
     return {
@@ -527,11 +573,13 @@ def build_selection_target_replay_input(
         list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []),
         market_state_payload=market_state_payload,
     )
-    supplemental_short_trade_entries = [
-        *list(short_trade_candidate_filters.get("tickers", []) or []),
-        *list(short_trade_candidate_filters.get("released_shadow_entries", []) or []),
-        *list(watchlist_filter.get("released_shadow_entries", []) or []),
-    ]
+    supplemental_short_trade_entries = _recompute_frozen_sidecar_supplemental_short_trade_entries(plan)
+    if supplemental_short_trade_entries is None:
+        supplemental_short_trade_entries = [
+            *list(short_trade_candidate_filters.get("tickers", []) or []),
+            *list(short_trade_candidate_filters.get("released_shadow_entries", []) or []),
+            *list(watchlist_filter.get("released_shadow_entries", []) or []),
+        ]
     supplemental_short_trade_entries = _attach_market_state_to_entries(
         supplemental_short_trade_entries,
         market_state_payload=market_state_payload,

@@ -19,6 +19,7 @@
 - 使用 ai-hedge-fund-btst skill，生成 4 月 21 日的 BTST 全套文档，使用 4 月 20 日收盘数据，保存到 outputs/202604/20260421/。
 - 使用 ai-hedge-fund-btst skill，生成 4 月 22 日的 BTST 全套文档，使用 4 月 21 日收盘数据，保存到 outputs/202604/20260422/。
 - 使用 ai-hedge-fund-btst skill，生成 4 月 23 日的 BTST 全套文档，使用 4 月 22 日收盘数据，保存到 outputs/202604/20260423/。
+- 使用 ai-hedge-fund-btst skill，生成 4 月 23 日的 BTST 全套文档，使用 4 月 22 日收盘数据，保存到 outputs/202604/20260423/。
 - 使用 ai-hedge-fund-btst skill，生成明天的 BTST 全套文档，保存到默认目录。
 
 ## Daily Optimize

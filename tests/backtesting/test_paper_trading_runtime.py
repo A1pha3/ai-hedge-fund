@@ -2005,3 +2005,280 @@ def test_run_paper_trading_session_applies_p3_prior_quality_enforcement_during_f
         "p3_execution_blocked_count": 1,
         "buy_orders_removed": 1,
     }
+
+
+def test_run_paper_trading_session_applies_p3_prior_quality_enforcement_from_sidecar_replay_input(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTST_0422_P3_PRIOR_QUALITY_MODE", "enforce")
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {"2024-03-01": 10.0, "2024-03-04": 11.0},
+            "SPY": {"2024-03-01": 100.0, "2024-03-04": 101.0},
+        },
+    )
+
+    source_path = tmp_path / "p3_sidecar_frozen_daily_events.jsonl"
+    profile = build_short_trade_target_profile("default")
+    frozen_plan = ExecutionPlan(
+        date="20240301",
+        target_mode="short_trade_only",
+        short_trade_target_profile_name=profile.name,
+        short_trade_target_profile_config=_serialize_short_trade_target_profile(profile),
+        selection_targets={
+            "AAPL": DualTargetEvaluation(
+                ticker="AAPL",
+                trade_date="20240301",
+                short_trade=TargetEvaluationResult(target_type="short_trade", decision="selected"),
+            )
+        },
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"buy_order_count": 1}},
+    )
+    source_path.write_text(
+        json.dumps({"event": "paper_trading_day", "trade_date": "20240301", "current_plan": frozen_plan.model_dump()}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    sidecar_dir = tmp_path / "selection_artifacts" / "2024-03-01"
+    sidecar_dir.mkdir(parents=True)
+    (sidecar_dir / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2024-03-01",
+                "selection_targets": {
+                    "AAPL": {
+                        "short_trade": {
+                            "decision": "selected",
+                            "explainability_payload": {
+                                "historical_prior": {
+                                    "evaluable_count": 3,
+                                    "next_high_hit_rate_at_threshold": 0.25,
+                                    "next_close_positive_rate": 0.46,
+                                }
+                            },
+                        }
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        output_dir=tmp_path / "paper_trading_p3_sidecar_frozen_replay",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=source_path,
+        selection_target="short_trade_only",
+    )
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    current_plan = lines[0]["current_plan"]
+    assert current_plan["buy_orders"] == []
+    assert current_plan["selection_targets"]["AAPL"]["p3_execution_blocked"] is True
+    assert current_plan["risk_metrics"]["btst_prior_quality_p3_enforcement"] == {
+        "mode": "enforce",
+        "p3_execution_blocked_count": 1,
+        "buy_orders_removed": 1,
+    }
+
+
+def test_run_paper_trading_session_applies_p6_risk_budget_enforcement_during_frozen_replay(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {"2024-03-01": 10.0, "2024-03-04": 11.0},
+            "SPY": {"2024-03-01": 100.0, "2024-03-04": 101.0},
+        },
+    )
+    monkeypatch.setattr(
+        "src.execution.daily_pipeline.build_candidate_pool",
+        lambda trade_date: (_ for _ in ()).throw(AssertionError("live pipeline should not run during frozen replay")),
+    )
+
+    source_path = tmp_path / "p6_frozen_daily_events.jsonl"
+    profile = build_short_trade_target_profile("default")
+    frozen_plan = ExecutionPlan(
+        date="20240301",
+        target_mode="short_trade_only",
+        short_trade_target_profile_name=profile.name,
+        short_trade_target_profile_config=_serialize_short_trade_target_profile(profile),
+        selection_targets={
+            "AAPL": DualTargetEvaluation(
+                ticker="AAPL",
+                trade_date="20240301",
+                execution_eligible=False,
+                p3_prior_quality_label="watch_only",
+                historical_prior_quality_level="watch_only",
+                btst_regime_gate="normal_trade",
+                short_trade=TargetEvaluationResult(
+                    target_type="short_trade",
+                    decision="selected",
+                    execution_eligible=False,
+                    score_target=0.81,
+                    metrics_payload={
+                        "thresholds": {
+                            "market_state_threshold_adjustment": {
+                                "enabled": True,
+                                "regime_gate_level": "normal_trade",
+                                "risk_level": "normal_trade",
+                            }
+                        }
+                    },
+                ),
+            )
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="AAPL",
+                score_b=0.82,
+                score_c=0.75,
+                score_final=0.81,
+                quality_score=0.72,
+                decision="watch",
+            )
+        ],
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.81, execution_ratio=1.0, quality_score=0.72)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"buy_order_count": 1}},
+    )
+    source_path.write_text(
+        json.dumps({"event": "paper_trading_day", "trade_date": "20240301", "current_plan": frozen_plan.model_dump()}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        output_dir=tmp_path / "paper_trading_p6_frozen_replay",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=source_path,
+        selection_target="short_trade_only",
+    )
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    current_plan = lines[0]["current_plan"]
+    assert current_plan["buy_orders"] == []
+    assert current_plan["risk_metrics"]["btst_risk_budget_p6_enforcement"] == {
+        "mode": "enforce",
+        "gate_distribution": {"normal_trade": 1},
+        "formal_exposure_distribution": {"zero_budget": 1},
+        "suppressed_position_summary": {
+            "zero_budget_count": 1,
+            "reduced_budget_count": 0,
+        },
+    }
+    assert current_plan["selection_targets"]["AAPL"]["short_trade"]["metrics_payload"]["p6_risk_budget"]["formal_exposure_bucket"] == "zero_budget"
+
+
+def test_run_paper_trading_session_recomputes_boundary_supplemental_entries_from_sidecar_during_frozen_replay(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_TREND_MIN", "0.36")
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {"2024-03-01": 10.0, "2024-03-04": 11.0},
+            "SPY": {"2024-03-01": 100.0, "2024-03-04": 101.0},
+        },
+    )
+    monkeypatch.setattr(
+        "src.execution.daily_pipeline.build_candidate_pool",
+        lambda trade_date: (_ for _ in ()).throw(AssertionError("live pipeline should not run during frozen replay")),
+    )
+
+    boundary_entries = [
+        {
+            "ticker": "601698",
+            "candidate_source": "short_trade_boundary",
+            "short_trade_boundary_metrics": {
+                "breakout_freshness": 0.3784,
+                "trend_acceleration": 0.34,
+                "volume_expansion_quality": 0.4659,
+                "catalyst_freshness": 0.0955,
+                "close_strength": 0.3092,
+                "candidate_score": 0.3370,
+                "gate_status": {"data": "pass", "structural": "pass"},
+                "blockers": [],
+            },
+        },
+        {
+            "ticker": "002353",
+            "candidate_source": "short_trade_boundary",
+            "short_trade_boundary_metrics": {
+                "breakout_freshness": 0.4384,
+                "trend_acceleration": 0.65,
+                "volume_expansion_quality": 0.2807,
+                "catalyst_freshness": 0.0955,
+                "close_strength": 0.9246,
+                "candidate_score": 0.4569,
+                "gate_status": {"data": "pass", "structural": "pass"},
+                "blockers": [],
+            },
+        },
+    ]
+
+    source_path = tmp_path / "boundary_frozen_daily_events.jsonl"
+    profile = build_short_trade_target_profile("default")
+    frozen_plan = ExecutionPlan(
+        date="20240301",
+        target_mode="short_trade_only",
+        short_trade_target_profile_name=profile.name,
+        short_trade_target_profile_config=_serialize_short_trade_target_profile(profile),
+        selection_targets={},
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"buy_order_count": 1},
+            "funnel_diagnostics": {
+                "filters": {
+                    "short_trade_candidates": {
+                        "tickers": boundary_entries,
+                    }
+                }
+            },
+        },
+    )
+    source_path.write_text(
+        json.dumps({"event": "paper_trading_day", "trade_date": "20240301", "current_plan": frozen_plan.model_dump()}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    sidecar_dir = tmp_path / "selection_artifacts" / "2024-03-01"
+    sidecar_dir.mkdir(parents=True)
+    (sidecar_dir / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2024-03-01",
+                "supplemental_short_trade_entries": boundary_entries,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        output_dir=tmp_path / "paper_trading_boundary_sidecar_frozen_replay",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=source_path,
+        selection_target="short_trade_only",
+    )
+
+    replay_input_path = artifacts.selection_artifact_root / "2024-03-01" / "selection_target_replay_input.json"
+    replay_input = json.loads(replay_input_path.read_text(encoding="utf-8"))
+    supplemental_entries = list(replay_input.get("supplemental_short_trade_entries") or [])
+
+    assert [entry["ticker"] for entry in supplemental_entries] == ["002353"]

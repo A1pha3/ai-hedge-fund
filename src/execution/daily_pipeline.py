@@ -18,6 +18,7 @@ from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     build_buy_orders_with_diagnostics as build_buy_orders_with_diagnostics_impl,
 )
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
+    _apply_btst_risk_budget_overlay_to_plan,
     _resolve_btst_position_budget,
     build_reentry_filter_payload,
 )
@@ -1112,6 +1113,89 @@ class DailyPipeline:
         plan.risk_metrics = risk_metrics
         return plan
 
+    def _apply_frozen_p6_risk_budget_overlay(self, plan: ExecutionPlan) -> ExecutionPlan:
+        if _resolve_btst_risk_budget_p6_mode() != "enforce":
+            return plan
+
+        plan = plan.model_copy(deep=True)
+        selection_targets = dict(plan.selection_targets or {})
+        watchlist_by_ticker = {item.ticker: item for item in plan.watchlist}
+        nav = float((plan.portfolio_snapshot or {}).get("cash", 0.0) or 0.0)
+        nav += sum(
+            float(position.get("long", 0) or 0) * float(position.get("long_cost_basis", 0.0) or 0.0)
+            for position in dict((plan.portfolio_snapshot or {}).get("positions", {}) or {}).values()
+        )
+        nav = nav if nav > 0 else 1.0
+
+        filtered_entries: list[dict[str, Any]] = []
+        updated_orders = []
+        any_overlay_change = False
+        for order in list(plan.buy_orders or []):
+            item = watchlist_by_ticker.get(order.ticker)
+            selection_target = selection_targets.get(order.ticker)
+            if item is None or selection_target is None:
+                updated_orders.append(order)
+                continue
+
+            shares = int(getattr(order, "shares", 0) or 0)
+            amount = float(getattr(order, "amount", 0.0) or 0.0)
+            current_price = (amount / shares) if shares > 0 and amount > 0 else 0.0
+            if current_price <= 0:
+                updated_orders.append(order)
+                continue
+
+            budget = _resolve_btst_position_budget(
+                item=item,
+                selection_target=selection_target,
+                candidate=None,
+                nav=nav,
+            )
+            updated_order = _apply_btst_risk_budget_overlay_to_plan(
+                plan=order,
+                budget=budget,
+                current_price=current_price,
+            )
+            any_overlay_change = any_overlay_change or updated_order != order
+            if int(getattr(updated_order, "shares", 0) or 0) > 0:
+                updated_orders.append(updated_order)
+                continue
+
+            filtered_entries.append(
+                {
+                    "ticker": order.ticker,
+                    "reason": "position_blocked_risk_budget_overlay",
+                    "score_final": round(float(getattr(item, "score_final", getattr(order, "score_final", 0.0)) or 0.0), 4),
+                    "constraint_binding": getattr(updated_order, "constraint_binding", ""),
+                    "amount": round(float(getattr(updated_order, "amount", 0.0) or 0.0), 4),
+                    "execution_ratio": float(getattr(updated_order, "execution_ratio", 0.0) or 0.0),
+                    "quality_score": round(float(getattr(item, "quality_score", getattr(order, "quality_score", 0.0)) or 0.0), 4),
+                    "risk_budget_gate": str(budget.get("risk_budget_gate") or ""),
+                    "risk_budget_ratio": round(float(budget.get("formal_risk_budget_ratio", 1.0) or 0.0), 4),
+                    "formal_exposure_bucket": str(budget.get("formal_exposure_bucket") or ""),
+                    "execution_contract_bucket": str(budget.get("execution_contract_bucket") or ""),
+                }
+            )
+
+        if filtered_entries or any_overlay_change:
+            plan.buy_orders = updated_orders
+            risk_metrics = dict(plan.risk_metrics or {})
+            counts = dict(risk_metrics.get("counts", {}))
+            funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+            filters = dict(funnel_diagnostics.get("filters", {}) or {})
+            existing_buy_order_summary = dict(filters.get("buy_orders", {}) or {})
+            existing_entries = list(existing_buy_order_summary.get("tickers", []))
+            existing_entries.extend(filtered_entries)
+            buy_order_summary = _build_filter_summary(existing_entries)
+            buy_order_summary["selected_tickers"] = [order.ticker for order in updated_orders]
+            filters["buy_orders"] = buy_order_summary
+            funnel_diagnostics["filters"] = filters
+            counts["buy_order_count"] = len(updated_orders)
+            risk_metrics["counts"] = counts
+            risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+            plan.risk_metrics = risk_metrics
+
+        return _attach_btst_risk_budget_p6(plan)
+
     def run_post_market(self, trade_date: str, portfolio_snapshot: dict | None = None, blocked_buy_tickers: dict[str, dict] | None = None) -> ExecutionPlan:
         sync_phase4_test_overrides(globals())
         blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
@@ -1121,10 +1205,11 @@ class DailyPipeline:
                 raise ValueError(f"Missing frozen current_plan for trade_date={trade_date}")
             plan = self._apply_frozen_buy_order_filters(frozen_plan, trade_date, blocked_buy_tickers)
             plan = _enforce_btst_regime_gate_p2(_attach_btst_regime_gate_shadow(plan))
-            return _enforce_btst_prior_quality_p3(
+            plan = _enforce_btst_prior_quality_p3(
                 plan,
                 prior_by_ticker=_extract_frozen_prior_by_ticker(plan),
             )
+            return self._apply_frozen_p6_risk_budget_overlay(plan)
 
         total_started_at = perf_counter()
         portfolio_snapshot = portfolio_snapshot or {"cash": 1_000_000, "positions": {}}
