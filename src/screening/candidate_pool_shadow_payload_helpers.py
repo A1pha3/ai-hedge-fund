@@ -138,6 +138,7 @@ def _build_shadow_lane_payloads(
     select_shadow_rows_fn: Callable[..., list[tuple[float, int, CandidateStock, bool, bool]]],
     build_shadow_lane_payload_fn: Callable[..., tuple[list[CandidateStock], list[dict[str, Any]]]],
     shadow_liquidity_corridor_max_tickers: int,
+    shadow_liquidity_corridor_focus_low_gate_max_cutoff_share: float,
     shadow_rebucket_max_tickers: int,
 ) -> tuple[list[CandidateStock], list[dict[str, Any]]]:
     shadow_candidates: list[CandidateStock] = []
@@ -167,6 +168,13 @@ def _build_shadow_lane_payloads(
             visibility_gap_tickers=visibility_gap_tickers,
             liquidity_sort_key=candidate_liquidity_sort_key_fn,
         )
+        if lane == "layer_a_liquidity_corridor" and not focus_tickers and not visibility_gap_tickers:
+            selected_rows = _reserve_default_deep_corridor_probe(
+                rows=rows,
+                selected_rows=selected_rows,
+                max_tickers=max_tickers,
+                cutoff_share_max=shadow_liquidity_corridor_focus_low_gate_max_cutoff_share,
+            )
         lane_shadow_candidates, lane_shadow_entries = build_shadow_lane_payload_fn(
             selected_rows=selected_rows,
             cutoff_reference=cutoff_avg_volume,
@@ -180,6 +188,41 @@ def _build_shadow_lane_payloads(
         shadow_candidates.extend(lane_shadow_candidates)
         shadow_entries.extend(lane_shadow_entries)
     return shadow_candidates, shadow_entries
+
+
+def _reserve_default_deep_corridor_probe(
+    *,
+    rows: list[tuple[float, int, CandidateStock, bool, bool]],
+    selected_rows: list[tuple[float, int, CandidateStock, bool, bool]],
+    max_tickers: int,
+    cutoff_share_max: float,
+) -> list[tuple[float, int, CandidateStock, bool, bool]]:
+    if max_tickers < 2 or len(selected_rows) >= len(rows):
+        return selected_rows
+    deep_rows = [
+        row
+        for row in rows
+        if 0.0 < float(row[2].candidate_pool_avg_amount_share_of_cutoff or 0.0) <= float(cutoff_share_max)
+    ]
+    if not deep_rows:
+        return selected_rows
+    selected_tickers = {row[2].ticker for row in selected_rows}
+    deepest_row = min(
+        deep_rows,
+        key=lambda row: (
+            float(row[2].candidate_pool_avg_amount_share_of_cutoff or 1.0),
+            -float(row[0]),
+            int(row[1]),
+            str(row[2].ticker),
+        ),
+    )
+    if deepest_row[2].ticker in selected_tickers:
+        return selected_rows
+    retained_rows = list(selected_rows[: max(0, max_tickers - 1)])
+    retained_tickers = {row[2].ticker for row in retained_rows}
+    if deepest_row[2].ticker in retained_tickers:
+        return retained_rows
+    return retained_rows + [deepest_row]
 
 
 def _build_shadow_candidate_pool_summary(
@@ -261,6 +304,7 @@ def _resolve_shadow_overflow_payload(
         select_shadow_rows_fn=select_shadow_rows_fn,
         build_shadow_lane_payload_fn=build_shadow_lane_payload_fn,
         shadow_liquidity_corridor_max_tickers=shadow_liquidity_corridor_max_tickers,
+        shadow_liquidity_corridor_focus_low_gate_max_cutoff_share=shadow_liquidity_corridor_focus_low_gate_max_cutoff_share,
         shadow_rebucket_max_tickers=shadow_rebucket_max_tickers,
     )
     return shadow_candidates, shadow_entries, len(overflow_candidates), cutoff_avg_volume

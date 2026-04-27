@@ -609,6 +609,14 @@ def _apply_ticker_historical_prior_boost(
         effective_select_threshold = min(0.95, effective_select_threshold + 0.05)
         effective_near_miss_threshold = min(0.95, effective_near_miss_threshold + 0.03)
         return effective_select_threshold, effective_near_miss_threshold
+    if evaluable_count >= 20 and next_close_positive_rate < 0.35:
+        effective_select_threshold = min(0.95, effective_select_threshold + 0.06)
+        effective_near_miss_threshold = min(effective_select_threshold, effective_near_miss_threshold + 0.03)
+        return effective_select_threshold, effective_near_miss_threshold
+    if evaluable_count >= 10 and next_close_positive_rate < 0.45:
+        effective_select_threshold = min(0.95, effective_select_threshold + 0.03)
+        effective_near_miss_threshold = min(effective_select_threshold, effective_near_miss_threshold + 0.015)
+        return effective_select_threshold, effective_near_miss_threshold
     if evaluable_count >= 10 and next_high_hit_rate >= 0.80 and next_close_positive_rate >= 0.60:
         select_boost = 0.06
     elif evaluable_count >= 5 and next_high_hit_rate >= 0.70 and next_close_positive_rate >= 0.50:

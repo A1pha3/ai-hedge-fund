@@ -206,3 +206,23 @@ def test_analyze_btst_candidate_pool_corridor_narrow_probe_surfaces_deepest_corr
     markdown = render_btst_candidate_pool_corridor_narrow_probe_markdown(analysis)
     assert "deepest_corridor_focus_tickers" in markdown
     assert "688796" in markdown
+
+
+def test_analyze_btst_candidate_pool_corridor_narrow_probe_stays_scoped_to_custom_recall_dossier(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    recall_dossier_path = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_stage_counts": {"candidate_pool_truncated_after_filters": 2},
+            "priority_ticker_dossiers": [],
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_narrow_probe(
+        candidate_pool_recall_dossier_path=recall_dossier_path,
+    )
+
+    assert analysis["verdict"] == "insufficient_corridor_recall_inputs"
+    assert analysis["deepest_corridor_focus_tickers"] == []
+    assert analysis["excluded_low_gate_tail_tickers"] == []

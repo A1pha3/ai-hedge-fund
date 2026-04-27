@@ -1,13 +1,35 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+from contextlib import contextmanager
 from collections.abc import Callable
 
 if TYPE_CHECKING:
     from src.backtesting.types import PerformanceMetrics
     from src.execution.daily_pipeline import DailyPipeline
     from src.paper_trading.runtime import PaperTradingArtifacts, SessionRuntimeContext
+
+
+_FORMAL_BTST_SELECTION_TARGETS = frozenset({"short_trade_only", "dual_target"})
+
+
+@contextmanager
+def _apply_default_btst_formal_flow_flags(*, selection_target: str):
+    normalized_selection_target = str(selection_target or "").strip().lower()
+    should_default_p2 = normalized_selection_target in _FORMAL_BTST_SELECTION_TARGETS and not str(os.getenv("BTST_0422_P2_REGIME_GATE_MODE", "") or "").strip()
+    previous_p2_mode = os.environ.get("BTST_0422_P2_REGIME_GATE_MODE")
+    if should_default_p2:
+        os.environ["BTST_0422_P2_REGIME_GATE_MODE"] = "enforce"
+    try:
+        yield
+    finally:
+        if should_default_p2:
+            if previous_p2_mode is None:
+                os.environ.pop("BTST_0422_P2_REGIME_GATE_MODE", None)
+            else:
+                os.environ["BTST_0422_P2_REGIME_GATE_MODE"] = previous_p2_mode
 
 
 def finalize_runtime_run(
@@ -76,38 +98,39 @@ def run_paper_trading_session(
     run_runtime_backtest_fn: Callable[[SessionRuntimeContext], PerformanceMetrics],
     finalize_runtime_run_fn: Callable[..., PaperTradingArtifacts],
 ) -> PaperTradingArtifacts:
-    context = prepare_session_runtime_context_fn(
-        output_dir=output_dir,
-        frozen_plan_source=frozen_plan_source,
-        model_name=model_name,
-        model_provider=model_provider,
-        pipeline=pipeline,
-        selected_analysts=selected_analysts,
-        fast_selected_analysts=fast_selected_analysts,
-        short_trade_target_profile_name=short_trade_target_profile_name,
-        short_trade_target_profile_overrides=short_trade_target_profile_overrides,
-        selection_target=selection_target,
-        agent=agent,
-        tickers=tickers,
-        start_date=start_date,
-        end_date=end_date,
-        initial_capital=initial_capital,
-        initial_margin_requirement=initial_margin_requirement,
-    )
-    metrics = run_runtime_backtest_fn(context)
-    return finalize_runtime_run_fn(
-        context=context,
-        metrics=metrics,
-        start_date=start_date,
-        end_date=end_date,
-        tickers=tickers,
-        initial_capital=initial_capital,
-        selected_analysts=selected_analysts,
-        fast_selected_analysts=fast_selected_analysts,
-        short_trade_target_profile_name=short_trade_target_profile_name,
-        short_trade_target_profile_overrides=short_trade_target_profile_overrides,
-        selection_target=selection_target,
-        cache_benchmark=cache_benchmark,
-        cache_benchmark_ticker=cache_benchmark_ticker,
-        cache_benchmark_clear_first=cache_benchmark_clear_first,
-    )
+    with _apply_default_btst_formal_flow_flags(selection_target=selection_target):
+        context = prepare_session_runtime_context_fn(
+            output_dir=output_dir,
+            frozen_plan_source=frozen_plan_source,
+            model_name=model_name,
+            model_provider=model_provider,
+            pipeline=pipeline,
+            selected_analysts=selected_analysts,
+            fast_selected_analysts=fast_selected_analysts,
+            short_trade_target_profile_name=short_trade_target_profile_name,
+            short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+            selection_target=selection_target,
+            agent=agent,
+            tickers=tickers,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            initial_margin_requirement=initial_margin_requirement,
+        )
+        metrics = run_runtime_backtest_fn(context)
+        return finalize_runtime_run_fn(
+            context=context,
+            metrics=metrics,
+            start_date=start_date,
+            end_date=end_date,
+            tickers=tickers,
+            initial_capital=initial_capital,
+            selected_analysts=selected_analysts,
+            fast_selected_analysts=fast_selected_analysts,
+            short_trade_target_profile_name=short_trade_target_profile_name,
+            short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+            selection_target=selection_target,
+            cache_benchmark=cache_benchmark,
+            cache_benchmark_ticker=cache_benchmark_ticker,
+            cache_benchmark_clear_first=cache_benchmark_clear_first,
+        )

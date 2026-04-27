@@ -107,12 +107,39 @@ def _analyze_deepest_corridor_split(candidate_pool_recall_dossier: dict[str, Any
     }
 
 
+def _build_insufficient_corridor_recall_analysis(recall_dossier_path: str | Path) -> dict[str, Any]:
+    return {
+        "focus_ticker": "",
+        "anchor_trade_date": None,
+        "target_trade_date": None,
+        "anchor_decision": None,
+        "target_decision": None,
+        "anchor_score_target": None,
+        "target_score_target": None,
+        "score_target_delta_vs_anchor": None,
+        "anchor_effective_select_threshold": None,
+        "target_effective_select_threshold": None,
+        "threshold_override_gap_vs_anchor": None,
+        "target_gap_to_selected": None,
+        "deepest_corridor_focus_tickers": [],
+        "excluded_low_gate_tail_tickers": [],
+        "standard_corridor_tickers": [],
+        "low_gate_focus_max_cutoff_share": SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
+        "verdict": "insufficient_corridor_recall_inputs",
+        "recommendation": "Custom corridor recall dossier did not include priority_ticker_dossiers, so narrow-probe diagnostics stayed scoped to the provided dossier instead of falling back to unrelated default reports.",
+        "source_reports": {
+            "candidate_pool_recall_dossier": str(Path(recall_dossier_path).expanduser().resolve()),
+        },
+    }
+
+
 def analyze_btst_candidate_pool_corridor_narrow_probe(
     *,
     candidate_pool_recall_dossier_path: str | Path = DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH,
     candidate_dossier_path: str | Path = DEFAULT_CANDIDATE_DOSSIER_PATH,
     command_board_path: str | Path = DEFAULT_COMMAND_BOARD_PATH,
 ) -> dict[str, Any]:
+    resolved_recall_dossier_path = Path(candidate_pool_recall_dossier_path).expanduser().resolve()
     legacy_mode_requested = (
         Path(candidate_dossier_path).expanduser().resolve() != DEFAULT_CANDIDATE_DOSSIER_PATH.expanduser().resolve()
         or Path(command_board_path).expanduser().resolve() != DEFAULT_COMMAND_BOARD_PATH.expanduser().resolve()
@@ -123,6 +150,8 @@ def analyze_btst_candidate_pool_corridor_narrow_probe(
             deepest_corridor_analysis = _analyze_deepest_corridor_split(recall_dossier, candidate_pool_recall_dossier_path)
             if deepest_corridor_analysis:
                 return deepest_corridor_analysis
+            if resolved_recall_dossier_path != DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH.expanduser().resolve():
+                return _build_insufficient_corridor_recall_analysis(candidate_pool_recall_dossier_path)
 
     diagnostics = analyze_btst_candidate_pool_corridor_window_diagnostics(
         candidate_dossier_path=candidate_dossier_path,

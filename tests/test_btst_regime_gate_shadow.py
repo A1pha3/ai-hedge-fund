@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.execution.daily_pipeline import _resolve_effective_short_trade_target_profile_name
 from src.execution.daily_pipeline import _attach_btst_regime_gate_shadow
 from src.execution.models import ExecutionPlan
 from src.screening.market_state_helpers import classify_btst_regime_gate
@@ -59,6 +60,26 @@ def test_classify_btst_regime_gate_defaults_to_normal_trade() -> None:
 
     assert gate["gate"] == "normal_trade"
     assert gate["profile_hint"] == "btst_precision_v2"
+
+
+def test_resolve_effective_short_trade_target_profile_name_adapts_default_profile_for_risk_off() -> None:
+    market_state = MarketState(
+        breadth_ratio=0.377877,
+        daily_return=-0.003543,
+        limit_up_down_ratio=2.95,
+        adx=35.5263,
+        style_dispersion=0.21643,
+        regime_flip_risk=0.234638,
+        regime_gate_level="risk_off",
+    )
+
+    effective_profile_name = _resolve_effective_short_trade_target_profile_name(
+        requested_profile_name="default",
+        requested_profile_overrides={},
+        market_state=market_state,
+    )
+
+    assert effective_profile_name == "conservative"
 
 
 def test_attach_btst_regime_gate_shadow_is_noop_when_flag_off(monkeypatch) -> None:

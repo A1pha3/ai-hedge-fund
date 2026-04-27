@@ -9,6 +9,9 @@ from src.targets.short_trade_target import (
     evaluate_short_trade_rejected_target,
     evaluate_short_trade_selected_target,
 )
+from src.targets.short_trade_target_snapshot_relief_helpers import (
+    _apply_ticker_historical_prior_boost,
+)
 from src.targets.short_trade_target_prior_helpers import (
     calibrate_short_trade_historical_prior,
     score_short_trade_historical_continuation_prior,
@@ -458,6 +461,21 @@ def _make_non_catalyst_supply_probe_entry() -> dict:
     entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 0.0
     entry["strategy_signals"]["mean_reversion"] = _make_signal(1, 62.0).model_dump(mode="json")
     entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.10, "investor": 0.06}}
+    return entry
+
+
+def _make_weak_large_sample_close_continuation_frontier_entry() -> dict:
+    entry = _make_strong_close_continuation_selected_frontier_entry()
+    entry["ticker"] = "600522"
+    entry["historical_prior"] = {
+        "execution_quality_label": "close_continuation",
+        "entry_timing_bias": "confirm_then_hold",
+        "evaluable_count": 54,
+        "next_high_hit_rate_at_threshold": 0.5185,
+        "next_close_positive_rate": 0.1852,
+        "next_open_to_close_return_mean": -0.011,
+        "execution_note": "历史确认后延续很弱，不应继续按强 continuation 放松 formal admission。",
+    }
     return entry
 
 
@@ -3614,6 +3632,34 @@ def test_historical_execution_relief_promotes_strong_close_continuation_frontier
     assert relief_result.metrics_payload["historical_execution_relief"]["effective_select_threshold"] == 0.37
     assert relief_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.37
     assert relief_result.explainability_payload["historical_execution_relief"]["effective_select_threshold"] == 0.37
+
+
+def test_apply_ticker_historical_prior_boost_raises_thresholds_for_large_sample_weak_prior() -> None:
+    effective_select_threshold, effective_near_miss_threshold = _apply_ticker_historical_prior_boost(
+        effective_select_threshold=0.55,
+        effective_near_miss_threshold=0.28,
+        historical_execution_relief={
+            "evaluable_count": 54,
+            "next_high_hit_rate_at_threshold": 0.5185,
+            "next_close_positive_rate": 0.1852,
+        },
+    )
+
+    assert effective_select_threshold == pytest.approx(0.61, abs=1e-6)
+    assert effective_near_miss_threshold == pytest.approx(0.31, abs=1e-6)
+
+
+def test_large_sample_weak_close_continuation_frontier_is_no_longer_selected() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_weak_large_sample_close_continuation_frontier_entry(),
+        rank_hint=1,
+        profile_overrides={"select_threshold": 0.55, "near_miss_threshold": 0.45},
+    )
+
+    assert round(result.score_target, 4) == pytest.approx(0.5746, abs=1e-4)
+    assert result.decision == "near_miss"
+    assert result.metrics_payload["thresholds"]["effective_select_threshold"] == pytest.approx(0.61, abs=1e-6)
 
 
 def test_historical_continuation_score_weight_boosts_strong_same_ticker_continuation_score() -> None:

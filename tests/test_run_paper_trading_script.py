@@ -33,7 +33,7 @@ def test_resolve_short_trade_target_overrides_decodes_json_object() -> None:
     }
 
 
-def test_resolve_runtime_inputs_uses_btst_precision_v2_default_profile(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_runtime_inputs_uses_adaptive_default_profile(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         run_paper_trading_script,
         "_derive_shadow_focus_tickers_from_reports",
@@ -62,7 +62,7 @@ def test_resolve_runtime_inputs_uses_btst_precision_v2_default_profile(monkeypat
 
     runtime_inputs = run_paper_trading_script._resolve_paper_trading_runtime_inputs(args)
 
-    assert runtime_inputs["short_trade_target_profile"] == run_paper_trading_script.DEFAULT_SHORT_TRADE_TARGET_PROFILE
+    assert runtime_inputs["short_trade_target_profile"] == "default"
 
 
 def test_derive_shadow_focus_tickers_from_reports_picks_continuation_followup(tmp_path: Path) -> None:

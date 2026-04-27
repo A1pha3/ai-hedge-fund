@@ -208,6 +208,7 @@ def build_session_summary(
             "selection_target": selection_target,
         },
         "btst_0422_flags": {
+            "p2_regime_gate_mode": str(os.getenv("BTST_0422_P2_REGIME_GATE_MODE", "off") or "off").strip().lower() or "off",
             "p5_execution_contract_mode": str(os.getenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "off") or "off").strip().lower() or "off",
             "p6_risk_budget_mode": str(os.getenv("BTST_0422_P6_RISK_BUDGET_MODE", "off") or "off").strip().lower() or "off",
         },

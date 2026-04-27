@@ -1942,6 +1942,115 @@ def test_run_paper_trading_session_applies_p2_regime_gate_enforcement_during_fro
     }
 
 
+def test_run_paper_trading_session_defaults_p2_regime_gate_enforcement_for_short_trade_flow(tmp_path, monkeypatch):
+    monkeypatch.delenv("BTST_0422_P2_REGIME_GATE_MODE", raising=False)
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {"2024-03-01": 10.0, "2024-03-04": 11.0},
+            "SPY": {"2024-03-01": 100.0, "2024-03-04": 101.0},
+        },
+    )
+
+    source_path = tmp_path / "p2_default_frozen_daily_events.jsonl"
+    frozen_plan = ExecutionPlan(
+        date="20240301",
+        target_mode="short_trade_only",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"buy_order_count": 1}},
+        market_state={
+            "breadth_ratio": 0.38,
+            "daily_return": -0.002,
+            "style_dispersion": 0.55,
+            "regime_flip_risk": 0.65,
+            "regime_gate_level": "risk_off",
+        },
+    )
+    source_path.write_text(
+        json.dumps({"event": "paper_trading_day", "trade_date": "20240301", "current_plan": frozen_plan.model_dump()}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        output_dir=tmp_path / "paper_trading_p2_default_frozen_replay",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=source_path,
+        selection_target="short_trade_only",
+    )
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    current_plan = lines[0]["current_plan"]
+    assert current_plan["buy_orders"] == []
+    assert current_plan["risk_metrics"]["btst_regime_gate_enforcement"] == {
+        "enforced": True,
+        "gate": "halt",
+        "mode": "enforce",
+        "buy_orders_cleared": True,
+        "buy_orders_cleared_count": 1,
+    }
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["btst_0422_flags"]["p2_regime_gate_mode"] == "enforce"
+
+
+def test_run_paper_trading_session_keeps_default_p2_off_for_research_only(tmp_path, monkeypatch):
+    monkeypatch.delenv("BTST_0422_P2_REGIME_GATE_MODE", raising=False)
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {"2024-03-01": 10.0, "2024-03-04": 11.0},
+            "SPY": {"2024-03-01": 100.0, "2024-03-04": 101.0},
+        },
+    )
+
+    source_path = tmp_path / "p2_research_only_frozen_daily_events.jsonl"
+    frozen_plan = ExecutionPlan(
+        date="20240301",
+        target_mode="research_only",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"buy_order_count": 1}},
+        market_state={
+            "breadth_ratio": 0.38,
+            "daily_return": -0.002,
+            "style_dispersion": 0.55,
+            "regime_flip_risk": 0.65,
+            "regime_gate_level": "risk_off",
+        },
+    )
+    source_path.write_text(
+        json.dumps({"event": "paper_trading_day", "trade_date": "20240301", "current_plan": frozen_plan.model_dump()}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        output_dir=tmp_path / "paper_trading_p2_research_only_frozen_replay",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=source_path,
+        selection_target="research_only",
+    )
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    current_plan = lines[0]["current_plan"]
+    assert len(current_plan["buy_orders"]) == 1
+    assert current_plan["buy_orders"][0]["ticker"] == "AAPL"
+    assert "btst_regime_gate_enforcement" not in current_plan["risk_metrics"]
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["btst_0422_flags"]["p2_regime_gate_mode"] == "off"
+
+
 def test_run_paper_trading_session_applies_p3_prior_quality_enforcement_during_frozen_replay(tmp_path, monkeypatch):
     monkeypatch.setenv("BTST_0422_P3_PRIOR_QUALITY_MODE", "enforce")
     _patch_market_data(

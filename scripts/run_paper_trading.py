@@ -77,7 +77,7 @@ def refresh_btst_nightly_control_tower(report_dir: Path) -> dict[str, str] | Non
 
 
 
-DEFAULT_SHORT_TRADE_TARGET_PROFILE = "btst_precision_v2"
+DEFAULT_SHORT_TRADE_TARGET_PROFILE = "default"
 
 
 def parse_args() -> argparse.Namespace:

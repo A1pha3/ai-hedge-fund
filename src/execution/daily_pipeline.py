@@ -875,6 +875,33 @@ def _attach_short_trade_target_profile(
     return plan
 
 
+def _resolve_effective_short_trade_target_profile_name(
+    *,
+    requested_profile_name: str,
+    requested_profile_overrides: dict[str, object] | None,
+    market_state: Any,
+) -> str:
+    normalized_profile_name = str(requested_profile_name or "default").strip() or "default"
+    if normalized_profile_name != "default" or requested_profile_overrides:
+        return normalized_profile_name
+    if market_state is None:
+        return normalized_profile_name
+
+    from src.screening.market_state_helpers import (
+        recommend_short_trade_profile as _rec_profile,
+    )
+
+    return _rec_profile(
+        breadth_ratio=float(getattr(market_state, "breadth_ratio", 0.5) or 0.5),
+        daily_return=float(getattr(market_state, "daily_return", 0.0) or 0.0),
+        limit_ratio=float(getattr(market_state, "limit_up_down_ratio", 1.0) or 1.0),
+        adx=float(getattr(market_state, "adx", 20.0) or 20.0),
+        style_dispersion=float(getattr(market_state, "style_dispersion", 0.0) or 0.0),
+        regime_flip_risk=float(getattr(market_state, "regime_flip_risk", 0.0) or 0.0),
+        regime_gate_level=str(getattr(market_state, "regime_gate_level", "normal") or "normal"),
+    )
+
+
 def _ensure_plan_target_shells(
     plan: ExecutionPlan,
     target_mode: TargetMode,
@@ -1240,24 +1267,16 @@ class DailyPipeline:
         counts = diagnostics_aggregation.counts
         funnel_diagnostics = diagnostics_aggregation.funnel_diagnostics
         timing_seconds = diagnostics_aggregation.timing_seconds
-        # 自适应profile切换：基于市场状态选择最优profile（需启用环境变量）
-        effective_profile_name = self.short_trade_target_profile_name
+        effective_profile_name = _resolve_effective_short_trade_target_profile_name(
+            requested_profile_name=self.short_trade_target_profile_name,
+            requested_profile_overrides=self.short_trade_target_profile_overrides,
+            market_state=candidate_context.market_state,
+        )
         effective_profile_overrides = self.short_trade_target_profile_overrides
-        if os.getenv("BTST_ADAPTIVE_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"} and effective_profile_name == "default" and not effective_profile_overrides:
-            from src.screening.market_state_helpers import (
-                recommend_short_trade_profile as _rec_profile,
-            )
-
-            ms = candidate_context.market_state
-            effective_profile_name = _rec_profile(
-                breadth_ratio=float(ms.breadth_ratio) if ms else 0.5,
-                daily_return=float(ms.daily_return) if ms else 0.0,
-                limit_ratio=float(ms.limit_up_down_ratio) if ms else 1.0,
-                adx=float(ms.adx) if ms else 20.0,
-                style_dispersion=float(ms.style_dispersion) if ms else 0.0,
-                regime_flip_risk=float(ms.regime_flip_risk) if ms else 0.0,
-                regime_gate_level=str(ms.regime_gate_level) if ms else "normal",
-            )
+        effective_profile = build_short_trade_target_profile(
+            effective_profile_name,
+            effective_profile_overrides,
+        )
 
         selection_resolution: PostMarketSelectionResolution = resolve_post_market_selection_targets(
             trade_date=trade_date,
@@ -1293,7 +1312,7 @@ class DailyPipeline:
             selection_targets=selection_targets,
             target_mode=self.target_mode,
             dual_target_summary=dual_target_summary,
-            short_trade_target_profile=self._short_trade_target_profile,
+            short_trade_target_profile=effective_profile,
             serialize_short_trade_target_profile_fn=_serialize_short_trade_target_profile,
             generate_execution_plan_fn=generate_execution_plan,
         )
