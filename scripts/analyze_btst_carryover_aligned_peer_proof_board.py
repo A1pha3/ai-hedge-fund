@@ -26,6 +26,36 @@ PROMOTION_VERDICT_PRIORITY = {
     "await_next_day_close": 1,
     "not_promotion_ready": 0,
 }
+COMMAND_ROW_PHASE_BY_VERDICT = {
+    "await_next_day_close": "next_day_harvest",
+    "await_t_plus_2_close": "t_plus_2_harvest",
+    "ready_for_promotion_review": "promotion_review",
+    "requires_history_risk_review": "risk_review",
+}
+COMMAND_ROW_COPY = {
+    "await_next_day_close": {
+        "why_now": "缺 next-day close，先补 next-day harvest 再判断是否进入 T+2 跟踪。",
+        "next_step": "等待 next-day close 后重跑 aligned peer proof board。",
+    },
+    "await_t_plus_2_close": {
+        "why_now": "next-day close 已转正，但还缺 T+2 close 来确认 closed-cycle。",
+        "next_step": "收集 T+2 close 后重跑 aligned peer proof board。",
+    },
+    "ready_for_promotion_review": {
+        "why_now": "closed-cycle 已 supportive，可提交保守 promotion review。",
+        "next_step": "人工复核 aligned peer 证据后决定是否进入 promotion lane。",
+    },
+    "requires_history_risk_review": {
+        "why_now": "closed-cycle 已 supportive，但历史风险标签仍未解除。",
+        "next_step": "先完成人工 history risk review，再决定是否进入 promotion lane。",
+    },
+}
+COMMAND_QUEUE_SECTIONS = (
+    ("next_day_harvest", "Next-Day Harvest Queue"),
+    ("t_plus_2_harvest", "T+2 Harvest Queue"),
+    ("promotion_review", "Promotion Review Queue"),
+    ("risk_review", "Risk Review Queue"),
+)
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -95,6 +125,44 @@ def _classify_peer_proof(latest_row: dict[str, Any], best_closed_row: dict[str, 
 
     blockers.append("missing_close_loop_data")
     return "no_close_loop_data", "not_promotion_ready", blockers
+
+
+def _build_command_rows(entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+    command_rows: list[dict[str, str]] = []
+    phase_order = {phase: index for index, (phase, _) in enumerate(COMMAND_QUEUE_SECTIONS)}
+    ordered_entries = sorted(
+        entries,
+        key=lambda entry: (
+            phase_order.get(COMMAND_ROW_PHASE_BY_VERDICT.get(str(entry.get("promotion_review_verdict") or ""), ""), len(COMMAND_QUEUE_SECTIONS)),
+            -PROMOTION_VERDICT_PRIORITY.get(str(entry.get("promotion_review_verdict") or ""), -1),
+            str(entry.get("ticker") or ""),
+        ),
+    )
+    for entry in ordered_entries:
+        verdict = str(entry.get("promotion_review_verdict") or "")
+        harvest_phase = COMMAND_ROW_PHASE_BY_VERDICT.get(verdict)
+        if not harvest_phase:
+            continue
+        copy = COMMAND_ROW_COPY[verdict]
+        command_rows.append(
+            {
+                "ticker": str(entry.get("ticker") or ""),
+                "harvest_phase": harvest_phase,
+                "why_now": copy["why_now"],
+                "next_step": copy["next_step"],
+                "promotion_review_verdict": verdict,
+            }
+        )
+    return command_rows
+
+
+def _build_priority_board_status(command_rows: list[dict[str, str]]) -> str:
+    phase_counts = {phase: 0 for phase, _ in COMMAND_QUEUE_SECTIONS}
+    for row in command_rows:
+        phase = str(row.get("harvest_phase") or "")
+        if phase in phase_counts:
+            phase_counts[phase] += 1
+    return " | ".join(f"{phase}={phase_counts[phase]}" for phase, _ in COMMAND_QUEUE_SECTIONS)
 
 
 def _build_entry_recommendation(entry: dict[str, Any]) -> str:
@@ -197,9 +265,14 @@ def _build_aligned_peer_proof_analysis(
     risk_review_tickers = [
         str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "requires_history_risk_review"
     ][:4]
+    pending_next_day_tickers = [
+        str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "await_next_day_close"
+    ][:4]
     pending_t_plus_2_tickers = [
         str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "await_t_plus_2_close"
     ][:4]
+    command_rows = _build_command_rows(entries)
+    priority_board_status = _build_priority_board_status(command_rows)
     focus = entries[0] if entries else {}
 
     recommendation_parts: list[str] = []
@@ -243,7 +316,10 @@ def _build_aligned_peer_proof_analysis(
         },
         "ready_for_promotion_review_tickers": ready_for_promotion_review_tickers,
         "risk_review_tickers": risk_review_tickers,
+        "pending_next_day_tickers": pending_next_day_tickers,
         "pending_t_plus_2_tickers": pending_t_plus_2_tickers,
+        "command_rows": command_rows,
+        "priority_board_status": priority_board_status,
         "focus_ticker": focus.get("ticker") if focus else None,
         "focus_proof_verdict": focus.get("proof_verdict") if focus else None,
         "focus_promotion_review_verdict": focus.get("promotion_review_verdict") if focus else None,
@@ -266,10 +342,26 @@ def render_btst_carryover_aligned_peer_proof_board_markdown(analysis: dict[str, 
     lines.append(f"- promotion_review_verdict_counts: {analysis.get('promotion_review_verdict_counts')}")
     lines.append(f"- ready_for_promotion_review_tickers: {analysis.get('ready_for_promotion_review_tickers')}")
     lines.append(f"- risk_review_tickers: {analysis.get('risk_review_tickers')}")
+    lines.append(f"- pending_next_day_tickers: {analysis.get('pending_next_day_tickers')}")
     lines.append(f"- pending_t_plus_2_tickers: {analysis.get('pending_t_plus_2_tickers')}")
+    lines.append(f"- priority_board_status: {analysis.get('priority_board_status')}")
     lines.append(f"- focus_ticker: {analysis.get('focus_ticker')}")
     lines.append(f"- focus_proof_verdict: {analysis.get('focus_proof_verdict')}")
     lines.append(f"- focus_promotion_review_verdict: {analysis.get('focus_promotion_review_verdict')}")
+    lines.append("")
+    lines.append("## Command Queue")
+    command_rows = list(analysis.get("command_rows") or [])
+    for harvest_phase, title in COMMAND_QUEUE_SECTIONS:
+        lines.append("")
+        lines.append(f"### {title}")
+        phase_rows = [row for row in command_rows if str(row.get("harvest_phase") or "") == harvest_phase]
+        if phase_rows:
+            for row in phase_rows:
+                lines.append(
+                    f"- {row.get('ticker')} | {row.get('harvest_phase')} | why_now={row.get('why_now')} | next_step={row.get('next_step')} | promotion_review_verdict={row.get('promotion_review_verdict')}"
+                )
+        else:
+            lines.append("- none")
     lines.append("")
     lines.append("## Entries")
     for entry in list(analysis.get("entries") or []):

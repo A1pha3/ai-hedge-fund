@@ -20,14 +20,32 @@ def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
+def _resolve_default_expansion_status(payload: dict[str, Any]) -> str:
+    ready_tickers = [str(item).strip() for item in list(payload.get("promotion_ready_tickers") or []) if str(item).strip()]
+    explicit_status = str(payload.get("default_expansion_status") or "").strip()
+    if ready_tickers:
+        return "ready_for_peer_promotion"
+    if explicit_status:
+        return explicit_status
+    return "pending_peer_proof"
+
+
 def _build_promotion_gate_context(lane_rulepack: dict[str, Any], promotion_review: dict[str, Any]) -> dict[str, Any]:
     lane_rules = dict(lane_rulepack.get("lane_rules") or {})
+    promotion_ready_tickers = [str(item).strip() for item in list(promotion_review.get("promotion_ready_tickers") or []) if str(item).strip()]
     return {
         "focus_ticker": str(promotion_review.get("focus_ticker") or ""),
         "eligible_tickers": [str(item) for item in list(lane_rulepack.get("eligible_tickers") or []) if str(item).strip()],
         "watchlist_tickers": [str(item) for item in list(lane_rulepack.get("watchlist_tickers") or []) if str(item).strip()],
         "promotion_review_verdict": str(promotion_review.get("promotion_review_verdict") or ""),
         "promotion_review_blockers": [str(item) for item in list(promotion_review.get("promotion_blockers") or []) if str(item).strip()],
+        "promotion_ready_tickers": promotion_ready_tickers,
+        "default_expansion_status": _resolve_default_expansion_status(
+            {
+                "promotion_ready_tickers": promotion_ready_tickers,
+                "default_expansion_status": promotion_review.get("default_expansion_status"),
+            }
+        ),
         "lane_stage": str(lane_rules.get("lane_stage") or lane_rulepack.get("lane_stage") or ""),
         "capital_mode": str(lane_rules.get("capital_mode") or lane_rulepack.get("capital_mode") or ""),
     }
@@ -78,6 +96,8 @@ def _build_promotion_gate(lane_rulepack: dict[str, Any], promotion_review: dict[
         "focus_ticker": context["focus_ticker"] or None,
         "promotion_review_verdict": context["promotion_review_verdict"] or None,
         "promotion_review_blockers": context["promotion_review_blockers"],
+        "promotion_ready_tickers": context["promotion_ready_tickers"],
+        "default_expansion_status": context["default_expansion_status"],
         "gate_verdict": gate_verdict,
         "gate_blockers": gate_blockers,
         "current_watchlist_tickers": context["watchlist_tickers"],
@@ -143,6 +163,8 @@ def render_btst_tplus2_continuation_promotion_gate_markdown(analysis: dict[str, 
     lines.append(f"- focus_ticker: {analysis['focus_ticker']}")
     lines.append(f"- promotion_review_verdict: {analysis['promotion_review_verdict']}")
     lines.append(f"- promotion_review_blockers: {analysis['promotion_review_blockers']}")
+    lines.append(f"- promotion_ready_tickers: {analysis['promotion_ready_tickers']}")
+    lines.append(f"- default_expansion_status: {analysis['default_expansion_status']}")
     lines.append(f"- gate_verdict: {analysis['gate_verdict']}")
     lines.append(f"- gate_blockers: {analysis['gate_blockers']}")
     lines.append(f"- current_watchlist_tickers: {analysis['current_watchlist_tickers']}")

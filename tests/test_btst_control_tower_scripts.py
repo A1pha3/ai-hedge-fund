@@ -7,6 +7,7 @@ from scripts.analyze_btst_governance_synthesis import analyze_btst_governance_sy
 from scripts.analyze_btst_replay_cohort import analyze_btst_replay_cohort
 from scripts.run_btst_nightly_control_tower import (
     _build_carryover_contract_task,
+    _build_peer_close_loop_monitor_task,
     _build_selected_contract_resolution_task,
     _build_selected_contract_monitor_task,
     _prioritize_control_tower_next_actions,
@@ -14,6 +15,7 @@ from scripts.run_btst_nightly_control_tower import (
     build_btst_open_ready_delta_payload,
     generate_btst_nightly_control_tower_artifacts,
     render_btst_nightly_control_tower_markdown,
+    render_btst_open_ready_delta_markdown,
 )
 from scripts.validate_btst_governance_consistency import validate_btst_governance_consistency
 from src.screening.models import StrategySignal
@@ -328,9 +330,11 @@ def test_build_btst_open_ready_delta_payload_surfaces_carryover_promotion_gate_c
                 "selected_contract_verdict": "pending_next_day",
                 "focus_ticker": "300408",
                 "focus_gate_verdict": "await_peer_t_plus_2_close",
+                "default_expansion_status": "pending_peer_proof",
                 "ready_tickers": [],
                 "blocked_open_tickers": [],
                 "pending_t_plus_2_tickers": ["300408"],
+                "pending_next_day_tickers": ["600989"],
             }
         },
         "source_paths": {},
@@ -349,9 +353,11 @@ def test_build_btst_open_ready_delta_payload_surfaces_carryover_promotion_gate_c
                 "selected_contract_verdict": "pending_next_day",
                 "focus_ticker": "301396",
                 "focus_gate_verdict": "await_peer_next_day_close",
+                "default_expansion_status": "pending_peer_proof",
                 "ready_tickers": [],
                 "blocked_open_tickers": [],
                 "pending_t_plus_2_tickers": [],
+                "pending_next_day_tickers": ["301396"],
             }
         },
         "source_paths": {},
@@ -370,8 +376,84 @@ def test_build_btst_open_ready_delta_payload_surfaces_carryover_promotion_gate_c
     assert delta_payload["carryover_promotion_gate_delta"]["previous_focus_ticker"] == "301396"
     assert delta_payload["carryover_promotion_gate_delta"]["current_focus_gate_verdict"] == "await_peer_t_plus_2_close"
     assert delta_payload["carryover_promotion_gate_delta"]["previous_focus_gate_verdict"] == "await_peer_next_day_close"
+    assert delta_payload["carryover_promotion_gate_delta"]["current_default_expansion_status"] == "pending_peer_proof"
     assert delta_payload["carryover_promotion_gate_delta"]["added_pending_t_plus_2_tickers"] == ["300408"]
-    assert any("carryover promotion gate" in item for item in delta_payload["operator_focus"])
+    assert delta_payload["carryover_promotion_gate_delta"]["added_pending_next_day_tickers"] == ["600989"]
+    assert delta_payload["carryover_promotion_gate_delta"]["removed_pending_next_day_tickers"] == ["301396"]
+    assert any("carryover promotion gate" in item and "pending_next_day" in item and "pending_t_plus_2" in item for item in delta_payload["operator_focus"])
+
+
+def test_render_btst_open_ready_delta_markdown_surfaces_phase_aware_carryover_promotion_gate_delta(tmp_path: Path) -> None:
+    payload = {
+        "generated_at": "2026-04-10T08:00:00",
+        "comparison_basis": "previous_btst_report",
+        "comparison_scope": "previous_btst_report",
+        "overall_delta_verdict": "changed",
+        "current_reference": {"report_dir": "data/reports/report_b", "trade_date": "2026-04-10"},
+        "previous_reference": {"report_dir": "data/reports/report_a", "trade_date": "2026-04-09", "generated_at": "2026-04-10T07:30:00"},
+        "operator_focus": [],
+        "carryover_promotion_gate_delta": {
+            "available": True,
+            "has_changes": True,
+            "previous_focus_ticker": "301396",
+            "current_focus_ticker": "300408",
+            "previous_focus_gate_verdict": "await_peer_next_day_close",
+            "current_focus_gate_verdict": "await_peer_t_plus_2_close",
+            "previous_selected_contract_verdict": "pending_next_day",
+            "current_selected_contract_verdict": "pending_next_day",
+            "previous_default_expansion_status": "pending_peer_proof",
+            "current_default_expansion_status": "pending_peer_proof",
+            "previous_ready_tickers": [],
+            "current_ready_tickers": [],
+            "previous_pending_next_day_tickers": ["301396"],
+            "current_pending_next_day_tickers": ["600989"],
+            "added_pending_next_day_tickers": ["600989"],
+            "removed_pending_next_day_tickers": ["301396"],
+            "previous_pending_t_plus_2_tickers": [],
+            "current_pending_t_plus_2_tickers": ["300408"],
+            "added_pending_t_plus_2_tickers": ["300408"],
+            "removed_pending_t_plus_2_tickers": [],
+        },
+        "source_paths": {},
+    }
+
+    markdown = render_btst_open_ready_delta_markdown(payload, output_parent=tmp_path)
+
+    assert "- previous_default_expansion_status: pending_peer_proof" in markdown
+    assert "- current_default_expansion_status: pending_peer_proof" in markdown
+    assert "- added_pending_next_day_ticker: 600989" in markdown
+    assert "- removed_pending_next_day_ticker: 301396" in markdown
+
+
+def test_render_btst_nightly_control_tower_markdown_surfaces_pending_peer_promotion_contract(tmp_path: Path) -> None:
+    payload = {
+        "latest_btst_run": {"report_dir": "data/reports/report_a", "trade_date": "2026-04-10"},
+        "control_tower_snapshot": {
+            "recommendation": "wait for peer proof",
+            "carryover_peer_promotion_gate_summary": {
+                "focus_ticker": "301396",
+                "focus_gate_verdict": "blocked_selected_contract_open",
+                "default_expansion_status": "pending_peer_proof",
+                "ready_tickers": [],
+                "blocked_open_tickers": ["301396"],
+                "pending_t_plus_2_tickers": ["300408"],
+                "pending_next_day_tickers": ["600989"],
+            },
+            "closed_frontiers": [],
+            "next_actions": [],
+        },
+        "latest_priority_board_snapshot": {},
+        "replay_cohort_snapshot": {},
+        "latest_btst_snapshot": {},
+        "recommended_reading_order": [],
+        "source_paths": {},
+    }
+
+    markdown = render_btst_nightly_control_tower_markdown(payload, output_parent=tmp_path)
+
+    assert "carryover_peer_promotion_gate_summary: focus_ticker=301396 focus_gate_verdict=blocked_selected_contract_open default_expansion_status=pending_peer_proof" in markdown
+    assert "pending_next_day_tickers=['600989']" in markdown
+    assert "carryover_peer_promotion_gate_focus: focus_ticker=301396 focus_gate_verdict=blocked_selected_contract_open default_expansion_status=pending_peer_proof" in markdown
 
 
 def test_build_btst_open_ready_delta_payload_surfaces_selected_contract_changes(tmp_path: Path) -> None:
@@ -718,6 +800,46 @@ def test_build_btst_nightly_control_tower_payload_prioritizes_pending_peer_close
     assert payload["control_tower_snapshot"]["next_actions"][2]["source"] == "carryover_contract"
 
 
+def test_build_peer_close_loop_monitor_task_surfaces_next_day_harvest_contract() -> None:
+    task = _build_peer_close_loop_monitor_task(
+        {
+            "selected_outcome_refresh_summary": {
+                "focus_ticker": "002001",
+                "focus_cycle_status": "missing_next_day",
+                "focus_overall_contract_verdict": "pending_next_day",
+                "focus_next_day_contract_verdict": "pending_next_day",
+                "focus_t_plus_2_contract_verdict": "pending_t_plus_2",
+            },
+            "carryover_aligned_peer_proof_summary": {
+                "focus_ticker": "600989",
+                "focus_proof_verdict": "pending_next_day_close",
+                "focus_promotion_review_verdict": "await_next_day_close",
+                "ready_for_promotion_review_tickers": [],
+                "risk_review_tickers": [],
+            },
+            "carryover_peer_promotion_gate_summary": {
+                "selected_ticker": "002001",
+                "selected_contract_verdict": "pending_next_day",
+                "focus_ticker": "600989",
+                "focus_gate_verdict": "await_peer_next_day_close",
+                "ready_tickers": [],
+                "blocked_open_tickers": [],
+                "pending_t_plus_2_tickers": [],
+                "pending_next_day_tickers": ["600989"],
+                "default_expansion_status": "pending_peer_proof",
+            },
+        }
+    )
+
+    assert task is not None
+    assert task["source"] == "carryover_peer_close_loop_monitor"
+    assert "600989" in task["title"]
+    assert "next-day" in task["title"]
+    assert "focus_gate_verdict=await_peer_next_day_close" in task["why_now"]
+    assert "pending_next_day_tickers=['600989']" in task["why_now"]
+    assert "next-day bar" in task["next_step"]
+
+
 def test_build_selected_contract_monitor_task_uses_intraday_confirmation_only_language() -> None:
     task = _build_selected_contract_monitor_task(
         {
@@ -778,6 +900,52 @@ def test_build_carryover_contract_task_uses_intraday_confirmation_only_language(
     assert "intraday confirmation-only" in task["next_step"]
     assert "selected_entry_mode=intraday_confirmation_only" in task["why_now"]
     assert "selected_execution_quality=intraday_only" in task["why_now"]
+
+
+def test_build_carryover_contract_task_surfaces_next_day_peer_harvest_contract() -> None:
+    task = _build_carryover_contract_task(
+        {
+            "selected_outcome_refresh_summary": {
+                "focus_ticker": "002001",
+                "focus_overall_contract_verdict": "pending_next_day",
+            },
+            "carryover_multiday_continuation_audit_summary": {
+                "selected_ticker": "002001",
+                "selected_path_t2_bias_only": True,
+                "broad_family_only_multiday_unsupported": False,
+            },
+            "carryover_aligned_peer_harvest_summary": {
+                "focus_ticker": "600989",
+                "focus_status": "next_day_watch_priority",
+            },
+            "carryover_peer_expansion_summary": {
+                "focus_ticker": "600989",
+                "focus_status": "next_day_watch_priority",
+                "priority_expansion_tickers": ["600989"],
+                "watch_with_risk_tickers": [],
+            },
+            "carryover_aligned_peer_proof_summary": {
+                "focus_ticker": "600989",
+                "focus_promotion_review_verdict": "await_next_day_close",
+                "ready_for_promotion_review_tickers": [],
+                "risk_review_tickers": [],
+            },
+            "carryover_peer_promotion_gate_summary": {
+                "focus_ticker": "600989",
+                "focus_gate_verdict": "await_peer_next_day_close",
+                "default_expansion_status": "pending_peer_proof",
+                "pending_next_day_tickers": ["600989"],
+                "pending_t_plus_2_tickers": [],
+                "ready_tickers": [],
+                "blocked_open_tickers": [],
+            },
+        }
+    )
+
+    assert task is not None
+    assert "default_expansion_status=pending_peer_proof" in task["why_now"]
+    assert "pending_next_day_tickers=['600989']" in task["why_now"]
+    assert "next-day bar" in task["next_step"]
 
 
 def test_build_selected_contract_resolution_task_uses_closed_cycle_wording_for_nonpositive_expectation() -> None:
@@ -1416,6 +1584,123 @@ def test_build_btst_nightly_control_tower_payload_threads_refresh_and_sources(tm
     assert payload["latest_priority_board_snapshot"]["brief_recommendation"] == "Promote 300720 into explicit default BTST merge review."
     assert payload["recommended_reading_order"][0]["entry_id"] == "btst_governance_synthesis_latest"
     assert payload["source_paths"]["report_manifest_json"].endswith("report_manifest_latest.json")
+
+
+def test_build_btst_nightly_control_tower_payload_surfaces_zero_executable_blocked_state(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = _write_btst_followup_report(
+        reports_root,
+        report_name="report_zero_exec",
+        selection_target="short_trade_only",
+        mode="short_trade_only",
+        trade_date="2026-04-22",
+        next_trade_date="2026-04-23",
+        brief_payload={
+            "summary": {
+                "short_trade_selected_count": 0,
+                "short_trade_near_miss_count": 0,
+                "execution_blocked_candidate_count": 2,
+                "execution_blocked_tickers": ["300724", "688313"],
+            },
+            "recommendation": "继续等待默认 merge review。",
+        },
+        priority_board_payload={
+            "trade_date": "2026-04-22",
+            "next_trade_date": "2026-04-23",
+            "selection_target": "short_trade_only",
+            "headline": "当前没有可执行主票，priority board 只保留观察与漏票线索。",
+            "summary": {
+                "primary_count": 0,
+                "near_miss_count": 0,
+                "opportunity_pool_count": 0,
+                "research_upside_radar_count": 0,
+                "catalyst_theme_count": 0,
+                "catalyst_theme_shadow_count": 0,
+            },
+            "priority_rows": [],
+            "global_guardrails": [],
+        },
+    )
+    manifest = {
+        "reports_root": str(reports_root.resolve()),
+        "latest_btst_run": {
+            "report_dir_abs": str(report_dir.resolve()),
+            "report_dir": report_dir.name,
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-04-22",
+            "next_trade_date": "2026-04-23",
+        },
+        "default_merge_review_summary": {
+            "focus_ticker": "300720",
+            "merge_review_verdict": "ready_for_default_btst_merge_review",
+            "recommendation": "Promote 300720 into explicit default BTST merge review.",
+        },
+        "entries": [],
+    }
+
+    payload = build_btst_nightly_control_tower_payload(manifest)
+
+    assert "当前 formal BTST 执行名单为空" in payload["latest_priority_board_snapshot"]["brief_recommendation"]
+    assert "300724" in payload["latest_priority_board_snapshot"]["brief_recommendation"]
+    assert "Promote 300720 into explicit default BTST merge review." in payload["latest_priority_board_snapshot"]["brief_recommendation"]
+
+
+def test_build_btst_nightly_control_tower_payload_does_not_duplicate_zero_executable_blocked_banner(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = _write_btst_followup_report(
+        reports_root,
+        report_name="report_zero_exec_existing_banner",
+        selection_target="short_trade_only",
+        mode="short_trade_only",
+        trade_date="2026-04-22",
+        next_trade_date="2026-04-23",
+        brief_payload={
+            "summary": {
+                "short_trade_selected_count": 0,
+                "short_trade_near_miss_count": 0,
+                "execution_blocked_candidate_count": 2,
+                "execution_blocked_tickers": ["300724", "688313"],
+            },
+            "recommendation": "当前 formal BTST 执行名单为空；300724, 688313 已被 halt/block/prior gate 拦截，只保留非执行观察层。 继续等待默认 merge review。",
+        },
+        priority_board_payload={
+            "trade_date": "2026-04-22",
+            "next_trade_date": "2026-04-23",
+            "selection_target": "short_trade_only",
+            "headline": "当前没有可执行主票，priority board 只保留观察与漏票线索。",
+            "summary": {
+                "primary_count": 0,
+                "near_miss_count": 0,
+                "opportunity_pool_count": 0,
+                "research_upside_radar_count": 0,
+                "catalyst_theme_count": 0,
+                "catalyst_theme_shadow_count": 0,
+            },
+            "priority_rows": [],
+            "global_guardrails": [],
+        },
+    )
+    manifest = {
+        "reports_root": str(reports_root.resolve()),
+        "latest_btst_run": {
+            "report_dir_abs": str(report_dir.resolve()),
+            "report_dir": report_dir.name,
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-04-22",
+            "next_trade_date": "2026-04-23",
+        },
+        "default_merge_review_summary": {
+            "merge_review_verdict": "not_ready",
+            "recommendation": "should_not_override_existing_brief_banner",
+        },
+        "entries": [],
+    }
+
+    payload = build_btst_nightly_control_tower_payload(manifest)
+
+    recommendation = payload["latest_priority_board_snapshot"]["brief_recommendation"]
+    assert recommendation.count("当前 formal BTST 执行名单为空；") == 1
+    assert recommendation.endswith("继续等待默认 merge review。")
 
 
 def _write_btst_followup_report(
@@ -2851,10 +3136,12 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
             "selected_contract_verdict": "pending_next_day",
             "peer_count": 3,
             "gate_verdict_counts": {"blocked_selected_contract_open": 1, "await_peer_t_plus_2_close": 1, "await_peer_next_day_close": 1},
+            "default_expansion_status": "pending_peer_proof",
             "ready_tickers": [],
             "blocked_open_tickers": ["301396"],
             "risk_review_tickers": [],
             "pending_t_plus_2_tickers": ["300408"],
+            "pending_next_day_tickers": ["600989"],
             "focus_ticker": "301396",
             "focus_gate_verdict": "blocked_selected_contract_open",
             "entries": [
@@ -3010,7 +3297,6 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "carryover_aligned_peer_harvest_summary: focus_ticker=300408 focus_status=next_day_watch" in markdown
     assert "carryover_peer_expansion_summary: focus_ticker=300408 focus_status=next_day_watch_priority" in markdown
     assert "carryover_aligned_peer_proof_summary: focus_ticker=301396 focus_proof_verdict=supportive_closed_cycle focus_promotion_review_verdict=ready_for_promotion_review" in markdown
-    assert "carryover_peer_promotion_gate_summary: focus_ticker=301396 focus_gate_verdict=blocked_selected_contract_open" in markdown
     assert "## Rollout Lanes" in markdown
     assert "## Independent Window Monitor" in markdown
     assert "## T+1/T+2 Objective Monitor" in markdown
@@ -3259,6 +3545,329 @@ def test_btst_control_tower_overlays_latest_upstream_shadow_followup(tmp_path: P
     assert "validated_tickers: ['300720', '003036']" in markdown
     assert "active_no_candidate_entry_priority_tickers: ['301292']" in markdown
     assert "upstream_shadow_followup_overlay_recommendation:" in markdown
+
+
+def test_btst_control_tower_overlay_uses_formal_reporting_truth_for_demoted_shadow_names(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = _write_btst_followup_report(
+        reports_root,
+        report_name="paper_trading_20260424_20260424_live_m2_7_short_trade_only_shadow_followup",
+        selection_target="short_trade_only",
+        mode="live_pipeline",
+        trade_date="2026-04-24",
+        next_trade_date="2026-04-25",
+        summary_counts={
+            "selected_count": 0,
+            "near_miss_count": 1,
+            "blocked_count": 0,
+            "rejected_count": 0,
+            "opportunity_pool_count": 0,
+            "research_upside_radar_count": 0,
+        },
+        brief_payload={
+            "summary": {
+                "short_trade_selected_count": 0,
+                "short_trade_near_miss_count": 1,
+                "short_trade_blocked_count": 0,
+                "short_trade_rejected_count": 0,
+                "short_trade_opportunity_pool_count": 0,
+                "research_upside_radar_count": 0,
+            },
+            "recommendation": "转入 downstream followup。",
+            "upstream_shadow_recall_summary": {
+                "top_focus_tickers": ["002028", "600522", "301292"]
+            },
+            "near_miss_entries": [
+                {
+                    "ticker": "002028",
+                    "decision": "selected",
+                    "reporting_decision": "near_miss",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "positive_tags": ["upstream_shadow_catalyst_relief_applied"],
+                    "top_reasons": ["upstream_shadow_catalyst_relief"],
+                }
+            ],
+            "weak_history_pruned_entries": [
+                {
+                    "ticker": "600522",
+                    "decision": "selected",
+                    "reporting_decision": "opportunity_pool",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "top_reasons": ["historical_zero_follow_through_selected_demoted"],
+                }
+            ],
+        },
+    )
+
+    synthesis_json = reports_root / "btst_governance_synthesis_latest.json"
+    validation_json = reports_root / "btst_governance_validation_latest.json"
+    independent_json = reports_root / "btst_independent_window_monitor_latest.json"
+    tplus_json = reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json"
+    replay_json = reports_root / "btst_replay_cohort_latest.json"
+    action_board_json = reports_root / "btst_no_candidate_entry_action_board_latest.json"
+    failure_dossier_json = reports_root / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_json = reports_root / "btst_watchlist_recall_dossier_latest.json"
+    candidate_pool_dossier_json = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
+
+    _write_json(synthesis_json, {"lane_matrix": [], "waiting_lane_count": 0, "ready_lane_count": 0, "recommendation": "聚焦 active upstream backlog。", "lane_status_counts": {}, "closed_frontiers": [], "next_actions": []})
+    _write_json(validation_json, {"overall_verdict": "pass", "warn_count": 0, "fail_count": 0})
+    _write_json(independent_json, {"report_dir_count": 0, "rows": [], "recommendation": "n/a"})
+    _write_json(tplus_json, {"tradeable_surface": {"verdict": "n/a"}})
+    _write_json(replay_json, {"report_count": 1, "selection_target_counts": {"short_trade_only": 1}, "cohort_summaries": [], "recommendation": "n/a"})
+    _write_json(action_board_json, {"priority_queue_count": 1, "top_priority_tickers": ["301292"], "recommendation": "历史 backlog 仍显示 upstream absence。"})
+    _write_json(
+        failure_dossier_json,
+        {
+            "priority_failure_class_counts": {"upstream_absent_from_replay_inputs": 1},
+            "priority_handoff_stage_counts": {"absent_from_watchlist": 1},
+            "top_absent_from_watchlist_tickers": ["301292"],
+            "top_upstream_absence_tickers": ["301292"],
+            "recommendation": "先查 absent_from_watchlist。",
+        },
+    )
+    _write_json(
+        watchlist_dossier_json,
+        {
+            "priority_recall_stage_counts": {"absent_from_candidate_pool": 1},
+            "top_absent_from_candidate_pool_tickers": ["301292"],
+            "recommendation": "先补 candidate pool recall。",
+        },
+    )
+    _write_json(
+        candidate_pool_dossier_json,
+        {
+            "priority_stage_counts": {"candidate_pool_truncated_after_filters": 1},
+            "dominant_stage": "candidate_pool_truncated_after_filters",
+            "top_stage_tickers": {
+                "candidate_pool_truncated_after_filters": ["301292"]
+            },
+            "upstream_handoff_board_status": "mixed_upstream_and_post_recall_followup",
+            "upstream_handoff_board_summary": {
+                "board_status": "mixed_upstream_and_post_recall_followup",
+                "focus_tickers": ["301292"],
+            },
+            "recommendation": "raw backlog 与最新 followup 需要分层展示。",
+        },
+    )
+
+    manifest = {
+        "reports_root": str(reports_root.resolve()),
+        "latest_btst_run": {
+            "report_dir_abs": str(report_dir.resolve()),
+            "report_dir": report_dir.name,
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-04-24",
+            "next_trade_date": "2026-04-25",
+        },
+        "btst_governance_synthesis_refresh": {
+            "status": "refreshed",
+            "output_json": str(synthesis_json.resolve()),
+        },
+        "btst_governance_validation_refresh": {
+            "status": "refreshed",
+            "output_json": str(validation_json.resolve()),
+        },
+        "btst_independent_window_monitor_refresh": {
+            "status": "refreshed",
+            "output_json": str(independent_json.resolve()),
+        },
+        "btst_tplus1_tplus2_objective_monitor_refresh": {
+            "status": "refreshed",
+            "output_json": str(tplus_json.resolve()),
+        },
+        "btst_replay_cohort_refresh": {
+            "status": "refreshed",
+            "output_json": str(replay_json.resolve()),
+        },
+        "candidate_entry_shadow_refresh": {
+            "status": "refreshed",
+            "no_candidate_entry_action_board_json": str(action_board_json.resolve()),
+            "no_candidate_entry_failure_dossier_json": str(
+                failure_dossier_json.resolve()
+            ),
+            "watchlist_recall_dossier_json": str(watchlist_dossier_json.resolve()),
+            "candidate_pool_recall_dossier_json": str(
+                candidate_pool_dossier_json.resolve()
+            ),
+            "candidate_pool_upstream_handoff_board_status": "mixed_upstream_and_post_recall_followup",
+            "candidate_pool_upstream_handoff_board_summary": {
+                "board_status": "mixed_upstream_and_post_recall_followup",
+                "focus_tickers": ["301292"],
+            },
+        },
+        "entries": [],
+    }
+
+    payload = build_btst_nightly_control_tower_payload(manifest)
+    control = payload["control_tower_snapshot"]
+
+    assert control["upstream_shadow_followup_validated_tickers"] == ["002028"]
+    assert control["upstream_shadow_followup_near_miss_tickers"] == ["002028"]
+    assert control["upstream_shadow_followup_decision_counts"] == {"near_miss": 1}
+    assert control["active_no_candidate_entry_priority_tickers"] == ["301292"]
+
+
+def test_btst_control_tower_overlay_keeps_latest_validated_shadow_truth_when_newer_plain_rerun_exists(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    old_shadow_report = _write_btst_followup_report(
+        reports_root,
+        report_name="paper_trading_20260501_20260501_live_m2_7_short_trade_only_shadow_followup",
+        selection_target="short_trade_only",
+        mode="live_pipeline",
+        trade_date="2026-05-01",
+        next_trade_date="2026-05-04",
+        summary_counts={
+            "selected_count": 0,
+            "near_miss_count": 1,
+            "blocked_count": 0,
+            "rejected_count": 0,
+            "opportunity_pool_count": 0,
+            "research_upside_radar_count": 0,
+        },
+        brief_payload={
+            "summary": {
+                "short_trade_selected_count": 0,
+                "short_trade_near_miss_count": 1,
+                "short_trade_blocked_count": 0,
+                "short_trade_rejected_count": 0,
+                "short_trade_opportunity_pool_count": 0,
+                "research_upside_radar_count": 0,
+            },
+            "recommendation": "保留旧的 shadow truth。",
+            "upstream_shadow_recall_summary": {"top_focus_tickers": ["300720"]},
+            "near_miss_entries": [
+                {
+                    "ticker": "300720",
+                    "decision": "selected",
+                    "reporting_decision": "near_miss",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "positive_tags": ["upstream_shadow_catalyst_relief_applied"],
+                    "top_reasons": ["upstream_shadow_catalyst_relief"],
+                }
+            ],
+        },
+    )
+    new_plain_report = _write_btst_followup_report(
+        reports_root,
+        report_name="paper_trading_20260502_20260502_live_m2_7_short_trade_only_plain_rerun",
+        selection_target="short_trade_only",
+        mode="live_pipeline",
+        trade_date="2026-05-02",
+        next_trade_date="2026-05-05",
+        summary_counts={
+            "selected_count": 1,
+            "near_miss_count": 0,
+            "blocked_count": 0,
+            "rejected_count": 0,
+            "opportunity_pool_count": 0,
+            "research_upside_radar_count": 0,
+        },
+        brief_payload={
+            "summary": {
+                "short_trade_selected_count": 1,
+                "short_trade_near_miss_count": 0,
+                "short_trade_blocked_count": 0,
+                "short_trade_rejected_count": 0,
+                "short_trade_opportunity_pool_count": 0,
+                "research_upside_radar_count": 0,
+            },
+            "recommendation": "plain rerun without shadow recall rows",
+            "selected_entries": [
+                {
+                    "ticker": "600522",
+                    "decision": "selected",
+                    "candidate_source": "short_trade_boundary",
+                }
+            ],
+        },
+    )
+
+    synthesis_json = reports_root / "btst_governance_synthesis_latest.json"
+    validation_json = reports_root / "btst_governance_validation_latest.json"
+    independent_json = reports_root / "btst_independent_window_monitor_latest.json"
+    tplus_json = reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json"
+    replay_json = reports_root / "btst_replay_cohort_latest.json"
+    action_board_json = reports_root / "btst_no_candidate_entry_action_board_latest.json"
+    failure_dossier_json = reports_root / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_json = reports_root / "btst_watchlist_recall_dossier_latest.json"
+    candidate_pool_dossier_json = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
+
+    _write_json(synthesis_json, {"lane_matrix": [], "waiting_lane_count": 0, "ready_lane_count": 0, "recommendation": "聚焦 active upstream backlog。", "lane_status_counts": {}, "closed_frontiers": [], "next_actions": []})
+    _write_json(validation_json, {"overall_verdict": "pass", "warn_count": 0, "fail_count": 0})
+    _write_json(independent_json, {"report_dir_count": 0, "rows": [], "recommendation": "n/a"})
+    _write_json(tplus_json, {"tradeable_surface": {"verdict": "n/a"}})
+    _write_json(replay_json, {"report_count": 2, "selection_target_counts": {"short_trade_only": 2}, "cohort_summaries": [], "recommendation": "n/a"})
+    _write_json(action_board_json, {"priority_queue_count": 2, "top_priority_tickers": ["300720", "301292"], "recommendation": "历史 backlog 仍显示 upstream absence。"})
+    _write_json(
+        failure_dossier_json,
+        {
+            "priority_failure_class_counts": {"upstream_absent_from_replay_inputs": 2},
+            "priority_handoff_stage_counts": {"absent_from_watchlist": 2},
+            "top_absent_from_watchlist_tickers": ["300720", "301292"],
+            "top_upstream_absence_tickers": ["300720", "301292"],
+            "recommendation": "先查 absent_from_watchlist。",
+        },
+    )
+    _write_json(
+        watchlist_dossier_json,
+        {
+            "priority_recall_stage_counts": {"absent_from_candidate_pool": 2},
+            "top_absent_from_candidate_pool_tickers": ["300720", "301292"],
+            "recommendation": "先补 candidate pool recall。",
+        },
+    )
+    _write_json(
+        candidate_pool_dossier_json,
+        {
+            "priority_stage_counts": {"candidate_pool_truncated_after_filters": 2},
+            "dominant_stage": "candidate_pool_truncated_after_filters",
+            "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["300720", "301292"]},
+            "upstream_handoff_board_status": "mixed_upstream_and_post_recall_followup",
+            "upstream_handoff_board_summary": {
+                "board_status": "mixed_upstream_and_post_recall_followup",
+                "focus_tickers": ["300720", "301292"],
+            },
+            "recommendation": "raw backlog 与最新 followup 需要分层展示。",
+        },
+    )
+
+    manifest = {
+        "reports_root": str(reports_root.resolve()),
+        "latest_btst_run": {
+            "report_dir_abs": str(new_plain_report.resolve()),
+            "report_dir": new_plain_report.name,
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-05-02",
+            "next_trade_date": "2026-05-05",
+        },
+        "btst_governance_synthesis_refresh": {"status": "refreshed", "output_json": str(synthesis_json.resolve())},
+        "btst_governance_validation_refresh": {"status": "refreshed", "output_json": str(validation_json.resolve())},
+        "btst_independent_window_monitor_refresh": {"status": "refreshed", "output_json": str(independent_json.resolve())},
+        "btst_tplus1_tplus2_objective_monitor_refresh": {"status": "refreshed", "output_json": str(tplus_json.resolve())},
+        "btst_replay_cohort_refresh": {"status": "refreshed", "output_json": str(replay_json.resolve())},
+        "candidate_entry_shadow_refresh": {
+            "status": "refreshed",
+            "no_candidate_entry_action_board_json": str(action_board_json.resolve()),
+            "no_candidate_entry_failure_dossier_json": str(failure_dossier_json.resolve()),
+            "watchlist_recall_dossier_json": str(watchlist_dossier_json.resolve()),
+            "candidate_pool_recall_dossier_json": str(candidate_pool_dossier_json.resolve()),
+            "candidate_pool_upstream_handoff_board_status": "mixed_upstream_and_post_recall_followup",
+            "candidate_pool_upstream_handoff_board_summary": {
+                "board_status": "mixed_upstream_and_post_recall_followup",
+                "focus_tickers": ["300720", "301292"],
+            },
+        },
+        "entries": [],
+    }
+
+    payload = build_btst_nightly_control_tower_payload(manifest)
+    control = payload["control_tower_snapshot"]
+
+    assert old_shadow_report.exists()
+    assert control["upstream_shadow_followup_validated_tickers"] == ["300720"]
+    assert control["upstream_shadow_followup_near_miss_tickers"] == ["300720"]
+    assert control["upstream_shadow_followup_decision_counts"] == {"near_miss": 1}
+    assert control["active_no_candidate_entry_priority_tickers"] == ["301292"]
 
 
 def test_control_tower_surfaces_transient_probe_summary_from_manifest_refresh() -> None:

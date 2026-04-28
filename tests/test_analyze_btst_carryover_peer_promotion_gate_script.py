@@ -235,3 +235,145 @@ def test_analyze_btst_carryover_peer_promotion_gate_aligns_focus_with_pending_pr
     assert analysis["focus_ticker"] == "300620"
     assert analysis["focus_gate_verdict"] == "await_peer_t_plus_2_close"
     assert analysis["pending_t_plus_2_tickers"][:2] == ["300620", "688498"]
+
+
+def test_analyze_btst_carryover_peer_promotion_gate_surfaces_pending_next_day_tickers(tmp_path: Path) -> None:
+    proof_board_path = tmp_path / "proof_board.json"
+    selected_refresh_path = tmp_path / "selected_refresh.json"
+
+    _write_json(
+        proof_board_path,
+        {
+            "selected_ticker": "300720",
+            "selected_trade_date": "2026-04-06",
+            "selected_contract_verdict": "t_plus_2_observed_without_positive_expectation",
+            "focus_ticker": "600989",
+            "entries": [
+                {
+                    "ticker": "600989",
+                    "proof_verdict": "pending_next_day_close",
+                    "promotion_review_verdict": "await_next_day_close",
+                    "latest_trade_date": "2026-04-10",
+                    "concern_tags": [],
+                    "blockers": ["await_next_day_bar"],
+                },
+                {
+                    "ticker": "300620",
+                    "proof_verdict": "pending_t_plus_2_close",
+                    "promotion_review_verdict": "await_t_plus_2_close",
+                    "latest_trade_date": "2026-04-10",
+                    "concern_tags": [],
+                    "blockers": ["await_t_plus_2_bar"],
+                },
+            ],
+        },
+    )
+    _write_json(
+        selected_refresh_path,
+        {
+            "entries": [
+                {
+                    "ticker": "300720",
+                    "trade_date": "2026-04-06",
+                    "overall_contract_verdict": "t_plus_2_observed_without_positive_expectation",
+                    "current_cycle_status": "t_plus_4_closed",
+                }
+            ]
+        },
+    )
+
+    analysis = analyze_btst_carryover_peer_promotion_gate(proof_board_path, selected_refresh_path)
+
+    assert analysis["focus_ticker"] == "600989"
+    assert analysis["focus_gate_verdict"] == "await_peer_next_day_close"
+    assert analysis["pending_next_day_tickers"] == ["600989"]
+    assert analysis["pending_t_plus_2_tickers"] == ["300620"]
+
+
+def test_analyze_btst_carryover_peer_promotion_gate_marks_default_expansion_pending_without_ready_peers(tmp_path: Path) -> None:
+    proof_board_path = tmp_path / "proof_board.json"
+    selected_refresh_path = tmp_path / "selected_refresh.json"
+
+    _write_json(
+        proof_board_path,
+        {
+            "selected_ticker": "300720",
+            "selected_trade_date": "2026-04-06",
+            "selected_contract_verdict": "t_plus_2_observed_without_positive_expectation",
+            "focus_ticker": "300620",
+            "entries": [
+                {
+                    "ticker": "300620",
+                    "proof_verdict": "pending_t_plus_2_close",
+                    "promotion_review_verdict": "await_t_plus_2_close",
+                    "latest_trade_date": "2026-04-10",
+                    "concern_tags": [],
+                    "blockers": ["await_t_plus_2_bar"],
+                }
+            ],
+        },
+    )
+    _write_json(
+        selected_refresh_path,
+        {
+            "entries": [
+                {
+                    "ticker": "300720",
+                    "trade_date": "2026-04-06",
+                    "overall_contract_verdict": "t_plus_2_observed_without_positive_expectation",
+                    "current_cycle_status": "t_plus_4_closed",
+                }
+            ]
+        },
+    )
+
+    analysis = analyze_btst_carryover_peer_promotion_gate(proof_board_path, selected_refresh_path)
+
+    assert analysis["ready_tickers"] == []
+    assert analysis["focus_gate_verdict"] == "await_peer_t_plus_2_close"
+    assert analysis["default_expansion_status"] == "pending_peer_proof"
+    assert analysis["promotion_ready_tickers"] == []
+
+
+def test_analyze_btst_carryover_peer_promotion_gate_marks_default_expansion_ready_with_ready_peers(tmp_path: Path) -> None:
+    proof_board_path = tmp_path / "proof_board.json"
+    selected_refresh_path = tmp_path / "selected_refresh.json"
+
+    _write_json(
+        proof_board_path,
+        {
+            "selected_ticker": "300505",
+            "selected_trade_date": "2026-04-09",
+            "selected_contract_verdict": "t_plus_2_confirmed",
+            "focus_ticker": "301396",
+            "entries": [
+                {
+                    "ticker": "301396",
+                    "proof_verdict": "supportive_closed_cycle",
+                    "promotion_review_verdict": "ready_for_promotion_review",
+                    "latest_trade_date": "2026-04-10",
+                    "concern_tags": [],
+                    "blockers": [],
+                }
+            ],
+        },
+    )
+    _write_json(
+        selected_refresh_path,
+        {
+            "entries": [
+                {
+                    "ticker": "300505",
+                    "trade_date": "2026-04-09",
+                    "overall_contract_verdict": "t_plus_2_confirmed",
+                    "current_cycle_status": "t_plus_2_closed",
+                }
+            ]
+        },
+    )
+
+    analysis = analyze_btst_carryover_peer_promotion_gate(proof_board_path, selected_refresh_path)
+
+    assert analysis["ready_tickers"] == ["301396"]
+    assert analysis["default_expansion_status"] == "ready_for_peer_promotion"
+    assert analysis["promotion_ready_tickers"] == ["301396"]

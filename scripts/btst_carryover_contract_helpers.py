@@ -46,6 +46,9 @@ def extract_carryover_contract_context(control_tower_snapshot: dict[str, Any]) -
         "watch_with_risk_tickers": list(peer_expansion_summary.get("watch_with_risk_tickers") or []),
         "ready_for_promotion_review_tickers": list(peer_proof_summary.get("ready_for_promotion_review_tickers") or []),
         "promotion_gate_ready_tickers": list(peer_promotion_gate_summary.get("ready_tickers") or []),
+        "default_expansion_status": str(peer_promotion_gate_summary.get("default_expansion_status") or "").strip(),
+        "pending_next_day_tickers": list(peer_promotion_gate_summary.get("pending_next_day_tickers") or []),
+        "pending_t_plus_2_tickers": list(peer_promotion_gate_summary.get("pending_t_plus_2_tickers") or []),
     }
 
 
@@ -88,6 +91,9 @@ def build_carryover_contract_why_now_parts(context: dict[str, Any]) -> list[str]
             (context.get("peer_proof_focus_verdict"), "peer_proof_verdict"),
             (context.get("peer_promotion_gate_focus_ticker"), "peer_gate_focus"),
             (context.get("peer_promotion_gate_focus_verdict"), "peer_gate_verdict"),
+            (context.get("default_expansion_status"), "default_expansion_status"),
+            (context.get("pending_next_day_tickers"), "pending_next_day_tickers"),
+            (context.get("pending_t_plus_2_tickers"), "pending_t_plus_2_tickers"),
         )
     )
     if audit_summary.get("selected_path_t2_bias_only"):

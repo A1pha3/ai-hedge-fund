@@ -8,6 +8,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.paper_trading._btst_reporting.entry_builders import (
+    _filter_execution_ready_entries,
+)
 from src.paper_trading._btst_reporting.entry_mode_utils import (
     _augment_execution_note,
     _selected_action_posture,
@@ -77,15 +80,16 @@ def _build_priority_board_row(
 
 def _build_priority_board_headline(
     *,
-    brief: dict[str, Any],
+    selected_entries: list[dict[str, Any]],
+    near_miss_entries: list[dict[str, Any]],
     no_history_observer_entries: list[dict[str, Any]],
     risky_observer_entries: list[dict[str, Any]],
     catalyst_theme_frontier_priority: dict[str, Any],
 ) -> str:
     headline = "当前没有可执行主票，priority board 只保留观察与漏票线索。"
-    if brief.get("primary_entry"):
+    if selected_entries:
         headline = "先执行主票确认，再按 near-miss、机会池、research 漏票雷达递减关注。"
-    elif brief.get("near_miss_entries"):
+    elif near_miss_entries:
         headline = "当前没有主票，优先看 near-miss，其次看机会池和 research 漏票雷达。"
     elif no_history_observer_entries:
         headline = "当前没有标准 BTST 候选，只保留无历史先验观察与研究跟踪。"
@@ -111,23 +115,33 @@ def _build_priority_board_context(brief: dict[str, Any]) -> dict[str, Any]:
         ),
         "selected_entries": [
             _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("selected_entries") or [])
+            for entry in _filter_execution_ready_entries(
+                list(brief.get("selected_entries") or [])
+            )
         ],
         "near_miss_entries": [
             _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("near_miss_entries") or [])
+            for entry in _filter_execution_ready_entries(
+                list(brief.get("near_miss_entries") or [])
+            )
         ],
         "opportunity_pool_entries": [
             _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("opportunity_pool_entries") or [])
+            for entry in _filter_execution_ready_entries(
+                list(brief.get("opportunity_pool_entries") or [])
+            )
         ],
         "no_history_observer_entries": [
             _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("no_history_observer_entries") or [])
+            for entry in _filter_execution_ready_entries(
+                list(brief.get("no_history_observer_entries") or [])
+            )
         ],
         "risky_observer_entries": [
             _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("risky_observer_entries") or [])
+            for entry in _filter_execution_ready_entries(
+                list(brief.get("risky_observer_entries") or [])
+            )
         ],
     }
 
@@ -277,27 +291,28 @@ def _sort_priority_board_rows(priority_rows: list[dict[str, Any]]) -> None:
 
 def _build_priority_board_summary(
     *,
-    brief: dict[str, Any],
+    selected_entries: list[dict[str, Any]],
+    near_miss_entries: list[dict[str, Any]],
+    opportunity_pool_entries: list[dict[str, Any]],
+    research_upside_radar_entries: list[dict[str, Any]],
+    catalyst_theme_entries: list[dict[str, Any]],
     no_history_observer_entries: list[dict[str, Any]],
     risky_observer_entries: list[dict[str, Any]],
     catalyst_theme_frontier_priority: dict[str, Any],
+    catalyst_theme_shadow_entries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
-        "primary_count": len(brief.get("selected_entries") or []),
-        "near_miss_count": len(brief.get("near_miss_entries") or []),
-        "opportunity_pool_count": len(brief.get("opportunity_pool_entries") or []),
+        "primary_count": len(selected_entries),
+        "near_miss_count": len(near_miss_entries),
+        "opportunity_pool_count": len(opportunity_pool_entries),
         "no_history_observer_count": len(no_history_observer_entries),
         "risky_observer_count": len(risky_observer_entries),
-        "research_upside_radar_count": len(
-            brief.get("research_upside_radar_entries") or []
-        ),
-        "catalyst_theme_count": len(brief.get("catalyst_theme_entries") or []),
+        "research_upside_radar_count": len(research_upside_radar_entries),
+        "catalyst_theme_count": len(catalyst_theme_entries),
         "catalyst_theme_frontier_promoted_count": len(
             catalyst_theme_frontier_priority.get("promoted_tickers") or []
         ),
-        "catalyst_theme_shadow_count": len(
-            brief.get("catalyst_theme_shadow_entries") or []
-        ),
+        "catalyst_theme_shadow_count": len(catalyst_theme_shadow_entries),
     }
 
 
@@ -334,7 +349,8 @@ def analyze_btst_next_day_priority_board(
     _sort_priority_board_rows(priority_rows)
 
     headline = _build_priority_board_headline(
-        brief=brief,
+        selected_entries=selected_entries,
+        near_miss_entries=near_miss_entries,
         no_history_observer_entries=no_history_observer_entries,
         risky_observer_entries=risky_observer_entries,
         catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
@@ -346,10 +362,19 @@ def analyze_btst_next_day_priority_board(
         "selection_target": brief.get("selection_target"),
         "headline": headline,
         "summary": _build_priority_board_summary(
-            brief=brief,
+            selected_entries=selected_entries,
+            near_miss_entries=near_miss_entries,
+            opportunity_pool_entries=opportunity_pool_entries,
+            research_upside_radar_entries=list(
+                brief.get("research_upside_radar_entries") or []
+            ),
+            catalyst_theme_entries=list(brief.get("catalyst_theme_entries") or []),
             no_history_observer_entries=no_history_observer_entries,
             risky_observer_entries=risky_observer_entries,
             catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
+            catalyst_theme_shadow_entries=list(
+                brief.get("catalyst_theme_shadow_entries") or []
+            ),
         ),
         "priority_rows": priority_rows,
         "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,

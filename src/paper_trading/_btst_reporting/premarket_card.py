@@ -12,6 +12,9 @@ from src.paper_trading._btst_reporting.entry_mode_utils import (
     _selected_action_posture,
     _selected_holding_contract_note,
 )
+from src.paper_trading._btst_reporting.entry_builders import (
+    _filter_execution_ready_entries,
+)
 from src.paper_trading._btst_reporting.entry_transforms import (
     _build_catalyst_theme_shadow_watch_rows,
 )
@@ -102,7 +105,27 @@ def _build_premarket_observer_action(
 
 
 def _build_premarket_action_context(brief: dict[str, Any]) -> dict[str, Any]:
-    primary_entry = brief.get("primary_entry")
+    selected_entries = _filter_execution_ready_entries(
+        list(brief.get("selected_entries") or [])
+    )
+    near_miss_entries = _filter_execution_ready_entries(
+        list(brief.get("near_miss_entries") or [])
+    )
+    opportunity_pool_entries = _filter_execution_ready_entries(
+        list(brief.get("opportunity_pool_entries") or [])
+    )
+    no_history_observer_entries = _filter_execution_ready_entries(
+        list(brief.get("no_history_observer_entries") or [])
+    )
+    risky_observer_entries = _filter_execution_ready_entries(
+        list(brief.get("risky_observer_entries") or [])
+    )
+    primary_candidates = _filter_execution_ready_entries(
+        [brief.get("primary_entry")] if brief.get("primary_entry") else []
+    )
+    primary_entry = primary_candidates[0] if primary_candidates else (
+        selected_entries[0] if selected_entries else None
+    )
     return {
         "primary_entry": primary_entry,
         "catalyst_theme_frontier_priority": dict(
@@ -112,17 +135,13 @@ def _build_premarket_action_context(brief: dict[str, Any]) -> dict[str, Any]:
             list(brief.get("catalyst_theme_shadow_entries") or [])
         ),
         "primary_action": _build_premarket_primary_action(primary_entry),
-        "watch_actions": _build_watch_actions(
-            list(brief.get("near_miss_entries") or [])
-        ),
-        "opportunity_actions": _build_opportunity_actions(
-            list(brief.get("opportunity_pool_entries") or [])
-        ),
+        "watch_actions": _build_watch_actions(near_miss_entries),
+        "opportunity_actions": _build_opportunity_actions(opportunity_pool_entries),
         "no_history_observer_actions": _build_no_history_observer_actions(
-            list(brief.get("no_history_observer_entries") or [])
+            no_history_observer_entries
         ),
         "risky_observer_actions": _build_risky_observer_actions(
-            list(brief.get("risky_observer_entries") or [])
+            risky_observer_entries
         ),
         "upstream_shadow_summary": dict(brief.get("upstream_shadow_summary") or {}),
     }

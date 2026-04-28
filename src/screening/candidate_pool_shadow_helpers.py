@@ -17,6 +17,48 @@ def compute_shadow_share_metrics(*, avg_volume_20d: float, cutoff_reference: flo
     )
 
 
+def _resolve_source_layer_release_stage(*, lane: str, shadow_focus_selected: bool) -> tuple[str, str]:
+    if lane != "cooldown_review" and shadow_focus_selected:
+        return "strict_release", "shadow_focus_selected"
+    return "validation_only", "shadow_validation_only"
+
+
+def _build_source_layer_release_contract(shadow_entries: list[dict[str, Any]]) -> dict[str, Any]:
+    strict_release_tickers = sorted({str(entry.get("ticker") or "") for entry in shadow_entries if str(entry.get("source_layer_release_stage") or "") == "strict_release" and str(entry.get("ticker") or "").strip()})
+    validation_only_tickers = sorted(
+        {
+            str(entry.get("ticker") or "")
+            for entry in shadow_entries
+            if str(entry.get("source_layer_release_stage") or "") == "validation_only" and str(entry.get("ticker") or "").strip()
+        }
+    )
+    lane_release_contracts: dict[str, dict[str, list[str]]] = {}
+    for entry in shadow_entries:
+        lane = str(entry.get("candidate_pool_lane") or "unknown")
+        ticker = str(entry.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        lane_contract = lane_release_contracts.setdefault(
+            lane,
+            {
+                "strict_release_tickers": [],
+                "validation_only_tickers": [],
+            },
+        )
+        release_stage = str(entry.get("source_layer_release_stage") or "")
+        if release_stage == "strict_release":
+            if ticker not in lane_contract["strict_release_tickers"]:
+                lane_contract["strict_release_tickers"].append(ticker)
+            continue
+        if ticker not in lane_contract["validation_only_tickers"]:
+            lane_contract["validation_only_tickers"].append(ticker)
+    return {
+        "source_layer_strict_release_tickers": strict_release_tickers,
+        "source_layer_validation_only_tickers": validation_only_tickers,
+        "source_layer_lane_release_contracts": lane_release_contracts,
+    }
+
+
 def build_cooldown_review_shadow_payload(
     *,
     candidates: list[CandidateStock],
@@ -45,6 +87,10 @@ def build_cooldown_review_shadow_payload(
             }
         )
         shadow_candidates.append(shadow_candidate)
+        source_layer_release_stage, source_layer_release_reason = _resolve_source_layer_release_stage(
+            lane="cooldown_review",
+            shadow_focus_selected=shadow_candidate.ticker in review_focus_tickers,
+        )
         shadow_entries.append(
             {
                 "ticker": shadow_candidate.ticker,
@@ -59,6 +105,8 @@ def build_cooldown_review_shadow_payload(
                 "shadow_focus_relaxed_band": False,
                 "shadow_visibility_gap_selected": shadow_candidate.ticker in visibility_gap_tickers,
                 "shadow_visibility_gap_relaxed_band": False,
+                "source_layer_release_stage": source_layer_release_stage,
+                "source_layer_release_reason": source_layer_release_reason,
                 "cooldown_review": True,
             }
         )
@@ -131,6 +179,11 @@ def build_shadow_lane_payload(
             }
         )
         shadow_candidates.append(shadow_candidate)
+        shadow_focus_selected = shadow_candidate.ticker in focus_tickers
+        source_layer_release_stage, source_layer_release_reason = _resolve_source_layer_release_stage(
+            lane=lane,
+            shadow_focus_selected=shadow_focus_selected,
+        )
         shadow_entries.append(
             {
                 "ticker": shadow_candidate.ticker,
@@ -141,10 +194,12 @@ def build_shadow_lane_payload(
                 "market_cap": round(float(shadow_candidate.market_cap), 4),
                 "avg_amount_share_of_cutoff": cutoff_share,
                 "avg_amount_share_of_min_gate": min_gate_share,
-                "shadow_focus_selected": shadow_candidate.ticker in focus_tickers,
+                "shadow_focus_selected": shadow_focus_selected,
                 "shadow_focus_relaxed_band": focus_relaxed_band,
                 "shadow_visibility_gap_selected": shadow_candidate.ticker in visibility_gap_tickers,
                 "shadow_visibility_gap_relaxed_band": visibility_gap_relaxed_band,
+                "source_layer_release_stage": source_layer_release_stage,
+                "source_layer_release_reason": source_layer_release_reason,
                 rank_key: round(float(score), 4),
             }
         )
@@ -241,6 +296,7 @@ def build_shadow_summary_payload(
     focus_signature: str,
     focus_filter_diagnostics: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    source_layer_release_contract = _build_source_layer_release_contract(shadow_entries)
     return {
         "pool_size": pool_size,
         "selected_count": selected_count,
@@ -255,4 +311,5 @@ def build_shadow_summary_payload(
         "shadow_recall_status": "computed",
         "tickers": shadow_entries,
         "focus_filter_diagnostics": list(focus_filter_diagnostics or []),
+        **source_layer_release_contract,
     }

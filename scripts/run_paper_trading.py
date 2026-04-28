@@ -262,10 +262,7 @@ def _extend_shadow_focus_from_report_manifest(
         return
 
     summary = dict(manifest.get("candidate_pool_corridor_shadow_pack_summary") or {})
-    focus_tickers = [
-        _extract_manifest_primary_shadow_replay_ticker(summary),
-        *[str(ticker).strip() for ticker in list(summary.get("parallel_watch_tickers") or []) if str(ticker or "").strip()],
-    ]
+    focus_tickers = [str(ticker).strip() for ticker in list(summary.get("strict_release_tickers") or []) if str(ticker or "").strip()]
     for ticker in focus_tickers:
         if not ticker:
             continue

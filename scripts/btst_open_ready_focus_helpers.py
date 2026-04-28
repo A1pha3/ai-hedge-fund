@@ -84,7 +84,10 @@ def append_open_ready_action_focus(operator_focus: list[str], delta_sections: di
     if carryover_promotion_gate_delta.get("available") and carryover_promotion_gate_delta.get("has_changes"):
         operator_focus.append(
             f"carryover promotion gate 变化: focus {carryover_promotion_gate_delta.get('previous_focus_ticker') or 'n/a'} -> {carryover_promotion_gate_delta.get('current_focus_ticker') or 'n/a'}, "
-            f"verdict {carryover_promotion_gate_delta.get('previous_focus_gate_verdict') or 'n/a'} -> {carryover_promotion_gate_delta.get('current_focus_gate_verdict') or 'n/a'}。"
+            f"verdict {carryover_promotion_gate_delta.get('previous_focus_gate_verdict') or 'n/a'} -> {carryover_promotion_gate_delta.get('current_focus_gate_verdict') or 'n/a'}, "
+            f"default_expansion_status {carryover_promotion_gate_delta.get('previous_default_expansion_status') or 'n/a'} -> {carryover_promotion_gate_delta.get('current_default_expansion_status') or 'n/a'}, "
+            f"pending_next_day {carryover_promotion_gate_delta.get('previous_pending_next_day_tickers') or []} -> {carryover_promotion_gate_delta.get('current_pending_next_day_tickers') or []}, "
+            f"pending_t_plus_2 {carryover_promotion_gate_delta.get('previous_pending_t_plus_2_tickers') or []} -> {carryover_promotion_gate_delta.get('current_pending_t_plus_2_tickers') or []}。"
         )
 
 

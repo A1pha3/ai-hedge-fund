@@ -34,10 +34,37 @@ def _compact_trade_date(value: Any) -> str:
 def _decision_rank(decision: str | None) -> int:
     normalized = str(decision or "").strip()
     return {
-        "selected": 2,
-        "near_miss": 1,
+        "blocked": 4,
+        "selected": 3,
+        "near_miss": 2,
+        "opportunity_pool": 1,
         "rejected": 0,
     }.get(normalized, -1)
+
+
+def _report_candidate_rank(
+    *,
+    trade_date: str,
+    report_mtime_ns: int,
+    selection_target_rank: int,
+    has_upstream_shadow_summary: bool,
+    max_decision_rank: int,
+    selected_count: int,
+    near_miss_count: int,
+    rejected_count: int,
+    report_dir_name: str,
+) -> tuple[Any, ...]:
+    return (
+        trade_date,
+        report_mtime_ns,
+        selection_target_rank,
+        1 if has_upstream_shadow_summary else 0,
+        max_decision_rank,
+        selected_count,
+        near_miss_count,
+        -rejected_count,
+        report_dir_name,
+    )
 
 
 def _historical_prior_int(prior: dict[str, Any], key: str) -> int:
@@ -160,16 +187,17 @@ def _extract_btst_candidate(report_dir: Path) -> dict[str, Any] | None:
         "brief_json_path": str(Path(brief_json_path).expanduser().resolve()) if brief_json_path else None,
         "selection_target_rank": selection_target_rank,
         "report_mtime_ns": report_mtime_ns,
-        "rank": (
-            max_decision_rank,
-            selected_count,
-            near_miss_count,
-            -rejected_count,
-            selection_target_rank,
-            compact_trade_date,
-            1 if upstream_shadow_summary else 0,
-            report_mtime_ns,
-            report_dir.name,
+        "upstream_shadow_followup_row_count": len(list(followup_summary.get("rows") or [])),
+        "rank": _report_candidate_rank(
+            trade_date=compact_trade_date,
+            report_mtime_ns=report_mtime_ns,
+            selection_target_rank=selection_target_rank,
+            has_upstream_shadow_summary=bool(upstream_shadow_summary),
+            max_decision_rank=max_decision_rank,
+            selected_count=selected_count,
+            near_miss_count=near_miss_count,
+            rejected_count=rejected_count,
+            report_dir_name=report_dir.name,
         ),
     }
 
@@ -192,6 +220,18 @@ def select_latest_btst_followup_candidate(reports_root: str | Path) -> dict[str,
     return max(candidates, key=lambda candidate: candidate["rank"])
 
 
+def select_latest_upstream_shadow_followup_candidate(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    candidates = [
+        candidate
+        for candidate in (_extract_btst_candidate(path) for path in _discover_report_dirs(resolved_reports_root))
+        if candidate and int(candidate.get("upstream_shadow_followup_row_count") or 0) > 0
+    ]
+    if not candidates:
+        return {}
+    return max(candidates, key=lambda candidate: candidate["rank"])
+
+
 def _iter_ticker_rows(node: Any):
     if isinstance(node, dict):
         ticker = str(node.get("ticker") or "").strip()
@@ -205,9 +245,44 @@ def _iter_ticker_rows(node: Any):
             yield from _iter_ticker_rows(item)
 
 
+def _resolve_formal_decision(row: dict[str, Any]) -> str:
+    return str(row.get("reporting_decision") or row.get("decision") or "").strip()
+
+
+def _iter_followup_brief_rows(brief: dict[str, Any]):
+    sections: list[Any] = []
+    for key in (
+        "primary_entry",
+        "selected_entries",
+        "near_miss_entries",
+        "opportunity_pool_entries",
+        "no_history_observer_entries",
+        "risky_observer_entries",
+        "priority_rows",
+        "upstream_shadow_entries",
+    ):
+        value = brief.get(key)
+        if value:
+            sections.append(value)
+
+    for summary_key in ("upstream_shadow_summary", "upstream_shadow_recall_summary"):
+        summary = dict(brief.get(summary_key) or {})
+        for key in ("released_shadow_entries", "validated_rows", "observation_entries"):
+            value = summary.get(key)
+            if value:
+                sections.append(value)
+
+    if not sections:
+        yield from _iter_ticker_rows(brief)
+        return
+
+    for section in sections:
+        yield from _iter_ticker_rows(section)
+
+
 def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
-    for row in _iter_ticker_rows(brief):
+    for row in _iter_followup_brief_rows(brief):
         ticker = str(row.get("ticker") or "").strip()
         if not ticker:
             continue
@@ -216,8 +291,14 @@ def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if historical_prior:
             chosen_historical_prior = _choose_preferred_historical_prior(dict(current.get("historical_prior") or {}), historical_prior)
             _apply_historical_prior_fields(current, chosen_historical_prior)
+        formal_decision = _resolve_formal_decision(row)
+        if formal_decision:
+            current["decision"] = formal_decision
+            current["reporting_decision"] = formal_decision
+        source_decision = str(row.get("decision") or "").strip()
+        if source_decision:
+            current["source_decision"] = source_decision
         for key in (
-            "decision",
             "candidate_source",
             "preferred_entry_mode",
             "promotion_trigger",
@@ -252,6 +333,16 @@ def _ticker_row_rank(row: dict[str, Any]) -> tuple[Any, ...]:
         _decision_rank(row.get("decision")),
         _historical_prior_merge_rank(historical_prior),
         str(row.get("report_dir_name") or ""),
+    )
+
+
+def _upstream_shadow_row_rank(row: dict[str, Any], candidate: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        _compact_trade_date(candidate.get("trade_date")),
+        int(candidate.get("report_mtime_ns") or 0),
+        int(candidate.get("selection_target_rank") or 0),
+        _decision_rank(row.get("decision")),
+        str(candidate.get("report_dir_name") or ""),
     )
 
 
@@ -377,7 +468,7 @@ def _build_upstream_shadow_followup_rows(
         if not _is_upstream_shadow_followup_row(ticker, row, focus_tickers=focus_tickers):
             continue
         decision = str(row.get("decision") or "").strip()
-        if decision not in {"selected", "near_miss", "rejected"}:
+        if decision not in {"blocked", "selected", "near_miss", "rejected"}:
             continue
         top_reasons = _unique_strings(list(row.get("top_reasons") or []))
         rejection_reasons = _unique_strings(list(row.get("rejection_reasons") or []))
@@ -432,6 +523,7 @@ def _resolve_upstream_shadow_downstream_bottleneck(
 def _build_upstream_shadow_followup_ticker_groups(rows: list[dict[str, Any]]) -> dict[str, Any]:
     decision_counts = Counter(str(row.get("decision") or "unknown") for row in rows)
     validated_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("ticker") or "").strip()]
+    blocked_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("decision") or "") == "blocked"]
     selected_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("decision") or "") == "selected"]
     near_miss_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("decision") or "") == "near_miss"]
     rejected_profitability_tickers = [
@@ -447,6 +539,7 @@ def _build_upstream_shadow_followup_ticker_groups(rows: list[dict[str, Any]]) ->
     return {
         "decision_counts": {key: int(value) for key, value in decision_counts.items()},
         "validated_tickers": validated_tickers,
+        "blocked_tickers": blocked_tickers,
         "selected_tickers": selected_tickers,
         "near_miss_tickers": near_miss_tickers,
         "rejected_profitability_tickers": rejected_profitability_tickers,
@@ -472,6 +565,10 @@ def _build_unavailable_upstream_shadow_followup_summary(
 
 def _build_upstream_shadow_followup_recommendation(ticker_groups: dict[str, Any]) -> str:
     recommendation_parts: list[str] = []
+    if ticker_groups["blocked_tickers"]:
+        recommendation_parts.append(
+            f"最新正式 shadow rerun 已验证 {ticker_groups['blocked_tickers']} 属于 blocked truth，当前应从 formal execution 名单移除。"
+        )
     if ticker_groups["selected_tickers"]:
         recommendation_parts.append(
             f"最新正式 shadow rerun 已验证 {ticker_groups['selected_tickers']} 可进入 selected，当前不应再按 upstream absence 处理。"
@@ -494,7 +591,7 @@ def _build_upstream_shadow_followup_recommendation(ticker_groups: dict[str, Any]
 
 
 def load_latest_upstream_shadow_followup_summary(reports_root: str | Path) -> dict[str, Any]:
-    latest_candidate = select_latest_btst_followup_candidate(reports_root)
+    latest_candidate = select_latest_upstream_shadow_followup_candidate(reports_root)
     if not latest_candidate:
         return {
             "status": "unavailable",
@@ -528,13 +625,7 @@ def load_latest_upstream_shadow_followup_by_ticker(reports_root: str | Path) -> 
             ticker = str(row.get("ticker") or "").strip()
             if not ticker:
                 continue
-            candidate_rank = (
-                _decision_rank(row.get("decision")),
-                str(candidate.get("trade_date") or ""),
-                int(candidate.get("selection_target_rank") or 0),
-                int(candidate.get("report_mtime_ns") or 0),
-                str(candidate.get("report_dir_name") or ""),
-            )
+            candidate_rank = _upstream_shadow_row_rank(row, candidate)
             current_rank = ranks_by_ticker.get(ticker)
             if current_rank is None or candidate_rank > current_rank:
                 rows_by_ticker[ticker] = dict(row)
@@ -556,13 +647,7 @@ def load_upstream_shadow_followup_history_by_ticker(reports_root: str | Path) ->
             ticker = str(row.get("ticker") or "").strip()
             if not ticker:
                 continue
-            candidate_rank = (
-                _decision_rank(row.get("decision")),
-                str(candidate.get("trade_date") or ""),
-                int(candidate.get("selection_target_rank") or 0),
-                int(candidate.get("report_mtime_ns") or 0),
-                str(candidate.get("report_dir_name") or ""),
-            )
+            candidate_rank = _upstream_shadow_row_rank(row, candidate)
             grouped.setdefault(ticker, []).append((candidate_rank, dict(row)))
 
     return {

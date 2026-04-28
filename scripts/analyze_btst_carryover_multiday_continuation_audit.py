@@ -19,6 +19,17 @@ def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
 
 
+def _snapshot_has_selected_target(snapshot: dict[str, Any]) -> bool:
+    selection_targets = dict(snapshot.get("selection_targets") or {})
+    if any(str(dict(payload.get("short_trade") or {}).get("decision") or "") == "selected" for payload in selection_targets.values()):
+        return True
+    for entry in list(snapshot.get("target_context") or []):
+        short_trade = dict((entry or {}).get("short_trade") or {})
+        if str(short_trade.get("decision") or "") == "selected":
+            return True
+    return False
+
+
 def _resolve_latest_selected_snapshot(reports_root: Path) -> Path:
     refresh_board_path = reports_root / "btst_selected_outcome_refresh_board_latest.json"
     if refresh_board_path.exists():
@@ -30,8 +41,7 @@ def _resolve_latest_selected_snapshot(reports_root: Path) -> Path:
     selected_candidates: list[tuple[str, Path]] = []
     for snapshot_path in sorted(reports_root.glob("**/selection_artifacts/*/selection_snapshot.json")):
         snapshot = _load_json(snapshot_path)
-        selection_targets = dict(snapshot.get("selection_targets") or {})
-        if any(str(dict(payload.get("short_trade") or {}).get("decision") or "") == "selected" for payload in selection_targets.values()):
+        if _snapshot_has_selected_target(snapshot):
             selected_candidates.append((str(snapshot.get("trade_date") or snapshot_path.parent.name), snapshot_path))
     if not selected_candidates:
         raise FileNotFoundError(f"No selected selection_snapshot.json found under {reports_root}")

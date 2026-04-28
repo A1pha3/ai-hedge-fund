@@ -453,6 +453,51 @@ def test_generate_btst_next_day_priority_board_surfaces_no_history_observer_lane
     assert "lane: no_history_observer" in markdown
 
 
+def test_generate_btst_next_day_priority_board_filters_execution_blocked_formal_entries(tmp_path):
+    board = generate_btst_next_day_priority_board_artifacts(
+        input_path={
+            "trade_date": "2026-04-22",
+            "next_trade_date": "2026-04-23",
+            "selected_entries": [
+                {
+                    "ticker": "300724",
+                    "decision": "selected",
+                    "reporting_decision": "blocked",
+                    "execution_blocked": True,
+                    "score_target": 0.61,
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "historical_prior": {},
+                }
+            ],
+            "near_miss_entries": [
+                {
+                    "ticker": "688313",
+                    "decision": "near_miss",
+                    "reporting_decision": "blocked",
+                    "execution_blocked": True,
+                    "score_target": 0.55,
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "historical_prior": {},
+                }
+            ],
+            "opportunity_pool_entries": [],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_priority": {},
+        },
+        output_dir=tmp_path,
+    )
+
+    payload = json.loads((tmp_path / "btst_next_day_priority_board_20260423.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / "btst_next_day_priority_board_20260423.md").read_text(encoding="utf-8")
+
+    assert board["analysis"]["summary"]["primary_count"] == 0
+    assert payload["summary"]["near_miss_count"] == 0
+    assert payload["priority_rows"] == []
+    assert "300724" not in markdown
+    assert "688313" not in markdown
+
+
 def test_generate_btst_next_day_priority_board_uses_execution_quality_specific_suggested_actions(tmp_path):
     generate_btst_next_day_priority_board_artifacts(
         input_path={

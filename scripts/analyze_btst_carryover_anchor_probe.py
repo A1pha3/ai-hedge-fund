@@ -57,6 +57,14 @@ def _find_latest_target_report_dir(reports_root: str | Path, ticker: str) -> Pat
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         short_trade = dict((((snapshot.get("selection_targets") or {}).get(ticker) or {}).get("short_trade") or {}))
         if not short_trade:
+            for entry in list(snapshot.get("target_context") or []):
+                if str(entry.get("ticker") or "").strip() != ticker:
+                    continue
+                candidate_short_trade = dict((entry or {}).get("short_trade") or {})
+                if candidate_short_trade:
+                    short_trade = candidate_short_trade
+                    break
+        if not short_trade:
             continue
         explainability = dict(short_trade.get("explainability_payload") or {})
         upstream_relief = dict(explainability.get("upstream_shadow_catalyst_relief") or {})
@@ -70,6 +78,31 @@ def _find_latest_target_report_dir(reports_root: str | Path, ticker: str) -> Pat
     if not candidates:
         raise ValueError(f"No BTST report found for ticker: {ticker}")
     return max(candidates, key=lambda item: item[0])[1]
+
+
+def _load_target_row_from_legacy_snapshot(report_dir: Path, ticker: str) -> dict[str, Any]:
+    snapshot_candidates = sorted(report_dir.glob("selection_artifacts/*/selection_snapshot.json"))
+    for snapshot_path in reversed(snapshot_candidates):
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        trade_date = str(snapshot.get("trade_date") or snapshot_path.parent.name)
+        for entry in list(snapshot.get("target_context") or []):
+            if str(entry.get("ticker") or "").strip() != ticker:
+                continue
+            short_trade = dict((entry or {}).get("short_trade") or {})
+            if str(short_trade.get("decision") or "") != "selected":
+                continue
+            replay_context = dict(entry.get("replay_context") or {})
+            return {
+                "ticker": ticker,
+                "decision": str(short_trade.get("decision") or "selected"),
+                "candidate_source": entry.get("candidate_source"),
+                "preferred_entry_mode": entry.get("preferred_entry_mode"),
+                "historical_execution_quality_label": entry.get("historical_execution_quality_label"),
+                "historical_entry_timing_bias": entry.get("historical_entry_timing_bias"),
+                "trade_date": trade_date,
+                "historical_prior": dict(replay_context.get("historical_prior") or {}),
+            }
+    return {}
 
 
 def _attach_outcomes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -160,6 +193,10 @@ def _build_recommendation(best_probe: dict[str, Any], target_prior: dict[str, An
     )
 
 
+def _build_no_anchor_recommendation(ticker: str) -> str:
+    return f"{ticker} 当前没有找到同 ticker 的历史 anchor candidates。应保留该票 prior 诊断，但不要据此推进 carryover peer promotion。"
+
+
 def analyze_btst_carryover_anchor_probe(
     reports_root: str | Path,
     *,
@@ -170,6 +207,8 @@ def analyze_btst_carryover_anchor_probe(
     rows_by_ticker = load_btst_followup_by_ticker_for_report(resolved_report_dir)
     target_row = dict(rows_by_ticker.get(ticker) or {})
     if not target_row:
+        target_row = _load_target_row_from_legacy_snapshot(resolved_report_dir, ticker)
+    if not target_row:
         raise ValueError(f"No followup row found for ticker {ticker} in report {resolved_report_dir}")
     target_prior = dict(target_row.get("historical_prior") or {})
     if not target_prior:
@@ -179,7 +218,19 @@ def analyze_btst_carryover_anchor_probe(
     historical_rows = _dedupe_historical_rows(list(historical_payload.get("rows") or []))
     ticker_rows = [row for row in historical_rows if str(row.get("ticker") or "") == ticker]
     if not ticker_rows:
-        raise ValueError(f"No historical anchor candidates found for ticker {ticker}")
+        return {
+            "ticker": ticker,
+            "report_dir": str(resolved_report_dir),
+            "target_row": {
+                key: target_row.get(key)
+                for key in ("ticker", "decision", "candidate_source", "preferred_entry_mode", "historical_execution_quality_label", "historical_entry_timing_bias")
+            },
+            "target_prior_fingerprint": {key: int(target_prior.get(key) or 0) for key in COUNT_KEYS},
+            "historical_candidate_count": len(historical_rows),
+            "ticker_anchor_candidate_count": 0,
+            "probes": [],
+            "recommendation": _build_no_anchor_recommendation(ticker),
+        }
 
     probes: list[dict[str, Any]] = []
     for anchor in ticker_rows:

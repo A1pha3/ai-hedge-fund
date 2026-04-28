@@ -21,16 +21,27 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _selected_tickers_from_snapshot(snapshot: dict[str, Any]) -> list[str]:
+    tickers = [
+        str(ticker)
+        for ticker, payload in dict(snapshot.get("selection_targets") or {}).items()
+        if str(((payload or {}).get("short_trade") or {}).get("decision") or "") == "selected"
+    ]
+    if tickers:
+        return sorted(tickers)
+    return sorted(
+        str(entry.get("ticker") or "")
+        for entry in list(snapshot.get("target_context") or [])
+        if str(entry.get("ticker") or "").strip() and str(((entry or {}).get("short_trade") or {}).get("decision") or "") == "selected"
+    )
+
+
 def _resolve_latest_selected_snapshot(reports_root: str | Path) -> tuple[Path, dict[str, Any]]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     candidates: list[tuple[tuple[str, int, str], Path, dict[str, Any]]] = []
     for snapshot_path in resolved_reports_root.glob("**/selection_artifacts/*/selection_snapshot.json"):
         snapshot = _load_json(snapshot_path)
-        selected_count = sum(
-            1
-            for payload in dict(snapshot.get("selection_targets") or {}).values()
-            if str(((payload or {}).get("short_trade") or {}).get("decision") or "") == "selected"
-        )
+        selected_count = len(_selected_tickers_from_snapshot(snapshot))
         if selected_count <= 0:
             continue
         trade_date = str(snapshot.get("trade_date") or snapshot_path.parent.name)
@@ -42,12 +53,7 @@ def _resolve_latest_selected_snapshot(reports_root: str | Path) -> tuple[Path, d
 
 
 def _selected_tickers(snapshot: dict[str, Any]) -> list[str]:
-    tickers = [
-        str(ticker)
-        for ticker, payload in dict(snapshot.get("selection_targets") or {}).items()
-        if str(((payload or {}).get("short_trade") or {}).get("decision") or "") == "selected"
-    ]
-    return sorted(tickers)
+    return _selected_tickers_from_snapshot(snapshot)
 
 
 def _build_recommendation(entries: list[dict[str, Any]]) -> str:

@@ -860,10 +860,12 @@ def test_build_carryover_peer_promotion_gate_summary(tmp_path: Path) -> None:
             "selected_contract_verdict": "pending_next_day",
             "peer_count": 3,
             "gate_verdict_counts": {"blocked_selected_contract_open": 1, "await_peer_t_plus_2_close": 1},
+            "default_expansion_status": "pending_peer_proof",
             "ready_tickers": [],
             "blocked_open_tickers": ["301396"],
             "risk_review_tickers": [],
             "pending_t_plus_2_tickers": ["300408"],
+            "pending_next_day_tickers": ["600989"],
             "focus_ticker": "301396",
             "focus_gate_verdict": "blocked_selected_contract_open",
             "entries": [
@@ -881,8 +883,10 @@ def test_build_carryover_peer_promotion_gate_summary(tmp_path: Path) -> None:
 
     assert summary["focus_ticker"] == "301396"
     assert summary["focus_gate_verdict"] == "blocked_selected_contract_open"
+    assert summary["default_expansion_status"] == "pending_peer_proof"
     assert summary["blocked_open_tickers"] == ["301396"]
     assert summary["pending_t_plus_2_tickers"] == ["300408"]
+    assert summary["pending_next_day_tickers"] == ["600989"]
 
 
 def test_build_carryover_peer_promotion_gate_summary_aligns_focus_recommendation(tmp_path: Path) -> None:
@@ -1871,6 +1875,8 @@ def test_build_corridor_shadow_pack_summary_retains_primary_outcome_loop() -> No
     summary = _build_corridor_shadow_pack_summary(
         {
             "shadow_status": "ready_for_primary_shadow_replay",
+            "strict_release_status": "strict_release_ready",
+            "strict_release_tickers": ["300683", "301188"],
             "primary_shadow_replay": {
                 "ticker": "300683",
                 "validation_priority_rank": 1,
@@ -1895,16 +1901,46 @@ def test_build_corridor_shadow_pack_summary_retains_primary_outcome_loop() -> No
                     "uplift_to_cutoff_multiple_mean": 5.1023,
                 }
             ],
+            "validation_only_tickers": ["688796"],
             "excluded_low_gate_tail_tickers": ["688796"],
         }
     )
 
     assert summary["shadow_status"] == "ready_for_primary_shadow_replay"
+    assert summary["strict_release_status"] == "strict_release_ready"
+    assert summary["strict_release_tickers"] == ["300683", "301188"]
     assert summary["primary_shadow_replay"]["ticker"] == "300683"
     assert summary["primary_shadow_replay"]["t_plus_2_positive_rate"] == 1.0
     assert summary["primary_shadow_replay"]["mean_t_plus_2_return"] == 0.1051
     assert summary["parallel_watch_tickers"] == ["301188"]
     assert summary["parallel_watch_outcome_loop"][0]["ticker"] == "301188"
+    assert summary["validation_only_tickers"] == ["688796"]
+    assert summary["excluded_low_gate_tail_tickers"] == ["688796"]
+
+
+def test_build_corridor_shadow_pack_summary_does_not_backfill_strict_release_contract() -> None:
+    summary = _build_corridor_shadow_pack_summary(
+        {
+            "shadow_status": "hold_for_more_corridor_evidence",
+            "primary_shadow_replay": {
+                "ticker": "300683",
+                "validation_priority_rank": 1,
+            },
+            "parallel_watch_lanes": [
+                {
+                    "ticker": "301188",
+                    "validation_priority_rank": 2,
+                }
+            ],
+            "excluded_low_gate_tail_tickers": ["688796"],
+        }
+    )
+
+    assert summary["shadow_status"] == "hold_for_more_corridor_evidence"
+    assert summary["strict_release_status"] is None
+    assert summary["strict_release_tickers"] == []
+    assert summary["parallel_watch_tickers"] == ["301188"]
+    assert summary["validation_only_tickers"] == []
     assert summary["excluded_low_gate_tail_tickers"] == ["688796"]
 
 

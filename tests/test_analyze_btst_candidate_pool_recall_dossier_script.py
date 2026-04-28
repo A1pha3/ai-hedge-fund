@@ -69,6 +69,15 @@ def test_resolve_dominant_blocking_stage_prefers_real_truncation_over_tied_legac
     assert dominant_stage == "candidate_pool_truncated_after_filters"
 
 
+def test_resolve_truncation_frontier_case_verdict_treats_malformed_rank_gap_as_unobservable() -> None:
+    assert recall_script._resolve_truncation_frontier_case_verdict(rank_gap="bad-rank-gap", avg_amount_share_of_cutoff=0.8) == "mid_cutoff_gap"
+
+
+def test_resolve_truncation_frontier_case_verdict_explicitly_classifies_101_to_150_gap_as_non_boundary() -> None:
+    assert recall_script._resolve_truncation_frontier_case_verdict(rank_gap=101, avg_amount_share_of_cutoff=0.65) == "far_below_cutoff_not_boundary"
+    assert recall_script._resolve_truncation_frontier_case_verdict(rank_gap=150, avg_amount_share_of_cutoff=0.9) == "far_below_cutoff_not_boundary"
+
+
 def test_analyze_btst_candidate_pool_recall_dossier_splits_layer_a_root_causes(tmp_path: Path) -> None:
     avg_amount_share_of_min_gate = round(9100.0 / float(recall_script.MIN_AVG_AMOUNT_20D), 4)
     cutoff_avg_amount_share_of_min_gate = round(9250.0 / float(recall_script.MIN_AVG_AMOUNT_20D), 4)
@@ -1753,6 +1762,8 @@ def test_analyze_btst_candidate_pool_recall_dossier_reconstructs_pre_truncation_
                 "pre_truncation_liquidity_gap_mode": "near_cutoff_liquidity_gap",
                 "avg_amount_20d": 7000.0,
                 "market_cap": 7.0,
+                "priority_handoff": "top300_boundary_micro_tuning",
+                "frontier_probe_verdict": "near_cutoff_boundary",
                 "pre_truncation_frontier_window": [
                     {"rank": 1, "ticker": "600001", "ts_code": "600001.SH", "name": "A", "avg_amount_20d": 10000.0, "market_cap": 10.0},
                     {"rank": 2, "ticker": "600002", "ts_code": "600002.SH", "name": "B", "avg_amount_20d": 9000.0, "market_cap": 9.0},
@@ -1782,6 +1793,8 @@ def test_analyze_btst_candidate_pool_recall_dossier_reconstructs_pre_truncation_
                 "pre_truncation_liquidity_gap_mode": "near_cutoff_liquidity_gap",
                 "avg_amount_20d": 7000.0,
                 "market_cap": 7.0,
+                "priority_handoff": "top300_boundary_micro_tuning",
+                "frontier_probe_verdict": "near_cutoff_boundary",
                 "pre_truncation_frontier_window": [
                     {"rank": 1, "ticker": "600001", "ts_code": "600001.SH", "name": "A", "avg_amount_20d": 10000.0, "market_cap": 10.0},
                     {"rank": 2, "ticker": "600002", "ts_code": "600002.SH", "name": "B", "avg_amount_20d": 9000.0, "market_cap": 9.0},
@@ -1809,6 +1822,9 @@ def test_analyze_btst_candidate_pool_recall_dossier_reconstructs_pre_truncation_
         "min_rank_gap_to_cutoff": 1,
         "max_rank_gap_to_cutoff": 1,
         "avg_rank_gap_to_cutoff": 1.0,
+        "boundary_tunable_tickers": ["003036"],
+        "boundary_tunable_by_lane": {"top300_boundary_micro_tuning": ["003036"]},
+        "boundary_tunable_recommendation": "边界可调样本应按车道继续跟踪：优先沿 top300_boundary_micro_tuning 观察 ['003036'] 的 frontier 邻域，不要与 structural far-below 样本混用。",
     }
     assert analysis["focus_liquidity_profile_summary"] == {
         "profile_count": 1,
@@ -1831,6 +1847,58 @@ def test_analyze_btst_candidate_pool_recall_dossier_reconstructs_pre_truncation_
             }
         ],
     }
+
+
+def test_build_truncation_frontier_summary_splits_boundary_tunable_cases_from_structural_far_below() -> None:
+    summary = recall_script._build_truncation_frontier_summary(
+        [
+            {
+                "ticker": "003036",
+                "truncation_liquidity_profile": {"priority_handoff": "top300_boundary_micro_tuning"},
+                "occurrence_evidence": [
+                    {
+                        "blocking_stage": "candidate_pool_truncated_after_filters",
+                        "trade_date": "20260324",
+                        "pre_truncation_rank": 338,
+                        "pre_truncation_cutoff_rank": 300,
+                        "pre_truncation_rank_gap_to_cutoff": 38,
+                        "pre_truncation_avg_amount_share_of_cutoff": 0.9123,
+                        "avg_amount_share_of_min_gate": 9.123,
+                        "pre_truncation_cutoff_avg_amount_share_of_min_gate": 10.0,
+                        "pre_truncation_ranking_driver": "mixed_post_filter_gap",
+                        "pre_truncation_liquidity_gap_mode": "near_cutoff_liquidity_gap",
+                    }
+                ],
+            },
+            {
+                "ticker": "301292",
+                "truncation_liquidity_profile": {"priority_handoff": "post_gate_liquidity_competition"},
+                "occurrence_evidence": [
+                    {
+                        "blocking_stage": "candidate_pool_truncated_after_filters",
+                        "trade_date": "20260325",
+                        "pre_truncation_rank": 580,
+                        "pre_truncation_cutoff_rank": 300,
+                        "pre_truncation_rank_gap_to_cutoff": 280,
+                        "pre_truncation_avg_amount_share_of_cutoff": 0.5811,
+                        "avg_amount_share_of_min_gate": 8.011,
+                        "pre_truncation_cutoff_avg_amount_share_of_min_gate": 13.785,
+                        "pre_truncation_ranking_driver": "avg_amount_20d_gap_dominant",
+                        "pre_truncation_liquidity_gap_mode": "well_above_gate_but_far_below_cutoff",
+                    }
+                ],
+            },
+        ]
+    )
+
+    assert summary["frontier_verdict"] == "boundary_tunable_lane_probe"
+    assert summary["closest_cases"][0]["ticker"] == "003036"
+    assert summary["closest_cases"][0]["frontier_probe_verdict"] == "boundary_tunable_lane_probe"
+    assert summary["closest_cases"][1]["ticker"] == "301292"
+    assert summary["closest_cases"][1]["frontier_probe_verdict"] == "structural_far_below_gap"
+    assert summary["boundary_tunable_tickers"] == ["003036"]
+    assert summary["boundary_tunable_by_lane"] == {"top300_boundary_micro_tuning": ["003036"]}
+    assert "top300_boundary_micro_tuning" in summary["boundary_tunable_recommendation"]
 
 
 def test_build_ticker_truncation_ranking_summary_adds_frontier_peer_pressure_for_corridor_wall() -> None:

@@ -88,6 +88,15 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _safe_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
     left = _safe_float(numerator)
     right = _safe_float(denominator)
@@ -2867,14 +2876,19 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
     dominant_ranking_driver = ranking_driver_counts.most_common(1)[0][0] if ranking_driver_counts else None
     liquidity_gap_mode_counts = Counter(str(row.get("pre_truncation_liquidity_gap_mode") or "unknown") for row in ordered_rows)
     dominant_liquidity_gap_mode = liquidity_gap_mode_counts.most_common(1)[0][0] if liquidity_gap_mode_counts else None
-    frontier_verdict = _resolve_truncation_frontier_verdict(min_rank_gap=min_rank_gap, avg_amount_shares=avg_amount_shares)
+    frontier_probe_rows = [_annotate_truncation_frontier_probe_verdict(row) for row in ordered_rows]
+    distinct_frontier_probe_rows = _collect_distinct_truncation_ticker_cases(frontier_probe_rows)
+    frontier_verdict = _resolve_truncation_frontier_verdict(frontier_probe_rows)
+    boundary_tunable_rows = [row for row in frontier_probe_rows if str(row.get("frontier_probe_verdict") or "") in {"near_cutoff_boundary", "boundary_tunable_lane_probe"}]
+    boundary_tunable_tickers = [str(row.get("ticker") or "") for row in distinct_frontier_probe_rows if str(row.get("frontier_probe_verdict") or "") in {"near_cutoff_boundary", "boundary_tunable_lane_probe"} and str(row.get("ticker") or "").strip()]
+    boundary_tunable_by_lane = _build_boundary_tunable_by_lane(boundary_tunable_rows)
 
     return {
         "observed_case_count": truncation_case_count,
         "rank_observed_case_count": len(ordered_rows),
         "frontier_verdict": frontier_verdict,
-        "closest_cases": ordered_rows[:5],
-        "closest_distinct_ticker_cases": distinct_ticker_cases[:5],
+        "closest_cases": frontier_probe_rows[:5],
+        "closest_distinct_ticker_cases": distinct_frontier_probe_rows[:5],
         "ranking_driver_counts": {key: int(value) for key, value in ranking_driver_counts.most_common()},
         "dominant_ranking_driver": dominant_ranking_driver,
         "liquidity_gap_mode_counts": {key: int(value) for key, value in liquidity_gap_mode_counts.most_common()},
@@ -2894,6 +2908,9 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
         "min_rank_gap_to_cutoff": min_rank_gap,
         "max_rank_gap_to_cutoff": max(rank_gaps) if rank_gaps else None,
         "avg_rank_gap_to_cutoff": round(sum(rank_gaps) / len(rank_gaps), 4) if rank_gaps else None,
+        "boundary_tunable_tickers": boundary_tunable_tickers,
+        "boundary_tunable_by_lane": boundary_tunable_by_lane,
+        "boundary_tunable_recommendation": _build_boundary_tunable_recommendation(boundary_tunable_by_lane),
     }
 
 
@@ -2902,17 +2919,18 @@ def _collect_truncation_frontier_rows(priority_ticker_dossiers: list[dict[str, A
     truncation_rows: list[dict[str, Any]] = []
     for row in priority_ticker_dossiers:
         ticker = str(row.get("ticker") or "").strip()
+        truncation_liquidity_profile = dict(row.get("truncation_liquidity_profile") or {})
         for occurrence in list(row.get("occurrence_evidence") or []):
             if str(occurrence.get("blocking_stage") or "") != "candidate_pool_truncated_after_filters":
                 continue
             truncation_case_count += 1
-            truncation_row = _build_truncation_frontier_row(ticker, occurrence)
+            truncation_row = _build_truncation_frontier_row(ticker, occurrence, truncation_liquidity_profile=truncation_liquidity_profile)
             if truncation_row is not None:
                 truncation_rows.append(truncation_row)
     return truncation_case_count, truncation_rows
 
 
-def _build_truncation_frontier_row(ticker: str, occurrence: dict[str, Any]) -> dict[str, Any] | None:
+def _build_truncation_frontier_row(ticker: str, occurrence: dict[str, Any], *, truncation_liquidity_profile: dict[str, Any] | None = None) -> dict[str, Any] | None:
     rank_gap = occurrence.get("pre_truncation_rank_gap_to_cutoff")
     rank_value = occurrence.get("pre_truncation_rank")
     cutoff_rank = occurrence.get("pre_truncation_cutoff_rank")
@@ -2940,6 +2958,7 @@ def _build_truncation_frontier_row(ticker: str, occurrence: dict[str, Any]) -> d
         "avg_amount_20d": occurrence.get("avg_amount_20d"),
         "market_cap": occurrence.get("market_cap"),
         "pre_truncation_frontier_window": occurrence.get("pre_truncation_frontier_window") or [],
+        "priority_handoff": dict(truncation_liquidity_profile or {}).get("priority_handoff"),
     }
 
 
@@ -2955,19 +2974,70 @@ def _collect_distinct_truncation_ticker_cases(ordered_rows: list[dict[str, Any]]
     return distinct_ticker_cases
 
 
-def _resolve_truncation_frontier_verdict(*, min_rank_gap: int | None, avg_amount_shares: list[float]) -> str:
-    if min_rank_gap is None:
-        max_share = max(avg_amount_shares) if avg_amount_shares else None
-        if max_share is not None and max_share < 0.65:
-            return "far_below_cutoff_not_boundary"
-        if max_share is not None and max_share < 0.85:
+def _annotate_truncation_frontier_probe_verdict(row: dict[str, Any]) -> dict[str, Any]:
+    annotated_row = dict(row)
+    annotated_row["frontier_probe_verdict"] = _resolve_truncation_frontier_case_verdict(
+        rank_gap=annotated_row.get("pre_truncation_rank_gap_to_cutoff"),
+        avg_amount_share_of_cutoff=annotated_row.get("pre_truncation_avg_amount_share_of_cutoff"),
+    )
+    return annotated_row
+
+
+def _resolve_truncation_frontier_case_verdict(*, rank_gap: Any, avg_amount_share_of_cutoff: Any) -> str:
+    normalized_rank_gap = _safe_int(rank_gap)
+    normalized_share = _safe_float(avg_amount_share_of_cutoff)
+    if normalized_rank_gap is None:
+        if normalized_share is not None and normalized_share < 0.65:
+            return "structural_far_below_gap"
+        if normalized_share is not None and normalized_share < 0.85:
             return "mid_cutoff_gap"
         return "no_rank_observability"
-    if min_rank_gap <= 20:
+    if normalized_rank_gap <= 20:
         return "near_cutoff_boundary"
-    if min_rank_gap <= 100:
+    if normalized_rank_gap <= 60 and normalized_share is not None and normalized_share >= 0.9:
+        return "boundary_tunable_lane_probe"
+    if normalized_rank_gap > 150:
+        return "structural_far_below_gap"
+    if normalized_share is not None and normalized_share < 0.65:
+        return "structural_far_below_gap"
+    if normalized_rank_gap <= 100:
         return "mid_cutoff_gap"
+    if normalized_rank_gap <= 150:
+        return "far_below_cutoff_not_boundary"
     return "far_below_cutoff_not_boundary"
+
+
+def _resolve_truncation_frontier_verdict(frontier_rows: list[dict[str, Any]]) -> str:
+    case_verdicts = [str(row.get("frontier_probe_verdict") or "").strip() for row in frontier_rows if str(row.get("frontier_probe_verdict") or "").strip()]
+    if any(verdict in {"near_cutoff_boundary", "boundary_tunable_lane_probe"} for verdict in case_verdicts):
+        if any(verdict == "boundary_tunable_lane_probe" for verdict in case_verdicts):
+            return "boundary_tunable_lane_probe"
+        return "near_cutoff_boundary"
+    if any(verdict == "mid_cutoff_gap" for verdict in case_verdicts):
+        return "mid_cutoff_gap"
+    if any(verdict == "structural_far_below_gap" for verdict in case_verdicts):
+        return "far_below_cutoff_not_boundary"
+    return "no_rank_observability"
+
+
+def _build_boundary_tunable_by_lane(boundary_tunable_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    boundary_tunable_by_lane: dict[str, list[str]] = {}
+    for row in boundary_tunable_rows:
+        lane = str(row.get("priority_handoff") or "").strip() or "unclassified_boundary_lane"
+        ticker = str(row.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        lane_tickers = boundary_tunable_by_lane.setdefault(lane, [])
+        if ticker not in lane_tickers:
+            lane_tickers.append(ticker)
+    return boundary_tunable_by_lane
+
+
+def _build_boundary_tunable_recommendation(boundary_tunable_by_lane: dict[str, list[str]]) -> str | None:
+    if not boundary_tunable_by_lane:
+        return None
+    primary_lane, primary_tickers = next(iter(boundary_tunable_by_lane.items()))
+    return f"边界可调样本应按车道继续跟踪：优先沿 {primary_lane} 观察 {primary_tickers} 的 frontier 邻域，不要与 structural far-below 样本混用。"
 
 
 def _build_action_queue(priority_ticker_dossiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3059,6 +3129,9 @@ def _build_truncation_stage_recommendation(
     branch_recommendation = _build_truncation_branch_split_recommendation(truncation_context)
     if branch_recommendation is not None:
         return branch_recommendation
+    boundary_tunable_recommendation = _build_truncation_boundary_tunable_recommendation(truncation_context)
+    if boundary_tunable_recommendation is not None:
+        return boundary_tunable_recommendation
     far_below_recommendation = _build_truncation_far_below_cutoff_recommendation(truncation_context)
     if far_below_recommendation is not None:
         return far_below_recommendation
@@ -3093,6 +3166,15 @@ def _build_truncation_branch_split_recommendation(truncation_context: dict[str, 
         branch_mechanisms=[dict(row) for row in list(truncation_context.get("branch_mechanisms") or [])],
         branch_experiment_queue=[dict(row) for row in list(truncation_context.get("branch_experiment_queue") or [])],
     )
+
+
+def _build_truncation_boundary_tunable_recommendation(truncation_context: dict[str, Any]) -> str | None:
+    frontier_summary = dict(truncation_context.get("frontier_summary") or {})
+    frontier_verdict = str(frontier_summary.get("frontier_verdict") or "").strip()
+    if frontier_verdict not in {"near_cutoff_boundary", "boundary_tunable_lane_probe"}:
+        return None
+    recommendation = str(frontier_summary.get("boundary_tunable_recommendation") or "").strip()
+    return recommendation or None
 
 
 def _build_truncation_far_below_cutoff_recommendation(truncation_context: dict[str, Any]) -> str | None:
@@ -3352,6 +3434,9 @@ def _build_truncation_stage_next_actions(
     branch_actions = _build_truncation_branch_split_next_actions(truncation_context)
     if branch_actions is not None:
         return branch_actions
+    boundary_tunable_actions = _build_truncation_boundary_tunable_next_actions(truncation_context)
+    if boundary_tunable_actions is not None:
+        return boundary_tunable_actions
     far_below_actions = _build_truncation_far_below_cutoff_next_actions(top_stage_tickers=top_stage_tickers, truncation_context=truncation_context)
     if far_below_actions is not None:
         return far_below_actions
@@ -3387,6 +3472,22 @@ def _build_truncation_branch_split_next_actions(truncation_context: dict[str, An
         branch_mechanisms=[dict(row) for row in list(truncation_context.get("branch_mechanisms") or [])],
         branch_experiment_queue=[dict(row) for row in list(truncation_context.get("branch_experiment_queue") or [])],
     )
+
+
+def _build_truncation_boundary_tunable_next_actions(truncation_context: dict[str, Any]) -> list[str] | None:
+    frontier_summary = dict(truncation_context.get("frontier_summary") or {})
+    frontier_verdict = str(frontier_summary.get("frontier_verdict") or "").strip()
+    if frontier_verdict not in {"near_cutoff_boundary", "boundary_tunable_lane_probe"}:
+        return None
+    boundary_tunable_by_lane = dict(frontier_summary.get("boundary_tunable_by_lane") or {})
+    if not boundary_tunable_by_lane:
+        return None
+    primary_lane, primary_tickers = next(iter(boundary_tunable_by_lane.items()))
+    recommendation = str(frontier_summary.get("boundary_tunable_recommendation") or "").strip()
+    return [
+        recommendation or f"优先沿 {primary_lane} 跟踪 {primary_tickers} 的 boundary lane，不要与 far-below 结构性样本混用。",
+        f"继续补 {primary_lane} 车道的 pre-truncation frontier 观测，核对 {primary_tickers} 是否持续贴近 cutoff 邻域。",
+    ]
 
 
 def _build_truncation_far_below_cutoff_next_actions(*, top_stage_tickers: dict[str, list[str]], truncation_context: dict[str, Any]) -> list[str] | None:

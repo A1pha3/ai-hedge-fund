@@ -92,6 +92,46 @@ def test_generate_btst_tplus2_continuation_promotion_gate_holds_when_review_is_n
     assert analysis["proposed_watchlist_tickers"] == ["600989"]
 
 
+def test_generate_btst_tplus2_continuation_promotion_gate_threads_pending_peer_proof_contract(tmp_path: Path) -> None:
+    lane_rulepack_path = tmp_path / "lane_rulepack.json"
+    promotion_review_path = tmp_path / "promotion_review.json"
+
+    lane_rulepack_path.write_text(
+        json.dumps(
+            {
+                "eligible_tickers": ["600988"],
+                "watchlist_tickers": ["600989"],
+                "lane_rules": {
+                    "lane_stage": "observation_only",
+                    "capital_mode": "paper_only",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    promotion_review_path.write_text(
+        json.dumps(
+            {
+                "focus_ticker": "300620",
+                "promotion_review_verdict": "hold_validation_queue",
+                "promotion_blockers": ["promotion_review_not_ready"],
+                "default_expansion_status": "pending_peer_proof",
+                "promotion_ready_tickers": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    analysis = generate_btst_tplus2_continuation_promotion_gate(
+        lane_rulepack_path=lane_rulepack_path,
+        promotion_review_path=promotion_review_path,
+    )
+
+    assert analysis["default_expansion_status"] == "pending_peer_proof"
+    assert analysis["promotion_ready_tickers"] == []
+    assert analysis["gate_verdict"] == "hold_watchlist_promotion"
+
+
 def test_generate_btst_tplus2_continuation_promotion_gate_accepts_merge_review_ready(tmp_path: Path) -> None:
     lane_rulepack_path = tmp_path / "lane_rulepack.json"
     promotion_review_path = tmp_path / "promotion_review.json"
@@ -142,6 +182,8 @@ def test_generate_btst_tplus2_continuation_promotion_gate_threads_source_reports
             "focus_ticker": "300505",
             "promotion_review_verdict": "watch_review_ready",
             "promotion_review_blockers": [],
+            "default_expansion_status": "ready_for_peer_promotion",
+            "promotion_ready_tickers": ["300505"],
             "gate_verdict": "approve_watchlist_promotion",
             "gate_blockers": [],
             "current_watchlist_tickers": ["600989"],
@@ -159,6 +201,8 @@ def test_generate_btst_tplus2_continuation_promotion_gate_threads_source_reports
     )
 
     assert analysis["focus_ticker"] == "300505"
+    assert analysis["default_expansion_status"] == "ready_for_peer_promotion"
+    assert analysis["promotion_ready_tickers"] == ["300505"]
     assert analysis["gate_verdict"] == "approve_watchlist_promotion"
     assert analysis["source_reports"] == {
         "lane_rulepack": str(lane_rulepack_path.resolve()),

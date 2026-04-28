@@ -516,6 +516,9 @@ def _recompute_frozen_sidecar_supplemental_short_trade_entries(plan: ExecutionPl
             retained_entries.append(normalized_entry)
             continue
         snapshot = dict(normalized_entry.get("short_trade_boundary_metrics") or normalized_entry.get("metrics") or {})
+        if not snapshot:
+            retained_entries.append(normalized_entry)
+            continue
         qualified, _, _ = qualify_short_trade_boundary_candidate_from_snapshot(
             snapshot=snapshot,
             compute_candidate_score_fn=_compute_short_trade_boundary_candidate_score,

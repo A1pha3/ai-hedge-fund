@@ -621,12 +621,18 @@ def _build_common_artifact_summary(paths: CandidateEntryShadowPaths, state: Cand
 
 
 def _build_corridor_validation_pack_summary(analysis: dict[str, Any]) -> dict[str, Any]:
+    strict_release_tickers = [str(ticker) for ticker in list(analysis.get("strict_release_tickers") or []) if str(ticker).strip()]
+    strict_release_status = analysis.get("strict_release_status")
+    validation_only_tickers = [str(ticker) for ticker in list(analysis.get("validation_only_tickers") or []) if str(ticker).strip()]
     return {
         "pack_status": analysis.get("pack_status"),
         "focus_ticker": analysis.get("focus_ticker"),
         "primary_validation_ticker": dict(analysis.get("primary_validation_ticker") or {}).get("ticker"),
         "leader_gap_to_target": analysis.get("leader_gap_to_target"),
         "promotion_readiness_status": analysis.get("promotion_readiness_status"),
+        "strict_release_status": strict_release_status,
+        "strict_release_tickers": strict_release_tickers[:3],
+        "validation_only_tickers": validation_only_tickers[:3],
         "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(analysis.get("parallel_watch_tickers") or [])[:3] if str(row.get("ticker") or "").strip()],
     }
 
@@ -648,8 +654,13 @@ def _build_corridor_shadow_pack_ticker_summary(payload: dict[str, Any]) -> dict[
 def _build_corridor_shadow_pack_summary(analysis: dict[str, Any]) -> dict[str, Any]:
     primary_shadow_replay_raw = analysis.get("primary_shadow_replay")
     primary_shadow_replay_payload = dict(primary_shadow_replay_raw or {}) if isinstance(primary_shadow_replay_raw, dict) else {"ticker": primary_shadow_replay_raw}
+    strict_release_tickers = [str(ticker) for ticker in list(analysis.get("strict_release_tickers") or []) if str(ticker).strip()]
+    strict_release_status = analysis.get("strict_release_status")
+    validation_only_tickers = [str(ticker) for ticker in list(analysis.get("validation_only_tickers") or []) if str(ticker).strip()]
     return {
         "shadow_status": analysis.get("shadow_status"),
+        "strict_release_status": strict_release_status,
+        "strict_release_tickers": strict_release_tickers[:3],
         "primary_shadow_replay": _build_corridor_shadow_pack_ticker_summary(primary_shadow_replay_payload),
         "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(analysis.get("parallel_watch_lanes") or [])[:3] if str(row.get("ticker") or "").strip()],
         "parallel_watch_outcome_loop": [
@@ -657,6 +668,7 @@ def _build_corridor_shadow_pack_summary(analysis: dict[str, Any]) -> dict[str, A
             for row in list(analysis.get("parallel_watch_lanes") or [])[:3]
             if str(dict(row or {}).get("ticker") or "").strip()
         ],
+        "validation_only_tickers": validation_only_tickers[:3],
         "excluded_low_gate_tail_tickers": [str(ticker) for ticker in list(analysis.get("excluded_low_gate_tail_tickers") or [])[:3] if str(ticker).strip()],
     }
 

@@ -88,10 +88,37 @@ def _load_corridor_narrow_probe(
 def _resolve_parallel_watch_rows(
     corridor_ticker_rows: list[dict[str, Any]],
     *,
+    deepest_corridor_focus_tickers: set[str],
+    excluded_low_gate_tail_tickers: set[str],
+    primary_ticker: str,
+) -> list[dict[str, Any]]:
+    if not deepest_corridor_focus_tickers:
+        return []
+    return [
+        dict(row)
+        for row in corridor_ticker_rows
+        if str(row.get("ticker") or "") in deepest_corridor_focus_tickers
+        and str(row.get("ticker") or "") not in excluded_low_gate_tail_tickers
+        and str(row.get("ticker") or "") != primary_ticker
+    ]
+
+
+def _resolve_validation_only_rows(
+    corridor_ticker_rows: list[dict[str, Any]],
+    *,
     excluded_low_gate_tail_tickers: set[str],
 ) -> list[dict[str, Any]]:
-    selected_rows = [dict(row) for row in corridor_ticker_rows[1:3]]
-    return [row for row in selected_rows if str(row.get("ticker") or "") not in excluded_low_gate_tail_tickers]
+    return [dict(row) for row in corridor_ticker_rows if str(row.get("ticker") or "") in excluded_low_gate_tail_tickers]
+
+
+def _resolve_strict_release_candidates(
+    *,
+    primary_ticker_row: dict[str, Any],
+    parallel_watch_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    strict_release_candidates = [dict(primary_ticker_row)] if primary_ticker_row else []
+    strict_release_candidates.extend(dict(row) for row in parallel_watch_rows)
+    return strict_release_candidates
 
 
 def _resolve_promotion_readiness_status(primary_ticker_row: dict[str, Any]) -> str:
@@ -154,7 +181,18 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
         if str(ticker).strip()
     }
     primary_ticker_row = dict(corridor_ticker_rows[0]) if corridor_ticker_rows else {}
+    deepest_corridor_focus_tickers = {
+        str(ticker).strip()
+        for ticker in list(corridor_narrow_probe.get("deepest_corridor_focus_tickers") or [])
+        if str(ticker).strip()
+    }
     parallel_watch_rows = _resolve_parallel_watch_rows(
+        corridor_ticker_rows,
+        deepest_corridor_focus_tickers=deepest_corridor_focus_tickers,
+        excluded_low_gate_tail_tickers=excluded_low_gate_tail_tickers,
+        primary_ticker=str(primary_ticker_row.get("ticker") or "").strip(),
+    )
+    validation_only_rows = _resolve_validation_only_rows(
         corridor_ticker_rows,
         excluded_low_gate_tail_tickers=excluded_low_gate_tail_tickers,
     )
@@ -165,6 +203,12 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
         else None
     )
     promotion_readiness_status = _resolve_promotion_readiness_status(primary_ticker_row)
+    strict_release_candidates = _resolve_strict_release_candidates(
+        primary_ticker_row=primary_ticker_row,
+        parallel_watch_rows=parallel_watch_rows,
+    )
+    strict_release_tickers = [str(row.get("ticker") or "").strip() for row in strict_release_candidates if str(row.get("ticker") or "").strip()]
+    validation_only_tickers = [str(row.get("ticker") or "").strip() for row in validation_only_rows if str(row.get("ticker") or "").strip()]
 
     if not corridor_objective_row:
         pack_status = "skipped_no_corridor_lane"
@@ -194,6 +238,7 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
         f"优先围绕 {primary_ticker_row.get('ticker') or 'primary corridor ticker'} 回查 uplift burden 与 nearest frontier multiple。",
         "把剩余 corridor ticker 作为 parallel confirmation，不允许直接把 corridor 误写成 top300 micro-boundary 调参问题。",
     ]
+    strict_release_status = "strict_release_ready" if pack_status == "parallel_probe_ready" and strict_release_candidates else "strict_release_unavailable"
 
     return {
         "source_dossier": str(resolved_dossier_path),
@@ -209,6 +254,11 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
         "corridor_ticker_rows": corridor_ticker_rows,
         "primary_validation_ticker": primary_ticker_row,
         "parallel_watch_tickers": parallel_watch_rows,
+        "strict_release_status": strict_release_status,
+        "strict_release_candidates": strict_release_candidates,
+        "strict_release_tickers": strict_release_tickers,
+        "validation_only_rows": validation_only_rows,
+        "validation_only_tickers": validation_only_tickers,
         "excluded_low_gate_tail_tickers": sorted(excluded_low_gate_tail_tickers),
         "recommendation": recommendation,
         "runbook": runbook,
@@ -238,6 +288,23 @@ def render_btst_candidate_pool_corridor_validation_pack_markdown(analysis: dict[
             f"- ticker={row.get('ticker')} validation_priority_rank={row.get('validation_priority_rank')} tractability_tier={row.get('tractability_tier')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')} uplift_to_cutoff_multiple_mean={row.get('uplift_to_cutoff_multiple_mean')}"
         )
     if not list(analysis.get("parallel_watch_tickers") or []):
+        lines.append("- none")
+    lines.append("")
+    lines.append("## Strict Release")
+    lines.append(f"- strict_release_status: {analysis.get('strict_release_status')}")
+    for row in list(analysis.get("strict_release_candidates") or []):
+        lines.append(
+            f"- ticker={row.get('ticker')} validation_priority_rank={row.get('validation_priority_rank')} tractability_tier={row.get('tractability_tier')} corridor_priority_rank={row.get('corridor_priority_rank')}"
+        )
+    if not list(analysis.get("strict_release_candidates") or []):
+        lines.append("- none")
+    lines.append("")
+    lines.append("## Validation Only")
+    for row in list(analysis.get("validation_only_rows") or []):
+        lines.append(
+            f"- ticker={row.get('ticker')} validation_priority_rank={row.get('validation_priority_rank')} tractability_tier={row.get('tractability_tier')} corridor_priority_rank={row.get('corridor_priority_rank')}"
+        )
+    if not list(analysis.get("validation_only_rows") or []):
         lines.append("- none")
     for ticker in list(analysis.get("excluded_low_gate_tail_tickers") or []):
         lines.append(f"- excluded_low_gate_tail={ticker}")

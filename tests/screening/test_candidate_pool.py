@@ -604,6 +604,71 @@ class TestExcludeRules:
         assert deep_entry["avg_amount_share_of_cutoff"] == 0.075
         assert deep_entry["avg_amount_share_of_min_gate"] == 3.0
 
+    @patch("src.screening.candidate_pool.get_sw_industry_classification")
+    @patch("src.screening.candidate_pool.get_daily_basic_batch")
+    @patch("src.screening.candidate_pool.get_limit_list")
+    @patch("src.screening.candidate_pool.get_suspend_list")
+    @patch("src.screening.candidate_pool.get_all_stock_basic")
+    @patch("src.screening.candidate_pool._get_pro")
+    def test_candidate_pool_shadow_recall_emits_source_layer_release_contract(
+        self,
+        mock_pro,
+        mock_basic,
+        mock_suspend,
+        mock_limit,
+        mock_daily,
+        mock_sw,
+    ):
+        stocks = [
+            {"ts_code": f"{i:06d}.SZ", "symbol": f"{i:06d}", "name": f"股票{i}"}
+            for i in range(305)
+        ]
+        avg_amount_map = {f"{i:06d}.SZ": float(100_000 - i) for i in range(300)}
+        avg_amount_map["000300.SZ"] = 15_000.0
+        avg_amount_map["000301.SZ"] = 45_000.0
+        avg_amount_map["000302.SZ"] = 18_000.0
+        avg_amount_map["000303.SZ"] = 9_000.0
+        avg_amount_map["000304.SZ"] = 4_500.0
+
+        snapshot_dir = Path(tempfile.mkdtemp())
+        mock_pro.return_value = MagicMock()
+        mock_basic.return_value = _make_stock_basic_df(stocks)
+        mock_suspend.return_value = pd.DataFrame()
+        mock_limit.return_value = pd.DataFrame()
+        mock_daily.return_value = _make_daily_basic_df(
+            [{"ts_code": stock["ts_code"], "total_mv": 1_000_000} for stock in stocks]
+        )
+        mock_sw.return_value = {}
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
+             patch("src.screening.candidate_pool.MAX_CANDIDATE_POOL_SIZE", 300), \
+             patch("src.screening.candidate_pool._get_avg_amount_20d_map", return_value=avg_amount_map), \
+             patch.object(candidate_pool_module, "SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", {"000302"}), \
+             patch.object(candidate_pool_module, "SHADOW_FOCUS_TICKERS", set()):
+            _, shadow_candidates, shadow_summary = build_candidate_pool_with_shadow(
+                "20260305",
+                use_cache=False,
+                cooldown_tickers=set(),
+            )
+
+        assert [candidate.ticker for candidate in shadow_candidates] == ["000302", "000300", "000301"]
+        assert shadow_summary["source_layer_strict_release_tickers"] == ["000302"]
+        assert shadow_summary["source_layer_validation_only_tickers"] == ["000300", "000301"]
+        assert shadow_summary["source_layer_lane_release_contracts"] == {
+            "layer_a_liquidity_corridor": {
+                "strict_release_tickers": ["000302"],
+                "validation_only_tickers": ["000300"],
+            },
+            "post_gate_liquidity_competition": {
+                "strict_release_tickers": [],
+                "validation_only_tickers": ["000301"],
+            },
+        }
+        contract_rows = {row["ticker"]: row for row in shadow_summary["tickers"]}
+        assert contract_rows["000302"]["source_layer_release_stage"] == "strict_release"
+        assert contract_rows["000300"]["source_layer_release_stage"] == "validation_only"
+        assert contract_rows["000301"]["source_layer_release_stage"] == "validation_only"
+
     def test_candidate_pool_shadow_recall_preserves_cached_main_pool_when_shadow_backfill_unavailable(self):
         snapshot_dir = Path(tempfile.mkdtemp())
         cached_candidates = [

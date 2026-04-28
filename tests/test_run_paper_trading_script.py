@@ -458,6 +458,7 @@ def test_derive_shadow_focus_tickers_from_reports_includes_manifest_corridor_sha
           "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
           "candidate_pool_corridor_shadow_pack_summary": {
             "shadow_status": "ready_for_primary_shadow_replay",
+            "strict_release_tickers": ["300683", "301188"],
             "primary_shadow_replay": "300683",
             "parallel_watch_tickers": ["301188"]
           }
@@ -489,6 +490,7 @@ def test_derive_shadow_focus_tickers_from_reports_manifest_corridor_shadow_pack_
           "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
           "candidate_pool_corridor_shadow_pack_summary": {
             "shadow_status": "ready_for_primary_shadow_replay",
+            "strict_release_tickers": ["300683", "301188"],
             "primary_shadow_replay": {"ticker": "300683"},
             "parallel_watch_tickers": ["301188"]
           }
@@ -547,6 +549,7 @@ def test_derive_shadow_focus_tickers_from_reports_manifest_excludes_low_gate_tai
           "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
           "candidate_pool_corridor_shadow_pack_summary": {
             "shadow_status": "ready_for_primary_shadow_replay",
+            "strict_release_tickers": ["300683"],
             "primary_shadow_replay": "300683",
             "parallel_watch_tickers": ["688796"],
             "excluded_low_gate_tail_tickers": ["688796"]
@@ -563,6 +566,84 @@ def test_derive_shadow_focus_tickers_from_reports_manifest_excludes_low_gate_tai
         "layer_a_liquidity_corridor": ["300683"],
         "post_gate_liquidity_competition": [],
         "release_priority_layer_a_liquidity_corridor": ["300683"],
+        "release_priority_post_gate_liquidity_competition": [],
+        "visibility_gap_all": [],
+        "visibility_gap_layer_a_liquidity_corridor": [],
+        "visibility_gap_post_gate_liquidity_competition": [],
+    }
+
+
+def test_derive_shadow_focus_tickers_from_reports_prefers_manifest_strict_release_tickers(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    (reports_root / "btst_tplus2_candidate_dossier_688796_latest.json").write_text(
+        """
+        {
+          "candidate_ticker": "688796",
+          "governance_followup": {
+            "priority_handoff": "layer_a_liquidity_corridor",
+            "latest_followup_decision": "near_miss",
+            "downstream_followup_status": "continuation_confirm_then_review"
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    (reports_root / "report_manifest_latest.json").write_text(
+        """
+        {
+          "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
+          "candidate_pool_corridor_shadow_pack_summary": {
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "strict_release_tickers": ["300683", "301188"],
+            "primary_shadow_replay": "300683",
+            "parallel_watch_tickers": ["688796"],
+            "excluded_low_gate_tail_tickers": ["688796"]
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    derived = run_paper_trading_script._derive_shadow_focus_tickers_from_reports(reports_root)
+
+    assert derived == {
+        "all": ["300683", "301188"],
+        "layer_a_liquidity_corridor": ["300683", "301188"],
+        "post_gate_liquidity_competition": [],
+        "release_priority_layer_a_liquidity_corridor": ["300683", "301188"],
+        "release_priority_post_gate_liquidity_competition": [],
+        "visibility_gap_all": [],
+        "visibility_gap_layer_a_liquidity_corridor": [],
+        "visibility_gap_post_gate_liquidity_competition": [],
+    }
+
+
+def test_derive_shadow_focus_tickers_from_reports_does_not_backfill_manifest_primary_parallel_without_strict_release(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    (reports_root / "report_manifest_latest.json").write_text(
+        """
+        {
+          "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
+          "candidate_pool_corridor_shadow_pack_summary": {
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "primary_shadow_replay": "300683",
+            "parallel_watch_tickers": ["301188"],
+            "excluded_low_gate_tail_tickers": ["688796"]
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    derived = run_paper_trading_script._derive_shadow_focus_tickers_from_reports(reports_root)
+
+    assert derived == {
+        "all": [],
+        "layer_a_liquidity_corridor": [],
+        "post_gate_liquidity_competition": [],
+        "release_priority_layer_a_liquidity_corridor": [],
         "release_priority_post_gate_liquidity_competition": [],
         "visibility_gap_all": [],
         "visibility_gap_layer_a_liquidity_corridor": [],
