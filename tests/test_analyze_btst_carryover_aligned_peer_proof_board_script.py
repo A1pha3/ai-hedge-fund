@@ -3,12 +3,168 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_carryover_aligned_peer_proof_board import analyze_btst_carryover_aligned_peer_proof_board
+from scripts.analyze_btst_carryover_aligned_peer_proof_board import analyze_btst_carryover_aligned_peer_proof_board, render_btst_carryover_aligned_peer_proof_board_markdown
 
 
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def test_analyze_btst_carryover_aligned_peer_proof_board_surfaces_phase_aware_command_queue(tmp_path: Path) -> None:
+    harvest_path = tmp_path / "harvest.json"
+    expansion_path = tmp_path / "expansion.json"
+    selected_refresh_path = tmp_path / "selected_refresh.json"
+
+    _write_json(
+        harvest_path,
+        {
+            "ticker": "002001",
+            "harvest_entries": [
+                {
+                    "ticker": "300001",
+                    "harvest_status": "await_next_day_close",
+                    "latest_trade_date": "2026-04-10",
+                    "latest_scope": "same_family_source_score_catalyst",
+                    "latest_score_target": 0.41,
+                    "closed_cycle_count": 0,
+                    "next_day_available_count": 0,
+                    "rows": [
+                        {
+                            "trade_date": "2026-04-10",
+                            "scope": "same_family_source_score_catalyst",
+                            "next_high_return": None,
+                            "next_close_return": None,
+                            "t_plus_2_close_return": None,
+                        }
+                    ],
+                },
+                {
+                    "ticker": "300002",
+                    "harvest_status": "await_t_plus_2_close",
+                    "latest_trade_date": "2026-04-10",
+                    "latest_scope": "same_family_source_score_catalyst",
+                    "latest_score_target": 0.4,
+                    "closed_cycle_count": 0,
+                    "next_day_available_count": 1,
+                    "rows": [
+                        {
+                            "trade_date": "2026-04-10",
+                            "scope": "same_family_source_score_catalyst",
+                            "next_high_return": 0.026,
+                            "next_close_return": 0.017,
+                            "t_plus_2_close_return": None,
+                        }
+                    ],
+                },
+                {
+                    "ticker": "300003",
+                    "harvest_status": "promotion_review_ready",
+                    "latest_trade_date": "2026-04-10",
+                    "latest_scope": "same_family_source_score_catalyst",
+                    "latest_score_target": 0.39,
+                    "closed_cycle_count": 1,
+                    "next_day_available_count": 1,
+                    "rows": [
+                        {
+                            "trade_date": "2026-04-10",
+                            "scope": "same_family_source_score_catalyst",
+                            "next_high_return": 0.043,
+                            "next_close_return": 0.028,
+                            "t_plus_2_close_return": 0.021,
+                        }
+                    ],
+                },
+            ],
+        },
+    )
+    _write_json(
+        expansion_path,
+        {
+            "selected_ticker": "002001",
+            "entries": [
+                {
+                    "ticker": "300001",
+                    "harvest_status": "await_next_day_close",
+                    "expansion_status": "await_next_day_close",
+                    "latest_trade_date": "2026-04-10",
+                    "latest_scope": "same_family_source_score_catalyst",
+                    "latest_score_target": 0.41,
+                    "concern_tags": [],
+                },
+                {
+                    "ticker": "300002",
+                    "harvest_status": "await_t_plus_2_close",
+                    "expansion_status": "await_t_plus_2_close",
+                    "latest_trade_date": "2026-04-10",
+                    "latest_scope": "same_family_source_score_catalyst",
+                    "latest_score_target": 0.4,
+                    "concern_tags": [],
+                },
+                {
+                    "ticker": "300003",
+                    "harvest_status": "promotion_review_ready",
+                    "expansion_status": "promotion_review_ready",
+                    "latest_trade_date": "2026-04-10",
+                    "latest_scope": "same_family_source_score_catalyst",
+                    "latest_score_target": 0.39,
+                    "concern_tags": [],
+                },
+            ],
+        },
+    )
+    _write_json(
+        selected_refresh_path,
+        {
+            "trade_date": "2026-04-09",
+            "entries": [
+                {
+                    "ticker": "002001",
+                    "trade_date": "2026-04-09",
+                    "current_cycle_status": "missing_next_day",
+                    "overall_contract_verdict": "pending_next_day",
+                }
+            ],
+        },
+    )
+
+    analysis = analyze_btst_carryover_aligned_peer_proof_board(harvest_path, expansion_path, selected_refresh_path)
+    markdown = render_btst_carryover_aligned_peer_proof_board_markdown(analysis)
+
+    assert analysis["pending_next_day_tickers"] == ["300001"]
+    assert analysis["pending_t_plus_2_tickers"] == ["300002"]
+    assert analysis["command_rows"] == [
+        {
+            "ticker": "300001",
+            "harvest_phase": "next_day_harvest",
+            "why_now": "缺 next-day close，先补 next-day harvest 再判断是否进入 T+2 跟踪。",
+            "next_step": "等待 next-day close 后重跑 aligned peer proof board。",
+            "promotion_review_verdict": "await_next_day_close",
+        },
+        {
+            "ticker": "300002",
+            "harvest_phase": "t_plus_2_harvest",
+            "why_now": "next-day close 已转正，但还缺 T+2 close 来确认 closed-cycle。",
+            "next_step": "收集 T+2 close 后重跑 aligned peer proof board。",
+            "promotion_review_verdict": "await_t_plus_2_close",
+        },
+        {
+            "ticker": "300003",
+            "harvest_phase": "promotion_review",
+            "why_now": "closed-cycle 已 supportive，可提交保守 promotion review。",
+            "next_step": "人工复核 aligned peer 证据后决定是否进入 promotion lane。",
+            "promotion_review_verdict": "ready_for_promotion_review",
+        },
+    ]
+    assert analysis["priority_board_status"] == "next_day_harvest=1 | t_plus_2_harvest=1 | promotion_review=1 | risk_review=0"
+    assert "pending_next_day_tickers: ['300001']" in markdown
+    assert "pending_t_plus_2_tickers: ['300002']" in markdown
+    assert "## Command Queue" in markdown
+    assert "### Next-Day Harvest Queue" in markdown
+    assert "### T+2 Harvest Queue" in markdown
+    assert "300001 | next_day_harvest" in markdown
+    assert "300002 | t_plus_2_harvest" in markdown
+    assert "300003 | promotion_review" in markdown
 
 
 def test_analyze_btst_carryover_aligned_peer_proof_board_promotes_supportive_peer(tmp_path: Path) -> None:
