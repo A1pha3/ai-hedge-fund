@@ -1149,6 +1149,85 @@ def test_analyze_btst_candidate_pool_upstream_handoff_board_keeps_selected_post_
     assert row["downstream_followup_blocker"] == "no_selected_persistence_or_independent_edge"
 
 
+def test_analyze_btst_candidate_pool_upstream_handoff_board_maps_blocked_shadow_followup_to_formal_execution_removal(tmp_path: Path) -> None:
+    failure_dossier_path = tmp_path / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_path = tmp_path / "btst_watchlist_recall_dossier_latest.json"
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    _write_json(
+        failure_dossier_path,
+        {
+            "focus_tickers": ["300720"],
+            "failure_rows": [
+                {
+                    "ticker": "300720",
+                    "first_broken_handoff": "absent_from_watchlist",
+                    "watchlist_recall_stage": "absent_from_candidate_pool",
+                    "candidate_pool_blocking_stage": "candidate_pool_truncated_after_filters",
+                    "priority_handoff": "post_gate_liquidity_competition",
+                    "prototype_task_id": "post_gate_liquidity_competition_shadow_probe",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "shadow_probe",
+                    "primary_report_dir": "paper_trading_20260429_blocked_truth",
+                    "candidate_pool_rank_gap_min": 8,
+                    "avg_amount_share_of_cutoff_mean": 0.91,
+                    "avg_amount_share_of_min_gate_mean": 1.12,
+                    "profile_summary": "shadow recall gap still visible before blocked truth lands.",
+                }
+            ],
+            "priority_handoff_branch_experiment_queue": [],
+        },
+    )
+    _write_json(watchlist_dossier_path, {"reports_root": str(tmp_path), "focus_tickers": ["300720"], "recall_rows": []})
+    _write_json(recall_dossier_path, {"reports_root": str(tmp_path), "focus_tickers": ["300720"], "recall_rows": []})
+
+    report_dir = tmp_path / "paper_trading_20260429_blocked_truth"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        brief_path,
+        {
+            "upstream_shadow_recall_summary": {"top_focus_tickers": ["300720"]},
+            "priority_rows": [
+                {
+                    "ticker": "300720",
+                    "decision": "selected",
+                    "reporting_decision": "blocked",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "positive_tags": ["upstream_shadow_release_candidate"],
+                    "top_reasons": ["halt_gate_active"],
+                    "p2_execution_blocked": True,
+                }
+            ],
+        },
+    )
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "btst_followup": {
+                "trade_date": "2026-04-29",
+                "brief_json": str(brief_path.resolve()),
+            },
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_upstream_handoff_board(
+        failure_dossier_path,
+        watchlist_recall_dossier_path=watchlist_dossier_path,
+        candidate_pool_recall_dossier_path=recall_dossier_path,
+    )
+
+    row = next(item for item in analysis["board_rows"] if item["ticker"] == "300720")
+    assert row["board_phase"] == "post_recall_downstream_followup"
+    assert row["first_broken_handoff"] == "downstream_validated_after_shadow_recall"
+    assert row["latest_followup_decision"] == "blocked"
+    assert row["downstream_followup_lane"] == "formal_execution_removal"
+    assert row["downstream_followup_status"] == "remove_from_formal_execution"
+    assert row["downstream_followup_blocker"] == "blocked_truth_halt_block_prior_gate"
+    assert "formal execution 名单移除" in row["downstream_followup_summary"]
+    assert "不再重复 upstream recall probe" in row["next_step"]
+
+
 def test_corridor_uplift_runbook_keeps_corridor_first_and_parallel_confirmatory(tmp_path: Path) -> None:
     recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
     corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"

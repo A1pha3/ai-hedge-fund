@@ -2139,6 +2139,34 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
     )
 
 
+def _surface_zero_executable_blocked_recommendation(
+    latest_btst_snapshot: dict[str, Any], recommendation: Any
+) -> Any:
+    brief_summary = dict(latest_btst_snapshot.get("brief_summary") or {})
+    if int(brief_summary.get("short_trade_selected_count") or 0) > 0:
+        return recommendation
+    blocked_count = int(brief_summary.get("execution_blocked_candidate_count") or 0)
+    if blocked_count <= 0:
+        return recommendation
+    blocked_tickers = [
+        str(ticker)
+        for ticker in list(brief_summary.get("execution_blocked_tickers") or [])
+        if str(ticker or "").strip()
+    ]
+    preview = ", ".join(blocked_tickers[:3])
+    suffix = " 等" if len(blocked_tickers) > 3 else ""
+    blocked_message = (
+        f"当前 formal BTST 执行名单为空；{preview}{suffix} 已被 halt/block/prior gate 拦截，只保留非执行观察层。"
+        if preview
+        else "当前 formal BTST 执行名单为空；halt/block/prior gate 仍未解除，只保留非执行观察层。"
+    )
+    if isinstance(recommendation, str) and recommendation.lstrip().startswith("当前 formal BTST 执行名单为空；"):
+        return recommendation
+    if not recommendation:
+        return blocked_message
+    return f"{blocked_message} {recommendation}"
+
+
 def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[str, Any]:
     latest_btst_snapshot = _extract_latest_btst_snapshot(manifest)
     control_tower_snapshot = _extract_control_tower_snapshot(manifest)
@@ -2152,6 +2180,9 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
         default_merge_review_summary.get("recommendation")
         if default_merge_review_ready and default_merge_review_summary.get("recommendation")
         else latest_btst_snapshot.get("brief_recommendation") or default_merge_review_summary.get("recommendation")
+    )
+    effective_brief_recommendation = _surface_zero_executable_blocked_recommendation(
+        latest_btst_snapshot, effective_brief_recommendation
     )
     recommended_reading_order = _build_nightly_recommended_reading_order(manifest)
     source_paths = _build_nightly_source_paths(manifest, latest_btst_snapshot)

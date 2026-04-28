@@ -20,11 +20,13 @@ from src.paper_trading._btst_reporting.extractors import (
 from src.paper_trading._btst_reporting.entry_builders import (
     CATALYST_THEME_MAX_ENTRIES,
     CATALYST_THEME_SHADOW_MAX_ENTRIES,
+    _collect_formal_execution_block_flags as _collect_formal_execution_block_flags_eb,
     _extract_catalyst_theme_entry as _extract_catalyst_theme_entry_eb,
     _extract_catalyst_theme_shadow_entry as _extract_catalyst_theme_shadow_entry_eb,
     _extract_research_upside_radar_entry as _extract_research_upside_radar_entry_eb,
     _extract_short_trade_entry as _extract_short_trade_entry_eb,
     _extract_short_trade_opportunity_entry as _extract_short_trade_opportunity_entry_eb,
+    _filter_execution_ready_entries as _filter_execution_ready_entries_eb,
     _extract_upstream_shadow_entry as _extract_upstream_shadow_entry_eb,
     _build_upstream_shadow_summary as _build_upstream_shadow_summary_eb,
     _build_catalyst_theme_frontier_priority as _build_catalyst_theme_frontier_priority_eb,
@@ -89,6 +91,18 @@ def _build_catalyst_theme_frontier_priority(
     frontier_summary: dict[str, Any], shadow_entries: list[dict[str, Any]]
 ) -> dict[str, Any]:
     return _build_catalyst_theme_frontier_priority_eb(frontier_summary, shadow_entries)
+
+
+def _collect_formal_execution_block_flags(
+    selection_entry: dict[str, Any], short_trade_entry: dict[str, Any] | None = None
+) -> list[str]:
+    return _collect_formal_execution_block_flags_eb(selection_entry, short_trade_entry)
+
+
+def _filter_execution_ready_entries(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return _filter_execution_ready_entries_eb(entries)
 
 
 def _resolve_snapshot_path(
@@ -189,6 +203,7 @@ def analyze_btst_next_day_trade_brief(
 
     excluded_research_entries = _build_excluded_research_entries(selection_targets)
     recommendation_lines = _build_btst_brief_recommendation_lines(
+        selection_targets=selection_targets,
         selected_entries=selected_entries,
         near_miss_entries=near_miss_entries,
         opportunity_pool_entries=opportunity_pool_entries,
@@ -286,8 +301,38 @@ def _build_btst_brief_candidate_context(
     }
 
 
+def _build_execution_blocked_candidate_summary(
+    selection_targets: dict[str, Any],
+) -> dict[str, Any]:
+    blocked_tickers: list[str] = []
+    for ticker, entry in selection_targets.items():
+        short_trade_entry = dict(entry.get("short_trade") or {})
+        if not _is_formal_execution_blocked_target(entry, short_trade_entry):
+            continue
+        blocked_tickers.append(str(entry.get("ticker") or ticker))
+    return {
+        "count": len(blocked_tickers),
+        "tickers": blocked_tickers,
+    }
+
+
+def _build_execution_blocked_brief_recommendation_line(
+    selection_targets: dict[str, Any],
+) -> str | None:
+    blocked_summary = _build_execution_blocked_candidate_summary(selection_targets)
+    if blocked_summary["count"] <= 0:
+        return None
+    tickers = list(blocked_summary["tickers"] or [])
+    if not tickers:
+        return "当前 formal BTST 执行名单为空；halt/block/prior gate 仍未解除，只保留非执行观察层。"
+    preview = ", ".join(tickers[:3])
+    suffix = " 等" if len(tickers) > 3 else ""
+    return f"当前 formal BTST 执行名单为空；{preview}{suffix} 已被 halt/block/prior gate 拦截，只保留非执行观察层。"
+
+
 def _build_btst_brief_recommendation_lines(
     *,
+    selection_targets: dict[str, Any],
     selected_entries: list[dict[str, Any]],
     near_miss_entries: list[dict[str, Any]],
     opportunity_pool_entries: list[dict[str, Any]],
@@ -300,8 +345,10 @@ def _build_btst_brief_recommendation_lines(
     excluded_research_entries: list[dict[str, Any]],
     brief_frontier_context: dict[str, Any],
 ) -> list[str]:
+    selected_entries = _filter_execution_ready_entries(selected_entries)
+    near_miss_entries = _filter_execution_ready_entries(near_miss_entries)
     primary_entry = selected_entries[0] if selected_entries else None
-    return _build_btst_recommendation_lines_lazy(
+    recommendation_lines = _build_btst_recommendation_lines_lazy(
         primary_entry=primary_entry,
         near_miss_entries=near_miss_entries,
         opportunity_pool_entries=opportunity_pool_entries,
@@ -317,6 +364,13 @@ def _build_btst_brief_recommendation_lines(
         excluded_research_entries=excluded_research_entries,
         upstream_shadow_entries=brief_frontier_context["upstream_shadow_entries"],
     )
+    if primary_entry is None:
+        blocked_line = _build_execution_blocked_brief_recommendation_line(
+            selection_targets
+        )
+        if blocked_line:
+            recommendation_lines.insert(0, blocked_line)
+    return recommendation_lines
 
 
 def _build_btst_brief_frontier_context(
@@ -368,6 +422,8 @@ def _build_btst_next_day_trade_brief_payload(
     recommendation_lines: list[str],
     brief_frontier_context: dict[str, Any],
 ) -> dict[str, Any]:
+    selected_entries = _filter_execution_ready_entries(selected_entries)
+    near_miss_entries = _filter_execution_ready_entries(near_miss_entries)
     primary_entry = selected_entries[0] if selected_entries else None
     return {
         **_build_btst_next_day_trade_brief_metadata(
@@ -567,10 +623,14 @@ def _build_btst_brief_candidate_groups(
     )
     return {
         "selected_entries": [
-            entry for entry in short_trade_entries if entry["decision"] == "selected"
+            entry
+            for entry in short_trade_entries
+            if entry.get("reporting_decision") == "selected"
         ],
         "near_miss_entries": [
-            entry for entry in short_trade_entries if entry["decision"] == "near_miss"
+            entry
+            for entry in short_trade_entries
+            if entry.get("reporting_decision") == "near_miss"
         ],
         "opportunity_pool_entries": opportunity_pool_entries[
             :OPPORTUNITY_POOL_MAX_ENTRIES
@@ -597,7 +657,11 @@ def _build_btst_brief_short_trade_entries(
     ]
     short_trade_entries.sort(
         key=lambda entry: (
-            0 if entry["decision"] == "selected" else 1,
+            0
+            if entry.get("reporting_decision") == "selected"
+            else 1
+            if entry.get("reporting_decision") == "near_miss"
+            else 2,
             -(entry.get("score_target") or 0.0),
             entry.get("ticker") or "",
         )
@@ -809,17 +873,16 @@ def _build_btst_brief_summary(
 ) -> dict[str, Any]:
     dual_target_summary = snapshot.get("dual_target_summary") or {}
     brief_decision_counts = _build_btst_brief_decision_counts(selection_targets)
+    execution_blocked_summary = _build_execution_blocked_candidate_summary(
+        selection_targets
+    )
     return {
         "selection_target_count": _summary_value(
             dual_target_summary, "selection_target_count", len(selection_targets)
         ),
         "short_trade_selected_count": len(selected_entries),
         "short_trade_near_miss_count": len(near_miss_entries),
-        "short_trade_blocked_count": _summary_value(
-            dual_target_summary,
-            "short_trade_blocked_count",
-            brief_decision_counts["blocked_count"],
-        ),
+        "short_trade_blocked_count": execution_blocked_summary["count"],
         "short_trade_rejected_count": _summary_value(
             dual_target_summary,
             "short_trade_rejected_count",
@@ -848,23 +911,24 @@ def _build_btst_brief_summary(
             "research_selected_count",
             brief_decision_counts["research_selected_count"],
         ),
+        "execution_blocked_candidate_count": execution_blocked_summary["count"],
+        "execution_blocked_tickers": execution_blocked_summary["tickers"],
     }
 
 
 def _build_btst_brief_decision_counts(
     selection_targets: dict[str, Any],
 ) -> dict[str, int]:
-    short_trade_decisions = [
-        (entry.get("short_trade") or {}).get("decision")
-        for entry in selection_targets.values()
-        if entry.get("short_trade")
-    ]
     return {
         "blocked_count": sum(
-            1 for decision in short_trade_decisions if decision == "blocked"
+            1
+            for entry in selection_targets.values()
+            if _is_formal_execution_blocked_target(entry)
         ),
         "rejected_count": sum(
-            1 for decision in short_trade_decisions if decision == "rejected"
+            1
+            for entry in selection_targets.values()
+            if (entry.get("short_trade") or {}).get("decision") == "rejected"
         ),
         "research_selected_count": sum(
             1
@@ -872,3 +936,15 @@ def _build_btst_brief_decision_counts(
             if (entry.get("research") or {}).get("decision") == "selected"
         ),
     }
+
+
+def _is_formal_execution_blocked_target(
+    selection_entry: dict[str, Any], short_trade_entry: dict[str, Any] | None = None
+) -> bool:
+    short_trade_entry = dict(short_trade_entry or selection_entry.get("short_trade") or {})
+    decision = str(short_trade_entry.get("decision") or "").strip()
+    if decision == "blocked":
+        return True
+    if decision not in {"selected", "near_miss"}:
+        return False
+    return bool(_collect_formal_execution_block_flags(selection_entry, short_trade_entry))

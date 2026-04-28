@@ -40,6 +40,55 @@ from src.tools.api import get_price_data, prices_to_df
 
 CATALYST_THEME_MAX_ENTRIES = 5
 CATALYST_THEME_SHADOW_MAX_ENTRIES = 5
+
+FORMAL_EXECUTION_BLOCK_FLAGS = (
+    "p2_execution_blocked",
+    "p3_execution_blocked",
+    "p5_execution_blocked",
+    "p6_execution_blocked",
+)
+
+
+def _collect_formal_execution_block_flags(
+    selection_entry: dict[str, Any], short_trade_entry: dict[str, Any] | None = None
+) -> list[str]:
+    short_trade_entry = dict(short_trade_entry or selection_entry.get("short_trade") or {})
+    return [
+        flag
+        for flag in FORMAL_EXECUTION_BLOCK_FLAGS
+        if bool(selection_entry.get(flag)) or bool(short_trade_entry.get(flag))
+    ]
+
+
+def _is_formal_execution_blocked_entry(entry: dict[str, Any]) -> bool:
+    if bool(entry.get("execution_blocked")):
+        return True
+    if str(entry.get("reporting_decision") or "").strip() == "blocked":
+        return True
+    return any(bool(entry.get(flag)) for flag in FORMAL_EXECUTION_BLOCK_FLAGS)
+
+
+def _filter_execution_ready_entries(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        dict(entry)
+        for entry in entries
+        if not _is_formal_execution_blocked_entry(entry)
+    ]
+
+
+def _resolve_formal_shadow_decision(
+    selection_entry: dict[str, Any], short_trade_entry: dict[str, Any]
+) -> tuple[str, list[str]]:
+    execution_blocked_flags = _collect_formal_execution_block_flags(
+        selection_entry, short_trade_entry
+    )
+    raw_decision = str(short_trade_entry.get("decision") or "rejected")
+    formal_decision = "blocked" if execution_blocked_flags else raw_decision
+    return formal_decision, execution_blocked_flags
+
+
 def _extract_upstream_shadow_entry(
     selection_entry: dict[str, Any], supplemental_entry: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
@@ -68,12 +117,18 @@ def _extract_upstream_shadow_entry(
     candidate_pool_rank = supplemental_entry.get(
         "candidate_pool_rank"
     ) or replay_context.get("candidate_pool_rank")
-    decision = str(short_trade_entry.get("decision") or "rejected")
+    decision, execution_blocked_flags = _resolve_formal_shadow_decision(
+        selection_entry, short_trade_entry
+    )
     promotion_trigger = _build_upstream_shadow_promotion_trigger(decision)
 
     return {
         "ticker": selection_entry.get("ticker"),
         "decision": decision,
+        "reporting_decision": decision,
+        "short_trade_decision": str(short_trade_entry.get("decision") or "rejected"),
+        "execution_blocked": bool(execution_blocked_flags),
+        "execution_blocked_flags": execution_blocked_flags,
         "score_target": short_trade_entry.get("score_target"),
         "confidence": short_trade_entry.get("confidence"),
         "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
@@ -127,7 +182,9 @@ def _build_upstream_shadow_summary(entries: list[dict[str, Any]]) -> dict[str, A
             entry.get("candidate_pool_lane")
             or _source_lane_label(entry.get("candidate_source"))
         )
-        decision = str(entry.get("decision") or "rejected")
+        decision = str(
+            entry.get("reporting_decision") or entry.get("decision") or "rejected"
+        )
         lane_counts[lane] = int(lane_counts.get(lane) or 0) + 1
         decision_counts[decision] = int(decision_counts.get(decision) or 0) + 1
 
@@ -139,7 +196,8 @@ def _build_upstream_shadow_summary(entries: list[dict[str, Any]]) -> dict[str, A
         "promotable_count": sum(
             1
             for entry in entries
-            if str(entry.get("decision") or "") in {"selected", "near_miss"}
+            if str(entry.get("reporting_decision") or entry.get("decision") or "")
+            in {"selected", "near_miss"}
         ),
         "lane_counts": lane_counts,
         "decision_counts": decision_counts,
@@ -429,6 +487,9 @@ def _extract_short_trade_entry(
     if decision not in {"selected", "near_miss"}:
         return None
 
+    execution_blocked_flags = _collect_formal_execution_block_flags(
+        selection_entry, short_trade_entry
+    )
     metrics_payload = short_trade_entry.get("metrics_payload") or {}
     explainability_payload = short_trade_entry.get("explainability_payload") or {}
     candidate_reason_codes = [
@@ -451,7 +512,9 @@ def _extract_short_trade_entry(
     return {
         "ticker": selection_entry.get("ticker"),
         "decision": decision,
-        "reporting_decision": decision,
+        "reporting_decision": "blocked" if execution_blocked_flags else decision,
+        "execution_blocked": bool(execution_blocked_flags),
+        "execution_blocked_flags": execution_blocked_flags,
         "score_target": short_trade_entry.get("score_target"),
         "confidence": short_trade_entry.get("confidence"),
         "rank_hint": short_trade_entry.get("rank_hint"),
@@ -854,4 +917,3 @@ def _build_catalyst_theme_shadow_watch_rows(
     limit: int = CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES,
 ) -> list[dict[str, Any]]:
     return _build_catalyst_theme_shadow_watch_rows_direct(entries, limit=limit)
-

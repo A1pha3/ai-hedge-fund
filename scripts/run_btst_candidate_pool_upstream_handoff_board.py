@@ -50,6 +50,8 @@ def _resolved_reports_root(*, failure_dossier_path: str | Path, candidate_pool_r
 def _build_validated_followup_reason(ticker: str, followup_row: dict[str, Any]) -> str:
     decision = str(followup_row.get("decision") or "unknown")
     bottleneck = str(followup_row.get("downstream_bottleneck") or "")
+    if decision == "blocked":
+        return f"{ticker} 已在最新 short-trade followup 中完成 upstream shadow recall 验证，但当前 blocked truth 已明确要求把它从 formal execution 名单移除。"
     if decision == "near_miss":
         return f"{ticker} 已在最新 short-trade followup 中通过 upstream shadow recall 正式进入 near_miss，当前首要问题不再是 watchlist/candidate_pool 缺席。"
     if bottleneck == "profitability_hard_cliff":
@@ -65,6 +67,8 @@ def _build_validated_followup_next_step(ticker: str, followup_row: dict[str, Any
     candidate_source = str(followup_row.get("candidate_source") or "")
     top_reasons = {str(value or "").strip() for value in list(followup_row.get("top_reasons") or []) if str(value or "").strip()}
     priority_handoff_token = str(priority_handoff or "").strip() or "upstream_shadow"
+    if decision == "blocked":
+        return f"把 {ticker} 转入 blocked-truth formal execution removal followup，保留 {priority_handoff_token} lane 背景，只做非执行观察与 blocker diagnostics，不再重复 upstream recall probe。"
     if decision == "near_miss" and candidate_source == "post_gate_liquidity_competition_shadow" and bottleneck == "catalyst_relief_validated":
         return (
             f"保持 {ticker} 的 {priority_handoff_token} lane 背景，转入 T+2 continuation confirm-then-review，"
@@ -89,6 +93,17 @@ def _classify_downstream_followup_lane(ticker: str, followup_row: dict[str, Any]
     bottleneck = str(followup_row.get("downstream_bottleneck") or "")
     candidate_source = str(followup_row.get("candidate_source") or "")
     top_reasons = {str(value or "").strip() for value in list(followup_row.get("top_reasons") or []) if str(value or "").strip()}
+
+    if decision == "blocked":
+        return {
+            "downstream_followup_lane": "formal_execution_removal",
+            "downstream_followup_status": "remove_from_formal_execution",
+            "downstream_followup_blocker": "blocked_truth_halt_block_prior_gate",
+            "downstream_followup_summary": (
+                f"{ticker} 已完成 shadow recall，但最新正式 followup 已把它归档为 blocked truth；"
+                "当前应从 formal execution 名单移除，只保留非执行观察层与 blocker diagnostics。"
+            ),
+        }
 
     if decision == "near_miss" and candidate_source == "post_gate_liquidity_competition_shadow" and bottleneck == "catalyst_relief_validated":
         return {

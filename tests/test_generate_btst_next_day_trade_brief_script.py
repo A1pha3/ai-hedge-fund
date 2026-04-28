@@ -1257,6 +1257,312 @@ def test_generate_btst_next_day_trade_brief_includes_replay_only_upstream_shadow
     assert "301292" in analysis["recommendation"]
 
 
+def test_generate_btst_next_day_trade_brief_filters_execution_blocked_formal_entries(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-04-22"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"plan_generation": {"selection_target": "short_trade_only"}}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260422",
+                "target_mode": "short_trade_only",
+                "selection_targets": {
+                    "300724": {
+                        "ticker": "300724",
+                        "p2_execution_blocked": True,
+                        "short_trade": {
+                            "decision": "selected",
+                            "score_target": 0.6123,
+                            "confidence": 0.91,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "top_reasons": ["halt_gate=triggered"],
+                            "gate_status": {"score": "pass", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.84,
+                                "trend_acceleration": 0.73,
+                                "close_strength": 0.69,
+                                "catalyst_freshness": 0.66,
+                            },
+                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                        },
+                    },
+                    "688313": {
+                        "ticker": "688313",
+                        "p3_execution_blocked": True,
+                        "short_trade": {
+                            "decision": "near_miss",
+                            "score_target": 0.5512,
+                            "confidence": 0.82,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "top_reasons": ["prior_quality=watch_only"],
+                            "gate_status": {"score": "near_miss", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.75,
+                                "trend_acceleration": 0.68,
+                                "close_strength": 0.63,
+                                "catalyst_freshness": 0.44,
+                            },
+                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                        },
+                    },
+                    "600101": {
+                        "ticker": "600101",
+                        "p5_execution_blocked": True,
+                        "short_trade": {
+                            "decision": "selected",
+                            "score_target": 0.571,
+                            "confidence": 0.79,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "top_reasons": ["structural_conflict=watch_only"],
+                            "gate_status": {"score": "pass", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.7,
+                                "trend_acceleration": 0.66,
+                                "close_strength": 0.61,
+                                "catalyst_freshness": 0.4,
+                            },
+                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                        },
+                    },
+                    "002555": {
+                        "ticker": "002555",
+                        "p6_execution_blocked": True,
+                        "short_trade": {
+                            "decision": "near_miss",
+                            "score_target": 0.542,
+                            "confidence": 0.77,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "top_reasons": ["capacity_limit=blocked"],
+                            "gate_status": {"score": "near_miss", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.69,
+                                "trend_acceleration": 0.62,
+                                "close_strength": 0.6,
+                                "catalyst_freshness": 0.39,
+                            },
+                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                        },
+                    },
+                },
+                "dual_target_summary": {},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-04-22", next_trade_date="2026-04-23")
+
+    assert analysis["primary_entry"] is None
+    assert analysis["selected_entries"] == []
+    assert analysis["near_miss_entries"] == []
+    assert analysis["summary"]["short_trade_selected_count"] == 0
+    assert analysis["summary"]["short_trade_near_miss_count"] == 0
+    assert analysis["summary"]["short_trade_blocked_count"] == 4
+    assert analysis["summary"]["execution_blocked_candidate_count"] == 4
+    assert analysis["summary"]["execution_blocked_tickers"] == ["300724", "688313", "600101", "002555"]
+    assert "当前 formal BTST 执行名单为空" in analysis["recommendation"]
+    assert "300724" in analysis["recommendation"]
+    assert "688313" in analysis["recommendation"]
+
+
+def test_generate_btst_next_day_trade_brief_live_execution_blocked_count_overrides_stale_snapshot_summary(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-04-24"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"plan_generation": {"selection_target": "short_trade_only"}}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260424",
+                "target_mode": "short_trade_only",
+                "selection_targets": {
+                    "300724": {
+                        "ticker": "300724",
+                        "p6_execution_blocked": True,
+                        "short_trade": {
+                            "decision": "near_miss",
+                            "score_target": 0.558,
+                            "confidence": 0.8,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "top_reasons": ["halt_gate=triggered"],
+                            "gate_status": {"score": "near_miss", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.71,
+                                "trend_acceleration": 0.65,
+                                "close_strength": 0.62,
+                                "catalyst_freshness": 0.58,
+                            },
+                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                        },
+                    }
+                },
+                "dual_target_summary": {
+                    "short_trade_selected_count": 0,
+                    "short_trade_near_miss_count": 0,
+                    "short_trade_blocked_count": 0,
+                    "short_trade_rejected_count": 0,
+                    "research_selected_count": 0,
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-04-24", next_trade_date="2026-04-25")
+
+    assert analysis["summary"]["short_trade_blocked_count"] == 1
+    assert analysis["summary"]["execution_blocked_candidate_count"] == 1
+    assert analysis["summary"]["execution_blocked_tickers"] == ["300724"]
+
+
+def test_generate_btst_next_day_trade_brief_counts_explicit_blocked_short_trade_decisions(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-04-25"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"plan_generation": {"selection_target": "short_trade_only"}}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260425",
+                "target_mode": "short_trade_only",
+                "selection_targets": {
+                    "300724": {
+                        "ticker": "300724",
+                        "short_trade": {
+                            "decision": "blocked",
+                            "score_target": 0.558,
+                            "confidence": 0.8,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "top_reasons": ["halt_gate=triggered"],
+                            "gate_status": {"score": "blocked", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.71,
+                                "trend_acceleration": 0.65,
+                                "close_strength": 0.62,
+                                "catalyst_freshness": 0.58,
+                            },
+                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                        },
+                    }
+                },
+                "dual_target_summary": {
+                    "short_trade_selected_count": 0,
+                    "short_trade_near_miss_count": 0,
+                    "short_trade_blocked_count": 0,
+                    "short_trade_rejected_count": 0,
+                    "research_selected_count": 0,
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-04-25", next_trade_date="2026-04-28")
+
+    assert analysis["summary"]["short_trade_selected_count"] == 0
+    assert analysis["summary"]["short_trade_near_miss_count"] == 0
+    assert analysis["summary"]["short_trade_blocked_count"] == 1
+    assert analysis["summary"]["execution_blocked_candidate_count"] == 1
+    assert analysis["summary"]["execution_blocked_tickers"] == ["300724"]
+    assert "当前 formal BTST 执行名单为空" in analysis["recommendation"]
+
+
+def test_generate_btst_next_day_trade_brief_marks_execution_blocked_upstream_shadow_as_non_promotable(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-04-23"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"plan_generation": {"selection_target": "short_trade_only"}}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260423",
+                "target_mode": "short_trade_only",
+                "selection_targets": {
+                    "301111": {
+                        "ticker": "301111",
+                        "p2_execution_blocked": True,
+                        "candidate_reason_codes": ["upstream_shadow_release_candidate"],
+                        "short_trade": {
+                            "decision": "near_miss",
+                            "score_target": 0.553,
+                            "confidence": 0.81,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_catalyst_support"],
+                            "top_reasons": ["halt_gate=triggered"],
+                            "gate_status": {"score": "near_miss", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.73,
+                                "trend_acceleration": 0.67,
+                                "volume_expansion_quality": 0.41,
+                                "close_strength": 0.63,
+                                "catalyst_freshness": 0.59,
+                            },
+                            "explainability_payload": {
+                                "candidate_source": "upstream_liquidity_corridor_shadow",
+                                "replay_context": {
+                                    "candidate_pool_lane": "layer_a_liquidity_corridor",
+                                    "candidate_pool_rank": 11,
+                                    "candidate_pool_avg_amount_share_of_cutoff": 0.94,
+                                    "candidate_pool_avg_amount_share_of_min_gate": 1.08,
+                                },
+                            },
+                        },
+                    }
+                },
+                "dual_target_summary": {
+                    "short_trade_selected_count": 0,
+                    "short_trade_near_miss_count": 0,
+                    "short_trade_blocked_count": 1,
+                    "short_trade_rejected_count": 0,
+                    "research_selected_count": 0,
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-04-23", next_trade_date="2026-04-24")
+
+    assert analysis["selected_entries"] == []
+    assert analysis["near_miss_entries"] == []
+    assert analysis["summary"]["upstream_shadow_candidate_count"] == 1
+    assert analysis["summary"]["upstream_shadow_promotable_count"] == 0
+    assert [entry["ticker"] for entry in analysis["upstream_shadow_entries"]] == ["301111"]
+    assert analysis["upstream_shadow_entries"][0]["decision"] == "blocked"
+    assert analysis["upstream_shadow_entries"][0]["reporting_decision"] == "blocked"
+    assert analysis["upstream_shadow_entries"][0]["execution_blocked"] is True
+    assert analysis["upstream_shadow_summary"]["decision_counts"] == {"blocked": 1}
+
+
 def test_generate_btst_next_day_trade_brief_demotes_weak_historical_near_miss_into_opportunity_pool(tmp_path, monkeypatch):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-04-06"
