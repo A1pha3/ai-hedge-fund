@@ -222,7 +222,8 @@ def test_corridor_validation_pack_reports_parallel_probe_ready(tmp_path: Path) -
     assert analysis["focus_ticker"] == "300720"
     assert analysis["promotion_readiness_status"] == "corridor_shadow_probe_ready"
     assert analysis["primary_validation_ticker"]["ticker"] == "300720"
-    assert [row["ticker"] for row in analysis["parallel_watch_tickers"]] == ["003036"]
+    assert analysis["strict_release_tickers"] == ["300720"]
+    assert [row["ticker"] for row in analysis["parallel_watch_tickers"]] == []
 
 
 def test_corridor_validation_pack_promotes_strong_corridor_candidate_readiness(tmp_path: Path) -> None:
@@ -335,8 +336,195 @@ def test_corridor_validation_pack_excludes_low_gate_tail_without_backfilling_new
     )
 
     assert analysis["primary_validation_ticker"]["ticker"] == "300683"
-    assert [row["ticker"] for row in analysis["parallel_watch_tickers"]] == ["301188"]
+    assert analysis["strict_release_tickers"] == ["300683"]
+    assert [row["ticker"] for row in analysis["parallel_watch_tickers"]] == []
     assert analysis["excluded_low_gate_tail_tickers"] == ["688796"]
+
+
+def test_corridor_validation_pack_emits_strict_release_contract_for_retained_corridor_focus(tmp_path: Path) -> None:
+    dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    lane_support_path = tmp_path / "btst_candidate_pool_lane_objective_support_latest.json"
+    branch_priority_path = tmp_path / "btst_candidate_pool_branch_priority_board_latest.json"
+    narrow_probe_path = tmp_path / "btst_candidate_pool_corridor_narrow_probe_latest.json"
+
+    _write_json(dossier_path, {"priority_stage_counts": {"candidate_pool_truncated_after_filters": 4}})
+    _write_json(
+        lane_support_path,
+        {
+            "branch_rows": [
+                {
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "support_verdict": "candidate_pool_false_negative_outperforms_tradeable_surface",
+                    "closed_cycle_count": 16,
+                    "objective_fit_score": 0.9913,
+                    "mean_t_plus_2_return": 0.1258,
+                }
+            ],
+            "ticker_rows": [
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "300683", "mean_t_plus_2_return": 0.1051, "objective_fit_score": 1.0},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "688796", "mean_t_plus_2_return": 0.1333, "objective_fit_score": 0.98},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "301188", "mean_t_plus_2_return": 0.1214, "objective_fit_score": 0.975},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "688383", "mean_t_plus_2_return": 0.1188, "objective_fit_score": 0.972},
+            ],
+        },
+    )
+    _write_json(
+        branch_priority_path,
+        {
+            "branch_rows": [
+                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
+            ],
+            "corridor_ticker_rows": [
+                {"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.3291},
+                {"ticker": "688796", "corridor_priority_rank": 2, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 8.9123},
+                {"ticker": "301188", "corridor_priority_rank": 3, "tractability_tier": "parallel_probe", "uplift_to_cutoff_multiple_mean": 6.3502},
+                {"ticker": "688383", "corridor_priority_rank": 4, "tractability_tier": "parallel_probe", "uplift_to_cutoff_multiple_mean": 6.9812},
+            ],
+        },
+    )
+    _write_json(
+        narrow_probe_path,
+        {
+            "deepest_corridor_focus_tickers": ["301188"],
+            "excluded_low_gate_tail_tickers": ["688796"],
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_validation_pack(
+        dossier_path,
+        lane_objective_support_path=lane_support_path,
+        branch_priority_board_path=branch_priority_path,
+        corridor_narrow_probe_path=narrow_probe_path,
+    )
+
+    assert analysis["strict_release_status"] == "strict_release_ready"
+    assert [row["ticker"] for row in analysis["strict_release_candidates"]] == ["300683", "301188"]
+    assert analysis["strict_release_tickers"] == ["300683", "301188"]
+    assert [row["ticker"] for row in analysis["validation_only_rows"]] == ["688796"]
+    assert analysis["validation_only_tickers"] == ["688796"]
+
+
+def test_corridor_validation_pack_uses_deepest_focus_truth_outside_top_parallel_slice(tmp_path: Path) -> None:
+    dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    lane_support_path = tmp_path / "btst_candidate_pool_lane_objective_support_latest.json"
+    branch_priority_path = tmp_path / "btst_candidate_pool_branch_priority_board_latest.json"
+    narrow_probe_path = tmp_path / "btst_candidate_pool_corridor_narrow_probe_latest.json"
+
+    _write_json(dossier_path, {"priority_stage_counts": {"candidate_pool_truncated_after_filters": 5}})
+    _write_json(
+        lane_support_path,
+        {
+            "branch_rows": [
+                {
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "support_verdict": "candidate_pool_false_negative_outperforms_tradeable_surface",
+                    "closed_cycle_count": 18,
+                    "objective_fit_score": 0.9924,
+                    "mean_t_plus_2_return": 0.1311,
+                }
+            ],
+            "ticker_rows": [
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "300683", "mean_t_plus_2_return": 0.1051, "objective_fit_score": 1.0},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "688796", "mean_t_plus_2_return": 0.1333, "objective_fit_score": 0.98},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "301188", "mean_t_plus_2_return": 0.1214, "objective_fit_score": 0.975},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "688383", "mean_t_plus_2_return": 0.1188, "objective_fit_score": 0.972},
+            ],
+        },
+    )
+    _write_json(
+        branch_priority_path,
+        {
+            "branch_rows": [
+                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
+            ],
+            "corridor_ticker_rows": [
+                {"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.3291},
+                {"ticker": "688796", "corridor_priority_rank": 2, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 8.9123},
+                {"ticker": "301188", "corridor_priority_rank": 3, "tractability_tier": "parallel_probe", "uplift_to_cutoff_multiple_mean": 6.3502},
+                {"ticker": "688383", "corridor_priority_rank": 4, "tractability_tier": "parallel_probe", "uplift_to_cutoff_multiple_mean": 6.9812},
+            ],
+        },
+    )
+    _write_json(
+        narrow_probe_path,
+        {
+            "deepest_corridor_focus_tickers": ["688383"],
+            "excluded_low_gate_tail_tickers": ["688796"],
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_validation_pack(
+        dossier_path,
+        lane_objective_support_path=lane_support_path,
+        branch_priority_board_path=branch_priority_path,
+        corridor_narrow_probe_path=narrow_probe_path,
+    )
+
+    assert analysis["strict_release_tickers"] == ["300683", "688383"]
+    assert [row["ticker"] for row in analysis["parallel_watch_tickers"]] == ["688383"]
+    assert [row["ticker"] for row in analysis["validation_only_rows"]] == ["688796"]
+    assert "301188" not in analysis["strict_release_tickers"]
+
+
+def test_corridor_validation_pack_does_not_backfill_parallel_strict_release_without_deepest_focus_truth(tmp_path: Path) -> None:
+    dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    lane_support_path = tmp_path / "btst_candidate_pool_lane_objective_support_latest.json"
+    branch_priority_path = tmp_path / "btst_candidate_pool_branch_priority_board_latest.json"
+    narrow_probe_path = tmp_path / "btst_candidate_pool_corridor_narrow_probe_latest.json"
+
+    _write_json(dossier_path, {"priority_stage_counts": {"candidate_pool_truncated_after_filters": 4}})
+    _write_json(
+        lane_support_path,
+        {
+            "branch_rows": [
+                {
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "support_verdict": "candidate_pool_false_negative_outperforms_tradeable_surface",
+                    "closed_cycle_count": 18,
+                    "objective_fit_score": 0.9924,
+                    "mean_t_plus_2_return": 0.1311,
+                }
+            ],
+            "ticker_rows": [
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "300683", "mean_t_plus_2_return": 0.1051, "objective_fit_score": 1.0},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "688796", "mean_t_plus_2_return": 0.1333, "objective_fit_score": 0.98},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "301188", "mean_t_plus_2_return": 0.1214, "objective_fit_score": 0.975},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "688383", "mean_t_plus_2_return": 0.1188, "objective_fit_score": 0.972},
+            ],
+        },
+    )
+    _write_json(
+        branch_priority_path,
+        {
+            "branch_rows": [
+                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
+            ],
+            "corridor_ticker_rows": [
+                {"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.3291},
+                {"ticker": "688796", "corridor_priority_rank": 2, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 8.9123},
+                {"ticker": "301188", "corridor_priority_rank": 3, "tractability_tier": "parallel_probe", "uplift_to_cutoff_multiple_mean": 6.3502},
+                {"ticker": "688383", "corridor_priority_rank": 4, "tractability_tier": "parallel_probe", "uplift_to_cutoff_multiple_mean": 6.9812},
+            ],
+        },
+    )
+    _write_json(
+        narrow_probe_path,
+        {
+            "excluded_low_gate_tail_tickers": ["688796"],
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_validation_pack(
+        dossier_path,
+        lane_objective_support_path=lane_support_path,
+        branch_priority_board_path=branch_priority_path,
+        corridor_narrow_probe_path=narrow_probe_path,
+    )
+
+    assert analysis["strict_release_tickers"] == ["300683"]
+    assert analysis["parallel_watch_tickers"] == []
+    assert [row["ticker"] for row in analysis["validation_only_rows"]] == ["688796"]
+    assert "301188" not in analysis["strict_release_tickers"]
 
 
 def test_corridor_shadow_pack_promotes_primary_shadow_replay(tmp_path: Path) -> None:
@@ -373,6 +561,36 @@ def test_corridor_shadow_pack_promotes_primary_shadow_replay(tmp_path: Path) -> 
                     "profile_summary": "parallel corridor ticker",
                 }
             ],
+            "strict_release_status": "strict_release_ready",
+            "strict_release_candidates": [
+                {
+                    "ticker": "300720",
+                    "validation_priority_rank": 1,
+                    "tractability_tier": "second_shadow_probe",
+                    "corridor_priority_rank": 1,
+                    "closed_cycle_count": 15,
+                    "mean_t_plus_2_return": 0.0787,
+                    "t_plus_2_return_hit_rate_at_target": 0.8,
+                    "t_plus_2_positive_rate": 0.8667,
+                    "objective_fit_score": 1.0,
+                    "uplift_to_cutoff_multiple_mean": 6.6541,
+                    "profile_summary": "primary corridor ticker",
+                },
+                {
+                    "ticker": "003036",
+                    "validation_priority_rank": 2,
+                    "tractability_tier": "upstream_research_only",
+                    "corridor_priority_rank": 2,
+                    "closed_cycle_count": 14,
+                    "mean_t_plus_2_return": 0.0823,
+                    "t_plus_2_return_hit_rate_at_target": 0.7857,
+                    "t_plus_2_positive_rate": 1.0,
+                    "objective_fit_score": 0.992,
+                    "uplift_to_cutoff_multiple_mean": 10.691,
+                    "profile_summary": "parallel corridor ticker",
+                },
+            ],
+            "strict_release_tickers": ["300720", "003036"],
         },
     )
 
@@ -419,6 +637,22 @@ def test_corridor_shadow_pack_surfaces_excluded_low_gate_tail(tmp_path: Path) ->
                     "profile_summary": "parallel corridor ticker",
                 }
             ],
+            "strict_release_status": "strict_release_ready",
+            "strict_release_candidates": [
+                {
+                    "ticker": "300683",
+                    "validation_priority_rank": 1,
+                    "tractability_tier": "second_shadow_probe",
+                    "corridor_priority_rank": 1,
+                },
+                {
+                    "ticker": "301188",
+                    "validation_priority_rank": 3,
+                    "tractability_tier": "parallel_probe",
+                    "corridor_priority_rank": 3,
+                },
+            ],
+            "strict_release_tickers": ["300683", "301188"],
             "excluded_low_gate_tail_tickers": ["688796"],
         },
     )
@@ -428,6 +662,112 @@ def test_corridor_shadow_pack_surfaces_excluded_low_gate_tail(tmp_path: Path) ->
     assert [row["ticker"] for row in analysis["parallel_watch_lanes"]] == ["301188"]
     assert analysis["excluded_low_gate_tail_tickers"] == ["688796"]
     assert "688796" in analysis["recommendation"]
+
+
+def test_corridor_shadow_pack_preserves_strict_release_contract_and_validation_only_tail(tmp_path: Path) -> None:
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "primary_validation_ticker": {
+                "ticker": "300683",
+                "validation_priority_rank": 1,
+                "tractability_tier": "second_shadow_probe",
+                "corridor_priority_rank": 1,
+                "closed_cycle_count": 4,
+                "mean_t_plus_2_return": 0.1051,
+                "t_plus_2_return_hit_rate_at_target": 1.0,
+                "t_plus_2_positive_rate": 1.0,
+                "objective_fit_score": 1.0,
+                "uplift_to_cutoff_multiple_mean": 6.3291,
+                "profile_summary": "primary corridor ticker",
+            },
+            "parallel_watch_tickers": [
+                {
+                    "ticker": "301188",
+                    "validation_priority_rank": 3,
+                    "tractability_tier": "parallel_probe",
+                    "corridor_priority_rank": 3,
+                    "closed_cycle_count": 6,
+                    "mean_t_plus_2_return": 0.1214,
+                    "t_plus_2_return_hit_rate_at_target": 1.0,
+                    "t_plus_2_positive_rate": 1.0,
+                    "objective_fit_score": 0.975,
+                    "uplift_to_cutoff_multiple_mean": 6.3502,
+                    "profile_summary": "parallel corridor ticker",
+                }
+            ],
+            "strict_release_status": "strict_release_ready",
+            "strict_release_candidates": [
+                {
+                    "ticker": "300683",
+                    "validation_priority_rank": 1,
+                    "tractability_tier": "second_shadow_probe",
+                    "corridor_priority_rank": 1,
+                },
+                {
+                    "ticker": "301188",
+                    "validation_priority_rank": 3,
+                    "tractability_tier": "parallel_probe",
+                    "corridor_priority_rank": 3,
+                },
+            ],
+            "strict_release_tickers": ["300683", "301188"],
+            "validation_only_rows": [
+                {
+                    "ticker": "688796",
+                    "validation_priority_rank": 2,
+                    "tractability_tier": "second_shadow_probe",
+                    "corridor_priority_rank": 2,
+                }
+            ],
+            "validation_only_tickers": ["688796"],
+            "excluded_low_gate_tail_tickers": ["688796"],
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(corridor_validation_pack_path)
+
+    assert analysis["shadow_status"] == "ready_for_primary_shadow_replay"
+    assert analysis["strict_release_tickers"] == ["300683", "301188"]
+    assert analysis["primary_shadow_replay"]["ticker"] == "300683"
+    assert [row["ticker"] for row in analysis["parallel_watch_lanes"]] == ["301188"]
+    assert analysis["validation_only_tickers"] == ["688796"]
+
+
+def test_corridor_shadow_pack_does_not_backfill_strict_release_from_primary_parallel(tmp_path: Path) -> None:
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "primary_validation_ticker": {
+                "ticker": "300683",
+                "validation_priority_rank": 1,
+                "tractability_tier": "second_shadow_probe",
+                "corridor_priority_rank": 1,
+            },
+            "parallel_watch_tickers": [
+                {
+                    "ticker": "301188",
+                    "validation_priority_rank": 3,
+                    "tractability_tier": "parallel_probe",
+                    "corridor_priority_rank": 3,
+                }
+            ],
+            "excluded_low_gate_tail_tickers": ["688796"],
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(corridor_validation_pack_path)
+
+    assert analysis["strict_release_status"] == "strict_release_unavailable"
+    assert analysis["strict_release_tickers"] == []
+    assert analysis["primary_shadow_replay"] == {}
+    assert analysis["parallel_watch_lanes"] == []
+    assert analysis["validation_only_tickers"] == []
+    assert analysis["shadow_status"] != "ready_for_primary_shadow_replay"
 
 
 def test_lane_pair_board_keeps_corridor_primary_first(tmp_path: Path) -> None:

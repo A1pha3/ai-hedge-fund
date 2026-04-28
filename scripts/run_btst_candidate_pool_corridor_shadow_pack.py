@@ -80,6 +80,18 @@ def _build_corridor_shadow_lanes(primary: dict[str, Any], parallel: list[dict[st
     return lanes
 
 
+def _resolve_strict_release_candidates(pack: dict[str, Any]) -> list[dict[str, Any]]:
+    return [dict(row) for row in list(pack.get("strict_release_candidates") or []) if isinstance(row, dict)]
+
+
+def _split_strict_release_lanes(strict_release_candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if not strict_release_candidates:
+        return {}, []
+    primary = dict(strict_release_candidates[0])
+    parallel = [dict(row) for row in strict_release_candidates[1:]]
+    return primary, parallel
+
+
 def _build_shadow_pack_recommendation(*, shadow_status: str, primary: dict[str, Any], parallel: list[dict[str, Any]], excluded_low_gate_tail_tickers: list[str]) -> str:
     if shadow_status == "ready_for_primary_shadow_replay":
         recommendation = (
@@ -125,11 +137,16 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         pack = analyze_btst_candidate_pool_corridor_validation_pack(REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json")
 
     pack_status = str(pack.get("pack_status") or "skipped_no_corridor_lane")
-    primary = dict(pack.get("primary_validation_ticker") or {})
-    parallel = [dict(row) for row in list(pack.get("parallel_watch_tickers") or [])]
+    strict_release_status = str(pack.get("strict_release_status") or "").strip() or "strict_release_unavailable"
+    strict_release_candidates = _resolve_strict_release_candidates(pack)
+    strict_release_tickers = [str(row.get("ticker") or "").strip() for row in strict_release_candidates if str(row.get("ticker") or "").strip()]
+    primary, parallel = _split_strict_release_lanes(strict_release_candidates)
+    validation_only_rows = [dict(row) for row in list(pack.get("validation_only_rows") or []) if isinstance(row, dict)]
+    validation_only_tickers = [str(row.get("ticker") or "").strip() for row in validation_only_rows if str(row.get("ticker") or "").strip()]
     excluded_low_gate_tail_tickers = [str(ticker).strip() for ticker in list(pack.get("excluded_low_gate_tail_tickers") or []) if str(ticker).strip()]
     shadow_status = _resolve_corridor_shadow_status(pack_status=pack_status, primary=primary)
-    lanes = _build_corridor_shadow_lanes(primary, parallel)
+    strict_release_lanes = _build_corridor_shadow_lanes(primary, parallel)
+    lanes = list(strict_release_lanes)
 
     success_criteria = [
         "primary ticker 在新增窗口里仍维持 t_plus_2_return_hit_rate_at_target 不低于当前 tradeable surface。",
@@ -161,8 +178,13 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         "corridor_validation_pack_path": str(Path(corridor_validation_pack_path).expanduser().resolve()),
         "shadow_status": shadow_status,
         "source_pack_status": pack_status,
+        "strict_release_status": strict_release_status,
+        "strict_release_tickers": strict_release_tickers,
+        "strict_release_lanes": strict_release_lanes,
         "primary_shadow_replay": _build_lane(primary, lane_role="primary_shadow_replay", lane_rank=1) if primary else {},
         "parallel_watch_lanes": [_build_lane(row, lane_role="parallel_watch", lane_rank=index) for index, row in enumerate(parallel, start=2)],
+        "validation_only_rows": validation_only_rows,
+        "validation_only_tickers": validation_only_tickers,
         "excluded_low_gate_tail_tickers": excluded_low_gate_tail_tickers,
         "lanes": lanes,
         "success_criteria": success_criteria,
@@ -182,6 +204,7 @@ def render_btst_candidate_pool_corridor_shadow_pack_markdown(analysis: dict[str,
     lines.append("## Status")
     lines.append(f"- shadow_status: {analysis.get('shadow_status')}")
     lines.append(f"- source_pack_status: {analysis.get('source_pack_status')}")
+    lines.append(f"- strict_release_status: {analysis.get('strict_release_status')}")
     lines.append("")
     lines.append("## Lanes")
     for row in list(analysis.get("lanes") or []):
@@ -190,6 +213,8 @@ def render_btst_candidate_pool_corridor_shadow_pack_markdown(analysis: dict[str,
         )
     if not list(analysis.get("lanes") or []):
         lines.append("- none")
+    for ticker in list(analysis.get("validation_only_tickers") or []):
+        lines.append(f"- validation_only={ticker}")
     for ticker in list(analysis.get("excluded_low_gate_tail_tickers") or []):
         lines.append(f"- excluded_low_gate_tail={ticker}")
     lines.append("")
