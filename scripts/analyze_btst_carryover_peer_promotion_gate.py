@@ -183,6 +183,10 @@ def _build_peer_promotion_gate_analysis(
         [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "await_peer_t_plus_2_close"],
         focus_ticker,
     )
+    pending_next_day_tickers = _prioritize_focus_ticker(
+        [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "await_peer_next_day_close"],
+        focus_ticker,
+    )
     promotion_ready_tickers = list(ready_tickers)
     default_expansion_status = _resolve_default_expansion_status({"ready_tickers": promotion_ready_tickers})
 
@@ -195,6 +199,8 @@ def _build_peer_promotion_gate_analysis(
         recommendation_parts.append(f"{risk_review_tickers} 需先完成 history-risk review。")
     elif pending_t_plus_2_tickers:
         recommendation_parts.append(f"当前最关键的是等待 {pending_t_plus_2_tickers} 的 T+2 闭环。")
+    elif pending_next_day_tickers:
+        recommendation_parts.append(f"当前最关键的是等待 {pending_next_day_tickers} 的 next-day 闭环。")
     elif focus.get("ticker"):
         recommendation_parts.append(f"当前 promotion gate focus 是 {focus.get('ticker')}，gate_verdict={focus.get('gate_verdict')}。")
     recommendation_parts.append(
@@ -212,6 +218,7 @@ def _build_peer_promotion_gate_analysis(
         "blocked_open_tickers": blocked_open_tickers,
         "risk_review_tickers": risk_review_tickers,
         "pending_t_plus_2_tickers": pending_t_plus_2_tickers,
+        "pending_next_day_tickers": pending_next_day_tickers,
         "focus_ticker": focus.get("ticker") if focus else None,
         "focus_gate_verdict": focus.get("gate_verdict") if focus else None,
         "entries": entries,
@@ -235,6 +242,7 @@ def render_btst_carryover_peer_promotion_gate_markdown(analysis: dict[str, Any])
     lines.append(f"- blocked_open_tickers: {analysis.get('blocked_open_tickers')}")
     lines.append(f"- risk_review_tickers: {analysis.get('risk_review_tickers')}")
     lines.append(f"- pending_t_plus_2_tickers: {analysis.get('pending_t_plus_2_tickers')}")
+    lines.append(f"- pending_next_day_tickers: {analysis.get('pending_next_day_tickers')}")
     lines.append(f"- focus_ticker: {analysis.get('focus_ticker')}")
     lines.append(f"- focus_gate_verdict: {analysis.get('focus_gate_verdict')}")
     lines.append("")

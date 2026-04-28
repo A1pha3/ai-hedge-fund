@@ -155,10 +155,13 @@ def _build_close_loop_bundle(
         "peer_proof_focus_verdict": peer_proof_board.get("focus_promotion_review_verdict"),
         "peer_promotion_gate_focus_ticker": peer_promotion_gate.get("focus_ticker"),
         "peer_promotion_gate_focus_verdict": peer_promotion_gate.get("focus_gate_verdict"),
+        "peer_promotion_gate_default_expansion_status": peer_promotion_gate.get("default_expansion_status"),
         "priority_expansion_tickers": list(peer_expansion.get("priority_expansion_tickers") or []),
         "watch_with_risk_tickers": list(peer_expansion.get("watch_with_risk_tickers") or []),
         "ready_for_promotion_review_tickers": list(peer_proof_board.get("ready_for_promotion_review_tickers") or []),
         "promotion_gate_ready_tickers": list(peer_promotion_gate.get("ready_tickers") or []),
+        "peer_promotion_gate_pending_t_plus_2_tickers": list(peer_promotion_gate.get("pending_t_plus_2_tickers") or []),
+        "peer_promotion_gate_pending_next_day_tickers": list(peer_promotion_gate.get("pending_next_day_tickers") or []),
         "refresh_control_tower": refresh_control_tower,
         "artifact_paths": {
             "selected_outcome_refresh_json": str(artifact_paths["selected_output_json"]),
@@ -181,11 +184,14 @@ def _build_close_loop_bundle(
         "recommendation": (
             f"已刷新 {focus_ticker} 的 selected contract 与 peer close-loop 队列；"
             f" 当前 peer focus={peer_expansion.get('focus_ticker')} ({peer_expansion.get('focus_status')})，"
-            f" proof_focus={peer_proof_board.get('focus_ticker')} ({peer_proof_board.get('focus_promotion_review_verdict')})，"
-            f" promotion_gate_focus={peer_promotion_gate.get('focus_ticker')} ({peer_promotion_gate.get('focus_gate_verdict')})，"
-            f" priority_expansion={peer_expansion.get('priority_expansion_tickers')}，"
-            f" ready_for_promotion_review={peer_proof_board.get('ready_for_promotion_review_tickers')}，"
-            f" promotion_gate_ready={peer_promotion_gate.get('ready_tickers')}，"
+             f" proof_focus={peer_proof_board.get('focus_ticker')} ({peer_proof_board.get('focus_promotion_review_verdict')})，"
+             f" promotion_gate_focus={peer_promotion_gate.get('focus_ticker')} ({peer_promotion_gate.get('focus_gate_verdict')})，"
+             f" default_expansion_status={peer_promotion_gate.get('default_expansion_status')}，"
+             f" priority_expansion={peer_expansion.get('priority_expansion_tickers')}，"
+             f" ready_for_promotion_review={peer_proof_board.get('ready_for_promotion_review_tickers')}，"
+             f" promotion_gate_ready={peer_promotion_gate.get('ready_tickers')}，"
+             f" pending_t_plus_2={peer_promotion_gate.get('pending_t_plus_2_tickers')}，"
+             f" pending_next_day={peer_promotion_gate.get('pending_next_day_tickers')}，"
                 f" watch_with_risk={peer_expansion.get('watch_with_risk_tickers')}。"
         ),
     }
@@ -206,9 +212,12 @@ def render_btst_carryover_close_loop_refresh_markdown(bundle: dict[str, Any]) ->
     lines.append(f"- peer_proof_focus_verdict: {bundle.get('peer_proof_focus_verdict')}")
     lines.append(f"- peer_promotion_gate_focus_ticker: {bundle.get('peer_promotion_gate_focus_ticker')}")
     lines.append(f"- peer_promotion_gate_focus_verdict: {bundle.get('peer_promotion_gate_focus_verdict')}")
+    lines.append(f"- peer_promotion_gate_default_expansion_status: {bundle.get('peer_promotion_gate_default_expansion_status')}")
     lines.append(f"- priority_expansion_tickers: {bundle.get('priority_expansion_tickers')}")
     lines.append(f"- ready_for_promotion_review_tickers: {bundle.get('ready_for_promotion_review_tickers')}")
     lines.append(f"- promotion_gate_ready_tickers: {bundle.get('promotion_gate_ready_tickers')}")
+    lines.append(f"- peer_promotion_gate_pending_t_plus_2_tickers: {bundle.get('peer_promotion_gate_pending_t_plus_2_tickers')}")
+    lines.append(f"- peer_promotion_gate_pending_next_day_tickers: {bundle.get('peer_promotion_gate_pending_next_day_tickers')}")
     lines.append(f"- watch_with_risk_tickers: {bundle.get('watch_with_risk_tickers')}")
     lines.append(f"- refresh_control_tower: {bundle.get('refresh_control_tower')}")
     lines.append("")
