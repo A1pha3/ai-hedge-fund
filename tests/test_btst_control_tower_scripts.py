@@ -7,6 +7,7 @@ from scripts.analyze_btst_governance_synthesis import analyze_btst_governance_sy
 from scripts.analyze_btst_replay_cohort import analyze_btst_replay_cohort
 from scripts.run_btst_nightly_control_tower import (
     _build_carryover_contract_task,
+    _build_peer_close_loop_monitor_task,
     _build_selected_contract_resolution_task,
     _build_selected_contract_monitor_task,
     _prioritize_control_tower_next_actions,
@@ -754,6 +755,46 @@ def test_build_btst_nightly_control_tower_payload_prioritizes_pending_peer_close
     assert payload["control_tower_snapshot"]["next_actions"][1]["source"] == "carryover_peer_close_loop_monitor"
     assert "300408" in payload["control_tower_snapshot"]["next_actions"][1]["title"]
     assert payload["control_tower_snapshot"]["next_actions"][2]["source"] == "carryover_contract"
+
+
+def test_build_peer_close_loop_monitor_task_surfaces_next_day_harvest_contract() -> None:
+    task = _build_peer_close_loop_monitor_task(
+        {
+            "selected_outcome_refresh_summary": {
+                "focus_ticker": "002001",
+                "focus_cycle_status": "missing_next_day",
+                "focus_overall_contract_verdict": "pending_next_day",
+                "focus_next_day_contract_verdict": "pending_next_day",
+                "focus_t_plus_2_contract_verdict": "pending_t_plus_2",
+            },
+            "carryover_aligned_peer_proof_summary": {
+                "focus_ticker": "600989",
+                "focus_proof_verdict": "pending_next_day_close",
+                "focus_promotion_review_verdict": "await_next_day_close",
+                "ready_for_promotion_review_tickers": [],
+                "risk_review_tickers": [],
+            },
+            "carryover_peer_promotion_gate_summary": {
+                "selected_ticker": "002001",
+                "selected_contract_verdict": "pending_next_day",
+                "focus_ticker": "600989",
+                "focus_gate_verdict": "await_peer_next_day_close",
+                "ready_tickers": [],
+                "blocked_open_tickers": [],
+                "pending_t_plus_2_tickers": [],
+                "pending_next_day_tickers": ["600989"],
+                "default_expansion_status": "pending_peer_proof",
+            },
+        }
+    )
+
+    assert task is not None
+    assert task["source"] == "carryover_peer_close_loop_monitor"
+    assert "600989" in task["title"]
+    assert "next-day" in task["title"]
+    assert "focus_gate_verdict=await_peer_next_day_close" in task["why_now"]
+    assert "pending_next_day_tickers=['600989']" in task["why_now"]
+    assert "next-day bar" in task["next_step"]
 
 
 def test_build_selected_contract_monitor_task_uses_intraday_confirmation_only_language() -> None:

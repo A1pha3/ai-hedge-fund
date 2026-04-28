@@ -1342,9 +1342,34 @@ def _extract_peer_close_loop_task_context(control_tower_snapshot: dict[str, Any]
         "focus_proof_verdict": str(proof_summary.get("focus_proof_verdict") or "").strip(),
         "focus_promotion_review_verdict": str(proof_summary.get("focus_promotion_review_verdict") or "").strip(),
         "focus_gate_verdict": str(gate_summary.get("focus_gate_verdict") or "").strip(),
+        "pending_next_day_tickers": [str(ticker) for ticker in list(gate_summary.get("pending_next_day_tickers") or []) if str(ticker).strip()],
         "pending_t_plus_2_tickers": [str(ticker) for ticker in list(gate_summary.get("pending_t_plus_2_tickers") or []) if str(ticker).strip()],
         "selected_contract_verdict": str(gate_summary.get("selected_contract_verdict") or "").strip(),
     }
+
+
+def _resolve_peer_close_loop_phase(context: dict[str, Any]) -> str:
+    focus_ticker = str(context.get("focus_ticker") or "").strip()
+    focus_proof_verdict = str(context.get("focus_proof_verdict") or "").strip()
+    focus_promotion_review_verdict = str(context.get("focus_promotion_review_verdict") or "").strip()
+    focus_gate_verdict = str(context.get("focus_gate_verdict") or "").strip()
+    pending_next_day_tickers = list(context.get("pending_next_day_tickers") or [])
+    pending_t_plus_2_tickers = list(context.get("pending_t_plus_2_tickers") or [])
+    if focus_ticker and (
+        focus_proof_verdict == "pending_next_day_close"
+        or focus_promotion_review_verdict == "await_next_day_close"
+        or focus_gate_verdict == "await_peer_next_day_close"
+        or focus_ticker in pending_next_day_tickers
+    ):
+        return "next_day"
+    if focus_ticker and (
+        focus_proof_verdict == "pending_t_plus_2_close"
+        or focus_promotion_review_verdict == "await_t_plus_2_close"
+        or focus_gate_verdict == "await_peer_t_plus_2_close"
+        or focus_ticker in pending_t_plus_2_tickers
+    ):
+        return "t_plus_2"
+    return ""
 
 
 def _build_peer_close_loop_why_now_parts(context: dict[str, Any]) -> list[str]:
@@ -1352,6 +1377,7 @@ def _build_peer_close_loop_why_now_parts(context: dict[str, Any]) -> list[str]:
     focus_proof_verdict = str(context.get("focus_proof_verdict") or "").strip()
     focus_promotion_review_verdict = str(context.get("focus_promotion_review_verdict") or "").strip()
     focus_gate_verdict = str(context.get("focus_gate_verdict") or "").strip()
+    pending_next_day_tickers = list(context.get("pending_next_day_tickers") or [])
     pending_t_plus_2_tickers = list(context.get("pending_t_plus_2_tickers") or [])
     selected_contract_verdict = str(context.get("selected_contract_verdict") or "").strip()
     why_now_parts = [f"focus_ticker={focus_ticker}"]
@@ -1361,6 +1387,8 @@ def _build_peer_close_loop_why_now_parts(context: dict[str, Any]) -> list[str]:
         why_now_parts.append(f"focus_promotion_review_verdict={focus_promotion_review_verdict}")
     if focus_gate_verdict:
         why_now_parts.append(f"focus_gate_verdict={focus_gate_verdict}")
+    if pending_next_day_tickers:
+        why_now_parts.append(f"pending_next_day_tickers={pending_next_day_tickers}")
     if pending_t_plus_2_tickers:
         why_now_parts.append(f"pending_t_plus_2_tickers={pending_t_plus_2_tickers}")
     if selected_contract_verdict:
@@ -1371,7 +1399,11 @@ def _build_peer_close_loop_why_now_parts(context: dict[str, Any]) -> list[str]:
 def _build_peer_close_loop_next_steps(context: dict[str, Any]) -> list[str]:
     focus_ticker = str(context.get("focus_ticker") or "").strip()
     selected_contract_verdict = str(context.get("selected_contract_verdict") or "").strip()
-    next_steps = [f"优先盯 {focus_ticker} 的 peer close-loop，等待 T+2 bar 落地后确认是否从 pending_t_plus_2_close 翻到 proof-ready / promotion-review-ready。"]
+    close_loop_phase = _resolve_peer_close_loop_phase(context)
+    if close_loop_phase == "next_day":
+        next_steps = [f"优先盯 {focus_ticker} 的 peer next-day close-loop，等待 next-day bar 落地后确认是否从 pending_next_day_close 翻到 pending_t_plus_2_close / proof-ready。"]
+    else:
+        next_steps = [f"优先盯 {focus_ticker} 的 peer close-loop，等待 T+2 bar 落地后确认是否从 pending_t_plus_2_close 翻到 proof-ready / promotion-review-ready。"]
     safeguard_step = _build_peer_selected_contract_safeguard_step(
         selected_contract_verdict,
         template="同步确认 formal selected contract 仍为 {selected_contract_verdict}，避免主票未闭环时提前把 peer 读成可扩容。",
@@ -1382,25 +1414,15 @@ def _build_peer_close_loop_next_steps(context: dict[str, Any]) -> list[str]:
 
 
 def _is_pending_peer_close_loop(context: dict[str, Any]) -> bool:
-    focus_ticker = str(context.get("focus_ticker") or "").strip()
-    focus_proof_verdict = str(context.get("focus_proof_verdict") or "").strip()
-    focus_promotion_review_verdict = str(context.get("focus_promotion_review_verdict") or "").strip()
-    focus_gate_verdict = str(context.get("focus_gate_verdict") or "").strip()
-    pending_t_plus_2_tickers = list(context.get("pending_t_plus_2_tickers") or [])
-    return bool(
-        focus_ticker
-        and (
-            focus_proof_verdict == "pending_t_plus_2_close"
-            or focus_promotion_review_verdict == "await_t_plus_2_close"
-            or focus_gate_verdict == "await_peer_t_plus_2_close"
-            or focus_ticker in pending_t_plus_2_tickers
-        )
-    )
+    return bool(_resolve_peer_close_loop_phase(context))
 
 
 def _build_peer_close_loop_monitor_title(context: dict[str, Any]) -> str:
     focus_ticker = str(context.get("focus_ticker") or "").strip()
-    return f"优先监控 {focus_ticker} peer close-loop 闭环"
+    close_loop_phase = _resolve_peer_close_loop_phase(context)
+    if close_loop_phase == "next_day":
+        return f"优先监控 {focus_ticker} peer next-day close-loop"
+    return f"优先监控 {focus_ticker} peer T+2 close-loop"
 
 
 def _build_peer_close_loop_monitor_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
