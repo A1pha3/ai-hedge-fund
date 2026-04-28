@@ -16,12 +16,18 @@ DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_prepared_breakout_cohort_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_prepared_breakout_cohort_latest.md"
 WINDOW_KEY_PATTERN = re.compile(r"paper_trading_window_(\d{8})_(\d{8})")
 REFERENCE_TICKER = "300505"
+NON_WEAK_OUTCOME_SUPPORT_STATUSES = {
+    "strong_t1_t2_support",
+    "close_support_only",
+    "intraday_support_only",
+}
 
 VERDICT_PRIORITY = {
     "stable_selected_relief_peer": 0,
-    "prepared_breakout_selected_frontier": 1,
-    "prepared_breakout_watchlist_peer": 2,
-    "prepared_breakout_rejected_surface": 3,
+    "soft_selected_relief_peer": 1,
+    "prepared_breakout_selected_frontier": 2,
+    "prepared_breakout_watchlist_peer": 3,
+    "prepared_breakout_rejected_surface": 4,
 }
 OUTCOME_SUPPORT_PRIORITY = {
     "strong_t1_t2_support": 3,
@@ -162,11 +168,20 @@ def _build_candidate_summary(ticker: str, rows: list[dict[str, Any]], *, reports
     gap_to_selected_stats = _score_stats([row.get("replayed_gap_to_selected") for row in rows])
     dossier = _load_candidate_dossier(reports_root, ticker)
     outcome_support = _build_outcome_support_summary(dossier)
+    outcome_support_status = str(outcome_support.get("evidence_status") or "")
     row_count = len(rows)
     selected_count = decision_counts.get("selected", 0)
     near_miss_count = decision_counts.get("near_miss", 0)
     all_rows_selected = row_count > 0 and selected_count == row_count
     min_gap_to_selected = gap_to_selected_stats.get("min")
+    has_soft_selected_relief_alignment = (
+        ticker != REFERENCE_TICKER
+        and selected_relief_window_count >= 4
+        and selected_relief_alignment_rate is not None
+        and 0.75 <= float(selected_relief_alignment_rate) < 1.0
+        and outcome_support_status in NON_WEAK_OUTCOME_SUPPORT_STATUSES
+        and selected_count >= selected_relief_alignment_count
+    )
 
     if ticker == REFERENCE_TICKER and all_rows_selected and selected_relief_window_count == row_count:
         verdict = "reference_selected_relief_anchor"
@@ -174,6 +189,12 @@ def _build_candidate_summary(ticker: str, rows: list[dict[str, Any]], *, reports
     elif all_rows_selected and selected_relief_window_count == row_count:
         verdict = "stable_selected_relief_peer"
         recommendation = f"{ticker} already behaves like a stable prepared-breakout selected-relief peer under the current profile."
+    elif has_soft_selected_relief_alignment:
+        verdict = "soft_selected_relief_peer"
+        recommendation = (
+            f"{ticker} shows conservative progress toward a second selected-relief anchor, "
+            "but still lacks the perfect replay alignment required for stable-peer status."
+        )
     elif near_miss_count > 0 and min_gap_to_selected is not None and float(min_gap_to_selected) <= 0.12:
         verdict = "prepared_breakout_selected_frontier"
         recommendation = f"{ticker} is the closest non-anchor prepared-breakout frontier; validate whether its remaining selected gap is safe to close."
@@ -258,6 +279,7 @@ def analyze_btst_prepared_breakout_cohort(
     next_candidate = non_anchor_candidates[0] if non_anchor_candidates else None
 
     stable_selected_relief_candidate_count = sum(1 for row in non_anchor_candidates if row.get("verdict") == "stable_selected_relief_peer")
+    soft_selected_relief_candidate_count = sum(1 for row in non_anchor_candidates if row.get("verdict") == "soft_selected_relief_peer")
     selected_frontier_candidate_count = sum(1 for row in non_anchor_candidates if row.get("verdict") == "prepared_breakout_selected_frontier")
     watchlist_peer_candidate_count = sum(1 for row in non_anchor_candidates if row.get("verdict") == "prepared_breakout_watchlist_peer")
     rejected_surface_candidate_count = sum(1 for row in non_anchor_candidates if row.get("verdict") == "prepared_breakout_rejected_surface")
@@ -268,6 +290,12 @@ def analyze_btst_prepared_breakout_cohort(
     elif next_candidate.get("verdict") == "stable_selected_relief_peer":
         verdict = "stable_selected_relief_peer_found"
         recommendation = f"{next_candidate['ticker']} is the strongest non-anchor peer; validate false-positive risk before broadening the selected-relief lane."
+    elif next_candidate.get("verdict") == "soft_selected_relief_peer":
+        verdict = "soft_selected_relief_peer_found"
+        recommendation = (
+            f"{next_candidate['ticker']} is the strongest conservative second-anchor candidate so far; "
+            "keep it ahead of frontier names, but require more replay stability before broadening the uplift."
+        )
     elif next_candidate.get("verdict") == "prepared_breakout_selected_frontier":
         verdict = "selected_frontier_peer_found"
         recommendation = f"{next_candidate['ticker']} is the next prepared-breakout frontier to validate after 300505; its remaining selected gap is the tightest in the cohort."
@@ -287,6 +315,7 @@ def analyze_btst_prepared_breakout_cohort(
         "prepared_breakout_row_count": len(rows),
         "candidate_count": len(candidate_rows),
         "stable_selected_relief_candidate_count": stable_selected_relief_candidate_count,
+        "soft_selected_relief_candidate_count": soft_selected_relief_candidate_count,
         "selected_frontier_candidate_count": selected_frontier_candidate_count,
         "watchlist_peer_candidate_count": watchlist_peer_candidate_count,
         "rejected_surface_candidate_count": rejected_surface_candidate_count,
@@ -313,6 +342,7 @@ def render_btst_prepared_breakout_cohort_markdown(analysis: dict[str, Any]) -> s
     lines.append("## Cohort Summary")
     lines.append(f"- candidate_count: {analysis['candidate_count']}")
     lines.append(f"- stable_selected_relief_candidate_count: {analysis['stable_selected_relief_candidate_count']}")
+    lines.append(f"- soft_selected_relief_candidate_count: {analysis['soft_selected_relief_candidate_count']}")
     lines.append(f"- selected_frontier_candidate_count: {analysis['selected_frontier_candidate_count']}")
     lines.append(f"- watchlist_peer_candidate_count: {analysis['watchlist_peer_candidate_count']}")
     lines.append(f"- rejected_surface_candidate_count: {analysis['rejected_surface_candidate_count']}")

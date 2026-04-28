@@ -280,3 +280,196 @@ def test_analyze_btst_prepared_breakout_cohort_ranks_frontier_candidate(monkeypa
     assert analysis["next_candidate"]["verdict"] == "prepared_breakout_selected_frontier"
     assert analysis["selected_frontier_candidate_count"] == 1
     assert analysis["verdict"] == "selected_frontier_peer_found"
+
+
+def test_analyze_btst_prepared_breakout_cohort_surfaces_soft_selected_relief_peer(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir(parents=True)
+    report_dirs = [reports_root / f"paper_trading_window_2026032{i}_2026032{i}_live" for i in range(3, 7)]
+    for report_dir in report_dirs:
+        report_dir.mkdir(parents=True)
+
+    _write_json(
+        reports_root / "btst_tplus2_candidate_dossier_300505_latest.json",
+        {
+            "tier_focus_surface_summary": {
+                "next_high_hit_rate_at_threshold": 1.0,
+                "next_close_positive_rate": 1.0,
+                "t_plus_2_close_positive_rate": 1.0,
+            }
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus2_candidate_dossier_000792_latest.json",
+        {
+            "candidate_row_count": 4,
+            "recent_window_count": 4,
+            "tier_focus_surface_summary": {
+                "next_high_hit_rate_at_threshold": 0.7,
+                "next_close_positive_rate": 0.65,
+                "t_plus_2_close_positive_rate": 0.7,
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "scripts.analyze_btst_prepared_breakout_cohort.discover_nested_report_dirs",
+        lambda report_root_dirs, report_name_contains="": report_dirs,
+    )
+    trade_dates_by_report_dir = {
+        report_dir: f"2026-03-2{index}"
+        for index, report_dir in enumerate(report_dirs, start=3)
+    }
+    monkeypatch.setattr(
+        "scripts.analyze_btst_prepared_breakout_cohort.load_selection_target_replay_sources",
+        lambda report_dir: [(report_dir / "selection_artifacts" / trade_dates_by_report_dir[report_dir] / "selection_target_replay_input.json", {"selection_targets": {"300505": {}, "000792": {}}})],
+    )
+
+    candidate_rows = [
+        {
+            "ticker": "000792",
+            "trade_date": "2026-03-23",
+            "candidate_source": "layer_c_watchlist",
+            "replayed_decision": "selected",
+            "stored_decision": "selected",
+            "replayed_score_target": 0.558,
+            "replayed_gap_to_near_miss": -0.108,
+            "replayed_gap_to_selected": 0.0,
+            "delta_classification": "stable",
+            "replayed_top_reasons": [],
+            "replayed_blockers": [],
+            "replayed_gate_status": {"structural": "pass"},
+            "replayed_metrics_payload": {
+                "breakout_stage": "prepared_breakout",
+                "prepared_breakout_penalty_relief": {"applied": True},
+                "prepared_breakout_catalyst_relief": {"applied": True},
+                "prepared_breakout_volume_relief": {"applied": True},
+                "prepared_breakout_continuation_relief": {"applied": True},
+                "prepared_breakout_selected_catalyst_relief": {"applied": True},
+            },
+        },
+        {
+            "ticker": "000792",
+            "trade_date": "2026-03-24",
+            "candidate_source": "layer_c_watchlist",
+            "replayed_decision": "selected",
+            "stored_decision": "selected",
+            "replayed_score_target": 0.552,
+            "replayed_gap_to_near_miss": -0.102,
+            "replayed_gap_to_selected": 0.0,
+            "delta_classification": "stable",
+            "replayed_top_reasons": [],
+            "replayed_blockers": [],
+            "replayed_gate_status": {"structural": "pass"},
+            "replayed_metrics_payload": {
+                "breakout_stage": "prepared_breakout",
+                "prepared_breakout_penalty_relief": {"applied": True},
+                "prepared_breakout_catalyst_relief": {"applied": True},
+                "prepared_breakout_volume_relief": {"applied": True},
+                "prepared_breakout_continuation_relief": {"applied": True},
+                "prepared_breakout_selected_catalyst_relief": {"applied": True},
+            },
+        },
+        {
+            "ticker": "000792",
+            "trade_date": "2026-03-25",
+            "candidate_source": "layer_c_watchlist",
+            "replayed_decision": "selected",
+            "stored_decision": "selected",
+            "replayed_score_target": 0.549,
+            "replayed_gap_to_near_miss": -0.099,
+            "replayed_gap_to_selected": 0.0,
+            "delta_classification": "stable",
+            "replayed_top_reasons": [],
+            "replayed_blockers": [],
+            "replayed_gate_status": {"structural": "pass"},
+            "replayed_metrics_payload": {
+                "breakout_stage": "prepared_breakout",
+                "prepared_breakout_penalty_relief": {"applied": True},
+                "prepared_breakout_catalyst_relief": {"applied": True},
+                "prepared_breakout_volume_relief": {"applied": True},
+                "prepared_breakout_continuation_relief": {"applied": True},
+                "prepared_breakout_selected_catalyst_relief": {"applied": True},
+            },
+        },
+        {
+            "ticker": "000792",
+            "trade_date": "2026-03-26",
+            "candidate_source": "layer_c_watchlist",
+            "replayed_decision": "near_miss",
+            "stored_decision": "rejected",
+            "replayed_score_target": 0.521,
+            "replayed_gap_to_near_miss": -0.071,
+            "replayed_gap_to_selected": 0.041,
+            "delta_classification": "promoted",
+            "replayed_top_reasons": ["confirmed_breakout"],
+            "replayed_blockers": [],
+            "replayed_gate_status": {"structural": "pass"},
+            "replayed_metrics_payload": {
+                "breakout_stage": "prepared_breakout",
+                "prepared_breakout_penalty_relief": {"applied": True},
+                "prepared_breakout_catalyst_relief": {"applied": True},
+                "prepared_breakout_volume_relief": {"applied": True},
+                "prepared_breakout_continuation_relief": {"applied": True},
+                "prepared_breakout_selected_catalyst_relief": {"applied": True},
+            },
+        },
+    ]
+
+    def _diagnostics_for(replay_sources, profile_name="default", focus_tickers=None):
+        replay_path = str(replay_sources[0][0])
+        trade_date = replay_path.split("/")[-2]
+        diagnostics = [
+            {
+                "ticker": "300505",
+                "trade_date": trade_date,
+                "candidate_source": "layer_c_watchlist",
+                "replayed_decision": "selected",
+                "stored_decision": "selected",
+                "replayed_score_target": 0.6056,
+                "replayed_gap_to_near_miss": -0.1556,
+                "replayed_gap_to_selected": 0.0,
+                "delta_classification": "stable",
+                "replay_input_path": replay_path,
+                "replayed_top_reasons": [],
+                "replayed_blockers": [],
+                "replayed_gate_status": {},
+                "replayed_metrics_payload": {
+                    "breakout_stage": "prepared_breakout",
+                    "prepared_breakout_penalty_relief": {"applied": True},
+                    "prepared_breakout_catalyst_relief": {"applied": True},
+                    "prepared_breakout_volume_relief": {"applied": True},
+                    "prepared_breakout_continuation_relief": {"applied": True},
+                    "prepared_breakout_selected_catalyst_relief": {"applied": True},
+                },
+            }
+        ]
+        diagnostics.extend(
+            {
+                **row,
+                "trade_date": trade_date,
+                "replay_input_path": replay_path,
+            }
+            for row in candidate_rows
+            if row["trade_date"] == trade_date
+        )
+        return {"focused_score_diagnostics": diagnostics}
+
+    monkeypatch.setattr(
+        "scripts.analyze_btst_prepared_breakout_cohort.analyze_selection_target_replay_sources",
+        _diagnostics_for,
+    )
+
+    analysis = analyze_btst_prepared_breakout_cohort(reports_root)
+
+    assert analysis["candidate_count"] == 2
+    assert analysis["soft_selected_relief_candidate_count"] == 1
+    assert analysis["selected_frontier_candidate_count"] == 0
+    assert analysis["next_candidate"]["ticker"] == "000792"
+    assert analysis["next_candidate"]["verdict"] == "soft_selected_relief_peer"
+    assert analysis["verdict"] == "soft_selected_relief_peer_found"
+
+    markdown = render_btst_prepared_breakout_cohort_markdown(analysis)
+    assert "soft_selected_relief_candidate_count: 1" in markdown
+    assert "000792: verdict=soft_selected_relief_peer" in markdown
+    assert "soft_selected_relief_peer_found" in markdown
