@@ -149,6 +149,11 @@ def _prioritize_focus_ticker(tickers: list[str], focus_ticker: str, *, limit: in
     return ordered[:limit]
 
 
+def _resolve_default_expansion_status(payload: dict[str, Any]) -> str:
+    ready_tickers = [str(item).strip() for item in list(payload.get("ready_tickers") or []) if str(item).strip()]
+    return "ready_for_peer_promotion" if ready_tickers else "pending_peer_proof"
+
+
 def _build_peer_promotion_gate_analysis(
     *,
     proof_board: dict[str, Any],
@@ -178,6 +183,8 @@ def _build_peer_promotion_gate_analysis(
         [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "await_peer_t_plus_2_close"],
         focus_ticker,
     )
+    promotion_ready_tickers = list(ready_tickers)
+    default_expansion_status = _resolve_default_expansion_status({"ready_tickers": promotion_ready_tickers})
 
     recommendation_parts: list[str] = []
     if ready_tickers:
@@ -200,6 +207,8 @@ def _build_peer_promotion_gate_analysis(
         "peer_count": len(entries),
         "gate_verdict_counts": {verdict: sum(1 for entry in entries if str(entry.get("gate_verdict") or "") == verdict) for verdict in sorted({str(entry.get("gate_verdict") or "") for entry in entries})},
         "ready_tickers": ready_tickers,
+        "promotion_ready_tickers": promotion_ready_tickers,
+        "default_expansion_status": default_expansion_status,
         "blocked_open_tickers": blocked_open_tickers,
         "risk_review_tickers": risk_review_tickers,
         "pending_t_plus_2_tickers": pending_t_plus_2_tickers,
@@ -221,6 +230,8 @@ def render_btst_carryover_peer_promotion_gate_markdown(analysis: dict[str, Any])
     lines.append(f"- peer_count: {analysis.get('peer_count')}")
     lines.append(f"- gate_verdict_counts: {analysis.get('gate_verdict_counts')}")
     lines.append(f"- ready_tickers: {analysis.get('ready_tickers')}")
+    lines.append(f"- promotion_ready_tickers: {analysis.get('promotion_ready_tickers')}")
+    lines.append(f"- default_expansion_status: {analysis.get('default_expansion_status')}")
     lines.append(f"- blocked_open_tickers: {analysis.get('blocked_open_tickers')}")
     lines.append(f"- risk_review_tickers: {analysis.get('risk_review_tickers')}")
     lines.append(f"- pending_t_plus_2_tickers: {analysis.get('pending_t_plus_2_tickers')}")
