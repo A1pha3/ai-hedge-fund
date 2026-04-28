@@ -303,8 +303,14 @@ def append_carryover_promotion_gate_delta_markdown(lines: list[str], delta: dict
             "current_focus_gate_verdict",
             "previous_selected_contract_verdict",
             "current_selected_contract_verdict",
+            "previous_default_expansion_status",
+            "current_default_expansion_status",
             "previous_ready_tickers",
             "current_ready_tickers",
+            "previous_pending_next_day_tickers",
+            "current_pending_next_day_tickers",
+            "previous_pending_t_plus_2_tickers",
+            "current_pending_t_plus_2_tickers",
         ]
         for field in fields:
             lines.append(f"- {field}: {delta.get(field) or 'n/a'}")
@@ -316,6 +322,10 @@ def append_carryover_promotion_gate_delta_markdown(lines: list[str], delta: dict
             lines.append(f"- added_pending_t_plus_2_ticker: {ticker}")
         for ticker in list(delta.get("removed_pending_t_plus_2_tickers") or []):
             lines.append(f"- removed_pending_t_plus_2_ticker: {ticker}")
+        for ticker in list(delta.get("added_pending_next_day_tickers") or []):
+            lines.append(f"- added_pending_next_day_ticker: {ticker}")
+        for ticker in list(delta.get("removed_pending_next_day_tickers") or []):
+            lines.append(f"- removed_pending_next_day_ticker: {ticker}")
         if not delta.get("has_changes"):
             lines.append("- no_carryover_promotion_gate_change_detected")
     lines.append("")

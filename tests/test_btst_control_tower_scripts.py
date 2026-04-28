@@ -15,6 +15,7 @@ from scripts.run_btst_nightly_control_tower import (
     build_btst_open_ready_delta_payload,
     generate_btst_nightly_control_tower_artifacts,
     render_btst_nightly_control_tower_markdown,
+    render_btst_open_ready_delta_markdown,
 )
 from scripts.validate_btst_governance_consistency import validate_btst_governance_consistency
 from src.screening.models import StrategySignal
@@ -379,7 +380,49 @@ def test_build_btst_open_ready_delta_payload_surfaces_carryover_promotion_gate_c
     assert delta_payload["carryover_promotion_gate_delta"]["added_pending_t_plus_2_tickers"] == ["300408"]
     assert delta_payload["carryover_promotion_gate_delta"]["added_pending_next_day_tickers"] == ["600989"]
     assert delta_payload["carryover_promotion_gate_delta"]["removed_pending_next_day_tickers"] == ["301396"]
-    assert any("carryover promotion gate" in item for item in delta_payload["operator_focus"])
+    assert any("carryover promotion gate" in item and "pending_next_day" in item and "pending_t_plus_2" in item for item in delta_payload["operator_focus"])
+
+
+def test_render_btst_open_ready_delta_markdown_surfaces_phase_aware_carryover_promotion_gate_delta(tmp_path: Path) -> None:
+    payload = {
+        "generated_at": "2026-04-10T08:00:00",
+        "comparison_basis": "previous_btst_report",
+        "comparison_scope": "previous_btst_report",
+        "overall_delta_verdict": "changed",
+        "current_reference": {"report_dir": "data/reports/report_b", "trade_date": "2026-04-10"},
+        "previous_reference": {"report_dir": "data/reports/report_a", "trade_date": "2026-04-09", "generated_at": "2026-04-10T07:30:00"},
+        "operator_focus": [],
+        "carryover_promotion_gate_delta": {
+            "available": True,
+            "has_changes": True,
+            "previous_focus_ticker": "301396",
+            "current_focus_ticker": "300408",
+            "previous_focus_gate_verdict": "await_peer_next_day_close",
+            "current_focus_gate_verdict": "await_peer_t_plus_2_close",
+            "previous_selected_contract_verdict": "pending_next_day",
+            "current_selected_contract_verdict": "pending_next_day",
+            "previous_default_expansion_status": "pending_peer_proof",
+            "current_default_expansion_status": "pending_peer_proof",
+            "previous_ready_tickers": [],
+            "current_ready_tickers": [],
+            "previous_pending_next_day_tickers": ["301396"],
+            "current_pending_next_day_tickers": ["600989"],
+            "added_pending_next_day_tickers": ["600989"],
+            "removed_pending_next_day_tickers": ["301396"],
+            "previous_pending_t_plus_2_tickers": [],
+            "current_pending_t_plus_2_tickers": ["300408"],
+            "added_pending_t_plus_2_tickers": ["300408"],
+            "removed_pending_t_plus_2_tickers": [],
+        },
+        "source_paths": {},
+    }
+
+    markdown = render_btst_open_ready_delta_markdown(payload, output_parent=tmp_path)
+
+    assert "- previous_default_expansion_status: pending_peer_proof" in markdown
+    assert "- current_default_expansion_status: pending_peer_proof" in markdown
+    assert "- added_pending_next_day_ticker: 600989" in markdown
+    assert "- removed_pending_next_day_ticker: 301396" in markdown
 
 
 def test_render_btst_nightly_control_tower_markdown_surfaces_pending_peer_promotion_contract(tmp_path: Path) -> None:
