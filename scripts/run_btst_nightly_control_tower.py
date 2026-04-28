@@ -905,6 +905,11 @@ def _build_carryover_contract_next_steps(context: dict[str, Any]) -> list[str]:
 def _build_carryover_contract_peer_focus_step(*, peer_focus_ticker: str, peer_focus_status: str) -> str | None:
     if not peer_focus_ticker:
         return None
+    normalized_status = str(peer_focus_status or "").strip()
+    if normalized_status in {"await_peer_next_day_close", "await_next_day_close", "pending_next_day_close"}:
+        return f"优先盯 {peer_focus_ticker} 的 peer next-day harvest，等待 next-day bar 落地后再决定是否把它推进到 T+2 close-loop。"
+    if normalized_status in {"await_peer_t_plus_2_close", "await_t_plus_2_close", "pending_t_plus_2_close"}:
+        return f"优先盯 {peer_focus_ticker} 的 peer T+2 harvest，等待 T+2 bar 落地后再决定是否把它推进到 proof-ready / promotion-review-ready。"
     return f"优先盯 {peer_focus_ticker} 的 {peer_focus_status or 'peer_harvest'} 闭环；只有第二个 aligned peer 完成 closed-cycle 转强后才讨论 lane 扩容。"
 
 

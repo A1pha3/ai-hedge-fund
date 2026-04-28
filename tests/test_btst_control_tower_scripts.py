@@ -859,6 +859,52 @@ def test_build_carryover_contract_task_uses_intraday_confirmation_only_language(
     assert "selected_execution_quality=intraday_only" in task["why_now"]
 
 
+def test_build_carryover_contract_task_surfaces_next_day_peer_harvest_contract() -> None:
+    task = _build_carryover_contract_task(
+        {
+            "selected_outcome_refresh_summary": {
+                "focus_ticker": "002001",
+                "focus_overall_contract_verdict": "pending_next_day",
+            },
+            "carryover_multiday_continuation_audit_summary": {
+                "selected_ticker": "002001",
+                "selected_path_t2_bias_only": True,
+                "broad_family_only_multiday_unsupported": False,
+            },
+            "carryover_aligned_peer_harvest_summary": {
+                "focus_ticker": "600989",
+                "focus_status": "next_day_watch_priority",
+            },
+            "carryover_peer_expansion_summary": {
+                "focus_ticker": "600989",
+                "focus_status": "next_day_watch_priority",
+                "priority_expansion_tickers": ["600989"],
+                "watch_with_risk_tickers": [],
+            },
+            "carryover_aligned_peer_proof_summary": {
+                "focus_ticker": "600989",
+                "focus_promotion_review_verdict": "await_next_day_close",
+                "ready_for_promotion_review_tickers": [],
+                "risk_review_tickers": [],
+            },
+            "carryover_peer_promotion_gate_summary": {
+                "focus_ticker": "600989",
+                "focus_gate_verdict": "await_peer_next_day_close",
+                "default_expansion_status": "pending_peer_proof",
+                "pending_next_day_tickers": ["600989"],
+                "pending_t_plus_2_tickers": [],
+                "ready_tickers": [],
+                "blocked_open_tickers": [],
+            },
+        }
+    )
+
+    assert task is not None
+    assert "default_expansion_status=pending_peer_proof" in task["why_now"]
+    assert "pending_next_day_tickers=['600989']" in task["why_now"]
+    assert "next-day bar" in task["next_step"]
+
+
 def test_build_selected_contract_resolution_task_uses_closed_cycle_wording_for_nonpositive_expectation() -> None:
     task = _build_selected_contract_resolution_task(
         {
