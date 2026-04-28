@@ -180,7 +180,6 @@ def _build_candidate_summary(ticker: str, rows: list[dict[str, Any]], *, reports
         and selected_relief_alignment_rate is not None
         and 0.75 <= float(selected_relief_alignment_rate) < 1.0
         and outcome_support_status in NON_WEAK_OUTCOME_SUPPORT_STATUSES
-        and selected_count >= selected_relief_alignment_count
     )
 
     if ticker == REFERENCE_TICKER and all_rows_selected and selected_relief_window_count == row_count:
