@@ -96,7 +96,9 @@ def load_frozen_post_market_plans(daily_events_path: str | Path) -> dict[str, Ex
             trade_date = _normalize_frozen_trade_date_key(payload.get("trade_date") or current_plan_payload.get("date"))
             if not trade_date:
                 continue
-            plan = ExecutionPlan.model_validate(current_plan_payload)
+            normalized_plan_payload = dict(current_plan_payload)
+            normalized_plan_payload.setdefault("date", trade_date)
+            plan = ExecutionPlan.model_validate(normalized_plan_payload)
             risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
             explicit_prior = dict(risk_metrics.get("historical_prior_by_ticker", {}) or {})
             if not explicit_prior:

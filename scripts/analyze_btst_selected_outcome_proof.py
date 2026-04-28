@@ -18,6 +18,27 @@ def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
+def _legacy_selected_rows(snapshot: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    rows: list[tuple[str, dict[str, Any]]] = []
+    for entry in list(snapshot.get("target_context") or []):
+        ticker = str(entry.get("ticker") or "").strip()
+        short_trade = dict((entry or {}).get("short_trade") or {})
+        if not ticker or str(short_trade.get("decision") or "") != "selected":
+            continue
+        explainability_payload = dict(short_trade.get("explainability_payload") or {})
+        replay_context = dict(entry.get("replay_context") or {})
+        if replay_context:
+            explainability_payload.setdefault("replay_context", replay_context)
+            historical_prior = dict(replay_context.get("historical_prior") or {})
+            if historical_prior:
+                explainability_payload.setdefault("historical_prior", historical_prior)
+        legacy_short_trade = dict(short_trade)
+        if explainability_payload:
+            legacy_short_trade["explainability_payload"] = explainability_payload
+        rows.append((ticker, legacy_short_trade))
+    return rows
+
+
 def _resolve_snapshot(input_path: str | Path | dict[str, Any]) -> tuple[dict[str, Any], str | None, str | None]:
     if isinstance(input_path, dict):
         return dict(input_path), None, None
@@ -45,7 +66,7 @@ def _resolve_latest_selected_snapshot_from_reports_root(resolved: Path) -> tuple
             1
             for payload in dict(snapshot.get("selection_targets") or {}).values()
             if str(((payload or {}).get("short_trade") or {}).get("decision") or "") == "selected"
-        )
+        ) or len(_legacy_selected_rows(snapshot))
         if selected_count <= 0:
             continue
         trade_date = str(snapshot.get("trade_date") or snapshot_path.parent.name)
@@ -59,12 +80,16 @@ def _resolve_latest_selected_snapshot_from_reports_root(resolved: Path) -> tuple
 
 def _resolve_selected_entry(snapshot: dict[str, Any], ticker: str | None = None) -> tuple[str, dict[str, Any]]:
     selection_targets = dict(snapshot.get("selection_targets") or {})
+    legacy_selected_rows = _legacy_selected_rows(snapshot)
     if ticker:
         entry = dict(selection_targets.get(ticker) or {})
         short_trade = dict(entry.get("short_trade") or {})
-        if not short_trade:
-            raise KeyError(f"Ticker {ticker} not found in selection_targets")
-        return ticker, short_trade
+        if short_trade:
+            return ticker, short_trade
+        for row_ticker, legacy_short_trade in legacy_selected_rows:
+            if row_ticker == ticker:
+                return row_ticker, legacy_short_trade
+        raise KeyError(f"Ticker {ticker} not found in selection_targets")
 
     selected_rows: list[tuple[str, dict[str, Any]]] = []
     for row_ticker, payload in selection_targets.items():
@@ -72,6 +97,8 @@ def _resolve_selected_entry(snapshot: dict[str, Any], ticker: str | None = None)
         if str(short_trade.get("decision") or "") != "selected":
             continue
         selected_rows.append((str(row_ticker), short_trade))
+    if not selected_rows:
+        selected_rows = legacy_selected_rows
 
     if not selected_rows:
         raise ValueError("No selected short_trade entry found in snapshot")

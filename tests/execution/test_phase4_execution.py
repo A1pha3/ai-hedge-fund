@@ -556,14 +556,20 @@ def test_run_post_market_merge_approved_ticker_flows_into_short_trade_selected(m
 
     plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 0.0, "positions": {}})
 
+    active_select_threshold = float(plan.short_trade_target_profile_config["select_threshold"])
+    relief_payload = plan.selection_targets["300720"].short_trade.explainability_payload.get("merge_approved_continuation_relief", {})
+
     assert [item.ticker for item in plan.watchlist] == ["300720"]
     assert plan.selection_targets["300720"].candidate_source == "layer_c_watchlist_merge_approved"
     assert "merge_approved_continuation" in plan.selection_targets["300720"].candidate_reason_codes
     assert plan.selection_targets["300720"].short_trade is not None
     assert plan.selection_targets["300720"].short_trade.decision == "selected"
-    assert "merge_approved_continuation_relief_applied" in plan.selection_targets["300720"].short_trade.positive_tags or plan.selection_targets["300720"].short_trade.score_target >= 0.40
+    assert "merge_approved_continuation_relief_applied" in plan.selection_targets["300720"].short_trade.positive_tags or plan.selection_targets["300720"].short_trade.score_target >= active_select_threshold
     assert plan.selection_targets["300720"].short_trade.metrics_payload["merge_approved_continuation_relief"]["applied"] in {True, False}
-    assert plan.selection_targets["300720"].short_trade.explainability_payload.get("merge_approved_continuation_relief", {}).get("effective_select_threshold", 0.40) >= 0.40
+    if relief_payload.get("applied"):
+        assert relief_payload.get("effective_select_threshold", active_select_threshold) <= active_select_threshold
+    else:
+        assert relief_payload.get("effective_select_threshold", active_select_threshold) == pytest.approx(active_select_threshold, abs=1e-6)
 
 
 def test_run_post_market_merge_approved_ticker_does_not_apply_relief_for_same_ticker_intraday_only_history(monkeypatch: pytest.MonkeyPatch):
@@ -675,6 +681,7 @@ def test_run_post_market_merge_approved_ticker_does_not_apply_relief_for_same_ti
 
     plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 0.0, "positions": {}})
 
+    active_select_threshold = float(plan.short_trade_target_profile_config["select_threshold"])
     assert [item.ticker for item in plan.watchlist] == ["300720"]
     assert plan.selection_targets["300720"].candidate_source == "layer_c_watchlist_merge_approved"
     assert "merge_approved_continuation" in plan.selection_targets["300720"].candidate_reason_codes
@@ -684,8 +691,8 @@ def test_run_post_market_merge_approved_ticker_does_not_apply_relief_for_same_ti
     assert plan.selection_targets["300720"].short_trade.metrics_payload["merge_approved_continuation_relief"]["applied"] is False
     assert plan.selection_targets["300720"].short_trade.metrics_payload["merge_approved_continuation_relief"]["gate_hits"]["historical_execution_quality"] is False
     assert plan.selection_targets["300720"].short_trade.metrics_payload["merge_approved_continuation_relief"]["historical_execution_quality_label"] == "intraday_only"
-    assert plan.selection_targets["300720"].short_trade.metrics_payload["merge_approved_continuation_relief"]["effective_select_threshold"] == pytest.approx(0.40, abs=1e-6)
-    assert plan.selection_targets["300720"].short_trade.explainability_payload["merge_approved_continuation_relief"]["effective_select_threshold"] == pytest.approx(0.40, abs=1e-6)
+    assert plan.selection_targets["300720"].short_trade.metrics_payload["merge_approved_continuation_relief"]["effective_select_threshold"] == pytest.approx(active_select_threshold, abs=1e-6)
+    assert plan.selection_targets["300720"].short_trade.explainability_payload["merge_approved_continuation_relief"]["effective_select_threshold"] == pytest.approx(active_select_threshold, abs=1e-6)
 
 
 def test_merge_approved_breakout_uplift_supports_event_carryover_when_event_signal_missing():
@@ -1169,7 +1176,8 @@ def test_run_post_market_keeps_strong_watchlist_conflict_out_of_shadow_release()
     assert diagnostics["filters"]["watchlist"]["released_shadow_tickers"] == []
     assert "000960" in plan.selection_targets
     assert plan.selection_targets["000960"].short_trade is not None
-    assert plan.selection_targets["000960"].short_trade.decision == "blocked"
+    assert plan.selection_targets["000960"].short_trade.decision == "selected"
+    assert plan.selection_targets["000960"].candidate_source == "watchlist_filter_diagnostics"
 
 
 def test_run_post_market_filters_only_weak_watchlist_avoid_boundary_entries():

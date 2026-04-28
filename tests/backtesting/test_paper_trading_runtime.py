@@ -1396,7 +1396,7 @@ def test_run_paper_trading_session_writes_cache_benchmark_artifacts(tmp_path, mo
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert len(benchmark_calls) == 1
-    assert benchmark_calls[0]["repo_root"].name == "ai-hedge-fund-fork"
+    assert benchmark_calls[0]["repo_root"] == Path(__file__).resolve().parents[2]
     assert benchmark_calls[0]["python_executable"] == sys.executable
     assert benchmark_calls[0]["trade_date"] == "20240304"
     assert benchmark_calls[0]["ticker"] == "AAPL"

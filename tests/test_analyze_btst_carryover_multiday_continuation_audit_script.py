@@ -136,3 +136,67 @@ def test_analyze_btst_carryover_multiday_continuation_audit_recommends_t2_bias(m
     assert "broad_family_only" in analysis["recommendation"]
     assert "002001" in markdown
     assert "688498" in markdown
+
+
+def test_analyze_btst_carryover_multiday_continuation_audit_finds_legacy_selected_snapshot(monkeypatch, tmp_path):
+    selected_report = tmp_path / "paper_trading_selected" / "selection_artifacts" / "2026-04-22"
+    selected_report.mkdir(parents=True)
+    (selected_report / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-04-22",
+                "target_context": [
+                    {
+                        "ticker": "688313",
+                        "short_trade": {"decision": "selected"},
+                        "replay_context": {
+                            "historical_prior": {
+                                "execution_quality_label": "close_continuation",
+                                "entry_timing_bias": "confirm_then_hold",
+                            }
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "scripts.analyze_btst_carryover_multiday_continuation_audit.analyze_btst_selected_outcome_proof",
+        lambda snapshot_path: {
+            "ticker": "688313",
+            "trade_date": "2026-04-22",
+            "preferred_entry_mode": "confirm_then_hold_breakout",
+            "current_contract_status": "open",
+            "historical_prior": {
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+            },
+            "summary": {},
+            "evidence_rows": [],
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.analyze_btst_carryover_multiday_continuation_audit._extract_holding_outcome",
+        lambda ticker, trade_date, price_cache: {
+            "data_status": "ok",
+            "cycle_status": "missing_next_day",
+            "next_trade_date": None,
+            "next_close_return": None,
+            "t_plus_2_close_return": None,
+            "trade_anchor_date": trade_date,
+            "trade_date_was_non_trading": False,
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.analyze_btst_carryover_multiday_continuation_audit._build_supportive_cohort_rows",
+        lambda reports_root: [],
+    )
+
+    analysis = analyze_btst_carryover_multiday_continuation_audit(tmp_path)
+
+    assert analysis["selected_ticker"] == "688313"
+    assert analysis["selected_snapshot_path"].endswith("selection_artifacts/2026-04-22/selection_snapshot.json")
