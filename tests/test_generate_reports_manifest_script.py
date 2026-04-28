@@ -860,10 +860,12 @@ def test_build_carryover_peer_promotion_gate_summary(tmp_path: Path) -> None:
             "selected_contract_verdict": "pending_next_day",
             "peer_count": 3,
             "gate_verdict_counts": {"blocked_selected_contract_open": 1, "await_peer_t_plus_2_close": 1},
+            "default_expansion_status": "pending_peer_proof",
             "ready_tickers": [],
             "blocked_open_tickers": ["301396"],
             "risk_review_tickers": [],
             "pending_t_plus_2_tickers": ["300408"],
+            "pending_next_day_tickers": ["600989"],
             "focus_ticker": "301396",
             "focus_gate_verdict": "blocked_selected_contract_open",
             "entries": [
@@ -881,8 +883,10 @@ def test_build_carryover_peer_promotion_gate_summary(tmp_path: Path) -> None:
 
     assert summary["focus_ticker"] == "301396"
     assert summary["focus_gate_verdict"] == "blocked_selected_contract_open"
+    assert summary["default_expansion_status"] == "pending_peer_proof"
     assert summary["blocked_open_tickers"] == ["301396"]
     assert summary["pending_t_plus_2_tickers"] == ["300408"]
+    assert summary["pending_next_day_tickers"] == ["600989"]
 
 
 def test_build_carryover_peer_promotion_gate_summary_aligns_focus_recommendation(tmp_path: Path) -> None:

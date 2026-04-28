@@ -546,6 +546,8 @@ def build_carryover_promotion_gate_field_changes(current_summary: dict[str, Any]
         "focus_gate_verdict_changed": str(current_summary.get("focus_gate_verdict") or "") != str(previous_summary.get("focus_gate_verdict") or ""),
         "selected_contract_verdict_changed": str(current_summary.get("selected_contract_verdict") or "")
         != str(previous_summary.get("selected_contract_verdict") or ""),
+        "default_expansion_status_changed": str(current_summary.get("default_expansion_status") or "")
+        != str(previous_summary.get("default_expansion_status") or ""),
     }
 
 
@@ -572,21 +574,27 @@ def diff_carryover_promotion_gate(current_payload: dict[str, Any], previous_payl
     previous_blocked_open_tickers = list(previous_summary.get("blocked_open_tickers") or [])
     current_pending_t_plus_2_tickers = list(current_summary.get("pending_t_plus_2_tickers") or [])
     previous_pending_t_plus_2_tickers = list(previous_summary.get("pending_t_plus_2_tickers") or [])
+    current_pending_next_day_tickers = list(current_summary.get("pending_next_day_tickers") or [])
+    previous_pending_next_day_tickers = list(previous_summary.get("pending_next_day_tickers") or [])
     ready_ticker_delta = diff_ticker_lists(current_ready_tickers, previous_ready_tickers)
     blocked_open_ticker_delta = diff_ticker_lists(current_blocked_open_tickers, previous_blocked_open_tickers)
     pending_t_plus_2_ticker_delta = diff_ticker_lists(current_pending_t_plus_2_tickers, previous_pending_t_plus_2_tickers)
+    pending_next_day_ticker_delta = diff_ticker_lists(current_pending_next_day_tickers, previous_pending_next_day_tickers)
     field_changes = build_carryover_promotion_gate_field_changes(current_summary, previous_summary)
     has_changes = any(
         [
             field_changes["focus_ticker_changed"],
             field_changes["focus_gate_verdict_changed"],
             field_changes["selected_contract_verdict_changed"],
+            field_changes["default_expansion_status_changed"],
             bool(ready_ticker_delta["added"]),
             bool(ready_ticker_delta["removed"]),
             bool(blocked_open_ticker_delta["added"]),
             bool(blocked_open_ticker_delta["removed"]),
             bool(pending_t_plus_2_ticker_delta["added"]),
             bool(pending_t_plus_2_ticker_delta["removed"]),
+            bool(pending_next_day_ticker_delta["added"]),
+            bool(pending_next_day_ticker_delta["removed"]),
         ]
     )
     return {
@@ -600,6 +608,9 @@ def diff_carryover_promotion_gate(current_payload: dict[str, Any], previous_payl
         "previous_selected_contract_verdict": previous_summary.get("selected_contract_verdict"),
         "current_selected_contract_verdict": current_summary.get("selected_contract_verdict"),
         "selected_contract_verdict_changed": field_changes["selected_contract_verdict_changed"],
+        "previous_default_expansion_status": previous_summary.get("default_expansion_status"),
+        "current_default_expansion_status": current_summary.get("default_expansion_status"),
+        "default_expansion_status_changed": field_changes["default_expansion_status_changed"],
         "previous_ready_tickers": previous_ready_tickers,
         "current_ready_tickers": current_ready_tickers,
         "added_ready_tickers": ready_ticker_delta["added"],
@@ -612,6 +623,10 @@ def diff_carryover_promotion_gate(current_payload: dict[str, Any], previous_payl
         "current_pending_t_plus_2_tickers": current_pending_t_plus_2_tickers,
         "added_pending_t_plus_2_tickers": pending_t_plus_2_ticker_delta["added"],
         "removed_pending_t_plus_2_tickers": pending_t_plus_2_ticker_delta["removed"],
+        "previous_pending_next_day_tickers": previous_pending_next_day_tickers,
+        "current_pending_next_day_tickers": current_pending_next_day_tickers,
+        "added_pending_next_day_tickers": pending_next_day_ticker_delta["added"],
+        "removed_pending_next_day_tickers": pending_next_day_ticker_delta["removed"],
         "has_changes": has_changes,
     }
 

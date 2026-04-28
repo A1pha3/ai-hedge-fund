@@ -837,10 +837,12 @@ def _build_carryover_peer_promotion_gate_summary(reports_root: Path) -> dict[str
         **_build_carryover_focus_base_fields(promotion_gate, focus_entry),
         "peer_count": promotion_gate.get("peer_count"),
         "gate_verdict_counts": dict(promotion_gate.get("gate_verdict_counts") or {}),
+        "default_expansion_status": promotion_gate.get("default_expansion_status"),
         "ready_tickers": list(promotion_gate.get("ready_tickers") or []),
         "blocked_open_tickers": list(promotion_gate.get("blocked_open_tickers") or []),
         "risk_review_tickers": list(promotion_gate.get("risk_review_tickers") or []),
         "pending_t_plus_2_tickers": list(promotion_gate.get("pending_t_plus_2_tickers") or []),
+        "pending_next_day_tickers": list(promotion_gate.get("pending_next_day_tickers") or []),
         "focus_gate_verdict": promotion_gate.get("focus_gate_verdict") or focus_entry.get("gate_verdict"),
         "recommendation": promotion_gate.get("recommendation"),
     }

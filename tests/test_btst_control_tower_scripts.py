@@ -328,9 +328,11 @@ def test_build_btst_open_ready_delta_payload_surfaces_carryover_promotion_gate_c
                 "selected_contract_verdict": "pending_next_day",
                 "focus_ticker": "300408",
                 "focus_gate_verdict": "await_peer_t_plus_2_close",
+                "default_expansion_status": "pending_peer_proof",
                 "ready_tickers": [],
                 "blocked_open_tickers": [],
                 "pending_t_plus_2_tickers": ["300408"],
+                "pending_next_day_tickers": ["600989"],
             }
         },
         "source_paths": {},
@@ -349,9 +351,11 @@ def test_build_btst_open_ready_delta_payload_surfaces_carryover_promotion_gate_c
                 "selected_contract_verdict": "pending_next_day",
                 "focus_ticker": "301396",
                 "focus_gate_verdict": "await_peer_next_day_close",
+                "default_expansion_status": "pending_peer_proof",
                 "ready_tickers": [],
                 "blocked_open_tickers": [],
                 "pending_t_plus_2_tickers": [],
+                "pending_next_day_tickers": ["301396"],
             }
         },
         "source_paths": {},
@@ -370,8 +374,42 @@ def test_build_btst_open_ready_delta_payload_surfaces_carryover_promotion_gate_c
     assert delta_payload["carryover_promotion_gate_delta"]["previous_focus_ticker"] == "301396"
     assert delta_payload["carryover_promotion_gate_delta"]["current_focus_gate_verdict"] == "await_peer_t_plus_2_close"
     assert delta_payload["carryover_promotion_gate_delta"]["previous_focus_gate_verdict"] == "await_peer_next_day_close"
+    assert delta_payload["carryover_promotion_gate_delta"]["current_default_expansion_status"] == "pending_peer_proof"
     assert delta_payload["carryover_promotion_gate_delta"]["added_pending_t_plus_2_tickers"] == ["300408"]
+    assert delta_payload["carryover_promotion_gate_delta"]["added_pending_next_day_tickers"] == ["600989"]
+    assert delta_payload["carryover_promotion_gate_delta"]["removed_pending_next_day_tickers"] == ["301396"]
     assert any("carryover promotion gate" in item for item in delta_payload["operator_focus"])
+
+
+def test_render_btst_nightly_control_tower_markdown_surfaces_pending_peer_promotion_contract(tmp_path: Path) -> None:
+    payload = {
+        "latest_btst_run": {"report_dir": "data/reports/report_a", "trade_date": "2026-04-10"},
+        "control_tower_snapshot": {
+            "recommendation": "wait for peer proof",
+            "carryover_peer_promotion_gate_summary": {
+                "focus_ticker": "301396",
+                "focus_gate_verdict": "blocked_selected_contract_open",
+                "default_expansion_status": "pending_peer_proof",
+                "ready_tickers": [],
+                "blocked_open_tickers": ["301396"],
+                "pending_t_plus_2_tickers": ["300408"],
+                "pending_next_day_tickers": ["600989"],
+            },
+            "closed_frontiers": [],
+            "next_actions": [],
+        },
+        "latest_priority_board_snapshot": {},
+        "replay_cohort_snapshot": {},
+        "latest_btst_snapshot": {},
+        "recommended_reading_order": [],
+        "source_paths": {},
+    }
+
+    markdown = render_btst_nightly_control_tower_markdown(payload, output_parent=tmp_path)
+
+    assert "carryover_peer_promotion_gate_summary: focus_ticker=301396 focus_gate_verdict=blocked_selected_contract_open default_expansion_status=pending_peer_proof" in markdown
+    assert "pending_next_day_tickers=['600989']" in markdown
+    assert "carryover_peer_promotion_gate_focus: focus_ticker=301396 focus_gate_verdict=blocked_selected_contract_open default_expansion_status=pending_peer_proof" in markdown
 
 
 def test_build_btst_open_ready_delta_payload_surfaces_selected_contract_changes(tmp_path: Path) -> None:
@@ -2968,10 +3006,12 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
             "selected_contract_verdict": "pending_next_day",
             "peer_count": 3,
             "gate_verdict_counts": {"blocked_selected_contract_open": 1, "await_peer_t_plus_2_close": 1, "await_peer_next_day_close": 1},
+            "default_expansion_status": "pending_peer_proof",
             "ready_tickers": [],
             "blocked_open_tickers": ["301396"],
             "risk_review_tickers": [],
             "pending_t_plus_2_tickers": ["300408"],
+            "pending_next_day_tickers": ["600989"],
             "focus_ticker": "301396",
             "focus_gate_verdict": "blocked_selected_contract_open",
             "entries": [
@@ -3127,7 +3167,6 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "carryover_aligned_peer_harvest_summary: focus_ticker=300408 focus_status=next_day_watch" in markdown
     assert "carryover_peer_expansion_summary: focus_ticker=300408 focus_status=next_day_watch_priority" in markdown
     assert "carryover_aligned_peer_proof_summary: focus_ticker=301396 focus_proof_verdict=supportive_closed_cycle focus_promotion_review_verdict=ready_for_promotion_review" in markdown
-    assert "carryover_peer_promotion_gate_summary: focus_ticker=301396 focus_gate_verdict=blocked_selected_contract_open" in markdown
     assert "## Rollout Lanes" in markdown
     assert "## Independent Window Monitor" in markdown
     assert "## T+1/T+2 Objective Monitor" in markdown
