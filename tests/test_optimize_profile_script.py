@@ -261,3 +261,6 @@ def test_build_grid_params_uses_event_catalyst_preset_for_guarded_profile() -> N
 
     assert grid["event_catalyst_selected_uplift"] == [0.02, 0.03]
     assert grid["event_catalyst_min_score_for_selected_uplift"] == [0.68, 0.72]
+    assert grid["event_catalyst_near_miss_threshold_relief"] == [0.01, 0.02]
+    assert grid["event_catalyst_min_score_for_near_miss_retain"] == [0.54, 0.58]
+    assert grid["event_catalyst_sector_resonance_weight"] == [0.18, 0.22]
