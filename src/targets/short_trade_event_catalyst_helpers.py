@@ -83,10 +83,17 @@ def build_event_catalyst_assessment(
     overhead_penalty = float(snapshot.get("overhead_supply_penalty", 0.0) or 0.0)
 
     # Compute weighted score
-    score = clamp_unit_interval((float(profile.event_catalyst_catalyst_freshness_weight) * freshness) + (float(profile.event_catalyst_sector_resonance_weight) * resonance) + (float(profile.event_catalyst_volume_expansion_weight) * volume) + (float(profile.event_catalyst_close_strength_weight) * close) + (float(profile.event_catalyst_trend_acceleration_weight) * trend))
+    score_raw = (
+        float(profile.event_catalyst_catalyst_freshness_weight) * freshness
+        + float(profile.event_catalyst_sector_resonance_weight) * resonance
+        + float(profile.event_catalyst_volume_expansion_weight) * volume
+        + float(profile.event_catalyst_close_strength_weight) * close
+        + float(profile.event_catalyst_trend_acceleration_weight) * trend
+    )
+    score = clamp_unit_interval(score_raw)
 
     # Check eligibility gates
-    source_eligible = candidate_source in set(profile.event_catalyst_candidate_sources)
+    source_eligible = candidate_source in profile.event_catalyst_candidate_sources
     extension_ok = extension_penalty <= float(profile.event_catalyst_extension_penalty_max)
     stale_ok = stale_penalty <= float(profile.event_catalyst_stale_penalty_max)
     overhead_ok = overhead_penalty <= float(profile.event_catalyst_overhead_penalty_max)
