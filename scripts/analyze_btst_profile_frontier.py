@@ -163,6 +163,7 @@ def render_btst_profile_frontier_markdown(analysis: dict[str, Any]) -> str:
             lines.append(f"- comparison_note: {comparison['comparison_note']}")
             lines.append(f"- tradeable_surface_delta: {comparison['tradeable_surface_delta']}")
             lines.append(f"- false_negative_proxy_delta: {comparison['false_negative_proxy_delta']}")
+            lines.append(f"- top_tradeable_event_catalyst: {[row.get('explainability_payload', {}).get('event_catalyst') for row in variant['top_tradeable_rows'][:3]]}")
             lines.append("")
     lines.append("## Baseline Top False Negatives")
     for row in baseline["top_false_negative_rows"]:

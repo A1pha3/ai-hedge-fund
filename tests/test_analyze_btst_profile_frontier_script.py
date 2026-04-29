@@ -171,6 +171,75 @@ def _write_profitability_relief_replay_input(tmp_path):
     return replay_input_path
 
 
+def _write_event_catalyst_replay_input(tmp_path):
+    """Create replay input with catalyst_theme candidate that will trigger event_catalyst logic."""
+    supplemental_entry = {
+        "ticker": "300724",
+        "score_b": 0.68,
+        "score_c": 0.72,
+        "score_final": 0.70,
+        "quality_score": 0.75,
+        "decision": "near_miss",
+        "reason": "short_trade_boundary",
+        "reasons": ["short_trade_boundary"],
+        "candidate_source": "catalyst_theme",
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                72.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 68.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 75.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 1, "confidence": 45.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                78.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 75.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.65, "investor": 0.35}},
+    }
+    selection_targets, summary = build_selection_targets(
+        trade_date="20260324",
+        watchlist=[],
+        rejected_entries=[],
+        supplemental_short_trade_entries=[supplemental_entry],
+        buy_order_tickers=set(),
+        target_mode="dual_target",
+    )
+    replay_input = {
+        "artifact_version": "v1",
+        "run_id": "test_btst_event_catalyst_frontier",
+        "trade_date": "2026-03-24",
+        "market": "CN",
+        "target_mode": "dual_target",
+        "pipeline_config_snapshot": {},
+        "source_summary": {
+            "watchlist_count": 0,
+            "rejected_entry_count": 0,
+            "supplemental_short_trade_entry_count": 1,
+            "buy_order_ticker_count": 0,
+        },
+        "watchlist": [],
+        "rejected_entries": [],
+        "supplemental_short_trade_entries": [supplemental_entry],
+        "buy_order_tickers": [],
+        "selection_targets": {ticker: evaluation.model_dump(mode="json") for ticker, evaluation in selection_targets.items()},
+        "target_summary": summary.model_dump(mode="json"),
+    }
+    replay_input_path = tmp_path / "selection_target_replay_input.json"
+    replay_input_path.write_text(json.dumps(replay_input, ensure_ascii=False, indent=2), encoding="utf-8")
+    return replay_input_path
+
+
 def test_analyze_btst_profile_frontier_finds_staged_breakout_surface(tmp_path, monkeypatch):
     replay_input_path = _write_profile_replay_input(tmp_path)
 
@@ -273,3 +342,31 @@ def test_analyze_btst_profile_frontier_accepts_watchlist_zero_catalyst_guard_rel
     assert variant["profile_config"]["t_plus_2_continuation_enabled"] is True
     assert variant["profile_config"]["t_plus_2_continuation_close_strength_max"] == 0.90
     assert variant["profile_config"]["select_threshold"] == 0.40
+
+
+def test_analyze_btst_profile_frontier_supports_event_catalyst_guarded(tmp_path, monkeypatch):
+    replay_input_path = _write_event_catalyst_replay_input(tmp_path)
+
+    def fake_get_price_data(ticker: str, start_date: str, end_date: str):
+        assert ticker == "300724"
+        assert start_date == "2026-03-24"
+        return pd.DataFrame(
+            [
+                {"date": "2026-03-24", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                {"date": "2026-03-25", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
+                {"date": "2026-03-26", "open": 10.2, "high": 10.5, "low": 10.1, "close": 10.3},
+            ]
+        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
+
+    analysis = analyze_btst_profile_frontier(
+        replay_input_path,
+        baseline_profile="default",
+        variant_profiles=["event_catalyst_guarded"],
+        next_high_hit_threshold=0.02,
+    )
+
+    assert analysis["variants"][0]["profile_name"] == "event_catalyst_guarded"
+    top_row = analysis["variants"][0]["top_tradeable_rows"][0]
+    assert "event_catalyst" in top_row["explainability_payload"]
