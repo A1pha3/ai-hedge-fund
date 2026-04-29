@@ -81,6 +81,25 @@ def _build_profitability_hard_cliff_boundary_relief_metrics_payload(profitabilit
     }
 
 
+def _build_event_catalyst_metrics_payload(event_catalyst_assessment: dict[str, Any]) -> dict[str, Any]:
+    """Build metrics payload for event catalyst assessment."""
+    # Only expose payload if actually applied
+    selected_uplift = event_catalyst_assessment.get("selected_uplift", 0.0)
+    near_miss_relief = event_catalyst_assessment.get("near_miss_threshold_relief", 0.0)
+    
+    if selected_uplift == 0.0 and near_miss_relief == 0.0:
+        return {}
+    
+    return {
+        "score": round(event_catalyst_assessment["score"], 4),
+        "applied": event_catalyst_assessment["selected_uplift"] > 0 or event_catalyst_assessment["near_miss_threshold_relief"] > 0,
+        "selected_uplift": round(event_catalyst_assessment["selected_uplift"], 4),
+        "near_miss_threshold_relief": round(event_catalyst_assessment["near_miss_threshold_relief"], 4),
+        "gate_hits": dict(event_catalyst_assessment["gate_hits"]),
+        "component_scores": {k: round(v, 4) for k, v in event_catalyst_assessment["component_scores"].items()},
+    }
+
+
 def _build_t_plus_2_continuation_candidate_metrics_payload(t_plus_2_continuation_candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "enabled": bool(t_plus_2_continuation_candidate["enabled"]),
@@ -692,6 +711,7 @@ def _collect_short_trade_metrics_payload_inputs(snapshot: dict[str, Any]) -> dic
         "prepared_breakout_volume_relief": dict(snapshot["prepared_breakout_volume_relief"]),
         "prepared_breakout_continuation_relief": dict(snapshot["prepared_breakout_continuation_relief"]),
         "prepared_breakout_selected_catalyst_relief": dict(snapshot["prepared_breakout_selected_catalyst_relief"]),
+        "event_catalyst_assessment": dict(snapshot.get("event_catalyst_assessment") or {}),
         "positive_score_weights": dict(snapshot["positive_score_weights"]),
         "weighted_positive_contributions": dict(snapshot["weighted_positive_contributions"]),
         "weighted_negative_contributions": dict(snapshot["weighted_negative_contributions"]),
@@ -699,7 +719,7 @@ def _collect_short_trade_metrics_payload_inputs(snapshot: dict[str, Any]) -> dic
 
 
 def _build_short_trade_relief_metrics_payload(metrics_inputs: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "historical_execution_relief": _build_historical_execution_relief_metrics_payload(metrics_inputs["historical_execution_relief"]),
         "profitability_hard_cliff_boundary_relief": _build_profitability_hard_cliff_boundary_relief_metrics_payload(metrics_inputs["profitability_hard_cliff_boundary_relief"]),
         "visibility_gap_continuation_relief": _build_visibility_gap_continuation_relief_metrics_payload(metrics_inputs["visibility_gap_continuation_relief"]),
@@ -712,6 +732,13 @@ def _build_short_trade_relief_metrics_payload(metrics_inputs: dict[str, Any]) ->
             prepared_breakout_selected_catalyst_relief=metrics_inputs["prepared_breakout_selected_catalyst_relief"],
         ),
     }
+    
+    # Only add event_catalyst payload if it's meaningful (actually applied)
+    event_catalyst_payload = _build_event_catalyst_metrics_payload(metrics_inputs["event_catalyst_assessment"])
+    if event_catalyst_payload:
+        payload["event_catalyst"] = event_catalyst_payload
+    
+    return payload
 
 
 def _build_profitability_explainability_payload(snapshot: dict[str, Any]) -> dict[str, Any]:

@@ -763,7 +763,7 @@ def _build_short_trade_explainability_payload(
     carryover_evidence_deficiency: dict[str, Any],
     selected_historical_proof_deficiency: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
+    payload = {
         **_build_short_trade_core_explainability_payload(
             input_data=input_data,
             profile=state.profile,
@@ -801,6 +801,19 @@ def _build_short_trade_explainability_payload(
         ),
         "replay_context": dict(input_data.replay_context or {}),
     }
+    
+    # Only add event_catalyst explainability if it's meaningful (actually applied)
+    event_catalyst_assessment = dict(snapshot.get("event_catalyst_assessment") or {})
+    if event_catalyst_assessment and (event_catalyst_assessment.get("selected_uplift", 0.0) > 0 or event_catalyst_assessment.get("near_miss_threshold_relief", 0.0) > 0):
+        payload["event_catalyst"] = {
+            "score": round(event_catalyst_assessment["score"], 4),
+            "eligible": event_catalyst_assessment["eligible"],
+            "applied": True,
+            "gate_hits": dict(event_catalyst_assessment["gate_hits"]),
+            "component_scores": {k: round(v, 4) for k, v in event_catalyst_assessment["component_scores"].items()},
+        }
+    
+    return payload
 
 
 def _build_short_trade_mutable_verdict_state(snapshot: dict[str, Any]) -> ShortTradeMutableVerdictState:

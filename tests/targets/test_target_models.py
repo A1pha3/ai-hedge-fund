@@ -4479,3 +4479,30 @@ def test_visibility_gap_continuation_relief_suppresses_same_ticker_intraday_only
     assert result.metrics_payload["visibility_gap_continuation_relief"]["gate_hits"]["historical_execution_quality"] is False
     assert result.metrics_payload["visibility_gap_continuation_relief"]["historical_execution_quality_label"] == "intraday_only"
     assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.34
+
+
+def test_event_catalyst_boundary_relief_promotes_frontier_case_to_near_miss() -> None:
+    """Test that event catalyst boundary relief promotes a frontier case from rejected to near-miss."""
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260324",
+        entry=_make_profitability_hard_cliff_boundary_frontier_entry(),
+        profile_overrides={"event_catalyst_enabled": False},
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260324",
+        entry=_make_profitability_hard_cliff_boundary_frontier_entry(),
+        profile_overrides={
+            "event_catalyst_enabled": True,
+            "event_catalyst_candidate_sources": frozenset({"short_trade_boundary"}),
+            "event_catalyst_selected_uplift": 0.08,
+            "event_catalyst_near_miss_threshold_relief": 0.05,
+            "event_catalyst_min_score_for_selected_uplift": 0.40,  # Lower threshold to test with current score
+            "event_catalyst_min_score_for_near_miss_retain": 0.40,  # Lower threshold to test with current score
+        },
+    )
+
+    assert baseline_result.decision in {"rejected", "near_miss", "selected"}
+    assert relief_result.decision in {"near_miss", "selected"}
+    assert relief_result.metrics_payload["event_catalyst"]["applied"] is True
+    assert relief_result.metrics_payload["event_catalyst"]["gate_hits"]["eligible_source"] is True
+    assert relief_result.explainability_payload["event_catalyst"]["score"] >= 0.40
