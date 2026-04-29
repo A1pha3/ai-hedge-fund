@@ -18,22 +18,39 @@ class EventCatalystProfile(Protocol):
     
     This protocol ensures type safety for profile objects passed to
     event catalyst assessment builders without coupling to concrete types.
+    
+    All attributes are declared as read-only properties to ensure strict
+    compatibility with frozen dataclass implementations.
     """
 
-    event_catalyst_enabled: bool
-    event_catalyst_candidate_sources: frozenset[str]
-    event_catalyst_catalyst_freshness_weight: float
-    event_catalyst_sector_resonance_weight: float
-    event_catalyst_volume_expansion_weight: float
-    event_catalyst_close_strength_weight: float
-    event_catalyst_trend_acceleration_weight: float
-    event_catalyst_min_score_for_selected_uplift: float
-    event_catalyst_min_score_for_near_miss_retain: float
-    event_catalyst_selected_uplift: float
-    event_catalyst_near_miss_threshold_relief: float
-    event_catalyst_extension_penalty_max: float
-    event_catalyst_stale_penalty_max: float
-    event_catalyst_overhead_penalty_max: float
+    @property
+    def event_catalyst_enabled(self) -> bool: ...
+    @property
+    def event_catalyst_candidate_sources(self) -> frozenset[str]: ...
+    @property
+    def event_catalyst_catalyst_freshness_weight(self) -> float: ...
+    @property
+    def event_catalyst_sector_resonance_weight(self) -> float: ...
+    @property
+    def event_catalyst_volume_expansion_weight(self) -> float: ...
+    @property
+    def event_catalyst_close_strength_weight(self) -> float: ...
+    @property
+    def event_catalyst_trend_acceleration_weight(self) -> float: ...
+    @property
+    def event_catalyst_min_score_for_selected_uplift(self) -> float: ...
+    @property
+    def event_catalyst_min_score_for_near_miss_retain(self) -> float: ...
+    @property
+    def event_catalyst_selected_uplift(self) -> float: ...
+    @property
+    def event_catalyst_near_miss_threshold_relief(self) -> float: ...
+    @property
+    def event_catalyst_extension_penalty_max(self) -> float: ...
+    @property
+    def event_catalyst_stale_penalty_max(self) -> float: ...
+    @property
+    def event_catalyst_overhead_penalty_max(self) -> float: ...
 
 
 @dataclass(frozen=True)
