@@ -259,8 +259,73 @@ def test_build_grid_params_uses_event_catalyst_preset_for_guarded_profile() -> N
         profile_name="event_catalyst_guarded",
     )
 
+    # Verify event-catalyst-specific params are present
     assert grid["event_catalyst_selected_uplift"] == [0.02, 0.03]
     assert grid["event_catalyst_min_score_for_selected_uplift"] == [0.68, 0.72]
     assert grid["event_catalyst_near_miss_threshold_relief"] == [0.01, 0.02]
     assert grid["event_catalyst_min_score_for_near_miss_retain"] == [0.54, 0.58]
     assert grid["event_catalyst_sector_resonance_weight"] == [0.18, 0.22]
+    
+    # Verify base preset fields are still present (not replaced)
+    assert "select_threshold" in grid
+    assert "near_miss_threshold" in grid
+    assert "breakout_freshness_weight" in grid
+
+
+def test_main_integrates_event_catalyst_params_with_preset_grid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Integration test: main() should use resolve_grid_params() to merge event-catalyst params when --preset-grid is used with event_catalyst_guarded."""
+    import scripts.optimize_profile as opt_module
+    
+    captured_grid: dict[str, list] | None = None
+    
+    def fake_param_space_init(self: object, *, grid: dict[str, list]) -> None:
+        nonlocal captured_grid
+        captured_grid = grid
+        self.grid = grid  # type: ignore
+        
+    def fake_param_space_size(self: object) -> int:
+        return 1
+    
+    # Patch ParamSpace to capture the grid that main() uses
+    monkeypatch.setattr(opt_module.ParamSpace, "__init__", fake_param_space_init)
+    monkeypatch.setattr(opt_module.ParamSpace, "size", fake_param_space_size)
+    
+    # Patch run_param_search to short-circuit execution
+    def fake_run_param_search(**_: object) -> dict[str, object]:
+        return {"top_params": {}, "top_value": 0.0, "evaluations": 0}
+    
+    monkeypatch.setattr(opt_module, "run_param_search", fake_run_param_search)
+    
+    # Patch save/format functions to avoid side effects
+    monkeypatch.setattr(opt_module, "save_search_report", lambda *_: Path("fake.md"))
+    monkeypatch.setattr(opt_module, "save_search_payload", lambda *_: Path("fake.json"))
+    monkeypatch.setattr(opt_module, "format_search_report", lambda _: "")
+    
+    # Mock sys.argv to simulate --profile event_catalyst_guarded --preset-grid --input dummy.json
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "optimize_profile.py",
+            "--profile", "event_catalyst_guarded",
+            "--preset-grid",
+            "--input", "dummy.json",
+        ],
+    )
+    
+    # Mock the replay evaluator builder to avoid file I/O
+    def fake_build_replay_evaluator(*_: object, **__: object) -> object:
+        return lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6}
+    
+    monkeypatch.setattr(opt_module, "_build_replay_evaluator", fake_build_replay_evaluator)
+    
+    # Run main()
+    try:
+        opt_module.main()
+    except SystemExit:
+        pass
+    
+    # Verify that the grid passed to ParamSpace includes both base and event-catalyst params
+    assert captured_grid is not None, "ParamSpace was not initialized with a grid"
+    assert "event_catalyst_selected_uplift" in captured_grid, "Event-catalyst params missing from grid used by main()"
+    assert "select_threshold" in captured_grid, "Base preset params missing from grid used by main()"

@@ -429,10 +429,12 @@ def main() -> int:
 
     get_short_trade_target_profile(args.profile)
 
-    if args.preset_grid:
-        grid = MOMENTUM_OPTIMIZED_GRID
-    elif args.grid_params:
-        grid = _parse_grid_params(args.grid_params)
+    if args.preset_grid or args.grid_params:
+        grid = resolve_grid_params(
+            grid_params=args.grid_params or [],
+            preset_grid=args.preset_grid,
+            profile_name=args.profile,
+        )
     else:
         parser.error("Specify --preset-grid or --grid-params")
 
