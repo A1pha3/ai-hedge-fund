@@ -132,6 +132,7 @@ class ShortTradeTopReasonsState:
     profitability_relief_applied: bool
     profitability_hard_cliff_boundary_relief: dict[str, Any]
     historical_execution_relief: dict[str, Any]
+    event_catalyst_assessment: dict[str, Any]
     profitability_hard_cliff: bool
     breakout_stage: str
     layer_c_avoid_penalty: float
@@ -401,7 +402,9 @@ def _collect_short_trade_relief_reasons(
     profitability_relief_applied: bool,
     profitability_hard_cliff_boundary_relief: dict[str, Any],
     historical_execution_relief: dict[str, Any],
+    event_catalyst_assessment: dict[str, Any],
 ) -> list[str | None]:
+    event_catalyst_applied = event_catalyst_assessment.get("selected_uplift", 0.0) > 0.0 or event_catalyst_assessment.get("near_miss_threshold_relief", 0.0) > 0.0
     return [
         upstream_shadow_catalyst_relief_reason if upstream_shadow_catalyst_relief_applied else None,
         "visibility_gap_continuation_relief" if visibility_gap_continuation_relief["applied"] else None,
@@ -414,6 +417,7 @@ def _collect_short_trade_relief_reasons(
         "profitability_relief_applied" if profitability_relief_applied else None,
         "profitability_hard_cliff_boundary_relief" if profitability_hard_cliff_boundary_relief.get("applied") else None,
         "historical_execution_relief" if historical_execution_relief.get("applied") else None,
+        "event_catalyst_relief" if event_catalyst_applied else None,
     ]
 
 
@@ -484,6 +488,7 @@ def _build_short_trade_top_reasons(
             profitability_relief_applied=state.profitability_relief_applied,
             profitability_hard_cliff_boundary_relief=state.profitability_hard_cliff_boundary_relief,
             historical_execution_relief=state.historical_execution_relief,
+            event_catalyst_assessment=state.event_catalyst_assessment,
         ),
         *_collect_short_trade_penalty_reasons(
             profitability_hard_cliff=state.profitability_hard_cliff,
@@ -847,6 +852,7 @@ def _build_short_trade_top_reasons_state(
         profitability_relief_applied=bool(snapshot["profitability_relief_applied"]),
         profitability_hard_cliff_boundary_relief=dict(snapshot["profitability_hard_cliff_boundary_relief"]),
         historical_execution_relief=dict(snapshot["historical_execution_relief"]),
+        event_catalyst_assessment=dict(snapshot.get("event_catalyst_assessment") or {}),
         profitability_hard_cliff=bool(snapshot["profitability_hard_cliff"]),
         breakout_stage=thresholds.breakout_stage,
         layer_c_avoid_penalty=float(snapshot["layer_c_avoid_penalty"]),

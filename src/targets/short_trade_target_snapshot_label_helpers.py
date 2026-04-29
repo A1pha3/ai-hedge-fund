@@ -48,6 +48,17 @@ def _append_short_trade_snapshot_catalyst_tags(
             negative_tags.append("upstream_shadow_catalyst_relief_not_triggered")
 
 
+def _append_short_trade_snapshot_event_catalyst_tags(
+    *,
+    event_catalyst_assessment: dict[str, Any],
+    positive_tags: list[str],
+) -> None:
+    selected_uplift = event_catalyst_assessment.get("selected_uplift", 0.0)
+    near_miss_relief = event_catalyst_assessment.get("near_miss_threshold_relief", 0.0)
+    if selected_uplift > 0.0 or near_miss_relief > 0.0:
+        positive_tags.append("event_catalyst_applied")
+
+
 def _append_short_trade_snapshot_continuation_relief_tags(
     *,
     visibility_gap_continuation_relief: dict[str, Any],
@@ -230,6 +241,7 @@ def _build_short_trade_snapshot_label_inputs(
         "overhead_supply_penalty": float(relief_snapshot["overhead_supply_penalty"]),
         "extension_without_room_penalty": float(relief_snapshot["extension_without_room_penalty"]),
         "market_state_threshold_adjustment": dict(relief_snapshot["market_state_threshold_adjustment"]),
+        "event_catalyst_assessment": dict(relief_snapshot["event_catalyst_assessment"]),
     }
 
 
@@ -274,6 +286,10 @@ def collect_short_trade_snapshot_labels_and_gates(
         catalyst_relief=inputs["catalyst_relief"],
         positive_tags=positive_tags,
         negative_tags=negative_tags,
+    )
+    _append_short_trade_snapshot_event_catalyst_tags(
+        event_catalyst_assessment=inputs["event_catalyst_assessment"],
+        positive_tags=positive_tags,
     )
     _append_short_trade_snapshot_continuation_relief_tags(
         visibility_gap_continuation_relief=inputs["visibility_gap_continuation_relief"],

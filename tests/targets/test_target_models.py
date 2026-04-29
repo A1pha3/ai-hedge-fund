@@ -4506,3 +4506,7 @@ def test_event_catalyst_boundary_relief_promotes_frontier_case_to_near_miss() ->
     assert relief_result.metrics_payload["event_catalyst"]["applied"] is True
     assert relief_result.metrics_payload["event_catalyst"]["gate_hits"]["eligible_source"] is True
     assert relief_result.explainability_payload["event_catalyst"]["score"] >= 0.40
+    
+    # Task 2 spec-review requirements: positive tag and top-reason when event catalyst changes decision
+    assert "event_catalyst_applied" in relief_result.positive_tags
+    assert any("event_catalyst" in str(reason).lower() for reason in relief_result.top_reasons)
