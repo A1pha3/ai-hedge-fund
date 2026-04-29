@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.optimize_profile import _build_default_checkpoint_path, _build_replay_evaluator, _parse_grid_params, _resolve_primary_surface
+from scripts.optimize_profile import _build_default_checkpoint_path, _build_replay_evaluator, _parse_grid_params, _resolve_primary_surface, resolve_grid_params
 
 
 def test_resolve_primary_surface_prefers_selected_when_sample_sufficient() -> None:
@@ -250,3 +250,14 @@ def test_replay_evaluator_applies_lighter_penalty_for_missing_t_plus_3_only(monk
     assert metrics["sample_weight"] == pytest.approx((0.5 + (0.5 * 0.92)) / 2.0)
     assert metrics["t_plus_3_close_positive_rate"] == pytest.approx((0.53 + 0.55) / 2.0)
     assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 + 0.008) / 2.0)
+
+
+def test_build_grid_params_uses_event_catalyst_preset_for_guarded_profile() -> None:
+    grid = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="event_catalyst_guarded",
+    )
+
+    assert grid["event_catalyst_selected_uplift"] == [0.02, 0.03]
+    assert grid["event_catalyst_min_score_for_selected_uplift"] == [0.68, 0.72]
