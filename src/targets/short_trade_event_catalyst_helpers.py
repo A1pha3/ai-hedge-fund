@@ -8,9 +8,32 @@ supported events align with strong technical conditions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from src.utils.numeric import clamp_unit_interval
+
+
+class EventCatalystProfile(Protocol):
+    """Protocol defining the event catalyst configuration interface.
+    
+    This protocol ensures type safety for profile objects passed to
+    event catalyst assessment builders without coupling to concrete types.
+    """
+
+    event_catalyst_enabled: bool
+    event_catalyst_candidate_sources: frozenset[str]
+    event_catalyst_catalyst_freshness_weight: float
+    event_catalyst_sector_resonance_weight: float
+    event_catalyst_volume_expansion_weight: float
+    event_catalyst_close_strength_weight: float
+    event_catalyst_trend_acceleration_weight: float
+    event_catalyst_min_score_for_selected_uplift: float
+    event_catalyst_min_score_for_near_miss_retain: float
+    event_catalyst_selected_uplift: float
+    event_catalyst_near_miss_threshold_relief: float
+    event_catalyst_extension_penalty_max: float
+    event_catalyst_stale_penalty_max: float
+    event_catalyst_overhead_penalty_max: float
 
 
 @dataclass(frozen=True)
@@ -23,12 +46,13 @@ class EventCatalystAssessment:
     near_miss_threshold_relief: float
     gate_hits: dict[str, bool]
     component_scores: dict[str, float]
+    candidate_reason_codes: set[str]
 
 
 def build_event_catalyst_assessment(
     *,
     snapshot: dict[str, Any],
-    profile: Any,
+    profile: EventCatalystProfile,
     candidate_source: str,
     candidate_reason_codes: set[str],
 ) -> EventCatalystAssessment:
@@ -38,13 +62,13 @@ def build_event_catalyst_assessment(
         snapshot: Feature snapshot containing catalyst/event quality signals
         profile: Target profile with event_catalyst_* configuration fields
         candidate_source: Source of the candidate (e.g., "catalyst_theme")
-        candidate_reason_codes: Set of reason codes for the candidate
+        candidate_reason_codes: Set of reason codes for the candidate (captured for tracing)
 
     Returns:
         EventCatalystAssessment with score, eligibility, and potential uplifts
     """
     if not bool(getattr(profile, "event_catalyst_enabled", False)):
-        return EventCatalystAssessment(0.0, False, 0.0, 0.0, {}, {})
+        return EventCatalystAssessment(0.0, False, 0.0, 0.0, {}, {}, candidate_reason_codes)
 
     # Extract core component signals (all normalized 0..1)
     freshness = clamp_unit_interval(float(snapshot.get("catalyst_freshness", 0.0) or 0.0))
@@ -97,4 +121,5 @@ def build_event_catalyst_assessment(
             "close": close,
             "trend": trend,
         },
+        candidate_reason_codes=candidate_reason_codes,
     )
