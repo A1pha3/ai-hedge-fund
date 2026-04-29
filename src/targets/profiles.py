@@ -211,6 +211,21 @@ class ShortTradeTargetProfile:
     # P4 prior shrinkage controls
     p4_prior_shrinkage_k: float = 8.0
     selected_use_shrunk_prior_rates: bool = True
+    # Event catalyst assessment controls
+    event_catalyst_enabled: bool = False
+    event_catalyst_candidate_sources: frozenset[str] = frozenset({"catalyst_theme", "short_trade_boundary"})
+    event_catalyst_catalyst_freshness_weight: float = 0.30
+    event_catalyst_sector_resonance_weight: float = 0.22
+    event_catalyst_volume_expansion_weight: float = 0.18
+    event_catalyst_close_strength_weight: float = 0.18
+    event_catalyst_trend_acceleration_weight: float = 0.12
+    event_catalyst_min_score_for_selected_uplift: float = 0.72
+    event_catalyst_min_score_for_near_miss_retain: float = 0.58
+    event_catalyst_selected_uplift: float = 0.03
+    event_catalyst_near_miss_threshold_relief: float = 0.02
+    event_catalyst_extension_penalty_max: float = 0.55
+    event_catalyst_stale_penalty_max: float = 0.50
+    event_catalyst_overhead_penalty_max: float = 0.50
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:
