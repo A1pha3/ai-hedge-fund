@@ -370,3 +370,10 @@ def test_analyze_btst_profile_frontier_supports_event_catalyst_guarded(tmp_path,
     assert analysis["variants"][0]["profile_name"] == "event_catalyst_guarded"
     top_row = analysis["variants"][0]["top_tradeable_rows"][0]
     assert "event_catalyst" in top_row["explainability_payload"]
+    event_catalyst_payload = top_row["explainability_payload"]["event_catalyst"]
+    # Task 3 spec: structured payload must include gate_hits, selected_uplift, near_miss_threshold_relief
+    assert "gate_hits" in event_catalyst_payload
+    assert "selected_uplift" in event_catalyst_payload
+    assert "near_miss_threshold_relief" in event_catalyst_payload
+    assert isinstance(event_catalyst_payload["selected_uplift"], (int, float))
+    assert isinstance(event_catalyst_payload["near_miss_threshold_relief"], (int, float))

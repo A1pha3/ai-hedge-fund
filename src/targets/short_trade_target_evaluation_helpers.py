@@ -814,6 +814,8 @@ def _build_short_trade_explainability_payload(
             "score": round(event_catalyst_assessment["score"], 4),
             "eligible": event_catalyst_assessment["eligible"],
             "applied": True,
+            "selected_uplift": round(event_catalyst_assessment["selected_uplift"], 4),
+            "near_miss_threshold_relief": round(event_catalyst_assessment["near_miss_threshold_relief"], 4),
             "gate_hits": dict(event_catalyst_assessment["gate_hits"]),
             "component_scores": {k: round(v, 4) for k, v in event_catalyst_assessment["component_scores"].items()},
         }
