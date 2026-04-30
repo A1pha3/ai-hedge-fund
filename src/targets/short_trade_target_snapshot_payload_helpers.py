@@ -48,6 +48,7 @@ def build_short_trade_target_snapshot_payload(
         "stale_trend_repair_penalty": relief_snapshot["stale_trend_repair_penalty"],
         "overhead_supply_penalty": relief_snapshot["overhead_supply_penalty"],
         "extension_without_room_penalty": relief_snapshot["extension_without_room_penalty"],
+        "event_catalyst_assessment": relief_snapshot["event_catalyst_assessment"],
         "positive_score_weights": relief_snapshot["positive_score_weights"],
         "weighted_positive_contributions": relief_snapshot["weighted_positive_contributions"],
         "weighted_negative_contributions": relief_snapshot["weighted_negative_contributions"],

@@ -408,6 +408,33 @@ MOMENTUM_OPTIMIZED_GRID: dict[str, list[Any]] = {
     "extension_penalty_block_threshold": [0.80, 0.84],
 }
 
+EVENT_CATALYST_GRID: dict[str, list[Any]] = {
+    "event_catalyst_selected_uplift": [0.02, 0.03],
+    "event_catalyst_near_miss_threshold_relief": [0.01, 0.02],
+    "event_catalyst_min_score_for_selected_uplift": [0.68, 0.72],
+    "event_catalyst_min_score_for_near_miss_retain": [0.54, 0.58],
+    "event_catalyst_sector_resonance_weight": [0.18, 0.22],
+}
+
+
+def resolve_grid_params(*, grid_params: list[str], preset_grid: bool, profile_name: str) -> dict[str, list[Any]]:
+    """Resolve grid parameters with optional preset and profile-specific extensions.
+
+    Args:
+        grid_params: Raw grid parameter strings to parse
+        preset_grid: Whether to include base preset grid
+        profile_name: Profile name for profile-specific grid extensions
+
+    Returns:
+        Merged grid dictionary with parsed params taking precedence
+    """
+    resolved = _parse_grid_params(grid_params)
+    if preset_grid and profile_name == "event_catalyst_guarded":
+        return {**MOMENTUM_OPTIMIZED_GRID, **EVENT_CATALYST_GRID, **resolved}
+    if preset_grid:
+        return {**MOMENTUM_OPTIMIZED_GRID, **resolved}
+    return resolved
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Optimize short-trade target profile parameters")
@@ -437,10 +464,12 @@ def main(argv: list[str] | None = None) -> int:
 
     get_short_trade_target_profile(args.profile)
 
-    if args.preset_grid:
-        grid = MOMENTUM_OPTIMIZED_GRID
-    elif args.grid_params:
-        grid = _parse_grid_params(args.grid_params)
+    if args.preset_grid or args.grid_params:
+        grid = resolve_grid_params(
+            grid_params=args.grid_params or [],
+            preset_grid=args.preset_grid,
+            profile_name=args.profile,
+        )
     else:
         parser.error("Specify --preset-grid or --grid-params")
 

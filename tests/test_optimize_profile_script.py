@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import scripts.optimize_profile as optimize_profile
-from scripts.optimize_profile import _build_default_checkpoint_path, _build_replay_evaluator, _parse_grid_params, _resolve_primary_surface
+from scripts.optimize_profile import _build_default_checkpoint_path, _build_replay_evaluator, _parse_grid_params, _resolve_primary_surface, resolve_grid_params
 
 
 def test_resolve_primary_surface_prefers_selected_when_sample_sufficient() -> None:
@@ -254,6 +254,76 @@ def test_replay_evaluator_applies_lighter_penalty_for_missing_t_plus_3_only(monk
     assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 + 0.008) / 2.0)
 
 
+def test_build_grid_params_uses_event_catalyst_preset_for_guarded_profile() -> None:
+    grid = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="event_catalyst_guarded",
+    )
+
+    assert grid["event_catalyst_selected_uplift"] == [0.02, 0.03]
+    assert grid["event_catalyst_min_score_for_selected_uplift"] == [0.68, 0.72]
+    assert grid["event_catalyst_near_miss_threshold_relief"] == [0.01, 0.02]
+    assert grid["event_catalyst_min_score_for_near_miss_retain"] == [0.54, 0.58]
+    assert grid["event_catalyst_sector_resonance_weight"] == [0.18, 0.22]
+
+    assert "select_threshold" in grid
+    assert "near_miss_threshold" in grid
+    assert "breakout_freshness_weight" in grid
+
+
+def test_main_integrates_event_catalyst_params_with_preset_grid(monkeypatch: pytest.MonkeyPatch) -> None:
+    import scripts.optimize_profile as opt_module
+
+    captured_grid: dict[str, list] | None = None
+
+    def fake_param_space_init(self: object, *, grid: dict[str, list]) -> None:
+        nonlocal captured_grid
+        captured_grid = grid
+        self.grid = grid
+
+    def fake_param_space_size(self: object) -> int:
+        return 1
+
+    monkeypatch.setattr(opt_module.ParamSpace, "__init__", fake_param_space_init)
+    monkeypatch.setattr(opt_module.ParamSpace, "size", fake_param_space_size)
+
+    def fake_run_param_search(**_: object) -> dict[str, object]:
+        return {"top_params": {}, "top_value": 0.0, "evaluations": 0}
+
+    monkeypatch.setattr(opt_module, "run_param_search", fake_run_param_search)
+    monkeypatch.setattr(opt_module, "save_search_report", lambda *_: Path("fake.md"))
+    monkeypatch.setattr(opt_module, "save_search_payload", lambda *_: Path("fake.json"))
+    monkeypatch.setattr(opt_module, "format_search_report", lambda _: "")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "optimize_profile.py",
+            "--profile",
+            "event_catalyst_guarded",
+            "--preset-grid",
+            "--input",
+            "dummy.json",
+        ],
+    )
+
+    def fake_build_replay_evaluator(*_: object, **__: object) -> object:
+        return lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6}
+
+    monkeypatch.setattr(opt_module, "_build_replay_evaluator", fake_build_replay_evaluator)
+
+    try:
+        opt_module.main()
+    except SystemExit:
+        pass
+
+    assert captured_grid is not None, "ParamSpace was not initialized with a grid"
+    assert "event_catalyst_selected_uplift" in captured_grid, "Event-catalyst params missing from grid used by main()"
+    assert "select_threshold" in captured_grid, "Base preset params missing from grid used by main()"
+
+
 def test_resolve_replay_inputs_from_weekly_validation_selection(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     report_dir = reports_root / "paper_trading_20260413_20260413_live_short_trade_only_20260414"
@@ -302,7 +372,8 @@ def test_main_accepts_weekly_window_args_and_runs_search(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         optimize_profile,
         "run_param_search",
-        lambda **kwargs: checkpoint_calls.append(Path(kwargs["checkpoint_path"])) or SimpleNamespace(best_params={}, best_score=None, objective=kwargs["objective"], results=[], completed_trials=0, total_trials=1),
+        lambda **kwargs: checkpoint_calls.append(Path(kwargs["checkpoint_path"]))
+        or SimpleNamespace(best_params={}, best_score=None, objective=kwargs["objective"], results=[], completed_trials=0, total_trials=1),
     )
     monkeypatch.setattr(optimize_profile, "save_search_report", lambda report, output_path=None: Path(output_path or tmp_path / "report.md"))
     monkeypatch.setattr(optimize_profile, "save_search_payload", lambda report, output_path=None: Path(output_path or tmp_path / "report.json"))

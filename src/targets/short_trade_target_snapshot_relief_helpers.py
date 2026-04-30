@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from src.targets.short_trade_event_catalyst_helpers import build_event_catalyst_assessment
 from src.targets.short_trade_target_prior_helpers import (
     resolve_btst_prior_shrinkage_p4_mode,
     resolve_effective_prior_metrics,
@@ -13,6 +14,10 @@ from src.targets.short_trade_target_prior_helpers import (
 BREAKOUT_TRAP_PENALTY_WEIGHT = 0.10
 BREAKOUT_TRAP_EXECUTION_BLOCK_THRESHOLD = 0.60
 BREAKOUT_TRAP_BLOCK_THRESHOLD = 0.72
+
+
+def _normalized_reason_codes(values: Any) -> list[str]:
+    return [str(reason) for reason in list(values or []) if str(reason or "").strip()]
 
 
 @dataclass(frozen=True)
@@ -70,6 +75,7 @@ class SnapshotThresholdState:
     layer_c_avoid_penalty: float
     market_state_threshold_adjustment: dict[str, Any]
     selected_close_retention_adjustment: dict[str, Any]
+    event_catalyst_assessment: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -631,6 +637,8 @@ def _apply_ticker_historical_prior_boost(
 
 def _finalize_snapshot_threshold_state(
     *,
+    input_data: Any,
+    profile: Any,
     state: SnapshotSignalState,
     prepared_breakout_reliefs: PreparedBreakoutReliefs,
     core_reliefs: SnapshotCoreReliefs,
@@ -671,6 +679,19 @@ def _finalize_snapshot_threshold_state(
         effective_near_miss_threshold=effective_near_miss_threshold,
         historical_execution_relief=core_reliefs.historical_execution_relief,
     )
+    
+    # Event catalyst assessment is now deferred until after penalties are computed
+    # Placeholder returned here; real assessment applied in _apply_event_catalyst_threshold_adjustments
+    event_catalyst_assessment = {
+        "score": 0.0,
+        "eligible": False,
+        "selected_uplift": 0.0,
+        "near_miss_threshold_relief": 0.0,
+        "gate_hits": {},
+        "component_scores": {},
+        "candidate_reason_codes": [],
+    }
+    
     return SnapshotThresholdState(
         profitability_relief=core_reliefs.profitability_relief,
         catalyst_relief=core_reliefs.catalyst_relief,
@@ -710,6 +731,7 @@ def _finalize_snapshot_threshold_state(
             effective_select_threshold=effective_select_threshold,
             effective_near_miss_threshold=effective_near_miss_threshold,
         ),
+        event_catalyst_assessment=event_catalyst_assessment,
     )
 
 
@@ -772,6 +794,8 @@ def _resolve_snapshot_threshold_state(
         profile=profile,
     )
     return _finalize_snapshot_threshold_state(
+        input_data=input_data,
+        profile=profile,
         state=state,
         prepared_breakout_reliefs=prepared_breakout_reliefs,
         core_reliefs=core_reliefs,
@@ -898,6 +922,85 @@ def _resolve_score_penalty_state(
         ),
         effective_stale_score_penalty_weight=float(prepared_breakout_reliefs.penalty_relief["effective_stale_score_penalty_weight"]),
         effective_extension_score_penalty_weight=float(prepared_breakout_reliefs.penalty_relief["effective_extension_score_penalty_weight"]),
+    )
+
+
+def _apply_event_catalyst_threshold_adjustments(
+    *,
+    input_data: Any,
+    profile: Any,
+    state: SnapshotSignalState,
+    threshold_state: SnapshotThresholdState,
+    score_penalty_state: ScorePenaltyState,
+) -> SnapshotThresholdState:
+    """Apply event catalyst assessment with real penalty values and adjust thresholds.
+    
+    This function is called after score penalties are computed, ensuring that
+    the event catalyst safety gates see the real penalty values rather than
+    hardcoded zeros.
+    
+    Args:
+        input_data: Input data with replay context
+        profile: Target profile with event_catalyst_* configuration
+        state: Signal state with raw features
+        threshold_state: Threshold state with base thresholds (pre-event-catalyst)
+        score_penalty_state: Penalty state with computed penalty values
+        
+    Returns:
+        Updated threshold state with event catalyst assessment and adjusted thresholds
+    """
+    # Build snapshot with real penalty values
+    snapshot_for_event_catalyst = {
+        "breakout_freshness": threshold_state.breakout_freshness,
+        "trend_acceleration": threshold_state.trend_acceleration,
+        "volume_expansion_quality": threshold_state.volume_expansion_quality,
+        "catalyst_freshness": threshold_state.catalyst_freshness,
+        "close_strength": state.close_strength,
+        "sector_resonance": state.sector_resonance,
+        "extension_without_room_penalty": score_penalty_state.extension_without_room_penalty,
+        "stale_trend_repair_penalty": score_penalty_state.stale_trend_repair_penalty,
+        "overhead_supply_penalty": score_penalty_state.overhead_supply_penalty,
+    }
+    
+    event_catalyst_assessment_result = build_event_catalyst_assessment(
+        snapshot=snapshot_for_event_catalyst,
+        profile=profile,
+        candidate_source=str(input_data.replay_context.get("source") or input_data.replay_context.get("candidate_source") or ""),
+        candidate_reason_codes=set(_normalized_reason_codes(input_data.replay_context.get("candidate_reason_codes"))),
+    )
+    
+    # Apply threshold adjustments
+    effective_select_threshold = max(0.0, threshold_state.effective_select_threshold - event_catalyst_assessment_result.selected_uplift)
+    effective_near_miss_threshold = max(0.0, threshold_state.effective_near_miss_threshold - event_catalyst_assessment_result.near_miss_threshold_relief)
+    
+    event_catalyst_assessment = {
+        "score": event_catalyst_assessment_result.score,
+        "eligible": event_catalyst_assessment_result.eligible,
+        "selected_uplift": event_catalyst_assessment_result.selected_uplift,
+        "near_miss_threshold_relief": event_catalyst_assessment_result.near_miss_threshold_relief,
+        "gate_hits": dict(event_catalyst_assessment_result.gate_hits),
+        "component_scores": dict(event_catalyst_assessment_result.component_scores),
+        "candidate_reason_codes": list(event_catalyst_assessment_result.candidate_reason_codes),
+    }
+    
+    # Return updated threshold state with event catalyst applied
+    return SnapshotThresholdState(
+        profitability_relief=threshold_state.profitability_relief,
+        catalyst_relief=threshold_state.catalyst_relief,
+        visibility_gap_continuation_relief=threshold_state.visibility_gap_continuation_relief,
+        merge_approved_continuation_relief=threshold_state.merge_approved_continuation_relief,
+        historical_execution_relief=threshold_state.historical_execution_relief,
+        prepared_breakout_selected_catalyst_relief=threshold_state.prepared_breakout_selected_catalyst_relief,
+        breakout_freshness=threshold_state.breakout_freshness,
+        trend_acceleration=threshold_state.trend_acceleration,
+        volume_expansion_quality=threshold_state.volume_expansion_quality,
+        catalyst_freshness=threshold_state.catalyst_freshness,
+        effective_near_miss_threshold=effective_near_miss_threshold,
+        effective_select_threshold=effective_select_threshold,
+        layer_c_avoid_penalty=threshold_state.layer_c_avoid_penalty,
+        market_state_threshold_adjustment=threshold_state.market_state_threshold_adjustment,
+        selected_close_retention_adjustment=threshold_state.selected_close_retention_adjustment,
+        event_catalyst_assessment=event_catalyst_assessment,
     )
 
 
@@ -1117,6 +1220,14 @@ def _build_short_trade_snapshot_resolution_core_state(
         clamp_unit_interval=clamp_unit_interval,
         resolve_profitability_hard_cliff_boundary_relief=resolve_profitability_hard_cliff_boundary_relief,
     )
+    # Apply event catalyst with real penalty values
+    threshold_state = _apply_event_catalyst_threshold_adjustments(
+        input_data=input_data,
+        profile=profile,
+        state=state,
+        threshold_state=threshold_state,
+        score_penalty_state=score_penalty_state,
+    )
     score_payload = _build_snapshot_score_payload(
         profile=profile,
         state=state,
@@ -1177,6 +1288,7 @@ def _finalize_short_trade_snapshot_relief_resolution(
         layer_c_avoid_penalty=core_state.threshold_state.layer_c_avoid_penalty,
         market_state_threshold_adjustment=market_state_threshold_adjustment,
         selected_close_retention_adjustment=selected_close_retention_adjustment,
+        event_catalyst_assessment=core_state.threshold_state.event_catalyst_assessment,
     )
     adjusted_score_penalty_state = ScorePenaltyState(
         profitability_hard_cliff_boundary_relief=core_state.score_penalty_state.profitability_hard_cliff_boundary_relief,
@@ -1273,6 +1385,7 @@ def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolu
         "stale_trend_repair_penalty": resolution.score_penalty_state.stale_trend_repair_penalty,
         "overhead_supply_penalty": resolution.score_penalty_state.overhead_supply_penalty,
         "extension_without_room_penalty": resolution.score_penalty_state.extension_without_room_penalty,
+        "event_catalyst_assessment": resolution.threshold_state.event_catalyst_assessment,
     }
 
 

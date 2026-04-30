@@ -28,6 +28,11 @@ class TargetEvaluationInput(BaseModel):
 
 
 class TargetEvaluationResult(BaseModel):
+    """Target evaluation result with decision, scores, and diagnostics.
+    
+    positive_tags examples: event_catalyst_applied, profitability_relief_applied,
+    fresh_breakout_candidate, trend_acceleration_confirmed, etc.
+    """
     target_type: SelectionTargetType
     decision: TargetDecision | None = None
     execution_eligible: bool = False

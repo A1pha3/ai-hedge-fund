@@ -1134,3 +1134,17 @@ SHORT_TRADE_TARGET_PROFILES["momentum_tuned"] = replace(
     near_miss_threshold=0.24,
     selected_rank_cap_ratio=0.50,
 )
+
+# Task 3 - event_catalyst_guarded: Research profile for event-catalyst replay and frontier diagnostics
+# Guarded research profile enabling event-catalyst logic with controlled candidate sources
+# Limited to catalyst_theme and short_trade_boundary sources only
+SHORT_TRADE_TARGET_PROFILES["event_catalyst_guarded"] = replace(
+    SHORT_TRADE_TARGET_PROFILES["default"],
+    name="event_catalyst_guarded",
+    event_catalyst_enabled=True,
+    event_catalyst_candidate_sources=frozenset({"catalyst_theme", "short_trade_boundary"}),
+    event_catalyst_min_score_for_selected_uplift=0.72,
+    event_catalyst_min_score_for_near_miss_retain=0.58,
+    event_catalyst_selected_uplift=0.03,
+    event_catalyst_near_miss_threshold_relief=0.02,
+)
