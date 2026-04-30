@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
+from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.param_search import (
     ParamSpace,
     SearchObjective,
@@ -28,6 +29,37 @@ logger = get_logger(__name__)
 REPORTS_DIR = Path("data/reports")
 PARTIAL_HORIZON_WEIGHT_PENALTY = 0.85
 PARTIAL_T3_HORIZON_WEIGHT_PENALTY = 0.92
+
+
+def resolve_replay_input_paths(
+    *,
+    input_paths: list[str] | None,
+    reports_root: str | Path | None,
+    weekly_start_date: str | None,
+    weekly_end_date: str | None,
+) -> list[Path]:
+    if input_paths:
+        return [Path(path).expanduser().resolve() for path in input_paths]
+    if not reports_root or not weekly_start_date or not weekly_end_date:
+        raise ValueError("Provide --input or --reports-root with --weekly-start-date and --weekly-end-date")
+
+    analysis = analyze_btst_weekly_validation(
+        reports_root,
+        start_date=weekly_start_date,
+        end_date=weekly_end_date,
+    )
+    missing_trade_dates = list(analysis.get("missing_trade_dates") or [])
+    if missing_trade_dates:
+        raise ValueError(f"missing_trade_dates={missing_trade_dates}")
+
+    replay_input_paths: list[Path] = []
+    for row in list(analysis.get("selected_reports") or []):
+        replay_input_path = Path(str(row["report_dir"])) / "selection_artifacts" / str(row["trade_date"]) / "selection_target_replay_input.json"
+        if replay_input_path.exists():
+            replay_input_paths.append(replay_input_path.resolve())
+    if not replay_input_paths:
+        raise FileNotFoundError("No replay inputs found for the requested weekly window")
+    return replay_input_paths
 
 
 def _build_default_checkpoint_path(
@@ -377,11 +409,14 @@ MOMENTUM_OPTIMIZED_GRID: dict[str, list[Any]] = {
 }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Optimize short-trade target profile parameters")
     parser.add_argument("--profile", default="momentum_optimized", help="Base profile name")
     parser.add_argument("--objective", choices=[o.value for o in SearchObjective], default="edge")
     parser.add_argument("--input", nargs="+", help="Replay input JSON paths (replay mode)")
+    parser.add_argument("--reports-root", default=None, help="Reports root for weekly replay-input auto-discovery")
+    parser.add_argument("--weekly-start-date", default=None, help="Weekly replay-input discovery start date")
+    parser.add_argument("--weekly-end-date", default=None, help="Weekly replay-input discovery end date")
     parser.add_argument("--grid-params", nargs="+", help="Grid params as key=val1,val2 or path/to.json")
     parser.add_argument("--preset-grid", action="store_true", help="Use built-in momentum_optimized grid")
     parser.add_argument("--output-json", default=None, help="Output JSON path")
@@ -398,7 +433,7 @@ def main() -> int:
     parser.add_argument("--train-months", type=int, default=2)
     parser.add_argument("--test-months", type=int, default=2)
     parser.add_argument("--step-months", type=int, default=1)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     get_short_trade_target_profile(args.profile)
 
@@ -416,11 +451,15 @@ def main() -> int:
 
     replay_input_paths: list[Path] | None = None
     walk_forward_descriptor: str | None = None
-    if args.input:
-        input_paths = [Path(p) for p in args.input]
-        replay_input_paths = input_paths
+    if args.input or (args.reports_root and args.weekly_start_date and args.weekly_end_date):
+        replay_input_paths = resolve_replay_input_paths(
+            input_paths=args.input,
+            reports_root=args.reports_root,
+            weekly_start_date=args.weekly_start_date,
+            weekly_end_date=args.weekly_end_date,
+        )
         evaluator = _build_replay_evaluator(
-            input_paths,
+            replay_input_paths,
             base_profile=args.profile,
             next_high_hit_threshold=args.next_high_hit_threshold,
         )
@@ -452,7 +491,7 @@ def main() -> int:
             base_profile=args.profile,
         )
     else:
-        parser.error("Specify --input for replay mode, or --tickers --start-date --end-date for walk-forward mode")
+        parser.error("Specify --input, or --reports-root with --weekly-start-date and --weekly-end-date, or --tickers --start-date --end-date for walk-forward mode")
 
     checkpoint = args.checkpoint or _build_default_checkpoint_path(
         profile=args.profile,

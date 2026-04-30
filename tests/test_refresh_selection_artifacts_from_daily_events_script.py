@@ -1841,3 +1841,71 @@ def test_refresh_selection_artifacts_from_daily_events_rehydrates_strategy_signa
 
     selection_snapshot = json.loads((selection_dir / "selection_snapshot.json").read_text(encoding="utf-8"))
     assert selection_snapshot["selection_targets"]["300999"]["short_trade"]["explainability_payload"]["available_strategy_signals"] == ["event_sentiment", "trend"]
+
+
+def test_refresh_selection_artifacts_from_daily_events_rehydrates_strategy_signals_for_selected_catalyst_theme_entries_from_existing_replay_input(
+    tmp_path,
+):
+    report_dir = tmp_path / "paper_trading_20260410_20260410_refresh_rehydrate_selected_catalyst_theme_signals"
+    selection_dir = report_dir / "selection_artifacts" / "2026-04-10"
+    selection_dir.mkdir(parents=True)
+    trade_date = "20260410"
+
+    empty_entry = _make_catalyst_theme_carryover_entry()
+    empty_entry["strategy_signals"] = {}
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [empty_entry],
+                        "shadow_candidates": [],
+                        "selected_tickers": ["002001"],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (selection_dir / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "supplemental_catalyst_theme_entries": [
+                    {
+                        **_make_catalyst_theme_carryover_entry(),
+                        "strategy_signals": {
+                            "trend": _make_signal(1, 95.0).model_dump(mode="json"),
+                            "fundamental": _make_signal(1, 45.0).model_dump(mode="json"),
+                        },
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    refresh_selection_artifacts_for_report(report_dir, trade_date="2026-04-10")
+
+    selection_snapshot = json.loads((selection_dir / "selection_snapshot.json").read_text(encoding="utf-8"))
+    assert selection_snapshot["selection_targets"]["002001"]["short_trade"]["explainability_payload"]["available_strategy_signals"] == [
+        "fundamental",
+        "trend",
+    ]

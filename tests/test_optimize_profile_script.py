@@ -3,9 +3,11 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import scripts.optimize_profile as optimize_profile
 from scripts.optimize_profile import _build_default_checkpoint_path, _build_replay_evaluator, _parse_grid_params, _resolve_primary_surface
 
 
@@ -250,3 +252,77 @@ def test_replay_evaluator_applies_lighter_penalty_for_missing_t_plus_3_only(monk
     assert metrics["sample_weight"] == pytest.approx((0.5 + (0.5 * 0.92)) / 2.0)
     assert metrics["t_plus_3_close_positive_rate"] == pytest.approx((0.53 + 0.55) / 2.0)
     assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 + 0.008) / 2.0)
+
+
+def test_resolve_replay_inputs_from_weekly_validation_selection(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260413_20260413_live_short_trade_only_20260414"
+    day_dir = report_dir / "selection_artifacts" / "2026-04-13"
+    replay_input = day_dir / "selection_target_replay_input.json"
+    snapshot_path = day_dir / "selection_snapshot.json"
+    day_dir.mkdir(parents=True)
+    replay_input.write_text("{}", encoding="utf-8")
+    snapshot_path.write_text(
+        '{"trade_date": "20260413", "target_mode": "short_trade_only", "selection_targets": {}}',
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text("{}", encoding="utf-8")
+
+    paths = optimize_profile.resolve_replay_input_paths(
+        input_paths=None,
+        reports_root=reports_root,
+        weekly_start_date="2026-04-13",
+        weekly_end_date="2026-04-13",
+    )
+
+    assert paths == [replay_input.resolve()]
+
+
+def test_resolve_replay_inputs_rejects_missing_trade_dates(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="missing_trade_dates"):
+        optimize_profile.resolve_replay_input_paths(
+            input_paths=None,
+            reports_root=reports_root,
+            weekly_start_date="2026-04-13",
+            weekly_end_date="2026-04-14",
+        )
+
+
+def test_main_accepts_weekly_window_args_and_runs_search(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    checkpoint_calls: list[Path] = []
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "resolve_replay_input_paths",
+        lambda **_: [tmp_path / "window_a.json", tmp_path / "window_b.json"],
+    )
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: checkpoint_calls.append(Path(kwargs["checkpoint_path"])) or SimpleNamespace(best_params={}, best_score=None, objective=kwargs["objective"], results=[], completed_trials=0, total_trials=1),
+    )
+    monkeypatch.setattr(optimize_profile, "save_search_report", lambda report, output_path=None: Path(output_path or tmp_path / "report.md"))
+    monkeypatch.setattr(optimize_profile, "save_search_payload", lambda report, output_path=None: Path(output_path or tmp_path / "report.json"))
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "default",
+            "--grid-params",
+            "select_threshold=0.58",
+            "--reports-root",
+            str(tmp_path),
+            "--weekly-start-date",
+            "2026-04-13",
+            "--weekly-end-date",
+            "2026-04-18",
+        ]
+    )
+
+    assert exit_code == 0
+    assert checkpoint_calls
+    assert checkpoint_calls[0].name.startswith("param_search_default_")

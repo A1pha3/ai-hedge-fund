@@ -583,6 +583,10 @@ def rebuild_selection_targets_for_plan(
         refreshed_catalyst_theme_tickers,
         strategy_signals_by_ticker=strategy_signals_by_ticker,
     )
+    refreshed_catalyst_theme_filter = {
+        **catalyst_theme_filter,
+        "tickers": refreshed_catalyst_theme_tickers,
+    }
     plan.watchlist = _rehydrate_watchlist_strategy_signals(
         list(plan.watchlist or []),
         strategy_signals_by_ticker=strategy_signals_by_ticker,
@@ -602,7 +606,7 @@ def rebuild_selection_targets_for_plan(
     )
     selection_targets, dual_target_summary = _restore_selected_catalyst_theme_targets(
         selection_targets=selection_targets,
-        catalyst_theme_filter=catalyst_theme_filter,
+        catalyst_theme_filter=refreshed_catalyst_theme_filter,
         trade_date_compact=trade_date_compact,
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
     )
@@ -611,10 +615,9 @@ def rebuild_selection_targets_for_plan(
     watchlist_filter["released_shadow_entries"] = refreshed_watchlist_released_shadow_entries
     short_trade_candidate_filters["tickers"] = refreshed_short_trade_tickers
     short_trade_candidate_filters["released_shadow_entries"] = refreshed_short_trade_released_shadow_entries
-    catalyst_theme_filter["tickers"] = refreshed_catalyst_theme_tickers
     filters["watchlist"] = watchlist_filter
     filters["short_trade_candidates"] = short_trade_candidate_filters
-    filters["catalyst_theme_candidates"] = catalyst_theme_filter
+    filters["catalyst_theme_candidates"] = refreshed_catalyst_theme_filter
     funnel_diagnostics["filters"] = filters
     risk_metrics["funnel_diagnostics"] = funnel_diagnostics
     plan.risk_metrics = risk_metrics
