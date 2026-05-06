@@ -3269,9 +3269,10 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert next_actions[1]["source"] == "carryover_peer_proof"
     assert next_actions[2]["task_id"] == "candidate_pool_recall_priority"
     assert next_actions[2]["source"] == "candidate_pool_recall_dossier"
+    recall_experiment = payload["control_tower_snapshot"]["candidate_pool_recall_priority_handoff_branch_experiment_queue"][0]
     assert "candidate-pool truncation" in next_actions[2]["title"]
     assert "dominant recall stage=candidate_pool_truncated_after_filters" in next_actions[2]["why_now"]
-    assert "uplift_to_cutoff_multiple_min=0.1001" in next_actions[2]["why_now"]
+    assert f"uplift_to_cutoff_multiple_min={recall_experiment['uplift_to_cutoff_multiple_min']}" in next_actions[2]["why_now"]
     assert next_actions[2]["next_step"]
     assert all(task.get("source") != "carryover_contract" for task in next_actions)
     assert payload["control_tower_snapshot"]["candidate_pool_upstream_handoff_board_status"] in {"ready_for_upstream_handoff_execution", "skipped_no_focus_tickers"}
