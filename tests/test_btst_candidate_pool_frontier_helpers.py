@@ -58,3 +58,43 @@ def test_build_candidate_pool_frontier_entries_keeps_only_entries_that_meet_sour
     assert promoted_entries[0]["frontier_expansion_source_family"] == "upstream_liquidity_corridor_shadow"
     assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["promoted_count"] == 1
     assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["rejected_count"] == 1
+    assert diagnostics["promoted_count"] == 1
+    assert diagnostics["rejected_count"] == 1
+
+
+def test_build_candidate_pool_frontier_entries_applies_post_gate_thresholds() -> None:
+    promoted_entries, diagnostics = build_candidate_pool_frontier_entries(
+        released_shadow_entries=[],
+        shadow_observation_entries=[
+            {
+                "ticker": "600001",
+                "candidate_source": "post_gate_liquidity_competition_shadow",
+                "candidate_pool_lane": "post_gate_liquidity_competition",
+                "candidate_pool_rank": 1499,
+                "candidate_pool_avg_amount_share_of_cutoff": 0.18,
+                "candidate_pool_avg_amount_share_of_min_gate": 3.0,
+                "short_trade_boundary_metrics": {
+                    "trend_acceleration": 0.75,
+                    "close_strength": 0.88,
+                    "catalyst_freshness": 0.0,
+                },
+            },
+            {
+                "ticker": "600002",
+                "candidate_source": "post_gate_liquidity_competition_shadow",
+                "candidate_pool_lane": "post_gate_liquidity_competition",
+                "candidate_pool_rank": 1499,
+                "candidate_pool_avg_amount_share_of_cutoff": 0.1799,
+                "candidate_pool_avg_amount_share_of_min_gate": 3.0,
+                "short_trade_boundary_metrics": {
+                    "trend_acceleration": 0.75,
+                    "close_strength": 0.88,
+                    "catalyst_freshness": 0.0,
+                },
+            },
+        ],
+    )
+
+    assert [entry["ticker"] for entry in promoted_entries] == ["600001"]
+    assert diagnostics["source_family_counts"]["post_gate_liquidity_competition_shadow"]["promoted_count"] == 1
+    assert diagnostics["source_family_counts"]["post_gate_liquidity_competition_shadow"]["rejected_count"] == 1

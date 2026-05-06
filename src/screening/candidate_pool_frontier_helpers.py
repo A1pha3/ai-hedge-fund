@@ -59,7 +59,7 @@ def build_candidate_pool_frontier_entries(
     shadow_observation_entries: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     promoted_entries: list[dict[str, Any]] = []
-    diagnostics: dict[str, Any] = {"source_family_counts": {}}
+    diagnostics: dict[str, Any] = {"source_family_counts": {}, "promoted_count": 0, "rejected_count": 0}
 
     for entry in [*list(released_shadow_entries or []), *list(shadow_observation_entries or [])]:
         current = dict(entry or {})
@@ -70,6 +70,7 @@ def build_candidate_pool_frontier_entries(
         bucket = diagnostics["source_family_counts"].setdefault(source_family, {"promoted_count": 0, "rejected_count": 0})
         if not _meets_frontier_gate(current, source_family=source_family):
             bucket["rejected_count"] += 1
+            diagnostics["rejected_count"] += 1
             continue
 
         promoted_entries.append(
@@ -81,5 +82,6 @@ def build_candidate_pool_frontier_entries(
             }
         )
         bucket["promoted_count"] += 1
+        diagnostics["promoted_count"] += 1
 
     return promoted_entries, diagnostics
