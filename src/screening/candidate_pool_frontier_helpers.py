@@ -71,8 +71,8 @@ def build_candidate_pool_frontier_entries(
         "unclassified_count": 0,
     }
 
-    for entry in [*list(released_shadow_entries or []), *list(shadow_observation_entries or [])]:
-        current = dict(entry or {})
+    for entry in [*released_shadow_entries, *shadow_observation_entries]:
+        current = dict(entry)
         source_family = classify_candidate_pool_frontier_source_family(current)
         if source_family is None:
             diagnostics["unclassified_count"] += 1
