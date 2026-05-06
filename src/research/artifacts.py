@@ -47,6 +47,14 @@ class SelectionArtifactWriter(Protocol):
     ) -> SelectionArtifactWriteResult: ...
 
 
+FORMAL_EXECUTION_BLOCK_FLAGS = (
+    "p2_execution_blocked",
+    "p3_execution_blocked",
+    "p5_execution_blocked",
+    "p6_execution_blocked",
+)
+
+
 def _format_trade_date(trade_date: str) -> str:
     trade_date = str(trade_date)
     if len(trade_date) == 8 and trade_date.isdigit():
@@ -243,14 +251,22 @@ def _build_target_context(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
         target_context["candidate_reason_codes"] = candidate_reason_codes
     research_result = getattr(evaluation, "research", None)
     short_trade_result = getattr(evaluation, "short_trade", None)
+    short_trade_reporting_decision, formal_execution_block_flags = _resolve_short_trade_reporting_decision(
+        evaluation, short_trade_result
+    )
     if research_result is not None:
         target_context["research_decision"] = str(research_result.decision or "")
     if short_trade_result is not None:
         target_context["short_trade_decision"] = str(short_trade_result.decision or "")
+    if short_trade_reporting_decision:
+        target_context["short_trade_reporting_decision"] = short_trade_reporting_decision
     delta_classification = getattr(evaluation, "delta_classification", None)
     if delta_classification:
         target_context["delta_classification"] = str(delta_classification)
     target_context["execution_eligible"] = bool(getattr(evaluation, "execution_eligible", False))
+    if formal_execution_block_flags:
+        target_context["formal_execution_blocked"] = True
+        target_context["formal_execution_block_flags"] = formal_execution_block_flags
     downgrade_reasons = [str(reason) for reason in list(getattr(evaluation, "downgrade_reasons", []) or []) if str(reason or "").strip()]
     if downgrade_reasons:
         target_context["downgrade_reasons"] = downgrade_reasons
@@ -269,6 +285,11 @@ def _build_target_context(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
     p3_execution_block_reason = getattr(evaluation, "p3_execution_block_reason", None)
     if p3_execution_block_reason is not None:
         target_context["p3_execution_block_reason"] = str(p3_execution_block_reason)
+    if bool(getattr(evaluation, "p2_execution_blocked", False)):
+        target_context["p2_execution_blocked"] = True
+    p2_execution_block_reason = getattr(evaluation, "p2_execution_block_reason", None)
+    if p2_execution_block_reason is not None:
+        target_context["p2_execution_block_reason"] = str(p2_execution_block_reason)
     short_trade_result = getattr(evaluation, "short_trade", None)
     prior_payload = {}
     if short_trade_result is not None:
@@ -340,7 +361,7 @@ def _build_short_trade_target_view(plan: ExecutionPlan) -> ShortTradeTargetView:
         short_trade_result = getattr(evaluation, "short_trade", None)
         if short_trade_result is None:
             continue
-        decision = str(short_trade_result.decision or "")
+        decision, _ = _resolve_short_trade_reporting_decision(evaluation, short_trade_result)
         blockers = list(getattr(short_trade_result, "blockers", []) or [])
         if decision == "selected":
             view.selected_symbols.append(str(ticker))
@@ -358,6 +379,30 @@ def _build_short_trade_target_view(plan: ExecutionPlan) -> ShortTradeTargetView:
     view.rejected_symbols.sort()
     view.blocked_symbols.sort()
     return view
+
+
+def _collect_formal_execution_block_flags(
+    evaluation: DualTargetEvaluation,
+    short_trade_result: TargetEvaluationResult | None,
+) -> list[str]:
+    flags: list[str] = []
+    for flag in FORMAL_EXECUTION_BLOCK_FLAGS:
+        if bool(getattr(evaluation, flag, False)) or bool(getattr(short_trade_result, flag, False)):
+            flags.append(flag)
+    return flags
+
+
+def _resolve_short_trade_reporting_decision(
+    evaluation: DualTargetEvaluation,
+    short_trade_result: TargetEvaluationResult | None,
+) -> tuple[str, list[str]]:
+    if short_trade_result is None:
+        return "", []
+    raw_decision = str(short_trade_result.decision or "")
+    flags = _collect_formal_execution_block_flags(evaluation, short_trade_result)
+    if raw_decision in {"selected", "near_miss"} and flags:
+        return "blocked", flags
+    return raw_decision, flags
 
 
 def _build_dual_target_delta(plan: ExecutionPlan) -> DualTargetDeltaView:
@@ -520,7 +565,7 @@ def _attach_market_state_to_entries(entries: list[dict[str, Any]], *, market_sta
     attached_entries: list[dict[str, Any]] = []
     for entry in list(entries or []):
         updated_entry = dict(entry)
-        updated_entry.setdefault("market_state", dict(market_state_payload))
+        updated_entry["market_state"] = dict(market_state_payload)
         attached_entries.append(updated_entry)
     return attached_entries
 

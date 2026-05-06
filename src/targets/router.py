@@ -49,6 +49,11 @@ def apply_p2_regime_gate_enforcement_to_selection_targets(
         if _is_execution_eligible(evaluation):
             evaluation.p2_execution_blocked = True
             evaluation.p2_execution_block_reason = block_reason
+            evaluation.execution_eligible = False
+            if evaluation.research is not None:
+                evaluation.research.execution_eligible = False
+            if evaluation.short_trade is not None:
+                evaluation.short_trade.execution_eligible = False
 
 
 def _classify_delta(evaluation: DualTargetEvaluation) -> str | None:

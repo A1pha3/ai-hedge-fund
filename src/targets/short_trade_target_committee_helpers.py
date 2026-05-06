@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state
+from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state_metrics
 from src.targets.explainability import clamp_unit_interval
 
 
@@ -61,12 +61,15 @@ def _step_inverse_score(value: float, thresholds: list[tuple[float, float]], fal
 
 
 def _resolve_committee_gate(*, input_data: Any, snapshot: dict[str, Any]) -> str:
+    btst_regime_gate_payload = classify_btst_regime_gate_from_market_state_metrics(dict(input_data.market_state or {}))
+    inferred_gate = str((btst_regime_gate_payload or {}).get("gate") or "").strip().lower()
+    if inferred_gate:
+        return inferred_gate
+
     historical_prior = dict(snapshot.get("historical_prior") or {})
     explicit_gate = str(historical_prior.get("btst_regime_gate") or input_data.replay_context.get("btst_regime_gate") or "").strip().lower()
     if explicit_gate:
         return explicit_gate
-    btst_regime_gate_payload = classify_btst_regime_gate_from_market_state(dict(input_data.market_state or {}))
-    inferred_gate = str((btst_regime_gate_payload or {}).get("gate") or "").strip().lower()
     return inferred_gate or "normal_trade"
 
 

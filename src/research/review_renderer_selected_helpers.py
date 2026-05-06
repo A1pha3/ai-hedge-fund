@@ -69,5 +69,14 @@ def _render_execution_eligibility_section(candidate: SelectedCandidate) -> list[
         details.append(f"gate={target_context['btst_regime_gate']}")
     if target_context.get("historical_prior_quality_level"):
         details.append(f"prior={target_context['historical_prior_quality_level']}")
+    if target_context.get("short_trade_reporting_decision"):
+        details.append(f"reporting={target_context['short_trade_reporting_decision']}")
+    formal_execution_block_flags = [
+        str(flag)
+        for flag in list(target_context.get("formal_execution_block_flags", []) or [])
+        if str(flag or "").strip()
+    ]
+    if formal_execution_block_flags:
+        details.append(f"formal_block={'+'.join(formal_execution_block_flags)}")
     status = "是" if target_context.get("execution_eligible") else "否"
     return [f"- 是否可执行:", f"  - {status}" + (f" ({', '.join(details)})" if details else "")]

@@ -269,11 +269,16 @@ class TestP2RouterLevelExecutionBlocked:
         from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
         evaluation = DualTargetEvaluation(
             ticker="000001", trade_date="20260410",
-            research=TargetEvaluationResult(target_type="research", decision="selected"),
+            research=TargetEvaluationResult(target_type="research", decision="selected", execution_eligible=True),
+            short_trade=TargetEvaluationResult(target_type="short_trade", decision="selected", execution_eligible=True),
+            execution_eligible=True,
         )
         targets = {"000001": evaluation}
         apply_p2_regime_gate_enforcement_to_selection_targets(targets, gate="shadow_only")
         assert targets["000001"].p2_execution_blocked is True
+        assert targets["000001"].execution_eligible is False
+        assert targets["000001"].research.execution_eligible is False
+        assert targets["000001"].short_trade.execution_eligible is False
 
     def test_normal_trade_does_not_mark_p2_execution_blocked(self, monkeypatch):
         from src.targets.router import apply_p2_regime_gate_enforcement_to_selection_targets
@@ -332,6 +337,7 @@ class TestP2RouterLevelExecutionBlocked:
         st = updated.selection_targets or {}
         assert st.get("000001") is not None
         assert st["000001"].p2_execution_blocked is True, "selection_target must be marked execution_blocked"
+        assert updated.dual_target_summary.p2_execution_blocked_count == 1
 
 
 # ---------------------------------------------------------------------------

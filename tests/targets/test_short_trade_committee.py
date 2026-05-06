@@ -131,6 +131,39 @@ def test_explicit_default_profile_name_skips_auto_profile_switch() -> None:
     assert snapshot["committee_profile"] == "ignition_breakout"
 
 
+def test_market_state_auto_profile_switch_overrides_historical_prior_gate() -> None:
+    entry = _make_committee_entry()
+    entry["historical_prior"]["btst_regime_gate"] = "shadow_only"
+    entry["market_state"] = {
+        "breadth_ratio": 0.67,
+        "daily_return": -0.003,
+        "style_dispersion": 0.18,
+        "regime_flip_risk": 0.09,
+        "regime_gate_level": "normal",
+        "btst_regime_gate": {
+            "gate": "shadow_only",
+            "profile_hint": "conservative",
+            "reason_codes": ["profile_conservative"],
+            "metrics": {
+                "breadth_ratio": 0.41,
+                "daily_return": 0.012,
+                "style_dispersion": 0.55,
+                "regime_flip_risk": 0.60,
+                "regime_gate_level": "normal",
+            },
+        },
+    }
+
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert snapshot["profile"].name == "ignition_breakout"
+    assert snapshot["committee_profile"] == "ignition_breakout"
+    assert snapshot["committee_gate"] == "aggressive_trade"
+
+
 def test_committee_thresholds_can_downgrade_selected_candidate() -> None:
     entry = _make_committee_entry()
 

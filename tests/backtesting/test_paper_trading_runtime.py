@@ -202,6 +202,7 @@ def test_build_dual_target_session_summary_aggregates_paper_trading_days(tmp_pat
                             "target_mode": "dual_target",
                             "selection_targets": {"000001": {}, "000002": {}},
                             "dual_target_summary": {
+                                "execution_eligible_count": 1,
                                 "research_target_count": 3,
                                 "short_trade_target_count": 2,
                                 "research_selected_count": 1,
@@ -212,6 +213,9 @@ def test_build_dual_target_session_summary_aggregates_paper_trading_days(tmp_pat
                                 "short_trade_blocked_count": 0,
                                 "short_trade_rejected_count": 0,
                                 "shell_target_count": 1,
+                                "p2_execution_blocked_count": 1,
+                                "p3_execution_blocked_count": 0,
+                                "p3_prior_quality_distribution": {"watch_only": 1},
                                 "delta_classification_counts": {"upgraded": 2},
                             },
                         },
@@ -224,6 +228,7 @@ def test_build_dual_target_session_summary_aggregates_paper_trading_days(tmp_pat
                             "target_mode": "research_only",
                             "selection_targets": {},
                             "dual_target_summary": {
+                                "execution_eligible_count": 0,
                                 "research_target_count": 1,
                                 "short_trade_target_count": 4,
                                 "research_selected_count": 0,
@@ -234,6 +239,9 @@ def test_build_dual_target_session_summary_aggregates_paper_trading_days(tmp_pat
                                 "short_trade_blocked_count": 1,
                                 "short_trade_rejected_count": 1,
                                 "shell_target_count": 0,
+                                "p2_execution_blocked_count": 2,
+                                "p3_execution_blocked_count": 1,
+                                "p3_prior_quality_distribution": {"blocked": 1, "watch_only": 2},
                                 "delta_classification_counts": {"upgraded": 1, "downgraded": 3},
                             },
                         },
@@ -252,9 +260,13 @@ def test_build_dual_target_session_summary_aggregates_paper_trading_days(tmp_pat
     assert summary["day_count"] == 2
     assert summary["days_with_selection_targets"] == 1
     assert summary["selection_target_count"] == 2
+    assert summary["execution_eligible_count"] == 1
     assert summary["research_target_count"] == 4
     assert summary["short_trade_target_count"] == 6
     assert summary["short_trade_near_miss_count"] == 3
+    assert summary["p2_execution_blocked_count"] == 3
+    assert summary["p3_execution_blocked_count"] == 1
+    assert summary["p3_prior_quality_distribution"] == {"watch_only": 3, "blocked": 1}
     assert summary["target_mode_counts"] == {"dual_target": 1, "research_only": 1}
     assert summary["delta_classification_counts"] == {"upgraded": 3, "downgraded": 3}
 
@@ -870,6 +882,7 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
         "day_count": 3,
         "days_with_selection_targets": 1,
         "selection_target_count": 1,
+        "execution_eligible_count": 0,
         "research_target_count": 0,
         "short_trade_target_count": 0,
         "research_selected_count": 0,
@@ -882,6 +895,9 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
         "shell_target_count": 1,
         "target_mode_counts": {"research_only": 3},
         "delta_classification_counts": {},
+        "p2_execution_blocked_count": 0,
+        "p3_execution_blocked_count": 0,
+        "p3_prior_quality_distribution": {},
     }
     assert summary["llm_route_provenance"] == {
         "session_id": "test-session",

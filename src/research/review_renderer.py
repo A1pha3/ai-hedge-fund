@@ -68,6 +68,7 @@ def _render_target_summary(snapshot: SelectionSnapshot) -> list[str]:
         "",
         f"- target_mode: {snapshot.target_mode}",
         f"- selection_target_count: {summary.get('selection_target_count', 0)}",
+        f"- execution_eligible_count: {summary.get('execution_eligible_count', 0)}",
         f"- research_target_count: {summary.get('research_target_count', 0)}",
         f"- short_trade_target_count: {summary.get('short_trade_target_count', 0)}",
         f"- research_selected_count: {summary.get('research_selected_count', 0)}",
@@ -77,6 +78,8 @@ def _render_target_summary(snapshot: SelectionSnapshot) -> list[str]:
         f"- short_trade_near_miss_count: {summary.get('short_trade_near_miss_count', 0)}",
         f"- short_trade_blocked_count: {summary.get('short_trade_blocked_count', 0)}",
         f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count', 0)}",
+        f"- p2_execution_blocked_count: {summary.get('p2_execution_blocked_count', 0)}",
+        f"- p3_execution_blocked_count: {summary.get('p3_execution_blocked_count', 0)}",
         f"- shell_target_count: {summary.get('shell_target_count', 0)}",
     ]
     if snapshot.selection_targets:
@@ -132,6 +135,7 @@ def _render_short_trade_target_summary(snapshot: SelectionSnapshot) -> list[str]
     return [
         "## Short Trade Target Summary",
         "",
+        "- semantics: reporting_decision; formal execution blocked entries are shown under blocked_symbols",
         _render_symbol_list("selected_symbols", list(view.selected_symbols or [])),
         _render_symbol_list("near_miss_symbols", list(view.near_miss_symbols or [])),
         _render_symbol_list("rejected_symbols", list(view.rejected_symbols or [])),

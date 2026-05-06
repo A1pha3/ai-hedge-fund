@@ -38,6 +38,9 @@ def test_render_selection_review_contains_key_sections():
                     "downgrade_reasons": ["btst_regime_gate_not_tradeable", "historical_prior_not_execution_ready"],
                     "historical_prior_quality_level": "watch_only",
                     "btst_regime_gate": "shadow_only",
+                    "short_trade_reporting_decision": "blocked",
+                    "formal_execution_blocked": True,
+                    "formal_execution_block_flags": ["p2_execution_blocked"],
                 },
                 target_decisions={
                     "research": TargetEvaluationResult(target_type="research", decision="selected", score_target=0.72),
@@ -65,7 +68,14 @@ def test_render_selection_review_contains_key_sections():
             )
         ],
         selection_targets={"000001": DualTargetEvaluation(ticker="000001", trade_date="2026-03-22")},
-        target_summary=DualTargetSummary(target_mode="research_only", selection_target_count=1, research_selected_count=1, shell_target_count=1),
+        target_summary=DualTargetSummary(
+            target_mode="research_only",
+            selection_target_count=1,
+            execution_eligible_count=0,
+            research_selected_count=1,
+            shell_target_count=1,
+            p2_execution_blocked_count=1,
+        ),
         research_view={
             "selected_symbols": ["000001"],
             "near_miss_symbols": ["300750"],
@@ -146,10 +156,13 @@ def test_render_selection_review_contains_key_sections():
     assert "Layer B 因子摘要" in markdown
     assert "trend: weight=0.3000" in markdown
     assert "## 双目标空壳状态" in markdown
+    assert "execution_eligible_count: 0" in markdown
+    assert "p2_execution_blocked_count: 1" in markdown
     assert "## Research Target Summary" in markdown
     assert "selected_symbols: 000001" in markdown
     assert "near_miss_symbols: 300750" in markdown
     assert "## Short Trade Target Summary" in markdown
+    assert "semantics: reporting_decision; formal execution blocked entries are shown under blocked_symbols" in markdown
     assert "blocked_symbols: 000001" in markdown
     assert "## Target Delta Highlights" in markdown
     assert "delta_counts: research_pass_short_reject=1" in markdown
@@ -168,5 +181,7 @@ def test_render_selection_review_contains_key_sections():
     assert "是否可执行" in markdown
     assert "historical_prior_not_execution_ready" in markdown
     assert "否" in markdown
+    assert "reporting=blocked" in markdown
+    assert "formal_block=p2_execution_blocked" in markdown
     assert "## 接近入选但落选" in markdown
     assert "300750" in markdown

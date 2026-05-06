@@ -252,6 +252,26 @@ def classify_btst_regime_gate_from_market_state(market_state: MarketState | dict
     )
 
 
+def classify_btst_regime_gate_from_market_state_metrics(market_state: MarketState | dict | None) -> dict[str, object] | None:
+    if market_state is None:
+        return None
+    if isinstance(market_state, dict):
+        payload = market_state
+    elif hasattr(market_state, "model_dump"):
+        payload = dict(market_state.model_dump(mode="json") or {})
+    else:
+        return None
+    if not payload:
+        return None
+    return classify_btst_regime_gate(
+        breadth_ratio=float(payload.get("breadth_ratio", 0.5) or 0.5),
+        daily_return=float(payload.get("daily_return", 0.0) or 0.0),
+        style_dispersion=float(payload.get("style_dispersion", 0.0) or 0.0),
+        regime_flip_risk=float(payload.get("regime_flip_risk", 0.0) or 0.0),
+        regime_gate_level=str(payload.get("regime_gate_level", "normal") or "normal"),
+    )
+
+
 def _reuse_btst_regime_gate_payload(payload: object) -> dict[str, object] | None:
     if not isinstance(payload, dict):
         return None

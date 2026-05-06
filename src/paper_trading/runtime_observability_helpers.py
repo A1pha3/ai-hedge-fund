@@ -330,6 +330,7 @@ def _build_empty_dual_target_session_summary() -> dict:
         "day_count": 0,
         "days_with_selection_targets": 0,
         "selection_target_count": 0,
+        "execution_eligible_count": 0,
         "research_target_count": 0,
         "short_trade_target_count": 0,
         "research_selected_count": 0,
@@ -342,6 +343,9 @@ def _build_empty_dual_target_session_summary() -> dict:
         "shell_target_count": 0,
         "target_mode_counts": {},
         "delta_classification_counts": {},
+        "p2_execution_blocked_count": 0,
+        "p3_execution_blocked_count": 0,
+        "p3_prior_quality_distribution": {},
     }
 
 
@@ -384,6 +388,7 @@ def _accumulate_dual_target_day(summary: dict, payload: dict) -> None:
 
 def _accumulate_dual_target_counts(summary: dict, target_summary: dict) -> None:
     count_keys = (
+        "execution_eligible_count",
         "research_target_count",
         "short_trade_target_count",
         "research_selected_count",
@@ -394,9 +399,17 @@ def _accumulate_dual_target_counts(summary: dict, target_summary: dict) -> None:
         "short_trade_blocked_count",
         "short_trade_rejected_count",
         "shell_target_count",
+        "p2_execution_blocked_count",
+        "p3_execution_blocked_count",
     )
     for key in count_keys:
         summary[key] += int(target_summary.get(key) or 0)
+
+    for key, value in dict(target_summary.get("p3_prior_quality_distribution") or {}).items():
+        normalized = str(key or "").strip()
+        if not normalized:
+            continue
+        summary["p3_prior_quality_distribution"][normalized] = int(summary["p3_prior_quality_distribution"].get(normalized) or 0) + int(value or 0)
 
 
 def _accumulate_delta_classification_counts(summary: dict, target_summary: dict) -> None:

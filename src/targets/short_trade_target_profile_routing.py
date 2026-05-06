@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state
+from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state_metrics
 
 
 BTST_GATE_TO_SHORT_TRADE_TARGET_PROFILE: dict[str, str] = {
@@ -23,7 +23,7 @@ def resolve_short_trade_target_profile_name_from_market_state(
     *,
     fallback: str = "default",
 ) -> str:
-    gate_payload = classify_btst_regime_gate_from_market_state(market_state)
+    gate_payload = classify_btst_regime_gate_from_market_state_metrics(market_state)
     if gate_payload is None:
         return fallback
     return map_btst_gate_to_short_trade_target_profile_name(
@@ -38,6 +38,13 @@ def resolve_short_trade_target_profile_name_from_target_context(
     historical_prior: dict[str, Any] | None = None,
     fallback: str = "default",
 ) -> str:
+    resolved_from_market_state = resolve_short_trade_target_profile_name_from_market_state(
+        market_state,
+        fallback="",
+    )
+    if resolved_from_market_state:
+        return resolved_from_market_state
+
     normalized_historical_prior = dict(historical_prior or {})
     explicit_gate = str(normalized_historical_prior.get("btst_regime_gate") or "").strip().lower()
     if explicit_gate:

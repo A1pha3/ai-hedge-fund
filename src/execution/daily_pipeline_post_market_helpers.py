@@ -407,7 +407,7 @@ def _attach_market_state_to_entries(entries: list[dict[str, Any]], *, market_sta
     attached_entries: list[dict[str, Any]] = []
     for entry in list(entries or []):
         updated_entry = dict(entry)
-        updated_entry.setdefault("market_state", dict(market_state_payload))
+        updated_entry["market_state"] = dict(market_state_payload)
         attached_entries.append(updated_entry)
     return attached_entries
 
@@ -422,6 +422,7 @@ def build_plan_target_shell_inputs(
 ) -> PlanTargetShellInputs:
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
+    market_state_payload = _serialize_market_state_payload(getattr(plan, "market_state", None))
     watchlist_filter_diagnostics = dict(funnel_filters.get("watchlist", {}) or {})
     short_trade_candidate_diagnostics = dict(funnel_filters.get("short_trade_candidates", {}) or {})
     released_shadow_entries = _filter_promoted_upstream_shadow_entries(
@@ -429,22 +430,28 @@ def build_plan_target_shell_inputs(
     )
     catalyst_theme_candidates = list(dict(funnel_filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []) if target_mode == "short_trade_only" else []
     return PlanTargetShellInputs(
-        rejected_entries=attach_historical_prior_to_entries_fn(
-            list(watchlist_filter_diagnostics.get("tickers", []) or []),
-            prior_by_ticker=historical_prior_by_ticker,
+        rejected_entries=_attach_market_state_to_entries(
+            attach_historical_prior_to_entries_fn(
+                list(watchlist_filter_diagnostics.get("tickers", []) or []),
+                prior_by_ticker=historical_prior_by_ticker,
+            ),
+            market_state_payload=market_state_payload,
         ),
         watchlist=attach_historical_prior_to_watchlist_fn(
             list(plan.watchlist or []),
             prior_by_ticker=historical_prior_by_ticker,
         ),
-        supplemental_short_trade_entries=attach_historical_prior_to_entries_fn(
-            [
-                *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
-                *released_shadow_entries,
-                *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
-                *catalyst_theme_candidates,
-            ],
-            prior_by_ticker=historical_prior_by_ticker,
+        supplemental_short_trade_entries=_attach_market_state_to_entries(
+            attach_historical_prior_to_entries_fn(
+                [
+                    *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
+                    *released_shadow_entries,
+                    *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
+                    *catalyst_theme_candidates,
+                ],
+                prior_by_ticker=historical_prior_by_ticker,
+            ),
+            market_state_payload=market_state_payload,
         ),
         buy_order_tickers={order.ticker for order in list(plan.buy_orders or [])},
     )

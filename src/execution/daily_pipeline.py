@@ -368,8 +368,9 @@ def _attach_downstream_target_market_state_payload(
         return list(layer_c_results)
     attached_results: list[LayerCResult] = []
     for item in list(layer_c_results):
-        merged_market_state = dict(market_state_payload)
-        merged_market_state.update(dict(getattr(item, "market_state", {}) or {}))
+        merged_market_state = dict(getattr(item, "market_state", {}) or {})
+        merged_market_state.pop("btst_regime_gate", None)
+        merged_market_state.update(dict(market_state_payload))
         attached_results.append(item.model_copy(update={"market_state": merged_market_state}))
     return attached_results
 
@@ -459,6 +460,10 @@ def _enforce_btst_regime_gate_p2(plan: ExecutionPlan) -> ExecutionPlan:
     funnel_diagnostics["btst_regime_gate_enforcement"] = enforcement_payload
     risk_metrics["funnel_diagnostics"] = funnel_diagnostics
     plan.risk_metrics = risk_metrics
+    plan.dual_target_summary = summarize_selection_targets(
+        selection_targets=dict(plan.selection_targets or {}),
+        target_mode=plan.target_mode,
+    )
     return plan
 
 
@@ -940,11 +945,17 @@ def _ensure_plan_target_shells(
         short_trade_target_profile_overrides,
     )
     requested_profile_config = _serialize_short_trade_target_profile(requested_profile)
+    plan.watchlist = _attach_downstream_target_market_state_payload(
+        list(getattr(plan, "watchlist", []) or []),
+        market_state=getattr(plan, "market_state", None),
+    )
     existing_profile_name = str(getattr(plan, "short_trade_target_profile_name", "") or "")
     existing_profile_config = dict(getattr(plan, "short_trade_target_profile_config", {}) or {})
     profile_mismatch = existing_profile_name != requested_profile.name or existing_profile_config != requested_profile_config
-    if profile_mismatch:
-        # Frozen replay plans may contain selection_targets from another profile; clear to force recomputation.
+    frozen_replay_has_sidecar = bool(dict(dict(getattr(plan, "risk_metrics", {}) or {}).get("frozen_selection_target_replay_input", {}) or {}))
+    if profile_mismatch or frozen_replay_has_sidecar:
+        # Frozen replay plans may carry stale selection_targets even when the requested profile matches.
+        # Clear them whenever replay sidecar inputs are available so target evaluations are recomputed.
         plan.selection_targets = {}
 
     return ensure_plan_target_shells_impl(

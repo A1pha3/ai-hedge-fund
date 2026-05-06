@@ -1046,3 +1046,55 @@ def test_file_selection_artifact_writer_surfaces_p5_contract_metadata_and_review
     assert "为什么入选" in review_text
     assert "为何被降级" in review_text
     assert "是否可执行" in review_text
+
+
+def test_file_selection_artifact_writer_surfaces_p2_execution_block_context(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_p2_block")
+    evaluation = DualTargetEvaluation(
+        ticker="300724",
+        trade_date="20260422",
+        research=TargetEvaluationResult(target_type="research", decision="selected"),
+        short_trade=TargetEvaluationResult(target_type="short_trade", decision="selected", btst_regime_gate="shadow_only"),
+        p2_execution_blocked=True,
+        p2_execution_block_reason="p2_regime_gate_enforce:shadow_only",
+    )
+    plan = ExecutionPlan(
+        date="20260422",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"layer_a_count": 10, "layer_b_count": 1, "watchlist_count": 1, "buy_order_count": 0},
+            "btst_regime_gate": {"mode": "enforce", "gate": "shadow_only", "reason_codes": ["profile_conservative"]},
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="300724",
+                score_b=0.8,
+                score_c=0.71,
+                score_final=0.76,
+                quality_score=0.65,
+                decision="watch",
+            )
+        ],
+        selection_targets={"300724": evaluation},
+        target_mode="short_trade_only",
+        dual_target_summary=DualTargetSummary(
+            target_mode="short_trade_only",
+            selection_target_count=1,
+            short_trade_selected_count=1,
+            p2_execution_blocked_count=1,
+        ),
+        buy_orders=[],
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260422", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    snapshot = json.loads((tmp_path / "2026-04-22" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    target_context = snapshot["selected"][0]["target_context"]
+    assert target_context["p2_execution_blocked"] is True
+    assert target_context["p2_execution_block_reason"] == "p2_regime_gate_enforce:shadow_only"
+    assert target_context["short_trade_reporting_decision"] == "blocked"
+    assert target_context["formal_execution_blocked"] is True
+    assert target_context["formal_execution_block_flags"] == ["p2_execution_blocked"]
+    assert snapshot["short_trade_view"]["selected_symbols"] == []
+    assert snapshot["short_trade_view"]["blocked_symbols"] == ["300724"]
