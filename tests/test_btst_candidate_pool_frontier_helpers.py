@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+from src.screening.candidate_pool_frontier_helpers import (
+    build_candidate_pool_frontier_entries,
+    classify_candidate_pool_frontier_source_family,
+)
+
+
+def test_classify_candidate_pool_frontier_source_family_maps_corridor_and_post_gate() -> None:
+    assert classify_candidate_pool_frontier_source_family(
+        {
+            "candidate_source": "upstream_liquidity_corridor_shadow",
+            "candidate_pool_lane": "layer_a_liquidity_corridor",
+        }
+    ) == "upstream_liquidity_corridor_shadow"
+    assert classify_candidate_pool_frontier_source_family(
+        {
+            "candidate_source": "post_gate_liquidity_competition_shadow",
+            "candidate_pool_lane": "post_gate_liquidity_competition",
+        }
+    ) == "post_gate_liquidity_competition_shadow"
+
+
+def test_build_candidate_pool_frontier_entries_keeps_only_entries_that_meet_source_gates() -> None:
+    promoted_entries, diagnostics = build_candidate_pool_frontier_entries(
+        released_shadow_entries=[
+            {
+                "ticker": "300720",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "candidate_pool_lane": "layer_a_liquidity_corridor",
+                "candidate_pool_rank": 1131,
+                "candidate_pool_avg_amount_share_of_cutoff": 0.3221,
+                "candidate_pool_avg_amount_share_of_min_gate": 9.6762,
+                "short_trade_boundary_metrics": {
+                    "trend_acceleration": 0.8507,
+                    "close_strength": 0.9092,
+                    "catalyst_freshness": 0.0,
+                },
+            },
+            {
+                "ticker": "301188",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "candidate_pool_lane": "layer_a_liquidity_corridor",
+                "candidate_pool_rank": 3179,
+                "candidate_pool_avg_amount_share_of_cutoff": 0.0738,
+                "candidate_pool_avg_amount_share_of_min_gate": 2.4069,
+                "short_trade_boundary_metrics": {
+                    "trend_acceleration": 0.0,
+                    "close_strength": 0.068,
+                    "catalyst_freshness": 0.0,
+                },
+            },
+        ],
+        shadow_observation_entries=[],
+    )
+
+    assert [entry["ticker"] for entry in promoted_entries] == ["300720"]
+    assert promoted_entries[0]["frontier_expansion_source_family"] == "upstream_liquidity_corridor_shadow"
+    assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["promoted_count"] == 1
+    assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["rejected_count"] == 1
