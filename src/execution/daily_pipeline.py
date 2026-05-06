@@ -918,18 +918,13 @@ def _resolve_effective_short_trade_target_profile_name(
     if market_state is None:
         return normalized_profile_name
 
-    from src.screening.market_state_helpers import (
-        recommend_short_trade_profile as _rec_profile,
+    from src.targets.short_trade_target_profile_routing import (
+        resolve_short_trade_target_profile_name_from_market_state,
     )
 
-    return _rec_profile(
-        breadth_ratio=float(getattr(market_state, "breadth_ratio", 0.5) or 0.5),
-        daily_return=float(getattr(market_state, "daily_return", 0.0) or 0.0),
-        limit_ratio=float(getattr(market_state, "limit_up_down_ratio", 1.0) or 1.0),
-        adx=float(getattr(market_state, "adx", 20.0) or 20.0),
-        style_dispersion=float(getattr(market_state, "style_dispersion", 0.0) or 0.0),
-        regime_flip_risk=float(getattr(market_state, "regime_flip_risk", 0.0) or 0.0),
-        regime_gate_level=str(getattr(market_state, "regime_gate_level", "normal") or "normal"),
+    return resolve_short_trade_target_profile_name_from_market_state(
+        market_state,
+        fallback=normalized_profile_name,
     )
 
 

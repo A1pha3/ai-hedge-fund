@@ -79,7 +79,47 @@ def test_resolve_effective_short_trade_target_profile_name_adapts_default_profil
         market_state=market_state,
     )
 
-    assert effective_profile_name == "conservative"
+    assert effective_profile_name == "shadow_research"
+
+
+def test_resolve_effective_short_trade_target_profile_name_adapts_default_profile_for_normal_trade() -> None:
+    market_state = MarketState(
+        breadth_ratio=0.52,
+        daily_return=0.001,
+        limit_up_down_ratio=1.15,
+        adx=24.0,
+        style_dispersion=0.24,
+        regime_flip_risk=0.22,
+        regime_gate_level="normal",
+    )
+
+    effective_profile_name = _resolve_effective_short_trade_target_profile_name(
+        requested_profile_name="default",
+        requested_profile_overrides={},
+        market_state=market_state,
+    )
+
+    assert effective_profile_name == "retention_follow"
+
+
+def test_resolve_effective_short_trade_target_profile_name_adapts_default_profile_for_aggressive_trade() -> None:
+    market_state = MarketState(
+        breadth_ratio=0.67,
+        daily_return=-0.003,
+        limit_up_down_ratio=1.25,
+        adx=27.0,
+        style_dispersion=0.18,
+        regime_flip_risk=0.09,
+        regime_gate_level="normal",
+    )
+
+    effective_profile_name = _resolve_effective_short_trade_target_profile_name(
+        requested_profile_name="default",
+        requested_profile_overrides={},
+        market_state=market_state,
+    )
+
+    assert effective_profile_name == "ignition_breakout"
 
 
 def test_attach_btst_regime_gate_shadow_is_noop_when_flag_off(monkeypatch) -> None:

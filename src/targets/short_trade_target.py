@@ -9,7 +9,11 @@ from src.targets.explainability import clamp_unit_interval
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
 from src.targets.profiles import (
     get_active_short_trade_target_profile,
+    is_short_trade_target_profile_context_active,
     use_short_trade_target_profile,
+)
+from src.targets.short_trade_target_profile_routing import (
+    resolve_short_trade_target_profile_name_from_target_context,
 )
 from src.targets.short_trade_prepared_breakout_helpers import (
     resolve_prepared_breakout_catalyst_relief as _resolve_prepared_breakout_catalyst_relief,
@@ -913,6 +917,49 @@ def _build_short_trade_rejection_reasons(
     )
 
 
+def _resolve_auto_short_trade_target_profile_name(input_data: TargetEvaluationInput) -> str:
+    active_profile_name = get_active_short_trade_target_profile().name
+    if active_profile_name != "default" or is_short_trade_target_profile_context_active():
+        return active_profile_name
+    replay_context = dict(input_data.replay_context or {})
+    return resolve_short_trade_target_profile_name_from_target_context(
+        market_state=input_data.market_state,
+        historical_prior=dict(replay_context.get("historical_prior") or {}),
+        fallback=active_profile_name,
+    )
+
+
+def _build_short_trade_target_snapshot_with_resolved_profile(input_data: TargetEvaluationInput) -> dict[str, Any]:
+    effective_profile_name = _resolve_auto_short_trade_target_profile_name(input_data)
+    active_profile_name = get_active_short_trade_target_profile().name
+    if effective_profile_name == active_profile_name:
+        return _build_short_trade_target_snapshot(input_data)
+    with use_short_trade_target_profile(profile_name=effective_profile_name):
+        return _build_short_trade_target_snapshot(input_data)
+
+
+def _evaluate_short_trade_target_with_resolved_profile(
+    input_data: TargetEvaluationInput,
+    *,
+    rank_hint: int | None = None,
+    rank_population: int | None = None,
+) -> TargetEvaluationResult:
+    effective_profile_name = _resolve_auto_short_trade_target_profile_name(input_data)
+    active_profile_name = get_active_short_trade_target_profile().name
+    if effective_profile_name == active_profile_name:
+        return _evaluate_short_trade_target(
+            input_data,
+            rank_hint=rank_hint,
+            rank_population=rank_population,
+        )
+    with use_short_trade_target_profile(profile_name=effective_profile_name):
+        return _evaluate_short_trade_target(
+            input_data,
+            rank_hint=rank_hint,
+            rank_population=rank_population,
+        )
+
+
 def build_short_trade_target_snapshot_from_entry(
     *,
     trade_date: str,
@@ -926,7 +973,9 @@ def build_short_trade_target_snapshot_from_entry(
                 trade_date=trade_date,
                 entry=entry,
             )
-    return _build_short_trade_target_snapshot(_build_target_input_from_entry(trade_date=trade_date, entry=entry))
+    return _build_short_trade_target_snapshot_with_resolved_profile(
+        _build_target_input_from_entry(trade_date=trade_date, entry=entry)
+    )
 
 
 def _evaluate_short_trade_target(
@@ -974,7 +1023,7 @@ def evaluate_short_trade_selected_target(
                 rank_population=rank_population,
                 included_in_buy_orders=included_in_buy_orders,
             )
-    return _evaluate_short_trade_target(
+    return _evaluate_short_trade_target_with_resolved_profile(
         _build_target_input_from_item(trade_date=trade_date, item=item, included_in_buy_orders=included_in_buy_orders),
         rank_hint=rank_hint,
         rank_population=rank_population,
@@ -998,7 +1047,7 @@ def evaluate_short_trade_rejected_target(
                 rank_hint=rank_hint,
                 rank_population=rank_population,
             )
-    return _evaluate_short_trade_target(
+    return _evaluate_short_trade_target_with_resolved_profile(
         _build_target_input_from_entry(trade_date=trade_date, entry=entry),
         rank_hint=rank_hint,
         rank_population=rank_population,

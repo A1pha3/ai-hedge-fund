@@ -269,6 +269,10 @@ _ACTIVE_SHORT_TRADE_TARGET_PROFILE: ContextVar[ShortTradeTargetProfile] = Contex
     "active_short_trade_target_profile",
     default=SHORT_TRADE_TARGET_PROFILES["default"],
 )
+_SHORT_TRADE_TARGET_PROFILE_CONTEXT_ACTIVE: ContextVar[bool] = ContextVar(
+    "short_trade_target_profile_context_active",
+    default=False,
+)
 
 
 def get_short_trade_target_profile(name: str = "default") -> ShortTradeTargetProfile:
@@ -281,6 +285,10 @@ def get_short_trade_target_profile(name: str = "default") -> ShortTradeTargetPro
 
 def get_active_short_trade_target_profile() -> ShortTradeTargetProfile:
     return _ACTIVE_SHORT_TRADE_TARGET_PROFILE.get()
+
+
+def is_short_trade_target_profile_context_active() -> bool:
+    return _SHORT_TRADE_TARGET_PROFILE_CONTEXT_ACTIVE.get()
 
 
 def build_short_trade_target_profile(name: str = "default", overrides: Mapping[str, Any] | None = None) -> ShortTradeTargetProfile:
@@ -303,7 +311,9 @@ def build_short_trade_target_profile(name: str = "default", overrides: Mapping[s
 def use_short_trade_target_profile(*, profile_name: str = "default", overrides: Mapping[str, Any] | None = None) -> Iterator[ShortTradeTargetProfile]:
     profile = build_short_trade_target_profile(profile_name, overrides)
     token = _ACTIVE_SHORT_TRADE_TARGET_PROFILE.set(profile)
+    context_token = _SHORT_TRADE_TARGET_PROFILE_CONTEXT_ACTIVE.set(True)
     try:
         yield profile
     finally:
+        _SHORT_TRADE_TARGET_PROFILE_CONTEXT_ACTIVE.reset(context_token)
         _ACTIVE_SHORT_TRADE_TARGET_PROFILE.reset(token)

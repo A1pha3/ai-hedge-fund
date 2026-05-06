@@ -108,6 +108,29 @@ def test_short_trade_snapshot_surfaces_committee_scores() -> None:
     assert snapshot["committee_gate_status"]["formal_selected"] in {"pass", "advisory"}
 
 
+def test_short_trade_snapshot_auto_switches_to_ignition_breakout_profile() -> None:
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(),
+    )
+
+    assert snapshot["profile"].name == "ignition_breakout"
+    assert snapshot["committee_enabled"] is True
+    assert snapshot["committee_profile"] == "ignition_breakout"
+
+
+def test_explicit_default_profile_name_skips_auto_profile_switch() -> None:
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(),
+        profile_name="default",
+    )
+
+    assert snapshot["profile"].name == "default"
+    assert snapshot["committee_enabled"] is False
+    assert snapshot["committee_profile"] == "ignition_breakout"
+
+
 def test_committee_thresholds_can_downgrade_selected_candidate() -> None:
     entry = _make_committee_entry()
 

@@ -3007,11 +3007,13 @@ def test_short_trade_market_state_threshold_adjustment_tightens_crisis_regime() 
         trade_date="20260328",
         entry=baseline_entry,
         rank_hint=1,
+        profile_name="default",
     )
     crisis_result = evaluate_short_trade_rejected_target(
         trade_date="20260328",
         entry=crisis_entry,
         rank_hint=1,
+        profile_name="default",
     )
 
     adjustment = crisis_result.metrics_payload["thresholds"]["market_state_threshold_adjustment"]
