@@ -32,6 +32,11 @@ def _meets_frontier_gate(entry: dict[str, Any], *, source_family: str) -> bool:
     trend_acceleration = float(metrics.get("trend_acceleration") or 0.0)
     close_strength = float(metrics.get("close_strength") or 0.0)
 
+    # These corridor/post-gate thresholds are intentionally asymmetric: the
+    # validation-first BTST frontier widens only when liquidity, rank, and
+    # boundary-strength signals are strong enough to limit noisy expansion.
+    # The tighter gates keep frontier growth controlled while preserving the
+    # distinct risk profile of each source family.
     if source_family == "upstream_liquidity_corridor_shadow":
         return (
             rank > 0

@@ -21,6 +21,32 @@ def test_classify_candidate_pool_frontier_source_family_maps_corridor_and_post_g
     ) == "post_gate_liquidity_competition_shadow"
 
 
+def test_classify_candidate_pool_frontier_source_family_falls_back_to_lane_when_source_missing_or_unknown() -> None:
+    assert classify_candidate_pool_frontier_source_family(
+        {
+            "candidate_pool_lane": "layer_a_liquidity_corridor",
+        }
+    ) == "upstream_liquidity_corridor_shadow"
+    assert classify_candidate_pool_frontier_source_family(
+        {
+            "candidate_source": "unknown_source",
+            "candidate_pool_lane": "post_gate_liquidity_competition",
+        }
+    ) == "post_gate_liquidity_competition_shadow"
+
+
+def test_classify_candidate_pool_frontier_source_family_returns_none_for_unknown_input() -> None:
+    assert (
+        classify_candidate_pool_frontier_source_family(
+            {
+                "candidate_source": "unknown_source",
+                "candidate_pool_lane": "unknown_lane",
+            }
+        )
+        is None
+    )
+
+
 def test_build_candidate_pool_frontier_entries_keeps_only_entries_that_meet_source_gates() -> None:
     promoted_entries, diagnostics = build_candidate_pool_frontier_entries(
         released_shadow_entries=[
