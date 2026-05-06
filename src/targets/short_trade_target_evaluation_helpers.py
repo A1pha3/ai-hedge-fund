@@ -9,6 +9,9 @@ from src.targets.explainability import (
     trim_reasons,
 )
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
+from src.targets.short_trade_target_committee_helpers import (
+    apply_short_trade_committee_governance,
+)
 from src.targets.short_trade_metrics_payload_builders import (  # noqa: F401
     _build_breakout_trap_guard_metrics_payload,
     _build_carryover_evidence_deficiency_metrics_payload,
@@ -88,6 +91,7 @@ class ShortTradeVerdict:
     gate_status: dict[str, Any]
     top_reasons: list[str]
     rejection_reasons: list[str]
+    downgrade_reasons: list[str]
 
 
 @dataclass(frozen=True)
@@ -735,6 +739,7 @@ def _build_short_trade_metrics_payload(
             weighted_positive_contributions=metrics_inputs["weighted_positive_contributions"],
             weighted_negative_contributions=metrics_inputs["weighted_negative_contributions"],
         ),
+        "committee": _build_short_trade_committee_payload(snapshot),
         "thresholds": _build_short_trade_threshold_metrics_payload(
             profile=profile,
             snapshot=snapshot,
@@ -788,6 +793,7 @@ def _build_short_trade_explainability_payload(
             watchlist_filter_diagnostics_flat_trend_guard=state.watchlist_filter_diagnostics_flat_trend_guard,
             t_plus_2_continuation_candidate=state.t_plus_2_continuation_candidate,
         ),
+        "committee": _build_short_trade_committee_payload(snapshot),
         "replay_context": dict(input_data.replay_context or {}),
     }
     
@@ -814,6 +820,26 @@ def _build_short_trade_mutable_verdict_state(snapshot: dict[str, Any]) -> ShortT
         negative_tags=list(snapshot["negative_tags"]),
         blockers=list(snapshot["blockers"]),
     )
+
+
+def _build_short_trade_committee_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "enabled": bool(snapshot.get("committee_enabled", False)),
+        "gate": str(snapshot.get("committee_gate") or ""),
+        "profile": str(snapshot.get("committee_profile") or ""),
+        "alpha_edge_score": round(float(snapshot.get("alpha_edge_score", 0.0) or 0.0), 4),
+        "beta_execution_score": round(float(snapshot.get("beta_execution_score", 0.0) or 0.0), 4),
+        "gamma_risk_score": round(float(snapshot.get("gamma_risk_score", 0.0) or 0.0), 4),
+        "committee_score": round(float(snapshot.get("committee_score", 0.0) or 0.0), 4),
+        "thresholds": dict(snapshot.get("committee_thresholds") or {}),
+        "gate_status": dict(snapshot.get("committee_gate_status") or {}),
+        "fail_reasons": list(snapshot.get("committee_fail_reasons") or []),
+        "advisory_reasons": list(snapshot.get("committee_advisory_reasons") or []),
+        "vetoes": list(snapshot.get("committee_vetoes") or []),
+        "selected_pass": bool(snapshot.get("committee_selected_pass", False)),
+        "components": dict(snapshot.get("committee_components") or {}),
+        "component_sources": dict(snapshot.get("committee_component_sources") or {}),
+    }
 
 
 def _build_short_trade_top_reasons_state(
@@ -1030,6 +1056,7 @@ def _build_short_trade_verdict(
     decision: str,
     top_reasons: list[str],
     rejection_reasons: list[str],
+    downgrade_reasons: list[str],
 ) -> ShortTradeVerdict:
     historical_prior = calibrate_short_trade_historical_prior(dict(input_data.replay_context.get("historical_prior") or {}))
     if resolve_btst_prior_shrinkage_p4_mode() == "enforce":
@@ -1054,6 +1081,7 @@ def _build_short_trade_verdict(
         gate_status=decision_snapshot.gate_status,
         top_reasons=top_reasons,
         rejection_reasons=rejection_reasons,
+        downgrade_reasons=trim_reasons(downgrade_reasons),
     )
 
 
@@ -1098,6 +1126,14 @@ def _build_short_trade_decision_stage(
         carryover_evidence_deficiency=context.carryover_evidence_deficiency,
         selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
     )
+    decision, downgrade_reasons = apply_short_trade_committee_governance(
+        decision=decision,
+        snapshot=snapshot,
+        positive_tags=decision_snapshot.positive_tags,
+        negative_tags=decision_snapshot.negative_tags,
+        blockers=decision_snapshot.blockers,
+        gate_status=decision_snapshot.gate_status,
+    )
     top_reasons, rejection_reasons = _build_short_trade_decision_reasoning(
         snapshot=snapshot,
         decision_snapshot=decision_snapshot,
@@ -1113,6 +1149,7 @@ def _build_short_trade_decision_stage(
         decision=decision,
         top_reasons=top_reasons,
         rejection_reasons=rejection_reasons,
+        downgrade_reasons=downgrade_reasons,
     )
     return context, thresholds, verdict
 
@@ -1183,7 +1220,9 @@ def build_short_trade_target_result(
         blockers=verdict.blockers,
         top_reasons=verdict.top_reasons,
         rejection_reasons=verdict.rejection_reasons,
+        downgrade_reasons=verdict.downgrade_reasons,
         gate_status=verdict.gate_status,
+        btst_regime_gate=str(snapshot.get("committee_gate") or dict(snapshot.get("historical_prior") or {}).get("btst_regime_gate") or "") or None,
         expected_holding_window="t1_short_trade",
         preferred_entry_mode=preferred_entry_mode_from_historical_prior(dict(snapshot["historical_prior"])),
         candidate_source=str(input_data.replay_context.get("source") or "") or None,
@@ -1200,6 +1239,13 @@ def build_short_trade_target_result(
         short_term_reversal=round(float(snapshot.get("short_term_reversal", 0.0)), 4),
         intraday_strength=round(float(snapshot.get("intraday_strength", 0.0)), 4),
         reversal_2d=round(float(snapshot.get("reversal_2d", 0.0)), 4),
+        alpha_edge_score=round(float(snapshot.get("alpha_edge_score", 0.0)), 4),
+        beta_execution_score=round(float(snapshot.get("beta_execution_score", 0.0)), 4),
+        gamma_risk_score=round(float(snapshot.get("gamma_risk_score", 0.0)), 4),
+        committee_score=round(float(snapshot.get("committee_score", 0.0)), 4),
+        committee_profile=str(snapshot.get("committee_profile") or "") or None,
+        committee_gate_status=dict(snapshot.get("committee_gate_status") or {}),
+        committee_vetoes=list(snapshot.get("committee_vetoes") or []),
         weighted_positive_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_positive_contributions"]).items()},
         weighted_negative_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_negative_contributions"]).items()},
         metrics_payload=_build_short_trade_metrics_payload(

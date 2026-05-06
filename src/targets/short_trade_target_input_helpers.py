@@ -26,10 +26,14 @@ def build_item_replay_context(
         "historical_prior": dict(getattr(item, "historical_prior", {}) or {}),
         "candidate_pool_lane": str(getattr(item, "candidate_pool_lane", "") or ""),
         "candidate_pool_shadow_reason": str(getattr(item, "candidate_pool_shadow_reason", "") or ""),
+        "candidate_pool_rank": int(getattr(item, "candidate_pool_rank", 0) or 0),
+        "candidate_pool_avg_amount_share_of_cutoff": float(getattr(item, "candidate_pool_avg_amount_share_of_cutoff", 0.0) or 0.0),
         "shadow_visibility_gap_selected": bool(getattr(item, "shadow_visibility_gap_selected", False)),
         "shadow_visibility_gap_relaxed_band": bool(getattr(item, "shadow_visibility_gap_relaxed_band", False)),
         "short_trade_catalyst_relief": dict(getattr(item, "short_trade_catalyst_relief", {}) or {}),
         "explicit_metric_overrides": explicit_metric_overrides,
+        "raw_candidate_metrics": dict(getattr(item, "metrics", {}) or {}),
+        "projected_theme_exposure": float(getattr(item, "projected_theme_exposure", 0.0) or 0.0),
     }
 
 
@@ -87,10 +91,14 @@ def build_target_input_from_entry(
             "historical_prior": dict(entry.get("historical_prior") or {}),
             "candidate_pool_lane": str(entry.get("candidate_pool_lane") or ""),
             "candidate_pool_shadow_reason": str(entry.get("candidate_pool_shadow_reason") or ""),
+            "candidate_pool_rank": int(entry.get("candidate_pool_rank", 0) or 0),
+            "candidate_pool_avg_amount_share_of_cutoff": float(entry.get("candidate_pool_avg_amount_share_of_cutoff", 0.0) or 0.0),
             "shadow_visibility_gap_selected": bool(entry.get("shadow_visibility_gap_selected")),
             "shadow_visibility_gap_relaxed_band": bool(entry.get("shadow_visibility_gap_relaxed_band")),
             "short_trade_catalyst_relief": dict(entry.get("short_trade_catalyst_relief") or {}),
             "explicit_metric_overrides": explicit_metric_overrides,
+            "raw_candidate_metrics": dict(entry.get("metrics") or {}),
+            "projected_theme_exposure": float(entry.get("projected_theme_exposure", 0.0) or 0.0),
         },
     )
 

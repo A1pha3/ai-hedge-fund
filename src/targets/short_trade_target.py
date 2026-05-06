@@ -32,6 +32,9 @@ from src.targets.short_trade_target_evaluation_helpers import (
 from src.targets.short_trade_target_evaluation_helpers import (
     _classify_breakout_stage as _classify_breakout_stage_impl,
 )
+from src.targets.short_trade_target_committee_helpers import (
+    build_short_trade_committee_snapshot,
+)
 from src.targets.short_trade_target_input_helpers import (
     build_item_replay_context as _build_item_replay_context_impl,
 )
@@ -729,12 +732,20 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         signal_snapshot=signal_snapshot,
         relief_snapshot=relief_snapshot,
     )
-    return build_short_trade_target_snapshot_payload(
+    snapshot = build_short_trade_target_snapshot_payload(
         profile=profile,
         signal_snapshot=signal_snapshot,
         relief_snapshot=relief_snapshot,
         labels_and_gates=labels_and_gates,
     )
+    snapshot.update(
+        build_short_trade_committee_snapshot(
+            input_data=input_data,
+            snapshot=snapshot,
+            profile=profile,
+        )
+    )
+    return snapshot
 
 
 def _resolve_short_trade_decision(

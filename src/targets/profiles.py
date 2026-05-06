@@ -234,6 +234,27 @@ class ShortTradeTargetProfile:
     event_catalyst_extension_penalty_max: float = 0.55
     event_catalyst_stale_penalty_max: float = 0.50
     event_catalyst_overhead_penalty_max: float = 0.50
+    committee_enabled: bool = False
+    committee_alpha_weight: float = 0.55
+    committee_beta_weight: float = 0.25
+    committee_gamma_weight: float = 0.20
+    committee_alpha_min_aggressive_trade: float = 0.0
+    committee_beta_min_aggressive_trade: float = 0.0
+    committee_gamma_min_aggressive_trade: float = 0.0
+    committee_score_min_aggressive_trade: float = 0.0
+    committee_alpha_min_normal_trade: float = 0.0
+    committee_beta_min_normal_trade: float = 0.0
+    committee_gamma_min_normal_trade: float = 0.0
+    committee_score_min_normal_trade: float = 0.0
+    committee_isolated_attention_veto_enabled: bool = True
+    committee_isolated_attention_min: float = 80.0
+    committee_isolated_attention_sector_max: float = 60.0
+    committee_isolated_attention_flow_max: float = 60.0
+    committee_weak_close_veto_enabled: bool = True
+    committee_weak_close_flow_min: float = 75.0
+    committee_weak_close_structure_max: float = 45.0
+    committee_weak_close_close_support_max: float = 60.0
+    committee_shadow_only_blocks_selected: bool = True
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:

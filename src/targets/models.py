@@ -62,6 +62,15 @@ class TargetEvaluationResult(BaseModel):
     layer_c_alignment: float | None = None
     momentum_strength: float | None = None
     short_term_reversal: float | None = None
+    intraday_strength: float | None = None
+    reversal_2d: float | None = None
+    alpha_edge_score: float | None = None
+    beta_execution_score: float | None = None
+    gamma_risk_score: float | None = None
+    committee_score: float | None = None
+    committee_profile: str | None = None
+    committee_gate_status: dict[str, Any] = Field(default_factory=dict)
+    committee_vetoes: list[str] = Field(default_factory=list)
     weighted_positive_contributions: dict[str, Any] = Field(default_factory=dict)
     weighted_negative_contributions: dict[str, Any] = Field(default_factory=dict)
     metrics_payload: dict[str, Any] = Field(default_factory=dict)
