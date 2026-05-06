@@ -63,6 +63,11 @@ def build_candidate_pool_frontier_entries(
     released_shadow_entries: list[dict[str, Any]],
     shadow_observation_entries: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not isinstance(released_shadow_entries, list):
+        raise TypeError("released_shadow_entries must be a list")
+    if not isinstance(shadow_observation_entries, list):
+        raise TypeError("shadow_observation_entries must be a list")
+
     promoted_entries: list[dict[str, Any]] = []
     diagnostics: dict[str, Any] = {
         "source_family_counts": {},
@@ -71,28 +76,35 @@ def build_candidate_pool_frontier_entries(
         "unclassified_count": 0,
     }
 
-    for entry in [*released_shadow_entries, *shadow_observation_entries]:
-        current = dict(entry)
-        source_family = classify_candidate_pool_frontier_source_family(current)
-        if source_family is None:
-            diagnostics["unclassified_count"] += 1
-            continue
+    for source_name, entries in (
+        ("released_shadow_entries", released_shadow_entries),
+        ("shadow_observation_entries", shadow_observation_entries),
+    ):
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise TypeError(f"{source_name}[{index}] must be a dict")
 
-        bucket = diagnostics["source_family_counts"].setdefault(source_family, {"promoted_count": 0, "rejected_count": 0})
-        if not _meets_frontier_gate(current, source_family=source_family):
-            bucket["rejected_count"] += 1
-            diagnostics["rejected_count"] += 1
-            continue
+            current = dict(entry)
+            source_family = classify_candidate_pool_frontier_source_family(current)
+            if source_family is None:
+                diagnostics["unclassified_count"] += 1
+                continue
 
-        promoted_entries.append(
-            {
-                **current,
-                "frontier_expansion_enabled": True,
-                "frontier_expansion_source_family": source_family,
-                "frontier_expansion_reason": "candidate_pool_frontier_expanded",
-            }
-        )
-        bucket["promoted_count"] += 1
-        diagnostics["promoted_count"] += 1
+            bucket = diagnostics["source_family_counts"].setdefault(source_family, {"promoted_count": 0, "rejected_count": 0})
+            if not _meets_frontier_gate(current, source_family=source_family):
+                bucket["rejected_count"] += 1
+                diagnostics["rejected_count"] += 1
+                continue
+
+            promoted_entries.append(
+                {
+                    **current,
+                    "frontier_expansion_enabled": True,
+                    "frontier_expansion_source_family": source_family,
+                    "frontier_expansion_reason": "candidate_pool_frontier_expanded",
+                }
+            )
+            bucket["promoted_count"] += 1
+            diagnostics["promoted_count"] += 1
 
     return promoted_entries, diagnostics

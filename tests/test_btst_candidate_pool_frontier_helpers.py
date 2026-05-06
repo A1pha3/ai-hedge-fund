@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.screening.candidate_pool_frontier_helpers import (
     build_candidate_pool_frontier_entries,
     classify_candidate_pool_frontier_source_family,
@@ -81,6 +83,8 @@ def test_build_candidate_pool_frontier_entries_keeps_only_entries_that_meet_sour
     )
 
     assert [entry["ticker"] for entry in promoted_entries] == ["300720"]
+    assert promoted_entries[0]["frontier_expansion_enabled"] is True
+    assert promoted_entries[0]["frontier_expansion_reason"] == "candidate_pool_frontier_expanded"
     assert promoted_entries[0]["frontier_expansion_source_family"] == "upstream_liquidity_corridor_shadow"
     assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["promoted_count"] == 1
     assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["rejected_count"] == 1
@@ -150,3 +154,31 @@ def test_build_candidate_pool_frontier_entries_counts_unclassified_entries_witho
     assert diagnostics["unclassified_count"] == 1
     assert diagnostics["promoted_count"] == 0
     assert diagnostics["rejected_count"] == 0
+
+
+def test_build_candidate_pool_frontier_entries_rejects_non_list_inputs_with_clear_typeerror() -> None:
+    with pytest.raises(TypeError, match="released_shadow_entries must be a list"):
+        build_candidate_pool_frontier_entries(  # type: ignore[arg-type]
+            released_shadow_entries={"ticker": "300720"},
+            shadow_observation_entries=[],
+        )
+
+    with pytest.raises(TypeError, match="shadow_observation_entries must be a list"):
+        build_candidate_pool_frontier_entries(  # type: ignore[arg-type]
+            released_shadow_entries=[],
+            shadow_observation_entries={"ticker": "300720"},
+        )
+
+
+def test_build_candidate_pool_frontier_entries_rejects_non_dict_entries_with_clear_typeerror() -> None:
+    with pytest.raises(TypeError, match="released_shadow_entries\\[0\\] must be a dict"):
+        build_candidate_pool_frontier_entries(
+            released_shadow_entries=["bad-entry"],  # type: ignore[list-item]
+            shadow_observation_entries=[],
+        )
+
+    with pytest.raises(TypeError, match="shadow_observation_entries\\[0\\] must be a dict"):
+        build_candidate_pool_frontier_entries(
+            released_shadow_entries=[],
+            shadow_observation_entries=["bad-entry"],  # type: ignore[list-item]
+        )
