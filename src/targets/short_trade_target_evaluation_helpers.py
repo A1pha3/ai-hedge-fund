@@ -224,39 +224,23 @@ def _collect_breakout_gate_misses(*, breakout_freshness: float, trend_accelerati
 
 def _preferred_entry_mode_from_historical_prior(historical_prior: dict[str, Any] | None) -> str:
     prior = dict(historical_prior or {})
-    has_calibrated_prior = any(
-        key in prior
-        for key in (
-            "calibrated_next_close_positive_rate",
-            "prior_evidence_weight",
-        )
-    )
-    evaluable_count = int(prior.get("evaluable_count") or 0)
-    prior_strength = float(prior.get("prior_shrinkage_strength", 3.0) or 3.0)
     execution_quality_label = str(prior.get("execution_quality_label") or "unknown")
-    if resolve_btst_prior_shrinkage_p4_mode() == "enforce":
-        effective_metrics = resolve_effective_prior_metrics(prior)
-        calibrated_next_close_positive_rate = clamp_unit_interval(float(effective_metrics.get("next_close_positive_rate", 0.0) or 0.0))
-        evidence_weight = clamp_unit_interval(float(effective_metrics.get("reliability", 0.0) or 0.0))
-    else:
-        calibrated_next_close_positive_rate = clamp_unit_interval(float(prior.get("calibrated_next_close_positive_rate", prior.get("next_close_positive_rate", 0.0)) or 0.0))
-        evidence_weight = clamp_unit_interval(
-            float(
-                prior.get(
-                    "prior_evidence_weight",
-                    (float(evaluable_count) / (float(evaluable_count) + prior_strength)) if (float(evaluable_count) + prior_strength) > 0 else 0.0,
-                )
-                or 0.0
-            )
-        )
+    effective_metrics = resolve_effective_prior_metrics(prior)
+    calibrated_next_close_positive_rate = clamp_unit_interval(float(effective_metrics.get("next_close_positive_rate", 0.0) or 0.0))
+    calibrated_next_high_hit_rate = clamp_unit_interval(float(effective_metrics.get("next_high_hit_rate_at_threshold", 0.0) or 0.0))
+    evidence_weight = clamp_unit_interval(float(effective_metrics.get("reliability", 0.0) or 0.0))
     if execution_quality_label == "intraday_only":
         return "intraday_confirmation_only"
     if execution_quality_label == "gap_chase_risk":
         return "avoid_open_chase_confirmation"
     if execution_quality_label == "close_continuation":
-        if has_calibrated_prior and (evidence_weight < 0.4 or calibrated_next_close_positive_rate < 0.60):
+        if evidence_weight >= 0.4 and calibrated_next_close_positive_rate >= 0.60:
+            return "confirm_then_hold_breakout"
+        if evidence_weight >= 0.4 and calibrated_next_high_hit_rate >= 0.70 and calibrated_next_close_positive_rate < 0.55:
+            return "intraday_confirmation_only"
+        if resolve_btst_prior_shrinkage_p4_mode() == "enforce" and evidence_weight < 0.4:
             return "next_day_breakout_confirmation"
-        return "confirm_then_hold_breakout"
+        return "next_day_breakout_confirmation"
     if execution_quality_label == "zero_follow_through":
         return "strong_reconfirmation_only"
     return "next_day_breakout_confirmation"

@@ -70,11 +70,25 @@ def _selected_holding_contract_note(
     return "默认按 BTST T+2 bias 管理，不把 T+3 连续走强当成基础预期。"
 
 
+def _selected_strict_posture_note(
+    preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None
+) -> str | None:
+    prior = dict(historical_prior or {})
+    if preferred_entry_mode == "intraday_confirmation_only":
+        return "当前 historical_prior 更像 intraday-only surface，默认不按隔夜持有管理。"
+    if preferred_entry_mode == "next_day_breakout_confirmation" and str(prior.get("execution_quality_label") or "") == "close_continuation":
+        return "当前 close-retention 证据不足，执行上先按次日确认处理，不预设 follow-through 持有。"
+    return None
+
+
 def _augment_execution_note(
     preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None
 ) -> str | None:
     prior = dict(historical_prior or {})
     base_note = str(prior.get("execution_note") or "").strip()
+    strict_posture_note = _selected_strict_posture_note(preferred_entry_mode, prior)
+    if strict_posture_note and strict_posture_note not in base_note:
+        base_note = f"{base_note} {strict_posture_note}".strip() if base_note else strict_posture_note
     contract_note = _selected_holding_contract_note(preferred_entry_mode, prior)
     if contract_note and contract_note not in base_note:
         return f"{base_note} {contract_note}".strip() if base_note else contract_note

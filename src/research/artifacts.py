@@ -63,6 +63,40 @@ def _portfolio_nav(portfolio_snapshot: dict[str, Any]) -> float:
     return total if total > 0 else cash
 
 
+def _merge_supplemental_short_trade_entries(
+    *,
+    base_entries: list[dict[str, Any]],
+    override_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    overrides_by_ticker: dict[str, dict[str, Any]] = {}
+    untickered_override_entries: list[dict[str, Any]] = []
+    for raw_entry in list(override_entries or []):
+        entry = dict(raw_entry or {})
+        ticker = str(entry.get("ticker") or "").strip()
+        if ticker:
+            overrides_by_ticker[ticker] = entry
+            continue
+        untickered_override_entries.append(entry)
+
+    merged_entries: list[dict[str, Any]] = []
+    inserted_override_tickers: set[str] = set()
+    for raw_entry in list(base_entries or []):
+        entry = dict(raw_entry or {})
+        ticker = str(entry.get("ticker") or "").strip()
+        if ticker and ticker in overrides_by_ticker:
+            if ticker not in inserted_override_tickers:
+                merged_entries.append(dict(overrides_by_ticker[ticker]))
+                inserted_override_tickers.add(ticker)
+            continue
+        merged_entries.append(entry)
+
+    for ticker, entry in overrides_by_ticker.items():
+        if ticker not in inserted_override_tickers:
+            merged_entries.append(dict(entry))
+    merged_entries.extend(untickered_override_entries)
+    return merged_entries
+
+
 def _extract_top_factors(item: LayerCResult) -> list[dict[str, Any]]:
     factors: list[dict[str, Any]] = []
     for strategy_name, signal in sorted((item.strategy_signals or {}).items()):
@@ -564,6 +598,7 @@ def build_selection_target_replay_input(
     formatted_trade_date = _format_trade_date(trade_date)
     market_state_payload = _serialize_market_state_payload(getattr(plan, "market_state", None))
     btst_regime_gate_payload = _build_btst_regime_gate_payload(plan)
+    frontier_diagnostics = dict((plan.risk_metrics or {}).get("candidate_pool_frontier_expansion") or {})
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
     rejected_entries = _attach_market_state_to_entries(
@@ -583,6 +618,10 @@ def build_selection_target_replay_input(
             *list(short_trade_candidate_filters.get("released_shadow_entries", []) or []),
             *list(watchlist_filter.get("released_shadow_entries", []) or []),
         ]
+    supplemental_short_trade_entries = _merge_supplemental_short_trade_entries(
+        base_entries=list(supplemental_short_trade_entries or []),
+        override_entries=list(frontier_diagnostics.get("promoted_entries") or []),
+    )
     supplemental_short_trade_entries = _attach_market_state_to_entries(
         supplemental_short_trade_entries,
         market_state_payload=market_state_payload,
@@ -618,7 +657,9 @@ def build_selection_target_replay_input(
             "upstream_shadow_observation_entry_count": len(upstream_shadow_observation_entries),
             "supplemental_catalyst_theme_entry_count": len(supplemental_catalyst_theme_entries),
             "buy_order_ticker_count": len(plan.buy_orders),
+            "frontier_source_family_counts": dict(frontier_diagnostics.get("source_family_counts") or {}),
         },
+        candidate_pool_frontier_expansion=frontier_diagnostics,
         watchlist=watchlist_entries,
         rejected_entries=rejected_entries,
         supplemental_short_trade_entries=supplemental_short_trade_entries,
@@ -646,6 +687,7 @@ def build_selection_snapshot(
     btst_regime_gate_payload = _build_btst_regime_gate_payload(plan)
     counts = dict((plan.risk_metrics or {}).get("counts", {}) or {})
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
+    frontier_diagnostics = dict((plan.risk_metrics or {}).get("candidate_pool_frontier_expansion") or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
     catalyst_theme_candidates = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
     catalyst_theme_shadow_candidates = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("shadow_candidates", []) or [])
@@ -683,6 +725,7 @@ def build_selection_snapshot(
         buy_orders=[order.model_dump(mode="json") for order in plan.buy_orders],
         sell_orders=[order.model_dump(mode="json") for order in plan.sell_orders],
         funnel_diagnostics=funnel_diagnostics,
+        candidate_pool_frontier_expansion=frontier_diagnostics,
         artifact_status={
             "snapshot_written": False,
             "review_written": False,

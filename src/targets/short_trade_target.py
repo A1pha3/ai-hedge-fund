@@ -168,6 +168,19 @@ def _historical_prior(input_data: TargetEvaluationInput) -> dict[str, Any]:
     profile = get_active_short_trade_target_profile()
     historical_prior.setdefault("p4_prior_shrinkage_k", float(getattr(profile, "p4_prior_shrinkage_k", 0.0) or 0.0))
     historical_prior.setdefault("selected_use_shrunk_prior_rates", bool(getattr(profile, "selected_use_shrunk_prior_rates", True)))
+    historical_prior.setdefault("adaptive_prior_shrinkage_enabled", bool(getattr(profile, "adaptive_prior_shrinkage_enabled", False)))
+    historical_prior.setdefault(
+        "adaptive_prior_shrinkage_low_sample_max_evaluable_count",
+        int(getattr(profile, "adaptive_prior_shrinkage_low_sample_max_evaluable_count", 0) or 0),
+    )
+    historical_prior.setdefault(
+        "adaptive_prior_shrinkage_close_continuation_normal_trade_k",
+        float(getattr(profile, "adaptive_prior_shrinkage_close_continuation_normal_trade_k", 0.0) or 0.0),
+    )
+    historical_prior.setdefault(
+        "adaptive_prior_shrinkage_close_continuation_aggressive_trade_k",
+        float(getattr(profile, "adaptive_prior_shrinkage_close_continuation_aggressive_trade_k", 0.0) or 0.0),
+    )
     explicit_btst_regime_gate = str(input_data.replay_context.get("btst_regime_gate") or historical_prior.get("btst_regime_gate") or "").strip()
     if explicit_btst_regime_gate:
         historical_prior["btst_regime_gate"] = explicit_btst_regime_gate

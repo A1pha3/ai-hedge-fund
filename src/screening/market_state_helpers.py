@@ -8,6 +8,8 @@ from src.agents.technicals import calculate_adx, calculate_atr
 from src.screening.models import DEFAULT_STRATEGY_WEIGHTS, MarketState, MarketStateType
 from src.utils.numeric import clamp_unit_interval
 
+_BTST_REGIME_GATES = frozenset({"normal_trade", "aggressive_trade", "shadow_only", "halt"})
+
 
 @dataclass(frozen=True)
 class MarketStateMetrics:
@@ -238,6 +240,9 @@ def classify_btst_regime_gate_from_market_state(market_state: MarketState | dict
         return None
     if not payload:
         return None
+    existing_payload = _reuse_btst_regime_gate_payload(payload.get("btst_regime_gate"))
+    if existing_payload is not None:
+        return existing_payload
     return classify_btst_regime_gate(
         breadth_ratio=float(payload.get("breadth_ratio", 0.5) or 0.5),
         daily_return=float(payload.get("daily_return", 0.0) or 0.0),
@@ -245,6 +250,29 @@ def classify_btst_regime_gate_from_market_state(market_state: MarketState | dict
         regime_flip_risk=float(payload.get("regime_flip_risk", 0.0) or 0.0),
         regime_gate_level=str(payload.get("regime_gate_level", "normal") or "normal"),
     )
+
+
+def _reuse_btst_regime_gate_payload(payload: object) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+    gate = str(payload.get("gate") or "").strip().lower()
+    if gate not in _BTST_REGIME_GATES:
+        return None
+    metrics_payload = dict(payload.get("metrics") or {})
+    normalized_regime_gate_level = str(metrics_payload.get("regime_gate_level", "normal") or "normal").strip().lower() or "normal"
+    return {
+        "gate": gate,
+        "profile_hint": str(payload.get("profile_hint") or ""),
+        "reason_codes": [str(code).strip() for code in list(payload.get("reason_codes") or []) if str(code or "").strip()],
+        "metrics": {
+            "breadth_ratio": round(float(metrics_payload.get("breadth_ratio", 0.5) or 0.5), 6),
+            "daily_return": round(float(metrics_payload.get("daily_return", 0.0) or 0.0), 6),
+            "style_dispersion": round(float(metrics_payload.get("style_dispersion", 0.0) or 0.0), 6),
+            "regime_flip_risk": round(float(metrics_payload.get("regime_flip_risk", 0.0) or 0.0), 6),
+            "regime_gate_level": normalized_regime_gate_level,
+        },
+        **({"mode": str(payload.get("mode") or "")} if str(payload.get("mode") or "").strip() else {}),
+    }
 
 
 def build_market_state_from_metrics(*, metrics: MarketStateMetrics, normalize_weights: callable) -> MarketState:

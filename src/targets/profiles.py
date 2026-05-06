@@ -33,6 +33,10 @@ class ShortTradeTargetProfile:
     selected_rank_cap_relief_require_t_plus_2_candidate: bool = False
     selected_rank_cap_relief_allow_risk_off: bool = True
     selected_rank_cap_relief_allow_crisis: bool = True
+    regime_admission_recovery_enabled: bool = False
+    regime_admission_recovery_normal_trade_relief: float = 0.0
+    regime_admission_recovery_aggressive_trade_relief: float = 0.0
+    regime_admission_recovery_max_relief: float = 0.0
     selected_rank_cap_relief_catalyst_theme_carryover_support_enabled: bool = False
     selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count: int = 0
     selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min: float = 0.0
@@ -211,6 +215,10 @@ class ShortTradeTargetProfile:
     # P4 prior shrinkage controls
     p4_prior_shrinkage_k: float = 8.0
     selected_use_shrunk_prior_rates: bool = True
+    adaptive_prior_shrinkage_enabled: bool = False
+    adaptive_prior_shrinkage_low_sample_max_evaluable_count: int = 3
+    adaptive_prior_shrinkage_close_continuation_normal_trade_k: float = 8.0
+    adaptive_prior_shrinkage_close_continuation_aggressive_trade_k: float = 8.0
     # Event catalyst assessment controls
     event_catalyst_enabled: bool = False
     event_catalyst_candidate_sources: frozenset[str] = frozenset({"catalyst_theme", "short_trade_boundary"})

@@ -637,6 +637,62 @@ def test_file_selection_artifact_writer_includes_watchlist_shadow_release_entrie
     assert '"shadow_release_reason": "watchlist_avoid_shadow_release_boundary_pass"' in replay_input_text
 
 
+def test_file_selection_artifact_writer_includes_frontier_diagnostics_and_deduped_promotions(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_frontier")
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "short_trade_candidates": {
+                        "tickers": [],
+                        "released_shadow_entries": [
+                            {
+                                "ticker": "301292",
+                                "candidate_source": "post_gate_liquidity_competition_shadow",
+                                "candidate_pool_lane": "post_gate_liquidity_competition",
+                                "shadow_release_reason": "upstream_shadow_release_score_floor_pass",
+                            }
+                        ],
+                    }
+                }
+            },
+            "candidate_pool_frontier_expansion": {
+                "source_family_counts": {
+                    "post_gate_liquidity_competition_shadow": {
+                        "promoted_count": 1,
+                        "rejected_count": 0,
+                    }
+                },
+                "promoted_count": 1,
+                "rejected_count": 0,
+                "promoted_entries": [
+                    {
+                        "ticker": "301292",
+                        "candidate_source": "post_gate_liquidity_competition_shadow",
+                        "candidate_pool_lane": "post_gate_liquidity_competition",
+                        "frontier_expansion_enabled": True,
+                        "frontier_expansion_source_family": "post_gate_liquidity_competition_shadow",
+                        "frontier_expansion_reason": "candidate_pool_frontier_expanded",
+                    }
+                ],
+            },
+        },
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    replay_input_payload = json.loads((tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+    snapshot_payload = json.loads((tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8"))
+
+    assert replay_input_payload["source_summary"]["supplemental_short_trade_entry_count"] == 1
+    assert replay_input_payload["source_summary"]["frontier_source_family_counts"]["post_gate_liquidity_competition_shadow"]["promoted_count"] == 1
+    assert replay_input_payload["supplemental_short_trade_entries"][0]["frontier_expansion_enabled"] is True
+    assert snapshot_payload["candidate_pool_frontier_expansion"]["promoted_count"] == 1
+
+
 def test_file_selection_artifact_writer_builds_fallback_layer_b_factors_for_legacy_replay(tmp_path):
     writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_legacy")
     plan = ExecutionPlan(

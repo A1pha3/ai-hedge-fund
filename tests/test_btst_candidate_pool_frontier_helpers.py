@@ -156,6 +156,98 @@ def test_build_candidate_pool_frontier_entries_counts_unclassified_entries_witho
     assert diagnostics["rejected_count"] == 0
 
 
+def test_build_candidate_pool_frontier_entries_dedupes_overlap_by_ticker_across_sources() -> None:
+    overlapping_entry = {
+        "ticker": "300720",
+        "candidate_source": "post_gate_liquidity_competition_shadow",
+        "candidate_pool_lane": "post_gate_liquidity_competition",
+        "candidate_pool_rank": 1499,
+        "candidate_pool_avg_amount_share_of_cutoff": 0.18,
+        "candidate_pool_avg_amount_share_of_min_gate": 3.0,
+        "short_trade_boundary_metrics": {
+            "trend_acceleration": 0.75,
+            "close_strength": 0.88,
+            "catalyst_freshness": 0.0,
+        },
+    }
+
+    promoted_entries, diagnostics = build_candidate_pool_frontier_entries(
+        released_shadow_entries=[overlapping_entry],
+        shadow_observation_entries=[overlapping_entry],
+    )
+
+    assert [entry["ticker"] for entry in promoted_entries] == ["300720"]
+    assert diagnostics["source_family_counts"]["post_gate_liquidity_competition_shadow"]["promoted_count"] == 1
+    assert diagnostics["promoted_count"] == 1
+    assert diagnostics["rejected_count"] == 0
+
+
+def test_build_candidate_pool_frontier_entries_dedupes_cross_family_overlap_by_ticker_with_deterministic_winner() -> None:
+    promoted_entries, diagnostics = build_candidate_pool_frontier_entries(
+        released_shadow_entries=[
+            {
+                "ticker": "300721",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "candidate_pool_lane": "layer_a_liquidity_corridor",
+                "candidate_pool_rank": 1400,
+                "candidate_pool_avg_amount_share_of_cutoff": 0.21,
+                "candidate_pool_avg_amount_share_of_min_gate": 4.2,
+                "short_trade_boundary_metrics": {
+                    "candidate_score": 0.41,
+                    "trend_acceleration": 0.72,
+                    "close_strength": 0.86,
+                },
+            }
+        ],
+        shadow_observation_entries=[
+            {
+                "ticker": "300721",
+                "candidate_source": "post_gate_liquidity_competition_shadow",
+                "candidate_pool_lane": "post_gate_liquidity_competition",
+                "candidate_pool_rank": 1200,
+                "candidate_pool_avg_amount_share_of_cutoff": 0.31,
+                "candidate_pool_avg_amount_share_of_min_gate": 6.1,
+                "short_trade_boundary_metrics": {
+                    "candidate_score": 0.56,
+                    "trend_acceleration": 0.82,
+                    "close_strength": 0.92,
+                },
+            }
+        ],
+    )
+
+    assert [entry["ticker"] for entry in promoted_entries] == ["300721"]
+    assert promoted_entries[0]["frontier_expansion_source_family"] == "post_gate_liquidity_competition_shadow"
+    assert diagnostics["promoted_count"] == 1
+    assert diagnostics["source_family_counts"]["post_gate_liquidity_competition_shadow"]["promoted_count"] == 1
+    assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["promoted_count"] == 0
+    assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["rejected_count"] == 0
+
+
+def test_build_candidate_pool_frontier_entries_reports_missing_and_invalid_gate_fields_without_crashing() -> None:
+    promoted_entries, diagnostics = build_candidate_pool_frontier_entries(
+        released_shadow_entries=[
+            {
+                "ticker": "300722",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "candidate_pool_lane": "layer_a_liquidity_corridor",
+                "candidate_pool_rank": "bad-rank",
+                "candidate_pool_avg_amount_share_of_cutoff": 0.22,
+                "candidate_pool_avg_amount_share_of_min_gate": 4.3,
+                "short_trade_boundary_metrics": {
+                    "trend_acceleration": 0.73,
+                },
+            }
+        ],
+        shadow_observation_entries=[],
+    )
+
+    assert promoted_entries == []
+    assert diagnostics["rejected_count"] == 1
+    assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["invalid_field_counts"]["candidate_pool_rank"] == 1
+    assert diagnostics["source_family_counts"]["upstream_liquidity_corridor_shadow"]["missing_field_counts"]["close_strength"] == 1
+
+
 def test_build_candidate_pool_frontier_entries_rejects_non_list_inputs_with_clear_typeerror() -> None:
     with pytest.raises(TypeError, match="released_shadow_entries must be a list"):
         build_candidate_pool_frontier_entries(  # type: ignore[arg-type]

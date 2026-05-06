@@ -106,6 +106,7 @@ def _resolve_rank_threshold_tightening(rank_hint: int | None) -> dict[str, Any]:
 def _apply_rank_based_threshold_tightening(snapshot: dict[str, Any], *, rank_hint: int | None) -> dict[str, Any]:
     adjusted = dict(snapshot)
     tightening = _resolve_rank_threshold_tightening(rank_hint)
+    tightening = _apply_regime_admission_recovery(snapshot, tightening=tightening)
     if not bool(tightening["enabled"]):
         adjusted["rank_threshold_tightening"] = tightening
         return adjusted
@@ -127,6 +128,43 @@ def _apply_rank_based_threshold_tightening(snapshot: dict[str, Any], *, rank_hin
         "effective_near_miss_threshold": round(effective_near_miss, 4),
     }
     return adjusted
+
+
+def _apply_regime_admission_recovery(snapshot: dict[str, Any], *, tightening: dict[str, Any]) -> dict[str, Any]:
+    adjusted_tightening = dict(tightening)
+    profile = snapshot.get("profile")
+    historical_prior = dict(snapshot.get("historical_prior") or {})
+    btst_regime_gate = str(historical_prior.get("btst_regime_gate") or "normal_trade").strip().lower() or "normal_trade"
+    adjusted_tightening["btst_regime_gate"] = btst_regime_gate
+    adjusted_tightening["regime_admission_recovery_applied"] = False
+    adjusted_tightening["regime_admission_recovery_relief"] = 0.0
+    if not bool(adjusted_tightening.get("enabled")) or profile is None or not bool(getattr(profile, "regime_admission_recovery_enabled", False)):
+        return adjusted_tightening
+
+    max_relief = min(0.02, max(0.0, float(getattr(profile, "regime_admission_recovery_max_relief", 0.0) or 0.0)))
+    if max_relief <= 0.0:
+        return adjusted_tightening
+    if btst_regime_gate == "aggressive_trade":
+        configured_relief = float(getattr(profile, "regime_admission_recovery_aggressive_trade_relief", 0.0) or 0.0)
+    elif btst_regime_gate == "normal_trade":
+        configured_relief = float(getattr(profile, "regime_admission_recovery_normal_trade_relief", 0.0) or 0.0)
+    else:
+        configured_relief = 0.0
+    relief = min(
+        max_relief,
+        max(0.0, configured_relief),
+        float(adjusted_tightening.get("select_threshold_lift") or 0.0),
+        float(adjusted_tightening.get("near_miss_threshold_lift") or 0.0),
+    )
+    if relief <= 0.0:
+        return adjusted_tightening
+
+    adjusted_tightening["select_threshold_lift"] = round(max(0.0, float(adjusted_tightening["select_threshold_lift"]) - relief), 4)
+    adjusted_tightening["near_miss_threshold_lift"] = round(max(0.0, float(adjusted_tightening["near_miss_threshold_lift"]) - relief), 4)
+    adjusted_tightening["enabled"] = bool(adjusted_tightening["select_threshold_lift"] > 0.0 or adjusted_tightening["near_miss_threshold_lift"] > 0.0)
+    adjusted_tightening["regime_admission_recovery_applied"] = True
+    adjusted_tightening["regime_admission_recovery_relief"] = round(relief, 4)
+    return adjusted_tightening
 
 
 # ---------------------------------------------------------------------------

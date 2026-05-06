@@ -343,6 +343,37 @@ def _build_btst_regime_gate_payload(market_state: Any | None) -> dict[str, Any]:
     return gate_payload
 
 
+def _build_downstream_target_market_state_payload(market_state: Any | None) -> dict[str, Any]:
+    if market_state is None:
+        return {}
+    if hasattr(market_state, "model_dump"):
+        payload = dict(market_state.model_dump(mode="json") or {})
+    elif isinstance(market_state, dict):
+        payload = dict(market_state)
+    else:
+        return {}
+    gate_payload = _build_btst_regime_gate_payload(payload)
+    if gate_payload:
+        payload["btst_regime_gate"] = dict(gate_payload)
+    return payload
+
+
+def _attach_downstream_target_market_state_payload(
+    layer_c_results: list[LayerCResult],
+    *,
+    market_state: Any | None,
+) -> list[LayerCResult]:
+    market_state_payload = _build_downstream_target_market_state_payload(market_state)
+    if not market_state_payload:
+        return list(layer_c_results)
+    attached_results: list[LayerCResult] = []
+    for item in list(layer_c_results):
+        merged_market_state = dict(market_state_payload)
+        merged_market_state.update(dict(getattr(item, "market_state", {}) or {}))
+        attached_results.append(item.model_copy(update={"market_state": merged_market_state}))
+    return attached_results
+
+
 def _attach_btst_regime_gate_shadow(plan: ExecutionPlan) -> ExecutionPlan:
     gate_payload = _build_btst_regime_gate_payload(getattr(plan, "market_state", None))
     if not gate_payload:
@@ -1281,7 +1312,7 @@ class DailyPipeline:
         selection_resolution: PostMarketSelectionResolution = resolve_post_market_selection_targets(
             trade_date=trade_date,
             watchlist_context=watchlist_context,
-            market_state=candidate_context.market_state,
+            market_state=_build_downstream_target_market_state_payload(candidate_context.market_state),
             buy_orders=order_context.buy_orders,
             counts=counts,
             funnel_diagnostics=funnel_diagnostics,
@@ -1381,6 +1412,10 @@ class DailyPipeline:
 
         stage_started_at = perf_counter()
         layer_c_results = aggregate_layer_c_results(high_pool, merged_agent_results)
+        layer_c_results = _attach_downstream_target_market_state_payload(
+            layer_c_results,
+            market_state=market_state,
+        )
         layer_c_results, merge_approved_layer_c_alignment_uplift = _apply_merge_approved_layer_c_alignment_uplift(
             layer_c_results,
             self.merge_approved_tickers,

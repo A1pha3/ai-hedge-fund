@@ -1148,3 +1148,15 @@ SHORT_TRADE_TARGET_PROFILES["event_catalyst_guarded"] = replace(
     event_catalyst_selected_uplift=0.03,
     event_catalyst_near_miss_threshold_relief=0.02,
 )
+
+SHORT_TRADE_TARGET_PROFILES["btst_admission_edge_recovery"] = replace(
+    SHORT_TRADE_TARGET_PROFILES["btst_precision_v2"],
+    name="btst_admission_edge_recovery",
+    regime_admission_recovery_enabled=True,
+    regime_admission_recovery_normal_trade_relief=0.005,
+    regime_admission_recovery_aggressive_trade_relief=0.01,
+    regime_admission_recovery_max_relief=0.01,
+    adaptive_prior_shrinkage_enabled=True,
+    adaptive_prior_shrinkage_close_continuation_normal_trade_k=3.0,
+    adaptive_prior_shrinkage_close_continuation_aggressive_trade_k=2.0,
+)

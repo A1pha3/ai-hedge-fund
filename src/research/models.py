@@ -102,6 +102,7 @@ class SelectionSnapshot(BaseModel):
     buy_orders: list[dict[str, Any]] = Field(default_factory=list)
     sell_orders: list[dict[str, Any]] = Field(default_factory=list)
     funnel_diagnostics: dict[str, Any] = Field(default_factory=dict)
+    candidate_pool_frontier_expansion: dict[str, Any] = Field(default_factory=dict)
     artifact_status: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -116,6 +117,7 @@ class SelectionTargetReplayInput(BaseModel):
     target_mode: str = "research_only"
     pipeline_config_snapshot: dict[str, Any] = Field(default_factory=dict)
     source_summary: dict[str, Any] = Field(default_factory=dict)
+    candidate_pool_frontier_expansion: dict[str, Any] = Field(default_factory=dict)
     watchlist: list[dict[str, Any]] = Field(default_factory=list)
     rejected_entries: list[dict[str, Any]] = Field(default_factory=list)
     supplemental_short_trade_entries: list[dict[str, Any]] = Field(default_factory=list)

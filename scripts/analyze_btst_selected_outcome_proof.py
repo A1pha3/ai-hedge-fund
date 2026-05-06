@@ -342,6 +342,7 @@ def _build_evidence_summary_payload(
 
 def _build_recommendation(summary: dict[str, Any]) -> str:
     evidence_case_count = int(summary.get("evidence_case_count") or 0)
+    next_high_hit_rate = summary.get("next_high_hit_rate_at_threshold")
     next_close_positive_rate = summary.get("next_close_positive_rate")
     t_plus_2_positive_rate = summary.get("t_plus_2_close_positive_rate")
     t_plus_3_positive_rate = summary.get("t_plus_3_close_positive_rate")
@@ -354,6 +355,11 @@ def _build_recommendation(summary: dict[str, Any]) -> str:
         if _has_supported_t_plus_3(t_plus_3_positive_rate):
             return "当前 selected 路径已有足够的 historical_prior follow-through 支持，可继续保留 confirm_then_hold 语义。"
         return "当前 selected 路径的次日与 T+2 支持较强，但 T+3 延续偏弱，更适合作为次日确认后持有、而非过度拉长持仓的 BTST 方案。"
+    if _has_intraday_only_surface(
+        next_high_hit_rate=next_high_hit_rate,
+        next_close_positive_rate=next_close_positive_rate,
+    ):
+        return "当前 selected 路径更像 intraday-only surface：盘中高点命中存在，但次日收盘留存偏弱，应下调为 intraday_confirmation_only 一类的严格执行姿态。"
     if _has_strong_next_day_only(next_close_positive_rate):
         return "当前 selected 路径至少证明了较强的次日收盘延续，但 T+2/T+3 样本还不足，后续应继续积累 closed-cycle 证据。"
     return "当前 selected 路径的 historical_prior 证据还不足以证明收益质量改善，优先任务应转向扩充 carryover cohort，而不是继续放松 selected frontier。"
@@ -365,6 +371,15 @@ def _has_strong_next_day_and_t_plus_2_support(*, next_close_positive_rate: Any, 
 
 def _has_supported_t_plus_3(t_plus_3_positive_rate: Any) -> bool:
     return t_plus_3_positive_rate is None or t_plus_3_positive_rate >= 0.5
+
+
+def _has_intraday_only_surface(*, next_high_hit_rate: Any, next_close_positive_rate: Any) -> bool:
+    return (
+        next_high_hit_rate is not None
+        and next_high_hit_rate >= 0.75
+        and next_close_positive_rate is not None
+        and next_close_positive_rate < 0.6
+    )
 
 
 def _has_strong_next_day_only(next_close_positive_rate: Any) -> bool:

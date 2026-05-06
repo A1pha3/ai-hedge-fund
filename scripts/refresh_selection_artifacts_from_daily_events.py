@@ -15,7 +15,7 @@ from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_
 from src.execution.models import ExecutionPlan
 from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
-from src.research.artifacts import FileSelectionArtifactWriter
+from src.research.artifacts import FileSelectionArtifactWriter, _merge_supplemental_short_trade_entries
 from src.screening.candidate_pool_frontier_helpers import build_candidate_pool_frontier_entries
 from src.screening.models import FusedScore, MarketState, StrategySignal
 from src.targets.models import DualTargetEvaluation
@@ -612,6 +612,15 @@ def rebuild_selection_targets_for_plan(
         prior_by_ticker=historical_prior_by_ticker,
         strategy_signals_by_ticker=strategy_signals_by_ticker,
     )
+    supplemental_short_trade_entries = _merge_supplemental_short_trade_entries(
+        base_entries=[
+            *refreshed_short_trade_tickers,
+            *refreshed_short_trade_released_shadow_entries,
+            *refreshed_watchlist_released_shadow_entries,
+            *refreshed_catalyst_theme_tickers,
+        ],
+        override_entries=promoted_frontier_entries,
+    )
     frontier_diagnostics["promoted_entries"] = [dict(entry or {}) for entry in promoted_frontier_entries]
     plan.watchlist = _rehydrate_watchlist_strategy_signals(
         list(plan.watchlist or []),
@@ -621,13 +630,7 @@ def rebuild_selection_targets_for_plan(
         trade_date=trade_date_compact,
         watchlist=list(plan.watchlist or []),
         rejected_entries=refreshed_rejected_entries,
-        supplemental_short_trade_entries=[
-            *refreshed_short_trade_tickers,
-            *refreshed_short_trade_released_shadow_entries,
-            *refreshed_watchlist_released_shadow_entries,
-            *refreshed_catalyst_theme_tickers,
-            *promoted_frontier_entries,
-        ],
+        supplemental_short_trade_entries=supplemental_short_trade_entries,
         buy_order_tickers={str(order.ticker) for order in list(plan.buy_orders or [])},
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
     )
@@ -646,7 +649,6 @@ def rebuild_selection_targets_for_plan(
     filters["short_trade_candidates"] = short_trade_candidate_filters
     filters["catalyst_theme_candidates"] = refreshed_catalyst_theme_filter
     funnel_diagnostics["filters"] = filters
-    funnel_diagnostics["candidate_pool_frontier_expansion"] = frontier_diagnostics
     risk_metrics["funnel_diagnostics"] = funnel_diagnostics
     risk_metrics["candidate_pool_frontier_expansion"] = frontier_diagnostics
     plan.risk_metrics = risk_metrics
@@ -699,28 +701,6 @@ def _apply_rebuilt_catalyst_theme_filter(*, plan: ExecutionPlan, report_dir: Pat
     risk_metrics["funnel_diagnostics"] = funnel_diagnostics
     plan.risk_metrics = risk_metrics
     return plan
-
-
-def _write_frontier_diagnostics_to_artifacts(
-    *,
-    snapshot_path: str | Path,
-    replay_input_path: str | Path,
-    frontier_diagnostics: dict[str, Any],
-) -> None:
-    for artifact_path in (Path(snapshot_path), Path(replay_input_path)):
-        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
-        payload["candidate_pool_frontier_expansion"] = frontier_diagnostics
-        source_summary = dict(payload.get("source_summary") or {})
-        source_summary["frontier_source_family_counts"] = dict(frontier_diagnostics.get("source_family_counts") or {})
-        payload["source_summary"] = source_summary
-        if artifact_path.name == "selection_target_replay_input.json":
-            promoted_entries = [dict(entry or {}) for entry in list(frontier_diagnostics.get("promoted_entries") or [])]
-            if promoted_entries:
-                payload["supplemental_short_trade_entries"] = [
-                    *list(payload.get("supplemental_short_trade_entries") or []),
-                    *promoted_entries,
-                ]
-        artifact_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _normalize_market_state_payload(raw_market_state: Any) -> dict[str, Any]:
@@ -1092,12 +1072,6 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
             selected_analysts=selected_analysts,
         )
         frontier_diagnostics = dict((refreshed_plan.risk_metrics or {}).get("candidate_pool_frontier_expansion") or {})
-        if frontier_diagnostics and write_result.snapshot_path and write_result.replay_input_path:
-            _write_frontier_diagnostics_to_artifacts(
-                snapshot_path=write_result.snapshot_path,
-                replay_input_path=write_result.replay_input_path,
-                frontier_diagnostics=frontier_diagnostics,
-            )
         trade_date_display = normalize_trade_date(trade_date_compact) or trade_date_compact
         refreshed_results.append(
             {
