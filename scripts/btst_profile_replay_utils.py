@@ -27,6 +27,17 @@ DEFAULT_GUARDRAIL_NEXT_HIGH_HIT_RATE = 0.5217
 DEFAULT_GUARDRAIL_NEXT_CLOSE_POSITIVE_RATE = 0.5652
 
 
+def _resolve_frontier_source_family(*, row: dict[str, Any] | None = None, entry: dict[str, Any] | None = None) -> str | None:
+    row = dict(row or {})
+    entry = dict(entry or {})
+    explicit_source_family = str(
+        row.get("frontier_expansion_source_family")
+        or entry.get("frontier_expansion_source_family")
+        or ""
+    ).strip()
+    return explicit_source_family or None
+
+
 def _serialize_profile(profile: Any) -> dict[str, Any]:
     return {
         "name": profile.name,
@@ -362,6 +373,7 @@ def _build_filtered_candidate_entry_rows(
                 "matched_filter": str(filtered_entry.get("matched_filter") or "unknown"),
                 "metric_snapshot": dict(filtered_entry.get("metric_snapshot") or {}),
                 "metric_gate_status": dict(filtered_entry.get("metric_gate_status") or {}),
+                "frontier_expansion_source_family": _resolve_frontier_source_family(entry=filtered_entry),
                 "replay_input_path": str(replay_input_path),
                 **price_outcome,
             }
@@ -383,6 +395,11 @@ def _build_replayed_rows(
 ) -> list[dict[str, Any]]:
     watchlist = _coerce_watchlist_entries(list(payload.get("watchlist") or []))
     buy_order_tickers = {str(ticker) for ticker in list(payload.get("buy_order_tickers") or []) if str(ticker or "").strip()}
+    source_entry_by_ticker: dict[str, dict[str, Any]] = {}
+    for source_entry in [*list(rejected_entries or []), *list(supplemental_entries or [])]:
+        ticker = str((source_entry or {}).get("ticker") or "").strip()
+        if ticker:
+            source_entry_by_ticker[ticker] = dict(source_entry or {})
     replayed_targets, _ = build_selection_targets(
         trade_date=trade_date.replace("-", ""),
         watchlist=watchlist,
@@ -400,9 +417,11 @@ def _build_replayed_rows(
         stored_evaluation = dict(stored_targets.get(ticker) or {})
         stored_short_trade = dict(stored_evaluation.get("short_trade") or {})
         price_outcome = _extract_btst_price_outcome(str(ticker), trade_date, price_cache)
+        source_entry = dict(source_entry_by_ticker.get(str(ticker)) or {})
+        replayed_explainability_payload = dict(replayed_snapshot.get("explainability_payload") or {})
         candidate_source = str(
             stored_evaluation.get("candidate_source")
-            or dict(replayed_snapshot.get("explainability_payload") or {}).get("candidate_source")
+            or replayed_explainability_payload.get("candidate_source")
             or "unknown"
         )
         rows.append(
@@ -420,13 +439,43 @@ def _build_replayed_rows(
                 "blockers": list(replayed_snapshot.get("blockers") or []),
                 "gate_status": dict(replayed_snapshot.get("gate_status") or {}),
                 "metrics_payload": dict(replayed_snapshot.get("metrics_payload") or {}),
-                "explainability_payload": dict(replayed_snapshot.get("explainability_payload") or {}),
+                "explainability_payload": replayed_explainability_payload,
+                "frontier_expansion_source_family": _resolve_frontier_source_family(
+                    row={
+                        "candidate_source": candidate_source,
+                        "explainability_payload": replayed_explainability_payload,
+                    },
+                    entry=source_entry,
+                ),
                 "target_mode": target_mode,
                 "replay_input_path": str(replay_input_path),
                 **price_outcome,
             }
         )
     return rows
+
+
+def _summarize_rows_by_frontier_source_family(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
+    grouped_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in list(rows or []):
+        source_family = str(_resolve_frontier_source_family(row=row) or "").strip()
+        if not source_family:
+            continue
+        grouped_rows.setdefault(source_family, []).append(dict(row or {}))
+
+    summaries: dict[str, Any] = {}
+    for source_family, source_rows in sorted(grouped_rows.items()):
+        selected_rows = [row for row in source_rows if row.get("decision") == "selected"]
+        near_miss_rows = [row for row in source_rows if row.get("decision") == "near_miss"]
+        tradeable_rows = [row for row in source_rows if row.get("decision") in {"selected", "near_miss"}]
+        summaries[source_family] = {
+            "all": _build_surface_summary(source_rows, next_high_hit_threshold=next_high_hit_threshold),
+            "tradeable": _build_surface_summary(tradeable_rows, next_high_hit_threshold=next_high_hit_threshold),
+            "selected": _build_surface_summary(selected_rows, next_high_hit_threshold=next_high_hit_threshold),
+            "near_miss": _build_surface_summary(near_miss_rows, next_high_hit_threshold=next_high_hit_threshold),
+            "decision_counts": dict(Counter(str(row.get("decision") or "unknown") for row in source_rows)),
+        }
+    return summaries
 
 
 def _build_profile_replay_analysis_payload(
@@ -517,6 +566,10 @@ def _build_profile_replay_analysis_payload(
             "candidate_source_counts": dict(filtered_candidate_source_counts),
             "surface_metrics": _build_surface_summary(filtered_candidate_entry_rows, next_high_hit_threshold=next_high_hit_threshold),
         },
+        "frontier_source_family_summaries": _summarize_rows_by_frontier_source_family(
+            rows,
+            next_high_hit_threshold=next_high_hit_threshold,
+        ),
         "top_tradeable_rows": top_tradeable_rows,
         "top_false_negative_rows": false_negative_rows[:8],
         "top_filtered_candidate_entry_rows": top_filtered_candidate_entry_rows,

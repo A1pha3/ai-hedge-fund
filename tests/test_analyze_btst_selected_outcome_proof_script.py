@@ -65,6 +65,36 @@ def test_summarize_evidence_rows_builds_confirm_then_hold_recommendation() -> No
     assert recommendation == "当前 selected 路径已有足够的 historical_prior follow-through 支持，可继续保留 confirm_then_hold 语义。"
 
 
+def test_intraday_only_surface_recommendation_is_called_out_explicitly() -> None:
+    summary = _summarize_evidence_rows(
+        [
+            {
+                "next_high_return": 0.043,
+                "next_close_return": -0.018,
+                "next_open_to_close_return": -0.021,
+                "t_plus_2_close_return": -0.014,
+                "t_plus_3_close_return": -0.022,
+                "t_plus_4_close_return": -0.01,
+            },
+            {
+                "next_high_return": 0.031,
+                "next_close_return": 0.004,
+                "next_open_to_close_return": -0.012,
+                "t_plus_2_close_return": -0.009,
+                "t_plus_3_close_return": -0.008,
+                "t_plus_4_close_return": -0.006,
+            },
+        ],
+        next_high_hit_threshold=0.02,
+    )
+
+    recommendation = _build_recommendation(summary)
+
+    assert summary["next_high_hit_rate_at_threshold"] == 1.0
+    assert summary["next_close_positive_rate"] == 0.5
+    assert recommendation == "当前 selected 路径更像 intraday-only surface：盘中高点命中存在，但次日收盘留存偏弱，应下调为 intraday_confirmation_only 一类的严格执行姿态。"
+
+
 def test_analyze_btst_selected_outcome_proof_summarizes_legacy_selected_history(monkeypatch) -> None:
     monkeypatch.setattr(
         proof_module,

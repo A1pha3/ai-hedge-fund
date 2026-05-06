@@ -15,7 +15,8 @@ from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_
 from src.execution.models import ExecutionPlan
 from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
-from src.research.artifacts import FileSelectionArtifactWriter
+from src.research.artifacts import FileSelectionArtifactWriter, _merge_supplemental_short_trade_entries
+from src.screening.candidate_pool_frontier_helpers import build_candidate_pool_frontier_entries
 from src.screening.models import FusedScore, MarketState, StrategySignal
 from src.targets.models import DualTargetEvaluation
 from src.targets.router import build_selection_targets, summarize_selection_targets
@@ -407,6 +408,25 @@ def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_
     return attached_entries
 
 
+def _build_frontier_expansion_entries(
+    *,
+    filters: dict[str, Any],
+    prior_by_ticker: dict[str, dict[str, Any]],
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    short_trade_filter = dict(filters.get("short_trade_candidates") or {})
+    promoted_entries, diagnostics = build_candidate_pool_frontier_entries(
+        released_shadow_entries=list(short_trade_filter.get("released_shadow_entries") or []),
+        shadow_observation_entries=list(short_trade_filter.get("shadow_observation_entries") or []),
+    )
+    promoted_entries = _attach_historical_prior_to_entries(promoted_entries, prior_by_ticker=prior_by_ticker)
+    promoted_entries = _attach_strategy_signals_to_entries(
+        promoted_entries,
+        strategy_signals_by_ticker=strategy_signals_by_ticker,
+    )
+    return promoted_entries, diagnostics
+
+
 def _extract_historical_prior_from_plan_selection_targets(plan: ExecutionPlan) -> dict[str, dict[str, Any]]:
     prior_by_ticker: dict[str, dict[str, Any]] = {}
     for ticker, evaluation in dict(getattr(plan, "selection_targets", {}) or {}).items():
@@ -587,6 +607,21 @@ def rebuild_selection_targets_for_plan(
         **catalyst_theme_filter,
         "tickers": refreshed_catalyst_theme_tickers,
     }
+    promoted_frontier_entries, frontier_diagnostics = _build_frontier_expansion_entries(
+        filters=filters,
+        prior_by_ticker=historical_prior_by_ticker,
+        strategy_signals_by_ticker=strategy_signals_by_ticker,
+    )
+    supplemental_short_trade_entries = _merge_supplemental_short_trade_entries(
+        base_entries=[
+            *refreshed_short_trade_tickers,
+            *refreshed_short_trade_released_shadow_entries,
+            *refreshed_watchlist_released_shadow_entries,
+            *refreshed_catalyst_theme_tickers,
+        ],
+        override_entries=promoted_frontier_entries,
+    )
+    frontier_diagnostics["promoted_entries"] = [dict(entry or {}) for entry in promoted_frontier_entries]
     plan.watchlist = _rehydrate_watchlist_strategy_signals(
         list(plan.watchlist or []),
         strategy_signals_by_ticker=strategy_signals_by_ticker,
@@ -595,12 +630,7 @@ def rebuild_selection_targets_for_plan(
         trade_date=trade_date_compact,
         watchlist=list(plan.watchlist or []),
         rejected_entries=refreshed_rejected_entries,
-        supplemental_short_trade_entries=[
-            *refreshed_short_trade_tickers,
-            *refreshed_short_trade_released_shadow_entries,
-            *refreshed_watchlist_released_shadow_entries,
-            *refreshed_catalyst_theme_tickers,
-        ],
+        supplemental_short_trade_entries=supplemental_short_trade_entries,
         buy_order_tickers={str(order.ticker) for order in list(plan.buy_orders or [])},
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
     )
@@ -620,6 +650,7 @@ def rebuild_selection_targets_for_plan(
     filters["catalyst_theme_candidates"] = refreshed_catalyst_theme_filter
     funnel_diagnostics["filters"] = filters
     risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    risk_metrics["candidate_pool_frontier_expansion"] = frontier_diagnostics
     plan.risk_metrics = risk_metrics
     plan.selection_targets = selection_targets
     plan.dual_target_summary = dual_target_summary
@@ -1040,6 +1071,7 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
             pipeline=pipeline_stub,
             selected_analysts=selected_analysts,
         )
+        frontier_diagnostics = dict((refreshed_plan.risk_metrics or {}).get("candidate_pool_frontier_expansion") or {})
         trade_date_display = normalize_trade_date(trade_date_compact) or trade_date_compact
         refreshed_results.append(
             {
@@ -1048,6 +1080,7 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
                 "replay_input_path": write_result.replay_input_path,
                 "write_status": write_result.write_status,
                 "selection_target_count": len(refreshed_plan.selection_targets),
+                "frontier_source_family_counts": dict(frontier_diagnostics.get("source_family_counts") or {}),
                 "short_trade_selected_symbols": list(refreshed_plan.dual_target_summary.short_trade_selected_count and sorted(
                     ticker
                     for ticker, evaluation in refreshed_plan.selection_targets.items()

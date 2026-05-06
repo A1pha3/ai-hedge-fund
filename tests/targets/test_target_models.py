@@ -1,11 +1,18 @@
 import pytest
 
 from src.execution.models import ExecutionPlan, LayerCResult
+from src.paper_trading._btst_reporting.entry_mode_utils import (
+    _augment_execution_note,
+)
 from src.screening.models import StrategySignal
 from src.targets import get_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets
+from src.targets.short_trade_target_evaluation_helpers import (
+    _preferred_entry_mode_from_historical_prior,
+)
 from src.targets.short_trade_target import (
     _resolve_selected_score_tolerance,
+    build_short_trade_target_snapshot_from_entry,
     evaluate_short_trade_rejected_target,
     evaluate_short_trade_selected_target,
 )
@@ -909,6 +916,96 @@ def test_merge_approved_continuation_relief_suppresses_same_ticker_intraday_only
     assert result.metrics_payload["merge_approved_continuation_relief"]["gate_hits"]["historical_execution_quality"] is False
     assert result.metrics_payload["merge_approved_continuation_relief"]["historical_execution_quality_label"] == "intraday_only"
     assert result.metrics_payload["thresholds"]["effective_select_threshold"] == pytest.approx(0.95, abs=1e-4)
+
+
+def test_historical_prior_explainability_surfaces_selected_adaptive_shrinkage_policy() -> None:
+    entry = {
+        "ticker": "300724",
+        "score_b": 0.0,
+        "score_c": 0.0,
+        "score_final": 0.0,
+        "quality_score": 0.6,
+        "decision": "watch",
+        "reason": "catalyst_theme_candidate_score_ranked",
+        "candidate_source": "catalyst_theme",
+        "candidate_reason_codes": ["catalyst_theme_candidate_score_ranked"],
+        "metrics": {
+            "breakout_freshness": 1.0,
+            "trend_acceleration": 1.0,
+            "volume_expansion_quality": 1.0,
+            "close_strength": 1.0,
+            "sector_resonance": 1.0,
+            "catalyst_freshness": 1.0,
+        },
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                80.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 80.0, "completeness": 1.0, "metrics": {"momentum_1m": 0.2, "momentum_3m": 0.8, "momentum_6m": 0.8, "volume_momentum": 0.8}},
+                    "adx_strength": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 50.0, "completeness": 1.0, "metrics": {"volatility_regime": 0.6, "atr_ratio": 0.08}},
+                    "long_trend_alignment": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                80.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "fundamental": _make_signal(1, 60.0).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 2,
+            "same_ticker_sample_count": 2,
+            "next_high_hit_rate_at_threshold": 1.0,
+            "next_close_positive_rate": 1.0,
+            "next_open_to_close_return_mean": 0.04,
+            "btst_regime_gate": "normal_trade",
+        },
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "select_threshold": 0.8,
+            "near_miss_threshold": 0.65,
+            "selected_breakout_freshness_min": 0.0,
+            "selected_trend_acceleration_min": 0.0,
+            "near_miss_breakout_freshness_min": 0.0,
+            "near_miss_trend_acceleration_min": 0.0,
+            "breakout_freshness_weight": 0.0,
+            "trend_acceleration_weight": 0.0,
+            "volume_expansion_quality_weight": 0.0,
+            "close_strength_weight": 0.0,
+            "sector_resonance_weight": 0.0,
+            "catalyst_freshness_weight": 0.0,
+            "layer_c_alignment_weight": 0.0,
+            "historical_continuation_score_weight": 1.0,
+            "stale_score_penalty_weight": 0.0,
+            "overhead_score_penalty_weight": 0.0,
+            "extension_score_penalty_weight": 0.0,
+            "layer_c_avoid_penalty": 0.0,
+            "p4_prior_shrinkage_k": 8.0,
+            "adaptive_prior_shrinkage_enabled": True,
+            "adaptive_prior_shrinkage_low_sample_max_evaluable_count": 3,
+            "adaptive_prior_shrinkage_close_continuation_normal_trade_k": 3.0,
+            "adaptive_prior_shrinkage_close_continuation_aggressive_trade_k": 2.0,
+        },
+    ):
+        result = evaluate_short_trade_rejected_target(trade_date="20260422", entry=entry)
+
+    historical_prior = result.explainability_payload["historical_prior"]
+    assert historical_prior["p4_prior_shrinkage_policy"] == "adaptive_close_continuation_low_sample_normal_trade"
+    assert historical_prior["selected_p4_prior_shrinkage_k"] == pytest.approx(3.0)
 
 
 def test_watchlist_zero_catalyst_penalty_applies_only_to_layer_c_watchlist() -> None:
@@ -3015,6 +3112,134 @@ def test_short_trade_breakout_trap_guard_blocks_risk_off_breakout_chase() -> Non
     assert result.explainability_payload["market_state_threshold_adjustment"]["regime_gate_level"] == "risk_off"
 
 
+def test_regime_can_relax_rank_tightening() -> None:
+    entry = _make_prepared_breakout_entry()
+    entry["market_state"] = {
+        "breadth_ratio": 0.39,
+        "position_scale": 0.70,
+        "style_dispersion": 0.71,
+        "regime_flip_risk": 0.82,
+        "regime_gate_level": "risk_off",
+        "regime_gate_reasons": ["style_dispersion", "regime_flip_risk"],
+        "btst_regime_gate": {
+            "gate": "normal_trade",
+            "profile_hint": "btst_precision_v2",
+            "reason_codes": ["reused_payload"],
+            "metrics": {
+                "breadth_ratio": 0.39,
+                "daily_return": 0.011,
+                "style_dispersion": 0.71,
+                "regime_flip_risk": 0.82,
+                "regime_gate_level": "risk_off",
+            },
+        },
+    }
+    entry["historical_prior"] = {"evaluable_count": 0}
+
+    relaxed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=18,
+        profile_name="btst_admission_edge_recovery",
+    )
+    shadow_entry = dict(entry)
+    shadow_entry["market_state"] = {
+        **dict(entry["market_state"]),
+        "btst_regime_gate": {
+            **dict(entry["market_state"]["btst_regime_gate"]),
+            "gate": "shadow_only",
+        },
+    }
+    shadow_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=shadow_entry,
+        rank_hint=18,
+        profile_name="btst_admission_edge_recovery",
+    )
+
+    relaxed_tightening = relaxed_result.metrics_payload["thresholds"]["rank_threshold_tightening"]
+    shadow_tightening = shadow_result.metrics_payload["thresholds"]["rank_threshold_tightening"]
+
+    assert relaxed_tightening["btst_regime_gate"] == "normal_trade"
+    assert relaxed_tightening["regime_admission_recovery_applied"] is True
+    assert relaxed_tightening["select_threshold_lift"] < shadow_tightening["select_threshold_lift"]
+    assert relaxed_tightening["near_miss_threshold_lift"] < shadow_tightening["near_miss_threshold_lift"]
+    assert shadow_tightening["btst_regime_gate"] == "shadow_only"
+    assert shadow_tightening["regime_admission_recovery_applied"] is False
+
+
+def test_regime_admission_recovery_defaults_missing_btst_gate_to_normal_trade() -> None:
+    entry = _make_prepared_breakout_entry()
+    entry["market_state"] = {}
+    entry["historical_prior"] = {"evaluable_count": 0}
+
+    missing_gate_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=18,
+        profile_name="btst_admission_edge_recovery",
+    )
+    explicit_gate_entry = dict(entry)
+    explicit_gate_entry["historical_prior"] = {
+        **dict(entry["historical_prior"]),
+        "btst_regime_gate": "normal_trade",
+    }
+    explicit_gate_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=explicit_gate_entry,
+        rank_hint=18,
+        profile_name="btst_admission_edge_recovery",
+    )
+
+    missing_gate_tightening = missing_gate_result.metrics_payload["thresholds"]["rank_threshold_tightening"]
+    explicit_gate_tightening = explicit_gate_result.metrics_payload["thresholds"]["rank_threshold_tightening"]
+
+    assert missing_gate_tightening["btst_regime_gate"] == "normal_trade"
+    assert missing_gate_tightening["regime_admission_recovery_applied"] is True
+    assert missing_gate_tightening["regime_admission_recovery_relief"] == explicit_gate_tightening["regime_admission_recovery_relief"]
+    assert missing_gate_tightening["select_threshold_lift"] == explicit_gate_tightening["select_threshold_lift"]
+    assert missing_gate_tightening["near_miss_threshold_lift"] == explicit_gate_tightening["near_miss_threshold_lift"]
+    assert missing_gate_result.effective_select_threshold == explicit_gate_result.effective_select_threshold
+    assert missing_gate_result.effective_near_miss_threshold == explicit_gate_result.effective_near_miss_threshold
+
+
+def test_regime_gate_payload_is_reused_for_downstream_target_context() -> None:
+    entry = _make_prepared_breakout_entry()
+    entry["market_state"] = {
+        "breadth_ratio": 0.39,
+        "position_scale": 0.70,
+        "style_dispersion": 0.71,
+        "regime_flip_risk": 0.82,
+        "regime_gate_level": "risk_off",
+        "regime_gate_reasons": ["style_dispersion", "regime_flip_risk"],
+        "btst_regime_gate": {
+            "gate": "aggressive_trade",
+            "profile_hint": "btst_precision_v2",
+            "reason_codes": ["reused_payload"],
+            "metrics": {
+                "breadth_ratio": 0.64,
+                "daily_return": 0.011,
+                "style_dispersion": 0.12,
+                "regime_flip_risk": 0.11,
+                "regime_gate_level": "normal",
+            },
+        },
+    }
+    entry["historical_prior"] = {"evaluable_count": 0}
+
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="btst_admission_edge_recovery",
+    )
+
+    assert snapshot["historical_prior"]["btst_regime_gate"] == "aggressive_trade"
+    assert snapshot["market_state_threshold_adjustment"]["enabled"] is False
+    assert snapshot["market_state_threshold_adjustment"]["regime_gate_level"] == "normal"
+    assert snapshot["breakout_trap_guard"]["regime_gate_level"] == "normal"
+    assert snapshot["breakout_trap_guard"]["gate_hits"]["risk_off_regime"] is False
+
+
 def test_btst_precision_v2_selected_close_retention_lift_downgrades_weak_selected_candidate() -> None:
     entry = _make_catalyst_theme_short_trade_carryover_entry()
     entry["catalyst_theme_metrics"] = {
@@ -3574,6 +3799,24 @@ def test_historical_execution_relief_promotes_strong_close_continuation_boundary
     assert relief_result.metrics_payload["historical_execution_relief"]["effective_select_threshold"] == 0.37
     assert relief_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.32
     assert relief_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.37
+
+
+def test_weak_close_retention_downgrades_hold_posture() -> None:
+    historical_prior = {
+        "execution_quality_label": "close_continuation",
+        "entry_timing_bias": "confirm_then_hold",
+        "evaluable_count": 6,
+        "next_high_hit_rate_at_threshold": 0.8333,
+        "next_close_positive_rate": 0.3333,
+        "next_open_to_close_return_mean": -0.0042,
+        "execution_note": "历史上盘中冲高命中不少，但次日收盘留存偏弱，不宜默认按隔夜持有处理。",
+    }
+
+    preferred_entry_mode = _preferred_entry_mode_from_historical_prior(historical_prior)
+    execution_note = _augment_execution_note(preferred_entry_mode, historical_prior)
+
+    assert preferred_entry_mode == "intraday_confirmation_only"
+    assert execution_note == "历史上盘中冲高命中不少，但次日收盘留存偏弱，不宜默认按隔夜持有处理。 当前 historical_prior 更像 intraday-only surface，默认不按隔夜持有管理。"
 
 
 def test_historical_execution_relief_promotes_strong_close_continuation_boundary_without_profitability_hard_cliff() -> None:

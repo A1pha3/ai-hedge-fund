@@ -156,6 +156,20 @@ def _safe_reason_codes(values: Any) -> list[str]:
 
 def _resolve_market_state_regime_context(market_state: dict[str, Any]) -> tuple[str, float, float, list[str]]:
     payload = dict(market_state or {})
+    btst_regime_gate_payload = payload.get("btst_regime_gate")
+    if isinstance(btst_regime_gate_payload, dict):
+        gate = str(btst_regime_gate_payload.get("gate") or "").strip().lower()
+        metrics_payload = dict(btst_regime_gate_payload.get("metrics") or {})
+        regime_gate_level = str(metrics_payload.get("regime_gate_level") or "").strip().lower()
+        style_dispersion = _safe_float(metrics_payload.get("style_dispersion"))
+        regime_flip_risk = _safe_float(metrics_payload.get("regime_flip_risk"))
+        if gate in {"normal_trade", "aggressive_trade", "shadow_only", "halt"} and regime_gate_level in {"normal", "risk_off", "crisis"}:
+            return (
+                regime_gate_level,
+                style_dispersion or 0.0,
+                regime_flip_risk or 0.0,
+                _safe_reason_codes(btst_regime_gate_payload.get("reason_codes")) or _safe_reason_codes(payload.get("regime_gate_reasons")),
+            )
     breadth_ratio = _safe_float(payload.get("breadth_ratio"))
     position_scale = _safe_float(payload.get("position_scale"))
     regime_flip_risk = _safe_float(payload.get("regime_flip_risk")) or 0.0

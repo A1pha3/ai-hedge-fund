@@ -3944,6 +3944,41 @@ def test_build_buy_orders_blocks_market_regime_execution_gate_from_short_trade_t
     assert diagnostics["tickers"][0]["short_trade_decision"] == "selected"
 
 
+def test_regime_gate_payload_is_reused_in_daily_pipeline_market_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(daily_pipeline_module.BTST_0422_P1_REGIME_GATE_MODE_ENV, "shadow")
+    reused_payload = {
+        "gate": "aggressive_trade",
+        "profile_hint": "btst_precision_v2",
+        "reason_codes": ["reused_payload"],
+        "metrics": {
+            "breadth_ratio": 0.39,
+            "daily_return": 0.011,
+            "style_dispersion": 0.71,
+            "regime_flip_risk": 0.82,
+            "regime_gate_level": "risk_off",
+        },
+    }
+
+    downstream_payload = daily_pipeline_module._build_downstream_target_market_state_payload(
+        {
+            "breadth_ratio": 0.39,
+            "daily_return": 0.011,
+            "style_dispersion": 0.71,
+            "regime_flip_risk": 0.82,
+            "regime_gate_level": "risk_off",
+            "regime_gate_reasons": ["style_dispersion", "regime_flip_risk"],
+            "btst_regime_gate": reused_payload,
+        }
+    )
+
+    assert downstream_payload["btst_regime_gate"]["gate"] == reused_payload["gate"]
+    assert downstream_payload["btst_regime_gate"]["profile_hint"] == reused_payload["profile_hint"]
+    assert downstream_payload["btst_regime_gate"]["reason_codes"] == reused_payload["reason_codes"]
+    assert downstream_payload["btst_regime_gate"]["metrics"] == reused_payload["metrics"]
+    assert downstream_payload["btst_regime_gate"]["mode"] == "shadow"
+    assert downstream_payload["regime_gate_level"] == "risk_off"
+
+
 def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkeypatch: pytest.MonkeyPatch):
     def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
         return {

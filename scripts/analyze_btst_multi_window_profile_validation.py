@@ -65,6 +65,8 @@ def _summarize_row(*, report_dir: Path, baseline: dict[str, Any], variant: dict[
         "variant_profile": variant["profile_name"],
         "baseline_tradeable": dict(baseline["surface_summaries"]["tradeable"]),
         "variant_tradeable": dict(variant["surface_summaries"]["tradeable"]),
+        "baseline_frontier_source_family_summaries": dict(baseline.get("frontier_source_family_summaries") or {}),
+        "variant_frontier_source_family_summaries": dict(variant.get("frontier_source_family_summaries") or {}),
         "tradeable_surface_delta": dict(comparison.get("tradeable_surface_delta") or {}),
         "guardrail_status": str(comparison.get("guardrail_status") or ""),
         "window_recommendation": classification,
@@ -184,6 +186,22 @@ def render_btst_multi_window_profile_validation_markdown(analysis: dict[str, Any
             f"next_close_return_p10_delta={row['tradeable_surface_delta'].get('next_close_return_p10')}, "
             f"t_plus_2_close_return_median_delta={row['tradeable_surface_delta'].get('t_plus_2_close_return_median')}"
         )
+        frontier_source_families = sorted(
+            {
+                *dict(row.get("baseline_frontier_source_family_summaries") or {}).keys(),
+                *dict(row.get("variant_frontier_source_family_summaries") or {}).keys(),
+            }
+        )
+        for source_family in frontier_source_families:
+            baseline_summary = dict(dict(row.get("baseline_frontier_source_family_summaries") or {}).get(source_family) or {})
+            variant_summary = dict(dict(row.get("variant_frontier_source_family_summaries") or {}).get(source_family) or {})
+            lines.append(
+                f"  - frontier_source={source_family}, "
+                f"baseline_tradeable={dict(baseline_summary.get('tradeable') or {}).get('total_count')}, "
+                f"variant_tradeable={dict(variant_summary.get('tradeable') or {}).get('total_count')}, "
+                f"baseline_selected={dict(baseline_summary.get('selected') or {}).get('total_count')}, "
+                f"variant_selected={dict(variant_summary.get('selected') or {}).get('total_count')}"
+            )
     if not list(analysis.get("rows") or []):
         lines.append("- none")
     lines.append("")

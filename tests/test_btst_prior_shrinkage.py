@@ -159,6 +159,130 @@ class TestPriorShrinkageMath:
         assert heavy_prior["sample_reliability"] < light_prior["sample_reliability"]
         assert heavy_prior["shrunk_close_positive_rate"] < light_prior["shrunk_close_positive_rate"]
 
+    def test_adaptive_shrinkage_is_lighter_for_close_continuation_in_normal_trade(self, shrinkage_prior: dict[str, object]) -> None:
+        strict_prior = calibrate_short_trade_historical_prior(
+            {
+                **shrinkage_prior,
+                "evaluable_count": 2,
+                "same_ticker_sample_count": 2,
+                "btst_regime_gate": "normal_trade",
+                "p4_prior_shrinkage_k": 8.0,
+            }
+        )
+        adaptive_prior = calibrate_short_trade_historical_prior(
+            {
+                **shrinkage_prior,
+                "evaluable_count": 2,
+                "same_ticker_sample_count": 2,
+                "btst_regime_gate": "normal_trade",
+                "p4_prior_shrinkage_k": 8.0,
+                "adaptive_prior_shrinkage_enabled": True,
+                "adaptive_prior_shrinkage_low_sample_max_evaluable_count": 3,
+                "adaptive_prior_shrinkage_close_continuation_normal_trade_k": 3.0,
+                "adaptive_prior_shrinkage_close_continuation_aggressive_trade_k": 2.0,
+            }
+        )
+
+        assert strict_prior["p4_prior_shrinkage_policy"] == "strict"
+        assert adaptive_prior["p4_prior_shrinkage_policy"] == "adaptive_close_continuation_low_sample_normal_trade"
+        assert adaptive_prior["selected_p4_prior_shrinkage_k"] == pytest.approx(3.0)
+        assert adaptive_prior["sample_reliability"] > strict_prior["sample_reliability"]
+        assert adaptive_prior["shrunk_close_positive_rate"] > strict_prior["shrunk_close_positive_rate"]
+        assert adaptive_prior["shrunk_high_hit_rate"] > strict_prior["shrunk_high_hit_rate"]
+
+    def test_adaptive_shrinkage_keeps_weak_regime_and_intraday_only_priors_strict(self) -> None:
+        adaptive_policy = {
+            "adaptive_prior_shrinkage_enabled": True,
+            "adaptive_prior_shrinkage_low_sample_max_evaluable_count": 3,
+            "adaptive_prior_shrinkage_close_continuation_normal_trade_k": 3.0,
+            "adaptive_prior_shrinkage_close_continuation_aggressive_trade_k": 2.0,
+        }
+        intraday_prior = calibrate_short_trade_historical_prior(
+            {
+                "execution_quality_label": "intraday_only",
+                "entry_timing_bias": "confirm_then_hold",
+                "evaluable_count": 2,
+                "same_ticker_sample_count": 2,
+                "next_high_hit_rate_at_threshold": 1.0,
+                "next_close_positive_rate": 1.0,
+                "next_open_to_close_return_mean": 0.04,
+                "btst_regime_gate": "normal_trade",
+                "p4_prior_shrinkage_k": 8.0,
+                **adaptive_policy,
+            }
+        )
+        weak_regime_prior = calibrate_short_trade_historical_prior(
+            {
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "evaluable_count": 2,
+                "same_ticker_sample_count": 2,
+                "next_high_hit_rate_at_threshold": 1.0,
+                "next_close_positive_rate": 1.0,
+                "next_open_to_close_return_mean": 0.04,
+                "btst_regime_gate": "shadow_only",
+                "p4_prior_shrinkage_k": 8.0,
+                **adaptive_policy,
+            }
+        )
+
+        assert intraday_prior["p4_prior_shrinkage_policy"] == "strict"
+        assert intraday_prior["selected_p4_prior_shrinkage_k"] == pytest.approx(8.0)
+        assert weak_regime_prior["p4_prior_shrinkage_policy"] == "strict"
+        assert weak_regime_prior["selected_p4_prior_shrinkage_k"] == pytest.approx(8.0)
+
+    def test_btst_admission_edge_recovery_profile_activates_adaptive_shrinkage(self, catalyst_theme_entry: dict[str, object]) -> None:
+        entry = dict(catalyst_theme_entry)
+        entry["historical_prior"] = {
+            **dict(catalyst_theme_entry["historical_prior"]),
+            "btst_regime_gate": "normal_trade",
+        }
+        profile_overrides = {
+            "select_threshold": 0.8,
+            "near_miss_threshold": 0.65,
+            "selected_breakout_freshness_min": 0.0,
+            "selected_trend_acceleration_min": 0.0,
+            "near_miss_breakout_freshness_min": 0.0,
+            "near_miss_trend_acceleration_min": 0.0,
+            "breakout_freshness_weight": 0.0,
+            "trend_acceleration_weight": 0.0,
+            "volume_expansion_quality_weight": 0.0,
+            "close_strength_weight": 0.0,
+            "sector_resonance_weight": 0.0,
+            "catalyst_freshness_weight": 0.0,
+            "layer_c_alignment_weight": 0.0,
+            "historical_continuation_score_weight": 1.0,
+            "stale_score_penalty_weight": 0.0,
+            "overhead_score_penalty_weight": 0.0,
+            "extension_score_penalty_weight": 0.0,
+            "layer_c_avoid_penalty": 0.0,
+        }
+
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260422",
+            entry=entry,
+            profile_name="btst_precision_v2",
+            profile_overrides=profile_overrides,
+        )
+        recovery_result = evaluate_short_trade_rejected_target(
+            trade_date="20260422",
+            entry=entry,
+            profile_name="btst_admission_edge_recovery",
+            profile_overrides=profile_overrides,
+        )
+
+        baseline_prior = baseline_result.explainability_payload["historical_prior"]
+        recovery_prior = recovery_result.explainability_payload["historical_prior"]
+
+        assert baseline_prior["p4_prior_shrinkage_policy"] == "strict"
+        assert recovery_prior["adaptive_prior_shrinkage_enabled"] is True
+        assert recovery_prior["p4_prior_shrinkage_policy"] == "adaptive_close_continuation_low_sample_normal_trade"
+        assert recovery_prior["selected_p4_prior_shrinkage_k"] == pytest.approx(3.0)
+        assert recovery_prior["adaptive_prior_shrinkage_close_continuation_normal_trade_k"] == pytest.approx(3.0)
+        assert recovery_prior["adaptive_prior_shrinkage_close_continuation_aggressive_trade_k"] == pytest.approx(2.0)
+        assert recovery_prior["sample_reliability"] > baseline_prior["sample_reliability"]
+        assert recovery_prior["shrunk_close_positive_rate"] > baseline_prior["shrunk_close_positive_rate"]
+
 
 class TestP4DecisionPath:
     def test_p4_enforce_prefers_shrunk_prior_rates_in_decision_path(self, monkeypatch: pytest.MonkeyPatch, catalyst_theme_entry: dict[str, object]) -> None:

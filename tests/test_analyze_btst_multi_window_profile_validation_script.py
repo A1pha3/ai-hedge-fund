@@ -89,3 +89,52 @@ def test_analyze_btst_multi_window_profile_validation_recommends_baseline_when_v
     assert "# BTST Multi-Window Profile Validation" in markdown
     assert "paper_trading_window_a" in markdown
     assert "keep_baseline_default" in markdown
+
+
+def test_render_btst_multi_window_profile_validation_markdown_includes_frontier_source_summary(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_window_a"
+    (report_dir / "selection_artifacts" / "2026-03-24").mkdir(parents=True)
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(multi_window_validation, "discover_report_dirs", lambda *_args, **_kwargs: [report_dir])
+
+    def _fake_replay_window(input_path, *, profile_name, label, next_high_hit_threshold, select_threshold=None, near_miss_threshold=None, profile_overrides=None):
+        _ = (input_path, next_high_hit_threshold, select_threshold, near_miss_threshold, profile_overrides)
+        return {
+            "label": label,
+            "profile_name": profile_name,
+            "trade_dates": ["2026-03-24"],
+            "surface_summaries": {
+                "tradeable": {
+                    "total_count": 1,
+                    "closed_cycle_count": 1,
+                    "next_high_hit_rate_at_threshold": 1.0,
+                    "next_close_positive_rate": 1.0,
+                    "t_plus_2_close_positive_rate": 1.0,
+                    "next_high_return_distribution": {"mean": 0.05},
+                    "next_close_return_distribution": {"mean": 0.03, "median": 0.03, "p10": 0.01},
+                    "t_plus_2_close_return_distribution": {"mean": 0.04, "median": 0.04, "p10": 0.02},
+                }
+            },
+            "false_negative_proxy_summary": {"count": 0, "surface_metrics": {}},
+            "frontier_source_family_summaries": {
+                "upstream_liquidity_corridor_shadow": {
+                    "tradeable": {"total_count": 1},
+                    "selected": {"total_count": 1},
+                }
+            },
+        }
+
+    monkeypatch.setattr(multi_window_validation, "analyze_btst_profile_replay_window", _fake_replay_window)
+
+    analysis = multi_window_validation.analyze_btst_multi_window_profile_validation(
+        reports_root,
+        baseline_profile="btst_precision_v2",
+        variant_profile="btst_candidate_pool_frontier",
+    )
+
+    assert analysis["rows"][0]["variant_frontier_source_family_summaries"]["upstream_liquidity_corridor_shadow"]["tradeable"]["total_count"] == 1
+
+    markdown = multi_window_validation.render_btst_multi_window_profile_validation_markdown(analysis)
+    assert "upstream_liquidity_corridor_shadow" in markdown

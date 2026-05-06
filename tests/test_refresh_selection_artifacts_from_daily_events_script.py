@@ -454,6 +454,80 @@ def test_refresh_selection_artifacts_from_daily_events_promotes_post_gate_shadow
     assert session_summary["selection_artifact_refresh"]["refreshed_trade_dates"] == ["2026-03-31"]
 
 
+def test_refresh_selection_artifacts_from_daily_events_promotes_frontier_entries_into_supplemental_replay(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    report_dir = tmp_path / "paper_trading_20260406_20260406_frontier_refresh"
+    (report_dir / "selection_artifacts").mkdir(parents=True)
+    trade_date = "20260406"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {
+                        "tickers": [],
+                        "released_shadow_entries": [_make_corridor_released_shadow_entry(shadow_visibility_gap_selected=True)],
+                        "shadow_observation_entries": [],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps({"event": "paper_trading_day", "trade_date": trade_date, "current_plan": plan.model_dump(mode="json")}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(refresh_module, "_load_latest_historical_prior_by_ticker", lambda _report_dir: {})
+
+    refresh_selection_artifacts_for_report(report_dir, trade_date="2026-04-06")
+
+    replay_input = json.loads((report_dir / "selection_artifacts" / "2026-04-06" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+    promoted = [entry for entry in replay_input["supplemental_short_trade_entries"] if entry.get("frontier_expansion_enabled")]
+    selection_snapshot = json.loads((report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json").read_text(encoding="utf-8"))
+
+    assert [entry["ticker"] for entry in promoted] == ["300720"]
+    assert replay_input["source_summary"]["supplemental_short_trade_entry_count"] == 1
+    assert [entry["ticker"] for entry in replay_input["supplemental_short_trade_entries"]] == ["300720"]
+    assert promoted[0]["frontier_expansion_source_family"] == "upstream_liquidity_corridor_shadow"
+    assert replay_input["source_summary"]["frontier_source_family_counts"]["upstream_liquidity_corridor_shadow"]["promoted_count"] == 1
+    assert selection_snapshot["candidate_pool_frontier_expansion"]["source_family_counts"]["upstream_liquidity_corridor_shadow"]["promoted_count"] == 1
+
+
+def test_rebuild_selection_targets_for_plan_keeps_frontier_diagnostics_canonical_in_risk_metrics():
+    plan = ExecutionPlan(
+        date="20260406",
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {
+                        "tickers": [],
+                        "released_shadow_entries": [_make_corridor_released_shadow_entry(shadow_visibility_gap_selected=True)],
+                        "shadow_observation_entries": [],
+                    },
+                }
+            }
+        },
+    )
+
+    rebuilt = refresh_module.rebuild_selection_targets_for_plan(
+        plan,
+        trade_date_compact="20260406",
+        shadow_lookup={},
+        historical_prior_by_ticker={},
+        strategy_signals_by_ticker={},
+    )
+
+    assert "candidate_pool_frontier_expansion" in rebuilt.risk_metrics
+    assert "candidate_pool_frontier_expansion" not in rebuilt.risk_metrics["funnel_diagnostics"]
+
+
 def test_main_refreshes_unique_report_dirs_and_optional_followups(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]):
     reports_root = tmp_path / "reports"
     report_dir = reports_root / "paper_trading_20260331_case"

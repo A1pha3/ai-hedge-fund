@@ -117,6 +117,42 @@ def _resolve_p4_shrinkage_k(prior: dict[str, Any]) -> float:
     return shrinkage_k if shrinkage_k > 0 else DEFAULT_P4_PRIOR_SHRINKAGE_K
 
 
+def _resolve_p4_shrinkage_policy(
+    prior: dict[str, Any],
+    *,
+    execution_quality_label: str,
+    btst_regime_gate: str,
+    evidence_count: int,
+) -> dict[str, Any]:
+    base_shrinkage_k = _resolve_p4_shrinkage_k(prior)
+    adaptive_enabled = _safe_bool(prior.get("adaptive_prior_shrinkage_enabled"), False)
+    low_sample_max_evaluable_count = max(0, _safe_int(prior.get("adaptive_prior_shrinkage_low_sample_max_evaluable_count"), 0))
+    normalized_gate = str(btst_regime_gate or "normal_trade").strip().lower()
+    selected_shrinkage_k = base_shrinkage_k
+    policy_name = "strict"
+
+    if adaptive_enabled and execution_quality_label == "close_continuation" and 0 < evidence_count <= low_sample_max_evaluable_count:
+        adaptive_shrinkage_k = 0.0
+        if normalized_gate == "normal_trade":
+            adaptive_shrinkage_k = _safe_float(prior.get("adaptive_prior_shrinkage_close_continuation_normal_trade_k"), base_shrinkage_k)
+        elif normalized_gate == "aggressive_trade":
+            adaptive_shrinkage_k = _safe_float(prior.get("adaptive_prior_shrinkage_close_continuation_aggressive_trade_k"), base_shrinkage_k)
+
+        if 0 < adaptive_shrinkage_k < base_shrinkage_k:
+            selected_shrinkage_k = adaptive_shrinkage_k
+            policy_name = f"adaptive_close_continuation_low_sample_{normalized_gate}"
+
+    return {
+        "adaptive_enabled": adaptive_enabled,
+        "base_shrinkage_k": base_shrinkage_k,
+        "selected_shrinkage_k": selected_shrinkage_k,
+        "policy_name": policy_name,
+        "low_sample_max_evaluable_count": low_sample_max_evaluable_count,
+        "normal_trade_k": _safe_float(prior.get("adaptive_prior_shrinkage_close_continuation_normal_trade_k"), base_shrinkage_k),
+        "aggressive_trade_k": _safe_float(prior.get("adaptive_prior_shrinkage_close_continuation_aggressive_trade_k"), base_shrinkage_k),
+    }
+
+
 def _sample_reliability(*, evidence_count: int, shrinkage_k: float) -> float:
     denominator = float(evidence_count) + float(shrinkage_k)
     if denominator <= 0:
@@ -203,7 +239,14 @@ def calibrate_short_trade_historical_prior(historical_prior: dict[str, Any] | No
         prior_strength=prior_strength,
     )
     evidence_weight = (float(evidence_count) / (float(evidence_count) + prior_strength)) if (float(evidence_count) + prior_strength) > 0 else 0.0
-    p4_shrinkage_k = _resolve_p4_shrinkage_k(prior)
+    p4_shrinkage_policy = _resolve_p4_shrinkage_policy(
+        prior,
+        execution_quality_label=execution_quality_label,
+        btst_regime_gate=btst_regime_gate,
+        evidence_count=evidence_count,
+    )
+    p4_shrinkage_k = float(p4_shrinkage_policy["selected_shrinkage_k"])
+    base_p4_shrinkage_k = float(p4_shrinkage_policy["base_shrinkage_k"])
     use_shrunk_prior_rates = _safe_bool(prior.get("selected_use_shrunk_prior_rates"), True)
     sample_reliability = _sample_reliability(evidence_count=evidence_count, shrinkage_k=p4_shrinkage_k)
     shrunk_next_close_positive_rate = _shrink_rate(
@@ -234,8 +277,14 @@ def calibrate_short_trade_historical_prior(historical_prior: dict[str, Any] | No
             "prior_evidence_count": evidence_count,
             "prior_evidence_weight": round(evidence_weight, 6),
             "prior_shrinkage_strength": round(prior_strength, 6),
-            "p4_prior_shrinkage_k": round(p4_shrinkage_k, 6),
+            "p4_prior_shrinkage_k": round(base_p4_shrinkage_k, 6),
+            "selected_p4_prior_shrinkage_k": round(p4_shrinkage_k, 6),
+            "p4_prior_shrinkage_policy": str(p4_shrinkage_policy["policy_name"]),
             "selected_use_shrunk_prior_rates": use_shrunk_prior_rates,
+            "adaptive_prior_shrinkage_enabled": bool(p4_shrinkage_policy["adaptive_enabled"]),
+            "adaptive_prior_shrinkage_low_sample_max_evaluable_count": int(p4_shrinkage_policy["low_sample_max_evaluable_count"]),
+            "adaptive_prior_shrinkage_close_continuation_normal_trade_k": round(float(p4_shrinkage_policy["normal_trade_k"]), 6),
+            "adaptive_prior_shrinkage_close_continuation_aggressive_trade_k": round(float(p4_shrinkage_policy["aggressive_trade_k"]), 6),
             "sample_reliability": round(sample_reliability, 6),
             "shrunk_close_positive_rate": round(shrunk_next_close_positive_rate, 6),
             "shrunk_high_hit_rate": round(shrunk_next_high_hit_rate, 6),
