@@ -124,3 +124,29 @@ def test_build_candidate_pool_frontier_entries_applies_post_gate_thresholds() ->
     assert [entry["ticker"] for entry in promoted_entries] == ["600001"]
     assert diagnostics["source_family_counts"]["post_gate_liquidity_competition_shadow"]["promoted_count"] == 1
     assert diagnostics["source_family_counts"]["post_gate_liquidity_competition_shadow"]["rejected_count"] == 1
+
+
+def test_build_candidate_pool_frontier_entries_counts_unclassified_entries_without_promoting_them() -> None:
+    promoted_entries, diagnostics = build_candidate_pool_frontier_entries(
+        released_shadow_entries=[
+            {
+                "ticker": "999999",
+                "candidate_source": "unknown_source",
+                "candidate_pool_lane": "unknown_lane",
+                "candidate_pool_rank": 1,
+                "candidate_pool_avg_amount_share_of_cutoff": 1.0,
+                "candidate_pool_avg_amount_share_of_min_gate": 1.0,
+                "short_trade_boundary_metrics": {
+                    "trend_acceleration": 1.0,
+                    "close_strength": 1.0,
+                    "catalyst_freshness": 0.0,
+                },
+            }
+        ],
+        shadow_observation_entries=[],
+    )
+
+    assert promoted_entries == []
+    assert diagnostics["unclassified_count"] == 1
+    assert diagnostics["promoted_count"] == 0
+    assert diagnostics["rejected_count"] == 0
