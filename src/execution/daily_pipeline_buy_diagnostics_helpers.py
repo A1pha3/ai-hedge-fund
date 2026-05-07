@@ -4,6 +4,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from src.portfolio.position_calculator import enforce_daily_trade_limit
+
 BTST_0422_P6_RISK_BUDGET_MODE_ENV = "BTST_0422_P6_RISK_BUDGET_MODE"
 BTST_0422_P6_RISK_BUDGET_MODES = frozenset({"off", "enforce"})
 _P6_RISK_BUDGET_MATRIX = {
@@ -11,6 +13,19 @@ _P6_RISK_BUDGET_MATRIX = {
     "shadow_only": {"formal_full": 0.0, "formal_capped": 0.0},
     "normal_trade": {"formal_full": 1.0, "formal_capped": 0.6},
     "aggressive_trade": {"formal_full": 1.15, "formal_capped": 0.75},
+}
+
+_BTST_DAILY_LIMIT_RULES = {
+    "normal_trade": {"limit_ratio": 0.25, "max_new_positions": 2},
+    "aggressive_trade": {"limit_ratio": 0.25, "max_new_positions": 3},
+    "shadow_only": {"limit_ratio": 0.0, "max_new_positions": 0},
+    "halt": {"limit_ratio": 0.0, "max_new_positions": 0},
+}
+_BTST_GATE_RESTRICTIVENESS = {
+    "halt": 0,
+    "shadow_only": 1,
+    "normal_trade": 2,
+    "aggressive_trade": 3,
 }
 
 
@@ -244,6 +259,29 @@ def _build_btst_risk_budget_overlay_summary(*, candidate_plans: list[Any], filte
         if bucket == "reduced":
             summary["suppressed_position_summary"]["reduced_budget_count"] += 1
     return summary
+
+
+def _enforce_btst_daily_trade_limit(plans: list[Any], portfolio_nav: float) -> list[Any]:
+    if _resolve_btst_risk_budget_p6_mode() != "enforce":
+        return enforce_daily_trade_limit(plans, portfolio_nav)
+    gates = {
+        str(getattr(plan, "risk_budget_gate", "") or "").strip().lower()
+        for plan in list(plans or [])
+        if str(getattr(plan, "risk_budget_gate", "") or "").strip()
+    }
+    if not gates:
+        return enforce_daily_trade_limit(plans, portfolio_nav)
+    supported_gates = [gate for gate in gates if gate in _BTST_GATE_RESTRICTIVENESS]
+    if not supported_gates:
+        return enforce_daily_trade_limit(plans, portfolio_nav)
+    gate = min(supported_gates, key=lambda value: _BTST_GATE_RESTRICTIVENESS[value])
+    rules = _BTST_DAILY_LIMIT_RULES[gate]
+    return enforce_daily_trade_limit(
+        plans,
+        portfolio_nav,
+        limit_ratio=float(rules["limit_ratio"]),
+        max_new_positions=int(rules["max_new_positions"]),
+    )
 
 
 def prepare_buy_order_execution_context(

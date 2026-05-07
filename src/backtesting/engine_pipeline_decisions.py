@@ -223,6 +223,7 @@ class PipelineDecisionExecutor:
         daily_turnovers: dict[str, float],
         limit_up: set[str],
         limit_down: set[str],
+        trade_date: str | None = None,
     ) -> int:
         return self._execute_decision(
             ticker=ticker,
@@ -232,6 +233,7 @@ class PipelineDecisionExecutor:
             daily_turnovers=daily_turnovers,
             limit_up=limit_up,
             limit_down=limit_down,
+            trade_date=trade_date,
         )
 
     # ------------------------------------------------------------------
@@ -260,6 +262,7 @@ class PipelineDecisionExecutor:
             daily_turnovers=daily_turnovers,
             limit_up=limit_up,
             limit_down=limit_down,
+            trade_date=trade_date_compact,
         )
         executed_trades[ticker] = executed_qty
         self._record_side_effects(
@@ -386,6 +389,7 @@ class PipelineDecisionExecutor:
         daily_turnovers: dict[str, float],
         limit_up: set[str],
         limit_down: set[str],
+        trade_date: str | None = None,
     ) -> int:
         return self._executor.execute_trade(
             ticker,
@@ -396,6 +400,7 @@ class PipelineDecisionExecutor:
             is_limit_up=normalized_ticker in limit_up,
             is_limit_down=normalized_ticker in limit_down,
             daily_turnover=daily_turnovers.get(ticker),
+            trade_date=trade_date,
         )
 
     # ------------------------------------------------------------------

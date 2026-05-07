@@ -1108,3 +1108,27 @@ def test_pipeline_mode_p2_off_preserves_buy_orders_on_halt_day(monkeypatch):
         plan_in_event = pipeline_events[-1]["current_plan"]
         enforcement = plan_in_event.get("risk_metrics", {}).get("btst_regime_gate_enforcement", {})
         assert not enforcement.get("enforced"), "P2 off: no enforcement should occur"
+
+
+def test_t_plus_1_enforcement_in_pipeline_context(monkeypatch):
+    """Test T+1 enforcement works when integrated into pipeline mode execution."""
+    # This is a focused integration test showing T+1 works with the executor
+    # when called from pipeline-mode-like context with trade_date parameter
+    from src.backtesting.portfolio import Portfolio
+    from src.backtesting.trader import TradeExecutor
+    
+    portfolio = Portfolio(tickers=["AAPL"], initial_cash=100000.0, margin_requirement=0.0)
+    executor = TradeExecutor()
+    
+    # Simulate day 1: buy and record entry
+    buy_qty = executor.execute_trade("AAPL", "buy", 100, 10.0, portfolio, trade_date="20240301")
+    assert buy_qty == 100
+    portfolio.record_long_entry("AAPL", "20240301", reset=True)
+    
+    # Same day sell should be blocked
+    sell_qty_same_day = executor.execute_trade("AAPL", "sell", 100, 11.0, portfolio, trade_date="20240301")
+    assert sell_qty_same_day == 0, "T+1: same-day sell blocked"
+    
+    # Next day sell should succeed
+    sell_qty_next_day = executor.execute_trade("AAPL", "sell", 100, 11.0, portfolio, trade_date="20240304")
+    assert sell_qty_next_day == 100, "T+1: next-day sell allowed"

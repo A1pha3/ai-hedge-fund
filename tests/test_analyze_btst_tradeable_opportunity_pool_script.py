@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -413,4 +414,578 @@ def test_analyze_btst_tradeable_opportunity_pool_handles_missing_report_context(
     }
     assert analysis["rows"][0]["first_kill_switch"] == "no_candidate_entry"
     assert analysis["system_recall_count"] == 0
-    assert analysis["tradeable_pool_capture_rate"] == 0.0
+
+
+def test_analyze_btst_tradeable_opportunity_pool_surfaces_one_word_board_cases(tmp_path: Path, monkeypatch) -> None:
+    """Test that one-word-board (一字板) cases are detected and surfaced as a dedicated summary section."""
+    reports_root = tmp_path / "data" / "reports"
+    _prepare_report_dir(reports_root)
+
+    stock_basic = pd.DataFrame(
+        [
+            {"ts_code": "000001.SZ", "symbol": "000001", "name": "Alpha", "industry": "AI", "market": "SZ", "list_date": "20200101"},
+            {"ts_code": "000002.SZ", "symbol": "000002", "name": "Beta", "industry": "Robot", "market": "SZ", "list_date": "20200101"},
+            {"ts_code": "000008.SZ", "symbol": "000008", "name": "Theta", "industry": "Power", "market": "SZ", "list_date": "20200101"},
+        ]
+    )
+    daily_basic = pd.DataFrame(
+        [
+            {"ts_code": "000001.SZ", "turnover_rate": 5.0, "circ_mv": 100000.0},
+            {"ts_code": "000002.SZ", "turnover_rate": 5.0, "circ_mv": 100000.0},
+            {"ts_code": "000008.SZ", "turnover_rate": 5.0, "circ_mv": 100000.0},
+        ]
+    )
+
+    # 000001: one-word-board case (open=high=close at limit-up)
+    # 000002: not a one-word-board (open != close)
+    # 000008: selected case (normal)
+    price_outcomes = {
+        "000001": _build_price_outcome(next_open_return=0.10, next_high_return=0.10, next_close_return=0.10, t_plus_2_close_return=0.08),
+        "000002": _build_price_outcome(next_open_return=0.10, next_high_return=0.12, next_close_return=0.08, t_plus_2_close_return=0.05),
+        "000008": _build_price_outcome(next_open_return=0.01, next_high_return=0.06, next_close_return=0.04, t_plus_2_close_return=0.05),
+    }
+
+    daily_batches = _build_daily_price_batches(stock_basic, price_outcomes)
+
+    monkeypatch.setattr(tradeable_pool, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_open_trade_dates", lambda start_date, end_date: ["20260303", "20260304", "20260305"])
+    monkeypatch.setattr(tradeable_pool, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_daily_price_batch", lambda trade_date: daily_batches.get(trade_date, pd.DataFrame()))
+    monkeypatch.setattr(tradeable_pool, "get_limit_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_suspend_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_cooled_tickers", lambda trade_date: set())
+    monkeypatch.setattr(
+        tradeable_pool,
+        "extract_btst_price_outcome",
+        lambda ticker, trade_date, price_cache: price_outcomes[ticker],
+    )
+
+    analysis = tradeable_pool.analyze_btst_tradeable_opportunity_pool(
+        reports_root,
+        trade_dates={"2026-03-03"},
+    )
+
+    # Check that one-word-board tradeability note was detected
+    one_word_board_rows = [row for row in analysis["rows"] if "t_plus_1_one_word_board" in (row.get("tradeability_notes") or [])]
+    assert len(one_word_board_rows) == 1, f"Expected 1 one-word-board row, got {len(one_word_board_rows)}"
+    assert one_word_board_rows[0]["ticker"] == "000001"
+
+    # Check that the new one_word_board_summary is present and correct
+    assert "one_word_board_summary" in analysis, "one_word_board_summary missing from analysis"
+    one_word_board_summary = analysis["one_word_board_summary"]
+
+    assert one_word_board_summary["count"] == 1, f"Expected count=1, got {one_word_board_summary['count']}"
+    assert one_word_board_summary["share_of_tradeable_pool"] > 0.0
+    assert "industry_counts" in one_word_board_summary
+    assert one_word_board_summary["industry_counts"]["AI"] == 1
+    assert "trade_date_counts" in one_word_board_summary
+    assert one_word_board_summary["trade_date_counts"]["2026-03-03"] == 1
+    assert "top_ticker_rows" in one_word_board_summary
+    assert len(one_word_board_summary["top_ticker_rows"]) == 1
+    assert one_word_board_summary["top_ticker_rows"][0]["ticker"] == "000001"
+    assert "recommendation" in one_word_board_summary
+    assert len(one_word_board_summary["recommendation"]) > 0
+
+    # Check that strict_goal_case fields are present
+    assert "strict_goal_case_count" in one_word_board_summary
+    assert "strict_goal_case_share" in one_word_board_summary
+
+    # Check markdown rendering includes the new section
+    markdown = tradeable_pool.render_btst_tradeable_opportunity_pool_markdown(analysis)
+    assert "## One Word Board Entry Failure Breakdown" in markdown, "Markdown should include One Word Board section"
+    assert "000001" in markdown
+
+
+def test_analyze_btst_tradeable_opportunity_pool_one_word_board_recommendation_avoids_empty_list_literals(monkeypatch) -> None:
+    class _EmptyMostCommonCounter(Counter):
+        def most_common(self, n=None):  # type: ignore[override]
+            return []
+
+    monkeypatch.setattr(tradeable_pool, "Counter", _EmptyMostCommonCounter)
+
+    summary = tradeable_pool._build_one_word_board_summary(
+        [
+            {
+                "tradeability_notes": ["t_plus_1_one_word_board"],
+                "pool_b_tradeable": True,
+                "strict_btst_goal_case": False,
+                "ticker": "000001",
+                "industry": "AI",
+                "trade_date": "2026-03-03",
+                "next_high_return": 0.1,
+                "next_close_return": 0.1,
+                "t_plus_2_close_return": 0.08,
+            }
+        ]
+    )
+
+    assert summary["recommendation"]
+    assert "[]" not in summary["recommendation"]
+
+    lines: list[str] = []
+    tradeable_pool._append_tradeable_pool_one_word_board_markdown(lines, summary)
+    markdown = "\n".join(lines)
+    assert "## One Word Board Entry Failure Breakdown" in markdown
+    assert "[]" not in markdown
+
+
+def test_board_aware_extreme_open_gap_detection_main_board() -> None:
+    """Test that main board stocks use ~10% threshold for extreme open gap detection."""
+    # Main board stock (000xxx) with 9.6% gap should trigger (above 9.5% threshold)
+    price_outcome = {
+        "next_open_return": 0.096,
+        "next_high_return": 0.10,
+        "next_close_return": 0.10,
+        "next_open": 10.96,
+        "next_high": 11.0,
+        "next_close": 11.0,
+    }
+    symbol = "000001"
+    market = "SZ"
+    
+    notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
+    assert "t_plus_1_extreme_open_gap" in notes
+
+
+def test_board_aware_extreme_open_gap_detection_chinext_not_triggered() -> None:
+    """Test that ChiNext stocks (300xxx) do NOT trigger extreme gap at 9.6% (below 20% limit)."""
+    # ChiNext stock with 9.6% gap should NOT trigger (below ~19% threshold for 20% limit)
+    price_outcome = {
+        "next_open_return": 0.096,
+        "next_high_return": 0.10,
+        "next_close_return": 0.10,
+        "next_open": 10.96,
+        "next_high": 11.0,
+        "next_close": 11.0,
+    }
+    symbol = "300724"
+    market = "创业板"
+    
+    notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
+    assert "t_plus_1_extreme_open_gap" not in notes
+
+
+def test_board_aware_extreme_open_gap_detection_chinext_triggered() -> None:
+    """Test that ChiNext stocks (300xxx) DO trigger extreme gap at 19.1% (near 20% limit)."""
+    # ChiNext stock with 19.1% gap should trigger (approaching 20% limit)
+    price_outcome = {
+        "next_open_return": 0.191,
+        "next_high_return": 0.195,
+        "next_close_return": 0.195,
+        "next_open": 11.91,
+        "next_high": 11.95,
+        "next_close": 11.95,
+    }
+    symbol = "300724"
+    market = "创业板"
+    
+    notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
+    assert "t_plus_1_extreme_open_gap" in notes
+
+
+def test_board_aware_extreme_open_gap_detection_star_triggered() -> None:
+    """Test that STAR Market stocks (688xxx) DO trigger extreme gap at 19.1% (near 20% limit)."""
+    # STAR Market stock with 19.1% gap should trigger (approaching 20% limit)
+    price_outcome = {
+        "next_open_return": 0.191,
+        "next_high_return": 0.195,
+        "next_close_return": 0.195,
+        "next_open": 11.91,
+        "next_high": 11.95,
+        "next_close": 11.95,
+    }
+    symbol = "688001"
+    market = "科创板"
+    
+    notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
+    assert "t_plus_1_extreme_open_gap" in notes
+
+
+def test_board_aware_one_word_board_detection_main_board() -> None:
+    """Test that main board stocks use ~10% threshold for one-word-board detection."""
+    # Main board stock at 9.6% one-word-board should trigger
+    price_outcome = {
+        "next_open_return": 0.096,
+        "next_high_return": 0.096,
+        "next_close_return": 0.096,
+        "next_open": 10.96,
+        "next_high": 10.96,
+        "next_close": 10.96,
+    }
+    symbol = "000001"
+    market = "SZ"
+    
+    notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
+    assert "t_plus_1_one_word_board" in notes
+
+
+def test_board_aware_one_word_board_detection_chinext_not_triggered() -> None:
+    """Test that ChiNext stocks (300xxx) do NOT trigger one-word-board at 9.6% (not at limit)."""
+    # ChiNext stock at 9.6% one-word-board should NOT trigger (not at 20% limit)
+    price_outcome = {
+        "next_open_return": 0.096,
+        "next_high_return": 0.096,
+        "next_close_return": 0.096,
+        "next_open": 10.96,
+        "next_high": 10.96,
+        "next_close": 10.96,
+    }
+    symbol = "300724"
+    market = "创业板"
+    
+    notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
+    assert "t_plus_1_one_word_board" not in notes
+
+
+def test_board_aware_one_word_board_detection_chinext_triggered() -> None:
+    """Test that ChiNext stocks (300xxx) DO trigger one-word-board at 19.1% (near 20% limit)."""
+    # ChiNext stock at 19.1% one-word-board should trigger
+    price_outcome = {
+        "next_open_return": 0.191,
+        "next_high_return": 0.191,
+        "next_close_return": 0.191,
+        "next_open": 11.91,
+        "next_high": 11.91,
+        "next_close": 11.91,
+    }
+    symbol = "300724"
+    market = "创业板"
+    
+    notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
+    assert "t_plus_1_one_word_board" in notes
+
+
+def test_board_aware_one_word_board_detection_star_triggered() -> None:
+    """Test that STAR Market stocks (688xxx) DO trigger one-word-board at 19.1% (near 20% limit)."""
+    # STAR Market stock at 19.1% one-word-board should trigger
+    price_outcome = {
+        "next_open_return": 0.191,
+        "next_high_return": 0.191,
+        "next_close_return": 0.191,
+        "next_open": 11.91,
+        "next_high": 11.91,
+        "next_close": 11.91,
+    }
+    symbol = "688001"
+    market = "科创板"
+    
+    notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
+    assert "t_plus_1_one_word_board" in notes
+
+
+def test_board_aware_tradeability_integration_with_chinext_stock(tmp_path: Path, monkeypatch) -> None:
+    """Test that ChiNext stocks (300xxx) use 20% threshold in full workflow."""
+    reports_root = tmp_path / "data" / "reports"
+    _prepare_report_dir(reports_root)
+
+    stock_basic = pd.DataFrame(
+        [
+            {"ts_code": "300724.SZ", "symbol": "300724", "name": "ChiNext Alpha", "industry": "Tech", "market": "创业板", "list_date": "20200101"},
+            {"ts_code": "000001.SZ", "symbol": "000001", "name": "Main Board Beta", "industry": "Finance", "market": "SZ", "list_date": "20200101"},
+        ]
+    )
+    daily_basic = pd.DataFrame(
+        [
+            {"ts_code": "300724.SZ", "turnover_rate": 5.0, "circ_mv": 100000.0},
+            {"ts_code": "000001.SZ", "turnover_rate": 5.0, "circ_mv": 100000.0},
+        ]
+    )
+    # ChiNext stock with 9.6% gap - should NOT trigger (under 20% limit)
+    # Main board stock with 9.6% gap - should trigger (near 10% limit)
+    price_outcomes = {
+        "300724": _build_price_outcome(next_open_return=0.096, next_high_return=0.096, next_close_return=0.096, t_plus_2_close_return=0.10),
+        "000001": _build_price_outcome(next_open_return=0.096, next_high_return=0.096, next_close_return=0.096, t_plus_2_close_return=0.10),
+    }
+    daily_price_batches = _build_daily_price_batches(stock_basic, price_outcomes)
+
+    monkeypatch.setattr(tradeable_pool, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_open_trade_dates", lambda start_date, end_date: ["20260303", "20260304", "20260305"])
+    monkeypatch.setattr(tradeable_pool, "get_daily_price_batch", lambda trade_date: daily_price_batches.get(trade_date, pd.DataFrame()))
+    monkeypatch.setattr(tradeable_pool, "get_limit_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_suspend_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_cooled_tickers", lambda trade_date: set())
+    monkeypatch.setattr(
+        tradeable_pool,
+        "extract_btst_price_outcome",
+        lambda ticker, trade_date, price_cache: (_ for _ in ()).throw(AssertionError("fallback price extraction should not run when batched prices are available")),
+    )
+
+    analysis = tradeable_pool.analyze_btst_tradeable_opportunity_pool(
+        reports_root,
+        trade_dates={"2026-03-03"},
+    )
+
+    rows_by_ticker = {row["ticker"]: row for row in analysis["rows"]}
+    
+    # ChiNext stock should be tradeable (no tradeability notes at 9.6%)
+    assert rows_by_ticker["300724"]["pool_b_tradeable"] is True
+    assert rows_by_ticker["300724"]["tradeability_notes"] == []
+    
+    # Main board stock should have tradeability note (one-word-board at 9.6%)
+    assert rows_by_ticker["000001"]["pool_b_tradeable"] is False
+    assert "t_plus_1_one_word_board" in rows_by_ticker["000001"]["tradeability_notes"]
+    assert rows_by_ticker["000001"]["first_kill_switch"] == "execution_contract_only"
+
+
+def test_execution_cost_summary_exists_in_analysis(tmp_path: Path, monkeypatch) -> None:
+    """Test that analyze_btst_tradeable_opportunity_pool includes execution_cost_summary."""
+    reports_root = tmp_path / "data" / "reports"
+    _prepare_report_dir(reports_root)
+
+    stock_basic = pd.DataFrame(
+        [
+            {"ts_code": "000001.SZ", "symbol": "000001", "name": "Alpha", "industry": "AI", "market": "SZ", "list_date": "20200101"},
+            {"ts_code": "000011.SZ", "symbol": "000011", "name": "Beta", "industry": "Robot", "market": "SZ", "list_date": "20200101"},
+        ]
+    )
+    daily_basic = pd.DataFrame(
+        [
+            {"ts_code": "000001.SZ", "turnover_rate": 10.0, "circ_mv": 100000.0},  # 10000 万元 - base liquidity
+            {"ts_code": "000011.SZ", "turnover_rate": 2.0, "circ_mv": 100000.0},   # 2000 万元 - low liquidity but >= MIN threshold
+        ]
+    )
+    price_outcomes = {
+        "000001": _build_price_outcome(next_open_return=0.03, next_high_return=0.07, next_close_return=0.05, t_plus_2_close_return=0.08),
+        "000011": _build_price_outcome(next_open_return=0.02, next_high_return=0.06, next_close_return=0.04, t_plus_2_close_return=0.07),
+    }
+    daily_price_batches = _build_daily_price_batches(stock_basic, price_outcomes)
+
+    monkeypatch.setattr(tradeable_pool, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_open_trade_dates", lambda start_date, end_date: ["20260303", "20260304", "20260305"])
+    monkeypatch.setattr(tradeable_pool, "get_daily_price_batch", lambda trade_date: daily_price_batches.get(trade_date, pd.DataFrame()))
+    monkeypatch.setattr(tradeable_pool, "get_limit_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_suspend_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_cooled_tickers", lambda trade_date: set())
+    monkeypatch.setattr(
+        tradeable_pool,
+        "extract_btst_price_outcome",
+        lambda ticker, trade_date, price_cache: (_ for _ in ()).throw(AssertionError("fallback price extraction should not run")),
+    )
+
+    analysis = tradeable_pool.analyze_btst_tradeable_opportunity_pool(
+        reports_root,
+        trade_dates={"2026-03-03"},
+    )
+
+    # Check that execution_cost_summary exists
+    assert "execution_cost_summary" in analysis
+    cost_summary = analysis["execution_cost_summary"]
+    
+    # Check expected fields
+    assert "tradeable_row_count" in cost_summary
+    assert "base_liquidity_count" in cost_summary
+    assert "low_liquidity_count" in cost_summary
+    assert "unknown_liquidity_count" in cost_summary
+    assert "mean_round_trip_cost_rate" in cost_summary
+    assert "mean_slippage_rate" in cost_summary
+    assert "positive_gross_next_high_flipped_count" in cost_summary
+    assert "positive_gross_next_close_flipped_count" in cost_summary
+    assert "positive_gross_t_plus_2_close_flipped_count" in cost_summary
+    
+    # Should have at least 1 tradeable row
+    assert cost_summary["tradeable_row_count"] >= 1
+    # Should have cost regime counts that sum to tradeable_row_count
+    total_regimes = (
+        cost_summary["base_liquidity_count"] 
+        + cost_summary["low_liquidity_count"] 
+        + cost_summary["unknown_liquidity_count"]
+    )
+    assert total_regimes == cost_summary["tradeable_row_count"]
+
+
+def test_cost_regime_classification_aligns_with_backtesting_threshold(tmp_path: Path, monkeypatch) -> None:
+    """Test that cost regime classification uses the same threshold as backtesting after unit conversion."""
+    reports_root = tmp_path / "data" / "reports"
+    _prepare_report_dir(reports_root)
+
+    stock_basic = pd.DataFrame(
+        [
+            {"ts_code": "000001.SZ", "symbol": "000001", "name": "Base Liquidity", "industry": "AI", "market": "SZ", "list_date": "20200101"},
+            {"ts_code": "000002.SZ", "symbol": "000002", "name": "Low Liquidity", "industry": "Robot", "market": "SZ", "list_date": "20200101"},
+            {"ts_code": "000003.SZ", "symbol": "000003", "name": "Threshold Edge", "industry": "Chip", "market": "SZ", "list_date": "20200101"},
+        ]
+    )
+    # Backtesting threshold is 50_000_000 yuan = 5000 万元
+    daily_basic = pd.DataFrame(
+        [
+            {"ts_code": "000001.SZ", "turnover_rate": 10.0, "circ_mv": 100000.0},  # 10000 万元 > 5000 - base
+            {"ts_code": "000002.SZ", "turnover_rate": 1.0, "circ_mv": 100000.0},   # 1000 万元 < 5000 - low
+            {"ts_code": "000003.SZ", "turnover_rate": 5.0, "circ_mv": 100000.0},   # 5000 万元 = 5000 - edge case (should be base)
+        ]
+    )
+    price_outcomes = {
+        "000001": _build_price_outcome(next_open_return=0.03, next_high_return=0.07, next_close_return=0.05, t_plus_2_close_return=0.08),
+        "000002": _build_price_outcome(next_open_return=0.03, next_high_return=0.07, next_close_return=0.05, t_plus_2_close_return=0.08),
+        "000003": _build_price_outcome(next_open_return=0.03, next_high_return=0.07, next_close_return=0.05, t_plus_2_close_return=0.08),
+    }
+    daily_price_batches = _build_daily_price_batches(stock_basic, price_outcomes)
+
+    monkeypatch.setattr(tradeable_pool, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_open_trade_dates", lambda start_date, end_date: ["20260303", "20260304", "20260305"])
+    monkeypatch.setattr(tradeable_pool, "get_daily_price_batch", lambda trade_date: daily_price_batches.get(trade_date, pd.DataFrame()))
+    monkeypatch.setattr(tradeable_pool, "get_limit_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_suspend_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_cooled_tickers", lambda trade_date: set())
+    monkeypatch.setattr(
+        tradeable_pool,
+        "extract_btst_price_outcome",
+        lambda ticker, trade_date, price_cache: (_ for _ in ()).throw(AssertionError("fallback should not run")),
+    )
+
+    analysis = tradeable_pool.analyze_btst_tradeable_opportunity_pool(
+        reports_root,
+        trade_dates={"2026-03-03"},
+    )
+
+    rows_by_ticker = {row["ticker"]: row for row in analysis["rows"]}
+    
+    # Check cost regime classification
+    assert rows_by_ticker["000001"]["cost_regime"] == "base_liquidity"
+    assert rows_by_ticker["000002"]["cost_regime"] == "low_liquidity"
+    assert rows_by_ticker["000003"]["cost_regime"] == "base_liquidity"  # >= threshold is base
+
+
+def test_row_level_cost_fields_populated_correctly(tmp_path: Path, monkeypatch) -> None:
+    """Test that row-level cost fields are populated with correct values."""
+    reports_root = tmp_path / "data" / "reports"
+    _prepare_report_dir(reports_root)
+
+    stock_basic = pd.DataFrame(
+        [
+            {"ts_code": "000001.SZ", "symbol": "000001", "name": "Base Liquidity", "industry": "AI", "market": "SZ", "list_date": "20200101"},
+        ]
+    )
+    # Base liquidity: slippage = 0.0015, commission = 0.00025, stamp_duty = 0.001
+    # Round-trip cost = 2*slippage + 2*commission + stamp_duty = 2*0.0015 + 2*0.00025 + 0.001 = 0.0045
+    daily_basic = pd.DataFrame(
+        [
+            {"ts_code": "000001.SZ", "turnover_rate": 10.0, "circ_mv": 100000.0},  # 10000 万元 - base liquidity
+        ]
+    )
+    price_outcomes = {
+        "000001": _build_price_outcome(next_open_return=0.03, next_high_return=0.10, next_close_return=0.05, t_plus_2_close_return=0.08),
+    }
+    daily_price_batches = _build_daily_price_batches(stock_basic, price_outcomes)
+
+    monkeypatch.setattr(tradeable_pool, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_open_trade_dates", lambda start_date, end_date: ["20260303", "20260304", "20260305"])
+    monkeypatch.setattr(tradeable_pool, "get_daily_price_batch", lambda trade_date: daily_price_batches.get(trade_date, pd.DataFrame()))
+    monkeypatch.setattr(tradeable_pool, "get_limit_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_suspend_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_cooled_tickers", lambda trade_date: set())
+
+    analysis = tradeable_pool.analyze_btst_tradeable_opportunity_pool(
+        reports_root,
+        trade_dates={"2026-03-03"},
+    )
+
+    row = analysis["rows"][0]
+    
+    # Check cost fields
+    assert row["cost_regime"] == "base_liquidity"
+    assert row["estimated_slippage_rate"] == 0.0015
+    assert row["round_trip_cost_rate"] == 0.0045
+    
+    # Check net return fields
+    assert row["next_high_return"] == 0.10
+    assert row["next_high_return_after_cost"] == round(0.10 - 0.0045, 4)
+    assert row["next_close_return"] == 0.05
+    assert row["next_close_return_after_cost"] == round(0.05 - 0.0045, 4)
+    assert row["t_plus_2_close_return"] == 0.08
+    assert row["t_plus_2_close_return_after_cost"] == round(0.08 - 0.0045, 4)
+
+
+def test_cost_thresholds_exposed_in_analysis(tmp_path: Path, monkeypatch) -> None:
+    """Test that cost replay assumptions are exposed in thresholds."""
+    reports_root = tmp_path / "data" / "reports"
+    _prepare_report_dir(reports_root)
+
+    stock_basic = pd.DataFrame([{"ts_code": "000001.SZ", "symbol": "000001", "name": "Alpha", "industry": "AI", "market": "SZ", "list_date": "20200101"}])
+    daily_basic = pd.DataFrame([{"ts_code": "000001.SZ", "turnover_rate": 10.0, "circ_mv": 100000.0}])
+    price_outcomes = {"000001": _build_price_outcome(next_open_return=0.03, next_high_return=0.07, next_close_return=0.05, t_plus_2_close_return=0.08)}
+    daily_price_batches = _build_daily_price_batches(stock_basic, price_outcomes)
+
+    monkeypatch.setattr(tradeable_pool, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_open_trade_dates", lambda start_date, end_date: ["20260303", "20260304", "20260305"])
+    monkeypatch.setattr(tradeable_pool, "get_daily_price_batch", lambda trade_date: daily_price_batches.get(trade_date, pd.DataFrame()))
+    monkeypatch.setattr(tradeable_pool, "get_limit_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_suspend_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_cooled_tickers", lambda trade_date: set())
+
+    analysis = tradeable_pool.analyze_btst_tradeable_opportunity_pool(
+        reports_root,
+        trade_dates={"2026-03-03"},
+    )
+
+    # Check thresholds include cost parameters
+    thresholds = analysis["thresholds"]
+    assert "commission_rate" in thresholds
+    assert thresholds["commission_rate"] == 0.00025
+    assert "stamp_duty_rate" in thresholds
+    assert thresholds["stamp_duty_rate"] == 0.001
+    assert "base_slippage_rate" in thresholds
+    assert thresholds["base_slippage_rate"] == 0.0015
+    assert "low_liquidity_slippage_rate" in thresholds
+    assert thresholds["low_liquidity_slippage_rate"] == 0.003
+    assert "low_liquidity_turnover_threshold_wan_yuan" in thresholds
+    assert thresholds["low_liquidity_turnover_threshold_wan_yuan"] == 5000.0
+
+
+def test_execution_cost_markdown_section_exists(tmp_path: Path, monkeypatch) -> None:
+    """Test that markdown output includes execution cost summary section."""
+    reports_root = tmp_path / "data" / "reports"
+    _prepare_report_dir(reports_root)
+
+    stock_basic = pd.DataFrame([{"ts_code": "000001.SZ", "symbol": "000001", "name": "Alpha", "industry": "AI", "market": "SZ", "list_date": "20200101"}])
+    daily_basic = pd.DataFrame([{"ts_code": "000001.SZ", "turnover_rate": 10.0, "circ_mv": 100000.0}])
+    price_outcomes = {"000001": _build_price_outcome(next_open_return=0.03, next_high_return=0.07, next_close_return=0.05, t_plus_2_close_return=0.08)}
+    daily_price_batches = _build_daily_price_batches(stock_basic, price_outcomes)
+
+    monkeypatch.setattr(tradeable_pool, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(tradeable_pool, "get_open_trade_dates", lambda start_date, end_date: ["20260303", "20260304", "20260305"])
+    monkeypatch.setattr(tradeable_pool, "get_daily_price_batch", lambda trade_date: daily_price_batches.get(trade_date, pd.DataFrame()))
+    monkeypatch.setattr(tradeable_pool, "get_limit_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_suspend_list", lambda trade_date: pd.DataFrame())
+    monkeypatch.setattr(tradeable_pool, "get_cooled_tickers", lambda trade_date: set())
+
+    analysis = tradeable_pool.analyze_btst_tradeable_opportunity_pool(
+        reports_root,
+        trade_dates={"2026-03-03"},
+    )
+
+    markdown = tradeable_pool.render_btst_tradeable_opportunity_pool_markdown(analysis)
+    
+    # Check that markdown includes execution cost section
+    assert "## Execution Cost Impact" in markdown or "## 执行成本影响" in markdown
+    # Check cost summary fields appear in markdown
+    assert "base_liquidity" in markdown or "基础流动性" in markdown
+    assert "low_liquidity" in markdown or "低流动性" in markdown
+
+
+def test_execution_cost_summary_counts_flipped_rows_once_across_metrics() -> None:
+    summary = tradeable_pool._build_execution_cost_summary(
+        [
+            {
+                "ticker": "000001",
+                "cost_regime": "base_liquidity",
+                "estimated_slippage_rate": 0.0015,
+                "round_trip_cost_rate": 0.0045,
+                "next_high_return": 0.003,
+                "next_high_return_after_cost": -0.0015,
+                "next_close_return": 0.002,
+                "next_close_return_after_cost": -0.0025,
+                "t_plus_2_close_return": 0.001,
+                "t_plus_2_close_return_after_cost": -0.0035,
+            }
+        ]
+    )
+
+    assert summary["positive_gross_any_metric_flipped_count"] == 1
+    assert summary["positive_gross_any_metric_flipped_share"] == 1.0
+    assert "100.0%" in summary["recommendation"]

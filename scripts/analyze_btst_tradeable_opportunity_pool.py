@@ -13,12 +13,16 @@ import pandas as pd
 from scripts.btst_analysis_utils import extract_btst_price_outcome
 from scripts.btst_data_utils import round_or_none, safe_float
 from scripts.btst_report_utils import discover_nested_report_dirs, discover_report_dirs, normalize_trade_date, safe_load_json
+from src.backtesting.trader import TradingConstraints
 from src.project_env import load_project_dotenv
 from src.screening.candidate_pool import MIN_ESTIMATED_AMOUNT_1D, MIN_LISTING_DAYS, get_cooled_tickers, is_beijing_exchange_stock
 from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_daily_price_batch, get_limit_list, get_open_trade_dates, get_suspend_list
 
 
 load_project_dotenv()
+
+# Use backtesting-aligned cost parameters
+_DEFAULT_TRADING_CONSTRAINTS = TradingConstraints()
 
 
 REPORTS_DIR = Path("data/reports")
@@ -31,8 +35,6 @@ DEFAULT_WATERFALL_MD = REPORTS_DIR / "btst_tradeable_opportunity_reason_waterfal
 INTRADAY_STRONG_THRESHOLD = 0.05
 CLOSE_CONTINUATION_THRESHOLD = 0.03
 STRICT_BTST_GOAL_THRESHOLD = 0.05
-EXTREME_NEXT_OPEN_GAP_THRESHOLD = 0.095
-ONE_WORD_BOARD_THRESHOLD = 0.095
 
 KILL_SWITCH_ORDER: tuple[str, ...] = (
     "universe_prefilter",
@@ -125,6 +127,63 @@ def _estimate_amount_from_daily_basic(row: dict[str, Any] | None) -> float | Non
     if turnover_rate is None or circ_mv is None:
         return None
     return round(max(0.0, circ_mv * turnover_rate / 100.0), 4)
+
+
+def _classify_cost_regime(estimated_amount_1d: float | None) -> str:
+    """
+    Classify cost regime based on estimated_amount_1d (in 万元).
+    Aligns with backtesting threshold: 50_000_000 yuan = 5000 万元.
+    """
+    if estimated_amount_1d is None:
+        return "unknown"
+    # Convert 万元 to yuan for comparison: estimated_amount_1d * 10000
+    # Backtesting threshold is 50_000_000 yuan
+    # So: estimated_amount_1d * 10000 < 50_000_000 => estimated_amount_1d < 5000
+    if estimated_amount_1d < 5000.0:
+        return "low_liquidity"
+    return "base_liquidity"
+
+
+def _calculate_cost_fields(
+    estimated_amount_1d: float | None,
+    *,
+    constraints: TradingConstraints | None = None,
+) -> dict[str, Any]:
+    """
+    Calculate execution cost fields aligned with backtesting semantics.
+    Returns cost_regime, slippage_rate, and round_trip_cost_rate.
+    """
+    cost_regime = _classify_cost_regime(estimated_amount_1d)
+    
+    active_constraints = constraints or _DEFAULT_TRADING_CONSTRAINTS
+    
+    if cost_regime == "low_liquidity":
+        slippage_rate = active_constraints.low_liquidity_slippage_rate
+    elif cost_regime == "base_liquidity":
+        slippage_rate = active_constraints.base_slippage_rate
+    else:
+        # Unknown: use base as fallback
+        slippage_rate = active_constraints.base_slippage_rate
+    
+    # Round-trip cost: buy slippage + sell slippage + buy commission + sell commission + sell stamp duty
+    round_trip_cost_rate = (
+        slippage_rate * 2  # buy + sell slippage
+        + active_constraints.commission_rate * 2  # buy + sell commission
+        + active_constraints.stamp_duty_rate  # sell only
+    )
+    
+    return {
+        "cost_regime": cost_regime,
+        "estimated_slippage_rate": round(slippage_rate, 6),
+        "round_trip_cost_rate": round(round_trip_cost_rate, 6),
+    }
+
+
+def _apply_cost_drag(gross_return: float | None, round_trip_cost_rate: float) -> float | None:
+    """Apply cost drag to a gross return using the same additive approximation as the replay summary."""
+    if gross_return is None:
+        return None
+    return round(gross_return - round_trip_cost_rate, 4)
 
 
 def _normalize_dict(value: Any) -> dict[str, Any]:
@@ -403,21 +462,46 @@ def _classify_system_kill_switch(system_view: dict[str, Any]) -> str:
     return "candidate_entry_filtered"
 
 
-def _detect_tradeability_notes(price_outcome: dict[str, Any]) -> list[str]:
+def _get_board_price_limit_threshold(symbol: str, market: str | None) -> float:
+    """Return board-specific price limit threshold for extreme gap / one-word-board detection.
+    
+    Main board (10% limit) → 0.095 threshold
+    ChiNext/创业板 (300xxx, 20% limit) → 0.19 threshold
+    STAR Market/科创板 (688xxx, 20% limit) → 0.19 threshold
+    """
+    symbol_normalized = str(symbol or "").strip()
+    market_normalized = str(market or "").strip()
+    
+    # ChiNext: 300xxx prefix or market label
+    if symbol_normalized.startswith("300") or market_normalized in ("创业板", "ChiNext"):
+        return 0.19
+    
+    # STAR Market: 688xxx prefix or market label
+    if symbol_normalized.startswith("688") or market_normalized in ("科创板", "STAR"):
+        return 0.19
+    
+    # Main board default (10% limit)
+    return 0.095
+
+
+def _detect_tradeability_notes(price_outcome: dict[str, Any], symbol: str = "", market: str | None = None) -> list[str]:
     next_open_return = safe_float(price_outcome.get("next_open_return"))
     next_high = safe_float(price_outcome.get("next_high"))
     next_open = safe_float(price_outcome.get("next_open"))
     next_close = safe_float(price_outcome.get("next_close"))
     next_close_return = safe_float(price_outcome.get("next_close_return"))
+    
+    threshold = _get_board_price_limit_threshold(symbol, market)
+    
     notes: list[str] = []
-    if next_open_return is not None and next_open_return >= EXTREME_NEXT_OPEN_GAP_THRESHOLD:
+    if next_open_return is not None and next_open_return >= threshold:
         notes.append("t_plus_1_extreme_open_gap")
     if (
         next_open is not None
         and next_high is not None
         and next_close is not None
         and next_close_return is not None
-        and next_close_return >= ONE_WORD_BOARD_THRESHOLD
+        and next_close_return >= threshold
         and round(next_open, 4) == round(next_high, 4) == round(next_close, 4)
     ):
         notes.append("t_plus_1_one_word_board")
@@ -709,12 +793,24 @@ def _assemble_trade_date_row(
     result_truth_labels: list[str],
     price_outcome: dict[str, Any],
 ) -> dict[str, Any]:
-    tradeability_notes = _detect_tradeability_notes(price_outcome)
+    market = stock_context.get("market")
+    tradeability_notes = _detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
     prefilter_reasons = list(stock_context["prefilter_reasons"])
     day0_limit_up_excluded = bool(stock_context["day0_limit_up_excluded"])
     pool_b_tradeable = not prefilter_reasons and not day0_limit_up_excluded and not tradeability_notes
     first_kill_switch = _resolve_first_kill_switch(prefilter_reasons, day0_limit_up_excluded, tradeability_notes, system_view)
     selected_or_near_miss = bool(system_view.get("selected_or_near_miss"))
+    
+    # Calculate cost fields
+    estimated_amount_1d = round_or_none(stock_context["estimated_amount_1d"])
+    cost_fields = _calculate_cost_fields(estimated_amount_1d)
+    round_trip_cost_rate = cost_fields["round_trip_cost_rate"]
+    
+    # Apply cost drag to returns
+    next_high_return = safe_float(price_outcome.get("next_high_return"))
+    next_close_return = safe_float(price_outcome.get("next_close_return"))
+    t_plus_2_close_return = safe_float(price_outcome.get("t_plus_2_close_return"))
+    
     return {
         "trade_date": trade_date,
         "ticker": symbol,
@@ -723,7 +819,7 @@ def _assemble_trade_date_row(
         "industry": stock_row.get("industry"),
         "market": stock_context["market"],
         "list_date": normalize_trade_date(stock_context["list_date"]),
-        "estimated_amount_1d": round_or_none(stock_context["estimated_amount_1d"]),
+        "estimated_amount_1d": estimated_amount_1d,
         "result_truth_labels": result_truth_labels,
         "intraday_strong": "intraday_strong" in result_truth_labels,
         "close_continuation_strong": "close_continuation_strong" in result_truth_labels,
@@ -751,6 +847,14 @@ def _assemble_trade_date_row(
         "report_dir": system_view.get("report_dir_name"),
         "report_selection_target": system_view.get("selection_target"),
         "report_mode": system_view.get("mode"),
+        # Cost fields
+        "cost_regime": cost_fields["cost_regime"],
+        "estimated_slippage_rate": cost_fields["estimated_slippage_rate"],
+        "round_trip_cost_rate": round_trip_cost_rate,
+        # Net-after-cost return fields
+        "next_high_return_after_cost": _apply_cost_drag(next_high_return, round_trip_cost_rate),
+        "next_close_return_after_cost": _apply_cost_drag(next_close_return, round_trip_cost_rate),
+        "t_plus_2_close_return_after_cost": _apply_cost_drag(t_plus_2_close_return, round_trip_cost_rate),
         **price_outcome,
     }
 
@@ -910,6 +1014,195 @@ def _build_no_candidate_entry_summary(tradeable_rows: list[dict[str, Any]]) -> d
         "top_priority_rows": sorted(no_candidate_entry_rows, key=_row_priority_key, reverse=True)[:NO_CANDIDATE_ENTRY_TOP_PRIORITY_LIMIT],
         "recommendation": recommendation,
     }
+
+
+def _build_one_word_board_summary(all_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    one_word_board_rows = [
+        row
+        for row in all_rows
+        if "t_plus_1_one_word_board" in (row.get("tradeability_notes") or [])
+    ]
+    tradeable_row_count = sum(1 for row in all_rows if row.get("pool_b_tradeable"))
+    
+    if not one_word_board_rows:
+        return {
+            "count": 0,
+            "share_of_tradeable_pool": 0.0 if tradeable_row_count > 0 else None,
+            "strict_goal_case_count": 0,
+            "strict_goal_case_share": None,
+            "industry_counts": {},
+            "trade_date_counts": {},
+            "top_ticker_rows": [],
+            "recommendation": "当前 tradeable pool 中没有次日一字板买不到的样本。",
+        }
+
+    industry_counts = Counter(str(row.get("industry") or "unknown") for row in one_word_board_rows)
+    trade_date_counts = Counter(str(row.get("trade_date") or "unknown") for row in one_word_board_rows)
+
+    ticker_buckets: dict[str, list[dict[str, Any]]] = {}
+    for row in one_word_board_rows:
+        ticker = str(row.get("ticker") or "")
+        if ticker:
+            ticker_buckets.setdefault(ticker, []).append(row)
+
+    top_ticker_rows: list[dict[str, Any]] = []
+    for ticker, ticker_rows in ticker_buckets.items():
+        ticker_rows_sorted = sorted(ticker_rows, key=_row_priority_key, reverse=True)
+        lead_row = ticker_rows_sorted[0]
+        top_ticker_rows.append(
+            {
+                "ticker": ticker,
+                "occurrence_count": len(ticker_rows),
+                "strict_goal_case_count": sum(1 for row in ticker_rows if row.get("strict_btst_goal_case")),
+                "industry": str(lead_row.get("industry") or "unknown"),
+                "latest_trade_date": max(str(row.get("trade_date") or "") for row in ticker_rows),
+                "trade_dates": sorted({str(row.get("trade_date") or "") for row in ticker_rows if str(row.get("trade_date") or "")}),
+                "mean_next_high_return": _mean_metric(ticker_rows, "next_high_return"),
+                "mean_next_close_return": _mean_metric(ticker_rows, "next_close_return"),
+                "mean_t_plus_2_close_return": _mean_metric(ticker_rows, "t_plus_2_close_return"),
+            }
+        )
+    top_ticker_rows.sort(
+        key=lambda row: (
+            int(row.get("strict_goal_case_count") or 0),
+            int(row.get("occurrence_count") or 0),
+            float(row.get("mean_t_plus_2_close_return") if row.get("mean_t_plus_2_close_return") is not None else -999.0),
+            float(row.get("mean_next_high_return") if row.get("mean_next_high_return") is not None else -999.0),
+            str(row.get("ticker") or ""),
+        ),
+        reverse=True,
+    )
+
+    top_industries = [label for label, _ in industry_counts.most_common(3)]
+    top_tickers = [str(row.get("ticker") or "") for row in top_ticker_rows[:3] if row.get("ticker")]
+    top_industries_text = _format_summary_entities(top_industries, "相关行业信息不足")
+    top_tickers_text = _format_summary_entities(top_tickers, "相关 ticker 信息不足")
+    if top_tickers and top_tickers_text != "相关 ticker 信息不足":
+        recommendation = f"一字板买不到的机会主要集中在 {top_industries_text}，重点关注 {top_tickers_text} 的日内竞价/盘后成交可能性，或直接放弃。"
+    else:
+        recommendation = f"一字板买不到的机会主要集中在 {top_industries_text}，这类情况需要接受无法实际开仓的现实。"
+
+    strict_goal_case_count = sum(1 for row in one_word_board_rows if row.get("strict_btst_goal_case"))
+    return {
+        "count": len(one_word_board_rows),
+        "share_of_tradeable_pool": _rate(len(one_word_board_rows), tradeable_row_count) if tradeable_row_count > 0 else None,
+        "strict_goal_case_count": strict_goal_case_count,
+        "strict_goal_case_share": _rate(strict_goal_case_count, len(one_word_board_rows)),
+        "industry_counts": _summarize_counter(industry_counts, limit=10),
+        "trade_date_counts": _summarize_counter(trade_date_counts, limit=10),
+        "top_ticker_rows": top_ticker_rows[:NO_CANDIDATE_ENTRY_TOP_TICKER_LIMIT],
+        "recommendation": recommendation,
+    }
+
+
+def _build_execution_cost_summary(tradeable_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Build execution cost summary for tradeable rows using backtesting-aligned semantics.
+    """
+    if not tradeable_rows:
+        return {
+            "tradeable_row_count": 0,
+            "base_liquidity_count": 0,
+            "low_liquidity_count": 0,
+            "unknown_liquidity_count": 0,
+            "mean_round_trip_cost_rate": None,
+            "mean_slippage_rate": None,
+            "mean_next_high_return_compression": None,
+            "mean_next_close_return_compression": None,
+            "mean_t_plus_2_close_return_compression": None,
+            "positive_gross_next_high_flipped_count": 0,
+            "positive_gross_next_close_flipped_count": 0,
+            "positive_gross_t_plus_2_close_flipped_count": 0,
+            "positive_gross_any_metric_flipped_count": 0,
+            "positive_gross_any_metric_flipped_share": None,
+            "recommendation": "当前 tradeable pool 为空，无法计算执行成本影响。",
+        }
+    
+    # Count cost regimes
+    cost_regime_counts = Counter(str(row.get("cost_regime") or "unknown") for row in tradeable_rows)
+    
+    # Calculate mean costs
+    cost_rates = [safe_float(row.get("round_trip_cost_rate")) for row in tradeable_rows]
+    valid_cost_rates = [rate for rate in cost_rates if rate is not None]
+    mean_cost_rate = round(sum(valid_cost_rates) / len(valid_cost_rates), 6) if valid_cost_rates else None
+    
+    slippage_rates = [safe_float(row.get("estimated_slippage_rate")) for row in tradeable_rows]
+    valid_slippage_rates = [rate for rate in slippage_rates if rate is not None]
+    mean_slippage_rate = round(sum(valid_slippage_rates) / len(valid_slippage_rates), 6) if valid_slippage_rates else None
+    
+    # Calculate return compression (gross - net)
+    def _compute_compression(gross_key: str, net_key: str) -> float | None:
+        compressions = []
+        for row in tradeable_rows:
+            gross = safe_float(row.get(gross_key))
+            net = safe_float(row.get(net_key))
+            if gross is not None and net is not None:
+                compressions.append(gross - net)
+        return round(sum(compressions) / len(compressions), 6) if compressions else None
+    
+    mean_next_high_compression = _compute_compression("next_high_return", "next_high_return_after_cost")
+    mean_next_close_compression = _compute_compression("next_close_return", "next_close_return_after_cost")
+    mean_t_plus_2_close_compression = _compute_compression("t_plus_2_close_return", "t_plus_2_close_return_after_cost")
+    
+    # Count positive-gross-to-non-positive flips
+    def _count_flips(gross_key: str, net_key: str) -> int:
+        count = 0
+        for row in tradeable_rows:
+            gross = safe_float(row.get(gross_key))
+            net = safe_float(row.get(net_key))
+            if gross is not None and net is not None and gross > 0 and net <= 0:
+                count += 1
+        return count
+    
+    next_high_flips = _count_flips("next_high_return", "next_high_return_after_cost")
+    next_close_flips = _count_flips("next_close_return", "next_close_return_after_cost")
+    t_plus_2_close_flips = _count_flips("t_plus_2_close_return", "t_plus_2_close_return_after_cost")
+
+    any_metric_flipped_count = sum(
+        1
+        for row in tradeable_rows
+        if any(
+            gross is not None and net is not None and gross > 0 and net <= 0
+            for gross, net in (
+                (safe_float(row.get("next_high_return")), safe_float(row.get("next_high_return_after_cost"))),
+                (safe_float(row.get("next_close_return")), safe_float(row.get("next_close_return_after_cost"))),
+                (safe_float(row.get("t_plus_2_close_return")), safe_float(row.get("t_plus_2_close_return_after_cost"))),
+            )
+        )
+    )
+    any_metric_flipped_share = _rate(any_metric_flipped_count, len(tradeable_rows))
+    
+    # Build recommendation
+    low_liquidity_share = _rate(cost_regime_counts.get("low_liquidity", 0), len(tradeable_rows))
+    if low_liquidity_share is not None and low_liquidity_share > 0.5:
+        recommendation = f"超过 {low_liquidity_share:.1%} tradeable 样本处于低流动性成本区间，实际交易滑点冲击可能显著压缩收益。"
+    elif any_metric_flipped_share is not None and any_metric_flipped_share > 0.1:
+        recommendation = f"约 {any_metric_flipped_share:.1%} 的 tradeable 样本在至少一个正向收益面上会因成本翻转为非正收益，执行成本是显著约束。"
+    else:
+        recommendation = f"执行成本对 tradeable pool 的整体冲击有限（平均往返成本 {mean_cost_rate:.2%}），但仍需在流动性不足时降低仓位规模。"
+    
+    return {
+        "tradeable_row_count": len(tradeable_rows),
+        "base_liquidity_count": cost_regime_counts.get("base_liquidity", 0),
+        "low_liquidity_count": cost_regime_counts.get("low_liquidity", 0),
+        "unknown_liquidity_count": cost_regime_counts.get("unknown", 0),
+        "mean_round_trip_cost_rate": mean_cost_rate,
+        "mean_slippage_rate": mean_slippage_rate,
+        "mean_next_high_return_compression": mean_next_high_compression,
+        "mean_next_close_return_compression": mean_next_close_compression,
+        "mean_t_plus_2_close_return_compression": mean_t_plus_2_close_compression,
+        "positive_gross_next_high_flipped_count": next_high_flips,
+        "positive_gross_next_close_flipped_count": next_close_flips,
+        "positive_gross_t_plus_2_close_flipped_count": t_plus_2_close_flips,
+        "positive_gross_any_metric_flipped_count": any_metric_flipped_count,
+        "positive_gross_any_metric_flipped_share": any_metric_flipped_share,
+        "recommendation": recommendation,
+    }
+
+
+def _format_summary_entities(values: list[str], fallback: str) -> str:
+    cleaned = [value.strip() for value in values if str(value).strip() and str(value).strip() != "unknown"]
+    return "、".join(cleaned) if cleaned else fallback
 
 
 def _build_waterfall(analysis: dict[str, Any]) -> dict[str, Any]:
@@ -1116,6 +1409,8 @@ def analyze_btst_tradeable_opportunity_pool(
     selected_or_near_miss_rate = _rate(selected_or_near_miss_count, len(tradeable_rows))
     main_execution_rate = _rate(main_execution_pool_count, len(tradeable_rows))
     no_candidate_entry_summary = _build_no_candidate_entry_summary(tradeable_rows)
+    one_word_board_summary = _build_one_word_board_summary(rows)
+    execution_cost_summary = _build_execution_cost_summary(tradeable_rows)
     recommendation = _build_recommendation(
         tradeable_pool_count=len(tradeable_rows),
         tradeable_counts=tradeable_pool_first_kill_switch_counts,
@@ -1132,9 +1427,18 @@ def analyze_btst_tradeable_opportunity_pool(
             "intraday_strong_threshold": INTRADAY_STRONG_THRESHOLD,
             "close_continuation_threshold": CLOSE_CONTINUATION_THRESHOLD,
             "strict_btst_goal_threshold": STRICT_BTST_GOAL_THRESHOLD,
-            "extreme_next_open_gap_threshold": EXTREME_NEXT_OPEN_GAP_THRESHOLD,
+            "extreme_next_open_gap_threshold_main_board": 0.095,
+            "extreme_next_open_gap_threshold_chinext_star": 0.19,
+            "one_word_board_threshold_main_board": 0.095,
+            "one_word_board_threshold_chinext_star": 0.19,
             "min_listing_days": MIN_LISTING_DAYS,
             "min_estimated_amount_1d": MIN_ESTIMATED_AMOUNT_1D,
+            # Cost replay parameters (backtesting-aligned)
+            "commission_rate": _DEFAULT_TRADING_CONSTRAINTS.commission_rate,
+            "stamp_duty_rate": _DEFAULT_TRADING_CONSTRAINTS.stamp_duty_rate,
+            "base_slippage_rate": _DEFAULT_TRADING_CONSTRAINTS.base_slippage_rate,
+            "low_liquidity_slippage_rate": _DEFAULT_TRADING_CONSTRAINTS.low_liquidity_slippage_rate,
+            "low_liquidity_turnover_threshold_wan_yuan": _DEFAULT_TRADING_CONSTRAINTS.low_liquidity_turnover_threshold / 10000.0,
         },
         "pool_semantics": {
             "pool_a": "结果真值池：next_high / next_close / t+2 收益达到阈值的样本。",
@@ -1159,6 +1463,8 @@ def analyze_btst_tradeable_opportunity_pool(
         "candidate_source_false_negative_counts": _summarize_counter(candidate_source_false_negative_counts, limit=10),
         "industry_false_negative_counts": _summarize_counter(industry_false_negative_counts, limit=10),
         "no_candidate_entry_summary": no_candidate_entry_summary,
+        "one_word_board_summary": one_word_board_summary,
+        "execution_cost_summary": execution_cost_summary,
         "top_false_negative_rows": sorted(tradeable_false_negative_rows, key=_row_priority_key, reverse=True)[:12],
         "top_strict_goal_false_negative_rows": sorted(strict_goal_false_negative_rows, key=_row_priority_key, reverse=True)[:12],
         "recommendation": recommendation,
@@ -1168,6 +1474,8 @@ def analyze_btst_tradeable_opportunity_pool(
 
 def render_btst_tradeable_opportunity_pool_markdown(analysis: dict[str, Any]) -> str:
     no_candidate_entry_summary = dict(analysis.get("no_candidate_entry_summary") or {})
+    one_word_board_summary = dict(analysis.get("one_word_board_summary") or {})
+    execution_cost_summary = dict(analysis.get("execution_cost_summary") or {})
     lines: list[str] = []
     lines.append("# BTST Tradeable Opportunity Pool Review")
     lines.append("")
@@ -1177,9 +1485,38 @@ def render_btst_tradeable_opportunity_pool_markdown(analysis: dict[str, Any]) ->
     _append_tradeable_pool_kill_switch_summary_markdown(lines, analysis)
     _append_tradeable_pool_false_negative_clusters_markdown(lines, analysis)
     _append_tradeable_pool_no_candidate_entry_markdown(lines, no_candidate_entry_summary)
+    _append_tradeable_pool_one_word_board_markdown(lines, one_word_board_summary)
+    _append_tradeable_pool_execution_cost_markdown(lines, execution_cost_summary)
     _append_tradeable_pool_row_section_markdown(lines, "Top Tradeable False Negatives", list(analysis.get("top_false_negative_rows") or []), strict=False)
     _append_tradeable_pool_row_section_markdown(lines, "Top Strict Goal False Negatives", list(analysis.get("top_strict_goal_false_negative_rows") or []), strict=True)
     return "\n".join(lines) + "\n"
+
+
+def _append_tradeable_pool_execution_cost_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    lines.append("## Execution Cost Impact")
+    if int(summary.get("tradeable_row_count") or 0) <= 0:
+        lines.append("- none")
+        lines.append("")
+        return
+    for key in (
+        "tradeable_row_count",
+        "base_liquidity_count",
+        "low_liquidity_count",
+        "unknown_liquidity_count",
+        "mean_round_trip_cost_rate",
+        "mean_slippage_rate",
+        "mean_next_high_return_compression",
+        "mean_next_close_return_compression",
+        "mean_t_plus_2_close_return_compression",
+        "positive_gross_next_high_flipped_count",
+        "positive_gross_next_close_flipped_count",
+        "positive_gross_t_plus_2_close_flipped_count",
+        "positive_gross_any_metric_flipped_count",
+        "positive_gross_any_metric_flipped_share",
+    ):
+        lines.append(f"- {key}: {summary.get(key)}")
+    lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
 
 
 def _append_tradeable_pool_overview_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
@@ -1257,6 +1594,29 @@ def _append_tradeable_pool_no_candidate_entry_markdown(lines: list[str], summary
     for row in list(summary.get("top_priority_rows") or []):
         lines.append(
             f"- priority_case: {row.get('trade_date')} {row.get('ticker')} next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}"
+        )
+    lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
+
+
+def _append_tradeable_pool_one_word_board_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    lines.append("## One Word Board Entry Failure Breakdown")
+    if int(summary.get("count") or 0) <= 0:
+        lines.append("- none")
+        lines.append("")
+        return
+    for key in (
+        "count",
+        "share_of_tradeable_pool",
+        "strict_goal_case_count",
+        "strict_goal_case_share",
+        "industry_counts",
+        "trade_date_counts",
+    ):
+        lines.append(f"- {key}: {summary.get(key)}")
+    for row in list(summary.get("top_ticker_rows") or []):
+        lines.append(
+            f"- recurring_ticker: {row.get('ticker')} occurrences={row.get('occurrence_count')}, strict_goal_case_count={row.get('strict_goal_case_count')}, industry={row.get('industry')}, mean_next_high_return={row.get('mean_next_high_return')}, mean_t_plus_2_close_return={row.get('mean_t_plus_2_close_return')}"
         )
     lines.append(f"- recommendation: {summary.get('recommendation')}")
     lines.append("")

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
+    _enforce_btst_daily_trade_limit,
     _resolve_btst_position_budget,
     build_buy_orders_with_diagnostics,
 )
@@ -45,9 +46,24 @@ def _selection_target(*, gate: str, prior_quality_label: str, execution_eligible
     )
 
 
+def _selection_target_for_ticker(ticker: str, *, gate: str, prior_quality_label: str, execution_eligible: bool = True, candidate_source: str = "layer_c_watchlist") -> DualTargetEvaluation:
+    target = _selection_target(
+        gate=gate,
+        prior_quality_label=prior_quality_label,
+        execution_eligible=execution_eligible,
+        candidate_source=candidate_source,
+    )
+    target.ticker = ticker
+    return target
+
+
 
 def _watchlist_item(*, score_final: float = 0.55, quality_score: float = 0.5) -> LayerCResult:
     return LayerCResult(ticker="300724", score_b=0.72, score_c=0.64, score_final=score_final, quality_score=quality_score, decision="watch")
+
+
+def _watchlist_item_for_ticker(ticker: str, *, score_final: float = 0.55, quality_score: float = 0.5) -> LayerCResult:
+    return LayerCResult(ticker=ticker, score_b=0.72, score_c=0.64, score_final=score_final, quality_score=quality_score, decision="watch")
 
 
 
@@ -189,6 +205,92 @@ def test_p6_off_preserves_existing_position_sizing(monkeypatch):
     assert buy_orders[0].shares == 1000
     assert buy_orders[0].amount == pytest.approx(10000.0)
     assert diagnostics["btst_risk_budget_overlay"]["mode"] == "off"
+
+
+def test_btst_daily_trade_limit_caps_normal_trade_to_two_positions(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    watchlist = [
+        _watchlist_item_for_ticker("300721", score_final=0.57, quality_score=0.5),
+        _watchlist_item_for_ticker("300722", score_final=0.56, quality_score=0.5),
+        _watchlist_item_for_ticker("300723", score_final=0.55, quality_score=0.5),
+    ]
+    selection_targets = {
+        "300721": _selection_target_for_ticker("300721", gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True),
+        "300722": _selection_target_for_ticker("300722", gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True),
+        "300723": _selection_target_for_ticker("300723", gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True),
+    }
+    candidate_by_ticker = {
+        ticker: CandidateStock(ticker=ticker, name="Test", industry_sw="电子", avg_volume_20d=1_000_000.0)
+        for ticker in selection_targets
+    }
+
+    buy_orders, diagnostics = build_buy_orders_with_diagnostics(
+        watchlist=watchlist,
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        trade_date="20260422",
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={ticker: 10.0 for ticker in selection_targets},
+        blocked_buy_tickers={},
+        selection_targets=selection_targets,
+        normalize_blocked_buy_tickers_fn=lambda payload: payload or {},
+        build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {entry["reason"]: sum(1 for row in entries if row["reason"] == entry["reason"]) for entry in entries}, "tickers": entries},
+        build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
+        resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
+        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        enforce_daily_trade_limit_fn=_enforce_btst_daily_trade_limit,
+    )
+
+    assert [order.ticker for order in buy_orders] == ["300721", "300722"]
+    assert diagnostics["reason_counts"] == {"filtered_by_daily_trade_limit": 1}
+
+
+def test_btst_daily_trade_limit_allows_three_aggressive_trade_positions(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    watchlist = [
+        _watchlist_item_for_ticker("300731", score_final=0.58, quality_score=0.5),
+        _watchlist_item_for_ticker("300732", score_final=0.57, quality_score=0.5),
+        _watchlist_item_for_ticker("300733", score_final=0.56, quality_score=0.5),
+        _watchlist_item_for_ticker("300734", score_final=0.55, quality_score=0.5),
+    ]
+    selection_targets = {
+        ticker: _selection_target_for_ticker(ticker, gate="aggressive_trade", prior_quality_label="execution_ready", execution_eligible=True)
+        for ticker in ["300731", "300732", "300733", "300734"]
+    }
+    candidate_by_ticker = {
+        ticker: CandidateStock(ticker=ticker, name="Test", industry_sw="电子", avg_volume_20d=1_000_000.0)
+        for ticker in selection_targets
+    }
+
+    buy_orders, diagnostics = build_buy_orders_with_diagnostics(
+        watchlist=watchlist,
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        trade_date="20260422",
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={ticker: 10.0 for ticker in selection_targets},
+        blocked_buy_tickers={},
+        selection_targets=selection_targets,
+        normalize_blocked_buy_tickers_fn=lambda payload: payload or {},
+        build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {entry["reason"]: sum(1 for row in entries if row["reason"] == entry["reason"]) for entry in entries}, "tickers": entries},
+        build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
+        resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
+        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        enforce_daily_trade_limit_fn=_enforce_btst_daily_trade_limit,
+    )
+
+    assert [order.ticker for order in buy_orders] == ["300731", "300732", "300733"]
+    assert diagnostics["reason_counts"] == {"filtered_by_daily_trade_limit": 1}
+
+
+def test_btst_daily_trade_limit_uses_most_restrictive_gate_when_mixed(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    plans = [
+        PositionPlan(ticker="300731", shares=700, amount=7000.0, score_final=0.58, execution_ratio=0.75, quality_score=0.5, risk_budget_gate="aggressive_trade"),
+        PositionPlan(ticker="300732", shares=700, amount=7000.0, score_final=0.57, execution_ratio=0.75, quality_score=0.5, risk_budget_gate="shadow_only"),
+    ]
+
+    selected = _enforce_btst_daily_trade_limit(plans, portfolio_nav=100000.0)
+
+    assert selected == []
 
 
 

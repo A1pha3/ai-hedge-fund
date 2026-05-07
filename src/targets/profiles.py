@@ -246,6 +246,14 @@ class ShortTradeTargetProfile:
     committee_beta_min_normal_trade: float = 0.0
     committee_gamma_min_normal_trade: float = 0.0
     committee_score_min_normal_trade: float = 0.0
+    committee_sector_group_score_min_aggressive_trade: float = 0.05
+    committee_flow_group_score_min_aggressive_trade: float = 0.08
+    committee_retention_group_score_min_aggressive_trade: float = 0.0
+    committee_sector_group_score_min_normal_trade: float = 0.05
+    committee_flow_group_score_min_normal_trade: float = 0.05
+    committee_retention_group_score_min_normal_trade: float = 0.05
+    committee_penalty_total_max: float = 0.12
+    committee_theme_exposure_cap: float = 0.18
     committee_isolated_attention_veto_enabled: bool = True
     committee_isolated_attention_min: float = 80.0
     committee_isolated_attention_sector_max: float = 60.0

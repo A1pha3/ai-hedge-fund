@@ -87,6 +87,85 @@ def test_run_agent_mode_skips_day_without_prices(monkeypatch):
     assert append_calls == []
 
 
+def test_run_agent_mode_records_long_entry_date_on_buy(monkeypatch):
+    """Test that agent mode records entry_date after successful buy execution."""
+    engine = BacktestEngine(
+        agent=dummy_agent,
+        tickers=["AAPL", "MSFT"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="m",
+        model_provider="p",
+        selected_analysts=["x"],
+        initial_margin_requirement=0.0,
+        backtest_mode="agent",
+    )
+
+    monkeypatch.setattr(engine, "_load_current_prices", lambda *args, **kwargs: {"AAPL": 100.0, "MSFT": 200.0})
+    monkeypatch.setattr(engine, "_append_daily_state", lambda **kwargs: None)
+
+    # Execute agent mode for a single day where agent buys AAPL
+    engine._run_agent_mode(pd.DatetimeIndex([pd.Timestamp("2024-03-04")]))
+
+    # Verify buy execution happened
+    positions = engine._portfolio.get_positions()
+    assert positions["AAPL"]["long"] == 10
+
+    # Critical check: entry_date must be recorded for T+1 enforcement
+    assert positions["AAPL"]["entry_date"] == "2024-03-04", "Agent mode must record entry_date after buy execution"
+
+
+def test_agent_mode_t_plus_1_blocks_same_day_sell(monkeypatch):
+    """Test that T+1 enforcement works in agent mode: same-day sell is blocked."""
+    
+    def buy_then_sell_agent(**kwargs):
+        """Agent that buys AAPL on first call, sells on second."""
+        tickers = kwargs["tickers"]
+        # Portfolio is a snapshot dict (not Portfolio object)
+        portfolio_snapshot = kwargs["portfolio"]
+        if portfolio_snapshot["positions"]["AAPL"]["long"] > 0:
+            return {
+                "decisions": {tickers[0]: {"action": "sell", "quantity": "10"}},
+                "analyst_signals": {},
+            }
+        return {
+            "decisions": {tickers[0]: {"action": "buy", "quantity": "10"}},
+            "analyst_signals": {},
+        }
+    
+    engine = BacktestEngine(
+        agent=buy_then_sell_agent,
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="m",
+        model_provider="p",
+        selected_analysts=["x"],
+        initial_margin_requirement=0.0,
+        backtest_mode="agent",
+    )
+
+    monkeypatch.setattr(engine, "_load_current_prices", lambda *args, **kwargs: {"AAPL": 100.0})
+    monkeypatch.setattr(engine, "_append_daily_state", lambda **kwargs: None)
+
+    # Execute buy on day 1
+    engine._run_agent_mode(pd.DatetimeIndex([pd.Timestamp("2024-03-04")]))
+    
+    # Verify buy executed and entry_date recorded
+    positions_after_buy = engine._portfolio.get_positions()
+    assert positions_after_buy["AAPL"]["long"] == 10
+    assert positions_after_buy["AAPL"]["entry_date"] == "2024-03-04"
+
+    # Attempt to sell on the same day (should be blocked by T+1)
+    engine._run_agent_mode(pd.DatetimeIndex([pd.Timestamp("2024-03-04")]))
+    
+    # Position should remain intact (sell was blocked)
+    positions_after_sell_attempt = engine._portfolio.get_positions()
+    assert positions_after_sell_attempt["AAPL"]["long"] == 10, "T+1 must block same-day sell in agent mode"
+
+
 def test_append_daily_state_updates_portfolio_rows_and_metrics(monkeypatch):
     engine = BacktestEngine(
         agent=dummy_agent,

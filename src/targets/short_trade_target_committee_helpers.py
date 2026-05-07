@@ -60,6 +60,14 @@ def _step_inverse_score(value: float, thresholds: list[tuple[float, float]], fal
     return float(fallback)
 
 
+def _committee_group_score(raw_score_100: float) -> float:
+    if raw_score_100 >= 60.0:
+        return round(min(100.0, 2.0 * abs(raw_score_100 - 50.0)) / 100.0, 4)
+    if raw_score_100 <= 40.0:
+        return round(-min(100.0, 2.0 * abs(raw_score_100 - 50.0)) / 100.0, 4)
+    return 0.0
+
+
 def _resolve_committee_gate(*, input_data: Any, snapshot: dict[str, Any]) -> str:
     btst_regime_gate_payload = classify_btst_regime_gate_from_market_state_metrics(dict(input_data.market_state or {}))
     inferred_gate = str((btst_regime_gate_payload or {}).get("gate") or "").strip().lower()
@@ -80,6 +88,10 @@ def _resolve_committee_thresholds(*, profile: Any, gate: str) -> dict[str, Any]:
             "beta_min": float(getattr(profile, "committee_beta_min_aggressive_trade", 0.0) or 0.0),
             "gamma_min": float(getattr(profile, "committee_gamma_min_aggressive_trade", 0.0) or 0.0),
             "committee_min": float(getattr(profile, "committee_score_min_aggressive_trade", 0.0) or 0.0),
+            "sector_group_score_min": float(getattr(profile, "committee_sector_group_score_min_aggressive_trade", 0.05) or 0.05),
+            "flow_group_score_min": float(getattr(profile, "committee_flow_group_score_min_aggressive_trade", 0.08) or 0.08),
+            "retention_group_score_min": float(getattr(profile, "committee_retention_group_score_min_aggressive_trade", 0.0) or 0.0),
+            "penalty_total_max": float(getattr(profile, "committee_penalty_total_max", 0.12) or 0.12),
             "selected_enforced": bool(getattr(profile, "committee_enabled", False)),
             "formal_selected_allowed": True,
         }
@@ -89,6 +101,10 @@ def _resolve_committee_thresholds(*, profile: Any, gate: str) -> dict[str, Any]:
             "beta_min": float(getattr(profile, "committee_beta_min_normal_trade", 0.0) or 0.0),
             "gamma_min": float(getattr(profile, "committee_gamma_min_normal_trade", 0.0) or 0.0),
             "committee_min": float(getattr(profile, "committee_score_min_normal_trade", 0.0) or 0.0),
+            "sector_group_score_min": float(getattr(profile, "committee_sector_group_score_min_normal_trade", 0.05) or 0.05),
+            "flow_group_score_min": float(getattr(profile, "committee_flow_group_score_min_normal_trade", 0.05) or 0.05),
+            "retention_group_score_min": float(getattr(profile, "committee_retention_group_score_min_normal_trade", 0.05) or 0.05),
+            "penalty_total_max": float(getattr(profile, "committee_penalty_total_max", 0.12) or 0.12),
             "selected_enforced": bool(getattr(profile, "committee_enabled", False)),
             "formal_selected_allowed": True,
         }
@@ -97,6 +113,10 @@ def _resolve_committee_thresholds(*, profile: Any, gate: str) -> dict[str, Any]:
         "beta_min": 0.0,
         "gamma_min": 0.0,
         "committee_min": 0.0,
+        "sector_group_score_min": 0.0,
+        "flow_group_score_min": 0.0,
+        "retention_group_score_min": 0.0,
+        "penalty_total_max": float(getattr(profile, "committee_penalty_total_max", 0.12) or 0.12),
         "selected_enforced": False,
         "formal_selected_allowed": not bool(getattr(profile, "committee_shadow_only_blocks_selected", True)),
     }
@@ -276,10 +296,85 @@ def _weighted_average(scores: list[tuple[float, float]]) -> float:
     return round(sum(score * weight for score, weight in scores) / total_weight, 4)
 
 
+def _resolve_committee_kill_switch(raw_metrics: dict[str, Any], gate: str) -> dict[str, Any]:
+    triggered_metrics: list[str] = []
+    checks = (
+        ("rolling_8_trade_close_win_rate", lambda value: value < 0.375),
+        ("rolling_8_trade_payoff_ratio", lambda value: value < 0.85),
+        ("rolling_20d_selected_expectation", lambda value: value < -0.015),
+        ("rolling_shadow_minus_formal_close_rate", lambda value: value > 0.08),
+    )
+    for key, predicate in checks:
+        raw_value = raw_metrics.get(key)
+        if raw_value is None:
+            continue
+        if predicate(float(raw_value or 0.0)):
+            triggered_metrics.append(key)
+
+    effective_gate = gate
+    if triggered_metrics:
+        if gate == "aggressive_trade":
+            effective_gate = "normal_trade"
+        elif gate == "normal_trade":
+            effective_gate = "shadow_only"
+
+    return {
+        "active": bool(triggered_metrics),
+        "triggered_metrics": triggered_metrics,
+        "effective_gate": effective_gate,
+    }
+
+
+def _build_committee_penalties(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tuple[dict[str, float], float]:
+    turnover_ratio_20 = raw_metrics.get("turnover_ratio_20")
+    amount_ratio_5 = raw_metrics.get("amount_ratio_5")
+    limit_up_memory_259 = raw_metrics.get("limit_up_memory_259")
+    close_structure = raw_metrics.get("close_structure")
+    close_support_30 = raw_metrics.get("close_support_30")
+    supply_pressure_60 = raw_metrics.get("supply_pressure_60")
+
+    overheat_penalty = 0.0
+    if turnover_ratio_20 is not None and amount_ratio_5 is not None:
+        turnover_value = float(turnover_ratio_20 or 0.0)
+        amount_ratio_value = float(amount_ratio_5 or 0.0)
+        limit_up_value = _normalized_ratio(limit_up_memory_259 or 0.0)
+        if turnover_value >= 2.5 and limit_up_value >= 0.8 and amount_ratio_value >= 2.0:
+            overheat_penalty = 0.08
+        elif turnover_value >= 2.0 and amount_ratio_value >= 1.8:
+            overheat_penalty = 0.04
+
+    weak_close_penalty = 0.0
+    if close_structure is not None:
+        close_structure_value = float(close_structure or 0.0)
+        close_support_value = float(close_support_30 or 0.0) if close_support_30 is not None else float(snapshot.get("close_strength", 0.0) or 0.0)
+        if close_structure_value < 0.45 and close_support_value < 0.02:
+            weak_close_penalty = 0.06
+        elif close_structure_value < 0.50:
+            weak_close_penalty = 0.03
+
+    congestion_penalty = 0.0
+    if supply_pressure_60 is not None:
+        supply_pressure_value = float(supply_pressure_60 or 0.0)
+        if supply_pressure_value > 0.25:
+            congestion_penalty = 0.05
+        elif supply_pressure_value > 0.18:
+            congestion_penalty = 0.02
+
+    penalties = {
+        "overheat_penalty": round(overheat_penalty, 4),
+        "weak_close_penalty": round(weak_close_penalty, 4),
+        "congestion_penalty": round(congestion_penalty, 4),
+    }
+    penalty_total = round(sum(penalties.values()), 4)
+    return penalties, penalty_total
+
+
 def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str, Any], profile: Any) -> dict[str, Any]:
     raw_metrics = _merge_raw_candidate_metrics(input_data)
     gate = _resolve_committee_gate(input_data=input_data, snapshot=snapshot)
-    thresholds = _resolve_committee_thresholds(profile=profile, gate=gate)
+    kill_switch = _resolve_committee_kill_switch(raw_metrics, gate)
+    effective_gate = str(kill_switch["effective_gate"])
+    thresholds = _resolve_committee_thresholds(profile=profile, gate=effective_gate)
     advisory_only, advisory_reasons = _is_committee_advisory_continuation_lane(input_data=input_data, snapshot=snapshot)
     if advisory_only:
         thresholds = {**thresholds, "selected_enforced": False}
@@ -296,6 +391,11 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     liquidity_capacity_raw_100, liquidity_capacity_source = _liquidity_capacity_raw_score(snapshot, raw_metrics, input_data)
     crowding_risk_raw_100, crowding_source = _crowding_risk_raw_score(snapshot, raw_metrics)
     theme_concentration_after_trade_raw_100, theme_source = _theme_concentration_risk_raw_score(raw_metrics, input_data)
+    projected_theme_exposure = _as_float(raw_metrics, "projected_theme_exposure", _as_float(dict(input_data.replay_context or {}), "projected_theme_exposure"))
+    sector_group_score = _committee_group_score(sector_raw_100)
+    flow_group_score = _committee_group_score(flow_raw_100)
+    retention_group_score = _committee_group_score(retention_raw_100)
+    penalties, penalty_total = _build_committee_penalties(snapshot, raw_metrics)
 
     alpha_edge_score = _weighted_average(
         [
@@ -315,7 +415,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     )
 
     gamma_components: list[tuple[float, float]] = [
-        (100.0 if gate == "aggressive_trade" else 75.0 if gate == "normal_trade" else 20.0 if gate == "shadow_only" else 0.0, 0.40),
+        (100.0 if effective_gate == "aggressive_trade" else 75.0 if effective_gate == "normal_trade" else 20.0 if effective_gate == "shadow_only" else 0.0, 0.40),
         (liquidity_capacity_raw_100, 0.25),
         (100.0 - crowding_risk_raw_100, 0.20),
     ]
@@ -347,9 +447,24 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             fail_reasons.append("committee_gamma_below_selected_min")
         if committee_score < float(thresholds["committee_min"]):
             fail_reasons.append("committee_score_below_selected_min")
+        if sector_group_score < float(thresholds["sector_group_score_min"]):
+            fail_reasons.append("committee_sector_hard_gate_failed")
+        if flow_group_score < float(thresholds["flow_group_score_min"]):
+            fail_reasons.append("committee_flow_hard_gate_failed")
+        if retention_group_score < float(thresholds["retention_group_score_min"]):
+            fail_reasons.append("committee_retention_hard_gate_failed")
+        if sector_group_score < 0.0 or flow_group_score < 0.0:
+            fail_reasons.append("committee_negative_sector_or_flow_block")
+        if penalty_total > float(thresholds["penalty_total_max"]):
+            fail_reasons.append("committee_penalty_total_exceeded")
+        if projected_theme_exposure > float(getattr(profile, "committee_theme_exposure_cap", 0.18) or 0.18):
+            fail_reasons.append("committee_theme_exposure_cap_exceeded")
+
+    if bool(kill_switch["active"]) and effective_gate in SHADOW_ONLY_GATES:
+        fail_reasons.append("committee_kill_switch_active")
 
     formal_selected_allowed = bool(thresholds["formal_selected_allowed"])
-    if gate in SHADOW_ONLY_GATES and bool(getattr(profile, "committee_shadow_only_blocks_selected", True)):
+    if effective_gate in SHADOW_ONLY_GATES and bool(getattr(profile, "committee_shadow_only_blocks_selected", True)):
         formal_selected_allowed = False
         fail_reasons.append("committee_shadow_profile_only")
 
@@ -360,18 +475,23 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         "gamma": "pass" if gamma_risk_score >= float(thresholds["gamma_min"]) else "advisory" if not bool(thresholds["selected_enforced"]) else "fail",
         "committee": "pass" if committee_score >= float(thresholds["committee_min"]) else "advisory" if not bool(thresholds["selected_enforced"]) else "fail",
         "veto": "fail" if vetoes else "pass",
-        "formal_selected": "pass" if selected_pass else "shadow_only" if gate in SHADOW_ONLY_GATES and bool(getattr(profile, "committee_shadow_only_blocks_selected", True)) else "fail" if bool(thresholds["selected_enforced"]) or vetoes else "advisory",
+        "formal_selected": "pass" if selected_pass else "shadow_only" if effective_gate in SHADOW_ONLY_GATES and bool(getattr(profile, "committee_shadow_only_blocks_selected", True)) else "fail" if bool(thresholds["selected_enforced"]) or vetoes else "advisory",
     }
 
     return {
         "committee_enabled": bool(getattr(profile, "committee_enabled", False)),
         "committee_gate": gate,
-        "committee_profile": COMMITTEE_PROFILE_BY_GATE.get(gate, "retention_follow"),
+        "committee_effective_gate": effective_gate,
+        "committee_profile": COMMITTEE_PROFILE_BY_GATE.get(effective_gate, "retention_follow"),
         "committee_thresholds": {
             "alpha_min": round(float(thresholds["alpha_min"]), 4),
             "beta_min": round(float(thresholds["beta_min"]), 4),
             "gamma_min": round(float(thresholds["gamma_min"]), 4),
             "committee_min": round(float(thresholds["committee_min"]), 4),
+            "sector_group_score_min": round(float(thresholds["sector_group_score_min"]), 4),
+            "flow_group_score_min": round(float(thresholds["flow_group_score_min"]), 4),
+            "retention_group_score_min": round(float(thresholds["retention_group_score_min"]), 4),
+            "penalty_total_max": round(float(thresholds["penalty_total_max"]), 4),
             "selected_enforced": bool(thresholds["selected_enforced"]),
             "formal_selected_allowed": formal_selected_allowed,
         },
@@ -389,6 +509,14 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "liquidity_capacity_raw_100": round(liquidity_capacity_raw_100, 4),
             "crowding_risk_raw_100": round(crowding_risk_raw_100, 4),
             "theme_concentration_after_trade_raw_100": round(theme_concentration_after_trade_raw_100, 4) if theme_concentration_after_trade_raw_100 is not None else None,
+            "projected_theme_exposure": round(projected_theme_exposure, 4) if projected_theme_exposure > 0.0 else None,
+            "sector_group_score": round(sector_group_score, 4),
+            "flow_group_score": round(flow_group_score, 4),
+            "retention_group_score": round(retention_group_score, 4),
+            "overheat_penalty": penalties["overheat_penalty"],
+            "weak_close_penalty": penalties["weak_close_penalty"],
+            "congestion_penalty": penalties["congestion_penalty"],
+            "penalty_total": penalty_total,
         },
         "committee_component_sources": {
             "sector_raw_100": sector_source,
@@ -403,6 +531,11 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "liquidity_capacity_raw_100": liquidity_capacity_source,
             "crowding_risk_raw_100": crowding_source,
             "theme_concentration_after_trade_raw_100": theme_source,
+            "projected_theme_exposure": "raw:projected_theme_exposure" if projected_theme_exposure > 0.0 else "missing",
+            "sector_group_score": "derived:raw_score_mapping",
+            "flow_group_score": "derived:raw_score_mapping",
+            "retention_group_score": "derived:raw_score_mapping",
+            "penalty_total": "raw:committee_penalty_formula",
         },
         "alpha_edge_score": round(alpha_edge_score, 4),
         "beta_execution_score": round(beta_execution_score, 4),
@@ -413,6 +546,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         "committee_selected_pass": selected_pass,
         "committee_gate_status": component_status,
         "committee_advisory_reasons": advisory_reasons,
+        "committee_kill_switch": kill_switch,
     }
 
 
@@ -444,6 +578,9 @@ def apply_short_trade_committee_governance(
         return decision, downgrade_reasons
 
     if "committee_shadow_profile_only" in threshold_fail_reasons:
+        if "committee_kill_switch_active" in threshold_fail_reasons:
+            _append_unique(blockers, "committee_kill_switch_active")
+            _append_unique(negative_tags, "committee_kill_switch_active")
         _append_unique(blockers, "committee_shadow_profile_only")
         _append_unique(negative_tags, "committee_shadow_profile_only")
         gate_status["committee"] = "shadow_only"

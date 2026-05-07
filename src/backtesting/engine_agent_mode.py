@@ -123,16 +123,58 @@ def execute_agent_mode_trades(
     decisions: dict[str, dict],
     current_prices: dict[str, float],
     portfolio: Portfolio,
+    trade_date: str | None = None,
 ) -> dict[str, int]:
     """Execute trades for every ticker and return ``{ticker: quantity}``."""
     executed_trades: dict[str, int] = {}
     for ticker in tickers:
         decision = decisions.get(ticker, {"action": "hold", "quantity": 0})
-        executed_trades[ticker] = executor.execute_trade(
+        action = decision.get("action", "hold")
+        
+        # Capture position before execution for entry date tracking
+        existing_long_before = int(portfolio.get_positions()[ticker]["long"])
+        
+        executed_qty = executor.execute_trade(
             ticker,
-            decision.get("action", "hold"),
+            action,
             decision.get("quantity", 0),
             current_prices[ticker],
             portfolio,
+            trade_date=trade_date,
         )
+        executed_trades[ticker] = executed_qty
+        
+        # Record long entry lifecycle data for successful buy executions
+        if executed_qty > 0 and action == "buy" and trade_date is not None:
+            _record_agent_mode_buy_execution(
+                portfolio=portfolio,
+                ticker=ticker,
+                executed_qty=executed_qty,
+                existing_long_before=existing_long_before,
+                trade_date_compact=trade_date,
+            )
     return executed_trades
+
+
+def _record_agent_mode_buy_execution(
+    *,
+    portfolio: Portfolio,
+    ticker: str,
+    executed_qty: int,
+    existing_long_before: int,
+    trade_date_compact: str,
+) -> None:
+    """Record long entry lifecycle data after successful buy execution.
+    
+    Reuses the same portfolio lifecycle pattern as pipeline mode to ensure
+    T+1 enforcement functions correctly in agent mode.
+    """
+    portfolio.record_long_entry(
+        ticker,
+        trade_date_compact,
+        reset=existing_long_before <= 0,
+        entry_score=0.0,
+        quality_score=0.5,
+        industry_sw="",
+        is_fundamental_driven=False,
+    )

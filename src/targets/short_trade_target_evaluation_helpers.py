@@ -826,6 +826,7 @@ def _build_short_trade_committee_payload(snapshot: dict[str, Any]) -> dict[str, 
     return {
         "enabled": bool(snapshot.get("committee_enabled", False)),
         "gate": str(snapshot.get("committee_gate") or ""),
+        "effective_gate": str(snapshot.get("committee_effective_gate") or snapshot.get("committee_gate") or ""),
         "profile": str(snapshot.get("committee_profile") or ""),
         "alpha_edge_score": round(float(snapshot.get("alpha_edge_score", 0.0) or 0.0), 4),
         "beta_execution_score": round(float(snapshot.get("beta_execution_score", 0.0) or 0.0), 4),
@@ -839,6 +840,7 @@ def _build_short_trade_committee_payload(snapshot: dict[str, Any]) -> dict[str, 
         "selected_pass": bool(snapshot.get("committee_selected_pass", False)),
         "components": dict(snapshot.get("committee_components") or {}),
         "component_sources": dict(snapshot.get("committee_component_sources") or {}),
+        "kill_switch": dict(snapshot.get("committee_kill_switch") or {}),
     }
 
 

@@ -470,6 +470,7 @@ class BacktestEngine:
                 decisions=agent_output["decisions"],
                 current_prices=current_prices,
                 portfolio=self._portfolio,
+                trade_date=current_date_str,
             )
             self._append_daily_state(
                 current_date=current_date,

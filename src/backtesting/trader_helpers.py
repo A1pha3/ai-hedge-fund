@@ -22,7 +22,16 @@ def execute_buy_trade(ticker: str, quantity: float, current_price: float, portfo
     return executed
 
 
-def execute_sell_trade(ticker: str, quantity: float, current_price: float, portfolio: Portfolio, slippage_rate: float, commission_rate: float, stamp_duty_rate: float) -> int:
+def execute_sell_trade(ticker: str, quantity: float, current_price: float, portfolio: Portfolio, slippage_rate: float, commission_rate: float, stamp_duty_rate: float, trade_date: str | None = None) -> int:
+    # T+1 enforcement: block same-day sell if trade_date and entry_date are both provided and equal
+    if trade_date:
+        positions = portfolio.get_positions()
+        if ticker in positions:
+            position = positions[ticker]
+            entry_date = position.get("entry_date", "")
+            if entry_date and entry_date == trade_date and position.get("long", 0) > 0:
+                return 0
+
     executed_price = float(current_price) * (1 - slippage_rate)
     executed = portfolio.apply_long_sell(ticker, int(quantity), executed_price)
     if executed > 0:

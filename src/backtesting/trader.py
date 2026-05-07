@@ -39,6 +39,7 @@ class TradeExecutor:
         is_limit_up: bool = False,
         is_limit_down: bool = False,
         daily_turnover: float | None = None,
+        trade_date: str | None = None,
     ) -> int:
         if quantity is None or quantity <= 0:
             return 0
@@ -53,7 +54,7 @@ class TradeExecutor:
         if action_enum == Action.SELL:
             if is_limit_down:
                 return 0
-            return execute_sell_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate, self._constraints.stamp_duty_rate)
+            return execute_sell_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate, self._constraints.stamp_duty_rate, trade_date)
         if action_enum == Action.SHORT:
             return execute_short_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
         if action_enum == Action.COVER:

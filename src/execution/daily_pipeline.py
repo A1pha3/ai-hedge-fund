@@ -15,6 +15,7 @@ from scripts.btst_latest_followup_utils import (
 )
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
+    _enforce_btst_daily_trade_limit,
     build_buy_orders_with_diagnostics as build_buy_orders_with_diagnostics_impl,
 )
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
@@ -204,10 +205,7 @@ from src.execution.t1_confirmation import confirm_buy_signal
 from src.llm.defaults import get_default_model_config
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
-from src.portfolio.position_calculator import (
-    calculate_position,
-    enforce_daily_trade_limit,
-)
+from src.portfolio.position_calculator import calculate_position
 from src.screening.candidate_pool import (
     build_candidate_pool,
     build_candidate_pool_with_shadow,
@@ -1024,7 +1022,7 @@ def build_buy_orders_with_diagnostics(
         build_reentry_filter_entry_fn=_build_reentry_filter_entry,
         resolve_continuation_execution_overrides_fn=_resolve_continuation_execution_overrides,
         calculate_position_fn=calculate_position,
-        enforce_daily_trade_limit_fn=enforce_daily_trade_limit,
+        enforce_daily_trade_limit_fn=_enforce_btst_daily_trade_limit,
     )
 
 
