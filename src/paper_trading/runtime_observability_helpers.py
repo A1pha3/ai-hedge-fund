@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Iterator
 
+from src.targets.router_build_helpers import build_reporting_target_summary
+
 if TYPE_CHECKING:
     from src.execution.daily_pipeline import DailyPipeline
 
@@ -102,6 +104,21 @@ def build_dual_target_session_summary(daily_events_path: Path) -> dict:
 
     for payload in _iter_paper_trading_day_payloads(lines):
         _accumulate_dual_target_day(summary, payload)
+    return summary
+
+
+def build_reporting_target_session_summary(daily_events_path: Path) -> dict:
+    summary = _build_empty_dual_target_session_summary()
+    if not daily_events_path.exists():
+        return summary
+
+    lines, read_error = _read_daily_event_lines(daily_events_path)
+    if read_error is not None:
+        summary["read_error"] = read_error
+        return summary
+
+    for payload in _iter_paper_trading_day_payloads(lines):
+        _accumulate_reporting_target_day(summary, payload)
     return summary
 
 
@@ -381,6 +398,28 @@ def _accumulate_dual_target_day(summary: dict, payload: dict) -> None:
     target_summary = dict(current_plan.get("dual_target_summary") or {})
     _accumulate_dual_target_counts(summary, target_summary)
     _accumulate_delta_classification_counts(summary, target_summary)
+    risk_metrics = dict(current_plan.get("risk_metrics") or {})
+    _accumulate_btst_regime_gate_counts(summary, risk_metrics)
+    _accumulate_btst_risk_budget_p6_counts(summary, risk_metrics)
+
+
+def _accumulate_reporting_target_day(summary: dict, payload: dict) -> None:
+    summary["day_count"] += 1
+    current_plan = dict(payload.get("current_plan") or {})
+    target_mode = str(current_plan.get("target_mode") or "research_only")
+    summary["target_mode_counts"][target_mode] = int(summary["target_mode_counts"].get(target_mode) or 0) + 1
+
+    selection_targets = dict(current_plan.get("selection_targets") or {})
+    if selection_targets:
+        summary["days_with_selection_targets"] += 1
+    summary["selection_target_count"] += len(selection_targets)
+
+    reporting_summary = build_reporting_target_summary(
+        selection_targets=selection_targets,
+        target_mode=target_mode,
+    ).model_dump(mode="json")
+    _accumulate_dual_target_counts(summary, reporting_summary)
+    _accumulate_delta_classification_counts(summary, reporting_summary)
     risk_metrics = dict(current_plan.get("risk_metrics") or {})
     _accumulate_btst_regime_gate_counts(summary, risk_metrics)
     _accumulate_btst_risk_budget_p6_counts(summary, risk_metrics)

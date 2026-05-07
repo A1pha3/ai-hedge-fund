@@ -171,10 +171,43 @@ def test_build_selection_target_inputs_overrides_entry_market_state_with_plan_ma
     assert "btst_regime_gate" not in attached_market_state
 
 
-def test_ensure_plan_target_shells_clears_selection_targets_for_frozen_replay_even_when_profile_matches(monkeypatch) -> None:
+def test_ensure_plan_target_shells_preserves_selection_targets_for_frozen_replay_without_rebuildable_shells(monkeypatch) -> None:
     requested_profile = build_short_trade_target_profile("default")
     plan = ExecutionPlan.model_construct(
         date="20260506",
+        selection_targets={"000807": {"short_trade": {"decision": "selected"}}},
+        risk_metrics={"frozen_selection_target_replay_input": {"watchlist": []}},
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_config=_serialize_short_trade_target_profile(requested_profile),
+    )
+    monkeypatch.setattr(daily_pipeline_module, "ensure_plan_target_shells_impl", lambda **kwargs: kwargs["plan"])
+
+    updated = daily_pipeline_module._ensure_plan_target_shells(
+        plan,
+        target_mode="short_trade_only",
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+    )
+
+    assert updated.selection_targets == {"000807": {"short_trade": {"decision": "selected"}}}
+
+
+def test_ensure_plan_target_shells_clears_selection_targets_for_frozen_replay_when_rebuildable_shells_exist(monkeypatch) -> None:
+    requested_profile = build_short_trade_target_profile("default")
+    plan = ExecutionPlan.model_construct(
+        date="20260506",
+        watchlist=[
+            LayerCResult(
+                ticker="000807",
+                score_b=0.4316,
+                score_c=0.2261,
+                score_final=0.2775,
+                quality_score=0.8083,
+                decision="watch",
+                strategy_signals={},
+                agent_contribution_summary={},
+            )
+        ],
         selection_targets={"000807": {"short_trade": {"decision": "selected"}}},
         risk_metrics={"frozen_selection_target_replay_input": {"watchlist": []}},
         short_trade_target_profile_name="default",

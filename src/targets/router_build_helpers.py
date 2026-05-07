@@ -12,45 +12,113 @@ from src.targets.models import (
 )
 
 
+FORMAL_EXECUTION_BLOCK_FLAGS = (
+    "p2_execution_blocked",
+    "p3_execution_blocked",
+    "p5_execution_blocked",
+    "p6_execution_blocked",
+)
+
+
+def _read_field(payload: Any, field_name: str) -> Any:
+    if payload is None:
+        return None
+    if isinstance(payload, dict):
+        return payload.get(field_name)
+    return getattr(payload, field_name, None)
+
+
 def build_dual_target_summary(*, selection_targets: dict[str, DualTargetEvaluation], target_mode: TargetMode) -> DualTargetSummary:
     summary = DualTargetSummary(target_mode=target_mode, selection_target_count=len(selection_targets))
     for evaluation in selection_targets.values():
-        if evaluation.execution_eligible:
+        if bool(_read_field(evaluation, "execution_eligible")):
             summary.execution_eligible_count += 1
-        _accumulate_target_result(summary=summary, result=evaluation.research, target_type="research")
-        _accumulate_target_result(summary=summary, result=evaluation.short_trade, target_type="short_trade")
-        if evaluation.research is None and evaluation.short_trade is None:
+        research_result = _read_field(evaluation, "research")
+        short_trade_result = _read_field(evaluation, "short_trade")
+        _accumulate_target_result(summary=summary, result=research_result, target_type="research")
+        _accumulate_target_result(summary=summary, result=short_trade_result, target_type="short_trade")
+        if research_result is None and short_trade_result is None:
             summary.shell_target_count += 1
-        if evaluation.delta_classification:
-            summary.delta_classification_counts[evaluation.delta_classification] = int(summary.delta_classification_counts.get(evaluation.delta_classification) or 0) + 1
-        if evaluation.p2_execution_blocked:
+        delta_classification = str(_read_field(evaluation, "delta_classification") or "").strip()
+        if delta_classification:
+            summary.delta_classification_counts[delta_classification] = int(summary.delta_classification_counts.get(delta_classification) or 0) + 1
+        if bool(_read_field(evaluation, "p2_execution_blocked")):
             summary.p2_execution_blocked_count += 1
-        if evaluation.p3_execution_blocked:
+        if bool(_read_field(evaluation, "p3_execution_blocked")):
             summary.p3_execution_blocked_count += 1
-        if evaluation.p3_prior_quality_label:
-            label = evaluation.p3_prior_quality_label
+        label = str(_read_field(evaluation, "p3_prior_quality_label") or "").strip()
+        if label:
             summary.p3_prior_quality_distribution[label] = int(summary.p3_prior_quality_distribution.get(label) or 0) + 1
     return summary
 
 
-def _accumulate_target_result(*, summary: DualTargetSummary, result: TargetEvaluationResult | None, target_type: str) -> None:
+def collect_formal_execution_block_flags(evaluation: Any, short_trade_result: Any | None = None) -> list[str]:
+    short_trade_result = short_trade_result if short_trade_result is not None else _read_field(evaluation, "short_trade")
+    return [
+        flag
+        for flag in FORMAL_EXECUTION_BLOCK_FLAGS
+        if bool(_read_field(evaluation, flag)) or bool(_read_field(short_trade_result, flag))
+    ]
+
+
+def resolve_short_trade_reporting_decision(evaluation: Any, short_trade_result: Any | None = None) -> tuple[str, list[str]]:
+    short_trade_result = short_trade_result if short_trade_result is not None else _read_field(evaluation, "short_trade")
+    raw_decision = str(_read_field(short_trade_result, "decision") or "")
+    formal_execution_block_flags = collect_formal_execution_block_flags(evaluation, short_trade_result)
+    if raw_decision in {"selected", "near_miss"} and formal_execution_block_flags:
+        return "blocked", formal_execution_block_flags
+    return raw_decision, formal_execution_block_flags
+
+
+def build_reporting_target_summary(*, selection_targets: dict[str, Any], target_mode: TargetMode | str) -> DualTargetSummary:
+    summary = DualTargetSummary(target_mode=target_mode, selection_target_count=len(selection_targets))
+    for evaluation in selection_targets.values():
+        if bool(_read_field(evaluation, "execution_eligible")):
+            summary.execution_eligible_count += 1
+        research_result = _read_field(evaluation, "research")
+        short_trade_result = _read_field(evaluation, "short_trade")
+        _accumulate_target_result(summary=summary, result=research_result, target_type="research")
+        reporting_decision, _ = resolve_short_trade_reporting_decision(evaluation, short_trade_result)
+        _accumulate_target_result(
+            summary=summary,
+            result=short_trade_result,
+            target_type="short_trade",
+            decision_override=reporting_decision,
+        )
+        if research_result is None and short_trade_result is None:
+            summary.shell_target_count += 1
+        delta_classification = str(_read_field(evaluation, "delta_classification") or "").strip()
+        if delta_classification:
+            summary.delta_classification_counts[delta_classification] = int(summary.delta_classification_counts.get(delta_classification) or 0) + 1
+        if bool(_read_field(evaluation, "p2_execution_blocked")):
+            summary.p2_execution_blocked_count += 1
+        if bool(_read_field(evaluation, "p3_execution_blocked")):
+            summary.p3_execution_blocked_count += 1
+        label = str(_read_field(evaluation, "p3_prior_quality_label") or "").strip()
+        if label:
+            summary.p3_prior_quality_distribution[label] = int(summary.p3_prior_quality_distribution.get(label) or 0) + 1
+    return summary
+
+
+def _accumulate_target_result(*, summary: DualTargetSummary, result: TargetEvaluationResult | dict[str, Any] | None, target_type: str, decision_override: str | None = None) -> None:
     if result is None:
         return
+    decision = str(decision_override or _read_field(result, "decision") or "")
     if target_type == "research":
         summary.research_target_count += 1
-        if result.decision == "selected":
+        if decision == "selected":
             summary.research_selected_count += 1
-        elif result.decision == "near_miss":
+        elif decision == "near_miss":
             summary.research_near_miss_count += 1
         else:
             summary.research_rejected_count += 1
         return
     summary.short_trade_target_count += 1
-    if result.decision == "selected":
+    if decision == "selected":
         summary.short_trade_selected_count += 1
-    elif result.decision == "near_miss":
+    elif decision == "near_miss":
         summary.short_trade_near_miss_count += 1
-    elif result.decision == "blocked":
+    elif decision == "blocked":
         summary.short_trade_blocked_count += 1
     else:
         summary.short_trade_rejected_count += 1

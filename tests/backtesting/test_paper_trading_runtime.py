@@ -10,7 +10,7 @@ import pandas as pd
 from src.execution.models import ExecutionPlan
 from src.execution.models import LayerCResult
 from src.execution.daily_pipeline import _serialize_short_trade_target_profile
-from src.paper_trading.runtime import _build_dual_target_session_summary, _build_llm_error_digest, _build_llm_observability_summary, _build_llm_route_provenance, _build_paper_trading_engine, _build_runtime_recorder_and_engine, _finalize_paper_trading_session, _prepare_session_runtime_context, run_paper_trading_session
+from src.paper_trading.runtime import _build_dual_target_session_summary, _build_reporting_target_session_summary, _build_llm_error_digest, _build_llm_observability_summary, _build_llm_route_provenance, _build_paper_trading_engine, _build_runtime_recorder_and_engine, _finalize_paper_trading_session, _prepare_session_runtime_context, run_paper_trading_session
 from src.portfolio.models import PositionPlan
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
 from src.targets.profiles import build_short_trade_target_profile
@@ -269,6 +269,58 @@ def test_build_dual_target_session_summary_aggregates_paper_trading_days(tmp_pat
     assert summary["p3_prior_quality_distribution"] == {"watch_only": 3, "blocked": 1}
     assert summary["target_mode_counts"] == {"dual_target": 1, "research_only": 1}
     assert summary["delta_classification_counts"] == {"upgraded": 3, "downgraded": 3}
+
+
+def test_build_reporting_target_session_summary_rebuckets_formal_execution_blocked_candidates(tmp_path: Path):
+    daily_events_path = tmp_path / "daily_events.jsonl"
+    daily_events_path.write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "current_plan": {
+                    "target_mode": "short_trade_only",
+                    "selection_targets": {
+                        "000001": {
+                            "execution_eligible": False,
+                            "p2_execution_blocked": True,
+                            "research": {"decision": "selected"},
+                            "short_trade": {"decision": "selected"},
+                        },
+                        "000002": {
+                            "execution_eligible": False,
+                            "research": {"decision": "near_miss"},
+                            "short_trade": {"decision": "near_miss"},
+                        },
+                        "000003": {
+                            "execution_eligible": False,
+                            "short_trade": {"decision": "blocked"},
+                        },
+                        "000004": {
+                            "execution_eligible": False,
+                            "short_trade": {"decision": "rejected"},
+                        },
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = _build_reporting_target_session_summary(daily_events_path)
+
+    assert summary["day_count"] == 1
+    assert summary["days_with_selection_targets"] == 1
+    assert summary["selection_target_count"] == 4
+    assert summary["research_selected_count"] == 1
+    assert summary["research_near_miss_count"] == 1
+    assert summary["short_trade_selected_count"] == 0
+    assert summary["short_trade_near_miss_count"] == 1
+    assert summary["short_trade_blocked_count"] == 2
+    assert summary["short_trade_rejected_count"] == 1
+    assert summary["p2_execution_blocked_count"] == 1
+    assert summary["target_mode_counts"] == {"short_trade_only": 1}
 
 
 def test_build_dual_target_session_summary_accumulates_p6_risk_budget_overlay(tmp_path: Path):
@@ -610,6 +662,7 @@ def test_finalize_paper_trading_session_writes_summary(monkeypatch, tmp_path: Pa
     monkeypatch.setattr("src.paper_trading.runtime._build_llm_error_digest", lambda route, observability: {"status": "healthy"})
     monkeypatch.setattr("src.paper_trading.runtime._build_execution_plan_provenance_summary", lambda pipeline: {"observation_count": 1})
     monkeypatch.setattr("src.paper_trading.runtime._build_dual_target_session_summary", lambda path: {"day_count": 2})
+    monkeypatch.setattr("src.paper_trading.runtime._build_reporting_target_session_summary", lambda path: {"day_count": 2, "short_trade_blocked_count": 1})
     monkeypatch.setattr("src.paper_trading.runtime.get_cache_runtime_info", lambda: {"stats": {"hits": 9}})
     monkeypatch.setattr("src.paper_trading.runtime.diff_cache_stats", lambda before, after: {"hit_rate": 0.5})
     monkeypatch.setattr(
@@ -650,6 +703,7 @@ def test_finalize_paper_trading_session_writes_summary(monkeypatch, tmp_path: Pa
     assert summary["llm_error_digest"] == {"status": "healthy"}
     assert summary["data_cache"]["session_stats"] == {"hit_rate": 0.5}
     assert captured["summary_kwargs"]["resolved_model_name"] == "model-x"
+    assert captured["summary_kwargs"]["reporting_target_summary"] == {"day_count": 2, "short_trade_blocked_count": 1}
     assert captured["summary_kwargs"]["cache_benchmark_artifacts"] == {"benchmark": "artifact"}
     assert captured["summary_kwargs"]["llm_metrics_artifacts"] == {"llm_metrics_jsonl": "metrics.jsonl"}
     assert summary_path.exists()
@@ -879,6 +933,27 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
         ],
     }
     assert summary["dual_target_summary"] == {
+        "day_count": 3,
+        "days_with_selection_targets": 1,
+        "selection_target_count": 1,
+        "execution_eligible_count": 0,
+        "research_target_count": 0,
+        "short_trade_target_count": 0,
+        "research_selected_count": 0,
+        "research_near_miss_count": 0,
+        "research_rejected_count": 0,
+        "short_trade_selected_count": 0,
+        "short_trade_near_miss_count": 0,
+        "short_trade_blocked_count": 0,
+        "short_trade_rejected_count": 0,
+        "shell_target_count": 1,
+        "target_mode_counts": {"research_only": 3},
+        "delta_classification_counts": {},
+        "p2_execution_blocked_count": 0,
+        "p3_execution_blocked_count": 0,
+        "p3_prior_quality_distribution": {},
+    }
+    assert summary["reporting_target_summary"] == {
         "day_count": 3,
         "days_with_selection_targets": 1,
         "selection_target_count": 1,

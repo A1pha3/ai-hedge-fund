@@ -43,6 +43,7 @@ def build_runtime_session_monitoring_inputs(monitoring_summary: dict) -> dict:
         "llm_route_provenance": monitoring_summary["llm_route_provenance"],
         "execution_plan_provenance": monitoring_summary["execution_plan_provenance"],
         "dual_target_summary": monitoring_summary["dual_target_summary"],
+        "reporting_target_summary": monitoring_summary.get("reporting_target_summary", {}),
         "llm_observability_summary": monitoring_summary["llm_observability_summary"],
         "llm_error_digest": monitoring_summary["llm_error_digest"],
     }

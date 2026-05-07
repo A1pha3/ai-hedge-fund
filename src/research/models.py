@@ -94,6 +94,7 @@ class SelectionSnapshot(BaseModel):
     rejected: list[RejectedCandidate] = Field(default_factory=list)
     selection_targets: dict[str, DualTargetEvaluation] = Field(default_factory=dict)
     target_summary: DualTargetSummary = Field(default_factory=DualTargetSummary)
+    reporting_target_summary: dict[str, Any] = Field(default_factory=dict)
     research_view: ResearchTargetView = Field(default_factory=ResearchTargetView)
     short_trade_view: ShortTradeTargetView = Field(default_factory=ShortTradeTargetView)
     dual_target_delta: DualTargetDeltaView = Field(default_factory=DualTargetDeltaView)

@@ -28,6 +28,7 @@ from src.research.models import (
     ShortTradeTargetView,
 )
 from src.research.review_renderer import render_selection_review
+from src.targets.router_build_helpers import build_reporting_target_summary, resolve_short_trade_reporting_decision
 from src.utils.env_helpers import get_env_float
 
 if TYPE_CHECKING:
@@ -45,14 +46,6 @@ class SelectionArtifactWriter(Protocol):
         pipeline: DailyPipeline | None,
         selected_analysts: list[str] | None,
     ) -> SelectionArtifactWriteResult: ...
-
-
-FORMAL_EXECUTION_BLOCK_FLAGS = (
-    "p2_execution_blocked",
-    "p3_execution_blocked",
-    "p5_execution_blocked",
-    "p6_execution_blocked",
-)
 
 
 def _format_trade_date(trade_date: str) -> str:
@@ -251,7 +244,7 @@ def _build_target_context(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
         target_context["candidate_reason_codes"] = candidate_reason_codes
     research_result = getattr(evaluation, "research", None)
     short_trade_result = getattr(evaluation, "short_trade", None)
-    short_trade_reporting_decision, formal_execution_block_flags = _resolve_short_trade_reporting_decision(
+    short_trade_reporting_decision, formal_execution_block_flags = resolve_short_trade_reporting_decision(
         evaluation, short_trade_result
     )
     if research_result is not None:
@@ -361,7 +354,7 @@ def _build_short_trade_target_view(plan: ExecutionPlan) -> ShortTradeTargetView:
         short_trade_result = getattr(evaluation, "short_trade", None)
         if short_trade_result is None:
             continue
-        decision, _ = _resolve_short_trade_reporting_decision(evaluation, short_trade_result)
+        decision, _ = resolve_short_trade_reporting_decision(evaluation, short_trade_result)
         blockers = list(getattr(short_trade_result, "blockers", []) or [])
         if decision == "selected":
             view.selected_symbols.append(str(ticker))
@@ -379,30 +372,6 @@ def _build_short_trade_target_view(plan: ExecutionPlan) -> ShortTradeTargetView:
     view.rejected_symbols.sort()
     view.blocked_symbols.sort()
     return view
-
-
-def _collect_formal_execution_block_flags(
-    evaluation: DualTargetEvaluation,
-    short_trade_result: TargetEvaluationResult | None,
-) -> list[str]:
-    flags: list[str] = []
-    for flag in FORMAL_EXECUTION_BLOCK_FLAGS:
-        if bool(getattr(evaluation, flag, False)) or bool(getattr(short_trade_result, flag, False)):
-            flags.append(flag)
-    return flags
-
-
-def _resolve_short_trade_reporting_decision(
-    evaluation: DualTargetEvaluation,
-    short_trade_result: TargetEvaluationResult | None,
-) -> tuple[str, list[str]]:
-    if short_trade_result is None:
-        return "", []
-    raw_decision = str(short_trade_result.decision or "")
-    flags = _collect_formal_execution_block_flags(evaluation, short_trade_result)
-    if raw_decision in {"selected", "near_miss"} and flags:
-        return "blocked", flags
-    return raw_decision, flags
 
 
 def _build_dual_target_delta(plan: ExecutionPlan) -> DualTargetDeltaView:
@@ -762,6 +731,10 @@ def build_selection_snapshot(
         rejected=_build_rejected_candidates(plan),
         selection_targets=dict(plan.selection_targets or {}),
         target_summary=plan.dual_target_summary,
+        reporting_target_summary=build_reporting_target_summary(
+            selection_targets=dict(plan.selection_targets or {}),
+            target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
+        ).model_dump(mode="json"),
         research_view=_build_research_target_view(plan),
         short_trade_view=_build_short_trade_target_view(plan),
         dual_target_delta=_build_dual_target_delta(plan),

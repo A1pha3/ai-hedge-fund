@@ -27,6 +27,12 @@ def _format_target_decision(candidate, target_name: str) -> str | None:
     return f"{summary} (score={score_target:.4f})"
 
 
+def _summary_to_dict(summary: object) -> dict:
+    if hasattr(summary, "model_dump"):
+        return summary.model_dump(mode="json")
+    return dict(summary or {})
+
+
 def _render_selected_section(snapshot: SelectionSnapshot) -> list[str]:
     lines = ["## 今日入选股票", ""]
     if not snapshot.selected:
@@ -62,7 +68,7 @@ def _render_rejected_section(snapshot: SelectionSnapshot) -> list[str]:
 
 
 def _render_target_summary(snapshot: SelectionSnapshot) -> list[str]:
-    summary = snapshot.target_summary.model_dump(mode="json") if hasattr(snapshot.target_summary, "model_dump") else dict(snapshot.target_summary or {})
+    summary = _summary_to_dict(snapshot.target_summary)
     lines = [
         "## 双目标空壳状态",
         "",
@@ -88,6 +94,27 @@ def _render_target_summary(snapshot: SelectionSnapshot) -> list[str]:
         lines.append("- attached_target_tickers: none")
     lines.append("")
     return lines
+
+
+def _render_reporting_target_summary(snapshot: SelectionSnapshot) -> list[str]:
+    summary = _summary_to_dict(snapshot.reporting_target_summary)
+    if not summary:
+        return []
+    return [
+        "## 正式执行口径摘要",
+        "",
+        "- semantics: selected/near_miss entries with formal execution block flags are rebucketed into blocked",
+        f"- target_mode: {summary.get('target_mode', snapshot.target_mode)}",
+        f"- selection_target_count: {summary.get('selection_target_count', 0)}",
+        f"- execution_eligible_count: {summary.get('execution_eligible_count', 0)}",
+        f"- short_trade_selected_count: {summary.get('short_trade_selected_count', 0)}",
+        f"- short_trade_near_miss_count: {summary.get('short_trade_near_miss_count', 0)}",
+        f"- short_trade_blocked_count: {summary.get('short_trade_blocked_count', 0)}",
+        f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count', 0)}",
+        f"- p2_execution_blocked_count: {summary.get('p2_execution_blocked_count', 0)}",
+        f"- p3_execution_blocked_count: {summary.get('p3_execution_blocked_count', 0)}",
+        "",
+    ]
 
 
 def _render_btst_regime_gate(snapshot: SelectionSnapshot) -> list[str]:
@@ -266,6 +293,7 @@ def render_selection_review(snapshot: SelectionSnapshot) -> str:
     ]
     lines.extend(_render_btst_regime_gate(snapshot))
     lines.extend(_render_target_summary(snapshot))
+    lines.extend(_render_reporting_target_summary(snapshot))
     lines.extend(_render_research_target_summary(snapshot))
     lines.extend(_render_short_trade_target_summary(snapshot))
     lines.extend(_render_target_delta_highlights(snapshot))

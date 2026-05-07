@@ -933,6 +933,30 @@ def _resolve_effective_short_trade_target_profile_name(
     )
 
 
+def _has_rebuildable_target_shell_inputs(plan: ExecutionPlan, *, target_mode: TargetMode) -> bool:
+    if list(getattr(plan, "watchlist", []) or []):
+        return True
+
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+    funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
+    watchlist_filter_diagnostics = dict(funnel_filters.get("watchlist", {}) or {})
+    short_trade_candidate_diagnostics = dict(funnel_filters.get("short_trade_candidates", {}) or {})
+    catalyst_theme_candidates = dict(funnel_filters.get("catalyst_theme_candidates", {}) or {})
+
+    if list(watchlist_filter_diagnostics.get("tickers", []) or []):
+        return True
+    if list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []):
+        return True
+    if list(short_trade_candidate_diagnostics.get("tickers", []) or []):
+        return True
+    if list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []):
+        return True
+    if str(target_mode or "") == "short_trade_only" and list(catalyst_theme_candidates.get("tickers", []) or []):
+        return True
+    return False
+
+
 def _ensure_plan_target_shells(
     plan: ExecutionPlan,
     target_mode: TargetMode,
@@ -953,9 +977,13 @@ def _ensure_plan_target_shells(
     existing_profile_config = dict(getattr(plan, "short_trade_target_profile_config", {}) or {})
     profile_mismatch = existing_profile_name != requested_profile.name or existing_profile_config != requested_profile_config
     frozen_replay_has_sidecar = bool(dict(dict(getattr(plan, "risk_metrics", {}) or {}).get("frozen_selection_target_replay_input", {}) or {}))
-    if profile_mismatch or frozen_replay_has_sidecar:
+    replay_sidecar_can_rebuild = frozen_replay_has_sidecar and _has_rebuildable_target_shell_inputs(
+        plan,
+        target_mode=target_mode,
+    )
+    if profile_mismatch or replay_sidecar_can_rebuild:
         # Frozen replay plans may carry stale selection_targets even when the requested profile matches.
-        # Clear them whenever replay sidecar inputs are available so target evaluations are recomputed.
+        # Only clear sidecar-backed selection_targets when shell inputs exist and recomputation is possible.
         plan.selection_targets = {}
 
     return ensure_plan_target_shells_impl(

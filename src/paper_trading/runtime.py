@@ -37,6 +37,7 @@ from src.paper_trading.runtime_finalization_helpers import (
 )
 from src.paper_trading.runtime_observability_helpers import (
     build_dual_target_session_summary as build_dual_target_session_summary_helper,
+    build_reporting_target_session_summary as build_reporting_target_session_summary_helper,
     build_execution_plan_provenance_summary as build_execution_plan_provenance_summary_helper,
     build_llm_error_digest as build_llm_error_digest_helper,
     build_llm_observability_summary as build_llm_observability_summary_helper,
@@ -90,6 +91,10 @@ def _build_execution_plan_provenance_summary(pipeline: DailyPipeline | None) -> 
 
 def _build_dual_target_session_summary(daily_events_path: Path) -> dict:
     return build_dual_target_session_summary_helper(daily_events_path)
+
+
+def _build_reporting_target_session_summary(daily_events_path: Path) -> dict:
+    return build_reporting_target_session_summary_helper(daily_events_path)
 
 
 @dataclass(frozen=True)
@@ -529,7 +534,7 @@ def _build_runtime_session_artifact_inputs(
 
 
 def _build_runtime_monitoring_summary(context: SessionRuntimeContext) -> dict:
-    return build_runtime_monitoring_summary_helper(
+    summary = build_runtime_monitoring_summary_helper(
         context,
         build_llm_route_provenance_fn=_build_llm_route_provenance,
         build_llm_observability_summary_fn=_build_llm_observability_summary,
@@ -537,6 +542,8 @@ def _build_runtime_monitoring_summary(context: SessionRuntimeContext) -> dict:
         build_execution_plan_provenance_summary_fn=_build_execution_plan_provenance_summary,
         build_dual_target_session_summary_fn=_build_dual_target_session_summary,
     )
+    summary["reporting_target_summary"] = _build_reporting_target_session_summary(context.session_paths.daily_events_path)
+    return summary
 
 
 def _build_runtime_data_cache_summary(context: SessionRuntimeContext) -> dict:

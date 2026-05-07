@@ -76,6 +76,17 @@ def test_render_selection_review_contains_key_sections():
             shell_target_count=1,
             p2_execution_blocked_count=1,
         ),
+        reporting_target_summary={
+            "target_mode": "research_only",
+            "selection_target_count": 1,
+            "execution_eligible_count": 0,
+            "short_trade_selected_count": 0,
+            "short_trade_near_miss_count": 0,
+            "short_trade_blocked_count": 1,
+            "short_trade_rejected_count": 0,
+            "p2_execution_blocked_count": 1,
+            "p3_execution_blocked_count": 0,
+        },
         research_view={
             "selected_symbols": ["000001"],
             "near_miss_symbols": ["300750"],
@@ -158,6 +169,8 @@ def test_render_selection_review_contains_key_sections():
     assert "## 双目标空壳状态" in markdown
     assert "execution_eligible_count: 0" in markdown
     assert "p2_execution_blocked_count: 1" in markdown
+    assert "## 正式执行口径摘要" in markdown
+    assert "short_trade_blocked_count: 1" in markdown
     assert "## Research Target Summary" in markdown
     assert "selected_symbols: 000001" in markdown
     assert "near_miss_symbols: 300750" in markdown
