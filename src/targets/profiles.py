@@ -255,6 +255,10 @@ class ShortTradeTargetProfile:
     committee_penalty_total_max: float = 0.12
     committee_theme_exposure_cap: float = 0.25
     committee_incremental_theme_exposure_cap: float = 0.18
+    committee_isolated_theme_direction_enabled: bool = True
+    committee_isolated_theme_peer_count_min: float = 2.0
+    committee_theme_direction_rank_enabled: bool = True
+    committee_theme_direction_rank_max: float = 5.0
     committee_isolated_attention_veto_enabled: bool = True
     committee_isolated_attention_min: float = 80.0
     committee_isolated_attention_sector_max: float = 60.0

@@ -506,6 +506,77 @@ def _attach_incremental_theme_exposure(
     return annotated_watchlist, _annotate_entries(rejected_entries), _annotate_entries(supplemental_short_trade_entries)
 
 
+def _attach_theme_direction_metrics(
+    *,
+    watchlist: list[LayerCResult],
+    rejected_entries: list[dict[str, Any]],
+    supplemental_short_trade_entries: list[dict[str, Any]],
+) -> tuple[list[LayerCResult], list[dict[str, Any]], list[dict[str, Any]]]:
+    theme_ticker_scores: dict[str, dict[str, float]] = {}
+
+    def _record_theme_sample(*, ticker: str, theme_name: str, score: Any) -> None:
+        normalized_ticker = str(ticker or "").strip()
+        normalized_theme = str(theme_name or "").strip()
+        if not normalized_ticker or not normalized_theme:
+            return
+        theme_scores = theme_ticker_scores.setdefault(normalized_theme, {})
+        numeric_score = float(score or 0.0)
+        theme_scores[normalized_ticker] = max(theme_scores.get(normalized_ticker, numeric_score), numeric_score)
+
+    for item in list(watchlist or []):
+        _record_theme_sample(
+            ticker=getattr(item, "ticker", ""),
+            theme_name=getattr(item, "theme_name", ""),
+            score=getattr(item, "score_final", 0.0),
+        )
+    for entry in list(rejected_entries or []) + list(supplemental_short_trade_entries or []):
+        entry_dict = dict(entry)
+        _record_theme_sample(
+            ticker=entry_dict.get("ticker", ""),
+            theme_name=entry_dict.get("theme_name", ""),
+            score=entry_dict.get("score_final", entry_dict.get("score_b", 0.0)),
+        )
+
+    if not theme_ticker_scores:
+        return list(watchlist), list(rejected_entries), list(supplemental_short_trade_entries)
+
+    ranked_themes = sorted(
+        theme_ticker_scores.items(),
+        key=lambda item: (-len(item[1]), -max(item[1].values()), item[0]),
+    )
+    theme_direction_metrics = {
+        theme_name: {
+            "theme_direction_peer_count": float(len(ticker_scores)),
+            "theme_direction_rank": float(rank),
+        }
+        for rank, (theme_name, ticker_scores) in enumerate(ranked_themes, start=1)
+    }
+
+    annotated_watchlist: list[LayerCResult] = []
+    for item in list(watchlist or []):
+        metrics = theme_direction_metrics.get(str(getattr(item, "theme_name", "") or "").strip())
+        if not metrics:
+            annotated_watchlist.append(item)
+            continue
+        merged_metrics = dict(getattr(item, "metrics", {}) or {})
+        merged_metrics.update(metrics)
+        annotated_watchlist.append(item.model_copy(update={"metrics": merged_metrics}))
+
+    def _annotate_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        annotated_entries: list[dict[str, Any]] = []
+        for entry in list(entries or []):
+            updated_entry = dict(entry)
+            metrics = theme_direction_metrics.get(str(updated_entry.get("theme_name") or "").strip())
+            if metrics:
+                merged_metrics = dict(updated_entry.get("metrics") or {})
+                merged_metrics.update(metrics)
+                updated_entry["metrics"] = merged_metrics
+            annotated_entries.append(updated_entry)
+        return annotated_entries
+
+    return annotated_watchlist, _annotate_entries(rejected_entries), _annotate_entries(supplemental_short_trade_entries)
+
+
 def _attach_missing_intraday_short_trade_metrics(
     *,
     trade_date: str,
@@ -790,6 +861,11 @@ def resolve_post_market_selection_targets(
             ),
             buy_orders=buy_orders,
             portfolio_snapshot=portfolio_snapshot,
+        )
+        resolved_watchlist, resolved_rejected_entries, resolved_supplemental_entries = _attach_theme_direction_metrics(
+            watchlist=resolved_watchlist,
+            rejected_entries=resolved_rejected_entries,
+            supplemental_short_trade_entries=resolved_supplemental_entries,
         )
         resolved_watchlist, resolved_rejected_entries, resolved_supplemental_entries = _attach_missing_intraday_short_trade_metrics(
             trade_date=trade_date,

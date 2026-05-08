@@ -83,7 +83,7 @@ class PendingPlanRunner:
         executed_trades: dict[str, int],
         pending_buy_queue: list[PendingOrder],
         pending_sell_queue: list[PendingOrder],
-        build_confirmation_inputs_fn: Callable[[ExecutionPlan, dict[str, float]], dict[str, dict]],
+        build_confirmation_inputs_fn: Callable[[ExecutionPlan, dict[str, float], str, str], dict[str, dict]],
         process_pending_queues_fn: Callable[..., tuple[list[PendingOrder], list[PendingOrder], list[str]]],
     ) -> PendingPlanRunResult:
         preparation = self._build_pending_pipeline_preparation_state(
@@ -174,11 +174,16 @@ class PendingPlanRunner:
         decisions: dict[str, dict],
         pending_buy_queue: list[PendingOrder],
         pending_sell_queue: list[PendingOrder],
-        build_confirmation_inputs_fn: Callable[[ExecutionPlan, dict[str, float]], dict[str, dict]],
+        build_confirmation_inputs_fn: Callable[[ExecutionPlan, dict[str, float], str, str], dict[str, dict]],
         process_pending_queues_fn: Callable[..., tuple[list[PendingOrder], list[PendingOrder], list[str]]],
     ) -> tuple[PendingPipelineIntradayState, list[PendingOrder], list[PendingOrder]]:
         stage_started_at = perf_counter()
-        confirmation_inputs = build_confirmation_inputs_fn(prepared_plan, day_context.current_prices)
+        confirmation_inputs = build_confirmation_inputs_fn(
+            prepared_plan,
+            day_context.current_prices,
+            day_context.previous_date_str,
+            day_context.current_date_str,
+        )
         updated_buy_queue, updated_sell_queue, queue_alerts = self._run_pending_intraday_queue_stage(
             prepared_plan=prepared_plan,
             day_context=day_context,

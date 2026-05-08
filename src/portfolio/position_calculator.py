@@ -12,6 +12,8 @@ WATCHLIST_EDGE_EXECUTION_RATIO = 0.3
 AVG_VOLUME_20D_AMOUNT_UNIT = 10_000.0
 A_SHARE_MIN_LOT = 100
 MIN_LOT_OVERRIDE_MAX_RATIO = 0.15
+LOWEST_LIQUIDITY_TIER_SINGLE_NAME_LIMIT = 0.08
+LOWEST_LIQUIDITY_TIER_MAX_AVG_VOLUME_20D = 7_500.0
 
 
 def _get_execution_thresholds() -> tuple[float, float, float, float]:
@@ -32,6 +34,13 @@ def _round_down_lot(shares: float, lot_size: int = 100) -> int:
 def _quality_execution_multiplier(quality_score: float) -> float:
     clamped = max(0.0, min(1.0, quality_score))
     return 0.85 + (0.30 * clamped)
+
+
+def _resolve_single_name_limit(*, allow_extended_limit: bool, avg_volume_20d: float) -> float:
+    base_limit = 0.12 if allow_extended_limit else 0.10
+    if 0.0 < avg_volume_20d <= LOWEST_LIQUIDITY_TIER_MAX_AVG_VOLUME_20D:
+        return min(base_limit, LOWEST_LIQUIDITY_TIER_SINGLE_NAME_LIMIT)
+    return base_limit
 
 
 def _compute_beta(portfolio_returns: list[float], benchmark_returns: list[float]) -> float | None:
@@ -75,8 +84,14 @@ def calculate_position(
         return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="score", score_final=score_final, execution_ratio=0.0, quality_score=quality_score)
 
     min_lot_amount = current_price * A_SHARE_MIN_LOT
-    allow_min_lot_override = existing_position_ratio <= 0 and min_lot_amount <= portfolio_nav * MIN_LOT_OVERRIDE_MAX_RATIO
-    single_name_limit = 0.12 if allow_extended_limit else 0.10
+    single_name_limit = _resolve_single_name_limit(
+        allow_extended_limit=allow_extended_limit,
+        avg_volume_20d=float(avg_volume_20d or 0.0),
+    )
+    min_lot_override_ratio = MIN_LOT_OVERRIDE_MAX_RATIO
+    if single_name_limit <= LOWEST_LIQUIDITY_TIER_SINGLE_NAME_LIMIT:
+        min_lot_override_ratio = min(min_lot_override_ratio, single_name_limit)
+    allow_min_lot_override = existing_position_ratio <= 0 and min_lot_amount <= portfolio_nav * min_lot_override_ratio
     remaining_single_name_amount = max((single_name_limit - existing_position_ratio) * portfolio_nav, 0.0)
     if allow_min_lot_override:
         remaining_single_name_amount = max(remaining_single_name_amount, min_lot_amount)

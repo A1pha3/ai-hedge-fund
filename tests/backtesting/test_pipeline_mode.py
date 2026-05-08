@@ -113,6 +113,75 @@ def test_pipeline_mode_executes_buy_on_t_plus_one(monkeypatch):
     assert pipeline.intraday_calls[0][0] == "20240304"
 
 
+def test_pipeline_mode_confirmation_inputs_include_open_gap_confirmation_fields(monkeypatch):
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_prices", lambda *a, **k: None)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_financial_metrics", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_insider_trades", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_company_news", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.output.print_backtest_results", lambda *a, **k: None)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_limit_list", lambda *a, **k: None)
+
+    def fake_get_price_data(ticker: str, start_date: str, end_date: str, api_key=None):
+        rows_by_ticker = {
+            "AAPL": [
+                {"date": "2024-03-01", "open": 10.0, "close": 10.0, "high": 10.1, "low": 9.9, "volume": 1_000_000},
+                {"date": "2024-03-04", "open": 10.6, "close": 10.4, "high": 10.7, "low": 10.2, "volume": 1_250_000},
+            ],
+            "SPY": [
+                {"date": "2024-03-01", "open": 100.0, "close": 100.0, "high": 100.2, "low": 99.8, "volume": 5_000_000},
+                {"date": "2024-03-04", "open": 100.5, "close": 100.8, "high": 101.0, "low": 100.4, "volume": 5_200_000},
+            ],
+        }
+        rows = [
+            row
+            for row in rows_by_ticker[ticker]
+            if start_date <= row["date"] <= end_date
+        ]
+        frame = pd.DataFrame(rows)
+        if frame.empty:
+            return frame
+        frame["date"] = pd.to_datetime(frame["date"])
+        frame.set_index("date", inplace=True)
+        return frame[["open", "close", "high", "low", "volume"]]
+
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
+    monkeypatch.setattr("src.backtesting.engine_agent_mode.get_price_data", fake_get_price_data)
+    monkeypatch.setattr("src.backtesting.benchmarks.get_price_data", fake_get_price_data)
+
+    plan = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+    )
+    pipeline = StubPipeline(
+        post_market_plans=[plan, ExecutionPlan(date="20240304", portfolio_snapshot={})],
+        intraday_responses=[([], [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+    )
+
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+    )
+
+    engine.run_backtest()
+
+    confirmation_inputs = pipeline.intraday_calls[0][1]["confirmation_inputs"]
+    aapl_inputs = confirmation_inputs["AAPL"]
+    assert aapl_inputs.get("open_price") == pytest.approx(10.6)
+    assert aapl_inputs.get("prev_close") == pytest.approx(10.0)
+    assert aapl_inputs.get("open_gap_pct") == pytest.approx(0.06)
+    assert aapl_inputs.get("minutes_since_open") == 10
+
+
 def test_pipeline_mode_crisis_reduce_trims_existing_position(monkeypatch):
     _patch_market_data(
         monkeypatch,
@@ -617,7 +686,7 @@ def test_run_pending_pipeline_plan_merges_applies_and_carries_queue_alerts(monke
         executed_trades=executed_trades,
         pending_buy_queue=engine._pending_buy_queue,
         pending_sell_queue=engine._pending_sell_queue,
-        build_confirmation_inputs_fn=lambda plan, prices: {},
+        build_confirmation_inputs_fn=lambda plan, prices, previous_date, current_date: {},
         process_pending_queues_fn=lambda **kw: ([], [], []),
     )
 

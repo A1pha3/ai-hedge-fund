@@ -164,6 +164,23 @@ def build_catalyst_theme_shadow_entry(
         dict(metrics_payload.get("threshold_checks") or {}),
     )
     total_shortfall = round(sum(threshold_shortfalls.values()), 4)
+    metrics = {
+        "breakout_freshness": metrics_payload.get("breakout_freshness"),
+        "trend_acceleration": metrics_payload.get("trend_acceleration"),
+        "close_strength": metrics_payload.get("close_strength"),
+        "sector_resonance": metrics_payload.get("sector_resonance"),
+        "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
+    }
+    for key in (
+        "flow_60",
+        "flow_60_source",
+        "close_support_30",
+        "close_support_30_source",
+        "persist_120",
+        "persist_120_source",
+    ):
+        if key in metrics_payload:
+            metrics[key] = metrics_payload.get(key)
     return {
         **build_catalyst_theme_entry_fn(item=item, reason=filter_reason, rank=0),
         "decision": "catalyst_theme_shadow",
@@ -178,13 +195,7 @@ def build_catalyst_theme_shadow_entry(
         "positive_tags": list(metrics_payload.get("theme_tags") or []),
         "gate_status": dict(metrics_payload.get("gate_status") or {}),
         "blockers": list(metrics_payload.get("blockers") or []),
-        "metrics": {
-            "breakout_freshness": metrics_payload.get("breakout_freshness"),
-            "trend_acceleration": metrics_payload.get("trend_acceleration"),
-            "close_strength": metrics_payload.get("close_strength"),
-            "sector_resonance": metrics_payload.get("sector_resonance"),
-            "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
-        },
+        "metrics": metrics,
         "filter_reason": filter_reason,
         "threshold_shortfalls": threshold_shortfalls,
         "failed_threshold_count": len(threshold_shortfalls),

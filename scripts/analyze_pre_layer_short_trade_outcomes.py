@@ -97,6 +97,27 @@ def _classify_board(ticker: str) -> str:
     return "main_board"
 
 
+def _dedupe_theme_event_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped_rows: dict[tuple[str, str], dict[str, Any]] = {}
+    passthrough_rows: list[dict[str, Any]] = []
+    for row in rows:
+        trade_date = str(row.get("trade_date") or "").strip()
+        theme_name = str(row.get("theme_name") or "").strip().lower()
+        if not trade_date or not theme_name:
+            passthrough_rows.append(row)
+            continue
+        key = (trade_date, theme_name)
+        existing = deduped_rows.get(key)
+        if existing is None:
+            deduped_rows[key] = row
+            continue
+        existing_score = _safe_float(existing.get("candidate_score"), default=-999.0) or -999.0
+        current_score = _safe_float(row.get("candidate_score"), default=-999.0) or -999.0
+        if current_score > existing_score:
+            deduped_rows[key] = row
+    return list(deduped_rows.values()) + passthrough_rows
+
+
 def _iter_replay_inputs(report_dir: Path):
     selection_root = report_dir / "selection_artifacts"
     for day_dir in sorted(path for path in selection_root.iterdir() if path.is_dir()):
@@ -237,6 +258,7 @@ def _compute_walk_forward_validation(
             for row in ok_rows
             if test_start <= pd.Timestamp(row["trade_date"]) <= test_end
         ]
+        window_rows = _dedupe_theme_event_rows(window_rows)
         
         if not window_rows:
             continue
@@ -442,6 +464,8 @@ def analyze_pre_layer_short_trade_outcomes(
                 "trade_date": trade_date,
                 "ticker": ticker,
                 "candidate_source": candidate_source,
+                "theme_name": str(entry.get("theme_name") or ""),
+                "theme_category": str(entry.get("theme_category") or ""),
                 "regime_gate": regime_gate,
                 "candidate_score": _round_or_none(_safe_float(metrics.get("candidate_score"))),
                 "breakout_freshness": _round_or_none(_safe_float(metrics.get("breakout_freshness"))),

@@ -89,6 +89,38 @@ def test_watchlist_edge_high_price_name_keeps_one_lot_when_constraints_allow_it(
     assert plan.amount == 14271.0
 
 
+def test_lowest_liquidity_tier_formal_position_is_capped_at_eight_percent():
+    plan = calculate_position(
+        ticker="300724",
+        current_price=20.0,
+        score_final=0.60,
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=7_000.0,
+        industry_remaining_quota=25_000,
+    )
+
+    assert plan.constraint_binding == "single_name"
+    assert plan.shares == 400
+    assert plan.amount == 8_000.0
+
+
+def test_lowest_liquidity_tier_high_price_name_cannot_bypass_eight_percent_with_min_lot_override():
+    plan = calculate_position(
+        ticker="300724",
+        current_price=85.0,
+        score_final=0.2260,
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=7_000.0,
+        industry_remaining_quota=25_000,
+    )
+
+    assert plan.constraint_binding == "single_name"
+    assert plan.shares == 0
+    assert plan.amount == 0.0
+
+
 def test_existing_position_ratio_blocks_additional_single_name_pyramiding():
     plan = calculate_position(
         ticker="300724",

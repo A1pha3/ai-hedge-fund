@@ -593,6 +593,7 @@ def _serialize_layer_c_result_for_replay(item: LayerCResult, *, candidate_source
         "bc_conflict": item.bc_conflict,
         "candidate_source": candidate_source,
         "strategy_signals": _serialize_strategy_signals(item.strategy_signals),
+        "metrics": dict(item.metrics or {}),
         "agent_contribution_summary": dict(item.agent_contribution_summary or {}),
         "market_state": item_market_state or dict(market_state_payload),
     }

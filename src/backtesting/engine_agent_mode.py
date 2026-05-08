@@ -20,6 +20,7 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 from src.execution.models import ExecutionPlan
+from src.tools.api import get_price_data
 
 from .controller import AgentController
 from .portfolio import Portfolio
@@ -32,7 +33,12 @@ from .types import AgentOutput
 # ---------------------------------------------------------------------------
 
 
-def build_confirmation_inputs(plan: ExecutionPlan, current_prices: dict[str, float]) -> dict[str, dict]:
+def build_confirmation_inputs(
+    plan: ExecutionPlan,
+    current_prices: dict[str, float],
+    previous_date_str: str = "",
+    current_date_str: str = "",
+) -> dict[str, dict]:
     """Build synthetic confirmation inputs for pipeline buy orders.
 
     When no real-time intraday data is available the engine substitutes
@@ -44,7 +50,7 @@ def build_confirmation_inputs(plan: ExecutionPlan, current_prices: dict[str, flo
         price = current_prices.get(order.ticker, 0.0)
         if price <= 0:
             continue
-        confirmation_inputs[order.ticker] = {
+        payload = {
             "day_low": price,
             "ema30": price * 0.99,
             "current_price": price,
@@ -55,6 +61,42 @@ def build_confirmation_inputs(plan: ExecutionPlan, current_prices: dict[str, flo
             "stock_pct_change": 0.0,
             "industry_pct_change": 0.0,
         }
+        if previous_date_str and current_date_str:
+            try:
+                price_data = get_price_data(order.ticker, previous_date_str, current_date_str)
+            except Exception:
+                price_data = None
+            if price_data is not None and len(price_data) < 2:
+                fallback_start = (pd.Timestamp(current_date_str) - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+                try:
+                    fallback_price_data = get_price_data(order.ticker, fallback_start, current_date_str)
+                except Exception:
+                    fallback_price_data = None
+                if fallback_price_data is not None and not fallback_price_data.empty:
+                    price_data = fallback_price_data
+            if price_data is not None and not price_data.empty:
+                current_row = price_data.iloc[-1]
+                previous_row = price_data.iloc[-2] if len(price_data) >= 2 else None
+                open_price = float(current_row.get("open", 0.0) or 0.0)
+                prev_close = float(previous_row.get("close", 0.0) or 0.0) if previous_row is not None else 0.0
+                day_low = float(current_row.get("low", price) or price)
+                day_high = float(current_row.get("high", price) or price)
+                current_volume = float(current_row.get("volume", 1.0) or 1.0)
+                previous_volume = float(previous_row.get("volume", current_volume) or current_volume) if previous_row is not None else current_volume
+                payload.update(
+                    {
+                        "day_low": day_low if day_low > 0 else price,
+                        "vwap": ((day_high + max(day_low, 0.0) + price) / 3.0) if day_high > 0 else price,
+                        "intraday_volume": max(current_volume, 1.0),
+                        "avg_same_time_volume": max(previous_volume, 1.0),
+                        "stock_pct_change": ((price / prev_close) - 1.0) if prev_close > 0 else 0.0,
+                        "open_price": open_price,
+                        "prev_close": prev_close,
+                        "open_gap_pct": ((open_price / prev_close) - 1.0) if open_price > 0 and prev_close > 0 else None,
+                        "minutes_since_open": 10,
+                    }
+                )
+        confirmation_inputs[order.ticker] = payload
     return confirmation_inputs
 
 

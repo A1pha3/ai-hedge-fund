@@ -5,7 +5,7 @@ import json
 import pandas as pd
 import pytest
 
-from scripts.analyze_pre_layer_short_trade_outcomes import analyze_pre_layer_short_trade_outcomes, render_pre_layer_short_trade_outcomes_markdown
+from scripts.analyze_pre_layer_short_trade_outcomes import _compute_walk_forward_validation, analyze_pre_layer_short_trade_outcomes, render_pre_layer_short_trade_outcomes_markdown
 
 
 def test_analyze_pre_layer_short_trade_outcomes_summarizes_next_day_returns(tmp_path, monkeypatch):
@@ -548,6 +548,81 @@ def test_analyze_pre_layer_short_trade_outcomes_computes_walk_forward_windows(tm
     assert "candidate_count" in summary
     assert "next_high_return_mean" in summary
     assert "next_close_return_mean" in summary
+
+
+def test_compute_walk_forward_validation_dedupes_same_theme_same_day_event_rows() -> None:
+    walk_forward = _compute_walk_forward_validation(
+        candidate_rows=[
+            {
+                "trade_date": "2026-01-10",
+                "ticker": "300001",
+                "theme_name": "old_theme",
+                "candidate_score": 0.21,
+                "data_status": "ok",
+                "next_high_return": 0.01,
+                "next_close_return": 0.0,
+                "label_fast_confirm": False,
+                "label_retention": False,
+                "label_tail_20": False,
+            },
+            {
+                "trade_date": "2026-03-12",
+                "ticker": "300111",
+                "theme_name": "storage",
+                "candidate_score": 0.42,
+                "data_status": "ok",
+                "next_high_return": 0.08,
+                "next_close_return": 0.04,
+                "label_fast_confirm": True,
+                "label_retention": True,
+                "label_tail_20": False,
+            },
+            {
+                "trade_date": "2026-03-12",
+                "ticker": "300222",
+                "theme_name": "storage",
+                "candidate_score": 0.31,
+                "data_status": "ok",
+                "next_high_return": 0.02,
+                "next_close_return": -0.01,
+                "label_fast_confirm": False,
+                "label_retention": False,
+                "label_tail_20": False,
+            },
+            {
+                "trade_date": "2026-03-13",
+                "ticker": "300333",
+                "theme_name": "ai_terminal",
+                "candidate_score": 0.37,
+                "data_status": "ok",
+                "next_high_return": 0.06,
+                "next_close_return": 0.03,
+                "label_fast_confirm": True,
+                "label_retention": False,
+                "label_tail_20": False,
+            },
+            {
+                "trade_date": "2026-04-10",
+                "ticker": "300444",
+                "theme_name": "extender",
+                "candidate_score": 0.20,
+                "data_status": "ok",
+                "next_high_return": 0.01,
+                "next_close_return": 0.0,
+                "label_fast_confirm": False,
+                "label_retention": False,
+                "label_tail_20": False,
+            },
+        ],
+        preset="standard",
+        window_mode="rolling",
+        next_high_hit_threshold=0.02,
+    )
+
+    assert walk_forward["summary"]["candidate_count"] == 2
+    assert walk_forward["summary"]["next_high_return_mean"] == 0.07
+    assert walk_forward["summary"]["next_close_return_mean"] == 0.035
+    assert walk_forward["windows"][0]["count"] == 2
 
 
 def test_render_pre_layer_short_trade_outcomes_markdown_includes_board_and_walk_forward_sections():

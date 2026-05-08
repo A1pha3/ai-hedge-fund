@@ -3664,6 +3664,25 @@ def test_build_buy_orders_allows_edge_watchlist_name_when_execution_score_floor_
     assert diagnostics["reason_counts"] == {}
 
 
+def test_build_buy_orders_blocks_lowest_liquidity_tier_name_when_one_lot_would_breach_eight_percent() -> None:
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.0182, score_final=0.2260, score_b=0.3798, decision="watch")]
+    candidate_by_ticker = {"300724": CandidateStock(ticker="300724", name="样本", industry_sw="电力设备", avg_volume_20d=7_000.0, market_cap=100, listing_date="19910403")}
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 100_000, "positions": {}},
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={"300724": 85.0},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"position_blocked_single_name": 1}
+    assert diagnostics["tickers"][0]["ticker"] == "300724"
+    assert diagnostics["tickers"][0]["constraint_binding"] == "single_name"
+    assert diagnostics["tickers"][0]["score_final"] == pytest.approx(0.2260)
+
+
 def test_build_buy_orders_allows_continuation_edge_without_global_floor_change():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     watchlist = [LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")]

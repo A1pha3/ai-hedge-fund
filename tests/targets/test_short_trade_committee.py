@@ -3,6 +3,7 @@ import pytest
 from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
 from src.targets.profiles import get_short_trade_target_profile
+from src.targets.short_trade_target_committee_helpers import _flow_raw_score
 from src.targets.short_trade_target import (
     build_short_trade_target_snapshot_from_entry,
     evaluate_short_trade_rejected_target,
@@ -216,6 +217,57 @@ def test_flow_group_uses_close_support_metric_when_present() -> None:
     assert baseline_snapshot["committee_components"]["flow_raw_100"] == pytest.approx(60.0)
     assert improved_snapshot["committee_component_sources"]["flow_raw_100"] == "raw:flow_metrics"
     assert improved_snapshot["committee_components"]["flow_raw_100"] > baseline_snapshot["committee_components"]["flow_raw_100"]
+
+
+def test_flow_raw_score_uses_source_aware_bar_proxy_thresholds_for_persist_120() -> None:
+    exact_tick_score, source = _flow_raw_score(
+        {},
+        {
+            "flow_60": 0.04,
+            "persist_120": 0.50,
+            "persist_120_source": "exact_tick",
+        },
+    )
+    bar_proxy_score, _ = _flow_raw_score(
+        {},
+        {
+            "flow_60": 0.04,
+            "persist_120": 0.50,
+            "persist_120_source": "bar_proxy",
+        },
+    )
+
+    assert source == "raw:flow_metrics"
+    assert exact_tick_score == pytest.approx(51.4286, abs=1e-4)
+    assert bar_proxy_score == pytest.approx(60.0, abs=1e-4)
+
+
+def test_flow_raw_score_keeps_exact_tick_persist_thresholds_unchanged() -> None:
+    score, source = _flow_raw_score(
+        {},
+        {
+            "flow_60": 0.04,
+            "persist_120": 0.60,
+            "persist_120_source": "exact_tick",
+        },
+    )
+
+    assert source == "raw:flow_metrics"
+    assert score == pytest.approx(66.4286, abs=1e-4)
+
+
+def test_flow_raw_score_relaxes_bar_proxy_midband_for_realistic_persist_120_values() -> None:
+    score, source = _flow_raw_score(
+        {},
+        {
+            "flow_60": 0.04,
+            "persist_120": 0.4333,
+            "persist_120_source": "bar_proxy",
+        },
+    )
+
+    assert source == "raw:flow_metrics"
+    assert score == pytest.approx(60.0, abs=1e-4)
 
 
 def test_sector_group_uses_breadth_follow_and_catalyst_metrics_when_present() -> None:
@@ -699,6 +751,32 @@ def test_committee_kill_switch_blocks_normal_trade_formal_selection() -> None:
     assert governed_result.metrics_payload["committee"]["kill_switch"]["effective_gate"] == "shadow_only"
 
 
+def test_committee_kill_switch_recovery_window_keeps_normal_trade_blocked() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "kill_switch_recovery_trade_count": 5.0,
+            "kill_switch_recovery_day_count": 7.0,
+        }
+    )
+    entry["historical_prior"]["btst_regime_gate"] = "normal_trade"
+
+    governed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert governed_result.decision == "blocked"
+    assert "committee_kill_switch_active" in governed_result.blockers
+    assert governed_result.metrics_payload["committee"]["kill_switch"]["active"] is True
+    assert governed_result.metrics_payload["committee"]["kill_switch"]["recovery_pending"] is True
+    assert governed_result.metrics_payload["committee"]["kill_switch"]["effective_gate"] == "shadow_only"
+
+
 def test_committee_theme_exposure_cap_blocks_formal_selected_candidate() -> None:
     entry = _make_committee_entry(
         metrics={
@@ -791,3 +869,63 @@ def test_committee_incremental_theme_exposure_cap_allows_candidate_exactly_at_ca
 
     assert governed_result.decision == "selected"
     assert "committee_incremental_theme_exposure_cap_exceeded" not in governed_result.downgrade_reasons
+
+
+def test_committee_isolated_theme_direction_blocks_formal_selected_candidate() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "theme_direction_peer_count": 1,
+            "theme_direction_rank": 2,
+        }
+    )
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides={**_base_profile_overrides(), "committee_enabled": False},
+    )
+    governed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_result.decision == "selected"
+    assert governed_result.decision == "near_miss"
+    assert "committee_isolated_theme_direction_block" in governed_result.downgrade_reasons
+    assert governed_result.metrics_payload["committee"]["components"]["theme_direction_peer_count"] == pytest.approx(1.0)
+
+
+def test_committee_theme_direction_rank_cap_blocks_sixth_theme_candidate() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "theme_direction_peer_count": 2,
+            "theme_direction_rank": 6,
+        }
+    )
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides={**_base_profile_overrides(), "committee_enabled": False},
+    )
+    governed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_result.decision == "selected"
+    assert governed_result.decision == "near_miss"
+    assert "committee_theme_direction_rank_exceeded" in governed_result.downgrade_reasons
+    assert governed_result.metrics_payload["committee"]["components"]["theme_direction_rank"] == pytest.approx(6.0)

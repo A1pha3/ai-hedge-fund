@@ -2,6 +2,9 @@ import json
 from pathlib import Path
 
 from src.execution.models import ExecutionPlan, LayerCResult
+from src.execution.daily_pipeline_upstream_shadow_helpers import _build_upstream_shadow_release_entry
+from src.execution.daily_pipeline_phase4_entry_helpers import _build_upstream_shadow_observation_entry
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import _build_catalyst_theme_shadow_entry
 from src.portfolio.models import ExitSignal, PositionPlan
 from src.research.artifacts import FileSelectionArtifactWriter
 from src.screening.models import MarketState, StrategySignal
@@ -227,6 +230,233 @@ def test_file_selection_artifact_writer_propagates_market_state_into_replay_inpu
     assert replay_input_payload["watchlist"][0]["market_state"] == expected_market_state
     assert replay_input_payload["rejected_entries"][0]["market_state"] == expected_market_state
     assert replay_input_payload["supplemental_short_trade_entries"][0]["market_state"] == expected_market_state
+
+
+def test_file_selection_artifact_writer_preserves_watchlist_intraday_metric_sources_in_replay_input(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_intraday_metric_sources")
+    watchlist = [
+        LayerCResult(
+            ticker="688183",
+            score_b=0.66,
+            score_c=0.21,
+            score_final=0.55,
+            quality_score=0.64,
+            decision="watch",
+            metrics={
+                "flow_60": -0.0163,
+                "flow_60_source": "bar_proxy",
+                "close_support_30": -0.0492,
+                "close_support_30_source": "bar_proxy",
+                "persist_120": 0.4667,
+                "persist_120_source": "bar_proxy",
+            },
+        )
+    ]
+    selection_targets, dual_target_summary = build_selection_targets(
+        trade_date="20260322",
+        watchlist=watchlist,
+        rejected_entries=[],
+        buy_order_tickers=set(),
+        target_mode="short_trade_only",
+    )
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"watchlist_count": 1}, "funnel_diagnostics": {"filters": {}}},
+        watchlist=watchlist,
+        target_mode="short_trade_only",
+        selection_targets=selection_targets,
+        dual_target_summary=dual_target_summary,
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+    replay_input_payload = json.loads(Path(result.replay_input_path).read_text(encoding="utf-8"))
+    watchlist_entry = replay_input_payload["watchlist"][0]
+    raw_candidate_metrics = replay_input_payload["selection_targets"]["688183"]["short_trade"]["explainability_payload"]["replay_context"]["raw_candidate_metrics"]
+
+    assert watchlist_entry["metrics"]["flow_60"] == -0.0163
+    assert watchlist_entry["metrics"]["flow_60_source"] == "bar_proxy"
+    assert watchlist_entry["metrics"]["persist_120"] == 0.4667
+    assert watchlist_entry["metrics"]["persist_120_source"] == "bar_proxy"
+    assert raw_candidate_metrics["flow_60_source"] == "bar_proxy"
+    assert raw_candidate_metrics["persist_120_source"] == "bar_proxy"
+
+
+def test_file_selection_artifact_writer_preserves_supplemental_intraday_metric_sources_in_replay_input(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_supplemental_metric_sources")
+    released_shadow_entry = _build_upstream_shadow_release_entry(
+        candidate_entry={
+            "ticker": "688183",
+            "score_b": 0.41,
+            "score_c": 0.0,
+            "score_final": 0.41,
+            "quality_score": 0.58,
+            "decision": "watch",
+            "candidate_source": "upstream_shadow_release_watchlist",
+            "candidate_pool_lane": "post_gate_liquidity_competition",
+        },
+        filter_reason="catalyst_freshness_below_short_trade_boundary_floor",
+        metrics_payload={
+            "candidate_score": 0.41,
+            "breakout_freshness": 0.34,
+            "trend_acceleration": 0.29,
+            "close_strength": 0.43,
+            "catalyst_freshness": 0.86,
+            "flow_60": -0.0163,
+            "flow_60_source": "bar_proxy",
+            "persist_120": 0.4667,
+            "persist_120_source": "bar_proxy",
+        },
+        release_reason="upstream_shadow_release_score_floor_pass",
+    )
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"watchlist_count": 0},
+            "funnel_diagnostics": {
+                "filters": {
+                    "short_trade_candidates": {
+                        "tickers": [],
+                        "released_shadow_entries": [released_shadow_entry],
+                        "shadow_observation_entries": [],
+                    }
+                }
+            },
+        },
+        watchlist=[],
+        target_mode="research_only",
+        selection_targets={},
+        dual_target_summary=DualTargetSummary(target_mode="research_only"),
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+    replay_input_payload = json.loads(Path(result.replay_input_path).read_text(encoding="utf-8"))
+    supplemental_entry = replay_input_payload["supplemental_short_trade_entries"][0]
+
+    assert supplemental_entry["metrics"]["flow_60_source"] == "bar_proxy"
+    assert supplemental_entry["metrics"]["persist_120_source"] == "bar_proxy"
+
+
+def test_file_selection_artifact_writer_preserves_upstream_shadow_observation_intraday_metric_sources_in_replay_input(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_shadow_observation_metric_sources")
+    shadow_observation_entry = _build_upstream_shadow_observation_entry(
+        candidate_entry={
+            "ticker": "688183",
+            "score_b": 0.39,
+            "score_c": 0.0,
+            "score_final": 0.39,
+            "quality_score": 0.57,
+            "decision": "observation",
+        },
+        filter_reason="candidate_score_below_shadow_floor",
+        metrics_payload={
+            "candidate_score": 0.39,
+            "breakout_freshness": 0.28,
+            "trend_acceleration": 0.24,
+            "volume_expansion_quality": 0.31,
+            "close_strength": 0.35,
+            "catalyst_freshness": 0.81,
+            "flow_60": -0.0163,
+            "flow_60_source": "bar_proxy",
+            "close_support_30": -0.0492,
+            "close_support_30_source": "bar_proxy",
+            "persist_120": 0.4667,
+            "persist_120_source": "bar_proxy",
+        },
+    )
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"watchlist_count": 0},
+            "funnel_diagnostics": {
+                "filters": {
+                    "short_trade_candidates": {
+                        "tickers": [],
+                        "released_shadow_entries": [],
+                        "shadow_observation_entries": [shadow_observation_entry],
+                    }
+                }
+            },
+        },
+        watchlist=[],
+        target_mode="research_only",
+        selection_targets={},
+        dual_target_summary=DualTargetSummary(target_mode="research_only"),
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+    replay_input_payload = json.loads(Path(result.replay_input_path).read_text(encoding="utf-8"))
+    observation_entry = replay_input_payload["upstream_shadow_observation_entries"][0]
+
+    assert observation_entry["metrics"]["flow_60"] == -0.0163
+    assert observation_entry["metrics"]["flow_60_source"] == "bar_proxy"
+    assert observation_entry["metrics"]["close_support_30"] == -0.0492
+    assert observation_entry["metrics"]["close_support_30_source"] == "bar_proxy"
+    assert observation_entry["metrics"]["persist_120"] == 0.4667
+    assert observation_entry["metrics"]["persist_120_source"] == "bar_proxy"
+
+
+def test_file_selection_artifact_writer_preserves_catalyst_theme_shadow_intraday_metric_sources_in_snapshot(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_catalyst_theme_shadow_metric_sources")
+    shadow_entry = _build_catalyst_theme_shadow_entry(
+        item=LayerCResult(
+            ticker="688183",
+            score_b=0.41,
+            score_c=0.0,
+            score_final=0.41,
+            quality_score=0.58,
+            decision="watch",
+            theme_name="chip",
+            theme_category="semiconductor",
+        ),
+        filter_reason="catalyst_freshness_below_short_trade_boundary_floor",
+        metrics_payload={
+            "candidate_score": 0.41,
+            "breakout_freshness": 0.31,
+            "trend_acceleration": 0.24,
+            "close_strength": 0.35,
+            "sector_resonance": 0.18,
+            "catalyst_freshness": 0.79,
+            "flow_60": -0.0163,
+            "flow_60_source": "bar_proxy",
+            "close_support_30": -0.0492,
+            "close_support_30_source": "bar_proxy",
+            "persist_120": 0.4667,
+            "persist_120_source": "bar_proxy",
+        },
+    )
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"catalyst_theme_shadow_candidate_count": 1},
+            "funnel_diagnostics": {
+                "filters": {
+                    "catalyst_theme_candidates": {
+                        "tickers": [],
+                        "shadow_candidates": [shadow_entry],
+                    }
+                }
+            },
+        },
+        watchlist=[],
+        target_mode="research_only",
+        selection_targets={},
+        dual_target_summary=DualTargetSummary(target_mode="research_only"),
+    )
+
+    writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+    snapshot_payload = json.loads((tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    shadow_candidate = snapshot_payload["catalyst_theme_shadow_candidates"][0]
+
+    assert shadow_candidate["metrics"]["flow_60"] == -0.0163
+    assert shadow_candidate["metrics"]["flow_60_source"] == "bar_proxy"
+    assert shadow_candidate["metrics"]["close_support_30"] == -0.0492
+    assert shadow_candidate["metrics"]["close_support_30_source"] == "bar_proxy"
+    assert shadow_candidate["metrics"]["persist_120"] == 0.4667
+    assert shadow_candidate["metrics"]["persist_120_source"] == "bar_proxy"
 
 
 def test_file_selection_artifact_writer_renders_target_decisions_for_selected_and_rejected(tmp_path):

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+import pytest
+
 import src.execution.daily_pipeline as daily_pipeline_module
 
 from src.execution.daily_pipeline_post_market_helpers import build_plan_target_shell_inputs
@@ -15,6 +17,7 @@ from src.execution.daily_pipeline_post_market_helpers import resolve_post_market
 from src.execution.daily_pipeline import _resolve_effective_short_trade_target_profile_name
 from src.execution.daily_pipeline import _attach_btst_regime_gate_shadow
 from src.execution.daily_pipeline import _serialize_short_trade_target_profile
+from src.execution.daily_pipeline_upstream_shadow_helpers import _build_upstream_shadow_watchlist_entry
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.execution.models import ExecutionPlan
 from src.execution.models import LayerCResult
@@ -183,6 +186,53 @@ def test_resolve_effective_short_trade_target_profile_name_downgrades_normal_tra
     )
 
     assert effective_profile_name == "shadow_research"
+
+
+def test_resolve_effective_short_trade_target_profile_name_keeps_downgrade_during_kill_switch_recovery_window() -> None:
+    market_state = MarketState(
+        breadth_ratio=0.67,
+        daily_return=-0.003,
+        limit_up_down_ratio=1.25,
+        adx=27.0,
+        style_dispersion=0.18,
+        regime_flip_risk=0.09,
+        regime_gate_level="normal",
+        btst_kill_switch_metrics={
+            "kill_switch_recovery_trade_count": 5.0,
+            "kill_switch_recovery_day_count": 7.0,
+        },
+    )
+
+    effective_profile_name = _resolve_effective_short_trade_target_profile_name(
+        requested_profile_name="default",
+        requested_profile_overrides={},
+        market_state=market_state,
+    )
+
+    assert effective_profile_name == "retention_follow"
+
+
+def test_build_upstream_shadow_watchlist_entry_preserves_intraday_metric_sources() -> None:
+    result = _build_upstream_shadow_watchlist_entry(
+        {
+            "ticker": "688183",
+            "score_b": 0.58,
+            "score_c": 0.0,
+            "score_final": 0.58,
+            "quality_score": 0.61,
+            "decision": "watch",
+            "metrics": {
+                "flow_60": -0.0163,
+                "flow_60_source": "bar_proxy",
+                "persist_120": 0.4667,
+                "persist_120_source": "bar_proxy",
+            },
+        }
+    )
+
+    assert result.metrics["flow_60"] == -0.0163
+    assert result.metrics["flow_60_source"] == "bar_proxy"
+    assert result.metrics["persist_120_source"] == "bar_proxy"
 
 
 def test_build_selection_target_inputs_overrides_entry_market_state_with_plan_market_state() -> None:
@@ -493,6 +543,87 @@ def test_resolve_post_market_selection_targets_injects_projected_theme_exposure_
 
     assert captured["watchlist"][0].projected_theme_exposure == 0.2
     assert captured["supplemental_short_trade_entries"][0]["projected_theme_exposure"] == 0.2
+
+
+def test_resolve_post_market_selection_targets_injects_theme_direction_metrics_from_selection_universe() -> None:
+    watchlist_context = PostMarketWatchlistContext(
+        watchlist=[
+            LayerCResult(
+                ticker="300724",
+                score_c=0.12,
+                score_final=0.74,
+                score_b=0.81,
+                quality_score=0.69,
+                decision="strong_buy",
+                theme_name="AI算力",
+            ),
+            LayerCResult(
+                ticker="300730",
+                score_c=0.08,
+                score_final=0.60,
+                score_b=0.72,
+                quality_score=0.62,
+                decision="watch",
+                theme_name="机器人",
+            ),
+        ],
+        layer_b_filter_diagnostics={},
+        watchlist_filter_diagnostics={},
+        historical_prior_by_ticker={},
+        short_trade_candidate_diagnostics={},
+        catalyst_theme_candidate_diagnostics={},
+        candidate_by_ticker={},
+        price_map={},
+    )
+    captured: dict[str, object] = {}
+
+    @contextmanager
+    def use_profile(**kwargs):
+        yield None
+
+    def build_inputs(**kwargs):
+        return PostMarketSelectionTargetInputs(
+            rejected_entries=[],
+            supplemental_short_trade_entries=[
+                {"ticker": "300725", "theme_name": "AI算力", "score_final": 0.70},
+                {"ticker": "300731", "theme_name": "机器人", "score_final": 0.55},
+            ],
+            candidate_entry_filter_diagnostics={},
+        )
+
+    def build_targets(**kwargs):
+        captured["watchlist"] = kwargs["watchlist"]
+        captured["supplemental_short_trade_entries"] = kwargs["supplemental_short_trade_entries"]
+        return {}, {}
+
+    resolve_post_market_selection_targets(
+        trade_date="20260506",
+        watchlist_context=watchlist_context,
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        market_state={},
+        buy_orders=[],
+        counts={},
+        funnel_diagnostics={},
+        target_mode="short_trade_only",
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+        use_short_trade_target_profile_fn=use_profile,
+        build_selection_target_inputs_fn=build_inputs,
+        attach_historical_prior_to_entries_fn=lambda entries, prior_by_ticker: entries,
+        build_selection_targets_fn=build_targets,
+    )
+
+    watchlist = captured["watchlist"]
+    supplemental_entries = captured["supplemental_short_trade_entries"]
+
+    assert watchlist[0].metrics["theme_direction_peer_count"] == pytest.approx(2.0)
+    assert watchlist[0].metrics["theme_direction_rank"] == pytest.approx(1.0)
+    assert watchlist[1].metrics["theme_direction_peer_count"] == pytest.approx(2.0)
+    assert watchlist[1].metrics["theme_direction_rank"] == pytest.approx(2.0)
+    assert supplemental_entries[0]["metrics"]["theme_direction_peer_count"] == pytest.approx(2.0)
+    assert supplemental_entries[0]["metrics"]["theme_direction_rank"] == pytest.approx(1.0)
+    assert supplemental_entries[1]["metrics"]["theme_direction_peer_count"] == pytest.approx(2.0)
+    assert supplemental_entries[1]["metrics"]["theme_direction_rank"] == pytest.approx(2.0)
 
 
 def test_resolve_post_market_selection_targets_returns_resolved_watchlist_for_downstream_plan_persistence() -> None:

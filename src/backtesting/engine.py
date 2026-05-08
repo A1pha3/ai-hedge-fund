@@ -483,8 +483,19 @@ class BacktestEngine:
 
         return self._performance_metrics
 
-    def _build_confirmation_inputs(self, plan: ExecutionPlan, current_prices: dict[str, float]) -> dict[str, dict]:
-        return build_confirmation_inputs(plan, current_prices)
+    def _build_confirmation_inputs(
+        self,
+        plan: ExecutionPlan,
+        current_prices: dict[str, float],
+        previous_date_str: str,
+        current_date_str: str,
+    ) -> dict[str, dict]:
+        return build_confirmation_inputs(
+            plan,
+            current_prices,
+            previous_date_str=previous_date_str,
+            current_date_str=current_date_str,
+        )
 
     def _build_pipeline_agent_output(self, decisions: dict[str, dict], active_tickers: Sequence[str]) -> AgentOutput:
         return build_pipeline_agent_output(decisions, active_tickers)

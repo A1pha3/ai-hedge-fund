@@ -219,6 +219,7 @@ def _build_upstream_shadow_watchlist_entry(entry: dict[str, Any]) -> LayerCResul
         score_b=float(entry.get("score_b", 0.0) or 0.0),
         quality_score=float(entry.get("quality_score", 0.5) or 0.5),
         market_state=dict(entry.get("market_state") or {}),
+        metrics=dict(entry.get("metrics") or {}),
         candidate_source=str(entry.get("candidate_source") or "upstream_shadow_release_watchlist"),
         candidate_reason_codes=reason_codes,
         strategy_signals=strategy_signals,

@@ -181,7 +181,10 @@ def _flow_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tu
         available_scores.append((_step_score(flow_60, [(0.12, 90.0), (0.08, 75.0), (0.04, 60.0), (0.0, 40.0)], 20.0), 0.40))
     persist_120 = raw_metrics.get("persist_120")
     if persist_120 is not None:
-        available_scores.append((_step_score(float(persist_120 or 0.0), [(0.65, 90.0), (0.58, 75.0), (0.52, 60.0), (0.45, 40.0)], 20.0), 0.30))
+        persist_120_thresholds = [(0.65, 90.0), (0.58, 75.0), (0.52, 60.0), (0.45, 40.0)]
+        if str(raw_metrics.get("persist_120_source") or "").strip() == "bar_proxy":
+            persist_120_thresholds = [(0.60, 90.0), (0.53, 75.0), (0.43, 60.0), (0.36, 40.0)]
+        available_scores.append((_step_score(float(persist_120 or 0.0), persist_120_thresholds, 20.0), 0.30))
     close_support_30 = raw_metrics.get("close_support_30")
     if close_support_30 is not None:
         available_scores.append((_step_score(float(close_support_30 or 0.0), [(0.10, 90.0), (0.05, 75.0), (0.02, 60.0), (0.0, 40.0)], 20.0), 0.30))
@@ -439,6 +442,8 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     theme_concentration_after_trade_raw_100, theme_source = _theme_concentration_risk_raw_score(raw_metrics, input_data)
     projected_theme_exposure = _as_float(raw_metrics, "projected_theme_exposure", _as_float(dict(input_data.replay_context or {}), "projected_theme_exposure"))
     incremental_theme_exposure = _as_float(raw_metrics, "incremental_theme_exposure", _as_float(dict(input_data.replay_context or {}), "incremental_theme_exposure"))
+    theme_direction_peer_count = _as_float(raw_metrics, "theme_direction_peer_count")
+    theme_direction_rank = _as_float(raw_metrics, "theme_direction_rank")
     sector_group_score = _committee_group_score(sector_raw_100)
     flow_group_score = _committee_group_score(flow_raw_100)
     retention_group_score = _committee_group_score(retention_raw_100)
@@ -531,6 +536,17 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             fail_reasons.append("committee_theme_exposure_cap_exceeded")
         if incremental_theme_exposure > float(getattr(profile, "committee_incremental_theme_exposure_cap", 0.18) or 0.18):
             fail_reasons.append("committee_incremental_theme_exposure_cap_exceeded")
+        if (
+            bool(getattr(profile, "committee_isolated_theme_direction_enabled", True))
+            and theme_direction_peer_count > 0.0
+            and theme_direction_peer_count < float(getattr(profile, "committee_isolated_theme_peer_count_min", 2.0) or 2.0)
+        ):
+            fail_reasons.append("committee_isolated_theme_direction_block")
+        if (
+            bool(getattr(profile, "committee_theme_direction_rank_enabled", True))
+            and theme_direction_rank > float(getattr(profile, "committee_theme_direction_rank_max", 5.0) or 5.0)
+        ):
+            fail_reasons.append("committee_theme_direction_rank_exceeded")
 
     if bool(kill_switch["active"]) and effective_gate in SHADOW_ONLY_GATES:
         fail_reasons.append("committee_kill_switch_active")
@@ -568,6 +584,8 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "formal_selected_allowed": formal_selected_allowed,
             "theme_exposure_cap": round(float(getattr(profile, "committee_theme_exposure_cap", 0.25) or 0.25), 4),
             "incremental_theme_exposure_cap": round(float(getattr(profile, "committee_incremental_theme_exposure_cap", 0.18) or 0.18), 4),
+            "isolated_theme_peer_count_min": round(float(getattr(profile, "committee_isolated_theme_peer_count_min", 2.0) or 2.0), 4),
+            "theme_direction_rank_max": round(float(getattr(profile, "committee_theme_direction_rank_max", 5.0) or 5.0), 4),
         },
         "committee_components": {
             "sector_raw_100": round(sector_raw_100, 4),
@@ -585,6 +603,8 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "theme_concentration_after_trade_raw_100": round(theme_concentration_after_trade_raw_100, 4) if theme_concentration_after_trade_raw_100 is not None else None,
             "projected_theme_exposure": round(projected_theme_exposure, 4) if projected_theme_exposure > 0.0 else None,
             "incremental_theme_exposure": round(incremental_theme_exposure, 4) if incremental_theme_exposure > 0.0 else None,
+            "theme_direction_peer_count": round(theme_direction_peer_count, 4) if theme_direction_peer_count > 0.0 else None,
+            "theme_direction_rank": round(theme_direction_rank, 4) if theme_direction_rank > 0.0 else None,
             "sector_group_score": round(sector_group_score, 4),
             "flow_group_score": round(flow_group_score, 4),
             "retention_group_score": round(retention_group_score, 4),
@@ -608,6 +628,8 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "theme_concentration_after_trade_raw_100": theme_source,
             "projected_theme_exposure": "raw:projected_theme_exposure" if projected_theme_exposure > 0.0 else "missing",
             "incremental_theme_exposure": "raw:incremental_theme_exposure" if incremental_theme_exposure > 0.0 else "missing",
+            "theme_direction_peer_count": "raw:theme_direction_context" if theme_direction_peer_count > 0.0 else "missing",
+            "theme_direction_rank": "raw:theme_direction_context" if theme_direction_rank > 0.0 else "missing",
             "sector_group_score": "derived:raw_score_mapping",
             "flow_group_score": "derived:raw_score_mapping",
             "retention_group_score": "derived:raw_score_mapping",

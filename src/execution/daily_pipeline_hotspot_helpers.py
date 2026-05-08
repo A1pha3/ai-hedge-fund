@@ -292,6 +292,7 @@ def build_upstream_shadow_release_entry(
         **candidate_entry,
         "reasons": resolved_reason_codes,
         "candidate_reason_codes": resolved_reason_codes,
+        "metrics": dict(metrics_payload),
         "short_trade_boundary_metrics": dict(metrics_payload),
         "shadow_release_filter_reason": filter_reason,
         "shadow_release_reason": release_reason,

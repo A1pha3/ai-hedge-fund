@@ -20,13 +20,24 @@ def _build_upstream_shadow_observation_score_fields(candidate_score: float) -> d
 
 
 def _build_upstream_shadow_observation_metrics(metrics_payload: dict[str, Any]) -> dict[str, Any]:
-    return {
+    metrics = {
         "breakout_freshness": metrics_payload.get("breakout_freshness"),
         "trend_acceleration": metrics_payload.get("trend_acceleration"),
         "volume_expansion_quality": metrics_payload.get("volume_expansion_quality"),
         "close_strength": metrics_payload.get("close_strength"),
         "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
     }
+    for key in (
+        "flow_60",
+        "flow_60_source",
+        "close_support_30",
+        "close_support_30_source",
+        "persist_120",
+        "persist_120_source",
+    ):
+        if key in metrics_payload:
+            metrics[key] = metrics_payload.get(key)
+    return metrics
 
 
 def _build_upstream_shadow_observation_status_fields(
