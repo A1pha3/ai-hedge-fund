@@ -42,6 +42,9 @@ class PositionState(PositionStateRequired, total=False):
     quality_score: float
     is_fundamental_driven: bool
     industry_sw: str
+    theme_name: str
+    theme_category: str
+    is_new_theme: bool
 
 
 class TickerRealizedGains(TypedDict):

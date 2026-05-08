@@ -145,6 +145,62 @@ def _is_rate_limit_error(error: Exception) -> bool:
     )
 
 
+def _iter_error_chain(error: Exception):
+    current: Exception | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        yield current
+        seen.add(id(current))
+        next_error = current.__cause__ or current.__context__
+        current = next_error if isinstance(next_error, Exception) else None
+
+
+def _is_transport_error(error: Exception) -> bool:
+    transport_error_type_names = {
+        "APITimeoutError",
+        "APIConnectionError",
+        "ConnectError",
+        "ConnectTimeout",
+        "ConnectionError",
+        "NetworkError",
+        "ReadTimeout",
+        "RemoteProtocolError",
+        "TimeoutError",
+        "TimeoutException",
+        "TransportError",
+    }
+    transport_error_markers = [
+        "api connection",
+        "connect timeout",
+        "connection aborted",
+        "connection refused",
+        "connection reset",
+        "connection timed out",
+        "network is unreachable",
+        "read timeout",
+        "timed out",
+        "temporary failure in name resolution",
+    ]
+
+    for current_error in _iter_error_chain(error):
+        if isinstance(current_error, (TimeoutError, ConnectionError)):
+            return True
+
+        error_type_name = type(current_error).__name__
+        if error_type_name in transport_error_type_names:
+            return True
+
+        error_message = str(current_error).lower()
+        if any(marker in error_message for marker in transport_error_markers):
+            return True
+
+    return False
+
+
+def _should_fallback_on_error(error: Exception) -> bool:
+    return _is_rate_limit_error(error) or _is_transport_error(error)
+
+
 def _compute_retry_delay(attempt: int, error: Exception) -> float:
     """Returns a bounded backoff delay for transient provider failures."""
     if _is_rate_limit_error(error):
@@ -239,6 +295,7 @@ def call_llm(
                 record_llm_attempt_safely=_record_llm_attempt_safely,
                 compute_retry_delay=_compute_retry_delay,
                 is_rate_limit_error=_is_rate_limit_error,
+                should_fallback_on_error=_should_fallback_on_error,
                 register_provider_rate_limit_cooldown=_register_provider_rate_limit_cooldown,
                 is_provider_fallback_disabled=_is_provider_fallback_disabled,
                 get_transport_family=_get_transport_family,

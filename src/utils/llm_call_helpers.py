@@ -136,6 +136,7 @@ def handle_llm_failure(
     record_llm_attempt_safely: Callable[..., None],
     compute_retry_delay: Callable[[int, Exception], float],
     is_rate_limit_error: Callable[[Exception], bool],
+    should_fallback_on_error: Callable[[Exception], bool],
     register_provider_rate_limit_cooldown: Callable[[str, str | None, float], None],
     is_provider_fallback_disabled: Callable[[], bool],
     get_transport_family: Callable[[str, str | None, dict | None], str],
@@ -166,7 +167,7 @@ def handle_llm_failure(
     if is_rate_limited:
         register_provider_rate_limit_cooldown(context.active_model_provider, context.active_route_id, retry_delay)
 
-    if context.fallback_index < len(context.fallback_chain) and is_rate_limited:
+    if context.fallback_index < len(context.fallback_chain) and should_fallback_on_error(error):
         if is_provider_fallback_disabled():
             context.fallback_chain = []
         else:

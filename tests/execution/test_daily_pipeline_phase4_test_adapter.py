@@ -66,3 +66,26 @@ def test_run_with_phase4_test_overrides_syncs_before_invoking_callback():
         assert result == "phase4:ok"
     finally:
         _restore_phase4_target_state(original_state)
+
+
+def test_build_upstream_shadow_watchlist_entry_preserves_theme_identity_metadata():
+    entry = upstream_shadow_helpers._build_upstream_shadow_watchlist_entry(
+        {
+            "ticker": "300724",
+            "score_b": 0.62,
+            "score_c": 0.08,
+            "score_final": 0.58,
+            "quality_score": 0.63,
+            "market_state": {"state_type": "trend"},
+            "candidate_source": "catalyst_theme_shadow",
+            "decision": "watch",
+            "strategy_signals": {},
+            "theme_name": "AI算力",
+            "theme_category": "technology",
+            "is_new_theme": True,
+        }
+    )
+
+    assert entry.theme_name == "AI算力"
+    assert entry.theme_category == "technology"
+    assert entry.is_new_theme is True

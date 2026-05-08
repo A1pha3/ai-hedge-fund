@@ -235,10 +235,14 @@ def aggregate_layer_c_results(
                 quality_score=quality_score,
                 market_state=fused.market_state.model_dump(mode="json") if fused.market_state is not None else {},
                 strategy_signals=fused.strategy_signals,
+                metrics=dict(getattr(fused, "metrics", {}) or {}),
                 agent_signals=ticker_agent_signals,
                 agent_contribution_summary=agent_contribution_summary,
                 bc_conflict=bc_conflict,
                 decision=decision,
+                theme_name=str(getattr(fused, "theme_name", "") or ""),
+                theme_category=str(getattr(fused, "theme_category", "") or ""),
+                is_new_theme=bool(getattr(fused, "is_new_theme", False)),
             )
         )
 

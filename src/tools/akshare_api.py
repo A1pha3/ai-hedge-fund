@@ -10,6 +10,7 @@ A股数据接口模块 - 使用 AKShare 获取中国股票数据
 """
 
 import os
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -69,6 +70,7 @@ from src.tools.akshare_runtime_helpers import (
 _cache = get_cache()
 _persistent_cache = get_enhanced_cache()
 AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS = float(os.getenv("AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS", "8"))
+AKSHARE_INTRADAY_TIMEOUT_SECONDS = float(os.getenv("AKSHARE_INTRADAY_TIMEOUT_SECONDS", "2.5"))
 
 # AKShare 是否可用标志
 _akshare_available = False
@@ -104,6 +106,7 @@ def _cached_akshare_dataframe_call(
     func,
     ttl: int | None = None,
     cache_key_kwargs: dict[str, Any] | None = None,
+    timeout_seconds: float | None = None,
     **kwargs,
 ) -> pd.DataFrame | None:
     return _cached_akshare_dataframe_call_impl(
@@ -111,6 +114,7 @@ def _cached_akshare_dataframe_call(
         func,
         persistent_cache=_persistent_cache,
         stock_news_timeout_seconds=AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS,
+        timeout_seconds=timeout_seconds,
         ttl=ttl,
         cache_key_kwargs=cache_key_kwargs,
         **kwargs,
@@ -633,6 +637,106 @@ def get_money_flow(ticker: str) -> pd.DataFrame | None:
     )
 
 
+def get_intraday_bars(ticker: str, trade_date: str, period: str = "1", adjust: str = "") -> pd.DataFrame | None:
+    """
+    获取个股单日分钟线。
+
+    参数:
+        ticker: 6 位股票代码
+        trade_date: 交易日，格式 YYYYMMDD
+        period: 分钟周期，支持 1/5/15/30/60
+        adjust: 复权方式
+    """
+    trade_day = datetime.strptime(str(trade_date), "%Y%m%d").strftime("%Y-%m-%d")
+    symbol = get_ashare_symbol(ticker)
+    return load_optional_market_dataframe(
+        is_available=_akshare_available,
+        unavailable_message="[AKShare] akshare 未安装",
+        fetch_dataframe_fn=lambda: _cached_akshare_dataframe_call(
+            "stock_zh_a_hist_min_em",
+            ak.stock_zh_a_hist_min_em,
+            timeout_seconds=AKSHARE_INTRADAY_TIMEOUT_SECONDS,
+            cache_key_kwargs={
+                "symbol": symbol,
+                "trade_date": str(trade_date),
+                "period": period,
+                "adjust": adjust,
+            },
+            symbol=symbol,
+            start_date=f"{trade_day} 09:30:00",
+            end_date=f"{trade_day} 15:00:00",
+            period=period,
+            adjust=adjust,
+        ),
+        error_message=f"[AKShare] get_intraday_bars({ticker}, {trade_date}) 失败",
+    )
+
+
+def get_intraday_ticks(ticker: str, trade_date: str) -> pd.DataFrame | None:
+    """
+    获取个股单日分笔成交。
+
+    参数:
+        ticker: 6 位股票代码
+        trade_date: 交易日，格式 YYYYMMDD
+    """
+    prefixed_symbol = to_prefixed_ashare_code(ticker)
+    return load_optional_market_dataframe(
+        is_available=_akshare_available,
+        unavailable_message="[AKShare] akshare 未安装",
+        fetch_dataframe_fn=lambda: _cached_akshare_dataframe_call(
+            "stock_intraday_sina",
+            ak.stock_intraday_sina,
+            timeout_seconds=AKSHARE_INTRADAY_TIMEOUT_SECONDS,
+            cache_key_kwargs={
+                "symbol": prefixed_symbol,
+                "trade_date": str(trade_date),
+            },
+            symbol=prefixed_symbol,
+            date=str(trade_date),
+        ),
+        error_message=f"[AKShare] get_intraday_ticks({ticker}, {trade_date}) 失败",
+    )
+
+
+def get_lhb_detail(start_date: str, end_date: str) -> pd.DataFrame | None:
+    """
+    获取龙虎榜日级明细。
+
+    参数:
+        start_date: 开始日期，格式 YYYYMMDD
+        end_date: 结束日期，格式 YYYYMMDD
+    """
+    return load_optional_market_dataframe(
+        is_available=_akshare_available,
+        unavailable_message="[AKShare] akshare 未安装",
+        fetch_dataframe_fn=lambda: ak.stock_lhb_detail_em(
+            start_date=str(start_date),
+            end_date=str(end_date),
+        ),
+        error_message=f"[AKShare] get_lhb_detail({start_date}, {end_date}) 失败",
+    )
+
+
+def get_lhb_institutional_stats(start_date: str, end_date: str) -> pd.DataFrame | None:
+    """
+    获取龙虎榜机构买卖日统计。
+
+    参数:
+        start_date: 开始日期，格式 YYYYMMDD
+        end_date: 结束日期，格式 YYYYMMDD
+    """
+    return load_optional_market_dataframe(
+        is_available=_akshare_available,
+        unavailable_message="[AKShare] akshare 未安装",
+        fetch_dataframe_fn=lambda: ak.stock_lhb_jgmmtj_em(
+            start_date=str(start_date),
+            end_date=str(end_date),
+        ),
+        error_message=f"[AKShare] get_lhb_institutional_stats({start_date}, {end_date}) 失败",
+    )
+
+
 # 导出函数
 __all__ = [
     "get_prices",
@@ -651,4 +755,8 @@ __all__ = [
     "get_realtime_quotes",
     "get_industry_realtime",
     "get_money_flow",
+    "get_intraday_bars",
+    "get_intraday_ticks",
+    "get_lhb_detail",
+    "get_lhb_institutional_stats",
 ]

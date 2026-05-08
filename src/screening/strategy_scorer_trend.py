@@ -7,10 +7,13 @@ ADX strength, momentum, and volatility sub-factors.
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 from src.agents.technicals import (
     calculate_adx,
+    calculate_atr,
     calculate_ema,
     calculate_momentum_signals,
     calculate_volatility_signals,
@@ -22,6 +25,7 @@ from src.screening.strategy_scorer_utils import (
     _make_sub_factor,
     _signal_to_direction,
 )
+from src.tools.ashare_board_utils import get_ashare_symbol
 from src.utils.numeric import clip as _clip
 
 
@@ -173,9 +177,17 @@ def _resolve_adx_strength_direction(adx_metrics: dict[str, float]) -> int:
 # Trend strategy orchestrator
 # ---------------------------------------------------------------------------
 
-def score_trend_strategy(prices_df: pd.DataFrame) -> StrategySignal:
+def score_trend_strategy(prices_df: pd.DataFrame, *, ticker: str | None = None) -> StrategySignal:
     trend_weights = _get_trend_subfactor_weights()
     momentum_signal = calculate_momentum_signals(prices_df) if len(prices_df) >= 126 else None
+    if momentum_signal is not None:
+        momentum_signal = {
+            **momentum_signal,
+            "metrics": {
+                **dict(momentum_signal.get("metrics") or {}),
+                **_build_short_trade_doc_metrics(prices_df, ticker=ticker),
+            },
+        }
     volatility_signal = calculate_volatility_signals(prices_df) if len(prices_df) >= 126 else None
     return aggregate_sub_factors(
         _build_trend_sub_factors(
@@ -218,3 +230,158 @@ def _resolve_optional_trend_factor_inputs(signal: dict | None) -> tuple[int, flo
 
 def _append_long_trend_factor(sub_factors: list[SubFactor], prices_df: pd.DataFrame, weight: float) -> None:
     sub_factors.append(_score_long_trend_alignment(prices_df, weight))
+
+
+def _build_short_trade_doc_metrics(prices_df: pd.DataFrame, *, ticker: str | None = None) -> dict[str, float]:
+    if prices_df.empty:
+        return {}
+    resolved_ticker = _resolve_price_frame_ticker(prices_df, ticker=ticker)
+    return {
+        "attack_slope_258": _compute_attack_slope_258(prices_df),
+        "breakout_quality_20_atr": _compute_breakout_quality_20_atr(prices_df),
+        "close_structure": _compute_close_structure(prices_df),
+        "amount_ratio_5": _compute_amount_ratio_5(prices_df),
+        "turnover_ratio_20": _compute_turnover_ratio_20(prices_df),
+        "limit_up_memory_259": _compute_limit_up_memory_259(prices_df, ticker=resolved_ticker),
+        "ret_2d": _compute_close_return(prices_df, sessions=2),
+        "ret_5d": _compute_close_return(prices_df, sessions=5),
+        "failed_breakout_10": float(_count_failed_breakouts(prices_df, lookback=10, breakout_window=20)),
+    }
+
+
+def _resolve_price_frame_ticker(prices_df: pd.DataFrame, *, ticker: str | None = None) -> str:
+    if ticker:
+        return str(ticker).strip()
+    for column in ("ticker", "symbol", "ts_code"):
+        if column in prices_df.columns and not prices_df.empty:
+            value = prices_df[column].iloc[-1]
+            if pd.notna(value):
+                return str(value).strip()
+    return ""
+
+
+def _compute_attack_slope_258(prices_df: pd.DataFrame) -> float:
+    if "close" not in prices_df.columns:
+        return 0.0
+    close = prices_df["close"]
+    return round(
+        100.0
+        * (
+            (0.45 * _log_regression_slope(close, 2))
+            + (0.35 * _log_regression_slope(close, 5))
+            + (0.20 * _log_regression_slope(close, 8))
+        ),
+        4,
+    )
+
+
+def _log_regression_slope(close: pd.Series, window: int) -> float:
+    if len(close) < window or window < 2:
+        return 0.0
+    values = [float(value) for value in close.tail(window)]
+    if any(value <= 0.0 for value in values):
+        return 0.0
+    log_values = [math.log(value) for value in values]
+    x_mean = (window - 1) / 2.0
+    y_mean = sum(log_values) / window
+    denominator = sum((idx - x_mean) ** 2 for idx in range(window))
+    if denominator <= 0.0:
+        return 0.0
+    numerator = sum((idx - x_mean) * (value - y_mean) for idx, value in enumerate(log_values))
+    return float(numerator / denominator)
+
+
+def _compute_breakout_quality_20_atr(prices_df: pd.DataFrame) -> float:
+    if len(prices_df) < 21 or not {"high", "low", "close"}.issubset(prices_df.columns):
+        return 0.0
+    atr = calculate_atr(prices_df)
+    current_atr = float(atr.iloc[-1]) if pd.notna(atr.iloc[-1]) else 0.0
+    if current_atr <= 0.0:
+        return 0.0
+    prev_high = float(prices_df["high"].iloc[-21:-1].max())
+    close = float(prices_df["close"].iloc[-1])
+    return round((close - prev_high) / current_atr, 4)
+
+
+def _compute_close_structure(prices_df: pd.DataFrame) -> float:
+    if not {"open", "high", "low", "close"}.issubset(prices_df.columns):
+        return 0.0
+    high = float(prices_df["high"].iloc[-1])
+    low = float(prices_df["low"].iloc[-1])
+    open_ = float(prices_df["open"].iloc[-1])
+    close = float(prices_df["close"].iloc[-1])
+    trading_range = high - low
+    if trading_range <= 0.0:
+        return 0.0
+    clv = (close - low) / trading_range
+    upper_shadow_ratio = (high - max(open_, close)) / trading_range
+    return round(clv - (0.5 * upper_shadow_ratio), 4)
+
+
+def _compute_amount_ratio_5(prices_df: pd.DataFrame) -> float:
+    source_column = "amount" if "amount" in prices_df.columns else "volume" if "volume" in prices_df.columns else ""
+    if not source_column or len(prices_df) < 5:
+        return 0.0
+    current_amount = float(prices_df[source_column].iloc[-1])
+    amount_ma_5 = float(prices_df[source_column].tail(5).mean())
+    if amount_ma_5 <= 0.0:
+        return 0.0
+    return round(current_amount / amount_ma_5, 4)
+
+
+def _compute_turnover_ratio_20(prices_df: pd.DataFrame) -> float:
+    if "turnover_rate" not in prices_df.columns or len(prices_df) < 21:
+        return 0.0
+    turnover_rate = pd.to_numeric(prices_df["turnover_rate"], errors="coerce")
+    current_turnover = float(turnover_rate.iloc[-1]) if pd.notna(turnover_rate.iloc[-1]) else 0.0
+    prior_turnover = turnover_rate.iloc[-21:-1].dropna()
+    if current_turnover <= 0.0 or prior_turnover.empty:
+        return 0.0
+    prior_median = float(prior_turnover.median())
+    if prior_median <= 0.0:
+        return 0.0
+    return round(current_turnover / prior_median, 4)
+
+
+def _compute_limit_up_memory_259(prices_df: pd.DataFrame, *, ticker: str) -> float:
+    if len(prices_df) < 10 or "close" not in prices_df.columns:
+        return 0.0
+    symbol = get_ashare_symbol(ticker)
+    price_limit_pct = 0.20 if symbol.startswith(("300", "301", "688")) else 0.10
+    returns = prices_df["close"].pct_change().fillna(0.0)
+    last_2d = _has_recent_limit_up(returns, window=2, price_limit_pct=price_limit_pct)
+    last_5d = _has_recent_limit_up(returns, window=5, price_limit_pct=price_limit_pct)
+    last_9d = _has_recent_limit_up(returns, window=9, price_limit_pct=price_limit_pct)
+    return round((0.5 * float(last_2d)) + (0.3 * float(last_5d)) + (0.2 * float(last_9d)), 4)
+
+
+def _has_recent_limit_up(returns: pd.Series, *, window: int, price_limit_pct: float) -> bool:
+    if len(returns) < window:
+        return False
+    tolerance = 0.001
+    return bool((returns.tail(window) >= (price_limit_pct - tolerance)).any())
+
+
+def _compute_close_return(prices_df: pd.DataFrame, *, sessions: int) -> float:
+    if len(prices_df) <= sessions or "close" not in prices_df.columns:
+        return 0.0
+    current_close = float(prices_df["close"].iloc[-1])
+    prior_close = float(prices_df["close"].iloc[-(sessions + 1)])
+    if prior_close <= 0.0:
+        return 0.0
+    return round((current_close / prior_close) - 1.0, 4)
+
+
+def _count_failed_breakouts(prices_df: pd.DataFrame, *, lookback: int, breakout_window: int) -> int:
+    if not {"open", "high", "close"}.issubset(prices_df.columns):
+        return 0
+    failed_breakouts = 0
+    start_idx = max(breakout_window, len(prices_df) - lookback)
+    for idx in range(start_idx, len(prices_df)):
+        prior_high = float(prices_df["high"].iloc[idx - breakout_window : idx].max())
+        high = float(prices_df["high"].iloc[idx])
+        open_ = float(prices_df["open"].iloc[idx])
+        close = float(prices_df["close"].iloc[idx])
+        if high > prior_high and close < open_:
+            failed_breakouts += 1
+    return failed_breakouts

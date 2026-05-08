@@ -1344,6 +1344,7 @@ class DailyPipeline:
         selection_resolution: PostMarketSelectionResolution = resolve_post_market_selection_targets(
             trade_date=trade_date,
             watchlist_context=watchlist_context,
+            portfolio_snapshot=portfolio_snapshot,
             market_state=_build_downstream_target_market_state_payload(candidate_context.market_state),
             buy_orders=order_context.buy_orders,
             counts=counts,

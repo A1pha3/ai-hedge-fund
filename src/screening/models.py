@@ -66,6 +66,7 @@ class MarketState(BaseModel):
     regime_flip_risk: float = 0.0
     regime_gate_level: str = "normal"
     regime_gate_reasons: list[str] = Field(default_factory=list)
+    btst_kill_switch_metrics: dict[str, float] = Field(default_factory=dict)
     position_scale: float = Field(ge=0, le=1, default=1.0)
     adjusted_weights: dict[str, float] = Field(default_factory=lambda: {
         "trend": 0.30,
@@ -88,10 +89,14 @@ class FusedScore(BaseModel):
     ticker: str
     score_b: float = Field(ge=-1, le=1)
     strategy_signals: dict[str, StrategySignal] = Field(default_factory=dict)
+    metrics: dict = Field(default_factory=dict)
     arbitration_applied: list[str] = Field(default_factory=list)
     market_state: MarketState | None = None
     weights_used: dict[str, float] = Field(default_factory=dict)
     decision: str = "neutral"
+    theme_name: str = ""
+    theme_category: str = ""
+    is_new_theme: bool = False
 
     @staticmethod
     def classify_decision(score: float) -> str:

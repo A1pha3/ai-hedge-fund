@@ -412,6 +412,79 @@ def _attach_market_state_to_entries(entries: list[dict[str, Any]], *, market_sta
     return attached_entries
 
 
+def _compute_portfolio_nav(portfolio_snapshot: dict[str, Any] | None) -> float:
+    snapshot = dict(portfolio_snapshot or {})
+    cash = float(snapshot.get("cash") or 0.0)
+    positions = dict(snapshot.get("positions") or {})
+    long_book = sum(
+        max(float(position.get("long") or 0.0), 0.0) * max(float(position.get("long_cost_basis") or 0.0), 0.0)
+        for position in positions.values()
+        if isinstance(position, dict)
+    )
+    return cash + long_book
+
+
+def _attach_incremental_theme_exposure(
+    *,
+    watchlist: list[LayerCResult],
+    rejected_entries: list[dict[str, Any]],
+    supplemental_short_trade_entries: list[dict[str, Any]],
+    buy_orders: list[Any],
+    portfolio_snapshot: dict[str, Any] | None,
+) -> tuple[list[LayerCResult], list[dict[str, Any]], list[dict[str, Any]]]:
+    nav = _compute_portfolio_nav(portfolio_snapshot)
+    if nav <= 0:
+        return list(watchlist), list(rejected_entries), list(supplemental_short_trade_entries)
+
+    theme_name_by_ticker: dict[str, str] = {}
+    for item in list(watchlist or []):
+        theme_name = str(getattr(item, "theme_name", "") or "").strip()
+        if theme_name:
+            theme_name_by_ticker[item.ticker] = theme_name
+    for entry in list(rejected_entries or []) + list(supplemental_short_trade_entries or []):
+        entry_dict = dict(entry)
+        theme_name = str(entry_dict.get("theme_name") or "").strip()
+        ticker = str(entry_dict.get("ticker") or "").strip()
+        if ticker and theme_name and ticker not in theme_name_by_ticker:
+            theme_name_by_ticker[ticker] = theme_name
+
+    incremental_exposure_by_ticker: dict[str, float] = {}
+    theme_amounts: dict[str, float] = {}
+    for order in list(buy_orders or []):
+        ticker = str(getattr(order, "ticker", "") or "").strip()
+        theme_name = theme_name_by_ticker.get(ticker, "").strip()
+        amount = float(getattr(order, "amount", 0.0) or 0.0)
+        if not ticker or not theme_name or amount <= 0:
+            continue
+        theme_amounts[theme_name] = theme_amounts.get(theme_name, 0.0) + amount
+    for order in list(buy_orders or []):
+        ticker = str(getattr(order, "ticker", "") or "").strip()
+        theme_name = theme_name_by_ticker.get(ticker, "").strip()
+        if ticker and theme_name and theme_name in theme_amounts:
+            incremental_exposure_by_ticker[ticker] = round(theme_amounts[theme_name] / nav, 6)
+
+    if not incremental_exposure_by_ticker:
+        return list(watchlist), list(rejected_entries), list(supplemental_short_trade_entries)
+
+    annotated_watchlist: list[LayerCResult] = []
+    for item in list(watchlist or []):
+        payload = item.model_dump()
+        payload["incremental_theme_exposure"] = incremental_exposure_by_ticker.get(item.ticker, 0.0)
+        annotated_watchlist.append(LayerCResult(**payload))
+
+    def _annotate_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        annotated_entries: list[dict[str, Any]] = []
+        for entry in list(entries or []):
+            updated_entry = dict(entry)
+            ticker = str(updated_entry.get("ticker") or "").strip()
+            if ticker in incremental_exposure_by_ticker:
+                updated_entry["incremental_theme_exposure"] = incremental_exposure_by_ticker[ticker]
+            annotated_entries.append(updated_entry)
+        return annotated_entries
+
+    return annotated_watchlist, _annotate_entries(rejected_entries), _annotate_entries(supplemental_short_trade_entries)
+
+
 def build_plan_target_shell_inputs(
     *,
     plan: Any,
@@ -558,6 +631,7 @@ def resolve_post_market_selection_targets(
     *,
     trade_date: str,
     watchlist_context: PostMarketWatchlistContext,
+    portfolio_snapshot: dict[str, Any] | None,
     market_state: Any | None,
     buy_orders: list[Any],
     counts: dict[str, Any],
@@ -588,8 +662,7 @@ def resolve_post_market_selection_targets(
         funnel_filters = dict(resolved_funnel_diagnostics.get("filters", {}) or {})
         funnel_filters["candidate_entry"] = selection_target_inputs.candidate_entry_filter_diagnostics
         resolved_funnel_diagnostics["filters"] = funnel_filters
-        selection_targets, dual_target_summary = build_selection_targets_fn(
-            trade_date=trade_date,
+        resolved_watchlist, resolved_rejected_entries, resolved_supplemental_entries = _attach_incremental_theme_exposure(
             watchlist=watchlist_context.watchlist,
             rejected_entries=attach_historical_prior_to_entries_fn(
                 selection_target_inputs.rejected_entries,
@@ -599,6 +672,14 @@ def resolve_post_market_selection_targets(
                 selection_target_inputs.supplemental_short_trade_entries,
                 prior_by_ticker=watchlist_context.historical_prior_by_ticker,
             ),
+            buy_orders=buy_orders,
+            portfolio_snapshot=portfolio_snapshot,
+        )
+        selection_targets, dual_target_summary = build_selection_targets_fn(
+            trade_date=trade_date,
+            watchlist=resolved_watchlist,
+            rejected_entries=resolved_rejected_entries,
+            supplemental_short_trade_entries=resolved_supplemental_entries,
             buy_order_tickers={order.ticker for order in buy_orders},
             target_mode=target_mode,
         )

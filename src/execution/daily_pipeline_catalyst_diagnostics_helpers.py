@@ -602,6 +602,9 @@ def _build_catalyst_theme_entry(*, item: Any, reason: str, rank: int) -> dict[st
         "candidate_reason_codes": [reason, "catalyst_theme_research_candidate"],
         "strategy_signals": {name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {}) for name, signal in dict(item.strategy_signals or {}).items()},
         "agent_contribution_summary": agent_contribution_summary,
+        "theme_name": str(getattr(item, "theme_name", "") or ""),
+        "theme_category": str(getattr(item, "theme_category", "") or ""),
+        "is_new_theme": bool(getattr(item, "is_new_theme", False)),
         "rank": rank,
     }
 

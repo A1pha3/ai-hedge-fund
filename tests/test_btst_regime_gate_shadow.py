@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import src.execution.daily_pipeline as daily_pipeline_module
 
 from src.execution.daily_pipeline_post_market_helpers import build_plan_target_shell_inputs
+from src.execution.daily_pipeline_post_market_helpers import PostMarketSelectionTargetInputs
+from src.execution.daily_pipeline_post_market_helpers import PostMarketWatchlistContext
 from src.execution.daily_pipeline_post_market_helpers import build_selection_target_inputs
+from src.execution.daily_pipeline_post_market_helpers import resolve_post_market_selection_targets
 from src.execution.daily_pipeline import _resolve_effective_short_trade_target_profile_name
 from src.execution.daily_pipeline import _attach_btst_regime_gate_shadow
 from src.execution.daily_pipeline import _serialize_short_trade_target_profile
+from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.execution.models import ExecutionPlan
 from src.execution.models import LayerCResult
+from src.portfolio.models import PositionPlan
 from src.screening.market_state_helpers import classify_btst_regime_gate
+from src.screening.models import FusedScore
 from src.screening.models import MarketState
+from src.screening.models import MarketStateType
+from src.screening.models import StrategySignal
+from src.targets.router import build_selection_targets
 from src.targets.profiles import build_short_trade_target_profile
 
 
@@ -129,6 +140,48 @@ def test_resolve_effective_short_trade_target_profile_name_adapts_default_profil
     assert effective_profile_name == "ignition_breakout"
 
 
+def test_resolve_effective_short_trade_target_profile_name_downgrades_aggressive_trade_when_kill_switch_is_active() -> None:
+    market_state = MarketState(
+        breadth_ratio=0.67,
+        daily_return=-0.003,
+        limit_up_down_ratio=1.25,
+        adx=27.0,
+        style_dispersion=0.18,
+        regime_flip_risk=0.09,
+        regime_gate_level="normal",
+        btst_kill_switch_metrics={"rolling_8_trade_close_win_rate": 0.30},
+    )
+
+    effective_profile_name = _resolve_effective_short_trade_target_profile_name(
+        requested_profile_name="default",
+        requested_profile_overrides={},
+        market_state=market_state,
+    )
+
+    assert effective_profile_name == "retention_follow"
+
+
+def test_resolve_effective_short_trade_target_profile_name_downgrades_normal_trade_to_shadow_when_kill_switch_is_active() -> None:
+    market_state = MarketState(
+        breadth_ratio=0.52,
+        daily_return=0.001,
+        limit_up_down_ratio=1.15,
+        adx=24.0,
+        style_dispersion=0.24,
+        regime_flip_risk=0.22,
+        regime_gate_level="normal",
+        btst_kill_switch_metrics={"rolling_shadow_minus_formal_close_rate": 0.10},
+    )
+
+    effective_profile_name = _resolve_effective_short_trade_target_profile_name(
+        requested_profile_name="default",
+        requested_profile_overrides={},
+        market_state=market_state,
+    )
+
+    assert effective_profile_name == "shadow_research"
+
+
 def test_build_selection_target_inputs_overrides_entry_market_state_with_plan_market_state() -> None:
     stale_entry = {
         "ticker": "000807",
@@ -169,6 +222,264 @@ def test_build_selection_target_inputs_overrides_entry_market_state_with_plan_ma
     assert attached_market_state["breadth_ratio"] == 0.67
     assert attached_market_state["style_dispersion"] == 0.18
     assert "btst_regime_gate" not in attached_market_state
+
+
+def test_build_selection_targets_blocks_watchlist_item_when_market_state_kill_switch_is_active() -> None:
+    baseline_market_state = {
+        "breadth_ratio": 0.52,
+        "daily_return": 0.001,
+        "style_dispersion": 0.24,
+        "regime_flip_risk": 0.22,
+        "regime_gate_level": "normal",
+    }
+    governed_market_state = {
+        **baseline_market_state,
+        "btst_kill_switch_metrics": {"rolling_shadow_minus_formal_close_rate": 0.10},
+    }
+    baseline_watch_item = LayerCResult(
+        ticker="000001",
+        score_b=0.71,
+        score_c=0.66,
+        score_final=0.69,
+        quality_score=0.65,
+        decision="watch",
+        market_state=baseline_market_state,
+        strategy_signals={
+            "trend": StrategySignal(
+                direction=1,
+                confidence=84.0,
+                completeness=1.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 86.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 74.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 66.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 30.0, "completeness": 1.0},
+                },
+            ),
+            "event_sentiment": StrategySignal(
+                direction=1,
+                confidence=76.0,
+                completeness=1.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 65.0, "completeness": 1.0},
+                },
+            ),
+            "mean_reversion": StrategySignal(direction=-1, confidence=18.0, completeness=1.0, sub_factors={}),
+        },
+        agent_contribution_summary={"cohort_contributions": {"analyst": 0.22, "investor": 0.11}},
+    )
+    governed_watch_item = baseline_watch_item.model_copy(update={"market_state": governed_market_state})
+
+    baseline_targets, _ = build_selection_targets(
+        trade_date="20260322",
+        watchlist=[baseline_watch_item],
+        buy_order_tickers={"000001"},
+        target_mode="dual_target",
+    )
+    governed_targets, _ = build_selection_targets(
+        trade_date="20260322",
+        watchlist=[governed_watch_item],
+        buy_order_tickers={"000001"},
+        target_mode="dual_target",
+    )
+
+    assert baseline_targets["000001"].short_trade is not None
+    assert baseline_targets["000001"].short_trade.decision != "blocked"
+    assert "committee_kill_switch_active" not in baseline_targets["000001"].short_trade.blockers
+    assert governed_targets["000001"].short_trade is not None
+    assert governed_targets["000001"].short_trade.decision == "blocked"
+    assert "committee_kill_switch_active" in governed_targets["000001"].short_trade.blockers
+
+
+def test_build_selection_targets_applies_committee_veto_from_aggregated_watchlist_raw_metrics() -> None:
+    baseline_fused = FusedScore(
+        ticker="000001",
+        score_b=0.71,
+        decision="watch",
+        market_state=MarketState(
+            state_type=MarketStateType.TREND,
+            breadth_ratio=0.52,
+            daily_return=0.001,
+            style_dispersion=0.24,
+            regime_flip_risk=0.22,
+            regime_gate_level="normal",
+        ),
+        strategy_signals={
+            "trend": StrategySignal(
+                direction=1,
+                confidence=84.0,
+                completeness=1.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 86.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 74.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 66.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 30.0, "completeness": 1.0},
+                },
+            ),
+            "event_sentiment": StrategySignal(
+                direction=1,
+                confidence=76.0,
+                completeness=1.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 65.0, "completeness": 1.0},
+                },
+            ),
+            "mean_reversion": StrategySignal(direction=-1, confidence=18.0, completeness=1.0, sub_factors={}),
+        },
+        arbitration_applied=[],
+        weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+    )
+    governed_fused = baseline_fused.model_copy(
+        update={
+            "metrics": {
+                "attention_composite": 0.88,
+                "sector_amt_share": 0.010,
+                "flow_60": -0.01,
+            }
+        }
+    )
+    baseline_watch_item = aggregate_layer_c_results([baseline_fused], {})[0]
+    governed_watch_item = aggregate_layer_c_results([governed_fused], {})[0]
+
+    baseline_targets, _ = build_selection_targets(
+        trade_date="20260322",
+        watchlist=[baseline_watch_item],
+        buy_order_tickers={"000001"},
+        target_mode="dual_target",
+    )
+    governed_targets, _ = build_selection_targets(
+        trade_date="20260322",
+        watchlist=[governed_watch_item],
+        buy_order_tickers={"000001"},
+        target_mode="dual_target",
+    )
+
+    assert baseline_targets["000001"].short_trade is not None
+    assert "committee_isolated_attention_veto" not in baseline_targets["000001"].short_trade.blockers
+    assert governed_targets["000001"].short_trade is not None
+    assert governed_targets["000001"].short_trade.decision == "rejected"
+    assert "committee_isolated_attention_veto" in governed_targets["000001"].short_trade.blockers
+
+
+def test_resolve_post_market_selection_targets_injects_incremental_theme_exposure_from_buy_orders() -> None:
+    watch_item = LayerCResult(
+        ticker="300724",
+        score_c=0.12,
+        score_final=0.74,
+        score_b=0.81,
+        quality_score=0.69,
+        decision="strong_buy",
+        theme_name="AI算力",
+    )
+    watchlist_context = PostMarketWatchlistContext(
+        watchlist=[watch_item],
+        layer_b_filter_diagnostics={},
+        watchlist_filter_diagnostics={},
+        historical_prior_by_ticker={},
+        short_trade_candidate_diagnostics={},
+        catalyst_theme_candidate_diagnostics={},
+        candidate_by_ticker={},
+        price_map={},
+    )
+    captured: dict[str, object] = {}
+
+    @contextmanager
+    def use_profile(**kwargs):
+        yield None
+
+    def build_inputs(**kwargs):
+        return PostMarketSelectionTargetInputs(
+            rejected_entries=[],
+            supplemental_short_trade_entries=[{"ticker": "300724", "theme_name": "AI算力"}],
+            candidate_entry_filter_diagnostics={},
+        )
+
+    def build_targets(**kwargs):
+        captured["watchlist"] = kwargs["watchlist"]
+        captured["supplemental_short_trade_entries"] = kwargs["supplemental_short_trade_entries"]
+        return {}, {}
+
+    resolve_post_market_selection_targets(
+        trade_date="20260506",
+        watchlist_context=watchlist_context,
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        market_state={},
+        buy_orders=[PositionPlan(ticker="300724", shares=100, amount=90000.0, score_final=0.81, execution_ratio=1.0, quality_score=0.69)],
+        counts={},
+        funnel_diagnostics={},
+        target_mode="short_trade_only",
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+        use_short_trade_target_profile_fn=use_profile,
+        build_selection_target_inputs_fn=build_inputs,
+        attach_historical_prior_to_entries_fn=lambda entries, prior_by_ticker: entries,
+        build_selection_targets_fn=build_targets,
+    )
+
+    assert captured["watchlist"][0].incremental_theme_exposure == 0.18
+    assert captured["supplemental_short_trade_entries"][0]["incremental_theme_exposure"] == 0.18
+
+
+def test_resolve_post_market_selection_targets_skips_incremental_theme_exposure_without_theme_name() -> None:
+    watch_item = LayerCResult(
+        ticker="300724",
+        score_c=0.12,
+        score_final=0.74,
+        score_b=0.81,
+        quality_score=0.69,
+        decision="strong_buy",
+    )
+    watchlist_context = PostMarketWatchlistContext(
+        watchlist=[watch_item],
+        layer_b_filter_diagnostics={},
+        watchlist_filter_diagnostics={},
+        historical_prior_by_ticker={},
+        short_trade_candidate_diagnostics={},
+        catalyst_theme_candidate_diagnostics={},
+        candidate_by_ticker={},
+        price_map={},
+    )
+    captured: dict[str, object] = {}
+
+    @contextmanager
+    def use_profile(**kwargs):
+        yield None
+
+    def build_inputs(**kwargs):
+        return PostMarketSelectionTargetInputs(
+            rejected_entries=[],
+            supplemental_short_trade_entries=[{"ticker": "300724"}],
+            candidate_entry_filter_diagnostics={},
+        )
+
+    def build_targets(**kwargs):
+        captured["watchlist"] = kwargs["watchlist"]
+        captured["supplemental_short_trade_entries"] = kwargs["supplemental_short_trade_entries"]
+        return {}, {}
+
+    resolve_post_market_selection_targets(
+        trade_date="20260506",
+        watchlist_context=watchlist_context,
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        market_state={},
+        buy_orders=[PositionPlan(ticker="300724", shares=100, amount=90000.0, score_final=0.81, execution_ratio=1.0, quality_score=0.69)],
+        counts={},
+        funnel_diagnostics={},
+        target_mode="short_trade_only",
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+        use_short_trade_target_profile_fn=use_profile,
+        build_selection_target_inputs_fn=build_inputs,
+        attach_historical_prior_to_entries_fn=lambda entries, prior_by_ticker: entries,
+        build_selection_targets_fn=build_targets,
+    )
+
+    assert captured["watchlist"][0].incremental_theme_exposure == 0.0
+    assert "incremental_theme_exposure" not in captured["supplemental_short_trade_entries"][0]
 
 
 def test_ensure_plan_target_shells_preserves_selection_targets_for_frozen_replay_without_rebuildable_shells(monkeypatch) -> None:

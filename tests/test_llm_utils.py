@@ -432,6 +432,73 @@ def test_call_llm_records_fallback_attempt_metrics(monkeypatch):
     assert summary["providers"]["Volcengine Ark"]["fallback_attempts"] == 1
 
 
+def test_call_llm_falls_back_on_transport_timeout(monkeypatch):
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
+    monkeypatch.delenv("ZHIPU_CODE_API_KEY", raising=False)
+
+    class FakeModelInfo:
+        def has_json_mode(self):
+            return True
+
+    class FakeLLM:
+        def __init__(self, provider):
+            self.provider = provider
+
+        def with_structured_output(self, pydantic_model, method="json_mode"):
+            return self
+
+        def invoke(self, prompt):
+            if self.provider == "MiniMax":
+                raise TimeoutError("connect timeout")
+            return _FallbackSignal(signal="fallback-timeout-ok")
+
+    monkeypatch.setattr(llm_utils, "get_agent_model_config", lambda state, agent_name: ("MiniMax-M2.7", "MiniMax"))
+    monkeypatch.setattr(llm_utils, "get_model_info", lambda model_name, model_provider: FakeModelInfo())
+    monkeypatch.setattr(llm_utils, "get_model", lambda model_name, model_provider, api_keys=None: FakeLLM(str(model_provider)))
+
+    result = call_llm(
+        prompt="hello transport timeout fallback",
+        pydantic_model=_FallbackSignal,
+        agent_name="fallback_timeout_agent",
+        state={
+            "metadata": {
+                "agent_llm_overrides": {
+                    "fallback_timeout_agent": {
+                        "model_name": "MiniMax-M2.7",
+                        "model_provider": "MiniMax",
+                        "api_keys": {},
+                        "fallback_chain": [
+                            {
+                                "model_name": "glm-4.7",
+                                "model_provider": "Zhipu",
+                                "api_keys": {},
+                                "status_message": "MiniMax timeout, switching to Zhipu:glm-4.7",
+                                "route_id": "Zhipu:standard",
+                                "transport_family": "openai-compatible",
+                            }
+                        ],
+                        "route_id": "MiniMax:default",
+                        "transport_family": "openai-compatible",
+                    }
+                }
+            }
+        },
+        max_retries=3,
+    )
+
+    paths = get_llm_metrics_paths()
+    with open(paths["summary_path"], "r", encoding="utf-8") as handle:
+        summary = __import__("json").load(handle)
+
+    assert result.signal == "fallback-timeout-ok"
+    assert summary["totals"]["attempts"] == 2
+    assert summary["totals"]["rate_limit_errors"] == 0
+    assert summary["totals"]["fallback_attempts"] == 1
+    assert summary["providers"]["Zhipu"]["fallback_attempts"] == 1
+    assert summary["providers"]["MiniMax"]["error_types"]["TimeoutError"] == 1
+
+
 def test_call_llm_disables_provider_fallback_when_requested(monkeypatch):
     monkeypatch.setenv("LLM_DISABLE_FALLBACK", "true")
 

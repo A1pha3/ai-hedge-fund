@@ -466,6 +466,9 @@ class PipelineDecisionExecutor:
             quality_score=(matching_order.quality_score if matching_order is not None else (watch_item.quality_score if watch_item is not None else 0.5)),
             industry_sw="",
             is_fundamental_driven=False,
+            theme_name=str(getattr(watch_item, "theme_name", "") or ""),
+            theme_category=str(getattr(watch_item, "theme_category", "") or ""),
+            is_new_theme=bool(getattr(watch_item, "is_new_theme", False)),
         )
 
     # ------------------------------------------------------------------

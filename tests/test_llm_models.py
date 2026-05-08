@@ -143,6 +143,93 @@ def test_get_registered_provider_model_builds_openai_compatible_client(monkeypat
         "model": "alpha-router-v2",
         "api_key": "alpha-key",
         "base_url": "https://alpha.example/v1",
+        "timeout": 60.0,
+    }
+
+
+def test_get_registered_provider_model_applies_openai_compatible_timeout_env(monkeypatch):
+    captured = {}
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setenv("LLM_OPENAI_COMPATIBLE_TIMEOUT_SECONDS", "42.5")
+    monkeypatch.setattr(llm_models, "_PROVIDER_REGISTRY", llm_models.get_provider_registry())
+
+    llm_models.register_provider_profile(
+        llm_models.ProviderProfile(
+            name="Alpha Router Timeout",
+            variants=(
+                llm_models.ProviderVariantProfile(
+                    variant_name="default",
+                    display_name="Alpha Router Timeout",
+                    api_key_names=("ALPHA_ROUTER_TIMEOUT_API_KEY",),
+                    default_model_name="alpha-router-timeout-v1",
+                    openai_compatible_transport=llm_models.OpenAICompatibleTransportConfig(
+                        api_key_name="ALPHA_ROUTER_TIMEOUT_API_KEY",
+                        base_url="https://alpha-timeout.example/v1",
+                    ),
+                    route_order=41,
+                ),
+            ),
+            capabilities=llm_models.ProviderCapabilities(openai_compatible=True),
+        )
+    )
+
+    llm_models.get_registered_provider_model("alpha-router-timeout-v2", "Alpha Router Timeout", {"ALPHA_ROUTER_TIMEOUT_API_KEY": "alpha-timeout-key"})
+
+    assert captured == {
+        "model": "alpha-router-timeout-v2",
+        "api_key": "alpha-timeout-key",
+        "base_url": "https://alpha-timeout.example/v1",
+        "timeout": 42.5,
+    }
+
+
+def test_get_registered_provider_model_applies_default_openai_compatible_timeout(monkeypatch):
+    captured = {}
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.delenv("LLM_OPENAI_COMPATIBLE_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setattr(llm_models, "_PROVIDER_REGISTRY", llm_models.get_provider_registry())
+
+    llm_models.register_provider_profile(
+        llm_models.ProviderProfile(
+            name="Alpha Router Default Timeout",
+            variants=(
+                llm_models.ProviderVariantProfile(
+                    variant_name="default",
+                    display_name="Alpha Router Default Timeout",
+                    api_key_names=("ALPHA_ROUTER_DEFAULT_TIMEOUT_API_KEY",),
+                    default_model_name="alpha-router-default-timeout-v1",
+                    openai_compatible_transport=llm_models.OpenAICompatibleTransportConfig(
+                        api_key_name="ALPHA_ROUTER_DEFAULT_TIMEOUT_API_KEY",
+                        base_url="https://alpha-default-timeout.example/v1",
+                    ),
+                    route_order=42,
+                ),
+            ),
+            capabilities=llm_models.ProviderCapabilities(openai_compatible=True),
+        )
+    )
+
+    llm_models.get_registered_provider_model(
+        "alpha-router-default-timeout-v2",
+        "Alpha Router Default Timeout",
+        {"ALPHA_ROUTER_DEFAULT_TIMEOUT_API_KEY": "alpha-default-timeout-key"},
+    )
+
+    assert captured == {
+        "model": "alpha-router-default-timeout-v2",
+        "api_key": "alpha-default-timeout-key",
+        "base_url": "https://alpha-default-timeout.example/v1",
+        "timeout": 60.0,
     }
 
 
@@ -150,10 +237,8 @@ def test_get_zhipu_model_uses_standard_key_when_only_standard_key_is_provided(mo
     captured = {}
 
     class FakeChatOpenAI:
-        def __init__(self, model, api_key, base_url):
-            captured["model"] = model
-            captured["api_key"] = api_key
-            captured["base_url"] = base_url
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
 
     monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
 
@@ -163,6 +248,7 @@ def test_get_zhipu_model_uses_standard_key_when_only_standard_key_is_provided(mo
         "model": "glm-4.7",
         "api_key": "standard-key",
         "base_url": llm_models.ZHIPU_STANDARD_BASE_URL,
+        "timeout": 60.0,
     }
 
 
@@ -170,10 +256,8 @@ def test_get_zhipu_model_prefers_standard_key_when_both_keys_present(monkeypatch
     captured = {}
 
     class FakeChatOpenAI:
-        def __init__(self, model, api_key, base_url):
-            captured["model"] = model
-            captured["api_key"] = api_key
-            captured["base_url"] = base_url
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
 
     monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
 
@@ -183,6 +267,7 @@ def test_get_zhipu_model_prefers_standard_key_when_both_keys_present(monkeypatch
         "model": "GLM-4.7",
         "api_key": "coding-key",
         "base_url": llm_models.ZHIPU_CODING_PLAN_BASE_URL,
+        "timeout": 60.0,
     }
 
 
@@ -190,10 +275,8 @@ def test_get_zhipu_model_uses_coding_plan_when_code_key_present(monkeypatch):
     captured = {}
 
     class FakeChatOpenAI:
-        def __init__(self, model, api_key, base_url):
-            captured["model"] = model
-            captured["api_key"] = api_key
-            captured["base_url"] = base_url
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
 
     monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
     monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
@@ -204,6 +287,7 @@ def test_get_zhipu_model_uses_coding_plan_when_code_key_present(monkeypatch):
         "model": "GLM-4.7",
         "api_key": "coding-key",
         "base_url": llm_models.ZHIPU_CODING_PLAN_BASE_URL,
+        "timeout": 60.0,
     }
 
 
@@ -211,10 +295,8 @@ def test_get_zhipu_model_uses_coding_plan_when_explicitly_requested(monkeypatch)
     captured = {}
 
     class FakeChatOpenAI:
-        def __init__(self, model, api_key, base_url):
-            captured["model"] = model
-            captured["api_key"] = api_key
-            captured["base_url"] = base_url
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
 
     monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
 
@@ -224,6 +306,7 @@ def test_get_zhipu_model_uses_coding_plan_when_explicitly_requested(monkeypatch)
         "model": "GLM-4.7",
         "api_key": "coding-key",
         "base_url": llm_models.ZHIPU_CODING_PLAN_BASE_URL,
+        "timeout": 60.0,
     }
 
 
@@ -231,10 +314,8 @@ def test_get_zhipu_model_explicit_api_keys_do_not_leak_env(monkeypatch):
     captured = {}
 
     class FakeChatOpenAI:
-        def __init__(self, model, api_key, base_url):
-            captured["model"] = model
-            captured["api_key"] = api_key
-            captured["base_url"] = base_url
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
 
     monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
     monkeypatch.setenv("ZHIPU_CODE_API_KEY", "env-coding-key")
@@ -245,6 +326,7 @@ def test_get_zhipu_model_explicit_api_keys_do_not_leak_env(monkeypatch):
         "model": "glm-4.7",
         "api_key": "standard-key",
         "base_url": llm_models.ZHIPU_STANDARD_BASE_URL,
+        "timeout": 60.0,
     }
 
 
@@ -252,10 +334,8 @@ def test_get_zhipu_coding_plan_model_keeps_glm5_lowercase(monkeypatch):
     captured = {}
 
     class FakeChatOpenAI:
-        def __init__(self, model, api_key, base_url):
-            captured["model"] = model
-            captured["api_key"] = api_key
-            captured["base_url"] = base_url
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
 
     monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
 
@@ -265,6 +345,7 @@ def test_get_zhipu_coding_plan_model_keeps_glm5_lowercase(monkeypatch):
         "model": "glm-5",
         "api_key": "coding-key",
         "base_url": llm_models.ZHIPU_CODING_PLAN_BASE_URL,
+        "timeout": 60.0,
     }
 
 
@@ -283,6 +364,7 @@ def test_get_registered_provider_model_builds_volcengine_client(monkeypatch):
         "model": "doubao-seed-2.0-code",
         "api_key": "ark-key",
         "base_url": llm_models.VOLCENGINE_ARK_CODING_BASE_URL,
+        "timeout": 60.0,
     }
 
 

@@ -464,6 +464,168 @@ def test_get_money_flow_uses_exchange_market(monkeypatch):
     assert captured == {"stock": "600036", "market": "sh"}
 
 
+def test_get_intraday_bars_uses_daily_minute_window(monkeypatch):
+    monkeypatch.setattr(akshare_api, "_akshare_available", True)
+    captured = {}
+
+    def _stock_zh_a_hist_min_em(*, symbol, start_date, end_date, period, adjust):
+        captured.update(
+            {
+                "symbol": symbol,
+                "start_date": start_date,
+                "end_date": end_date,
+                "period": period,
+                "adjust": adjust,
+            }
+        )
+        return pd.DataFrame([{"时间": "2026-03-05 09:30:00", "成交额": 1.0}])
+
+    def _fake_cached_dataframe_call(_api_name, func, **kwargs):
+        return func(
+            symbol=kwargs["symbol"],
+            start_date=kwargs["start_date"],
+            end_date=kwargs["end_date"],
+            period=kwargs["period"],
+            adjust=kwargs["adjust"],
+        )
+
+    monkeypatch.setattr(akshare_api, "_cached_akshare_dataframe_call", _fake_cached_dataframe_call)
+    monkeypatch.setattr(akshare_api, "ak", SimpleNamespace(stock_zh_a_hist_min_em=_stock_zh_a_hist_min_em))
+
+    result = akshare_api.get_intraday_bars("000001", "20260305")
+
+    assert result is not None
+    assert captured == {
+        "symbol": "000001",
+        "start_date": "2026-03-05 09:30:00",
+        "end_date": "2026-03-05 15:00:00",
+        "period": "1",
+        "adjust": "",
+    }
+
+
+def test_get_intraday_bars_uses_cached_timeout_wrapper(monkeypatch):
+    monkeypatch.setattr(akshare_api, "_akshare_available", True)
+    monkeypatch.setattr(akshare_api, "AKSHARE_INTRADAY_TIMEOUT_SECONDS", 2.5)
+    captured = {}
+
+    def _fake_cached_dataframe_call(api_name, func, **kwargs):
+        captured["api_name"] = api_name
+        captured["func"] = func
+        captured.update(kwargs)
+        return pd.DataFrame([{"时间": "2026-03-05 09:30:00", "成交额": 1.0}])
+
+    stock_zh_a_hist_min_em = object()
+    monkeypatch.setattr(akshare_api, "_cached_akshare_dataframe_call", _fake_cached_dataframe_call)
+    monkeypatch.setattr(akshare_api, "ak", SimpleNamespace(stock_zh_a_hist_min_em=stock_zh_a_hist_min_em))
+
+    result = akshare_api.get_intraday_bars("000001", "20260305")
+
+    assert result is not None
+    assert captured == {
+        "api_name": "stock_zh_a_hist_min_em",
+        "func": stock_zh_a_hist_min_em,
+        "timeout_seconds": 2.5,
+        "cache_key_kwargs": {
+            "symbol": "000001",
+            "trade_date": "20260305",
+            "period": "1",
+            "adjust": "",
+        },
+        "symbol": "000001",
+        "start_date": "2026-03-05 09:30:00",
+        "end_date": "2026-03-05 15:00:00",
+        "period": "1",
+        "adjust": "",
+    }
+
+
+def test_get_intraday_ticks_uses_prefixed_symbol_and_trade_date(monkeypatch):
+    monkeypatch.setattr(akshare_api, "_akshare_available", True)
+    captured = {}
+
+    def _stock_intraday_sina(*, symbol, date):
+        captured.update({"symbol": symbol, "date": date})
+        return pd.DataFrame([{"ticktime": "14:30:00", "price": 10.0, "volume": 100.0, "kind": "U"}])
+
+    def _fake_cached_dataframe_call(_api_name, func, **kwargs):
+        return func(
+            symbol=kwargs["symbol"],
+            date=kwargs["date"],
+        )
+
+    monkeypatch.setattr(akshare_api, "_cached_akshare_dataframe_call", _fake_cached_dataframe_call)
+    monkeypatch.setattr(akshare_api, "ak", SimpleNamespace(stock_intraday_sina=_stock_intraday_sina))
+
+    result = akshare_api.get_intraday_ticks("000001", "20260305")
+
+    assert result is not None
+    assert captured == {"symbol": "sz000001", "date": "20260305"}
+
+
+def test_get_intraday_ticks_uses_cached_timeout_wrapper(monkeypatch):
+    monkeypatch.setattr(akshare_api, "_akshare_available", True)
+    monkeypatch.setattr(akshare_api, "AKSHARE_INTRADAY_TIMEOUT_SECONDS", 2.5)
+    captured = {}
+
+    def _fake_cached_dataframe_call(api_name, func, **kwargs):
+        captured["api_name"] = api_name
+        captured["func"] = func
+        captured.update(kwargs)
+        return pd.DataFrame([{"ticktime": "14:30:00", "price": 10.0, "volume": 100.0, "kind": "U"}])
+
+    stock_intraday_sina = object()
+    monkeypatch.setattr(akshare_api, "_cached_akshare_dataframe_call", _fake_cached_dataframe_call)
+    monkeypatch.setattr(akshare_api, "ak", SimpleNamespace(stock_intraday_sina=stock_intraday_sina))
+
+    result = akshare_api.get_intraday_ticks("000001", "20260305")
+
+    assert result is not None
+    assert captured == {
+        "api_name": "stock_intraday_sina",
+        "func": stock_intraday_sina,
+        "timeout_seconds": 2.5,
+        "cache_key_kwargs": {
+            "symbol": "sz000001",
+            "trade_date": "20260305",
+        },
+        "symbol": "sz000001",
+        "date": "20260305",
+    }
+
+
+def test_get_lhb_detail_uses_trade_date_window(monkeypatch):
+    monkeypatch.setattr(akshare_api, "_akshare_available", True)
+    captured = {}
+
+    def _stock_lhb_detail_em(*, start_date, end_date):
+        captured.update({"start_date": start_date, "end_date": end_date})
+        return pd.DataFrame([{"代码": "000001"}])
+
+    monkeypatch.setattr(akshare_api, "ak", SimpleNamespace(stock_lhb_detail_em=_stock_lhb_detail_em))
+
+    result = akshare_api.get_lhb_detail("20260305", "20260305")
+
+    assert result is not None
+    assert captured == {"start_date": "20260305", "end_date": "20260305"}
+
+
+def test_get_lhb_institutional_stats_uses_trade_date_window(monkeypatch):
+    monkeypatch.setattr(akshare_api, "_akshare_available", True)
+    captured = {}
+
+    def _stock_lhb_jgmmtj_em(*, start_date, end_date):
+        captured.update({"start_date": start_date, "end_date": end_date})
+        return pd.DataFrame([{"代码": "000001", "机构买入净额": 1.0}])
+
+    monkeypatch.setattr(akshare_api, "ak", SimpleNamespace(stock_lhb_jgmmtj_em=_stock_lhb_jgmmtj_em))
+
+    result = akshare_api.get_lhb_institutional_stats("20260305", "20260305")
+
+    assert result is not None
+    assert captured == {"start_date": "20260305", "end_date": "20260305"}
+
+
 def test_get_sina_historical_data_reuses_mock_price_window(monkeypatch):
     monkeypatch.setattr(
         akshare_api.AShareTicker,

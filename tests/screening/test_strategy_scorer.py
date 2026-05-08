@@ -118,6 +118,123 @@ def test_score_batch_keeps_all_strategy_keys_when_heavy_signals_skipped():
     assert results["000001"]["event_sentiment"].completeness == 0.0
 
 
+def test_score_batch_enriches_intraday_short_trade_metrics_for_heavy_candidates():
+    candidates = [_candidate("000001")]
+
+    trend_signal = StrategySignal(
+        direction=1,
+        confidence=70.0,
+        completeness=1.0,
+        sub_factors={
+            "momentum": {
+                "direction": 1,
+                "confidence": 75.0,
+                "completeness": 1.0,
+                "metrics": {"amount_ratio_5": 1.8},
+            }
+        },
+    )
+
+    intraday_bars = pd.DataFrame(
+        {
+            "时间": pd.date_range("2026-03-05 13:01:00", periods=120, freq="min"),
+            "成交额": [1000.0] * 120,
+        }
+    )
+    intraday_ticks = pd.DataFrame(
+        [
+            {"ticktime": "14:10:00", "price": 10.0, "volume": 100.0, "kind": "U"},
+            {"ticktime": "14:20:00", "price": 10.0, "volume": 50.0, "kind": "D"},
+            {"ticktime": "14:40:00", "price": 10.0, "volume": 200.0, "kind": "U"},
+            {"ticktime": "14:50:00", "price": 10.0, "volume": 100.0, "kind": "D"},
+            {"ticktime": "14:58:00", "price": 10.0, "volume": 150.0, "kind": "U"},
+        ]
+    )
+
+    with (
+        patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
+        patch("src.screening.strategy_scorer._compute_light_signals", return_value=(
+            {
+                "trend": trend_signal,
+                "mean_reversion": _signal(0, 0, completeness=0.0),
+                "fundamental": _signal(0, 0, completeness=0.0),
+                "event_sentiment": _signal(0, 0, completeness=0.0),
+            },
+            None,
+        )),
+        patch("src.screening.strategy_scorer.score_fundamental_strategy", return_value=_signal(1, 65)),
+        patch("src.screening.strategy_scorer.score_event_sentiment_strategy", return_value=_signal(1, 60)),
+        patch("src.screening.strategy_scorer.get_intraday_bars", return_value=intraday_bars),
+        patch("src.screening.strategy_scorer.get_intraday_ticks", return_value=intraday_ticks),
+        patch("src.screening.strategy_scorer.get_lhb_detail", return_value=pd.DataFrame([{"代码": "000001"}])),
+        patch("src.screening.strategy_scorer.get_lhb_institutional_stats", return_value=pd.DataFrame([{"代码": "000001", "机构买入净额": 1.0}])),
+        patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 1),
+        patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 1),
+        patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.01),
+    ):
+        results = score_batch(candidates, "20260305")
+
+    metrics = results["000001"]["trend"].sub_factors["momentum"]["metrics"]
+    assert metrics["amount_ratio_5"] == pytest.approx(1.8)
+    assert metrics["flow_60"] == pytest.approx(0.05)
+    assert metrics["persist_120"] == pytest.approx(0.025)
+    assert metrics["close_support_30"] == pytest.approx(round(2500.0 / 30000.0, 4))
+    assert metrics["dragon_tiger_bonus"] == pytest.approx(1.0)
+
+
+def test_populate_intraday_short_trade_metrics_caps_candidate_count():
+    candidates = [_candidate("000001"), _candidate("000002"), _candidate("000003")]
+    trend_signal = StrategySignal(
+        direction=1,
+        confidence=70.0,
+        completeness=1.0,
+        sub_factors={
+            "momentum": {
+                "direction": 1,
+                "confidence": 75.0,
+                "completeness": 1.0,
+                "metrics": {"amount_ratio_5": 1.8},
+            }
+        },
+    )
+    results = {
+        candidate.ticker: {
+            "trend": StrategySignal.model_validate(trend_signal.model_dump()),
+            "mean_reversion": _signal(0, 0, completeness=0.0),
+            "fundamental": _signal(0, 0, completeness=0.0),
+            "event_sentiment": _signal(0, 0, completeness=0.0),
+        }
+        for candidate in candidates
+    }
+    visited_tickers: list[str] = []
+
+    def _fake_build_intraday_metrics(ticker: str, trade_date: str) -> dict[str, float]:
+        visited_tickers.append(ticker)
+        return {"flow_60": 0.1}
+
+    with (
+        patch("src.screening.strategy_scorer._build_intraday_short_trade_metrics", side_effect=_fake_build_intraday_metrics),
+        patch("src.screening.strategy_scorer.INTRADAY_SCORE_MAX_CANDIDATES", 2),
+    ):
+        strategy_scorer_module._populate_intraday_short_trade_metrics(results, candidates, "20260305")
+
+    assert visited_tickers == ["000001", "000002"]
+    assert results["000001"]["trend"].sub_factors["momentum"]["metrics"]["flow_60"] == pytest.approx(0.1)
+    assert results["000002"]["trend"].sub_factors["momentum"]["metrics"]["flow_60"] == pytest.approx(0.1)
+    assert "flow_60" not in results["000003"]["trend"].sub_factors["momentum"]["metrics"]
+
+
+def test_build_intraday_short_trade_metrics_skips_ticks_when_bars_missing():
+    with (
+        patch("src.screening.strategy_scorer.get_intraday_bars", return_value=None),
+        patch("src.screening.strategy_scorer.get_intraday_ticks", side_effect=AssertionError("ticks should not be fetched without bars")),
+        patch("src.screening.strategy_scorer._load_daily_flow_proxy_ratio", return_value=0.12),
+    ):
+        metrics = strategy_scorer_module._build_intraday_short_trade_metrics("000001", "20260305")
+
+    assert metrics == {"flow_60": pytest.approx(0.12)}
+
+
 def test_score_batch_requires_positive_trend_confirmation_for_heavy_scoring():
     candidates = [_candidate("000001")]
 
@@ -595,6 +712,71 @@ def test_score_trend_strategy_builds_optional_sub_factors(monkeypatch):
     volatility = captured["factors"][3]
     assert momentum.direction == 1 and momentum.confidence == 70.0 and momentum.completeness == 1.0
     assert volatility.direction == -1 and volatility.confidence == 40.0 and volatility.completeness == 1.0
+
+
+def test_score_trend_strategy_surfaces_short_trade_doc_metrics() -> None:
+    close = [10.0 + (0.01 * idx) for idx in range(130)]
+    open_ = [value * 0.99 for value in close]
+    high = [value * 1.01 for value in close]
+    low = [value * 0.98 for value in close]
+    volume = [100.0] * 129 + [300.0]
+    amount = [100.0] * 129 + [300.0]
+
+    for idx, breakout_high in ((120, 12.0), (124, 12.4), (129, 12.8)):
+        open_[idx] = close[idx] + 0.4
+        high[idx] = breakout_high
+        low[idx] = close[idx] - 0.2
+
+    prices_df = pd.DataFrame(
+        {
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+            "amount": amount,
+        }
+    )
+
+    signal = score_trend_strategy(prices_df)
+    metrics = signal.sub_factors["momentum"]["metrics"]
+
+    assert metrics["failed_breakout_10"] == 3
+    assert metrics["amount_ratio_5"] == pytest.approx(round(300.0 / 140.0, 4))
+    expected_range = high[-1] - low[-1]
+    expected_clv = (close[-1] - low[-1]) / expected_range
+    expected_upper_shadow = (high[-1] - max(open_[-1], close[-1])) / expected_range
+    assert metrics["close_structure"] == pytest.approx(round(expected_clv - (0.5 * expected_upper_shadow), 4))
+    assert metrics["attack_slope_258"] > 0.0
+    assert isinstance(metrics["breakout_quality_20_atr"], float)
+
+
+def test_score_trend_strategy_surfaces_attention_turnover_and_limit_up_metrics() -> None:
+    close = [10.0] * 130
+    close[121] = 12.0
+    close[122:126] = [12.0] * 4
+    close[126] = 13.2
+    close[127:] = [13.2] * 3
+
+    prices_df = pd.DataFrame(
+        {
+            "open": [value * 0.99 for value in close],
+            "high": [value * 1.01 for value in close],
+            "low": [value * 0.98 for value in close],
+            "close": close,
+            "volume": [100.0] * 130,
+            "amount": [100.0] * 130,
+            "turnover_rate": ([2.0] * 129) + [5.0],
+        }
+    )
+
+    signal = score_trend_strategy(prices_df, ticker="300001")
+    metrics = signal.sub_factors["momentum"]["metrics"]
+
+    assert metrics["turnover_ratio_20"] == pytest.approx(2.5)
+    assert metrics["limit_up_memory_259"] == pytest.approx(0.2)
+    assert metrics["ret_2d"] == pytest.approx(0.0)
+    assert metrics["ret_5d"] == pytest.approx(0.1)
 
 
 def _news_item(title: str, date: str, content: str = "") -> CompanyNews:

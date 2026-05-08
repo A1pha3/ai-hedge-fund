@@ -148,6 +148,7 @@ def _build_short_trade_boundary_strategy_context_fields(item: Any) -> dict[str, 
     return {
         "decision": str(item.decision or "neutral"),
         "strategy_signals": _build_short_trade_boundary_strategy_signals(item),
+        "metrics": dict(getattr(item, "metrics", {}) or {}),
         "agent_contribution_summary": _build_short_trade_boundary_agent_summary(),
     }
 

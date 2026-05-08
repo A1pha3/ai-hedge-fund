@@ -59,6 +59,7 @@ def cached_akshare_dataframe_call(
     *,
     persistent_cache,
     stock_news_timeout_seconds: float,
+    timeout_seconds: float | None = None,
     ttl: int | None = None,
     cache_key_kwargs: dict[str, Any] | None = None,
     **kwargs,
@@ -69,11 +70,15 @@ def cached_akshare_dataframe_call(
     if isinstance(cached_df, pd.DataFrame):
         return cached_df.copy()
 
-    if api_name == "stock_news_em" and stock_news_timeout_seconds > 0:
+    effective_timeout_seconds = timeout_seconds
+    if effective_timeout_seconds is None and api_name == "stock_news_em":
+        effective_timeout_seconds = stock_news_timeout_seconds
+
+    if effective_timeout_seconds is not None and effective_timeout_seconds > 0:
         df = _call_with_timeout(
             func=func,
-            timeout_seconds=stock_news_timeout_seconds,
-            timeout_label=f"AKShare {api_name} timed out after {stock_news_timeout_seconds}s",
+            timeout_seconds=effective_timeout_seconds,
+            timeout_label=f"AKShare {api_name} timed out after {effective_timeout_seconds}s",
             **kwargs,
         )
     else:

@@ -199,6 +199,31 @@ def test_layer_c_bc_conflict_avoid():
     assert result.bc_conflict == "b_positive_c_strong_bearish"
 
 
+def test_layer_c_aggregation_preserves_raw_candidate_metrics():
+    fused = [
+        FusedScore(
+            ticker="000001",
+            score_b=0.60,
+            strategy_signals={
+                "trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}),
+                "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}),
+                "fundamental": StrategySignal(direction=1, confidence=70, completeness=1.0, sub_factors={}),
+                "event_sentiment": StrategySignal(direction=1, confidence=60, completeness=1.0, sub_factors={}),
+            },
+            arbitration_applied=[],
+            market_state=MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}),
+            weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+            decision="strong_buy",
+            metrics={"gap_to_limit": 0.005, "attention_composite": 0.88},
+        )
+    ]
+
+    result = aggregate_layer_c_results(fused, {})[0]
+
+    assert result.metrics["gap_to_limit"] == pytest.approx(0.005)
+    assert result.metrics["attention_composite"] == pytest.approx(0.88)
+
+
 def test_full_pipeline_smoke():
     calls = []
 
@@ -1761,6 +1786,31 @@ def test_build_catalyst_theme_entry_qualifies_context_supported_fused_candidate(
     assert filter_reason == "catalyst_theme_candidate_score_ranked"
     assert metrics_payload["sector_resonance"] >= daily_pipeline_module.CATALYST_THEME_SECTOR_MIN
     assert metrics_payload["candidate_score"] >= daily_pipeline_module.CATALYST_THEME_CANDIDATE_SCORE_MIN
+
+
+def test_build_catalyst_theme_entry_preserves_theme_identity_metadata():
+    item = FusedScore(
+        ticker="000009",
+        score_b=0.52,
+        strategy_signals=_shadow_candidate_signals(),
+        arbitration_applied=[],
+        market_state=MarketState(state_type=MarketStateType.TREND),
+        weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+        decision="watch",
+        theme_name="AI算力",
+        theme_category="technology",
+        is_new_theme=True,
+    )
+
+    entry = daily_pipeline_module._build_catalyst_theme_entry(
+        item=item,
+        reason="catalyst_theme_candidate_score_ranked",
+        rank=1,
+    )
+
+    assert entry["theme_name"] == "AI算力"
+    assert entry["theme_category"] == "technology"
+    assert entry["is_new_theme"] is True
 
 
 def test_run_post_market_releases_strong_upstream_shadow_into_supplemental_targets(patch_daily_pipeline_module):
@@ -4693,3 +4743,543 @@ def test_intraday_confirmation_pipeline():
     assert len(confirmed) == 1
     assert exits == []
     assert crisis["mode"] == "normal"
+
+
+def test_build_buy_orders_blocks_theme_exposure_cap_exceeded():
+    """Test that execution blocks candidates when projected_theme_exposure > theme_exposure_cap."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["theme_cap_exceeded"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee": {
+                        "thresholds": {
+                            "theme_exposure_cap": 0.16,
+                        },
+                        "components": {
+                            "projected_theme_exposure": 0.17,
+                        },
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"blocked_by_theme_exposure_cap": 1}
+    assert diagnostics["tickers"][0]["ticker"] == "300724"
+    assert diagnostics["tickers"][0]["projected_theme_exposure"] == 0.17
+    assert diagnostics["tickers"][0]["theme_exposure_cap"] == 0.16
+
+
+def test_build_buy_orders_allows_candidate_below_theme_exposure_cap():
+    """Test that execution allows candidates when projected_theme_exposure <= theme_exposure_cap."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["theme_cap_ok"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee": {
+                        "thresholds": {
+                            "theme_exposure_cap": 0.2,
+                        },
+                        "components": {
+                            "projected_theme_exposure": 0.19,
+                        },
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert diagnostics["reason_counts"] == {}
+
+
+def test_build_buy_orders_allows_candidate_exactly_at_theme_exposure_cap():
+    """Test that execution allows candidates when projected_theme_exposure == theme_exposure_cap."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["theme_cap_at_limit"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee": {
+                        "thresholds": {
+                            "theme_exposure_cap": 0.21,
+                        },
+                        "components": {
+                            "projected_theme_exposure": 0.21,
+                        },
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert diagnostics["reason_counts"] == {}
+
+
+def test_build_buy_orders_allows_candidate_when_theme_exposure_is_missing():
+    """Test that execution does not block when projected theme exposure data is unavailable."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["theme_exposure_missing"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee": {
+                        "thresholds": {
+                            "theme_exposure_cap": 0.16,
+                        },
+                        "components": {},
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert diagnostics["reason_counts"] == {}
+
+
+def test_build_buy_orders_blocks_theme_exposure_above_default_total_cap_when_threshold_missing():
+    """Test that execution falls back to the 25% total theme exposure cap when thresholds are absent."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["theme_cap_default_fallback"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee": {
+                        "components": {
+                            "projected_theme_exposure": 0.26,
+                        },
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"blocked_by_theme_exposure_cap": 1}
+    assert diagnostics["tickers"][0]["theme_exposure_cap"] == 0.25
+
+
+def test_build_buy_orders_blocks_theme_exposure_from_legacy_top_level_committee_payload():
+    """Test that execution still honors legacy top-level committee payload fields."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["theme_cap_legacy_payload"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee_thresholds": {
+                        "theme_exposure_cap": 0.22,
+                    },
+                    "committee_components": {
+                        "projected_theme_exposure": 0.23,
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"blocked_by_theme_exposure_cap": 1}
+    assert diagnostics["tickers"][0]["projected_theme_exposure"] == 0.23
+    assert diagnostics["tickers"][0]["theme_exposure_cap"] == 0.22
+
+
+def test_build_buy_orders_treats_zero_theme_cap_as_default_total_cap():
+    """Test that a zero-valued theme cap falls back to the 25% default like committee logic does."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["theme_cap_zero_fallback"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee": {
+                        "thresholds": {
+                            "theme_exposure_cap": 0.0,
+                        },
+                        "components": {
+                            "projected_theme_exposure": 0.2,
+                        },
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert diagnostics["reason_counts"] == {}
+
+
+def test_build_buy_orders_blocks_incremental_theme_exposure_cap_exceeded():
+    """Test that execution blocks candidates when incremental_theme_exposure > incremental_theme_exposure_cap."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["incremental_theme_cap_exceeded"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee": {
+                        "thresholds": {
+                            "incremental_theme_exposure_cap": 0.18,
+                        },
+                        "components": {
+                            "incremental_theme_exposure": 0.19,
+                        },
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"blocked_by_incremental_theme_exposure_cap": 1}
+    assert diagnostics["tickers"][0]["incremental_theme_exposure"] == 0.19
+    assert diagnostics["tickers"][0]["incremental_theme_exposure_cap"] == 0.18
+
+
+def test_build_buy_orders_allows_incremental_theme_exposure_exactly_at_cap():
+    """Test that execution allows candidates when incremental_theme_exposure == incremental_theme_exposure_cap."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["incremental_theme_cap_at_limit"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee": {
+                        "thresholds": {
+                            "incremental_theme_exposure_cap": 0.18,
+                        },
+                        "components": {
+                            "incremental_theme_exposure": 0.18,
+                        },
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert diagnostics["reason_counts"] == {}
+
+
+def test_build_buy_orders_prioritizes_incremental_theme_cap_when_both_caps_exceeded():
+    """Test that execution reports the incremental cap when both incremental and total theme caps are exceeded."""
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["both_theme_caps_exceeded"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": False,
+                            "execution_hard_gate": False,
+                        }
+                    },
+                    "committee": {
+                        "thresholds": {
+                            "incremental_theme_exposure_cap": 0.18,
+                            "theme_exposure_cap": 0.25,
+                        },
+                        "components": {
+                            "incremental_theme_exposure": 0.19,
+                            "projected_theme_exposure": 0.26,
+                        },
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"blocked_by_incremental_theme_exposure_cap": 1}
+    assert diagnostics["tickers"][0]["incremental_theme_exposure"] == 0.19
+    assert diagnostics["tickers"][0]["projected_theme_exposure"] == 0.26

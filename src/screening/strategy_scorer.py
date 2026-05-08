@@ -33,6 +33,7 @@ from src.screening.strategy_scorer_fundamental import (
 )
 from src.data.models import CompanyNews, InsiderTrade
 from src.screening.models import CandidateStock, StrategySignal, SubFactor
+from src.tools.akshare_api import get_intraday_bars, get_intraday_ticks, get_lhb_detail, get_lhb_institutional_stats, get_money_flow
 from src.tools.api import (
     get_company_news,
     get_insider_trades,
@@ -71,6 +72,12 @@ EVENT_SENTIMENT_MAX_CANDIDATES = int(
     os.getenv(
         "SCORE_BATCH_EVENT_SENTIMENT_MAX_CANDIDATES",
         str(max(40, math.ceil(_DEFAULT_CANDIDATE_POOL_SIZE * 0.20))),
+    )
+)
+INTRADAY_SCORE_MAX_CANDIDATES = int(
+    os.getenv(
+        "SCORE_BATCH_INTRADAY_MAX_CANDIDATES",
+        "12",
     )
 )
 HEAVY_SCORE_MIN_PROVISIONAL_SCORE = float(os.getenv("SCORE_BATCH_MIN_PROVISIONAL_SCORE", "0.05"))
@@ -472,7 +479,7 @@ def score_candidate(
     prices_df = prices_df if prices_df is not None else _load_price_frame(candidate.ticker, trade_date)
     industry_pe_medians = industry_pe_medians if industry_pe_medians is not None else {}
     return {
-        "trend": score_trend_strategy(prices_df),
+        "trend": score_trend_strategy(prices_df, ticker=candidate.ticker),
         "mean_reversion": score_mean_reversion_strategy(prices_df),
         "fundamental": score_fundamental_strategy(candidate.ticker, trade_date, candidate.industry_sw, industry_pe_medians),
         "event_sentiment": score_event_sentiment_strategy(candidate.ticker, trade_date),
@@ -481,12 +488,12 @@ def score_candidate(
 
 def _compute_light_signals(candidate: CandidateStock, trade_date: str) -> tuple[dict[str, StrategySignal], pd.DataFrame]:
     prices_df = _load_price_frame(candidate.ticker, trade_date)
-    return _build_light_signal_map(prices_df), prices_df
+    return _build_light_signal_map(prices_df, ticker=candidate.ticker), prices_df
 
 
-def _build_light_signal_map(prices_df: pd.DataFrame) -> dict[str, StrategySignal]:
+def _build_light_signal_map(prices_df: pd.DataFrame, *, ticker: str | None = None) -> dict[str, StrategySignal]:
     return {
-        "trend": score_trend_strategy(prices_df),
+        "trend": score_trend_strategy(prices_df, ticker=ticker),
         "mean_reversion": score_mean_reversion_strategy(prices_df),
         "fundamental": _empty_signal(),
         "event_sentiment": _empty_signal(),
@@ -613,6 +620,221 @@ def _populate_heavy_signals(
 
     for candidate in _select_event_sentiment_candidates(fundamental_candidates):
         results[candidate.ticker]["event_sentiment"] = score_event_sentiment_strategy(candidate.ticker, trade_date)
+
+    _populate_intraday_short_trade_metrics(results, fundamental_candidates, trade_date)
+    _populate_dragon_tiger_bonus_metrics(results, fundamental_candidates, trade_date)
+
+
+def _populate_intraday_short_trade_metrics(
+    results: dict[str, dict[str, StrategySignal]],
+    candidates: list[CandidateStock],
+    trade_date: str,
+) -> None:
+    for candidate in _select_intraday_metric_candidates(candidates):
+        trend_signal = results.get(candidate.ticker, {}).get("trend")
+        if not _trend_signal_has_momentum_payload(trend_signal):
+            continue
+        intraday_metrics = _build_intraday_short_trade_metrics(candidate.ticker, trade_date)
+        if not intraday_metrics:
+            continue
+        _merge_metrics_into_trend_momentum(trend_signal, intraday_metrics)
+
+
+def _select_intraday_metric_candidates(candidates: list[CandidateStock]) -> list[CandidateStock]:
+    return candidates[:INTRADAY_SCORE_MAX_CANDIDATES]
+
+
+def _populate_dragon_tiger_bonus_metrics(
+    results: dict[str, dict[str, StrategySignal]],
+    candidates: list[CandidateStock],
+    trade_date: str,
+) -> None:
+    candidates_with_momentum = [
+        candidate
+        for candidate in candidates
+        if _trend_signal_has_momentum_payload(results.get(candidate.ticker, {}).get("trend"))
+    ]
+    if not candidates_with_momentum:
+        return
+    bonus_map = _build_dragon_tiger_bonus_map([candidate.ticker for candidate in candidates_with_momentum], trade_date)
+    if not bonus_map:
+        return
+    for candidate in candidates_with_momentum:
+        bonus = bonus_map.get(candidate.ticker)
+        if bonus is None:
+            continue
+        trend_signal = results.get(candidate.ticker, {}).get("trend")
+        _merge_metrics_into_trend_momentum(trend_signal, {"dragon_tiger_bonus": round(float(bonus), 4)})
+
+
+def _build_dragon_tiger_bonus_map(tickers: list[str], trade_date: str) -> dict[str, float]:
+    if not tickers:
+        return {}
+    lhb_detail = get_lhb_detail(trade_date, trade_date)
+    institutional_stats = get_lhb_institutional_stats(trade_date, trade_date)
+    if (lhb_detail is None or lhb_detail.empty) and (institutional_stats is None or institutional_stats.empty):
+        return {}
+
+    normalized_tickers = {str(ticker).zfill(6) for ticker in tickers}
+    bonus_map = {ticker: 0.0 for ticker in normalized_tickers}
+    if lhb_detail is not None and not lhb_detail.empty and "代码" in lhb_detail.columns:
+        for code in lhb_detail["代码"].astype(str).str.zfill(6):
+            if code in bonus_map:
+                bonus_map[code] = 1.0
+    if institutional_stats is not None and not institutional_stats.empty and {"代码", "机构买入净额"}.issubset(institutional_stats.columns):
+        institutional_codes = institutional_stats.copy()
+        institutional_codes["代码"] = institutional_codes["代码"].astype(str).str.zfill(6)
+        institutional_codes["机构买入净额"] = pd.to_numeric(institutional_codes["机构买入净额"], errors="coerce").fillna(0.0)
+        for code in institutional_codes.loc[institutional_codes["机构买入净额"] > 0.0, "代码"]:
+            if code in bonus_map:
+                bonus_map[code] = 1.0
+    return bonus_map
+
+
+def _build_intraday_short_trade_metrics(ticker: str, trade_date: str) -> dict[str, float]:
+    intraday_bars = get_intraday_bars(ticker, trade_date)
+    if intraday_bars is None or intraday_bars.empty:
+        fallback_flow = _load_daily_flow_proxy_ratio(ticker)
+        return {"flow_60": fallback_flow} if fallback_flow is not None else {}
+    intraday_ticks = get_intraday_ticks(ticker, trade_date)
+    metrics = _build_intraday_short_trade_metrics_from_frames(
+        intraday_bars=intraday_bars,
+        intraday_ticks=intraday_ticks,
+        trade_date=trade_date,
+    )
+    if "flow_60" not in metrics:
+        fallback_flow = _load_daily_flow_proxy_ratio(ticker)
+        if fallback_flow is not None:
+            metrics["flow_60"] = fallback_flow
+    return metrics
+
+
+def _build_intraday_short_trade_metrics_from_frames(
+    *,
+    intraday_bars: pd.DataFrame | None,
+    intraday_ticks: pd.DataFrame | None,
+    trade_date: str,
+) -> dict[str, float]:
+    if intraday_bars is None or intraday_bars.empty or intraday_ticks is None or intraday_ticks.empty:
+        return {}
+
+    turnover_windows = _extract_intraday_turnover_windows(intraday_bars)
+    if not turnover_windows:
+        return {}
+    tick_flows = _extract_intraday_tick_net_flows(intraday_ticks, trade_date, turnover_windows)
+    if not tick_flows:
+        return {}
+
+    metrics: dict[str, float] = {}
+    turnover_60 = float(turnover_windows.get("turnover_60", 0.0) or 0.0)
+    turnover_30 = float(turnover_windows.get("turnover_30", 0.0) or 0.0)
+    net_buy_amt_60 = float(tick_flows.get("net_buy_amt_60", 0.0) or 0.0)
+    net_buy_amt_30 = float(tick_flows.get("net_buy_amt_30", 0.0) or 0.0)
+    if turnover_60 > 0.0:
+        metrics["flow_60"] = round(net_buy_amt_60 / turnover_60, 4)
+    if turnover_30 > 0.0:
+        metrics["close_support_30"] = round(net_buy_amt_30 / turnover_30, 4)
+    persist_120 = tick_flows.get("persist_120")
+    if persist_120 is not None:
+        metrics["persist_120"] = round(float(persist_120), 4)
+    return metrics
+
+
+def _extract_intraday_turnover_windows(intraday_bars: pd.DataFrame) -> dict[str, Any]:
+    if intraday_bars.empty or not {"时间", "成交额"}.issubset(intraday_bars.columns):
+        return {}
+    normalized = intraday_bars.copy()
+    normalized["时间"] = pd.to_datetime(normalized["时间"], errors="coerce")
+    normalized["成交额"] = pd.to_numeric(normalized["成交额"], errors="coerce").fillna(0.0)
+    normalized = normalized.dropna(subset=["时间"]).sort_values("时间")
+    if normalized.empty:
+        return {}
+    last_120 = normalized.tail(min(120, len(normalized)))
+    last_60 = normalized.tail(min(60, len(normalized)))
+    last_30 = normalized.tail(min(30, len(normalized)))
+    return {
+        "minute_index_120": last_120["时间"].reset_index(drop=True),
+        "window_start_60": last_60["时间"].iloc[0],
+        "window_start_30": last_30["时间"].iloc[0],
+        "turnover_60": float(last_60["成交额"].sum()),
+        "turnover_30": float(last_30["成交额"].sum()),
+    }
+
+
+def _extract_intraday_tick_net_flows(
+    intraday_ticks: pd.DataFrame,
+    trade_date: str,
+    turnover_windows: dict[str, Any],
+) -> dict[str, float]:
+    required_columns = {"ticktime", "price", "volume", "kind"}
+    if intraday_ticks.empty or not required_columns.issubset(intraday_ticks.columns):
+        return {}
+    normalized = intraday_ticks.copy()
+    trade_day = datetime.strptime(str(trade_date), "%Y%m%d").strftime("%Y-%m-%d")
+    normalized["timestamp"] = pd.to_datetime(trade_day + " " + normalized["ticktime"].astype(str), errors="coerce")
+    normalized["price"] = pd.to_numeric(normalized["price"], errors="coerce")
+    normalized["volume"] = pd.to_numeric(normalized["volume"], errors="coerce")
+    normalized = normalized.dropna(subset=["timestamp", "price", "volume"])
+    if normalized.empty:
+        return {}
+    normalized["signed_amount"] = normalized["price"] * normalized["volume"] * normalized["kind"].astype(str).map({"U": 1.0, "D": -1.0}).fillna(0.0)
+    window_start_60 = turnover_windows["window_start_60"]
+    window_start_30 = turnover_windows["window_start_30"]
+    minute_index_120 = pd.to_datetime(turnover_windows.get("minute_index_120"), errors="coerce")
+    minute_flow = normalized.groupby(normalized["timestamp"].dt.floor("min"))["signed_amount"].sum()
+    active_minutes_120 = minute_index_120.dropna()
+    persist_120 = None
+    if not active_minutes_120.empty:
+        aligned_minute_flow = minute_flow.reindex(active_minutes_120, fill_value=0.0)
+        persist_120 = float((aligned_minute_flow > 0.0).sum() / len(active_minutes_120))
+    return {
+        "net_buy_amt_60": float(normalized.loc[normalized["timestamp"] >= window_start_60, "signed_amount"].sum()),
+        "net_buy_amt_30": float(normalized.loc[normalized["timestamp"] >= window_start_30, "signed_amount"].sum()),
+        "persist_120": persist_120,
+    }
+
+
+def _load_daily_flow_proxy_ratio(ticker: str) -> float | None:
+    money_flow = get_money_flow(ticker)
+    if money_flow is None or money_flow.empty:
+        return None
+    ratio_values = money_flow.get("主力净流入占比")
+    if ratio_values is None:
+        return None
+    if isinstance(ratio_values, pd.Series):
+        ratio_series = pd.to_numeric(ratio_values, errors="coerce")
+    else:
+        ratio_series = pd.Series([pd.to_numeric(ratio_values, errors="coerce")])
+    ratio_series = ratio_series.dropna()
+    if ratio_series.empty:
+        return None
+    latest_ratio = float(ratio_series.dropna().iloc[0])
+    if abs(latest_ratio) > 1.0:
+        latest_ratio /= 100.0
+    return round(latest_ratio, 4)
+
+
+def _trend_signal_has_momentum_payload(trend_signal: StrategySignal | None) -> bool:
+    if trend_signal is None:
+        return False
+    return trend_signal.sub_factors.get("momentum") is not None
+
+
+def _merge_metrics_into_trend_momentum(trend_signal: StrategySignal | None, raw_metrics: dict[str, float]) -> None:
+    if trend_signal is None or not raw_metrics:
+        return
+    momentum_payload = trend_signal.sub_factors.get("momentum")
+    if momentum_payload is None:
+        return
+    if isinstance(momentum_payload, dict):
+        metrics = dict(momentum_payload.get("metrics") or {})
+        metrics.update(raw_metrics)
+        momentum_payload["metrics"] = metrics
+        trend_signal.sub_factors["momentum"] = momentum_payload
+        return
+    metrics = dict(getattr(momentum_payload, "metrics", {}) or {})
+    metrics.update(raw_metrics)
+    setattr(momentum_payload, "metrics", metrics)
 
 
 def _select_event_sentiment_candidates(fundamental_candidates: list[CandidateStock]) -> list[CandidateStock]:

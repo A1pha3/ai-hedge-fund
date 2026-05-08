@@ -21,10 +21,15 @@ class LayerCResult(BaseModel):
     candidate_source: str = "layer_c_watchlist"
     candidate_reason_codes: list[str] = Field(default_factory=list)
     strategy_signals: dict[str, StrategySignal] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
     agent_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     agent_contribution_summary: dict = Field(default_factory=dict)
     bc_conflict: str | None = None
     decision: str = "neutral"
+    theme_name: str = ""
+    theme_category: str = ""
+    is_new_theme: bool = False
+    incremental_theme_exposure: float = 0.0
 
 
 class PendingOrder(BaseModel):

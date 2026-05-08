@@ -5,9 +5,17 @@ from typing import Any
 from collections.abc import Callable
 
 from src.execution.models import LayerCResult
+from src.targets.short_trade_target_kill_switch_helpers import extract_btst_kill_switch_metrics
 from src.targets.models import TargetEvaluationInput
 
 _logger = logging.getLogger(__name__)
+
+
+def _merge_market_state_kill_switch_metrics(raw_candidate_metrics: dict[str, Any], market_state: dict[str, Any] | None) -> dict[str, Any]:
+    merged_metrics = dict(raw_candidate_metrics or {})
+    for key, value in extract_btst_kill_switch_metrics(market_state).items():
+        merged_metrics.setdefault(key, value)
+    return merged_metrics
 
 
 def build_item_replay_context(
@@ -19,6 +27,7 @@ def build_item_replay_context(
     explicit_metric_overrides: dict[str, Any] = {}
     if candidate_source == "catalyst_theme":
         explicit_metric_overrides = dict(getattr(item, "catalyst_theme_metrics", None) or getattr(item, "metrics", None) or {})
+    market_state = dict(getattr(item, "market_state", {}) or {})
     return {
         "source": candidate_source,
         "reason": str(getattr(item, "reason", "") or ""),
@@ -32,8 +41,12 @@ def build_item_replay_context(
         "shadow_visibility_gap_relaxed_band": bool(getattr(item, "shadow_visibility_gap_relaxed_band", False)),
         "short_trade_catalyst_relief": dict(getattr(item, "short_trade_catalyst_relief", {}) or {}),
         "explicit_metric_overrides": explicit_metric_overrides,
-        "raw_candidate_metrics": dict(getattr(item, "metrics", {}) or {}),
+        "raw_candidate_metrics": _merge_market_state_kill_switch_metrics(
+            dict(getattr(item, "metrics", {}) or {}),
+            market_state,
+        ),
         "projected_theme_exposure": float(getattr(item, "projected_theme_exposure", 0.0) or 0.0),
+        "incremental_theme_exposure": float(getattr(item, "incremental_theme_exposure", 0.0) or 0.0),
     }
 
 
@@ -72,10 +85,13 @@ def build_target_input_from_entry(
     explicit_metric_overrides: dict[str, Any] = {}
     if candidate_source == "catalyst_theme":
         explicit_metric_overrides = dict(entry.get("catalyst_theme_metrics") or entry.get("metrics") or {})
+    market_state = dict(entry.get("market_state") or {})
+    raw_candidate_metrics = dict(entry.get("short_trade_boundary_metrics") or {})
+    raw_candidate_metrics.update(dict(entry.get("metrics") or {}))
     return TargetEvaluationInput(
         trade_date=trade_date,
         ticker=str(entry.get("ticker") or ""),
-        market_state=dict(entry.get("market_state") or {}),
+        market_state=market_state,
         score_b=float(entry.get("score_b", 0.0) or 0.0),
         score_c=float(entry.get("score_c", 0.0) or 0.0),
         score_final=float(entry.get("score_final", 0.0) or 0.0),
@@ -97,8 +113,9 @@ def build_target_input_from_entry(
             "shadow_visibility_gap_relaxed_band": bool(entry.get("shadow_visibility_gap_relaxed_band")),
             "short_trade_catalyst_relief": dict(entry.get("short_trade_catalyst_relief") or {}),
             "explicit_metric_overrides": explicit_metric_overrides,
-            "raw_candidate_metrics": dict(entry.get("metrics") or {}),
+            "raw_candidate_metrics": _merge_market_state_kill_switch_metrics(raw_candidate_metrics, market_state),
             "projected_theme_exposure": float(entry.get("projected_theme_exposure", 0.0) or 0.0),
+            "incremental_theme_exposure": float(entry.get("incremental_theme_exposure", 0.0) or 0.0),
         },
     )
 

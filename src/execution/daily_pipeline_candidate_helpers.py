@@ -34,9 +34,10 @@ def build_short_trade_boundary_metrics_payload(
     *,
     snapshot: dict[str, Any],
     compute_candidate_score_fn,
+    raw_candidate_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     gate_status, blockers = _extract_gate_status_and_blockers(snapshot)
-    return {
+    payload = {
         "breakout_freshness": round(float(snapshot.get("breakout_freshness", 0.0) or 0.0), 4),
         "trend_acceleration": round(float(snapshot.get("trend_acceleration", 0.0) or 0.0), 4),
         "volume_expansion_quality": round(float(snapshot.get("volume_expansion_quality", 0.0) or 0.0), 4),
@@ -46,6 +47,9 @@ def build_short_trade_boundary_metrics_payload(
         "gate_status": gate_status,
         "blockers": blockers,
     }
+    for key, value in dict(raw_candidate_metrics or {}).items():
+        payload.setdefault(str(key), value)
+    return payload
 
 
 def resolve_short_trade_boundary_filter_reason(
@@ -85,10 +89,12 @@ def qualify_short_trade_boundary_candidate_from_snapshot(
     volume_min: float,
     catalyst_min: float,
     candidate_score_min: float,
+    raw_candidate_metrics: dict[str, Any] | None = None,
 ) -> tuple[bool, str, dict[str, Any]]:
     metrics_payload = build_short_trade_boundary_metrics_payload(
         snapshot=snapshot,
         compute_candidate_score_fn=compute_candidate_score_fn,
+        raw_candidate_metrics=raw_candidate_metrics,
     )
     filter_reason = resolve_short_trade_boundary_filter_reason(
         metrics_payload=metrics_payload,

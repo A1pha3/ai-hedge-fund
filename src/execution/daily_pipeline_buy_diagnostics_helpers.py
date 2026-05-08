@@ -388,6 +388,9 @@ def build_short_trade_execution_gate_filter_payload(
     metrics_payload = dict(getattr(short_trade_result, "metrics_payload", {}) or {})
     explainability_payload = dict(getattr(short_trade_result, "explainability_payload", {}) or {})
     thresholds = dict(metrics_payload.get("thresholds") or {})
+    committee_payload = dict(metrics_payload.get("committee") or {})
+    committee_thresholds = dict(committee_payload.get("thresholds") or metrics_payload.get("committee_thresholds") or {})
+    committee_components = dict(committee_payload.get("components") or metrics_payload.get("committee_components") or {})
     breakout_trap_guard = dict(metrics_payload.get("breakout_trap_guard") or explainability_payload.get("breakout_trap_guard") or {})
     market_state_threshold_adjustment = dict(thresholds.get("market_state_threshold_adjustment") or explainability_payload.get("market_state_threshold_adjustment") or {})
     decision = str(getattr(short_trade_result, "decision", None) or "").strip().lower()
@@ -398,7 +401,16 @@ def build_short_trade_execution_gate_filter_payload(
     risk_level = str(market_state_threshold_adjustment.get("risk_level") or "unknown").strip().lower()
     regime_gate_level = str(market_state_threshold_adjustment.get("regime_gate_level") or risk_level or "unknown").strip().lower()
 
-    if bool(breakout_trap_guard.get("blocked")) or bool(breakout_trap_guard.get("execution_blocked")) or "breakout_trap_risk" in blockers or "breakout_trap_execution_hard_gate" in blockers:
+    projected_theme_exposure = float(committee_components.get("projected_theme_exposure", 0.0) or 0.0)
+    theme_exposure_cap = float(committee_thresholds.get("theme_exposure_cap") or 0.25)
+    incremental_theme_exposure = float(committee_components.get("incremental_theme_exposure", 0.0) or 0.0)
+    incremental_theme_exposure_cap = float(committee_thresholds.get("incremental_theme_exposure_cap") or 0.18)
+
+    if incremental_theme_exposure > 0.0 and incremental_theme_exposure > incremental_theme_exposure_cap:
+        reason = "blocked_by_incremental_theme_exposure_cap"
+    elif projected_theme_exposure > 0.0 and projected_theme_exposure > theme_exposure_cap:
+        reason = "blocked_by_theme_exposure_cap"
+    elif bool(breakout_trap_guard.get("blocked")) or bool(breakout_trap_guard.get("execution_blocked")) or "breakout_trap_risk" in blockers or "breakout_trap_execution_hard_gate" in blockers:
         reason = "blocked_by_breakout_trap_risk"
     elif bool(market_state_threshold_adjustment.get("execution_hard_gate")):
         reason = "blocked_by_market_regime_gate"
@@ -421,6 +433,10 @@ def build_short_trade_execution_gate_filter_payload(
         "blockers": blockers,
         "candidate_source": str(getattr(short_trade_result, "candidate_source", None) or ""),
         "top_reasons": [str(reason) for reason in list(getattr(short_trade_result, "top_reasons", []) or [])[:5]],
+        "projected_theme_exposure": round(projected_theme_exposure, 4) if projected_theme_exposure > 0.0 else None,
+        "theme_exposure_cap": round(theme_exposure_cap, 4),
+        "incremental_theme_exposure": round(incremental_theme_exposure, 4) if incremental_theme_exposure > 0.0 else None,
+        "incremental_theme_exposure_cap": round(incremental_theme_exposure_cap, 4),
     }
 
 

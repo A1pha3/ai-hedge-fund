@@ -128,6 +128,84 @@ def test_short_trade_snapshot_surfaces_committee_scores() -> None:
     assert snapshot["committee_gate_status"]["formal_selected"] in {"pass", "advisory"}
 
 
+def test_retention_group_uses_failed_breakout_metric_when_present() -> None:
+    baseline_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "retention_proxy": 0.78,
+                "supply_pressure_60": 0.08,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+    degraded_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "retention_proxy": 0.78,
+                "supply_pressure_60": 0.08,
+                "failed_breakout_10": 3,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_snapshot["committee_component_sources"]["retention_raw_100"] == "raw:retention_metrics"
+    assert degraded_snapshot["committee_component_sources"]["retention_raw_100"] == "raw:retention_metrics"
+    assert degraded_snapshot["committee_components"]["retention_raw_100"] < baseline_snapshot["committee_components"]["retention_raw_100"]
+
+
+def test_flow_group_uses_persist_metric_when_present() -> None:
+    baseline_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "flow_60": 0.04,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+    improved_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "flow_60": 0.04,
+                "persist_120": 0.70,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_snapshot["committee_components"]["flow_raw_100"] == pytest.approx(60.0)
+    assert improved_snapshot["committee_components"]["flow_raw_100"] > baseline_snapshot["committee_components"]["flow_raw_100"]
+
+
+def test_attention_group_uses_dragon_tiger_bonus_when_present() -> None:
+    baseline_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "attention_composite": 0.50,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+    improved_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "attention_composite": 0.50,
+                "dragon_tiger_bonus": 1.0,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_snapshot["committee_components"]["attention_raw_100"] == pytest.approx(60.0)
+    assert improved_snapshot["committee_components"]["attention_raw_100"] > baseline_snapshot["committee_components"]["attention_raw_100"]
+
+
 def test_short_trade_snapshot_auto_switches_to_ignition_breakout_profile() -> None:
     snapshot = build_short_trade_target_snapshot_from_entry(
         trade_date="20260328",
@@ -268,6 +346,131 @@ def test_committee_weak_close_veto_downgrades_selected_candidate_to_near_miss() 
     assert "committee_weak_close_execution_veto" not in vetoed_result.blockers
 
 
+def test_committee_gap_to_limit_veto_rejects_selected_candidate() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "gap_to_limit": 0.005,
+        }
+    )
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides={**_base_profile_overrides(), "committee_enabled": False},
+    )
+    vetoed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_result.decision == "selected"
+    assert vetoed_result.decision == "rejected"
+    assert "committee_gap_to_limit_veto" in vetoed_result.blockers
+    assert "committee_gap_to_limit_veto" in vetoed_result.committee_vetoes
+    assert vetoed_result.gate_status["committee"] == "veto"
+
+
+def test_committee_failed_breakout_history_veto_rejects_selected_candidate() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "close_structure": 0.30,
+            "close_support_30": 0.05,
+        }
+    )
+    entry["historical_prior"]["execution_quality_label"] = "gap_chase_risk"
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides={**_base_profile_overrides(), "committee_enabled": False},
+    )
+    vetoed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_result.decision == "selected"
+    assert vetoed_result.decision == "rejected"
+    assert "committee_failed_breakout_history_veto" in vetoed_result.blockers
+    assert "committee_failed_breakout_history_veto" in vetoed_result.committee_vetoes
+    assert vetoed_result.gate_status["committee"] == "veto"
+
+
+def test_committee_failed_breakout_metric_veto_rejects_selected_candidate() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "supply_pressure_60": 0.08,
+            "close_structure": 0.30,
+            "close_support_30": 0.05,
+            "failed_breakout_10": 3,
+        }
+    )
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides={**_base_profile_overrides(), "committee_enabled": False},
+    )
+    vetoed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_result.decision == "selected"
+    assert vetoed_result.decision == "rejected"
+    assert "committee_failed_breakout_metric_veto" in vetoed_result.blockers
+    assert "committee_failed_breakout_metric_veto" in vetoed_result.committee_vetoes
+    assert vetoed_result.gate_status["committee"] == "veto"
+
+
+def test_committee_uses_short_trade_boundary_metrics_when_entry_metrics_missing() -> None:
+    entry = _make_committee_entry(metrics={})
+    entry["short_trade_boundary_metrics"] = {
+        "sector_amt_share": 0.060,
+        "flow_60": 0.12,
+        "retention_proxy": 0.78,
+        "supply_pressure_60": 0.08,
+        "close_structure": 0.30,
+        "close_support_30": 0.05,
+        "failed_breakout_10": 3,
+    }
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides={**_base_profile_overrides(), "committee_enabled": False},
+    )
+    vetoed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_result.decision == "selected"
+    assert vetoed_result.decision == "rejected"
+    assert "committee_failed_breakout_metric_veto" in vetoed_result.blockers
+
+
 def test_committee_sector_hard_gate_blocks_formal_selected_candidate() -> None:
     entry = _make_committee_entry(
         metrics={
@@ -387,7 +590,7 @@ def test_committee_theme_exposure_cap_blocks_formal_selected_candidate() -> None
             "sector_amt_share": 0.060,
             "flow_60": 0.12,
             "retention_proxy": 0.78,
-            "projected_theme_exposure": 0.22,
+            "projected_theme_exposure": 0.26,
         }
     )
 
@@ -407,3 +610,69 @@ def test_committee_theme_exposure_cap_blocks_formal_selected_candidate() -> None
     assert baseline_result.decision == "selected"
     assert governed_result.decision == "near_miss"
     assert "committee_theme_exposure_cap_exceeded" in governed_result.downgrade_reasons
+    assert governed_result.metrics_payload["committee"]["thresholds"]["theme_exposure_cap"] == pytest.approx(0.25)
+
+
+def test_committee_theme_exposure_cap_allows_candidate_exactly_at_default_total_exposure_cap() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "projected_theme_exposure": 0.25,
+        }
+    )
+
+    governed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert governed_result.decision == "selected"
+    assert "committee_theme_exposure_cap_exceeded" not in governed_result.downgrade_reasons
+
+
+def test_committee_incremental_theme_exposure_cap_blocks_formal_selected_candidate() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "incremental_theme_exposure": 0.19,
+        }
+    )
+
+    governed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert governed_result.decision == "near_miss"
+    assert "committee_incremental_theme_exposure_cap_exceeded" in governed_result.downgrade_reasons
+    assert governed_result.metrics_payload["committee"]["thresholds"]["incremental_theme_exposure_cap"] == pytest.approx(0.18)
+    assert governed_result.metrics_payload["committee"]["components"]["incremental_theme_exposure"] == pytest.approx(0.19)
+
+
+def test_committee_incremental_theme_exposure_cap_allows_candidate_exactly_at_cap() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "incremental_theme_exposure": 0.18,
+        }
+    )
+
+    governed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert governed_result.decision == "selected"
+    assert "committee_incremental_theme_exposure_cap_exceeded" not in governed_result.downgrade_reasons

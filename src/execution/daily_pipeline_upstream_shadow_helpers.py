@@ -226,6 +226,9 @@ def _build_upstream_shadow_watchlist_entry(entry: dict[str, Any]) -> LayerCResul
         agent_contribution_summary=dict(entry.get("agent_contribution_summary") or {}),
         bc_conflict=str(entry.get("bc_conflict") or "") or None,
         decision=str(entry.get("decision") or "watch"),
+        theme_name=str(entry.get("theme_name") or ""),
+        theme_category=str(entry.get("theme_category") or ""),
+        is_new_theme=bool(entry.get("is_new_theme", False)),
     )
 
 

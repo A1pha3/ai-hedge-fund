@@ -253,7 +253,8 @@ class ShortTradeTargetProfile:
     committee_flow_group_score_min_normal_trade: float = 0.05
     committee_retention_group_score_min_normal_trade: float = 0.05
     committee_penalty_total_max: float = 0.12
-    committee_theme_exposure_cap: float = 0.18
+    committee_theme_exposure_cap: float = 0.25
+    committee_incremental_theme_exposure_cap: float = 0.18
     committee_isolated_attention_veto_enabled: bool = True
     committee_isolated_attention_min: float = 80.0
     committee_isolated_attention_sector_max: float = 60.0
@@ -262,6 +263,12 @@ class ShortTradeTargetProfile:
     committee_weak_close_flow_min: float = 75.0
     committee_weak_close_structure_max: float = 45.0
     committee_weak_close_close_support_max: float = 60.0
+    committee_gap_to_limit_veto_enabled: bool = True
+    committee_gap_to_limit_max: float = 0.01
+    committee_failed_breakout_history_veto_enabled: bool = True
+    committee_failed_breakout_history_min: float = 1.0
+    committee_failed_breakout_metric_veto_enabled: bool = True
+    committee_failed_breakout_metric_min: float = 3.0
     committee_shadow_only_blocks_selected: bool = True
 
     @property

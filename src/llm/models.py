@@ -125,6 +125,7 @@ OLLAMA_LLM_ORDER = [model.to_choice_tuple() for model in OLLAMA_MODELS]
 ZHIPU_STANDARD_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 ZHIPU_CODING_PLAN_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4"
 VOLCENGINE_ARK_CODING_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
+DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,19 @@ class OpenAICompatibleTransportConfig:
     static_model_kwargs: dict[str, Any] = field(default_factory=dict)
     dynamic_model_kwargs_factory: Callable[[], dict[str, Any]] | None = None
     model_name_transform: Callable[[str], str] | None = None
+
+
+def _resolve_openai_compatible_timeout_seconds() -> float | None:
+    raw_value = os.getenv("LLM_OPENAI_COMPATIBLE_TIMEOUT_SECONDS", "").strip()
+    if not raw_value:
+        return DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
+
+    try:
+        parsed_value = float(raw_value)
+    except ValueError:
+        return DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
+
+    return parsed_value if parsed_value > 0 else DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -345,6 +359,9 @@ def build_openai_compatible_model(model_name: str, config: OpenAICompatibleTrans
     kwargs: dict[str, Any] = {"model": normalized_model_name, config.api_key_kwarg: api_key}
     if base_url:
         kwargs[config.base_url_kwarg] = base_url
+    timeout_seconds = _resolve_openai_compatible_timeout_seconds()
+    if timeout_seconds is not None:
+        kwargs["timeout"] = timeout_seconds
 
     model_kwargs = _resolve_openai_compatible_model_kwargs(config)
     if model_kwargs:

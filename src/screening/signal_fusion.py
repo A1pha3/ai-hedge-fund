@@ -359,6 +359,74 @@ def compute_score_b(signals: dict[str, StrategySignal], weights: dict[str, float
     return max(-1.0, min(1.0, score))
 
 
+def _collect_raw_metrics_from_signals(signals: dict[str, StrategySignal]) -> dict[str, float]:
+    collected: dict[str, float] = {}
+    for signal in signals.values():
+        sub_factors = dict(getattr(signal, "sub_factors", {}) or {})
+        for payload in sub_factors.values():
+            metrics = dict((payload or {}).get("metrics") or {}) if isinstance(payload, dict) else dict(getattr(payload, "metrics", {}) or {})
+            for key, value in metrics.items():
+                collected.setdefault(str(key), value)
+    return collected
+
+
+def _build_percentile_rank_map(values: dict[str, float]) -> dict[str, float]:
+    if len(values) < 2:
+        return {}
+    sorted_pairs = sorted(values.items(), key=lambda item: item[1])
+    total = len(sorted_pairs)
+    percentile_map: dict[str, float] = {}
+    idx = 0
+    while idx < total:
+        end_idx = idx
+        while end_idx + 1 < total and sorted_pairs[end_idx + 1][1] == sorted_pairs[idx][1]:
+            end_idx += 1
+        average_rank = ((idx + 1) + (end_idx + 1)) / 2.0
+        percentile = average_rank / total
+        for ticker, _ in sorted_pairs[idx:end_idx + 1]:
+            percentile_map[ticker] = percentile
+        idx = end_idx + 1
+    return percentile_map
+
+
+def _extract_attention_component_values(results: list[FusedScore], metric_name: str, *, absolute: bool = False) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for result in results:
+        metric_value = result.metrics.get(metric_name)
+        if metric_value is None:
+            continue
+        value = float(metric_value)
+        values[result.ticker] = abs(value) if absolute else value
+    return values
+
+
+def _apply_cross_sectional_attention_metrics(results: list[FusedScore]) -> None:
+    component_weights = {
+        "turnover_ratio_20": 0.40,
+        "amount_ratio_5": 0.30,
+        "ret_2d": 0.15,
+        "ret_5d": 0.15,
+    }
+    rank_maps = {
+        "turnover_ratio_20": _build_percentile_rank_map(_extract_attention_component_values(results, "turnover_ratio_20")),
+        "amount_ratio_5": _build_percentile_rank_map(_extract_attention_component_values(results, "amount_ratio_5")),
+        "ret_2d": _build_percentile_rank_map(_extract_attention_component_values(results, "ret_2d", absolute=True)),
+        "ret_5d": _build_percentile_rank_map(_extract_attention_component_values(results, "ret_5d", absolute=True)),
+    }
+
+    for result in results:
+        weighted_score = 0.0
+        available_weight = 0.0
+        for metric_name, weight in component_weights.items():
+            percentile = rank_maps[metric_name].get(result.ticker)
+            if percentile is None:
+                continue
+            weighted_score += weight * percentile
+            available_weight += weight
+        if available_weight > 0.0:
+            result.metrics["attention_composite"] = round(weighted_score / available_weight, 4)
+
+
 def fuse_signals_for_ticker(
     ticker: str,
     signals: dict[str, StrategySignal],
@@ -379,6 +447,7 @@ def fuse_signals_for_ticker(
         ticker=ticker,
         score_b=score_b,
         strategy_signals=adjusted_signals,
+        metrics=_collect_raw_metrics_from_signals(adjusted_signals),
         arbitration_applied=arbitration_applied,
         market_state=market_state,
         weights_used=weights_used,
@@ -397,4 +466,5 @@ def fuse_batch(
         if trade_date and ticker in current_cooldown and signals.get("fundamental") and signals["fundamental"].direction > 0:
             maybe_release_cooldown_early(ticker, trade_date, signals["fundamental"])
         results.append(fuse_signals_for_ticker(ticker, signals, market_state, trade_date))
+    _apply_cross_sectional_attention_metrics(results)
     return results

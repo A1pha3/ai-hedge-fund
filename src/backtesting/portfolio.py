@@ -40,6 +40,9 @@ class Portfolio:
                     "quality_score": 0.5,
                     "is_fundamental_driven": False,
                     "industry_sw": "",
+                    "theme_name": "",
+                    "theme_category": "",
+                    "is_new_theme": False,
                 }
                 for ticker in tickers
             },
@@ -63,6 +66,9 @@ class Portfolio:
                 "quality_score": float(p.get("quality_score", 0.5)),
                 "is_fundamental_driven": bool(p.get("is_fundamental_driven", False)),
                 "industry_sw": str(p.get("industry_sw", "")),
+                "theme_name": str(p.get("theme_name", "")),
+                "theme_category": str(p.get("theme_category", "")),
+                "is_new_theme": bool(p.get("is_new_theme", False)),
             }
             for t, p in self._portfolio["positions"].items()
         }
@@ -96,6 +102,9 @@ class Portfolio:
                     "quality_score": float(position.get("quality_score", 0.5)),
                     "is_fundamental_driven": bool(position.get("is_fundamental_driven", False)),
                     "industry_sw": str(position.get("industry_sw", "")),
+                    "theme_name": str(position.get("theme_name", "")),
+                    "theme_category": str(position.get("theme_category", "")),
+                    "is_new_theme": bool(position.get("is_new_theme", False)),
                 }
                 for ticker, position in snapshot["positions"].items()
             },
@@ -128,6 +137,9 @@ class Portfolio:
             "quality_score": 0.5,
             "is_fundamental_driven": False,
             "industry_sw": "",
+            "theme_name": "",
+            "theme_category": "",
+            "is_new_theme": False,
         }
         self._portfolio["realized_gains"][ticker] = {"long": 0.0, "short": 0.0}
 
@@ -141,6 +153,9 @@ class Portfolio:
         quality_score: float = 0.5,
         is_fundamental_driven: bool = False,
         industry_sw: str = "",
+        theme_name: str = "",
+        theme_category: str = "",
+        is_new_theme: bool = False,
     ) -> None:
         self.ensure_ticker(ticker)
         position = self._portfolio["positions"][ticker]
@@ -154,6 +169,9 @@ class Portfolio:
             position["quality_score"] = float(quality_score)
             position["is_fundamental_driven"] = bool(is_fundamental_driven)
             position["industry_sw"] = industry_sw
+            position["theme_name"] = str(theme_name or "")
+            position["theme_category"] = str(theme_category or "")
+            position["is_new_theme"] = bool(is_new_theme)
 
     def record_long_exit(self, ticker: str, trigger_reason: str = "") -> None:
         self.ensure_ticker(ticker)
@@ -168,6 +186,9 @@ class Portfolio:
             position["quality_score"] = 0.5
             position["is_fundamental_driven"] = False
             position["industry_sw"] = ""
+            position["theme_name"] = ""
+            position["theme_category"] = ""
+            position["is_new_theme"] = False
             return
         if trigger_reason == "profit_take_stage_1":
             position["profit_take_stage"] = max(int(position.get("profit_take_stage", 0)), 1)

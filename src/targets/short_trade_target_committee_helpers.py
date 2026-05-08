@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state_metrics
+from src.targets.short_trade_target_kill_switch_helpers import resolve_btst_kill_switch
 from src.targets.explainability import clamp_unit_interval
 
 
@@ -158,9 +159,17 @@ def _sector_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> 
 
 
 def _flow_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tuple[float, str]:
+    available_scores: list[tuple[float, float]] = []
     flow_60 = _as_float(raw_metrics, "flow_60")
     if flow_60 != 0.0 or "flow_60" in raw_metrics:
-        return _step_score(flow_60, [(0.12, 90.0), (0.08, 75.0), (0.04, 60.0), (0.0, 40.0)], 20.0), "raw:flow_60"
+        available_scores.append((_step_score(flow_60, [(0.12, 90.0), (0.08, 75.0), (0.04, 60.0), (0.0, 40.0)], 20.0), 0.40))
+    persist_120 = raw_metrics.get("persist_120")
+    if persist_120 is not None:
+        available_scores.append((_step_score(float(persist_120 or 0.0), [(0.65, 90.0), (0.58, 75.0), (0.52, 60.0), (0.45, 40.0)], 20.0), 0.30))
+    if available_scores:
+        total_weight = sum(weight for _, weight in available_scores)
+        weighted_score = sum(score * weight for score, weight in available_scores) / total_weight if total_weight > 0 else 0.0
+        return round(weighted_score, 4), "raw:flow_metrics"
     proxy = (0.45 * float(snapshot.get("volume_expansion_quality", 0.0) or 0.0)) + (0.30 * float(snapshot.get("score_b_strength", 0.0) or 0.0)) + (0.25 * float(snapshot.get("momentum_strength", 0.0) or 0.0))
     return _support_score_100(proxy), "proxy:flow_alignment"
 
@@ -188,18 +197,49 @@ def _structure_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) 
 
 
 def _attention_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tuple[float, str]:
+    available_scores: list[tuple[float, float]] = []
     attention_composite = raw_metrics.get("attention_composite")
     if attention_composite is not None:
         attention_ratio = _normalized_ratio(attention_composite)
-        return _step_score(attention_ratio, [(0.80, 90.0), (0.65, 75.0), (0.50, 60.0), (0.35, 40.0)], 20.0), "raw:attention_composite"
+        available_scores.append((_step_score(attention_ratio, [(0.80, 90.0), (0.65, 75.0), (0.50, 60.0), (0.35, 40.0)], 20.0), 0.35))
+    dragon_tiger_bonus = raw_metrics.get("dragon_tiger_bonus")
+    if dragon_tiger_bonus is not None:
+        available_scores.append((80.0 if float(dragon_tiger_bonus or 0.0) >= 1.0 else 50.0, 0.15))
+    if available_scores:
+        total_weight = sum(weight for _, weight in available_scores)
+        weighted_score = sum(score * weight for score, weight in available_scores) / total_weight if total_weight > 0 else 0.0
+        return round(weighted_score, 4), "raw:attention_metrics"
     proxy = (0.45 * float(snapshot.get("event_signal_strength", 0.0) or 0.0)) + (0.30 * float(snapshot.get("news_sentiment_strength", 0.0) or 0.0)) + (0.25 * float(snapshot.get("investor_alignment", 0.0) or 0.0))
     return _support_score_100(proxy), "proxy:event_attention"
 
 
 def _retention_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tuple[float, str]:
+    available_scores: list[tuple[float, float]] = []
     retention_proxy = raw_metrics.get("retention_proxy")
     if retention_proxy is not None:
-        return _step_score(_normalized_ratio(retention_proxy), [(0.75, 90.0), (0.65, 75.0), (0.55, 60.0), (0.45, 40.0)], 20.0), "raw:retention_proxy"
+        available_scores.append((_step_score(_normalized_ratio(retention_proxy), [(0.75, 90.0), (0.65, 75.0), (0.55, 60.0), (0.45, 40.0)], 20.0), 0.30))
+    supply_pressure_60 = raw_metrics.get("supply_pressure_60")
+    if supply_pressure_60 is not None:
+        available_scores.append((_step_inverse_score(float(supply_pressure_60 or 0.0), [(0.08, 90.0), (0.12, 75.0), (0.18, 60.0), (0.25, 40.0)], 20.0), 0.20))
+    failed_breakout_10 = raw_metrics.get("failed_breakout_10")
+    if failed_breakout_10 is not None:
+        available_scores.append((_step_inverse_score(float(failed_breakout_10 or 0.0), [(0.0, 90.0), (1.0, 75.0), (2.0, 55.0)], 30.0), 0.20))
+    prior_retention_score = raw_metrics.get("prior_retention_score")
+    if prior_retention_score is not None:
+        prior_retention_value = float(prior_retention_score or 0.0)
+        if prior_retention_value <= 1.0:
+            prior_retention_value = _support_score_100(prior_retention_value)
+        available_scores.append((_step_score(prior_retention_value, [(75.0, 90.0), (65.0, 75.0), (55.0, 60.0), (45.0, 40.0)], 20.0), 0.30))
+    else:
+        historical_continuation_prior_score = dict(snapshot.get("historical_continuation_prior_score") or {})
+        if historical_continuation_prior_score:
+            prior_retention_ratio = float(historical_continuation_prior_score.get("score", 0.0) or 0.0)
+            prior_retention_value = _support_score_100(prior_retention_ratio)
+            available_scores.append((_step_score(prior_retention_value, [(75.0, 90.0), (65.0, 75.0), (55.0, 60.0), (45.0, 40.0)], 20.0), 0.30))
+    if available_scores:
+        total_weight = sum(weight for _, weight in available_scores)
+        weighted_score = sum(score * weight for score, weight in available_scores) / total_weight if total_weight > 0 else 0.0
+        return round(weighted_score, 4), "raw:retention_metrics"
     historical_continuation_prior_score = dict(snapshot.get("historical_continuation_prior_score") or {})
     prior_retention_score = float(historical_continuation_prior_score.get("score", 0.0) or 0.0)
     proxy = (0.60 * float(snapshot.get("close_retention_score", 0.0) or 0.0)) + (0.40 * prior_retention_score)
@@ -297,32 +337,7 @@ def _weighted_average(scores: list[tuple[float, float]]) -> float:
 
 
 def _resolve_committee_kill_switch(raw_metrics: dict[str, Any], gate: str) -> dict[str, Any]:
-    triggered_metrics: list[str] = []
-    checks = (
-        ("rolling_8_trade_close_win_rate", lambda value: value < 0.375),
-        ("rolling_8_trade_payoff_ratio", lambda value: value < 0.85),
-        ("rolling_20d_selected_expectation", lambda value: value < -0.015),
-        ("rolling_shadow_minus_formal_close_rate", lambda value: value > 0.08),
-    )
-    for key, predicate in checks:
-        raw_value = raw_metrics.get(key)
-        if raw_value is None:
-            continue
-        if predicate(float(raw_value or 0.0)):
-            triggered_metrics.append(key)
-
-    effective_gate = gate
-    if triggered_metrics:
-        if gate == "aggressive_trade":
-            effective_gate = "normal_trade"
-        elif gate == "normal_trade":
-            effective_gate = "shadow_only"
-
-    return {
-        "active": bool(triggered_metrics),
-        "triggered_metrics": triggered_metrics,
-        "effective_gate": effective_gate,
-    }
+    return resolve_btst_kill_switch(raw_metrics, gate)
 
 
 def _build_committee_penalties(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tuple[dict[str, float], float]:
@@ -392,6 +407,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     crowding_risk_raw_100, crowding_source = _crowding_risk_raw_score(snapshot, raw_metrics)
     theme_concentration_after_trade_raw_100, theme_source = _theme_concentration_risk_raw_score(raw_metrics, input_data)
     projected_theme_exposure = _as_float(raw_metrics, "projected_theme_exposure", _as_float(dict(input_data.replay_context or {}), "projected_theme_exposure"))
+    incremental_theme_exposure = _as_float(raw_metrics, "incremental_theme_exposure", _as_float(dict(input_data.replay_context or {}), "incremental_theme_exposure"))
     sector_group_score = _committee_group_score(sector_raw_100)
     flow_group_score = _committee_group_score(flow_raw_100)
     retention_group_score = _committee_group_score(retention_raw_100)
@@ -436,6 +452,16 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         vetoes.append("committee_isolated_attention_veto")
     if bool(getattr(profile, "committee_weak_close_veto_enabled", True)) and flow_raw_100 >= float(getattr(profile, "committee_weak_close_flow_min", 75.0) or 75.0) and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0) and close_support_raw_100 <= float(getattr(profile, "committee_weak_close_close_support_max", 60.0) or 60.0):
         vetoes.append("committee_weak_close_execution_veto")
+    gap_to_limit = raw_metrics.get("gap_to_limit")
+    if bool(getattr(profile, "committee_gap_to_limit_veto_enabled", True)) and gap_to_limit is not None and float(gap_to_limit or 0.0) <= float(getattr(profile, "committee_gap_to_limit_max", 0.01) or 0.01):
+        vetoes.append("committee_gap_to_limit_veto")
+    breakout_trap_guard = dict(snapshot.get("breakout_trap_guard") or {})
+    historical_gap_chase_risk = float(breakout_trap_guard.get("historical_gap_chase_risk", 0.0) or 0.0)
+    if bool(getattr(profile, "committee_failed_breakout_history_veto_enabled", True)) and historical_gap_chase_risk >= float(getattr(profile, "committee_failed_breakout_history_min", 1.0) or 1.0) and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0):
+        vetoes.append("committee_failed_breakout_history_veto")
+    failed_breakout_10 = raw_metrics.get("failed_breakout_10")
+    if bool(getattr(profile, "committee_failed_breakout_metric_veto_enabled", True)) and failed_breakout_10 is not None and float(failed_breakout_10 or 0.0) >= float(getattr(profile, "committee_failed_breakout_metric_min", 3.0) or 3.0) and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0):
+        vetoes.append("committee_failed_breakout_metric_veto")
 
     fail_reasons: list[str] = []
     if bool(thresholds["selected_enforced"]):
@@ -457,8 +483,10 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             fail_reasons.append("committee_negative_sector_or_flow_block")
         if penalty_total > float(thresholds["penalty_total_max"]):
             fail_reasons.append("committee_penalty_total_exceeded")
-        if projected_theme_exposure > float(getattr(profile, "committee_theme_exposure_cap", 0.18) or 0.18):
+        if projected_theme_exposure > float(getattr(profile, "committee_theme_exposure_cap", 0.25) or 0.25):
             fail_reasons.append("committee_theme_exposure_cap_exceeded")
+        if incremental_theme_exposure > float(getattr(profile, "committee_incremental_theme_exposure_cap", 0.18) or 0.18):
+            fail_reasons.append("committee_incremental_theme_exposure_cap_exceeded")
 
     if bool(kill_switch["active"]) and effective_gate in SHADOW_ONLY_GATES:
         fail_reasons.append("committee_kill_switch_active")
@@ -494,6 +522,8 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "penalty_total_max": round(float(thresholds["penalty_total_max"]), 4),
             "selected_enforced": bool(thresholds["selected_enforced"]),
             "formal_selected_allowed": formal_selected_allowed,
+            "theme_exposure_cap": round(float(getattr(profile, "committee_theme_exposure_cap", 0.25) or 0.25), 4),
+            "incremental_theme_exposure_cap": round(float(getattr(profile, "committee_incremental_theme_exposure_cap", 0.18) or 0.18), 4),
         },
         "committee_components": {
             "sector_raw_100": round(sector_raw_100, 4),
@@ -510,6 +540,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "crowding_risk_raw_100": round(crowding_risk_raw_100, 4),
             "theme_concentration_after_trade_raw_100": round(theme_concentration_after_trade_raw_100, 4) if theme_concentration_after_trade_raw_100 is not None else None,
             "projected_theme_exposure": round(projected_theme_exposure, 4) if projected_theme_exposure > 0.0 else None,
+            "incremental_theme_exposure": round(incremental_theme_exposure, 4) if incremental_theme_exposure > 0.0 else None,
             "sector_group_score": round(sector_group_score, 4),
             "flow_group_score": round(flow_group_score, 4),
             "retention_group_score": round(retention_group_score, 4),
@@ -532,6 +563,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "crowding_risk_raw_100": crowding_source,
             "theme_concentration_after_trade_raw_100": theme_source,
             "projected_theme_exposure": "raw:projected_theme_exposure" if projected_theme_exposure > 0.0 else "missing",
+            "incremental_theme_exposure": "raw:incremental_theme_exposure" if incremental_theme_exposure > 0.0 else "missing",
             "sector_group_score": "derived:raw_score_mapping",
             "flow_group_score": "derived:raw_score_mapping",
             "retention_group_score": "derived:raw_score_mapping",
@@ -593,6 +625,21 @@ def apply_short_trade_committee_governance(
             _append_unique(downgrade_reasons, veto)
         if "committee_isolated_attention_veto" in vetoes:
             _append_unique(blockers, "committee_isolated_attention_veto")
+            gate_status["committee"] = "veto"
+            gate_status["score"] = "fail"
+            return "rejected", downgrade_reasons
+        if "committee_gap_to_limit_veto" in vetoes:
+            _append_unique(blockers, "committee_gap_to_limit_veto")
+            gate_status["committee"] = "veto"
+            gate_status["score"] = "fail"
+            return "rejected", downgrade_reasons
+        if "committee_failed_breakout_history_veto" in vetoes:
+            _append_unique(blockers, "committee_failed_breakout_history_veto")
+            gate_status["committee"] = "veto"
+            gate_status["score"] = "fail"
+            return "rejected", downgrade_reasons
+        if "committee_failed_breakout_metric_veto" in vetoes:
+            _append_unique(blockers, "committee_failed_breakout_metric_veto")
             gate_status["committee"] = "veto"
             gate_status["score"] = "fail"
             return "rejected", downgrade_reasons

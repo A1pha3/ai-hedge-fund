@@ -708,6 +708,48 @@ def test_queue_limit_blocked_pipeline_decision_queues_sell_with_ratio_and_reason
     assert engine._pending_sell_queue[0].sell_ratio == pytest.approx(0.25)
 
 
+def test_record_executed_buy_metadata_persists_theme_identity_from_watchlist():
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=StubPipeline(post_market_plans=[], intraday_responses=[]),
+    )
+    engine._portfolio.apply_long_buy("AAPL", 100, 10.0)
+
+    watch_item = LayerCResult(
+        ticker="AAPL",
+        score_c=0.12,
+        score_final=0.74,
+        score_b=0.81,
+        quality_score=0.69,
+        decision="strong_buy",
+        theme_name="AI算力",
+        theme_category="technology",
+        is_new_theme=True,
+    )
+
+    engine._decision_executor._record_buy_execution(
+        ticker="AAPL",
+        executed_qty=100,
+        trade_date_compact="20240304",
+        buy_order_by_ticker={"AAPL": type("BuyOrderLike", (), {"score_final": 0.81, "quality_score": 0.69})()},
+        watchlist_by_ticker={"AAPL": watch_item},
+    )
+
+    snapshot = engine._portfolio.get_snapshot()
+    assert snapshot["positions"]["AAPL"]["theme_name"] == "AI算力"
+    assert snapshot["positions"]["AAPL"]["theme_category"] == "technology"
+    assert snapshot["positions"]["AAPL"]["is_new_theme"] is True
+
+
 def test_pipeline_mode_registers_defensive_exit_cooldown_for_same_day_post_market(monkeypatch):
     _patch_market_data(
         monkeypatch,

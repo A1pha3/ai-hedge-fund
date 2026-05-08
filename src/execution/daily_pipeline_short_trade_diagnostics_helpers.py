@@ -627,6 +627,7 @@ def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -
         volume_min=SHORT_TRADE_BOUNDARY_VOLUME_MIN,
         catalyst_min=SHORT_TRADE_BOUNDARY_CATALYST_MIN,
         candidate_score_min=SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN,
+        raw_candidate_metrics={**dict(entry.get("short_trade_boundary_metrics") or {}), **dict(entry.get("metrics") or {})},
     )
 
 

@@ -96,6 +96,23 @@ def test_trade_executor_allows_t_plus_1_next_day_sell(portfolio):
     assert snapshot["positions"]["AAPL"]["long"] == 0
 
 
+def test_portfolio_record_long_entry_persists_theme_identity_metadata(portfolio):
+    portfolio.apply_long_buy("AAPL", 10, 100.0)
+    portfolio.record_long_entry(
+        "AAPL",
+        "2024-01-15",
+        reset=True,
+        theme_name="AI算力",
+        theme_category="technology",
+        is_new_theme=True,
+    )
+
+    snapshot = portfolio.get_snapshot()
+    assert snapshot["positions"]["AAPL"]["theme_name"] == "AI算力"
+    assert snapshot["positions"]["AAPL"]["theme_category"] == "technology"
+    assert snapshot["positions"]["AAPL"]["is_new_theme"] is True
+
+
 def test_trade_executor_t_plus_1_no_entry_date_allows_sell(portfolio):
     """Test T+1: positions without entry_date (legacy) can be sold."""
     ex = TradeExecutor()

@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state_metrics
+from src.targets.short_trade_target_kill_switch_helpers import extract_btst_kill_switch_metrics
+from src.targets.short_trade_target_kill_switch_helpers import resolve_btst_kill_switch
 
 
 BTST_GATE_TO_SHORT_TRADE_TARGET_PROFILE: dict[str, str] = {
@@ -26,8 +28,18 @@ def resolve_short_trade_target_profile_name_from_market_state(
     gate_payload = classify_btst_regime_gate_from_market_state_metrics(market_state)
     if gate_payload is None:
         return fallback
+    if hasattr(market_state, "model_dump"):
+        market_state_payload = dict(market_state.model_dump(mode="json") or {})
+    elif isinstance(market_state, dict):
+        market_state_payload = dict(market_state)
+    else:
+        market_state_payload = {}
+    effective_gate = str(gate_payload.get("gate") or "")
+    if effective_gate:
+        kill_switch = resolve_btst_kill_switch(extract_btst_kill_switch_metrics(market_state_payload), effective_gate)
+        effective_gate = str(kill_switch.get("effective_gate") or effective_gate)
     return map_btst_gate_to_short_trade_target_profile_name(
-        str(gate_payload.get("gate") or ""),
+        effective_gate,
         fallback=fallback,
     )
 
