@@ -69,6 +69,12 @@ def _committee_group_score(raw_score_100: float) -> float:
     return 0.0
 
 
+def _committee_excess_ratio(raw_score_100: float, floor_100: float) -> float:
+    if floor_100 >= 100.0:
+        return 0.0
+    return clamp_unit_interval((float(raw_score_100 or 0.0) - float(floor_100 or 0.0)) / max(1.0, 100.0 - float(floor_100 or 0.0)))
+
+
 def _resolve_committee_gate(*, input_data: Any, snapshot: dict[str, Any]) -> str:
     btst_regime_gate_payload = classify_btst_regime_gate_from_market_state_metrics(dict(input_data.market_state or {}))
     inferred_gate = str((btst_regime_gate_payload or {}).get("gate") or "").strip().lower()
@@ -350,6 +356,86 @@ def _crowding_risk_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, An
     return _risk_score_100(proxy), "proxy:crowding_risk"
 
 
+def _fragile_breakout_activation_raw_score(raw_metrics: dict[str, Any], *, attention_raw_100: float, crowding_risk_raw_100: float) -> tuple[float, str]:
+    activation_raw_100 = _weighted_average([(attention_raw_100, 0.55), (crowding_risk_raw_100, 0.45)])
+    activation_source = "derived:attention_crowding_activation"
+    turnover_ratio_20 = raw_metrics.get("turnover_ratio_20")
+    limit_up_memory_259 = raw_metrics.get("limit_up_memory_259")
+    turnover_boost = 0.0
+    memory_boost = 0.0
+    if turnover_ratio_20 is not None:
+        turnover_value = float(turnover_ratio_20 or 0.0)
+        if turnover_value >= 2.5:
+            turnover_boost = 8.0
+        elif turnover_value >= 2.0:
+            turnover_boost = 5.0
+        elif turnover_value >= 1.5:
+            turnover_boost = 2.0
+    if limit_up_memory_259 is not None:
+        limit_up_value = _normalized_ratio(limit_up_memory_259)
+        if limit_up_value >= 0.8:
+            memory_boost = 8.0
+        elif limit_up_value >= 0.5:
+            memory_boost = 4.0
+        elif limit_up_value >= 0.3:
+            memory_boost = 1.5
+    if turnover_boost > 0.0 or memory_boost > 0.0:
+        activation_raw_100 += turnover_boost + memory_boost
+        if turnover_boost >= 5.0 and memory_boost >= 4.0:
+            activation_raw_100 += 4.0
+        activation_source = "derived:attention_crowding_turnover_memory_activation"
+    return round(min(100.0, activation_raw_100), 4), activation_source
+
+
+def _fragile_breakout_fragility_raw_score(
+    raw_metrics: dict[str, Any],
+    *,
+    close_structure_raw_100: float,
+    retention_raw_100: float,
+    gap_risk_raw_100: float,
+    supply_pressure_risk_raw_100: float,
+) -> tuple[float, str]:
+    close_structure_risk_raw_100 = max(0.0, 100.0 - float(close_structure_raw_100 or 0.0))
+    retention_risk_raw_100 = max(0.0, 100.0 - float(retention_raw_100 or 0.0))
+    fragility_base_raw_100 = _weighted_average(
+        [
+            (close_structure_risk_raw_100, 0.20),
+            (retention_risk_raw_100, 0.30),
+            (gap_risk_raw_100, 0.20),
+            (supply_pressure_risk_raw_100, 0.30),
+        ]
+    )
+    fragility_raw_100 = min(100.0, max(0.0, (fragility_base_raw_100 * 1.5) - 10.0))
+    fragility_source = "derived:close_structure_retention_gap_supply_fragility"
+    failed_breakout_10 = raw_metrics.get("failed_breakout_10")
+    if failed_breakout_10 is not None:
+        failed_breakout_value = float(failed_breakout_10 or 0.0)
+        if failed_breakout_value >= 3.0:
+            fragility_raw_100 += 12.0
+        elif failed_breakout_value >= 2.0:
+            fragility_raw_100 += 7.0
+        elif failed_breakout_value >= 1.0:
+            fragility_raw_100 += 3.0
+        fragility_source = "derived:close_structure_retention_gap_supply_failed_breakout_fragility"
+    return round(min(100.0, fragility_raw_100), 4), fragility_source
+
+
+def _fragile_breakout_risk_scores(profile: Any, *, activation_raw_100: float, fragility_raw_100: float) -> tuple[float, float, dict[str, float]]:
+    activation_excess_ratio = _committee_excess_ratio(activation_raw_100, float(getattr(profile, "committee_fragile_breakout_activation_floor", 60.0) or 60.0))
+    fragility_excess_ratio = _committee_excess_ratio(fragility_raw_100, float(getattr(profile, "committee_fragile_breakout_fragility_floor", 55.0) or 55.0))
+    neutral_band = 0.03
+    interaction_ratio = activation_excess_ratio * fragility_excess_ratio
+    effective_interaction_ratio = clamp_unit_interval((interaction_ratio - neutral_band) / max(0.01, 0.18 - neutral_band))
+    fragile_breakout_risk_raw_100 = round(float(getattr(profile, "committee_fragile_breakout_risk_cap", 85.0) or 85.0) * effective_interaction_ratio, 4)
+    fragile_breakout_quality_raw_100 = round(100.0 - fragile_breakout_risk_raw_100, 4)
+    return fragile_breakout_risk_raw_100, fragile_breakout_quality_raw_100, {
+        "activation_excess_ratio": round(activation_excess_ratio, 4),
+        "fragility_excess_ratio": round(fragility_excess_ratio, 4),
+        "interaction_ratio": round(interaction_ratio, 4),
+        "effective_interaction_ratio": round(effective_interaction_ratio, 4),
+    }
+
+
 def _theme_concentration_risk_raw_score(raw_metrics: dict[str, Any], input_data: Any) -> tuple[float | None, str]:
     projected_theme_exposure = _as_float(raw_metrics, "projected_theme_exposure", _as_float(dict(input_data.replay_context or {}), "projected_theme_exposure"))
     if projected_theme_exposure <= 0.0:
@@ -439,6 +525,23 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     gap_risk_raw_100, gap_risk_source = _gap_risk_raw_score(snapshot, raw_metrics)
     liquidity_capacity_raw_100, liquidity_capacity_source = _liquidity_capacity_raw_score(snapshot, raw_metrics, input_data)
     crowding_risk_raw_100, crowding_source = _crowding_risk_raw_score(snapshot, raw_metrics)
+    fragile_breakout_activation_raw_100, fragile_breakout_activation_source = _fragile_breakout_activation_raw_score(
+        raw_metrics,
+        attention_raw_100=attention_raw_100,
+        crowding_risk_raw_100=crowding_risk_raw_100,
+    )
+    fragile_breakout_fragility_raw_100, fragile_breakout_fragility_source = _fragile_breakout_fragility_raw_score(
+        raw_metrics,
+        close_structure_raw_100=close_structure_raw_100,
+        retention_raw_100=retention_raw_100,
+        gap_risk_raw_100=gap_risk_raw_100,
+        supply_pressure_risk_raw_100=supply_pressure_risk_raw_100,
+    )
+    fragile_breakout_risk_raw_100, fragile_breakout_quality_raw_100, fragile_breakout_risk_details = _fragile_breakout_risk_scores(
+        profile,
+        activation_raw_100=fragile_breakout_activation_raw_100,
+        fragility_raw_100=fragile_breakout_fragility_raw_100,
+    )
     theme_concentration_after_trade_raw_100, theme_source = _theme_concentration_risk_raw_score(raw_metrics, input_data)
     projected_theme_exposure = _as_float(raw_metrics, "projected_theme_exposure", _as_float(dict(input_data.replay_context or {}), "projected_theme_exposure"))
     incremental_theme_exposure = _as_float(raw_metrics, "incremental_theme_exposure", _as_float(dict(input_data.replay_context or {}), "incremental_theme_exposure"))
@@ -450,14 +553,24 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     flow_60_raw_100 = _flow_60_raw_score(raw_metrics)
     penalties, penalty_total = _build_committee_penalties(snapshot, raw_metrics)
 
-    alpha_edge_score = _weighted_average(
-        [
+    fragile_breakout_enabled = bool(getattr(profile, "committee_fragile_breakout_risk_enabled", False))
+    if fragile_breakout_enabled:
+        fragile_breakout_alpha_weight = float(getattr(profile, "committee_fragile_breakout_alpha_weight", 0.10) or 0.10)
+        alpha_components = [
+            (sector_raw_100, 0.30),
+            (flow_raw_100, 0.30),
+            (structure_raw_100, 0.25),
+            (attention_raw_100, max(0.0, 0.15 - fragile_breakout_alpha_weight)),
+            (fragile_breakout_quality_raw_100, max(0.0, fragile_breakout_alpha_weight)),
+        ]
+    else:
+        alpha_components = [
             (sector_raw_100, 0.30),
             (flow_raw_100, 0.30),
             (structure_raw_100, 0.25),
             (attention_raw_100, 0.15),
         ]
-    )
+    alpha_edge_score = _weighted_average(alpha_components)
     beta_execution_score = _weighted_average(
         [
             (retention_raw_100, 0.40),
@@ -600,6 +713,10 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "regime_admissibility_raw_100": round(gamma_components[0][0], 4),
             "liquidity_capacity_raw_100": round(liquidity_capacity_raw_100, 4),
             "crowding_risk_raw_100": round(crowding_risk_raw_100, 4),
+            "fragile_breakout_activation_raw_100": round(fragile_breakout_activation_raw_100, 4),
+            "fragile_breakout_fragility_raw_100": round(fragile_breakout_fragility_raw_100, 4),
+            "fragile_breakout_risk_raw_100": round(fragile_breakout_risk_raw_100, 4),
+            "fragile_breakout_quality_raw_100": round(fragile_breakout_quality_raw_100, 4),
             "theme_concentration_after_trade_raw_100": round(theme_concentration_after_trade_raw_100, 4) if theme_concentration_after_trade_raw_100 is not None else None,
             "projected_theme_exposure": round(projected_theme_exposure, 4) if projected_theme_exposure > 0.0 else None,
             "incremental_theme_exposure": round(incremental_theme_exposure, 4) if incremental_theme_exposure > 0.0 else None,
@@ -625,6 +742,10 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "gap_risk_raw_100": gap_risk_source,
             "liquidity_capacity_raw_100": liquidity_capacity_source,
             "crowding_risk_raw_100": crowding_source,
+            "fragile_breakout_activation_raw_100": fragile_breakout_activation_source,
+            "fragile_breakout_fragility_raw_100": fragile_breakout_fragility_source,
+            "fragile_breakout_risk_raw_100": "derived:fragile_breakout_formula",
+            "fragile_breakout_quality_raw_100": "derived:fragile_breakout_formula",
             "theme_concentration_after_trade_raw_100": theme_source,
             "projected_theme_exposure": "raw:projected_theme_exposure" if projected_theme_exposure > 0.0 else "missing",
             "incremental_theme_exposure": "raw:incremental_theme_exposure" if incremental_theme_exposure > 0.0 else "missing",
@@ -645,6 +766,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         "committee_gate_status": component_status,
         "committee_advisory_reasons": advisory_reasons,
         "committee_kill_switch": kill_switch,
+        "committee_fragile_breakout_risk_details": fragile_breakout_risk_details,
     }
 
 

@@ -238,6 +238,11 @@ class ShortTradeTargetProfile:
     committee_alpha_weight: float = 0.55
     committee_beta_weight: float = 0.25
     committee_gamma_weight: float = 0.20
+    committee_fragile_breakout_risk_enabled: bool = False
+    committee_fragile_breakout_alpha_weight: float = 0.10
+    committee_fragile_breakout_activation_floor: float = 60.0
+    committee_fragile_breakout_fragility_floor: float = 55.0
+    committee_fragile_breakout_risk_cap: float = 85.0
     committee_alpha_min_aggressive_trade: float = 0.0
     committee_beta_min_aggressive_trade: float = 0.0
     committee_gamma_min_aggressive_trade: float = 0.0

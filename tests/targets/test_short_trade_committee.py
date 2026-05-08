@@ -111,6 +111,102 @@ def test_auto_profiles_use_strategy_doc_thresholds() -> None:
     assert retention_follow.committee_score_min_normal_trade == pytest.approx(66.0)
 
 
+def test_committee_profiles_enable_fragile_breakout_risk_only_for_btst_profiles() -> None:
+    default_profile = get_short_trade_target_profile("default")
+    ignition_breakout = get_short_trade_target_profile("ignition_breakout")
+    retention_follow = get_short_trade_target_profile("retention_follow")
+
+    assert default_profile.committee_fragile_breakout_risk_enabled is False
+    assert ignition_breakout.committee_fragile_breakout_risk_enabled is True
+    assert retention_follow.committee_fragile_breakout_risk_enabled is True
+
+
+def test_committee_fragile_breakout_risk_penalizes_crowded_weak_breakout_more_than_healthy_leader() -> None:
+    healthy_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "sector_amt_share": 0.060,
+                "flow_60": 0.12,
+                "persist_120": 0.72,
+                "close_support_30": 0.12,
+                "retention_proxy": 0.82,
+                "attention_composite": 0.92,
+                "turnover_ratio_20": 1.10,
+                "limit_up_memory_259": 0.18,
+                "candidate_pool_avg_amount_share_of_cutoff": 1.35,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+    weak_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "sector_amt_share": 0.025,
+                "flow_60": 0.00,
+                "persist_120": 0.36,
+                "close_support_30": 0.01,
+                "retention_proxy": 0.48,
+                "attention_composite": 0.88,
+                "turnover_ratio_20": 2.60,
+                "limit_up_memory_259": 0.90,
+                "candidate_pool_avg_amount_share_of_cutoff": 0.88,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert healthy_snapshot["committee_components"]["fragile_breakout_risk_raw_100"] < 35.0
+    assert weak_snapshot["committee_components"]["fragile_breakout_risk_raw_100"] > 65.0
+    assert weak_snapshot["committee_components"]["fragile_breakout_quality_raw_100"] < healthy_snapshot["committee_components"]["fragile_breakout_quality_raw_100"]
+    assert weak_snapshot["alpha_edge_score"] < healthy_snapshot["alpha_edge_score"]
+
+
+def test_committee_fragile_breakout_risk_keeps_output_when_some_raw_inputs_are_missing() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "retention_proxy": 0.78,
+            "close_support_30": 0.04,
+        }
+    )
+    entry["historical_prior"]["btst_regime_gate"] = "normal_trade"
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="retention_follow",
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert "fragile_breakout_activation_raw_100" in snapshot["committee_components"]
+    assert "fragile_breakout_fragility_raw_100" in snapshot["committee_components"]
+    assert snapshot["committee_component_sources"]["fragile_breakout_risk_raw_100"] == "derived:fragile_breakout_formula"
+
+
+def test_evaluate_short_trade_rejected_target_surfaces_fragile_breakout_committee_components() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "sector_amt_share": 0.025,
+                "flow_60": 0.00,
+                "persist_120": 0.36,
+                "close_support_30": 0.01,
+                "retention_proxy": 0.48,
+                "attention_composite": 0.88,
+                "turnover_ratio_20": 2.60,
+                "limit_up_memory_259": 0.90,
+                "candidate_pool_avg_amount_share_of_cutoff": 0.88,
+            }
+        ),
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert "fragile_breakout_risk_raw_100" in result.metrics_payload["committee"]["components"]
+    assert result.metrics_payload["committee"]["component_sources"]["fragile_breakout_risk_raw_100"] == "derived:fragile_breakout_formula"
+
+
 def test_short_trade_snapshot_surfaces_committee_scores() -> None:
     snapshot = build_short_trade_target_snapshot_from_entry(
         trade_date="20260328",
