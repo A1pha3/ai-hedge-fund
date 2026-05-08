@@ -1,5 +1,7 @@
 """组合层数据模型 — 仓位计划 + 退出信号 + 持仓跟踪"""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -43,6 +45,8 @@ class HoldingState(BaseModel):
     entry_score: float = 0.0
     quality_score: float = Field(ge=0, le=1, default=0.5)
     is_fundamental_driven: bool = False
+    execution_contract_bucket: str = ""
+    btst_runtime_metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class IndustryExposure(BaseModel):

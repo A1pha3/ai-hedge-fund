@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 from contextlib import contextmanager
 from collections.abc import Callable
 
+from src.execution.daily_pipeline import resolve_default_fast_selected_analysts
+
 if TYPE_CHECKING:
     from src.backtesting.types import PerformanceMetrics
     from src.execution.daily_pipeline import DailyPipeline
@@ -30,6 +32,19 @@ def _apply_default_btst_formal_flow_flags(*, selection_target: str):
                 os.environ.pop("BTST_0422_P2_REGIME_GATE_MODE", None)
             else:
                 os.environ["BTST_0422_P2_REGIME_GATE_MODE"] = previous_p2_mode
+
+
+def _resolve_effective_fast_selected_analysts(
+    *,
+    selection_target: str,
+    selected_analysts: list[str] | None,
+    fast_selected_analysts: list[str] | None,
+) -> list[str] | None:
+    return resolve_default_fast_selected_analysts(
+        selection_target=selection_target,
+        selected_analysts=selected_analysts,
+        fast_selected_analysts=fast_selected_analysts,
+    )
 
 
 def finalize_runtime_run(
@@ -98,6 +113,11 @@ def run_paper_trading_session(
     run_runtime_backtest_fn: Callable[[SessionRuntimeContext], PerformanceMetrics],
     finalize_runtime_run_fn: Callable[..., PaperTradingArtifacts],
 ) -> PaperTradingArtifacts:
+    effective_fast_selected_analysts = _resolve_effective_fast_selected_analysts(
+        selection_target=selection_target,
+        selected_analysts=selected_analysts,
+        fast_selected_analysts=fast_selected_analysts,
+    )
     with _apply_default_btst_formal_flow_flags(selection_target=selection_target):
         context = prepare_session_runtime_context_fn(
             output_dir=output_dir,
@@ -106,7 +126,7 @@ def run_paper_trading_session(
             model_provider=model_provider,
             pipeline=pipeline,
             selected_analysts=selected_analysts,
-            fast_selected_analysts=fast_selected_analysts,
+            fast_selected_analysts=effective_fast_selected_analysts,
             short_trade_target_profile_name=short_trade_target_profile_name,
             short_trade_target_profile_overrides=short_trade_target_profile_overrides,
             selection_target=selection_target,
@@ -126,7 +146,7 @@ def run_paper_trading_session(
             tickers=tickers,
             initial_capital=initial_capital,
             selected_analysts=selected_analysts,
-            fast_selected_analysts=fast_selected_analysts,
+            fast_selected_analysts=effective_fast_selected_analysts,
             short_trade_target_profile_name=short_trade_target_profile_name,
             short_trade_target_profile_overrides=short_trade_target_profile_overrides,
             selection_target=selection_target,

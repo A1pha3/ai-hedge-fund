@@ -45,6 +45,8 @@ class PositionState(PositionStateRequired, total=False):
     theme_name: str
     theme_category: str
     is_new_theme: bool
+    execution_contract_bucket: str
+    btst_runtime_metrics: dict[str, Any]
 
 
 class TickerRealizedGains(TypedDict):

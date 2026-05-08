@@ -711,7 +711,7 @@ def test_run_post_market_merge_approved_ticker_does_not_apply_relief_for_same_ti
     assert plan.selection_targets["300720"].candidate_source == "layer_c_watchlist_merge_approved"
     assert "merge_approved_continuation" in plan.selection_targets["300720"].candidate_reason_codes
     assert plan.selection_targets["300720"].short_trade is not None
-    assert plan.selection_targets["300720"].short_trade.decision == "selected"
+    assert plan.selection_targets["300720"].short_trade.decision == "near_miss"
     assert "merge_approved_continuation_relief_applied" not in plan.selection_targets["300720"].short_trade.positive_tags
     assert plan.selection_targets["300720"].short_trade.metrics_payload["merge_approved_continuation_relief"]["applied"] is False
     assert plan.selection_targets["300720"].short_trade.metrics_payload["merge_approved_continuation_relief"]["gate_hits"]["historical_execution_quality"] is False
@@ -1151,7 +1151,7 @@ def test_run_post_market_releases_watchlist_avoid_shadow_candidate_into_selectio
     assert plan.selection_targets["000960"].candidate_source == "watchlist_filter_diagnostics"
 
 
-def test_run_post_market_keeps_strong_watchlist_conflict_out_of_shadow_release():
+def test_run_post_market_keeps_strong_watchlist_conflict_out_of_shadow_release_and_blocks_short_trade():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [], target_mode="dual_target")
 
     original_build_candidate_pool = daily_pipeline_module.build_candidate_pool
@@ -1201,7 +1201,7 @@ def test_run_post_market_keeps_strong_watchlist_conflict_out_of_shadow_release()
     assert diagnostics["filters"]["watchlist"]["released_shadow_tickers"] == []
     assert "000960" in plan.selection_targets
     assert plan.selection_targets["000960"].short_trade is not None
-    assert plan.selection_targets["000960"].short_trade.decision == "selected"
+    assert plan.selection_targets["000960"].short_trade.decision == "blocked"
     assert plan.selection_targets["000960"].candidate_source == "watchlist_filter_diagnostics"
 
 
@@ -4205,6 +4205,97 @@ def test_default_exit_checker_uses_logic_scores_when_available(monkeypatch: pyte
     assert len(exits) == 1
     assert exits[0].ticker == "300724"
     assert exits[0].trigger_reason == "logic_stop_loss"
+
+
+def test_default_exit_checker_emits_btst_time_stop_from_position_snapshot_contract_bucket(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "get_daily_basic_batch",
+        lambda trade_date: pd.DataFrame([{"ts_code": "300724.SZ", "close": 145.0}]),
+    )
+
+    exits = daily_pipeline_module._default_exit_checker(
+        {
+            "cash": 50_000,
+            "positions": {
+                "300724": {
+                    "long": 100,
+                    "short": 0,
+                    "long_cost_basis": 142.924065,
+                    "short_cost_basis": 0.0,
+                    "short_margin_used": 0.0,
+                    "entry_date": "20260203",
+                    "holding_days": 10,
+                    "max_unrealized_pnl_pct": 0.05,
+                    "profit_take_stage": 0,
+                    "entry_score": 0.22,
+                    "quality_score": 0.62,
+                    "is_fundamental_driven": False,
+                    "industry_sw": "电力设备",
+                    "execution_contract_bucket": "formal_full",
+                }
+            },
+            "realized_gains": {},
+        },
+        "20260217",
+    )
+
+    assert len(exits) == 1
+    assert exits[0].ticker == "300724"
+    assert exits[0].trigger_reason == "btst_time_stop"
+
+
+def test_attach_btst_runtime_exit_metrics_to_portfolio_snapshot_threads_layer_c_metrics():
+    portfolio_snapshot = {
+        "cash": 50_000,
+        "positions": {
+            "300724": {
+                "long": 100,
+                "short": 0,
+                "long_cost_basis": 142.924065,
+                "short_cost_basis": 0.0,
+                "short_margin_used": 0.0,
+                "entry_date": "20260203",
+                "holding_days": 5,
+                "max_unrealized_pnl_pct": 0.03,
+                "profit_take_stage": 0,
+                "entry_score": 0.22,
+                "quality_score": 0.62,
+                "is_fundamental_driven": False,
+                "industry_sw": "电力设备",
+                "execution_contract_bucket": "formal_full",
+            }
+        },
+        "realized_gains": {},
+    }
+    layer_c_results = [
+        LayerCResult(
+            ticker="300724",
+            score_c=0.4,
+            score_final=0.41,
+            score_b=0.39,
+            quality_score=0.65,
+            metrics={
+                "flow_60": 0.01,
+                "persist_120": 0.44,
+                "close_support_30": 0.0,
+                "sector_amt_share": 0.01,
+                "sector_breadth_3": 0.08,
+                "follow_ratio_2": 0.05,
+                "catalyst_freshness": 0.15,
+                "retention_proxy": 0.42,
+                "supply_pressure_60": 0.28,
+                "failed_breakout_10": 3.0,
+                "prior_retention_score": 42.0,
+            },
+        ),
+        LayerCResult(ticker="000001", score_c=0.1, score_final=0.1, score_b=0.1, quality_score=0.5, metrics={"flow_60": 0.12}),
+    ]
+
+    updated_snapshot = daily_pipeline_module._attach_btst_runtime_exit_metrics_to_portfolio_snapshot(portfolio_snapshot, layer_c_results)
+
+    assert updated_snapshot["positions"]["300724"]["btst_runtime_metrics"]["flow_60"] == pytest.approx(0.01)
+    assert updated_snapshot["positions"]["300724"]["btst_runtime_metrics"]["failed_breakout_10"] == pytest.approx(3.0)
 
 
 def test_signal_decay_jump_gap():

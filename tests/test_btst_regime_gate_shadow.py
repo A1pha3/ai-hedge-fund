@@ -5,6 +5,9 @@ from contextlib import contextmanager
 import src.execution.daily_pipeline as daily_pipeline_module
 
 from src.execution.daily_pipeline_post_market_helpers import build_plan_target_shell_inputs
+from src.execution.daily_pipeline_post_market_helpers import build_post_market_execution_plan
+from src.execution.daily_pipeline_post_market_helpers import PostMarketCandidateContext
+from src.execution.daily_pipeline_post_market_helpers import PostMarketOrderContext
 from src.execution.daily_pipeline_post_market_helpers import PostMarketSelectionTargetInputs
 from src.execution.daily_pipeline_post_market_helpers import PostMarketWatchlistContext
 from src.execution.daily_pipeline_post_market_helpers import build_selection_target_inputs
@@ -424,6 +427,413 @@ def test_resolve_post_market_selection_targets_injects_incremental_theme_exposur
     assert captured["supplemental_short_trade_entries"][0]["incremental_theme_exposure"] == 0.18
 
 
+def test_resolve_post_market_selection_targets_injects_projected_theme_exposure_from_existing_positions_and_buy_orders() -> None:
+    watch_item = LayerCResult(
+        ticker="300724",
+        score_c=0.12,
+        score_final=0.74,
+        score_b=0.81,
+        quality_score=0.69,
+        decision="strong_buy",
+        theme_name="AI算力",
+    )
+    watchlist_context = PostMarketWatchlistContext(
+        watchlist=[watch_item],
+        layer_b_filter_diagnostics={},
+        watchlist_filter_diagnostics={},
+        historical_prior_by_ticker={},
+        short_trade_candidate_diagnostics={},
+        catalyst_theme_candidate_diagnostics={},
+        candidate_by_ticker={},
+        price_map={},
+    )
+    captured: dict[str, object] = {}
+
+    @contextmanager
+    def use_profile(**kwargs):
+        yield None
+
+    def build_inputs(**kwargs):
+        return PostMarketSelectionTargetInputs(
+            rejected_entries=[],
+            supplemental_short_trade_entries=[{"ticker": "300724", "theme_name": "AI算力"}],
+            candidate_entry_filter_diagnostics={},
+        )
+
+    def build_targets(**kwargs):
+        captured["watchlist"] = kwargs["watchlist"]
+        captured["supplemental_short_trade_entries"] = kwargs["supplemental_short_trade_entries"]
+        return {}, {}
+
+    resolve_post_market_selection_targets(
+        trade_date="20260506",
+        watchlist_context=watchlist_context,
+        portfolio_snapshot={
+            "cash": 500000.0,
+            "positions": {
+                "002594": {
+                    "long": 1000,
+                    "long_cost_basis": 50.0,
+                    "theme_name": "AI算力",
+                }
+            },
+        },
+        market_state={},
+        buy_orders=[PositionPlan(ticker="300724", shares=100, amount=60000.0, score_final=0.81, execution_ratio=1.0, quality_score=0.69)],
+        counts={},
+        funnel_diagnostics={},
+        target_mode="short_trade_only",
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+        use_short_trade_target_profile_fn=use_profile,
+        build_selection_target_inputs_fn=build_inputs,
+        attach_historical_prior_to_entries_fn=lambda entries, prior_by_ticker: entries,
+        build_selection_targets_fn=build_targets,
+    )
+
+    assert captured["watchlist"][0].projected_theme_exposure == 0.2
+    assert captured["supplemental_short_trade_entries"][0]["projected_theme_exposure"] == 0.2
+
+
+def test_resolve_post_market_selection_targets_returns_resolved_watchlist_for_downstream_plan_persistence() -> None:
+    watch_item = LayerCResult(
+        ticker="300724",
+        score_c=0.12,
+        score_final=0.74,
+        score_b=0.81,
+        quality_score=0.69,
+        decision="strong_buy",
+        theme_name="AI算力",
+    )
+    watchlist_context = PostMarketWatchlistContext(
+        watchlist=[watch_item],
+        layer_b_filter_diagnostics={},
+        watchlist_filter_diagnostics={},
+        historical_prior_by_ticker={},
+        short_trade_candidate_diagnostics={},
+        catalyst_theme_candidate_diagnostics={},
+        candidate_by_ticker={},
+        price_map={},
+    )
+
+    @contextmanager
+    def use_profile(**kwargs):
+        yield None
+
+    def build_inputs(**kwargs):
+        return PostMarketSelectionTargetInputs(
+            rejected_entries=[],
+            supplemental_short_trade_entries=[],
+            candidate_entry_filter_diagnostics={},
+        )
+
+    resolution = resolve_post_market_selection_targets(
+        trade_date="20260506",
+        watchlist_context=watchlist_context,
+        portfolio_snapshot={
+            "cash": 500000.0,
+            "positions": {
+                "002594": {
+                    "long": 1000,
+                    "long_cost_basis": 50.0,
+                    "theme_name": "AI算力",
+                }
+            },
+        },
+        market_state={},
+        buy_orders=[PositionPlan(ticker="300724", shares=100, amount=60000.0, score_final=0.81, execution_ratio=1.0, quality_score=0.69)],
+        counts={},
+        funnel_diagnostics={},
+        target_mode="short_trade_only",
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+        use_short_trade_target_profile_fn=use_profile,
+        build_selection_target_inputs_fn=build_inputs,
+        attach_historical_prior_to_entries_fn=lambda entries, prior_by_ticker: entries,
+        build_selection_targets_fn=lambda **kwargs: ({}, {}),
+    )
+
+    assert resolution.resolved_watchlist[0].projected_theme_exposure == 0.2
+
+
+def test_resolve_post_market_selection_targets_backfills_missing_intraday_metrics_for_committee_entries() -> None:
+    watch_item = LayerCResult(
+        ticker="301308",
+        score_c=0.12,
+        score_final=0.74,
+        score_b=0.81,
+        quality_score=0.69,
+        decision="strong_buy",
+        metrics={"sector_amt_share": 0.04},
+    )
+    watchlist_context = PostMarketWatchlistContext(
+        watchlist=[watch_item],
+        layer_b_filter_diagnostics={},
+        watchlist_filter_diagnostics={},
+        historical_prior_by_ticker={},
+        short_trade_candidate_diagnostics={},
+        catalyst_theme_candidate_diagnostics={},
+        candidate_by_ticker={},
+        price_map={},
+    )
+    captured: dict[str, object] = {}
+
+    @contextmanager
+    def use_profile(**kwargs):
+        yield None
+
+    def build_inputs(**kwargs):
+        return PostMarketSelectionTargetInputs(
+            rejected_entries=[{"ticker": "688498", "metrics": {"sector_amt_share": 0.06}}],
+            supplemental_short_trade_entries=[{"ticker": "002222", "metrics": {"sector_amt_share": 0.05}}],
+            candidate_entry_filter_diagnostics={},
+        )
+
+    def build_targets(**kwargs):
+        captured["watchlist"] = kwargs["watchlist"]
+        captured["rejected_entries"] = kwargs["rejected_entries"]
+        captured["supplemental_short_trade_entries"] = kwargs["supplemental_short_trade_entries"]
+        return {}, {}
+
+    resolve_post_market_selection_targets(
+        trade_date="20260506",
+        watchlist_context=watchlist_context,
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        market_state={},
+        buy_orders=[],
+        counts={},
+        funnel_diagnostics={},
+        target_mode="short_trade_only",
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+        use_short_trade_target_profile_fn=use_profile,
+        build_selection_target_inputs_fn=build_inputs,
+        attach_historical_prior_to_entries_fn=lambda entries, prior_by_ticker: entries,
+        build_selection_targets_fn=build_targets,
+        build_intraday_short_trade_metrics_fn=lambda ticker, trade_date: {
+            "flow_60": 0.12,
+            "flow_60_source": "bar_proxy",
+            "close_support_30": 0.05,
+            "close_support_30_source": "bar_proxy",
+            "persist_120": 0.48,
+            "persist_120_source": "bar_proxy",
+        },
+    )
+
+    assert captured["watchlist"][0].metrics["flow_60"] == 0.12
+    assert captured["watchlist"][0].metrics["flow_60_source"] == "bar_proxy"
+    assert captured["rejected_entries"][0]["metrics"]["close_support_30"] == 0.05
+    assert captured["rejected_entries"][0]["metrics"]["close_support_30_source"] == "bar_proxy"
+    assert captured["supplemental_short_trade_entries"][0]["metrics"]["persist_120"] == 0.48
+    assert captured["supplemental_short_trade_entries"][0]["metrics"]["persist_120_source"] == "bar_proxy"
+
+
+def test_resolve_post_market_selection_targets_preserves_existing_intraday_metrics_when_backfilling() -> None:
+    watch_item = LayerCResult(
+        ticker="301308",
+        score_c=0.12,
+        score_final=0.74,
+        score_b=0.81,
+        quality_score=0.69,
+        decision="strong_buy",
+        metrics={"flow_60": 0.2, "flow_60_source": "exact_tick"},
+    )
+    watchlist_context = PostMarketWatchlistContext(
+        watchlist=[watch_item],
+        layer_b_filter_diagnostics={},
+        watchlist_filter_diagnostics={},
+        historical_prior_by_ticker={},
+        short_trade_candidate_diagnostics={},
+        catalyst_theme_candidate_diagnostics={},
+        candidate_by_ticker={},
+        price_map={},
+    )
+    captured: dict[str, object] = {}
+
+    @contextmanager
+    def use_profile(**kwargs):
+        yield None
+
+    def build_inputs(**kwargs):
+        return PostMarketSelectionTargetInputs(
+            rejected_entries=[],
+            supplemental_short_trade_entries=[],
+            candidate_entry_filter_diagnostics={},
+        )
+
+    def build_targets(**kwargs):
+        captured["watchlist"] = kwargs["watchlist"]
+        return {}, {}
+
+    resolve_post_market_selection_targets(
+        trade_date="20260506",
+        watchlist_context=watchlist_context,
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        market_state={},
+        buy_orders=[],
+        counts={},
+        funnel_diagnostics={},
+        target_mode="short_trade_only",
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+        use_short_trade_target_profile_fn=use_profile,
+        build_selection_target_inputs_fn=build_inputs,
+        attach_historical_prior_to_entries_fn=lambda entries, prior_by_ticker: entries,
+        build_selection_targets_fn=build_targets,
+        build_intraday_short_trade_metrics_fn=lambda ticker, trade_date: {
+            "flow_60": 0.12,
+            "flow_60_source": "bar_proxy",
+            "close_support_30": 0.05,
+            "close_support_30_source": "bar_proxy",
+            "persist_120": 0.48,
+            "persist_120_source": "bar_proxy",
+        },
+    )
+
+    assert captured["watchlist"][0].metrics["flow_60"] == 0.2
+    assert captured["watchlist"][0].metrics["flow_60_source"] == "exact_tick"
+    assert captured["watchlist"][0].metrics["close_support_30"] == 0.05
+    assert captured["watchlist"][0].metrics["close_support_30_source"] == "bar_proxy"
+    assert captured["watchlist"][0].metrics["persist_120"] == 0.48
+    assert captured["watchlist"][0].metrics["persist_120_source"] == "bar_proxy"
+
+
+def test_build_post_market_execution_plan_uses_resolved_watchlist_for_plan_persistence() -> None:
+    raw_watch_item = LayerCResult(
+        ticker="300724",
+        score_c=0.12,
+        score_final=0.74,
+        score_b=0.81,
+        quality_score=0.69,
+        decision="strong_buy",
+        theme_name="AI算力",
+    )
+    resolved_watch_item = raw_watch_item.model_copy(
+        update={
+            "incremental_theme_exposure": 0.12,
+            "projected_theme_exposure": 0.2,
+        }
+    )
+    captured: dict[str, object] = {}
+
+    plan = build_post_market_execution_plan(
+        trade_date="20260506",
+        candidate_context=PostMarketCandidateContext(
+            candidates=[],
+            shadow_candidates=[],
+            candidate_pool_shadow_summary={},
+            market_state={},
+            fused=[],
+            shadow_fused=[],
+            high_pool=[],
+            top_precise_pool=[],
+            layer_c_results=[],
+            logic_scores={},
+            merge_approved_breakout_signal_uplift={},
+            merge_approved_layer_c_alignment_uplift={},
+            merge_approved_sector_resonance_uplift={},
+        ),
+        watchlist_context=PostMarketWatchlistContext(
+            watchlist=[raw_watch_item],
+            layer_b_filter_diagnostics={},
+            watchlist_filter_diagnostics={},
+            historical_prior_by_ticker={},
+            short_trade_candidate_diagnostics={},
+            catalyst_theme_candidate_diagnostics={},
+            candidate_by_ticker={},
+            price_map={},
+        ),
+        resolved_watchlist=[resolved_watch_item],
+        resolved_rejected_entries=[],
+        resolved_supplemental_short_trade_entries=[],
+        order_context=PostMarketOrderContext(
+            prebuy_selection_targets={},
+            buy_orders=[],
+            buy_order_filter_diagnostics={},
+            sell_orders=[],
+            sell_order_diagnostics={},
+        ),
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        timing_seconds={},
+        counts={},
+        funnel_diagnostics={},
+        merge_approved_tickers=set(),
+        merge_approved_score_boost=0.0,
+        merge_approved_watchlist_threshold_relaxation=0.0,
+        selection_targets={},
+        target_mode="short_trade_only",
+        dual_target_summary={},
+        short_trade_target_profile=build_short_trade_target_profile("default"),
+        serialize_short_trade_target_profile_fn=lambda profile: {},
+        generate_execution_plan_fn=lambda **kwargs: captured.setdefault("watchlist", kwargs["watchlist"]),
+    )
+
+    assert plan[0].projected_theme_exposure == 0.2
+
+
+def test_build_post_market_execution_plan_persists_resolved_shell_inputs_for_replay() -> None:
+    plan = build_post_market_execution_plan(
+        trade_date="20260506",
+        candidate_context=PostMarketCandidateContext(
+            candidates=[],
+            shadow_candidates=[],
+            candidate_pool_shadow_summary={},
+            market_state={},
+            fused=[],
+            shadow_fused=[],
+            high_pool=[],
+            top_precise_pool=[],
+            layer_c_results=[],
+            logic_scores={},
+            merge_approved_breakout_signal_uplift={},
+            merge_approved_layer_c_alignment_uplift={},
+            merge_approved_sector_resonance_uplift={},
+        ),
+        watchlist_context=PostMarketWatchlistContext(
+            watchlist=[],
+            layer_b_filter_diagnostics={},
+            watchlist_filter_diagnostics={},
+            historical_prior_by_ticker={},
+            short_trade_candidate_diagnostics={},
+            catalyst_theme_candidate_diagnostics={},
+            candidate_by_ticker={},
+            price_map={},
+        ),
+        resolved_watchlist=[],
+        resolved_rejected_entries=[{"ticker": "300724", "theme_name": "AI算力", "projected_theme_exposure": 0.2}],
+        resolved_supplemental_short_trade_entries=[{"ticker": "300724", "theme_name": "AI算力", "incremental_theme_exposure": 0.12, "projected_theme_exposure": 0.2}],
+        order_context=PostMarketOrderContext(
+            prebuy_selection_targets={},
+            buy_orders=[],
+            buy_order_filter_diagnostics={},
+            sell_orders=[],
+            sell_order_diagnostics={},
+        ),
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        timing_seconds={},
+        counts={},
+        funnel_diagnostics={},
+        merge_approved_tickers=set(),
+        merge_approved_score_boost=0.0,
+        merge_approved_watchlist_threshold_relaxation=0.0,
+        selection_targets={},
+        target_mode="short_trade_only",
+        dual_target_summary={},
+        short_trade_target_profile=build_short_trade_target_profile("default"),
+        serialize_short_trade_target_profile_fn=lambda profile: {},
+        generate_execution_plan_fn=lambda **kwargs: ExecutionPlan.model_validate(
+            {
+                **kwargs,
+                "date": kwargs["trade_date"],
+            }
+        ),
+    )
+
+    shell_inputs = plan.risk_metrics["selection_target_shell_inputs"]
+    assert shell_inputs["rejected_entries"][0]["projected_theme_exposure"] == 0.2
+    assert shell_inputs["supplemental_short_trade_entries"][0]["incremental_theme_exposure"] == 0.12
+
+
 def test_resolve_post_market_selection_targets_skips_incremental_theme_exposure_without_theme_name() -> None:
     watch_item = LayerCResult(
         ticker="300724",
@@ -480,6 +890,51 @@ def test_resolve_post_market_selection_targets_skips_incremental_theme_exposure_
 
     assert captured["watchlist"][0].incremental_theme_exposure == 0.0
     assert "incremental_theme_exposure" not in captured["supplemental_short_trade_entries"][0]
+
+
+def test_build_plan_target_shell_inputs_prefers_persisted_resolved_shell_entries() -> None:
+    requested_profile = build_short_trade_target_profile("default")
+    plan_market_state = MarketState(
+        breadth_ratio=0.67,
+        daily_return=-0.003,
+        limit_up_down_ratio=1.25,
+        adx=27.0,
+        style_dispersion=0.18,
+        regime_flip_risk=0.09,
+        regime_gate_level="normal",
+    )
+    plan = ExecutionPlan.model_construct(
+        date="20260506",
+        market_state=plan_market_state,
+        watchlist=[],
+        buy_orders=[PositionPlan(ticker="300724", shares=100, amount=60000.0, score_final=0.81, execution_ratio=1.0, quality_score=0.69)],
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [{"ticker": "300724", "theme_name": "AI算力"}]},
+                    "short_trade_candidates": {"tickers": [{"ticker": "300724", "theme_name": "AI算力"}]},
+                }
+            },
+            "selection_target_shell_inputs": {
+                "rejected_entries": [{"ticker": "300724", "theme_name": "AI算力", "projected_theme_exposure": 0.2}],
+                "supplemental_short_trade_entries": [{"ticker": "300724", "theme_name": "AI算力", "incremental_theme_exposure": 0.12, "projected_theme_exposure": 0.2}],
+            },
+        },
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_config=_serialize_short_trade_target_profile(requested_profile),
+    )
+
+    shell_inputs = build_plan_target_shell_inputs(
+        plan=plan,
+        target_mode="short_trade_only",
+        historical_prior_by_ticker={},
+        attach_historical_prior_to_entries_fn=lambda entries, prior_by_ticker: entries,
+        attach_historical_prior_to_watchlist_fn=lambda entries, prior_by_ticker: entries,
+    )
+
+    assert shell_inputs.rejected_entries[0]["projected_theme_exposure"] == 0.2
+    assert shell_inputs.supplemental_short_trade_entries[0]["incremental_theme_exposure"] == 0.12
+    assert shell_inputs.supplemental_short_trade_entries[0]["market_state"]["breadth_ratio"] == 0.67
 
 
 def test_ensure_plan_target_shells_preserves_selection_targets_for_frozen_replay_without_rebuildable_shells(monkeypatch) -> None:

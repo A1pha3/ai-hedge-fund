@@ -557,6 +557,7 @@ def _build_short_trade_core_metrics_payload(
     selected_breakout_gate_pass: bool,
     near_miss_breakout_gate_pass: bool,
 ) -> dict[str, Any]:
+    historical_continuation_prior_score = dict(snapshot.get("historical_continuation_prior_score") or {})
     return {
         "score_b": round(float(input_data.score_b), 4),
         "score_c": round(float(input_data.score_c), 4),
@@ -594,7 +595,8 @@ def _build_short_trade_core_metrics_payload(
         "catalyst_freshness": round(float(snapshot["raw_catalyst_freshness"]), 4),
         "effective_catalyst_freshness": round(float(snapshot["catalyst_freshness"]), 4),
         "layer_c_alignment": round(float(snapshot["layer_c_alignment"]), 4),
-        "historical_continuation_prior_score": dict(snapshot.get("historical_continuation_prior_score") or {}),
+        "historical_continuation_prior_score": historical_continuation_prior_score,
+        "prior_retention_score": round(float(historical_continuation_prior_score.get("score", 0.0) or 0.0), 4),
         "short_term_reversal": round(float(snapshot.get("short_term_reversal", 0.0)), 4),
         "intraday_strength": round(float(snapshot.get("intraday_strength", 0.0)), 4),
         "reversal_2d": round(float(snapshot.get("reversal_2d", 0.0)), 4),

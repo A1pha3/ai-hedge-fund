@@ -128,6 +128,17 @@ def test_short_trade_snapshot_surfaces_committee_scores() -> None:
     assert snapshot["committee_gate_status"]["formal_selected"] in {"pass", "advisory"}
 
 
+def test_metrics_payload_exposes_prior_retention_score_alias() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_committee_entry(),
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert result.metrics_payload["prior_retention_score"] == pytest.approx(round(result.metrics_payload["historical_continuation_prior_score"]["score"], 4))
+
+
 def test_retention_group_uses_failed_breakout_metric_when_present() -> None:
     baseline_snapshot = build_short_trade_target_snapshot_from_entry(
         trade_date="20260328",
@@ -181,6 +192,60 @@ def test_flow_group_uses_persist_metric_when_present() -> None:
     assert improved_snapshot["committee_components"]["flow_raw_100"] > baseline_snapshot["committee_components"]["flow_raw_100"]
 
 
+def test_flow_group_uses_close_support_metric_when_present() -> None:
+    baseline_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "flow_60": 0.04,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+    improved_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "flow_60": 0.04,
+                "close_support_30": 0.10,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_snapshot["committee_components"]["flow_raw_100"] == pytest.approx(60.0)
+    assert improved_snapshot["committee_component_sources"]["flow_raw_100"] == "raw:flow_metrics"
+    assert improved_snapshot["committee_components"]["flow_raw_100"] > baseline_snapshot["committee_components"]["flow_raw_100"]
+
+
+def test_sector_group_uses_breadth_follow_and_catalyst_metrics_when_present() -> None:
+    baseline_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "sector_amt_share": 0.025,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+    improved_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "sector_amt_share": 0.025,
+                "sector_breadth_3": 0.35,
+                "follow_ratio_2": 0.30,
+                "catalyst_freshness": 0.70,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_snapshot["committee_components"]["sector_raw_100"] == pytest.approx(60.0)
+    assert improved_snapshot["committee_component_sources"]["sector_raw_100"] == "raw:sector_metrics"
+    assert improved_snapshot["committee_components"]["sector_raw_100"] > baseline_snapshot["committee_components"]["sector_raw_100"]
+
+
 def test_attention_group_uses_dragon_tiger_bonus_when_present() -> None:
     baseline_snapshot = build_short_trade_target_snapshot_from_entry(
         trade_date="20260328",
@@ -203,6 +268,33 @@ def test_attention_group_uses_dragon_tiger_bonus_when_present() -> None:
     )
 
     assert baseline_snapshot["committee_components"]["attention_raw_100"] == pytest.approx(60.0)
+    assert improved_snapshot["committee_components"]["attention_raw_100"] > baseline_snapshot["committee_components"]["attention_raw_100"]
+
+
+def test_attention_group_uses_turnover_and_limit_up_memory_when_present() -> None:
+    baseline_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "attention_composite": 0.50,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+    improved_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "attention_composite": 0.50,
+                "turnover_ratio_20": 2.20,
+                "limit_up_memory_259": 0.80,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_snapshot["committee_components"]["attention_raw_100"] == pytest.approx(60.0)
+    assert improved_snapshot["committee_component_sources"]["attention_raw_100"] == "raw:attention_metrics"
     assert improved_snapshot["committee_components"]["attention_raw_100"] > baseline_snapshot["committee_components"]["attention_raw_100"]
 
 
@@ -314,6 +406,29 @@ def test_committee_isolated_attention_veto_rejects_selected_candidate() -> None:
     assert "committee_isolated_attention_veto" in vetoed_result.blockers
     assert "committee_isolated_attention_veto" in vetoed_result.committee_vetoes
     assert vetoed_result.gate_status["committee"] == "veto"
+
+
+def test_committee_isolated_attention_veto_uses_direct_flow_60_threshold() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "attention_composite": 0.88,
+            "sector_amt_share": 0.010,
+            "flow_60": 0.00,
+            "persist_120": 0.70,
+            "close_support_30": 0.10,
+        }
+    )
+
+    vetoed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert vetoed_result.decision == "rejected"
+    assert "committee_isolated_attention_veto" in vetoed_result.blockers
+    assert "committee_isolated_attention_veto" in vetoed_result.committee_vetoes
 
 
 def test_committee_weak_close_veto_downgrades_selected_candidate_to_near_miss() -> None:

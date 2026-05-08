@@ -213,6 +213,7 @@ from src.screening.candidate_pool import (
 from src.screening.market_state import detect_market_state
 from src.screening.models import CandidateStock
 from src.screening.signal_fusion import fuse_batch
+from src.screening.strategy_scorer import _build_intraday_short_trade_metrics
 from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
 from src.targets.profiles import (
@@ -320,6 +321,65 @@ def _estimate_skipped_precise_seconds(fast_agent_seconds: float, fast_ticker_cou
 
 def _build_logic_score_map(layer_c_results: list[LayerCResult]) -> dict[str, float]:
     return {item.ticker: float(item.score_final) for item in layer_c_results}
+
+
+BTST_RUNTIME_EXIT_METRIC_KEYS = (
+    "sector_amt_share",
+    "sector_breadth_3",
+    "follow_ratio_2",
+    "catalyst_freshness",
+    "flow_60",
+    "persist_120",
+    "close_support_30",
+    "retention_proxy",
+    "supply_pressure_60",
+    "failed_breakout_10",
+    "prior_retention_score",
+)
+
+
+def _extract_btst_runtime_exit_metrics(result: LayerCResult) -> dict[str, Any]:
+    metrics = dict(result.metrics or {})
+    return {key: metrics[key] for key in BTST_RUNTIME_EXIT_METRIC_KEYS if key in metrics}
+
+
+def _attach_btst_runtime_exit_metrics_to_portfolio_snapshot(portfolio_snapshot: dict, layer_c_results: list[LayerCResult]) -> dict:
+    positions = dict(portfolio_snapshot.get("positions", {}) or {})
+    if not positions or not layer_c_results:
+        return portfolio_snapshot
+
+    runtime_metrics_by_ticker = {
+        result.ticker: extracted_metrics
+        for result in layer_c_results
+        if (extracted_metrics := _extract_btst_runtime_exit_metrics(result))
+    }
+    if not runtime_metrics_by_ticker:
+        return portfolio_snapshot
+
+    for ticker, position in positions.items():
+        if float(position.get("long", 0.0) or 0.0) <= 0:
+            continue
+        runtime_metrics = runtime_metrics_by_ticker.get(str(ticker))
+        if runtime_metrics:
+            position["btst_runtime_metrics"] = dict(runtime_metrics)
+        else:
+            position.pop("btst_runtime_metrics", None)
+    return portfolio_snapshot
+
+
+def resolve_default_fast_selected_analysts(
+    *,
+    selection_target: str,
+    selected_analysts: list[str] | None,
+    fast_selected_analysts: list[str] | None,
+) -> list[str] | None:
+    if fast_selected_analysts is not None:
+        return list(fast_selected_analysts)
+    if selected_analysts is not None:
+        return None
+    if str(selection_target or "").strip().lower() != "short_trade_only":
+        return None
+    return ["technical_analyst", "sentiment_analyst"]
 
 
 def _resolve_btst_regime_gate_mode() -> str:
@@ -1102,8 +1162,14 @@ class DailyPipeline:
         return self.exit_checker(portfolio_snapshot, trade_date)
 
     def _resolve_selected_analysts_for_tier(self, model_tier: str) -> list[str] | None:
-        if model_tier == "fast" and self.fast_selected_analysts is not None:
-            return list(self.fast_selected_analysts)
+        if model_tier == "fast":
+            default_fast_selected_analysts = resolve_default_fast_selected_analysts(
+                selection_target=self.target_mode,
+                selected_analysts=self.selected_analysts,
+                fast_selected_analysts=self.fast_selected_analysts,
+            )
+            if default_fast_selected_analysts is not None:
+                return default_fast_selected_analysts
         if self.selected_analysts is not None:
             return list(self.selected_analysts)
         return None
@@ -1310,6 +1376,7 @@ class DailyPipeline:
             portfolio_snapshot=portfolio_snapshot,
             blocked_buy_tickers=blocked_buy_tickers,
             watchlist_context=watchlist_context,
+            layer_c_results=candidate_context.layer_c_results,
             logic_scores=candidate_context.logic_scores,
         )
 
@@ -1356,6 +1423,7 @@ class DailyPipeline:
             build_selection_target_inputs_fn=build_selection_target_inputs,
             attach_historical_prior_to_entries_fn=_attach_historical_prior_to_entries,
             build_selection_targets_fn=build_selection_targets,
+            build_intraday_short_trade_metrics_fn=_build_intraday_short_trade_metrics,
         )
         counts = selection_resolution.counts
         funnel_diagnostics = selection_resolution.funnel_diagnostics
@@ -1365,6 +1433,9 @@ class DailyPipeline:
             trade_date=trade_date,
             candidate_context=candidate_context,
             watchlist_context=watchlist_context,
+            resolved_watchlist=selection_resolution.resolved_watchlist,
+            resolved_rejected_entries=selection_resolution.resolved_rejected_entries,
+            resolved_supplemental_short_trade_entries=selection_resolution.resolved_supplemental_short_trade_entries,
             order_context=order_context,
             portfolio_snapshot=portfolio_snapshot,
             timing_seconds=timing_seconds,
@@ -1560,6 +1631,7 @@ class DailyPipeline:
         portfolio_snapshot: dict,
         blocked_buy_tickers: dict[str, dict],
         watchlist_context: PostMarketWatchlistContext,
+        layer_c_results: list[LayerCResult],
         logic_scores: dict[str, float],
     ) -> tuple[PostMarketOrderContext, dict[str, float]]:
         with use_short_trade_target_profile(profile_name=self.short_trade_target_profile_name, overrides=self.short_trade_target_profile_overrides):
@@ -1585,6 +1657,7 @@ class DailyPipeline:
         build_buy_orders_seconds = perf_counter() - stage_started_at
 
         stage_started_at = perf_counter()
+        portfolio_snapshot = _attach_btst_runtime_exit_metrics_to_portfolio_snapshot(portfolio_snapshot, layer_c_results)
         sell_orders = self._run_exit_checker(portfolio_snapshot, trade_date, logic_scores)
         sell_check_seconds = perf_counter() - stage_started_at
         return (

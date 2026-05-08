@@ -64,6 +64,8 @@ def default_exit_checker(
             entry_score=float(position.get("entry_score", 0.0)),
             quality_score=float(position.get("quality_score", 0.5)),
             is_fundamental_driven=bool(position.get("is_fundamental_driven", False)),
+            execution_contract_bucket=str(position.get("execution_contract_bucket", "")),
+            btst_runtime_metrics=dict(position.get("btst_runtime_metrics", {}) or {}),
         )
         signal = check_exit_signal(
             holding,

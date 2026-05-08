@@ -29,6 +29,7 @@ class LayerCResult(BaseModel):
     theme_name: str = ""
     theme_category: str = ""
     is_new_theme: bool = False
+    projected_theme_exposure: float = 0.0
     incremental_theme_exposure: float = 0.0
 
 

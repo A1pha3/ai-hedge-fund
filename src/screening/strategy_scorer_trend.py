@@ -236,10 +236,12 @@ def _build_short_trade_doc_metrics(prices_df: pd.DataFrame, *, ticker: str | Non
     if prices_df.empty:
         return {}
     resolved_ticker = _resolve_price_frame_ticker(prices_df, ticker=ticker)
-    return {
+    metrics = {
         "attack_slope_258": _compute_attack_slope_258(prices_df),
         "breakout_quality_20_atr": _compute_breakout_quality_20_atr(prices_df),
         "close_structure": _compute_close_structure(prices_df),
+        "retention_proxy": _compute_retention_proxy(prices_df),
+        "supply_pressure_60": _compute_supply_pressure_60(prices_df),
         "amount_ratio_5": _compute_amount_ratio_5(prices_df),
         "turnover_ratio_20": _compute_turnover_ratio_20(prices_df),
         "limit_up_memory_259": _compute_limit_up_memory_259(prices_df, ticker=resolved_ticker),
@@ -247,6 +249,10 @@ def _build_short_trade_doc_metrics(prices_df: pd.DataFrame, *, ticker: str | Non
         "ret_5d": _compute_close_return(prices_df, sessions=5),
         "failed_breakout_10": float(_count_failed_breakouts(prices_df, lookback=10, breakout_window=20)),
     }
+    gap_to_limit = _compute_gap_to_limit(prices_df, ticker=resolved_ticker)
+    if gap_to_limit is not None:
+        metrics["gap_to_limit"] = gap_to_limit
+    return metrics
 
 
 def _resolve_price_frame_ticker(prices_df: pd.DataFrame, *, ticker: str | None = None) -> str:
@@ -306,16 +312,61 @@ def _compute_breakout_quality_20_atr(prices_df: pd.DataFrame) -> float:
 def _compute_close_structure(prices_df: pd.DataFrame) -> float:
     if not {"open", "high", "low", "close"}.issubset(prices_df.columns):
         return 0.0
+    close_structure, _ = _compute_close_structure_components(prices_df)
+    return close_structure
+
+
+def _compute_close_structure_components(prices_df: pd.DataFrame) -> tuple[float, float]:
+    if not {"open", "high", "low", "close"}.issubset(prices_df.columns):
+        return 0.0, 0.0
     high = float(prices_df["high"].iloc[-1])
     low = float(prices_df["low"].iloc[-1])
     open_ = float(prices_df["open"].iloc[-1])
     close = float(prices_df["close"].iloc[-1])
     trading_range = high - low
     if trading_range <= 0.0:
-        return 0.0
+        return 0.0, 0.0
     clv = (close - low) / trading_range
     upper_shadow_ratio = (high - max(open_, close)) / trading_range
-    return round(clv - (0.5 * upper_shadow_ratio), 4)
+    return round(clv - (0.5 * upper_shadow_ratio), 4), round(upper_shadow_ratio, 4)
+
+
+def _compute_retention_proxy(prices_df: pd.DataFrame) -> float:
+    close_structure, upper_shadow_ratio = _compute_close_structure_components(prices_df)
+    vwap_ratio = _compute_close_to_vwap_ratio(prices_df)
+    vwap_support = _clip(vwap_ratio / 0.03, 0.0, 1.0)
+    return round((0.5 * close_structure) + (0.3 * (1.0 - upper_shadow_ratio)) + (0.2 * vwap_support), 4)
+
+
+def _compute_close_to_vwap_ratio(prices_df: pd.DataFrame) -> float:
+    if not {"close", "amount", "volume"}.issubset(prices_df.columns):
+        return 0.0
+    amount = float(prices_df["amount"].iloc[-1]) if pd.notna(prices_df["amount"].iloc[-1]) else 0.0
+    volume = float(prices_df["volume"].iloc[-1]) if pd.notna(prices_df["volume"].iloc[-1]) else 0.0
+    close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
+    if amount <= 0.0 or volume <= 0.0 or close <= 0.0:
+        return 0.0
+    vwap = amount / volume
+    if vwap <= 0.0:
+        return 0.0
+    return max(0.0, (close / vwap) - 1.0)
+
+
+def _compute_supply_pressure_60(prices_df: pd.DataFrame) -> float:
+    if "close" not in prices_df.columns or len(prices_df) < 2:
+        return 0.0
+    close_series = pd.to_numeric(prices_df["close"], errors="coerce").dropna()
+    if len(close_series) < 2:
+        return 0.0
+    current_close = float(close_series.iloc[-1])
+    if current_close <= 0.0:
+        return 0.0
+    prior_closes = close_series.iloc[:-1].tail(60)
+    if prior_closes.empty:
+        return 0.0
+    upper_bound = 1.03 * current_close
+    matches = ((prior_closes >= current_close) & (prior_closes <= upper_bound)).sum()
+    return round(float(matches) / 60.0, 4)
 
 
 def _compute_amount_ratio_5(prices_df: pd.DataFrame) -> float:
@@ -346,13 +397,17 @@ def _compute_turnover_ratio_20(prices_df: pd.DataFrame) -> float:
 def _compute_limit_up_memory_259(prices_df: pd.DataFrame, *, ticker: str) -> float:
     if len(prices_df) < 10 or "close" not in prices_df.columns:
         return 0.0
-    symbol = get_ashare_symbol(ticker)
-    price_limit_pct = 0.20 if symbol.startswith(("300", "301", "688")) else 0.10
+    price_limit_pct = _resolve_ashare_price_limit_pct(ticker)
     returns = prices_df["close"].pct_change().fillna(0.0)
     last_2d = _has_recent_limit_up(returns, window=2, price_limit_pct=price_limit_pct)
     last_5d = _has_recent_limit_up(returns, window=5, price_limit_pct=price_limit_pct)
     last_9d = _has_recent_limit_up(returns, window=9, price_limit_pct=price_limit_pct)
     return round((0.5 * float(last_2d)) + (0.3 * float(last_5d)) + (0.2 * float(last_9d)), 4)
+
+
+def _resolve_ashare_price_limit_pct(ticker: str) -> float:
+    symbol = get_ashare_symbol(ticker)
+    return 0.20 if symbol.startswith(("300", "301", "688")) else 0.10
 
 
 def _has_recent_limit_up(returns: pd.Series, *, window: int, price_limit_pct: float) -> bool:
@@ -370,6 +425,20 @@ def _compute_close_return(prices_df: pd.DataFrame, *, sessions: int) -> float:
     if prior_close <= 0.0:
         return 0.0
     return round((current_close / prior_close) - 1.0, 4)
+
+
+def _compute_gap_to_limit(prices_df: pd.DataFrame, *, ticker: str) -> float | None:
+    if len(prices_df) < 2 or "close" not in prices_df.columns or not ticker:
+        return None
+    close_series = pd.to_numeric(prices_df["close"], errors="coerce").dropna()
+    if len(close_series) < 2:
+        return None
+    current_close = float(close_series.iloc[-1])
+    prior_close = float(close_series.iloc[-2])
+    if current_close <= 0.0 or prior_close <= 0.0:
+        return None
+    limit_up_price = prior_close * (1.0 + _resolve_ashare_price_limit_pct(ticker))
+    return round(max(0.0, (limit_up_price - current_close) / current_close), 4)
 
 
 def _count_failed_breakouts(prices_df: pd.DataFrame, *, lookback: int, breakout_window: int) -> int:

@@ -43,6 +43,7 @@ class Portfolio:
                     "theme_name": "",
                     "theme_category": "",
                     "is_new_theme": False,
+                    "execution_contract_bucket": "",
                 }
                 for ticker in tickers
             },
@@ -69,6 +70,7 @@ class Portfolio:
                 "theme_name": str(p.get("theme_name", "")),
                 "theme_category": str(p.get("theme_category", "")),
                 "is_new_theme": bool(p.get("is_new_theme", False)),
+                "execution_contract_bucket": str(p.get("execution_contract_bucket", "")),
             }
             for t, p in self._portfolio["positions"].items()
         }
@@ -105,6 +107,7 @@ class Portfolio:
                     "theme_name": str(position.get("theme_name", "")),
                     "theme_category": str(position.get("theme_category", "")),
                     "is_new_theme": bool(position.get("is_new_theme", False)),
+                    "execution_contract_bucket": str(position.get("execution_contract_bucket", "")),
                 }
                 for ticker, position in snapshot["positions"].items()
             },
@@ -140,6 +143,7 @@ class Portfolio:
             "theme_name": "",
             "theme_category": "",
             "is_new_theme": False,
+            "execution_contract_bucket": "",
         }
         self._portfolio["realized_gains"][ticker] = {"long": 0.0, "short": 0.0}
 
@@ -156,6 +160,7 @@ class Portfolio:
         theme_name: str = "",
         theme_category: str = "",
         is_new_theme: bool = False,
+        execution_contract_bucket: str = "",
     ) -> None:
         self.ensure_ticker(ticker)
         position = self._portfolio["positions"][ticker]
@@ -172,6 +177,7 @@ class Portfolio:
             position["theme_name"] = str(theme_name or "")
             position["theme_category"] = str(theme_category or "")
             position["is_new_theme"] = bool(is_new_theme)
+            position["execution_contract_bucket"] = str(execution_contract_bucket or "")
 
     def record_long_exit(self, ticker: str, trigger_reason: str = "") -> None:
         self.ensure_ticker(ticker)
@@ -189,11 +195,14 @@ class Portfolio:
             position["theme_name"] = ""
             position["theme_category"] = ""
             position["is_new_theme"] = False
+            position["execution_contract_bucket"] = ""
             return
         if trigger_reason == "profit_take_stage_1":
             position["profit_take_stage"] = max(int(position.get("profit_take_stage", 0)), 1)
         elif trigger_reason == "profit_take_stage_2":
             position["profit_take_stage"] = max(int(position.get("profit_take_stage", 0)), 2)
+        elif trigger_reason == "btst_tail_trim":
+            position["profit_take_stage"] = max(int(position.get("profit_take_stage", 0)), 3)
 
     def refresh_position_lifecycle(self, current_prices: Mapping[str, float], trade_date: str) -> None:
         for ticker, position in self._portfolio["positions"].items():

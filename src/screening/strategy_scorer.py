@@ -360,13 +360,17 @@ def _build_event_freshness_factor(snapshot: EventFreshnessSnapshot) -> SubFactor
 
 
 def _build_event_freshness_metrics(snapshot: EventFreshnessSnapshot) -> dict[str, int | float]:
-    return {
+    metrics: dict[str, int | float] = {
         "days_old": snapshot.days_old,
         "decay": snapshot.decay,
         "positive_hits": snapshot.positive_hits,
         "negative_hits": snapshot.negative_hits,
         "freshness_weight": snapshot.freshness_weight,
     }
+    if snapshot.positive_hits > snapshot.negative_hits and snapshot.strength > 0 and snapshot.freshness_weight > 0:
+        metrics["days_since_positive_event"] = snapshot.days_old
+        metrics["catalyst_freshness"] = snapshot.decay
+    return metrics
 
 
 def _resolve_event_freshness_days_old(news_date: str, trade_date: str) -> int:
@@ -551,11 +555,15 @@ def _build_provisional_ranking(
 ) -> list[tuple[float, CandidateStock]]:
     provisional_ranking: list[tuple[float, CandidateStock]] = []
     technical_candidates = _rank_candidates_for_technical_stage(candidates)[:TECHNICAL_SCORE_MAX_CANDIDATES]
+    price_frames_by_ticker: dict[str, pd.DataFrame] = {}
 
     for candidate in technical_candidates:
-        light_signals, _ = _compute_light_signals(candidate, trade_date)
+        light_signals, price_frame = _compute_light_signals(candidate, trade_date)
         results[candidate.ticker] = light_signals
+        if price_frame is not None:
+            price_frames_by_ticker[candidate.ticker] = price_frame
         provisional_ranking.append((_provisional_score(light_signals), candidate))
+    _populate_sector_diffusion_metrics(results, technical_candidates, price_frames_by_ticker)
     return _append_unranked_candidates_to_provisional_ranking(provisional_ranking, candidates)
 
 
@@ -568,6 +576,86 @@ def _append_unranked_candidates_to_provisional_ranking(
             continue
         provisional_ranking.append((0.0, candidate))
     return provisional_ranking
+
+
+def _populate_sector_diffusion_metrics(
+    results: dict[str, dict[str, StrategySignal]],
+    candidates: list[CandidateStock],
+    price_frames_by_ticker: dict[str, pd.DataFrame],
+) -> None:
+    sector_metric_map = _build_sector_diffusion_metric_map(candidates, price_frames_by_ticker)
+    for ticker, metrics in sector_metric_map.items():
+        trend_signal = results.get(ticker, {}).get("trend")
+        if not _trend_signal_has_momentum_payload(trend_signal):
+            continue
+        _merge_metrics_into_trend_momentum(trend_signal, metrics)
+
+
+def _build_sector_diffusion_metric_map(
+    candidates: list[CandidateStock],
+    price_frames_by_ticker: dict[str, pd.DataFrame],
+) -> dict[str, dict[str, float]]:
+    industry_returns: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    industry_amounts: dict[str, float] = defaultdict(float)
+    total_amount = 0.0
+    for candidate in candidates:
+        industry = str(candidate.industry_sw or "").strip()
+        if not industry:
+            continue
+        price_frame = price_frames_by_ticker.get(candidate.ticker)
+        ret_1d = _compute_price_frame_close_return(price_frame, sessions=1)
+        if ret_1d is None:
+            continue
+        industry_returns[industry].append((candidate.ticker, ret_1d))
+        latest_amount = _compute_price_frame_latest_amount(price_frame)
+        if latest_amount is not None and latest_amount > 0.0:
+            industry_amounts[industry] += latest_amount
+            total_amount += latest_amount
+
+    sector_metric_map: dict[str, dict[str, float]] = {}
+    for industry, members in industry_returns.items():
+        if not members:
+            continue
+        leader_ticker = max(members, key=lambda item: item[1])[0]
+        sector_breadth_3 = sum(1 for _, ret_1d in members if ret_1d > 0.03) / len(members)
+        nonleaders = [(ticker, ret_1d) for ticker, ret_1d in members if ticker != leader_ticker]
+        follow_ratio_2 = sum(1 for _, ret_1d in nonleaders if ret_1d > 0.02) / max(len(nonleaders), 1)
+        for ticker, _ in members:
+            metrics = {
+                "sector_breadth_3": round(float(sector_breadth_3), 4),
+                "follow_ratio_2": round(float(follow_ratio_2), 4),
+            }
+            industry_amount = float(industry_amounts.get(industry, 0.0) or 0.0)
+            if total_amount > 0.0 and industry_amount > 0.0:
+                metrics["sector_amt_share"] = round(industry_amount / total_amount, 4)
+            sector_metric_map[ticker] = metrics
+    return sector_metric_map
+
+
+def _compute_price_frame_close_return(price_frame: pd.DataFrame | None, *, sessions: int) -> float | None:
+    if price_frame is None or price_frame.empty or "close" not in price_frame.columns or len(price_frame) <= sessions:
+        return None
+    close_series = pd.to_numeric(price_frame["close"], errors="coerce").dropna()
+    if len(close_series) <= sessions:
+        return None
+    previous_close = float(close_series.iloc[-(sessions + 1)])
+    latest_close = float(close_series.iloc[-1])
+    if previous_close <= 0.0:
+        return None
+    return round((latest_close / previous_close) - 1.0, 4)
+
+
+def _compute_price_frame_latest_amount(price_frame: pd.DataFrame | None) -> float | None:
+    if price_frame is None or price_frame.empty:
+        return None
+    source_column = "amount" if "amount" in price_frame.columns else "volume" if "volume" in price_frame.columns else ""
+    if not source_column:
+        return None
+    latest_amount = pd.to_numeric(price_frame[source_column], errors="coerce").dropna()
+    if latest_amount.empty:
+        return None
+    value = float(latest_amount.iloc[-1])
+    return value if value > 0.0 else None
 
 
 def _rank_candidates_for_heavy_scoring(provisional_ranking: list[tuple[float, CandidateStock]]) -> list[tuple[float, CandidateStock]]:
@@ -695,7 +783,10 @@ def _build_intraday_short_trade_metrics(ticker: str, trade_date: str) -> dict[st
     intraday_bars = get_intraday_bars(ticker, trade_date)
     if intraday_bars is None or intraday_bars.empty:
         fallback_flow = _load_daily_flow_proxy_ratio(ticker)
-        return {"flow_60": fallback_flow} if fallback_flow is not None else {}
+        return {"flow_60": fallback_flow, "flow_60_source": "daily_flow_proxy"} if fallback_flow is not None else {}
+    proxy_metrics = _build_intraday_short_trade_metrics_from_bars(intraday_bars)
+    if proxy_metrics:
+        return proxy_metrics
     intraday_ticks = get_intraday_ticks(ticker, trade_date)
     metrics = _build_intraday_short_trade_metrics_from_frames(
         intraday_bars=intraday_bars,
@@ -706,6 +797,42 @@ def _build_intraday_short_trade_metrics(ticker: str, trade_date: str) -> dict[st
         fallback_flow = _load_daily_flow_proxy_ratio(ticker)
         if fallback_flow is not None:
             metrics["flow_60"] = fallback_flow
+            metrics["flow_60_source"] = "daily_flow_proxy"
+    return metrics
+
+
+def _build_intraday_short_trade_metrics_from_bars(intraday_bars: pd.DataFrame | None) -> dict[str, float]:
+    required_columns = {"时间", "收盘", "成交额"}
+    if intraday_bars is None or intraday_bars.empty or not required_columns.issubset(intraday_bars.columns):
+        return {}
+    normalized = intraday_bars.copy()
+    normalized["时间"] = pd.to_datetime(normalized["时间"], errors="coerce")
+    normalized["收盘"] = pd.to_numeric(normalized["收盘"], errors="coerce")
+    normalized["成交额"] = pd.to_numeric(normalized["成交额"], errors="coerce").fillna(0.0)
+    normalized = normalized.dropna(subset=["时间", "收盘"]).sort_values("时间").reset_index(drop=True)
+    if len(normalized) < 2:
+        return {}
+    normalized["direction"] = normalized["收盘"].diff().fillna(0.0).apply(lambda value: 1.0 if value > 0 else -1.0 if value < 0 else 0.0)
+    normalized["signed_turnover"] = normalized["成交额"] * normalized["direction"]
+
+    last_120 = normalized.tail(min(120, len(normalized)))
+    last_60 = normalized.tail(min(60, len(normalized)))
+    last_30 = normalized.tail(min(30, len(normalized)))
+    metrics: dict[str, float] = {}
+
+    turnover_60 = float(last_60["成交额"].sum())
+    if turnover_60 > 0.0:
+        metrics["flow_60"] = round(float(last_60["signed_turnover"].sum()) / turnover_60, 4)
+        metrics["flow_60_source"] = "bar_proxy"
+
+    turnover_30 = float(last_30["成交额"].sum())
+    if turnover_30 > 0.0:
+        metrics["close_support_30"] = round(float(last_30["signed_turnover"].sum()) / turnover_30, 4)
+        metrics["close_support_30_source"] = "bar_proxy"
+
+    if not last_120.empty:
+        metrics["persist_120"] = round(float((last_120["signed_turnover"] > 0.0).sum() / len(last_120)), 4)
+        metrics["persist_120_source"] = "bar_proxy"
     return metrics
 
 
@@ -732,11 +859,14 @@ def _build_intraday_short_trade_metrics_from_frames(
     net_buy_amt_30 = float(tick_flows.get("net_buy_amt_30", 0.0) or 0.0)
     if turnover_60 > 0.0:
         metrics["flow_60"] = round(net_buy_amt_60 / turnover_60, 4)
+        metrics["flow_60_source"] = "exact_tick"
     if turnover_30 > 0.0:
         metrics["close_support_30"] = round(net_buy_amt_30 / turnover_30, 4)
+        metrics["close_support_30_source"] = "exact_tick"
     persist_120 = tick_flows.get("persist_120")
     if persist_120 is not None:
         metrics["persist_120"] = round(float(persist_120), 4)
+        metrics["persist_120_source"] = "exact_tick"
     return metrics
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_ZHIPU_FALLBACK_MODEL = llm_provider_routing.DEFAULT_ZHIPU_FALLBACK_MODEL
 DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL = llm_provider_routing.DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL
 DEFAULT_MINIMAX_FALLBACK_MODEL = llm_provider_routing.DEFAULT_MINIMAX_FALLBACK_MODEL
+DEFAULT_LLM_INVOKE_TIMEOUT_SECONDS = 75.0
 
 
 def _sync_provider_routing_dependencies() -> None:
@@ -221,6 +223,32 @@ def _record_llm_attempt_safely(**kwargs) -> None:
         logger.warning("Failed to record LLM metrics: %s", metrics_error)
 
 
+def _resolve_llm_invoke_timeout_seconds() -> float:
+    raw_value = os.getenv("LLM_INVOKE_TIMEOUT_SECONDS", "").strip()
+    if not raw_value:
+        return DEFAULT_LLM_INVOKE_TIMEOUT_SECONDS
+
+    try:
+        parsed_value = float(raw_value)
+    except ValueError:
+        return DEFAULT_LLM_INVOKE_TIMEOUT_SECONDS
+
+    return parsed_value if parsed_value > 0 else DEFAULT_LLM_INVOKE_TIMEOUT_SECONDS
+
+
+def _invoke_llm_with_timeout(llm, prompt):
+    timeout_seconds = _resolve_llm_invoke_timeout_seconds()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(llm.invoke, prompt)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(f"LLM invoke timed out after {timeout_seconds}s") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 def call_llm(
     prompt,
     pydantic_model: type[BaseModel],
@@ -267,7 +295,7 @@ def call_llm(
         _wait_for_provider_rate_limit_cooldown(context.active_model_provider, context.active_route_id)
         attempt_started_at = perf_counter()
         try:
-            result = llm.invoke(prompt)
+            result = _invoke_llm_with_timeout(llm, prompt)
             return return_success_result(
                 llm_result=result,
                 model_info=model_info,
@@ -311,6 +339,8 @@ def call_llm(
             if outcome.should_continue:
                 continue
 
+    if default_factory:
+        return default_factory()
     return create_default_response(pydantic_model)
 
 

@@ -68,6 +68,9 @@ class PostMarketSelectionResolution:
     funnel_diagnostics: dict[str, Any]
     selection_targets: dict[str, Any]
     dual_target_summary: Any
+    resolved_watchlist: list[LayerCResult]
+    resolved_rejected_entries: list[dict[str, Any]]
+    resolved_supplemental_short_trade_entries: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,9 @@ class PlanTargetShellInputs:
     rejected_entries: list[dict[str, Any]]
     supplemental_short_trade_entries: list[dict[str, Any]]
     buy_order_tickers: set[str]
+
+
+_INTRADAY_SHORT_TRADE_METRIC_KEYS = ("flow_60", "close_support_30", "persist_120")
 
 
 def build_high_pool(
@@ -449,6 +455,17 @@ def _attach_incremental_theme_exposure(
             theme_name_by_ticker[ticker] = theme_name
 
     incremental_exposure_by_ticker: dict[str, float] = {}
+    projected_exposure_by_ticker: dict[str, float] = {}
+    existing_theme_amounts: dict[str, float] = {}
+    for position in dict((portfolio_snapshot or {}).get("positions", {}) or {}).values():
+        if not isinstance(position, dict):
+            continue
+        theme_name = str(position.get("theme_name") or "").strip()
+        shares = max(float(position.get("long") or 0.0), 0.0)
+        cost_basis = max(float(position.get("long_cost_basis") or 0.0), 0.0)
+        if not theme_name or shares <= 0 or cost_basis <= 0:
+            continue
+        existing_theme_amounts[theme_name] = existing_theme_amounts.get(theme_name, 0.0) + (shares * cost_basis)
     theme_amounts: dict[str, float] = {}
     for order in list(buy_orders or []):
         ticker = str(getattr(order, "ticker", "") or "").strip()
@@ -462,14 +479,16 @@ def _attach_incremental_theme_exposure(
         theme_name = theme_name_by_ticker.get(ticker, "").strip()
         if ticker and theme_name and theme_name in theme_amounts:
             incremental_exposure_by_ticker[ticker] = round(theme_amounts[theme_name] / nav, 6)
+            projected_exposure_by_ticker[ticker] = round((theme_amounts[theme_name] + existing_theme_amounts.get(theme_name, 0.0)) / nav, 6)
 
-    if not incremental_exposure_by_ticker:
+    if not incremental_exposure_by_ticker and not projected_exposure_by_ticker:
         return list(watchlist), list(rejected_entries), list(supplemental_short_trade_entries)
 
     annotated_watchlist: list[LayerCResult] = []
     for item in list(watchlist or []):
         payload = item.model_dump()
         payload["incremental_theme_exposure"] = incremental_exposure_by_ticker.get(item.ticker, 0.0)
+        payload["projected_theme_exposure"] = projected_exposure_by_ticker.get(item.ticker, 0.0)
         annotated_watchlist.append(LayerCResult(**payload))
 
     def _annotate_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -479,10 +498,80 @@ def _attach_incremental_theme_exposure(
             ticker = str(updated_entry.get("ticker") or "").strip()
             if ticker in incremental_exposure_by_ticker:
                 updated_entry["incremental_theme_exposure"] = incremental_exposure_by_ticker[ticker]
+            if ticker in projected_exposure_by_ticker:
+                updated_entry["projected_theme_exposure"] = projected_exposure_by_ticker[ticker]
             annotated_entries.append(updated_entry)
         return annotated_entries
 
     return annotated_watchlist, _annotate_entries(rejected_entries), _annotate_entries(supplemental_short_trade_entries)
+
+
+def _attach_missing_intraday_short_trade_metrics(
+    *,
+    trade_date: str,
+    watchlist: list[LayerCResult],
+    rejected_entries: list[dict[str, Any]],
+    supplemental_short_trade_entries: list[dict[str, Any]],
+    build_intraday_short_trade_metrics_fn: Callable[[str, str], dict[str, float]] | None,
+) -> tuple[list[LayerCResult], list[dict[str, Any]], list[dict[str, Any]]]:
+    if build_intraday_short_trade_metrics_fn is None:
+        return list(watchlist), list(rejected_entries), list(supplemental_short_trade_entries)
+
+    intraday_metrics_cache: dict[str, dict[str, float]] = {}
+
+    def _get_intraday_metrics(ticker: str) -> dict[str, float]:
+        normalized_ticker = str(ticker or "").strip()
+        if not normalized_ticker:
+            return {}
+        if normalized_ticker not in intraday_metrics_cache:
+            intraday_metrics_cache[normalized_ticker] = dict(build_intraday_short_trade_metrics_fn(normalized_ticker, trade_date) or {})
+        return intraday_metrics_cache[normalized_ticker]
+
+    def _missing_intraday_keys(metrics: dict[str, Any]) -> list[str]:
+        return [key for key in _INTRADAY_SHORT_TRADE_METRIC_KEYS if key not in metrics]
+
+    def _merge_intraday_metric_pair(metrics: dict[str, Any], fetched_metrics: dict[str, float], metric_key: str) -> None:
+        inserted_metric = False
+        if metric_key in fetched_metrics and metric_key not in metrics:
+            metrics[metric_key] = fetched_metrics[metric_key]
+            inserted_metric = True
+        source_key = f"{metric_key}_source"
+        if inserted_metric and source_key in fetched_metrics and source_key not in metrics:
+            metrics[source_key] = fetched_metrics[source_key]
+
+    enriched_watchlist: list[LayerCResult] = []
+    for item in list(watchlist or []):
+        metrics = dict(getattr(item, "metrics", {}) or {})
+        missing_keys = _missing_intraday_keys(metrics)
+        if not missing_keys:
+            enriched_watchlist.append(item)
+            continue
+        fetched_metrics = _get_intraday_metrics(item.ticker)
+        if not fetched_metrics:
+            enriched_watchlist.append(item)
+            continue
+        merged_metrics = dict(metrics)
+        for key in missing_keys:
+            _merge_intraday_metric_pair(merged_metrics, fetched_metrics, key)
+        enriched_watchlist.append(item.model_copy(update={"metrics": merged_metrics}))
+
+    def _enrich_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        enriched_entries: list[dict[str, Any]] = []
+        for entry in list(entries or []):
+            entry_dict = dict(entry)
+            metrics = dict(entry_dict.get("metrics") or {})
+            missing_keys = _missing_intraday_keys(metrics)
+            ticker = str(entry_dict.get("ticker") or "").strip()
+            if missing_keys and ticker:
+                fetched_metrics = _get_intraday_metrics(ticker)
+                for key in missing_keys:
+                    _merge_intraday_metric_pair(metrics, fetched_metrics, key)
+            if metrics:
+                entry_dict["metrics"] = metrics
+            enriched_entries.append(entry_dict)
+        return enriched_entries
+
+    return enriched_watchlist, _enrich_entries(rejected_entries), _enrich_entries(supplemental_short_trade_entries)
 
 
 def build_plan_target_shell_inputs(
@@ -493,9 +582,35 @@ def build_plan_target_shell_inputs(
     attach_historical_prior_to_entries_fn,
     attach_historical_prior_to_watchlist_fn,
 ) -> PlanTargetShellInputs:
+    market_state_payload = _serialize_market_state_payload(getattr(plan, "market_state", None))
+    selection_target_shell_inputs = dict((plan.risk_metrics or {}).get("selection_target_shell_inputs", {}) or {})
+    persisted_rejected_entries = list(selection_target_shell_inputs.get("rejected_entries", []) or [])
+    persisted_supplemental_entries = list(selection_target_shell_inputs.get("supplemental_short_trade_entries", []) or [])
+    if persisted_rejected_entries or persisted_supplemental_entries:
+        return PlanTargetShellInputs(
+            rejected_entries=_attach_market_state_to_entries(
+                attach_historical_prior_to_entries_fn(
+                    persisted_rejected_entries,
+                    prior_by_ticker=historical_prior_by_ticker,
+                ),
+                market_state_payload=market_state_payload,
+            ),
+            watchlist=attach_historical_prior_to_watchlist_fn(
+                list(plan.watchlist or []),
+                prior_by_ticker=historical_prior_by_ticker,
+            ),
+            supplemental_short_trade_entries=_attach_market_state_to_entries(
+                attach_historical_prior_to_entries_fn(
+                    persisted_supplemental_entries,
+                    prior_by_ticker=historical_prior_by_ticker,
+                ),
+                market_state_payload=market_state_payload,
+            ),
+            buy_order_tickers={order.ticker for order in list(plan.buy_orders or [])},
+        )
+
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
-    market_state_payload = _serialize_market_state_payload(getattr(plan, "market_state", None))
     watchlist_filter_diagnostics = dict(funnel_filters.get("watchlist", {}) or {})
     short_trade_candidate_diagnostics = dict(funnel_filters.get("short_trade_candidates", {}) or {})
     released_shadow_entries = _filter_promoted_upstream_shadow_entries(
@@ -643,6 +758,7 @@ def resolve_post_market_selection_targets(
     build_selection_target_inputs_fn: Callable[..., PostMarketSelectionTargetInputs],
     attach_historical_prior_to_entries_fn,
     build_selection_targets_fn: Callable[..., tuple[dict[str, Any], Any]],
+    build_intraday_short_trade_metrics_fn: Callable[[str, str], dict[str, float]] | None = None,
 ) -> PostMarketSelectionResolution:
     with use_short_trade_target_profile_fn(
         profile_name=short_trade_target_profile_name,
@@ -675,6 +791,13 @@ def resolve_post_market_selection_targets(
             buy_orders=buy_orders,
             portfolio_snapshot=portfolio_snapshot,
         )
+        resolved_watchlist, resolved_rejected_entries, resolved_supplemental_entries = _attach_missing_intraday_short_trade_metrics(
+            trade_date=trade_date,
+            watchlist=resolved_watchlist,
+            rejected_entries=resolved_rejected_entries,
+            supplemental_short_trade_entries=resolved_supplemental_entries,
+            build_intraday_short_trade_metrics_fn=build_intraday_short_trade_metrics_fn,
+        )
         selection_targets, dual_target_summary = build_selection_targets_fn(
             trade_date=trade_date,
             watchlist=resolved_watchlist,
@@ -688,6 +811,9 @@ def resolve_post_market_selection_targets(
         funnel_diagnostics=resolved_funnel_diagnostics,
         selection_targets=selection_targets,
         dual_target_summary=dual_target_summary,
+        resolved_watchlist=resolved_watchlist,
+        resolved_rejected_entries=resolved_rejected_entries,
+        resolved_supplemental_short_trade_entries=resolved_supplemental_entries,
     )
 
 
@@ -696,6 +822,9 @@ def build_post_market_execution_plan(
     trade_date: str,
     candidate_context: PostMarketCandidateContext,
     watchlist_context: PostMarketWatchlistContext,
+    resolved_watchlist: list[LayerCResult] | None,
+    resolved_rejected_entries: list[dict[str, Any]] | None,
+    resolved_supplemental_short_trade_entries: list[dict[str, Any]] | None,
     order_context: PostMarketOrderContext,
     portfolio_snapshot: dict[str, Any],
     timing_seconds: dict[str, float],
@@ -714,7 +843,7 @@ def build_post_market_execution_plan(
     return generate_execution_plan_fn(
         trade_date=trade_date,
         market_state=candidate_context.market_state,
-        watchlist=watchlist_context.watchlist,
+        watchlist=list(resolved_watchlist or watchlist_context.watchlist),
         logic_scores=candidate_context.logic_scores,
         buy_orders=order_context.buy_orders,
         sell_orders=order_context.sell_orders,
@@ -724,6 +853,10 @@ def build_post_market_execution_plan(
             "timing_seconds": timing_seconds,
             "counts": counts,
             "funnel_diagnostics": funnel_diagnostics,
+            "selection_target_shell_inputs": {
+                "rejected_entries": list(resolved_rejected_entries or []),
+                "supplemental_short_trade_entries": list(resolved_supplemental_short_trade_entries or []),
+            },
             "merge_approved_context": {
                 "tickers": sorted(merge_approved_tickers),
                 "score_boost": round(merge_approved_score_boost, 4),

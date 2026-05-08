@@ -1,3 +1,5 @@
+import time
+
 from pydantic import BaseModel
 
 from src.monitoring.llm_metrics import get_llm_metrics_paths, reset_llm_metrics_for_testing
@@ -51,6 +53,17 @@ class _FakeLLM:
             raise RuntimeError("429 too many requests")
         if self._raw_invoke_error is not None:
             raise self._raw_invoke_error
+        return type("Response", (), {"content": '{"signal": "ok"}'})()
+
+
+class _SlowRawLLM(_FakeLLM):
+    def __init__(self, provider, model_name, api_key, calls, sleep_seconds: float):
+        super().__init__(provider, model_name, api_key, calls)
+        self._sleep_seconds = sleep_seconds
+
+    def invoke(self, prompt):
+        self._calls.append((self.provider, self.model_name, self.api_key, "invoke", prompt))
+        time.sleep(self._sleep_seconds)
         return type("Response", (), {"content": '{"signal": "ok"}'})()
 
 
@@ -212,6 +225,37 @@ def test_call_llm_prefers_coding_plan_before_other_supported_providers(monkeypat
     assert result.signal == "ok"
     assert ("Zhipu", expected_coding_model, "coding-key", "with_structured_output", "json_mode", "_FallbackSignal") in calls
     assert ("Zhipu", expected_coding_model, "coding-key", "invoke", "hello") in calls
+
+
+def test_call_llm_returns_default_response_when_invoke_exceeds_total_timeout(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("LLM_INVOKE_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setattr(llm_utils, "get_agent_model_config", lambda state, agent_name: ("glm-4.7", "Zhipu"))
+    monkeypatch.setattr(llm_utils, "get_model_info", lambda model_name, model_provider: _FakeModelInfo(has_json_mode=False))
+    monkeypatch.setattr(
+        llm_utils,
+        "get_model",
+        lambda model_name, model_provider, api_keys=None: _SlowRawLLM(
+            str(model_provider),
+            model_name,
+            _extract_first_available_api_key(api_keys),
+            calls,
+            sleep_seconds=0.05,
+        ),
+    )
+
+    result = call_llm(
+        prompt="slow-request",
+        pydantic_model=_FallbackSignal,
+        agent_name="test_agent",
+        state={"metadata": {}},
+        max_retries=1,
+        default_factory=lambda: _FallbackSignal(signal="timed_out"),
+    )
+
+    assert result.signal == "timed_out"
+    assert any(call[3:] == ("invoke", "slow-request") for call in calls)
 
 
 def test_call_llm_falls_back_from_coding_plan_to_minimax_to_standard_zhipu(monkeypatch):

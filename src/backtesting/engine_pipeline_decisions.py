@@ -469,6 +469,7 @@ class PipelineDecisionExecutor:
             theme_name=str(getattr(watch_item, "theme_name", "") or ""),
             theme_category=str(getattr(watch_item, "theme_category", "") or ""),
             is_new_theme=bool(getattr(watch_item, "is_new_theme", False)),
+            execution_contract_bucket=str(getattr(matching_order, "execution_contract_bucket", "") or ""),
         )
 
     # ------------------------------------------------------------------

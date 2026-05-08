@@ -151,9 +151,25 @@ def _merge_raw_candidate_metrics(input_data: Any) -> dict[str, Any]:
 
 
 def _sector_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tuple[float, str]:
+    available_scores: list[tuple[float, float]] = []
     sector_amt_share = _as_float(raw_metrics, "sector_amt_share")
     if sector_amt_share > 0.0:
-        return _step_score(sector_amt_share, [(0.06, 90.0), (0.04, 75.0), (0.025, 60.0), (0.015, 40.0)], 20.0), "raw:sector_amt_share"
+        available_scores.append((_step_score(sector_amt_share, [(0.06, 90.0), (0.04, 75.0), (0.025, 60.0), (0.015, 40.0)], 20.0), 0.30))
+    sector_breadth_3 = raw_metrics.get("sector_breadth_3")
+    if sector_breadth_3 is not None:
+        available_scores.append((_step_score(float(sector_breadth_3 or 0.0), [(0.35, 90.0), (0.25, 75.0), (0.18, 60.0), (0.10, 40.0)], 20.0), 0.25))
+    follow_ratio_2 = raw_metrics.get("follow_ratio_2")
+    if follow_ratio_2 is not None:
+        available_scores.append((_step_score(float(follow_ratio_2 or 0.0), [(0.30, 90.0), (0.22, 75.0), (0.15, 60.0), (0.08, 40.0)], 20.0), 0.25))
+    catalyst_freshness = raw_metrics.get("catalyst_freshness")
+    if catalyst_freshness is not None:
+        available_scores.append((_step_score(float(catalyst_freshness or 0.0), [(0.70, 90.0), (0.50, 75.0), (0.35, 60.0), (0.20, 40.0)], 20.0), 0.20))
+    if available_scores:
+        if len(available_scores) == 1 and sector_amt_share > 0.0:
+            return available_scores[0][0], "raw:sector_amt_share"
+        total_weight = sum(weight for _, weight in available_scores)
+        weighted_score = sum(score * weight for score, weight in available_scores) / total_weight if total_weight > 0 else 0.0
+        return round(weighted_score, 4), "raw:sector_metrics"
     proxy = (0.65 * float(snapshot.get("sector_resonance", 0.0) or 0.0)) + (0.20 * float(snapshot.get("analyst_alignment", 0.0) or 0.0)) + (0.15 * float(snapshot.get("event_signal_strength", 0.0) or 0.0))
     return _support_score_100(proxy), "proxy:sector_resonance"
 
@@ -166,12 +182,21 @@ def _flow_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tu
     persist_120 = raw_metrics.get("persist_120")
     if persist_120 is not None:
         available_scores.append((_step_score(float(persist_120 or 0.0), [(0.65, 90.0), (0.58, 75.0), (0.52, 60.0), (0.45, 40.0)], 20.0), 0.30))
+    close_support_30 = raw_metrics.get("close_support_30")
+    if close_support_30 is not None:
+        available_scores.append((_step_score(float(close_support_30 or 0.0), [(0.10, 90.0), (0.05, 75.0), (0.02, 60.0), (0.0, 40.0)], 20.0), 0.30))
     if available_scores:
         total_weight = sum(weight for _, weight in available_scores)
         weighted_score = sum(score * weight for score, weight in available_scores) / total_weight if total_weight > 0 else 0.0
         return round(weighted_score, 4), "raw:flow_metrics"
     proxy = (0.45 * float(snapshot.get("volume_expansion_quality", 0.0) or 0.0)) + (0.30 * float(snapshot.get("score_b_strength", 0.0) or 0.0)) + (0.25 * float(snapshot.get("momentum_strength", 0.0) or 0.0))
     return _support_score_100(proxy), "proxy:flow_alignment"
+
+
+def _flow_60_raw_score(raw_metrics: dict[str, Any]) -> float | None:
+    if "flow_60" not in raw_metrics:
+        return None
+    return _step_score(float(raw_metrics.get("flow_60") or 0.0), [(0.12, 90.0), (0.08, 75.0), (0.04, 60.0), (0.0, 40.0)], 20.0)
 
 
 def _structure_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tuple[float, str]:
@@ -198,10 +223,16 @@ def _structure_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) 
 
 def _attention_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tuple[float, str]:
     available_scores: list[tuple[float, float]] = []
+    turnover_ratio_20 = raw_metrics.get("turnover_ratio_20")
+    if turnover_ratio_20 is not None:
+        available_scores.append((_step_score(float(turnover_ratio_20 or 0.0), [(2.20, 90.0), (1.60, 75.0), (1.20, 60.0), (0.90, 40.0)], 20.0), 0.30))
     attention_composite = raw_metrics.get("attention_composite")
     if attention_composite is not None:
         attention_ratio = _normalized_ratio(attention_composite)
         available_scores.append((_step_score(attention_ratio, [(0.80, 90.0), (0.65, 75.0), (0.50, 60.0), (0.35, 40.0)], 20.0), 0.35))
+    limit_up_memory_259 = raw_metrics.get("limit_up_memory_259")
+    if limit_up_memory_259 is not None:
+        available_scores.append((_step_score(_normalized_ratio(limit_up_memory_259), [(0.80, 85.0), (0.50, 70.0), (0.30, 55.0)], 35.0), 0.20))
     dragon_tiger_bonus = raw_metrics.get("dragon_tiger_bonus")
     if dragon_tiger_bonus is not None:
         available_scores.append((80.0 if float(dragon_tiger_bonus or 0.0) >= 1.0 else 50.0, 0.15))
@@ -411,6 +442,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     sector_group_score = _committee_group_score(sector_raw_100)
     flow_group_score = _committee_group_score(flow_raw_100)
     retention_group_score = _committee_group_score(retention_raw_100)
+    flow_60_raw_100 = _flow_60_raw_score(raw_metrics)
     penalties, penalty_total = _build_committee_penalties(snapshot, raw_metrics)
 
     alpha_edge_score = _weighted_average(
@@ -448,9 +480,21 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     )
 
     vetoes: list[str] = []
-    if bool(getattr(profile, "committee_isolated_attention_veto_enabled", True)) and attention_raw_100 >= float(getattr(profile, "committee_isolated_attention_min", 80.0) or 80.0) and sector_raw_100 <= float(getattr(profile, "committee_isolated_attention_sector_max", 60.0) or 60.0) and flow_raw_100 <= float(getattr(profile, "committee_isolated_attention_flow_max", 60.0) or 60.0):
+    if (
+        bool(getattr(profile, "committee_isolated_attention_veto_enabled", True))
+        and attention_raw_100 >= float(getattr(profile, "committee_isolated_attention_min", 80.0) or 80.0)
+        and sector_raw_100 <= float(getattr(profile, "committee_isolated_attention_sector_max", 60.0) or 60.0)
+        and flow_60_raw_100 is not None
+        and flow_60_raw_100 <= float(getattr(profile, "committee_isolated_attention_flow_max", 60.0) or 60.0)
+    ):
         vetoes.append("committee_isolated_attention_veto")
-    if bool(getattr(profile, "committee_weak_close_veto_enabled", True)) and flow_raw_100 >= float(getattr(profile, "committee_weak_close_flow_min", 75.0) or 75.0) and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0) and close_support_raw_100 <= float(getattr(profile, "committee_weak_close_close_support_max", 60.0) or 60.0):
+    if (
+        bool(getattr(profile, "committee_weak_close_veto_enabled", True))
+        and flow_60_raw_100 is not None
+        and flow_60_raw_100 >= float(getattr(profile, "committee_weak_close_flow_min", 75.0) or 75.0)
+        and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0)
+        and close_support_raw_100 <= float(getattr(profile, "committee_weak_close_close_support_max", 60.0) or 60.0)
+    ):
         vetoes.append("committee_weak_close_execution_veto")
     gap_to_limit = raw_metrics.get("gap_to_limit")
     if bool(getattr(profile, "committee_gap_to_limit_veto_enabled", True)) and gap_to_limit is not None and float(gap_to_limit or 0.0) <= float(getattr(profile, "committee_gap_to_limit_max", 0.01) or 0.01):

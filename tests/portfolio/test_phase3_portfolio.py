@@ -331,6 +331,159 @@ def test_l4_l5_mutual_exclusion():
     assert signal.level == "L5"
 
 
+def test_btst_tail_trim_reduces_formal_position_to_last_third_on_day_seven():
+    holding = HoldingState(
+        ticker="300724",
+        entry_price=10.0,
+        entry_date="20260301",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="半导体",
+        holding_days=7,
+        execution_contract_bucket="formal_full",
+    )
+
+    signal = check_exit_signal(holding, current_price=10.8, trade_date="20260310")
+
+    assert signal is not None
+    assert signal.trigger_reason == "btst_tail_trim"
+    assert signal.sell_ratio == pytest.approx(2 / 3, rel=1e-6)
+
+
+def test_btst_fast_confirm_window_trims_when_no_quick_edge_is_confirmed():
+    holding = HoldingState(
+        ticker="300724",
+        entry_price=10.0,
+        entry_date="20260301",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="半导体",
+        holding_days=2,
+        max_unrealized_pnl_pct=0.02,
+        execution_contract_bucket="formal_full",
+    )
+
+    signal = check_exit_signal(holding, current_price=10.02, trade_date="20260304")
+
+    assert signal is not None
+    assert signal.trigger_reason == "btst_fast_fail"
+    assert signal.sell_ratio == 0.5
+
+
+def test_btst_fast_confirm_window_exits_when_close_retention_fails():
+    holding = HoldingState(
+        ticker="300724",
+        entry_price=10.0,
+        entry_date="20260301",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="半导体",
+        holding_days=2,
+        max_unrealized_pnl_pct=0.03,
+        execution_contract_bucket="formal_full",
+    )
+
+    signal = check_exit_signal(holding, current_price=9.95, trade_date="20260304")
+
+    assert signal is not None
+    assert signal.trigger_reason == "btst_close_retention_fail"
+    assert signal.sell_ratio == 1.0
+
+
+def test_btst_main_trade_window_exits_when_continuation_strength_has_faded():
+    holding = HoldingState(
+        ticker="300724",
+        entry_price=10.0,
+        entry_date="20260301",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="半导体",
+        holding_days=5,
+        entry_score=0.46,
+        max_unrealized_pnl_pct=0.03,
+        execution_contract_bucket="formal_full",
+    )
+
+    signal = check_exit_signal(holding, current_price=10.04, trade_date="20260307", logic_score=0.18)
+
+    assert signal is not None
+    assert signal.trigger_reason == "btst_main_segment_fail"
+    assert signal.sell_ratio == 1.0
+
+
+def test_btst_main_trade_window_uses_refreshed_runtime_metrics_when_available():
+    holding = HoldingState(
+        ticker="300724",
+        entry_price=10.0,
+        entry_date="20260301",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="半导体",
+        holding_days=5,
+        entry_score=0.46,
+        max_unrealized_pnl_pct=0.03,
+        execution_contract_bucket="formal_full",
+        btst_runtime_metrics={
+            "sector_amt_share": 0.01,
+            "sector_breadth_3": 0.08,
+            "follow_ratio_2": 0.05,
+            "catalyst_freshness": 0.15,
+            "flow_60": 0.01,
+            "persist_120": 0.44,
+            "close_support_30": 0.0,
+            "retention_proxy": 0.42,
+            "supply_pressure_60": 0.28,
+            "failed_breakout_10": 3.0,
+            "prior_retention_score": 42.0,
+        },
+    )
+
+    signal = check_exit_signal(holding, current_price=10.12, trade_date="20260307", logic_score=0.40)
+
+    assert signal is not None
+    assert signal.trigger_reason == "btst_main_segment_fail"
+    assert signal.sell_ratio == 1.0
+
+
+def test_btst_tail_trim_respects_existing_stage_one_profit_take():
+    holding = HoldingState(
+        ticker="300724",
+        entry_price=10.0,
+        entry_date="20260301",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="半导体",
+        holding_days=7,
+        profit_take_stage=1,
+        execution_contract_bucket="formal_full",
+    )
+
+    signal = check_exit_signal(holding, current_price=10.8, trade_date="20260310")
+
+    assert signal is not None
+    assert signal.trigger_reason == "btst_tail_trim"
+    assert signal.sell_ratio == pytest.approx(1 / 3, rel=1e-6)
+
+
+def test_btst_time_stop_exits_formal_position_after_nine_holding_days():
+    holding = HoldingState(
+        ticker="300724",
+        entry_price=10.0,
+        entry_date="20260301",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="半导体",
+        holding_days=10,
+        execution_contract_bucket="formal_full",
+    )
+
+    signal = check_exit_signal(holding, current_price=10.5, trade_date="20260312")
+
+    assert signal is not None
+    assert signal.trigger_reason == "btst_time_stop"
+    assert signal.sell_ratio == 1.0
+
+
 def test_time_stop_uses_trading_day_state_instead_of_calendar_gap():
     holding = HoldingState(
         ticker="603993",

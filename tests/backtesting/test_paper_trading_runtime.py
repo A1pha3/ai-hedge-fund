@@ -1094,6 +1094,68 @@ def test_run_paper_trading_session_threads_fast_selected_analysts_into_pipeline(
     assert summary["short_trade_target_profile_overrides"] == {"select_threshold": 0.52, "near_miss_threshold": 0.44}
 
 
+def test_run_paper_trading_session_defaults_btst_fast_selected_analysts_for_short_trade_only(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "test-session-default-btst-fast-analysts",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+
+    captured: dict = {}
+
+    class CapturingPipeline(StubPipeline):
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+            plan = ExecutionPlan(
+                date="20240301",
+                buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+                portfolio_snapshot={"cash": 100000.0, "positions": {}},
+                risk_metrics={"counts": {"watchlist_count": 1}},
+            )
+            super().__init__(
+                post_market_plans=[plan],
+                intraday_responses=[(plan.buy_orders, [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+            )
+            self.execution_plan_provenance_log = []
+
+    monkeypatch.setattr("src.paper_trading.runtime.DailyPipeline", CapturingPipeline)
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-04",
+        output_dir=tmp_path / "paper_trading_default_btst_fast_analysts",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        selection_target="short_trade_only",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert captured["selected_analysts"] is None
+    assert captured["fast_selected_analysts"] == ["technical_analyst", "sentiment_analyst"]
+    assert summary["selected_analysts"] is None
+    assert summary["fast_selected_analysts"] == ["technical_analyst", "sentiment_analyst"]
+
+
 def test_run_paper_trading_session_resets_stale_artifacts_for_fresh_run(tmp_path, monkeypatch):
     metrics_summary_path = tmp_path / "llm_metrics.summary.json"
     metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
