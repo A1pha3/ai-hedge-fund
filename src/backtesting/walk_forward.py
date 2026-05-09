@@ -18,7 +18,10 @@ class WindowMode(StrEnum):
 
 
 WALK_FORWARD_PRESETS: dict[str, dict[str, int]] = {
-    "fast": {"train_months": 1, "test_months": 1, "step_months": 1, "max_test_trading_days": 10},
+    # fast: 1-month train, 1-month test, 1-month step.  No trading-day cap so the
+    # preset works without a live Tushare connection.  Use --max-test-trading-days
+    # explicitly if you need day-level truncation on top of the fast window shape.
+    "fast": {"train_months": 1, "test_months": 1, "step_months": 1},
     "standard": {"train_months": 2, "test_months": 1, "step_months": 1},
     "extended": {"train_months": 2, "test_months": 2, "step_months": 1},
     "seasonal": {"train_months": 3, "test_months": 3, "step_months": 3},

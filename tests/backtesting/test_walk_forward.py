@@ -128,3 +128,45 @@ def test_expanding_window_train_grows_each_step():
 
     for w in windows:
         assert w.train_start == "2026-01-01"
+
+
+def test_fast_preset_has_no_tushare_dependency():
+    """fast preset must not require a Tushare connection.
+
+    The fast preset is designed as the cheapest locally-runnable window shape.
+    Adding max_test_trading_days to it would silently introduce a live API
+    dependency, defeating that purpose.  This test ensures the preset can
+    produce windows without patching _get_pro.
+    """
+    from src.backtesting.walk_forward import WALK_FORWARD_PRESETS
+
+    preset = WALK_FORWARD_PRESETS["fast"]
+    assert "max_test_trading_days" not in preset, (
+        "fast preset must not include max_test_trading_days; "
+        "use --max-test-trading-days explicitly when Tushare is available"
+    )
+    windows = build_walk_forward_windows(
+        "2026-01-01",
+        "2026-04-30",
+        **preset,
+    )
+    assert len(windows) >= 1
+    assert windows[0].train_start == "2026-01-01"
+    assert windows[0].train_end == "2026-01-31"
+    assert windows[0].test_start == "2026-02-01"
+
+
+def test_all_presets_have_required_month_keys():
+    """Every preset must provide the three month-length keys."""
+    from src.backtesting.walk_forward import WALK_FORWARD_PRESETS
+
+    for name, preset in WALK_FORWARD_PRESETS.items():
+        for key in ("train_months", "test_months", "step_months"):
+            assert key in preset, f"Preset {name!r} is missing required key {key!r}"
+        # Verify the preset can actually build windows without errors
+        windows = build_walk_forward_windows(
+            "2026-01-01",
+            "2026-12-31",
+            **{k: v for k, v in preset.items() if k != "max_test_trading_days"},
+        )
+        assert len(windows) >= 1, f"Preset {name!r} produced no windows"

@@ -45,6 +45,8 @@ def _run_ab_compare(args, tickers: list[str], selected_analysts: list[str], mode
         baseline_pct_threshold=args.baseline_pct_threshold,
         baseline_top_n=args.baseline_top_n,
         checkpoint_path=checkpoint_path,
+        window_mode=WindowMode(args.window_mode),
+        walk_forward_preset=args.walk_forward_preset,
     )
     report = format_ab_comparison_report(results, summary)
     payload = build_ab_comparison_payload(results, summary)

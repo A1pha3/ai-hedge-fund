@@ -7,6 +7,7 @@ from src.backtesting.param_search import (
     ParamSpace,
     SearchObjective,
     TrialResult,
+    check_guardrails,
     compute_objective_score,
     format_search_report,
     run_param_search,
@@ -154,3 +155,191 @@ def test_trial_result_with_none_score_excluded_from_best():
 
     report = run_param_search(space=space, objective=SearchObjective.SHARPE, evaluator=evaluator)
     assert report.best_params == {"x": 2}
+
+
+# ---------------------------------------------------------------------------
+# Guardrail tests
+# ---------------------------------------------------------------------------
+
+
+def test_check_guardrails_passes_when_all_met():
+    metrics = {"next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    violations = check_guardrails(metrics, {"next_close_positive_rate": 0.54, "downside_p10": -0.06})
+    assert violations == []
+
+
+def test_check_guardrails_detects_value_below_floor():
+    metrics = {"next_close_positive_rate": 0.50, "downside_p10": -0.02}
+    violations = check_guardrails(metrics, {"next_close_positive_rate": 0.54, "downside_p10": -0.06})
+    assert "next_close_positive_rate" in violations
+    assert "downside_p10" not in violations
+
+
+def test_check_guardrails_treats_none_as_violation():
+    metrics = {"next_close_positive_rate": None}
+    violations = check_guardrails(metrics, {"next_close_positive_rate": 0.54})
+    assert "next_close_positive_rate" in violations
+
+
+def test_check_guardrails_treats_absent_key_as_violation():
+    violations = check_guardrails({}, {"next_close_positive_rate": 0.54})
+    assert "next_close_positive_rate" in violations
+
+
+def test_run_param_search_guardrail_failing_trials_ranked_last():
+    """Trials that violate guardrails must appear after all passing trials."""
+    space = ParamSpace(grid={"x": [1, 2, 3]})
+
+    # x=3 has the best score but violates the win-rate guardrail
+    def evaluator(params):
+        return {
+            "sharpe_ratio": float(params["x"]),
+            "sortino_ratio": float(params["x"]),
+            "max_drawdown": -0.1,
+            "next_close_positive_rate": 0.40 if params["x"] == 3 else 0.60,
+        }
+
+    report = run_param_search(
+        space=space,
+        objective=SearchObjective.COMPOSITE,
+        evaluator=evaluator,
+        guardrails={"next_close_positive_rate": 0.54},
+    )
+
+    passing = [r for r in report.results if not r.failed_guardrails]
+    failing = [r for r in report.results if r.failed_guardrails]
+
+    # All passing trials must come before failing ones in ranked list
+    for p in passing:
+        for f in failing:
+            assert report.results.index(p) < report.results.index(f)
+
+    # Best params must be from a passing trial, not x=3 (the highest scorer)
+    assert report.best_params != {"x": 3}
+    assert report.best_params in [{"x": 1}, {"x": 2}]
+
+    # x=3 trial must have the win-rate guardrail in its failed_guardrails
+    x3_trial = next(r for r in report.results if r.params["x"] == 3)
+    assert "next_close_positive_rate" in x3_trial.failed_guardrails
+
+
+def test_run_param_search_guardrail_all_failing_falls_back_to_best_overall():
+    """When every trial violates guardrails best_params is still populated."""
+    space = ParamSpace(grid={"x": [1, 2]})
+
+    def evaluator(params):
+        return {
+            "sharpe_ratio": float(params["x"]),
+            "sortino_ratio": 1.0,
+            "max_drawdown": -0.1,
+            "next_close_positive_rate": 0.40,  # always below floor
+        }
+
+    report = run_param_search(
+        space=space,
+        objective=SearchObjective.SHARPE,
+        evaluator=evaluator,
+        guardrails={"next_close_positive_rate": 0.54},
+    )
+
+    assert all(r.failed_guardrails for r in report.results), "all should fail"
+    # Fallback: best_params reflects the overall top trial (x=2 has sharpe=2.0)
+    assert report.best_params == {"x": 2}
+
+
+def test_run_param_search_guardrail_checkpoint_roundtrip(tmp_path):
+    """failed_guardrails must survive a checkpoint save/reload cycle."""
+    cp_path = tmp_path / "checkpoint.json"
+    space = ParamSpace(grid={"x": [1]})
+
+    def evaluator(params):
+        return {
+            "sharpe_ratio": 1.0,
+            "sortino_ratio": 1.0,
+            "max_drawdown": -0.1,
+            "next_close_positive_rate": 0.40,
+        }
+
+    run_param_search(
+        space=space,
+        objective=SearchObjective.SHARPE,
+        evaluator=evaluator,
+        checkpoint_path=cp_path,
+        guardrails={"next_close_positive_rate": 0.54},
+    )
+
+    call_count = 0
+
+    def evaluator2(params):
+        nonlocal call_count
+        call_count += 1
+        return {"sharpe_ratio": 1.0, "sortino_ratio": 1.0, "max_drawdown": -0.1, "next_close_positive_rate": 0.40}
+
+    report2 = run_param_search(
+        space=space,
+        objective=SearchObjective.SHARPE,
+        evaluator=evaluator2,
+        checkpoint_path=cp_path,
+        guardrails={"next_close_positive_rate": 0.54},
+    )
+
+    assert call_count == 0, "should not re-evaluate; completed trial loaded from checkpoint"
+    assert "next_close_positive_rate" in report2.results[0].failed_guardrails
+
+
+def test_run_param_search_without_guardrails_unchanged_behavior():
+    """Omitting guardrails must preserve the original ranking logic."""
+    space = ParamSpace(grid={"x": [1, 2, 3]})
+
+    def evaluator(params):
+        return {"sharpe_ratio": float(params["x"]), "sortino_ratio": 1.0, "max_drawdown": -0.1}
+
+    report = run_param_search(space=space, objective=SearchObjective.SHARPE, evaluator=evaluator)
+
+    assert report.best_params == {"x": 3}
+    assert all(not r.failed_guardrails for r in report.results)
+
+
+def test_format_search_report_surfaces_guardrail_violations():
+    """Markdown report must mention guardrail violations when any trial failed."""
+    space = ParamSpace(grid={"x": [1, 2]})
+
+    def evaluator(params):
+        return {
+            "sharpe_ratio": float(params["x"]),
+            "sortino_ratio": 1.0,
+            "max_drawdown": -0.1,
+            "next_close_positive_rate": 0.40 if params["x"] == 2 else 0.60,
+        }
+
+    report = run_param_search(
+        space=space,
+        objective=SearchObjective.SHARPE,
+        evaluator=evaluator,
+        guardrails={"next_close_positive_rate": 0.54},
+    )
+    md = format_search_report(report)
+    assert "guardrail" in md.lower()
+
+
+def test_save_search_payload_includes_failed_guardrails(tmp_path):
+    space = ParamSpace(grid={"x": [1]})
+
+    def evaluator(params):
+        return {
+            "sharpe_ratio": 0.5,
+            "sortino_ratio": 1.0,
+            "max_drawdown": -0.1,
+            "next_close_positive_rate": 0.40,
+        }
+
+    report = run_param_search(
+        space=space,
+        objective=SearchObjective.SHARPE,
+        evaluator=evaluator,
+        guardrails={"next_close_positive_rate": 0.54},
+    )
+    json_path = save_search_payload(report, tmp_path / "out.json")
+    data = json.loads(json_path.read_text())
+    assert "failed_guardrails" in data["results"][0]
+    assert "next_close_positive_rate" in data["results"][0]["failed_guardrails"]
