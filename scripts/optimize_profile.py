@@ -454,6 +454,10 @@ def resolve_grid_params(*, grid_params: list[str], preset_grid: bool, profile_na
     """
     resolved = _parse_grid_params(grid_params)
     if staged_mode == "ignition_stage1":
+        if profile_name != "ignition_breakout":
+            raise ValueError(
+                f"--staged-mode ignition_stage1 is only valid for profile 'ignition_breakout', got '{profile_name}'"
+            )
         return {**IGNITION_STAGE1_GRID, **resolved}
     if preset_grid and profile_name == "event_catalyst_guarded":
         return {**MOMENTUM_OPTIMIZED_GRID, **EVENT_CATALYST_GRID, **resolved}
@@ -499,12 +503,15 @@ def main(argv: list[str] | None = None) -> int:
     get_short_trade_target_profile(args.profile)
 
     if args.preset_grid or args.grid_params or args.staged_mode:
-        grid = resolve_grid_params(
-            grid_params=args.grid_params or [],
-            preset_grid=args.preset_grid,
-            profile_name=args.profile,
-            staged_mode=args.staged_mode,
-        )
+        try:
+            grid = resolve_grid_params(
+                grid_params=args.grid_params or [],
+                preset_grid=args.preset_grid,
+                profile_name=args.profile,
+                staged_mode=args.staged_mode,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
     else:
         parser.error("Specify --preset-grid or --grid-params")
 

@@ -450,7 +450,7 @@ def test_main_accepts_weekly_window_args_and_runs_search(monkeypatch: pytest.Mon
 def test_resolve_grid_params_uses_stage1_ignition_grid() -> None:
     grid = resolve_grid_params(
         grid_params=[],
-        preset_grid=True,
+        preset_grid=False,
         profile_name="ignition_breakout",
         staged_mode="ignition_stage1",
     )
@@ -459,3 +459,88 @@ def test_resolve_grid_params_uses_stage1_ignition_grid() -> None:
     assert grid["committee_score_min_normal_trade"] == [62.0, 64.0]
     assert grid["committee_fragile_breakout_alpha_weight"] == [0.08, 0.10]
     assert "committee_fragile_breakout_risk_cap" in grid
+
+
+def test_resolve_grid_params_stage1_rejects_non_ignition_profile() -> None:
+    with pytest.raises(ValueError, match="ignition_stage1.*ignition_breakout"):
+        resolve_grid_params(
+            grid_params=[],
+            preset_grid=False,
+            profile_name="retention_follow",
+            staged_mode="ignition_stage1",
+        )
+
+
+def test_resolve_grid_params_stage1_explicit_overrides_win() -> None:
+    grid = resolve_grid_params(
+        grid_params=["committee_score_min_normal_trade=61,63"],
+        preset_grid=False,
+        profile_name="ignition_breakout",
+        staged_mode="ignition_stage1",
+    )
+
+    assert grid["committee_score_min_normal_trade"] == [61, 63]
+    assert grid["committee_alpha_min_aggressive_trade"] == [66.0, 68.0]
+
+
+def test_main_stage1_forwards_staged_mode_into_grid(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import scripts.optimize_profile as opt_module
+
+    captured_grid: dict[str, list] | None = None
+
+    def fake_param_space_init(self: object, *, grid: dict[str, list]) -> None:
+        nonlocal captured_grid
+        captured_grid = grid
+        self.grid = grid
+
+    def fake_param_space_size(self: object) -> int:
+        return 1
+
+    monkeypatch.setattr(opt_module.ParamSpace, "__init__", fake_param_space_init)
+    monkeypatch.setattr(opt_module.ParamSpace, "size", fake_param_space_size)
+    monkeypatch.setattr(opt_module, "run_param_search", lambda **_: {"top_params": {}, "top_value": 0.0, "evaluations": 0})
+    monkeypatch.setattr(opt_module, "save_search_report", lambda *_: Path("fake.md"))
+    monkeypatch.setattr(opt_module, "save_search_payload", lambda *_: Path("fake.json"))
+    monkeypatch.setattr(opt_module, "format_search_report", lambda _: "")
+    monkeypatch.setattr(
+        opt_module,
+        "_build_replay_evaluator",
+        lambda *_, **__: lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6},
+    )
+
+    try:
+        opt_module.main(
+            [
+                "--profile",
+                "ignition_breakout",
+                "--staged-mode",
+                "ignition_stage1",
+                "--input",
+                "dummy.json",
+            ]
+        )
+    except SystemExit:
+        pass
+
+    assert captured_grid is not None, "ParamSpace was never initialized"
+    assert "committee_alpha_min_aggressive_trade" in captured_grid, "Stage1 grid not forwarded into ParamSpace"
+    assert captured_grid["committee_alpha_min_aggressive_trade"] == [66.0, 68.0], "Stage1 narrow values not used"
+    assert "select_threshold" not in captured_grid, "Preset grid should not appear in stage1 mode"
+
+
+def test_main_stage1_rejects_non_ignition_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    import scripts.optimize_profile as opt_module
+
+    monkeypatch.setattr(sys, "argv", ["optimize_profile.py"])
+
+    with pytest.raises(SystemExit):
+        opt_module.main(
+            [
+                "--profile",
+                "shadow_research",
+                "--staged-mode",
+                "ignition_stage1",
+                "--input",
+                "dummy.json",
+            ]
+        )
