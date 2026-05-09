@@ -39,6 +39,7 @@ def test_main_falls_back_to_akshare_trade_calendar_when_tushare_calendar_missing
     monkeypatch.setenv("TUSHARE_TOKEN", "")
 
     import akshare as ak
+
     monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace(set_token=lambda _token: None, pro_api=lambda: FakePro()))
     monkeypatch.setattr(
         ak,

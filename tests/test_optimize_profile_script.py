@@ -8,7 +8,14 @@ from types import SimpleNamespace
 import pytest
 
 import scripts.optimize_profile as optimize_profile
-from scripts.optimize_profile import _build_default_checkpoint_path, _build_replay_evaluator, _parse_grid_params, _resolve_primary_surface, resolve_grid_params
+from scripts.optimize_profile import (
+    _build_default_checkpoint_path,
+    _build_replay_evaluator,
+    _parse_grid_params,
+    _resolve_primary_surface,
+    resolve_grid_params,
+)
+from src.targets import build_short_trade_target_profile
 
 
 def test_resolve_primary_surface_prefers_selected_when_sample_sufficient() -> None:
@@ -324,6 +331,48 @@ def test_main_integrates_event_catalyst_params_with_preset_grid(monkeypatch: pyt
     assert "select_threshold" in captured_grid, "Base preset params missing from grid used by main()"
 
 
+def test_resolve_grid_params_uses_routed_btst_committee_preset_for_ignition_breakout() -> None:
+    grid = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="ignition_breakout",
+    )
+
+    assert grid["committee_alpha_min_aggressive_trade"] == [66.0, 68.0, 70.0]
+    assert grid["committee_beta_min_normal_trade"] == [60.0, 62.0, 64.0]
+    assert grid["committee_score_min_normal_trade"] == [62.0, 64.0, 66.0]
+    assert grid["committee_fragile_breakout_alpha_weight"] == [0.08, 0.10, 0.12]
+    assert "select_threshold" not in grid
+
+
+def test_resolve_grid_params_prefers_explicit_values_over_routed_preset() -> None:
+    grid = resolve_grid_params(
+        grid_params=["committee_score_min_normal_trade=61,63"],
+        preset_grid=True,
+        profile_name="retention_follow",
+    )
+
+    assert grid["committee_score_min_normal_trade"] == [61, 63]
+    assert grid["committee_fragile_breakout_risk_cap"] == [75.0, 85.0]
+
+
+def test_routed_committee_grid_overrides_can_build_profile() -> None:
+    grid = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="shadow_research",
+    )
+
+    profile = build_short_trade_target_profile(
+        "shadow_research",
+        overrides={key: values[0] for key, values in grid.items()},
+    )
+
+    assert profile.committee_alpha_min_aggressive_trade == 66.0
+    assert profile.committee_score_min_normal_trade == 62.0
+    assert profile.committee_fragile_breakout_risk_cap == 75.0
+
+
 def test_resolve_replay_inputs_from_weekly_validation_selection(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     report_dir = reports_root / "paper_trading_20260413_20260413_live_short_trade_only_20260414"
@@ -372,8 +421,7 @@ def test_main_accepts_weekly_window_args_and_runs_search(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         optimize_profile,
         "run_param_search",
-        lambda **kwargs: checkpoint_calls.append(Path(kwargs["checkpoint_path"]))
-        or SimpleNamespace(best_params={}, best_score=None, objective=kwargs["objective"], results=[], completed_trials=0, total_trials=1),
+        lambda **kwargs: checkpoint_calls.append(Path(kwargs["checkpoint_path"])) or SimpleNamespace(best_params={}, best_score=None, objective=kwargs["objective"], results=[], completed_trials=0, total_trials=1),
     )
     monkeypatch.setattr(optimize_profile, "save_search_report", lambda report, output_path=None: Path(output_path or tmp_path / "report.md"))
     monkeypatch.setattr(optimize_profile, "save_search_payload", lambda report, output_path=None: Path(output_path or tmp_path / "report.json"))

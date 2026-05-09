@@ -4,24 +4,25 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from scripts.btst_analysis_utils import build_day_breakdown as _build_day_breakdown
 from scripts.btst_analysis_utils import (
-    build_day_breakdown as _build_day_breakdown,
     build_false_negative_proxy_rows as _build_false_negative_proxy_rows,
-    build_surface_summary as _build_surface_summary,
+)
+from scripts.btst_analysis_utils import build_surface_summary as _build_surface_summary
+from scripts.btst_analysis_utils import (
     extract_btst_price_outcome as _extract_btst_price_outcome,
 )
 from scripts.replay_selection_target_calibration import (
-    STRUCTURAL_VARIANTS,
     _apply_candidate_entry_filters,
     _coerce_watchlist_entries,
     _extract_short_trade_snapshot_map,
     _iter_replay_input_sources,
     _override_short_trade_thresholds,
     _summarize_candidate_entry_filter_observability,
+    STRUCTURAL_VARIANTS,
 )
 from src.targets import build_short_trade_target_profile
 from src.targets.router import build_selection_targets
-
 
 DEFAULT_GUARDRAIL_NEXT_HIGH_HIT_RATE = 0.5217
 DEFAULT_GUARDRAIL_NEXT_CLOSE_POSITIVE_RATE = 0.5652
@@ -30,11 +31,7 @@ DEFAULT_GUARDRAIL_NEXT_CLOSE_POSITIVE_RATE = 0.5652
 def _resolve_frontier_source_family(*, row: dict[str, Any] | None = None, entry: dict[str, Any] | None = None) -> str | None:
     row = dict(row or {})
     entry = dict(entry or {})
-    explicit_source_family = str(
-        row.get("frontier_expansion_source_family")
-        or entry.get("frontier_expansion_source_family")
-        or ""
-    ).strip()
+    explicit_source_family = str(row.get("frontier_expansion_source_family") or entry.get("frontier_expansion_source_family") or "").strip()
     return explicit_source_family or None
 
 
@@ -396,7 +393,7 @@ def _build_replayed_rows(
     watchlist = _coerce_watchlist_entries(list(payload.get("watchlist") or []))
     buy_order_tickers = {str(ticker) for ticker in list(payload.get("buy_order_tickers") or []) if str(ticker or "").strip()}
     source_entry_by_ticker: dict[str, dict[str, Any]] = {}
-    for source_entry in [*list(rejected_entries or []), *list(supplemental_entries or [])]:
+    for source_entry in [*list(rejected_entries or []), *list(supplemental_entries or []), *list(payload.get("watchlist") or [])]:
         ticker = str((source_entry or {}).get("ticker") or "").strip()
         if ticker:
             source_entry_by_ticker[ticker] = dict(source_entry or {})
@@ -418,12 +415,13 @@ def _build_replayed_rows(
         stored_short_trade = dict(stored_evaluation.get("short_trade") or {})
         price_outcome = _extract_btst_price_outcome(str(ticker), trade_date, price_cache)
         source_entry = dict(source_entry_by_ticker.get(str(ticker)) or {})
+        source_entry_metrics = dict(source_entry.get("metrics") or {})
         replayed_explainability_payload = dict(replayed_snapshot.get("explainability_payload") or {})
-        candidate_source = str(
-            stored_evaluation.get("candidate_source")
-            or replayed_explainability_payload.get("candidate_source")
-            or "unknown"
-        )
+        candidate_source = str(stored_evaluation.get("candidate_source") or replayed_explainability_payload.get("candidate_source") or "unknown")
+        metric_source_fields = {}
+        for field_name in ("flow_60_source", "persist_120_source", "close_support_30_source"):
+            if field_name in source_entry_metrics:
+                metric_source_fields[field_name] = source_entry_metrics[field_name]
         rows.append(
             {
                 "report_label": label or profile_name,
@@ -450,6 +448,7 @@ def _build_replayed_rows(
                 "target_mode": target_mode,
                 "replay_input_path": str(replay_input_path),
                 **price_outcome,
+                **metric_source_fields,
             }
         )
     return rows
@@ -476,6 +475,44 @@ def _summarize_rows_by_frontier_source_family(rows: list[dict[str, Any]], *, nex
             "decision_counts": dict(Counter(str(row.get("decision") or "unknown") for row in source_rows)),
         }
     return summaries
+
+
+def _summarize_source_coverage(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Aggregate source coverage from rows:
+    - flow_60_source, persist_120_source, close_support_30_source counts
+    - committee component_sources from explainability_payload -> committee -> component_sources
+    """
+    flow_60_source_counts: Counter[str] = Counter()
+    persist_120_source_counts: Counter[str] = Counter()
+    close_support_30_source_counts: Counter[str] = Counter()
+    committee_component_sources_counts: Counter[str] = Counter()
+
+    for row in rows:
+        flow_60_source = row.get("flow_60_source")
+        if flow_60_source:
+            flow_60_source_counts[str(flow_60_source)] += 1
+
+        persist_120_source = row.get("persist_120_source")
+        if persist_120_source:
+            persist_120_source_counts[str(persist_120_source)] += 1
+
+        close_support_30_source = row.get("close_support_30_source")
+        if close_support_30_source:
+            close_support_30_source_counts[str(close_support_30_source)] += 1
+
+        explainability_payload = dict(row.get("explainability_payload") or {})
+        committee = dict(explainability_payload.get("committee") or {})
+        component_sources = list(committee.get("component_sources") or [])
+        for component_source in component_sources:
+            committee_component_sources_counts[str(component_source)] += 1
+
+    return {
+        "flow_60_source_counts": dict(flow_60_source_counts),
+        "persist_120_source_counts": dict(persist_120_source_counts),
+        "close_support_30_source_counts": dict(close_support_30_source_counts),
+        "committee_component_sources_counts": dict(committee_component_sources_counts),
+    }
 
 
 def _build_profile_replay_analysis_payload(
@@ -542,10 +579,7 @@ def _build_profile_replay_analysis_payload(
         "candidate_source_counts": dict(candidate_source_counts),
         "cycle_status_counts": dict(cycle_status_counts),
         "data_status_counts": dict(data_status_counts),
-        "candidate_entry_filter_observability": {
-            rule_name: {key: int(value) for key, value in counters.items()}
-            for rule_name, counters in sorted(candidate_entry_filter_observability.items())
-        },
+        "candidate_entry_filter_observability": {rule_name: {key: int(value) for key, value in counters.items()} for rule_name, counters in sorted(candidate_entry_filter_observability.items())},
         "surface_summaries": {
             "all": _build_surface_summary(rows, next_high_hit_threshold=next_high_hit_threshold),
             "tradeable": _build_surface_summary(actionable_rows, next_high_hit_threshold=next_high_hit_threshold),
@@ -570,6 +604,7 @@ def _build_profile_replay_analysis_payload(
             rows,
             next_high_hit_threshold=next_high_hit_threshold,
         ),
+        "source_coverage_summary": _summarize_source_coverage(rows),
         "top_tradeable_rows": top_tradeable_rows,
         "top_false_negative_rows": false_negative_rows[:8],
         "top_filtered_candidate_entry_rows": top_filtered_candidate_entry_rows,

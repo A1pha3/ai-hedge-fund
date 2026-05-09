@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import erfc, sqrt
 from pathlib import Path
 from statistics import mean, stdev
-import json
 from time import perf_counter
-from collections.abc import Callable, Sequence
 
 from src.execution.daily_pipeline import DailyPipeline
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
@@ -19,15 +19,12 @@ from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
 
 from .engine import BacktestEngine
 from .types import PerformanceMetrics
-from .walk_forward import WalkForwardWindow, build_walk_forward_windows
+from .walk_forward import build_walk_forward_windows, WalkForwardWindow
 
 
 def _slice_agent_results(agent_results: dict[str, dict[str, dict]], tickers: list[str]) -> dict[str, dict[str, dict]]:
     requested = set(tickers)
-    return {
-        agent_id: {ticker: payload for ticker, payload in ticker_payload.items() if ticker in requested}
-        for agent_id, ticker_payload in agent_results.items()
-    }
+    return {agent_id: {ticker: payload for ticker, payload in ticker_payload.items() if ticker in requested} for agent_id, ticker_payload in agent_results.items()}
 
 
 def make_backtest_agent_runner(agent: Callable, model_name: str, model_provider: str) -> Callable[[list[str], str, str], dict[str, dict[str, dict]]]:
@@ -298,10 +295,7 @@ def run_ab_comparison_walk_forward(
 
     baseline_metrics = [item.baseline for item in results]
     mvp_metrics = [item.mvp for item in results]
-    sortino_deltas = [
-        float(item.mvp.get("sortino_ratio", 0.0) or 0.0) - float(item.baseline.get("sortino_ratio", 0.0) or 0.0)
-        for item in results
-    ]
+    sortino_deltas = [float(item.mvp.get("sortino_ratio", 0.0) or 0.0) - float(item.baseline.get("sortino_ratio", 0.0) or 0.0) for item in results]
     summary = {
         "window_count": len(results),
         "baseline_avg_sharpe": _average_metric(baseline_metrics, "sharpe_ratio"),

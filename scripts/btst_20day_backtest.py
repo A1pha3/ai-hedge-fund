@@ -206,10 +206,7 @@ def compute_factors(hist_group, trade_date_price):
     normalized_open_to_close_return = min(max((next_open_to_close_return_mean + 0.01) / 0.04, 0), 1)
     historical_continuation_score = min(
         max(
-            (0.50 * next_close_positive_rate)
-            + (0.25 * next_high_hit_rate)
-            + (0.15 * normalized_open_to_close_return)
-            + (0.10 * continuation_evidence_weight),
+            (0.50 * next_close_positive_rate) + (0.25 * next_high_hit_rate) + (0.15 * normalized_open_to_close_return) + (0.10 * continuation_evidence_weight),
             0,
         ),
         1,
@@ -417,9 +414,7 @@ def _build_profiles(profile_names: tuple[str, ...] = DEFAULT_PROFILE_NAMES, prof
     unsupported_override_fields = sorted(set((profile_overrides or {}).keys()) - SUPPORTED_PROFILE_OVERRIDE_FIELDS)
     if unsupported_override_fields:
         unsupported_fields_text = ", ".join(str(field) for field in unsupported_override_fields)
-        raise ValueError(
-            f"Profile overrides not modeled by btst_20day_backtest.py: {unsupported_fields_text}"
-        )
+        raise ValueError(f"Profile overrides not modeled by btst_20day_backtest.py: {unsupported_fields_text}")
     for profile_name in profile_names:
         profile = build_short_trade_target_profile(profile_name, overrides=profile_overrides)
         profiles[profile_name] = {

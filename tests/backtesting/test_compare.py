@@ -1,4 +1,11 @@
-from src.backtesting.compare import ABWindowMetrics, BaselineDailyGainersPipeline, build_ab_comparison_payload, format_ab_comparison_report, make_backtest_agent_runner, run_ab_comparison_walk_forward
+from src.backtesting.compare import (
+    ABWindowMetrics,
+    BaselineDailyGainersPipeline,
+    build_ab_comparison_payload,
+    format_ab_comparison_report,
+    make_backtest_agent_runner,
+    run_ab_comparison_walk_forward,
+)
 from src.backtesting.walk_forward import WalkForwardWindow
 from src.screening.models import MarketState, MarketStateType
 
@@ -121,11 +128,7 @@ def test_make_backtest_agent_runner_reuses_superset_results_for_same_day():
 
     def fake_agent(**kwargs):
         calls.append(kwargs)
-        return {
-            "analyst_signals": {
-                "agent": {ticker: {"signal": "bullish", "confidence": 80, "reasoning": "ok"} for ticker in kwargs["tickers"]}
-            }
-        }
+        return {"analyst_signals": {"agent": {ticker: {"signal": "bullish", "confidence": 80, "reasoning": "ok"} for ticker in kwargs["tickers"]}}}
 
     runner = make_backtest_agent_runner(fake_agent, model_name="glm-4.7", model_provider="Zhipu")
 

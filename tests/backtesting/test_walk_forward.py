@@ -1,7 +1,12 @@
-import pytest
 import pandas as pd
+import pytest
 
-from src.backtesting.walk_forward import WindowMode, build_walk_forward_windows, run_walk_forward, summarize_walk_forward
+from src.backtesting.walk_forward import (
+    build_walk_forward_windows,
+    run_walk_forward,
+    summarize_walk_forward,
+    WindowMode,
+)
 
 
 def test_build_walk_forward_windows_generates_rolling_ranges():

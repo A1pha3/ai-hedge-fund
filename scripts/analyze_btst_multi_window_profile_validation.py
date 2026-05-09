@@ -5,14 +5,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_analysis_utils import compare_reports as _compare_reports, resolve_guardrail as _resolve_guardrail
+from scripts.btst_analysis_utils import compare_reports as _compare_reports
+from scripts.btst_analysis_utils import resolve_guardrail as _resolve_guardrail
 from scripts.btst_profile_replay_utils import (
+    analyze_btst_profile_replay_window,
     DEFAULT_GUARDRAIL_NEXT_CLOSE_POSITIVE_RATE,
     DEFAULT_GUARDRAIL_NEXT_HIGH_HIT_RATE,
-    analyze_btst_profile_replay_window,
 )
 from scripts.btst_report_utils import discover_report_dirs
-
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR
@@ -27,30 +27,11 @@ def _classify_window(comparison: dict[str, Any]) -> str:
     t_plus_2_close_return_median_delta = delta.get("t_plus_2_close_return_median")
     t_plus_2_close_positive_rate_delta = delta.get("t_plus_2_close_positive_rate")
 
-    if (
-        next_close_positive_rate_delta is not None
-        and float(next_close_positive_rate_delta) < 0
-        and next_close_return_p10_delta is not None
-        and float(next_close_return_p10_delta) < 0
-    ):
+    if next_close_positive_rate_delta is not None and float(next_close_positive_rate_delta) < 0 and next_close_return_p10_delta is not None and float(next_close_return_p10_delta) < 0:
         return "keep_baseline_default"
-    if (
-        next_close_positive_rate_delta is not None
-        and float(next_close_positive_rate_delta) >= 0
-        and next_close_return_p10_delta is not None
-        and float(next_close_return_p10_delta) >= 0
-        and (
-            float(next_close_positive_rate_delta) > 0
-            or float(next_close_return_p10_delta) > 0
-        )
-    ):
+    if next_close_positive_rate_delta is not None and float(next_close_positive_rate_delta) >= 0 and next_close_return_p10_delta is not None and float(next_close_return_p10_delta) >= 0 and (float(next_close_positive_rate_delta) > 0 or float(next_close_return_p10_delta) > 0):
         return "variant_supports_t1_edge"
-    if (
-        t_plus_2_close_return_median_delta is not None
-        and float(t_plus_2_close_return_median_delta) > 0
-        and t_plus_2_close_positive_rate_delta is not None
-        and float(t_plus_2_close_positive_rate_delta) >= 0
-    ):
+    if t_plus_2_close_return_median_delta is not None and float(t_plus_2_close_return_median_delta) > 0 and t_plus_2_close_positive_rate_delta is not None and float(t_plus_2_close_positive_rate_delta) >= 0:
         return "variant_improves_t2_but_not_t1"
     return "mixed"
 
@@ -67,6 +48,8 @@ def _summarize_row(*, report_dir: Path, baseline: dict[str, Any], variant: dict[
         "variant_tradeable": dict(variant["surface_summaries"]["tradeable"]),
         "baseline_frontier_source_family_summaries": dict(baseline.get("frontier_source_family_summaries") or {}),
         "variant_frontier_source_family_summaries": dict(variant.get("frontier_source_family_summaries") or {}),
+        "baseline_source_coverage_summary": dict(baseline.get("source_coverage_summary") or {}),
+        "variant_source_coverage_summary": dict(variant.get("source_coverage_summary") or {}),
         "tradeable_surface_delta": dict(comparison.get("tradeable_surface_delta") or {}),
         "guardrail_status": str(comparison.get("guardrail_status") or ""),
         "window_recommendation": classification,
@@ -195,13 +178,51 @@ def render_btst_multi_window_profile_validation_markdown(analysis: dict[str, Any
         for source_family in frontier_source_families:
             baseline_summary = dict(dict(row.get("baseline_frontier_source_family_summaries") or {}).get(source_family) or {})
             variant_summary = dict(dict(row.get("variant_frontier_source_family_summaries") or {}).get(source_family) or {})
-            lines.append(
-                f"  - frontier_source={source_family}, "
-                f"baseline_tradeable={dict(baseline_summary.get('tradeable') or {}).get('total_count')}, "
-                f"variant_tradeable={dict(variant_summary.get('tradeable') or {}).get('total_count')}, "
-                f"baseline_selected={dict(baseline_summary.get('selected') or {}).get('total_count')}, "
-                f"variant_selected={dict(variant_summary.get('selected') or {}).get('total_count')}"
+            lines.append(f"  - frontier_source={source_family}, " f"baseline_tradeable={dict(baseline_summary.get('tradeable') or {}).get('total_count')}, " f"variant_tradeable={dict(variant_summary.get('tradeable') or {}).get('total_count')}, " f"baseline_selected={dict(baseline_summary.get('selected') or {}).get('total_count')}, " f"variant_selected={dict(variant_summary.get('selected') or {}).get('total_count')}")
+        baseline_source_coverage = dict(row.get("baseline_source_coverage_summary") or {})
+        variant_source_coverage = dict(row.get("variant_source_coverage_summary") or {})
+        if baseline_source_coverage or variant_source_coverage:
+            lines.append(f"  - source_coverage:")
+            flow_sources = sorted(
+                {
+                    *dict(baseline_source_coverage.get("flow_60_source_counts") or {}).keys(),
+                    *dict(variant_source_coverage.get("flow_60_source_counts") or {}).keys(),
+                }
             )
+            for source in flow_sources:
+                baseline_count = dict(baseline_source_coverage.get("flow_60_source_counts") or {}).get(source, 0)
+                variant_count = dict(variant_source_coverage.get("flow_60_source_counts") or {}).get(source, 0)
+                lines.append(f"    - flow_60={source}: baseline={baseline_count}, variant={variant_count}")
+            persist_sources = sorted(
+                {
+                    *dict(baseline_source_coverage.get("persist_120_source_counts") or {}).keys(),
+                    *dict(variant_source_coverage.get("persist_120_source_counts") or {}).keys(),
+                }
+            )
+            for source in persist_sources:
+                baseline_count = dict(baseline_source_coverage.get("persist_120_source_counts") or {}).get(source, 0)
+                variant_count = dict(variant_source_coverage.get("persist_120_source_counts") or {}).get(source, 0)
+                lines.append(f"    - persist_120={source}: baseline={baseline_count}, variant={variant_count}")
+            close_support_sources = sorted(
+                {
+                    *dict(baseline_source_coverage.get("close_support_30_source_counts") or {}).keys(),
+                    *dict(variant_source_coverage.get("close_support_30_source_counts") or {}).keys(),
+                }
+            )
+            for source in close_support_sources:
+                baseline_count = dict(baseline_source_coverage.get("close_support_30_source_counts") or {}).get(source, 0)
+                variant_count = dict(variant_source_coverage.get("close_support_30_source_counts") or {}).get(source, 0)
+                lines.append(f"    - close_support_30={source}: baseline={baseline_count}, variant={variant_count}")
+            committee_sources = sorted(
+                {
+                    *dict(baseline_source_coverage.get("committee_component_sources_counts") or {}).keys(),
+                    *dict(variant_source_coverage.get("committee_component_sources_counts") or {}).keys(),
+                }
+            )
+            for source in committee_sources:
+                baseline_count = dict(baseline_source_coverage.get("committee_component_sources_counts") or {}).get(source, 0)
+                variant_count = dict(variant_source_coverage.get("committee_component_sources_counts") or {}).get(source, 0)
+                lines.append(f"    - committee={source}: baseline={baseline_count}, variant={variant_count}")
     if not list(analysis.get("rows") or []):
         lines.append("- none")
     lines.append("")

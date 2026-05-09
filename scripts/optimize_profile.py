@@ -3,6 +3,7 @@
 Uses replay-based multi-window analysis to evaluate parameter combinations.
 Supports checkpointing for long-running searches.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -14,12 +15,12 @@ from typing import Any, Callable
 
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.param_search import (
-    ParamSpace,
-    SearchObjective,
     format_search_report,
+    ParamSpace,
     run_param_search,
     save_search_payload,
     save_search_report,
+    SearchObjective,
 )
 from src.targets import get_short_trade_target_profile
 from src.utils.logging import get_logger
@@ -152,6 +153,7 @@ def _build_replay_evaluator(
 
     def evaluator(params: dict[str, Any]) -> dict[str, float | None]:
         from src.targets.profiles import build_short_trade_target_profile
+
         try:
             build_short_trade_target_profile(base_profile, overrides=params)
         except Exception as e:
@@ -232,17 +234,7 @@ def _build_replay_evaluator(
                 if t_plus_3_close_expectancy is None:
                     t_plus_3_close_expectancy = next_close_expectancy
 
-                if (
-                    next_close_positive_rate is None
-                    or next_high_hit_rate is None
-                    or t_plus_2_median is None
-                    or t_plus_3_median is None
-                    or max_dd_proxy is None
-                    or next_close_expectancy is None
-                    or t_plus_2_close_positive_rate is None
-                    or t_plus_3_close_positive_rate is None
-                    or t_plus_3_close_expectancy is None
-                ):
+                if next_close_positive_rate is None or next_high_hit_rate is None or t_plus_2_median is None or t_plus_3_median is None or max_dd_proxy is None or next_close_expectancy is None or t_plus_2_close_positive_rate is None or t_plus_3_close_positive_rate is None or t_plus_3_close_expectancy is None:
                     logger.warning("Trial skipped due missing metrics for %s scope=%s", input_path, primary_scope)
                     continue
 
@@ -296,33 +288,17 @@ def _build_replay_evaluator(
         avg_sharpe = sum(total_metrics["sharpe"]) / len(total_metrics["sharpe"]) if total_metrics["sharpe"] else None
         avg_sortino = sum(total_metrics["sortino"]) / len(total_metrics["sortino"]) if total_metrics["sortino"] else None
         avg_max_dd = sum(total_metrics["max_dd"]) / len(total_metrics["max_dd"]) if total_metrics["max_dd"] else None
-        avg_next_close_positive_rate = (
-            sum(total_metrics["next_close_positive_rate"]) / len(total_metrics["next_close_positive_rate"]) if total_metrics["next_close_positive_rate"] else None
-        )
-        avg_next_close_payoff_ratio = (
-            sum(total_metrics["next_close_payoff_ratio"]) / len(total_metrics["next_close_payoff_ratio"]) if total_metrics["next_close_payoff_ratio"] else None
-        )
-        avg_next_close_expectancy = (
-            sum(total_metrics["next_close_expectancy"]) / len(total_metrics["next_close_expectancy"]) if total_metrics["next_close_expectancy"] else None
-        )
+        avg_next_close_positive_rate = sum(total_metrics["next_close_positive_rate"]) / len(total_metrics["next_close_positive_rate"]) if total_metrics["next_close_positive_rate"] else None
+        avg_next_close_payoff_ratio = sum(total_metrics["next_close_payoff_ratio"]) / len(total_metrics["next_close_payoff_ratio"]) if total_metrics["next_close_payoff_ratio"] else None
+        avg_next_close_expectancy = sum(total_metrics["next_close_expectancy"]) / len(total_metrics["next_close_expectancy"]) if total_metrics["next_close_expectancy"] else None
         avg_next_high_hit_rate = sum(total_metrics["next_high_hit_rate"]) / len(total_metrics["next_high_hit_rate"]) if total_metrics["next_high_hit_rate"] else None
-        avg_t_plus_2_close_positive_rate = (
-            sum(total_metrics["t_plus_2_close_positive_rate"]) / len(total_metrics["t_plus_2_close_positive_rate"]) if total_metrics["t_plus_2_close_positive_rate"] else None
-        )
-        avg_t_plus_3_close_positive_rate = (
-            sum(total_metrics["t_plus_3_close_positive_rate"]) / len(total_metrics["t_plus_3_close_positive_rate"]) if total_metrics["t_plus_3_close_positive_rate"] else None
-        )
-        avg_t_plus_3_close_expectancy = (
-            sum(total_metrics["t_plus_3_close_expectancy"]) / len(total_metrics["t_plus_3_close_expectancy"]) if total_metrics["t_plus_3_close_expectancy"] else None
-        )
+        avg_t_plus_2_close_positive_rate = sum(total_metrics["t_plus_2_close_positive_rate"]) / len(total_metrics["t_plus_2_close_positive_rate"]) if total_metrics["t_plus_2_close_positive_rate"] else None
+        avg_t_plus_3_close_positive_rate = sum(total_metrics["t_plus_3_close_positive_rate"]) / len(total_metrics["t_plus_3_close_positive_rate"]) if total_metrics["t_plus_3_close_positive_rate"] else None
+        avg_t_plus_3_close_expectancy = sum(total_metrics["t_plus_3_close_expectancy"]) / len(total_metrics["t_plus_3_close_expectancy"]) if total_metrics["t_plus_3_close_expectancy"] else None
         avg_downside_p10 = sum(total_metrics["downside_p10"]) / len(total_metrics["downside_p10"]) if total_metrics["downside_p10"] else None
         avg_sample_weight = sum(total_metrics["sample_weight"]) / len(total_metrics["sample_weight"]) if total_metrics["sample_weight"] else None
         window_coverage = float(window_count) / float(len(input_paths) or 1)
-        effective_sample_weight = (
-            max(0.0, min(1.0, avg_sample_weight * window_coverage))
-            if avg_sample_weight is not None
-            else None
-        )
+        effective_sample_weight = max(0.0, min(1.0, avg_sample_weight * window_coverage)) if avg_sample_weight is not None else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -359,29 +335,40 @@ def _build_walk_forward_evaluator(
     base_profile: str,
 ) -> Callable:
     from src.backtesting.engine import BacktestEngine
-    from src.backtesting.walk_forward import WindowMode, build_walk_forward_windows, run_walk_forward, summarize_walk_forward
+    from src.backtesting.walk_forward import (
+        build_walk_forward_windows,
+        run_walk_forward,
+        summarize_walk_forward,
+        WindowMode,
+    )
     from src.main import run_hedge_fund
     from src.targets.profiles import use_short_trade_target_profile
 
     def evaluator(params: dict[str, Any]) -> dict[str, float | None]:
         windows = build_walk_forward_windows(
-            start_date, end_date,
-            train_months=train_months, test_months=test_months, step_months=step_months,
+            start_date,
+            end_date,
+            train_months=train_months,
+            test_months=test_months,
+            step_months=step_months,
             window_mode=WindowMode.ROLLING,
         )
         with use_short_trade_target_profile(profile_name=base_profile, overrides=params):
-            results = run_walk_forward(windows, lambda w: BacktestEngine(
-                agent=run_hedge_fund,
-                tickers=tickers,
-                start_date=w.test_start,
-                end_date=w.test_end,
-                initial_capital=initial_capital,
-                model_name=model_name,
-                model_provider=model_provider,
-                selected_analysts=selected_analysts,
-                initial_margin_requirement=0.0,
-                backtest_mode="pipeline",
-            ))
+            results = run_walk_forward(
+                windows,
+                lambda w: BacktestEngine(
+                    agent=run_hedge_fund,
+                    tickers=tickers,
+                    start_date=w.test_start,
+                    end_date=w.test_end,
+                    initial_capital=initial_capital,
+                    model_name=model_name,
+                    model_provider=model_provider,
+                    selected_analysts=selected_analysts,
+                    initial_margin_requirement=0.0,
+                    backtest_mode="pipeline",
+                ),
+            )
         summary = summarize_walk_forward(results)
         return {
             "sharpe_ratio": summary.get("avg_sharpe"),
@@ -416,6 +403,27 @@ EVENT_CATALYST_GRID: dict[str, list[Any]] = {
     "event_catalyst_sector_resonance_weight": [0.18, 0.22],
 }
 
+ROUTED_BTST_COMMITTEE_GRID: dict[str, list[Any]] = {
+    "committee_alpha_min_aggressive_trade": [66.0, 68.0, 70.0],
+    "committee_beta_min_aggressive_trade": [56.0, 58.0, 60.0],
+    "committee_gamma_min_aggressive_trade": [54.0, 56.0, 58.0],
+    "committee_score_min_aggressive_trade": [64.0, 66.0, 68.0],
+    "committee_alpha_min_normal_trade": [64.0, 66.0, 68.0],
+    "committee_beta_min_normal_trade": [60.0, 62.0, 64.0],
+    "committee_gamma_min_normal_trade": [56.0, 58.0, 60.0],
+    "committee_score_min_normal_trade": [62.0, 64.0, 66.0],
+    "committee_fragile_breakout_alpha_weight": [0.08, 0.10, 0.12],
+    "committee_fragile_breakout_activation_floor": [56.0, 60.0, 64.0],
+    "committee_fragile_breakout_fragility_floor": [52.0, 55.0, 58.0],
+    "committee_fragile_breakout_risk_cap": [75.0, 85.0],
+}
+
+ROUTED_BTST_COMMITTEE_PROFILES = {
+    "ignition_breakout",
+    "retention_follow",
+    "shadow_research",
+}
+
 
 def resolve_grid_params(*, grid_params: list[str], preset_grid: bool, profile_name: str) -> dict[str, list[Any]]:
     """Resolve grid parameters with optional preset and profile-specific extensions.
@@ -431,6 +439,8 @@ def resolve_grid_params(*, grid_params: list[str], preset_grid: bool, profile_na
     resolved = _parse_grid_params(grid_params)
     if preset_grid and profile_name == "event_catalyst_guarded":
         return {**MOMENTUM_OPTIMIZED_GRID, **EVENT_CATALYST_GRID, **resolved}
+    if preset_grid and profile_name in ROUTED_BTST_COMMITTEE_PROFILES:
+        return {**ROUTED_BTST_COMMITTEE_GRID, **resolved}
     if preset_grid:
         return {**MOMENTUM_OPTIMIZED_GRID, **resolved}
     return resolved
