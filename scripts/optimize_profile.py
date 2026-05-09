@@ -424,19 +424,37 @@ ROUTED_BTST_COMMITTEE_PROFILES = {
     "shadow_research",
 }
 
+IGNITION_STAGE1_GRID: dict[str, list[Any]] = {
+    "committee_alpha_min_aggressive_trade": [66.0, 68.0],
+    "committee_beta_min_aggressive_trade": [56.0, 58.0],
+    "committee_gamma_min_aggressive_trade": [54.0, 56.0],
+    "committee_score_min_aggressive_trade": [64.0, 66.0],
+    "committee_alpha_min_normal_trade": [64.0, 66.0],
+    "committee_beta_min_normal_trade": [60.0, 62.0],
+    "committee_gamma_min_normal_trade": [56.0, 58.0],
+    "committee_score_min_normal_trade": [62.0, 64.0],
+    "committee_fragile_breakout_alpha_weight": [0.08, 0.10],
+    "committee_fragile_breakout_activation_floor": [56.0, 60.0],
+    "committee_fragile_breakout_fragility_floor": [52.0, 55.0],
+    "committee_fragile_breakout_risk_cap": [75.0, 80.0],
+}
 
-def resolve_grid_params(*, grid_params: list[str], preset_grid: bool, profile_name: str) -> dict[str, list[Any]]:
+
+def resolve_grid_params(*, grid_params: list[str], preset_grid: bool, profile_name: str, staged_mode: str | None = None) -> dict[str, list[Any]]:
     """Resolve grid parameters with optional preset and profile-specific extensions.
 
     Args:
         grid_params: Raw grid parameter strings to parse
         preset_grid: Whether to include base preset grid
         profile_name: Profile name for profile-specific grid extensions
+        staged_mode: Optional staged calibration mode (e.g. "ignition_stage1")
 
     Returns:
         Merged grid dictionary with parsed params taking precedence
     """
     resolved = _parse_grid_params(grid_params)
+    if staged_mode == "ignition_stage1":
+        return {**IGNITION_STAGE1_GRID, **resolved}
     if preset_grid and profile_name == "event_catalyst_guarded":
         return {**MOMENTUM_OPTIMIZED_GRID, **EVENT_CATALYST_GRID, **resolved}
     if preset_grid and profile_name in ROUTED_BTST_COMMITTEE_PROFILES:
@@ -456,6 +474,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--weekly-end-date", default=None, help="Weekly replay-input discovery end date")
     parser.add_argument("--grid-params", nargs="+", help="Grid params as key=val1,val2 or path/to.json")
     parser.add_argument("--preset-grid", action="store_true", help="Use built-in momentum_optimized grid")
+    parser.add_argument(
+        "--staged-mode",
+        choices=["ignition_stage1"],
+        default=None,
+        help="Run a narrow staged calibration workflow for a routed BTST profile.",
+    )
     parser.add_argument("--output-json", default=None, help="Output JSON path")
     parser.add_argument("--output-md", default=None, help="Output Markdown path")
     parser.add_argument("--checkpoint", default=None, help="Checkpoint file for resume")
@@ -474,11 +498,12 @@ def main(argv: list[str] | None = None) -> int:
 
     get_short_trade_target_profile(args.profile)
 
-    if args.preset_grid or args.grid_params:
+    if args.preset_grid or args.grid_params or args.staged_mode:
         grid = resolve_grid_params(
             grid_params=args.grid_params or [],
             preset_grid=args.preset_grid,
             profile_name=args.profile,
+            staged_mode=args.staged_mode,
         )
     else:
         parser.error("Specify --preset-grid or --grid-params")

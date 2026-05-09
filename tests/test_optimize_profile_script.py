@@ -445,3 +445,17 @@ def test_main_accepts_weekly_window_args_and_runs_search(monkeypatch: pytest.Mon
     assert exit_code == 0
     assert checkpoint_calls
     assert checkpoint_calls[0].name.startswith("param_search_default_")
+
+
+def test_resolve_grid_params_uses_stage1_ignition_grid() -> None:
+    grid = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="ignition_breakout",
+        staged_mode="ignition_stage1",
+    )
+
+    assert grid["committee_alpha_min_aggressive_trade"] == [66.0, 68.0]
+    assert grid["committee_score_min_normal_trade"] == [62.0, 64.0]
+    assert grid["committee_fragile_breakout_alpha_weight"] == [0.08, 0.10]
+    assert "committee_fragile_breakout_risk_cap" in grid
