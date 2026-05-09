@@ -143,6 +143,36 @@ def _resolve_primary_surface(
     return tradeable_surface, "tradeable_fallback"
 
 
+def _compute_source_coverage_pass_ratio(source_coverage_summaries: list[dict[str, Any]]) -> float:
+    """Compute high-quality (exact_tick) source fraction across tracked source fields.
+
+    Args:
+        source_coverage_summaries: List of source_coverage_summary dicts from replay windows.
+
+    Returns:
+        Fraction of tracked source slots covered by exact_tick (0.0 if no data).
+    """
+    _TRACKED_FIELDS = [
+        "flow_60_source_counts",
+        "persist_120_source_counts",
+        "close_support_30_source_counts",
+        "committee_component_sources_counts",
+    ]
+    _STRONG_SOURCE = "exact_tick"
+    strong_total = 0
+    grand_total = 0
+    for summary in source_coverage_summaries:
+        for field in _TRACKED_FIELDS:
+            field_counts = dict(summary.get(field) or {})
+            for source, count in field_counts.items():
+                grand_total += int(count)
+                if source == _STRONG_SOURCE:
+                    strong_total += int(count)
+    if grand_total == 0:
+        return 0.0
+    return float(strong_total) / float(grand_total)
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -173,6 +203,7 @@ def _build_replay_evaluator(
                 "sample_weight": None,
                 "window_coverage": 0.0,
                 "window_count": 0,
+                "source_coverage_pass_ratio": 0.0,
             }
 
         total_metrics: dict[str, list[float]] = {
@@ -190,6 +221,7 @@ def _build_replay_evaluator(
             "sample_weight": [],
         }
         window_count = 0
+        source_coverage_summaries: list[dict[str, Any]] = []
 
         for input_path in input_paths:
             try:
@@ -263,6 +295,9 @@ def _build_replay_evaluator(
                 total_metrics["downside_p10"].append(max_dd_proxy)
                 total_metrics["sample_weight"].append(sample_weight)
                 window_count += 1
+                coverage_summary = dict(result.get("source_coverage_summary") or {})
+                if coverage_summary:
+                    source_coverage_summaries.append(coverage_summary)
             except Exception as e:
                 logger.warning("Trial failed for %s: %s", input_path, e)
                 continue
@@ -283,6 +318,7 @@ def _build_replay_evaluator(
                 "sample_weight": None,
                 "window_coverage": 0.0,
                 "window_count": 0,
+                "source_coverage_pass_ratio": 0.0,
             }
 
         avg_sharpe = sum(total_metrics["sharpe"]) / len(total_metrics["sharpe"]) if total_metrics["sharpe"] else None
@@ -299,6 +335,7 @@ def _build_replay_evaluator(
         avg_sample_weight = sum(total_metrics["sample_weight"]) / len(total_metrics["sample_weight"]) if total_metrics["sample_weight"] else None
         window_coverage = float(window_count) / float(len(input_paths) or 1)
         effective_sample_weight = max(0.0, min(1.0, avg_sample_weight * window_coverage)) if avg_sample_weight is not None else None
+        source_coverage_pass_ratio = _compute_source_coverage_pass_ratio(source_coverage_summaries)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -315,9 +352,96 @@ def _build_replay_evaluator(
             "sample_weight": effective_sample_weight,
             "window_coverage": window_coverage,
             "window_count": window_count,
+            "source_coverage_pass_ratio": source_coverage_pass_ratio,
         }
 
     return evaluator
+
+
+# Tolerance for T+1 metric weakening; candidates within this margin still pass.
+_IGNITION_GUARDRAIL_TOLERANCE = 0.002
+
+
+def _build_staged_ignition_evaluator(
+    input_paths: list[Path],
+    *,
+    base_profile: str,
+    next_high_hit_threshold: float = 0.02,
+) -> Callable:
+    """Build a staged evaluator that injects baseline-awareness and guardrail metrics.
+
+    Pre-computes ignition_breakout (no overrides) and default profile baselines once,
+    then wraps each candidate evaluation to inject:
+    - baseline_next_close_positive_rate_delta
+    - baseline_next_close_expectancy_delta
+    - promotion_guardrail_pass
+    - source_coverage_pass_ratio
+
+    Args:
+        input_paths: Replay window input paths.
+        base_profile: Must be "ignition_breakout" for stage1.
+        next_high_hit_threshold: Threshold for next-high hit rate computation.
+
+    Returns:
+        Callable evaluator that returns metrics with baseline-aware fields injected.
+    """
+    assert base_profile == "ignition_breakout", (
+        f"_build_staged_ignition_evaluator requires 'ignition_breakout', got '{base_profile}'"
+    )
+
+    _ignition_evaluator = _build_replay_evaluator(
+        input_paths, base_profile="ignition_breakout", next_high_hit_threshold=next_high_hit_threshold
+    )
+    _default_evaluator = _build_replay_evaluator(
+        input_paths, base_profile="default", next_high_hit_threshold=next_high_hit_threshold
+    )
+
+    logger.info("Staged ignition evaluator: pre-computing ignition_breakout baseline…")
+    ignition_baseline = _ignition_evaluator({})
+    logger.info("Staged ignition evaluator: pre-computing default baseline…")
+    default_baseline = _default_evaluator({})
+
+    ignition_win_rate = ignition_baseline.get("next_close_positive_rate") or 0.0
+    ignition_expectancy = ignition_baseline.get("next_close_expectancy") or 0.0
+    default_win_rate = default_baseline.get("next_close_positive_rate") or 0.0
+
+    logger.info(
+        "Baselines — ignition_breakout: win_rate=%.4f expectancy=%.4f | default: win_rate=%.4f",
+        ignition_win_rate,
+        ignition_expectancy,
+        default_win_rate,
+    )
+
+    _candidate_evaluator = _build_replay_evaluator(
+        input_paths, base_profile=base_profile, next_high_hit_threshold=next_high_hit_threshold
+    )
+
+    def staged_evaluator(params: dict[str, Any]) -> dict[str, float | None]:
+        metrics: dict[str, Any] = dict(_candidate_evaluator(params))
+
+        cand_win_rate = metrics.get("next_close_positive_rate")
+        cand_expectancy = metrics.get("next_close_expectancy")
+
+        metrics["baseline_next_close_positive_rate_delta"] = (
+            (float(cand_win_rate) - float(ignition_win_rate)) if cand_win_rate is not None else None
+        )
+        metrics["baseline_next_close_expectancy_delta"] = (
+            (float(cand_expectancy) - float(ignition_expectancy)) if cand_expectancy is not None else None
+        )
+
+        if cand_win_rate is None or cand_expectancy is None:
+            promotion_guardrail_pass = False
+        else:
+            promotion_guardrail_pass = (
+                float(cand_win_rate) >= float(ignition_win_rate) - _IGNITION_GUARDRAIL_TOLERANCE
+                and float(cand_expectancy) >= float(ignition_expectancy) - _IGNITION_GUARDRAIL_TOLERANCE
+                and float(cand_win_rate) >= float(default_win_rate) - _IGNITION_GUARDRAIL_TOLERANCE
+            )
+        metrics["promotion_guardrail_pass"] = promotion_guardrail_pass
+
+        return metrics
+
+    return staged_evaluator
 
 
 def _build_walk_forward_evaluator(
@@ -529,11 +653,18 @@ def main(argv: list[str] | None = None) -> int:
             weekly_start_date=args.weekly_start_date,
             weekly_end_date=args.weekly_end_date,
         )
-        evaluator = _build_replay_evaluator(
-            replay_input_paths,
-            base_profile=args.profile,
-            next_high_hit_threshold=args.next_high_hit_threshold,
-        )
+        if args.staged_mode == "ignition_stage1":
+            evaluator = _build_staged_ignition_evaluator(
+                replay_input_paths,
+                base_profile=args.profile,
+                next_high_hit_threshold=args.next_high_hit_threshold,
+            )
+        else:
+            evaluator = _build_replay_evaluator(
+                replay_input_paths,
+                base_profile=args.profile,
+                next_high_hit_threshold=args.next_high_hit_threshold,
+            )
     elif args.tickers and args.start_date and args.end_date:
         walk_forward_descriptor = "|".join(
             [

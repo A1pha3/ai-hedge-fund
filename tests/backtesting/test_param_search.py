@@ -144,6 +144,42 @@ def test_save_search_report_and_payload(tmp_path):
     assert data["results"][0]["params"]["x"] == 1
 
 
+def test_compute_objective_score_btst_returns_none_when_candidate_fails_guardrails() -> None:
+    metrics = {
+        "next_close_positive_rate": 0.62,
+        "next_close_payoff_ratio": 1.8,
+        "next_close_expectancy": 0.012,
+        "next_high_hit_rate": 0.58,
+        "t_plus_2_close_positive_rate": 0.56,
+        "t_plus_3_close_positive_rate": 0.54,
+        "t_plus_3_close_expectancy": 0.011,
+        "downside_p10": -0.02,
+        "sample_weight": 0.8,
+        "promotion_guardrail_pass": False,
+    }
+    assert compute_objective_score(metrics, SearchObjective.BTST) is None
+
+
+def test_compute_objective_score_btst_rewards_baseline_delta_when_guardrails_pass() -> None:
+    metrics = {
+        "next_close_positive_rate": 0.62,
+        "next_close_payoff_ratio": 1.8,
+        "next_close_expectancy": 0.012,
+        "next_high_hit_rate": 0.58,
+        "t_plus_2_close_positive_rate": 0.56,
+        "t_plus_3_close_positive_rate": 0.54,
+        "t_plus_3_close_expectancy": 0.011,
+        "downside_p10": -0.02,
+        "sample_weight": 0.8,
+        "promotion_guardrail_pass": True,
+        "baseline_next_close_positive_rate_delta": 0.03,
+        "baseline_next_close_expectancy_delta": 0.004,
+    }
+    score = compute_objective_score(metrics, SearchObjective.BTST)
+    assert score is not None
+    assert score > 0.47
+
+
 def test_trial_result_with_none_score_excluded_from_best():
     space = ParamSpace(grid={"x": [1, 2]})
 

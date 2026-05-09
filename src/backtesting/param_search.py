@@ -109,6 +109,9 @@ def compute_objective_score(
         )
         return edge_score * (0.40 + (0.60 * effective_sample_weight))
     if objective == SearchObjective.BTST:
+        if metrics.get("promotion_guardrail_pass") is False:
+            return None
+
         win_rate = metrics.get("next_close_positive_rate")
         payoff_ratio = metrics.get("next_close_payoff_ratio")
         expectancy = metrics.get("next_close_expectancy")
@@ -153,7 +156,17 @@ def compute_objective_score(
             + (0.18 * max(0.0, 0.50 - float(t_plus_3_positive_rate)))
             + (0.12 * max(0.0, 0.0 - float(t_plus_3_expectancy)))
         )
-        return (base_score - floor_penalty) * (0.35 + (0.65 * effective_sample_weight))
+
+        # Bounded bonus from positive baseline deltas; capped to prevent distortion.
+        pos_rate_delta = metrics.get("baseline_next_close_positive_rate_delta")
+        expectancy_delta = metrics.get("baseline_next_close_expectancy_delta")
+        delta_bonus = 0.0
+        if pos_rate_delta is not None and pos_rate_delta > 0:
+            delta_bonus += clip(float(pos_rate_delta) * 1.5, 0.0, 0.04)
+        if expectancy_delta is not None and expectancy_delta > 0:
+            delta_bonus += clip(float(expectancy_delta) * 5.0, 0.0, 0.02)
+
+        return (base_score - floor_penalty + delta_bonus) * (0.35 + (0.65 * effective_sample_weight))
     return None
 
 
