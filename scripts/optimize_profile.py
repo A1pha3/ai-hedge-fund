@@ -21,6 +21,7 @@ from src.backtesting.param_search import (
     save_search_payload,
     save_search_report,
     SearchObjective,
+    SearchReport,
 )
 from src.targets import get_short_trade_target_profile
 from src.utils.logging import get_logger
@@ -462,6 +463,97 @@ def _build_staged_ignition_evaluator(
     return staged_evaluator
 
 
+def _build_staged_ignition_shortlist(report: SearchReport, *, top_n: int = 5) -> list[dict[str, Any]]:
+    """Extract top-N candidates from a stage1 search report and annotate each with a promotion verdict.
+
+    Rows with a valid score are ranked first (descending); guardrail-failed rows (score=None) follow.
+    Each row's verdict is derived from the ``promotion_guardrail_pass`` flag injected by the staged
+    evaluator.  Row-level context (baseline deltas, source coverage) is surfaced so callers can
+    understand *why* a row is or is not promotable.
+
+    Args:
+        report: Completed ``SearchReport`` from a stage1 ignition search.
+        top_n: Maximum number of shortlist rows to return.
+
+    Returns:
+        List of dicts, each containing ``params``, ``score``, ``promotion_verdict``,
+        ``baseline_next_close_positive_rate_delta``, ``baseline_next_close_expectancy_delta``,
+        and ``source_coverage_pass_ratio``.
+    """
+    scored = sorted(
+        (r for r in report.results if r.score is not None),
+        key=lambda r: r.score or 0.0,
+        reverse=True,
+    )
+    unscored = [r for r in report.results if r.score is None]
+    candidates = (scored + unscored)[:top_n]
+
+    shortlist: list[dict[str, Any]] = []
+    for row in candidates:
+        metrics: dict[str, Any] = row.metrics or {}
+        guardrail_pass = bool(metrics.get("promotion_guardrail_pass", False))
+        shortlist.append(
+            {
+                "params": row.params,
+                "score": row.score,
+                "promotion_verdict": "promotable" if guardrail_pass else "not_promotable",
+                "baseline_next_close_positive_rate_delta": metrics.get("baseline_next_close_positive_rate_delta"),
+                "baseline_next_close_expectancy_delta": metrics.get("baseline_next_close_expectancy_delta"),
+                "source_coverage_pass_ratio": metrics.get("source_coverage_pass_ratio"),
+            }
+        )
+    return shortlist
+
+
+def _format_staged_ignition_summary(report: SearchReport) -> str:
+    """Format a human-readable stage1 calibration summary with shortlist and overall verdict.
+
+    Args:
+        report: Completed ``SearchReport`` from a stage1 ignition search.
+
+    Returns:
+        Markdown-formatted summary string.
+    """
+    shortlist = _build_staged_ignition_shortlist(report)
+    lines: list[str] = ["## Stage 1 Ignition Calibration Summary", ""]
+
+    promotable_rows = [row for row in shortlist if row.get("promotion_verdict") == "promotable"]
+    if promotable_rows:
+        lines.append("**Overall verdict: PROMOTION AVAILABLE** — at least one candidate clears all guardrails.")
+    else:
+        lines.append("**Overall verdict: KEEP CURRENT IGNITION PROFILE** — no promotable candidates found.")
+    lines.append("")
+
+    if not shortlist:
+        lines.append("*(no candidates evaluated)*")
+        return "\n".join(lines)
+
+    lines.append("### Top Candidates")
+    lines.append("")
+    for rank, row in enumerate(shortlist, 1):
+        score_str = f"{row['score']:.4f}" if row["score"] is not None else "n/a"
+        verdict = row.get("promotion_verdict", "n/a")
+        marker = "✓" if verdict == "promotable" else "✗"
+        lines.append(f"**#{rank}** {marker} score={score_str} | verdict={verdict}")
+
+        delta_wr = row.get("baseline_next_close_positive_rate_delta")
+        delta_ex = row.get("baseline_next_close_expectancy_delta")
+        cov = row.get("source_coverage_pass_ratio")
+        if delta_wr is not None:
+            lines.append(f"  - win_rate_delta_vs_baseline: {delta_wr:+.4f}")
+        if delta_ex is not None:
+            lines.append(f"  - expectancy_delta_vs_baseline: {delta_ex:+.4f}")
+        if cov is not None:
+            lines.append(f"  - source_coverage_pass_ratio: {cov:.4f}")
+
+        params = row.get("params") or {}
+        for k, v in sorted(params.items()):
+            lines.append(f"  - {k}={v}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def _build_walk_forward_evaluator(
     *,
     tickers: list[str],
@@ -734,6 +826,8 @@ def main(argv: list[str] | None = None) -> int:
     md_path = save_search_report(report, args.output_md)
     json_path = save_search_payload(report, args.output_json)
     print(format_search_report(report))
+    if args.staged_mode == "ignition_stage1":
+        print(_format_staged_ignition_summary(report))
     print(f"\nReport: {md_path}")
     print(f"JSON: {json_path}")
     return 0

@@ -12,11 +12,14 @@ from scripts.optimize_profile import (
     _build_default_checkpoint_path,
     _build_replay_evaluator,
     _build_staged_ignition_evaluator,
+    _build_staged_ignition_shortlist,
     _compute_source_coverage_pass_ratio,
+    _format_staged_ignition_summary,
     _parse_grid_params,
     _resolve_primary_surface,
     resolve_grid_params,
 )
+from src.backtesting.param_search import SearchObjective, SearchReport, TrialResult
 from src.targets import build_short_trade_target_profile
 
 
@@ -500,7 +503,11 @@ def test_main_stage1_forwards_staged_mode_into_grid(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(opt_module.ParamSpace, "__init__", fake_param_space_init)
     monkeypatch.setattr(opt_module.ParamSpace, "size", fake_param_space_size)
-    monkeypatch.setattr(opt_module, "run_param_search", lambda **_: {"top_params": {}, "top_value": 0.0, "evaluations": 0})
+    monkeypatch.setattr(
+        opt_module,
+        "run_param_search",
+        lambda **_: SearchReport(objective=SearchObjective.EDGE, results=[], best_params={}, best_score=None, total_trials=0, completed_trials=0),
+    )
     monkeypatch.setattr(opt_module, "save_search_report", lambda *_: Path("fake.md"))
     monkeypatch.setattr(opt_module, "save_search_payload", lambda *_: Path("fake.json"))
     monkeypatch.setattr(opt_module, "format_search_report", lambda _: "")
@@ -950,3 +957,258 @@ def test_main_staged_mode_with_walk_forward_raises_cli_error(monkeypatch: pytest
 
     # argparse.error() exits with code 2
     assert exc_info.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests for shortlist/verdict helpers (Task 3)
+# ---------------------------------------------------------------------------
+
+
+def _make_trial(
+    index: int,
+    params: dict,
+    score: float | None,
+    *,
+    guardrail_pass: bool = True,
+    win_rate_delta: float | None = 0.02,
+    expectancy_delta: float | None = 0.003,
+    source_coverage: float | None = 0.75,
+) -> TrialResult:
+    metrics: dict = {
+        "promotion_guardrail_pass": guardrail_pass,
+        "baseline_next_close_positive_rate_delta": win_rate_delta,
+        "baseline_next_close_expectancy_delta": expectancy_delta,
+        "source_coverage_pass_ratio": source_coverage,
+    }
+    return TrialResult(trial_index=index, params=params, metrics=metrics, window_count=2, score=score)
+
+
+def test_format_staged_ignition_report_includes_promotion_verdict() -> None:
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[
+            _make_trial(
+                0,
+                {"committee_score_min_normal_trade": 64.0},
+                0.52,
+                guardrail_pass=True,
+            )
+        ],
+        best_params={"committee_score_min_normal_trade": 64.0},
+        best_score=0.52,
+        total_trials=1,
+        completed_trials=1,
+    )
+    output = _format_staged_ignition_summary(report)
+    assert "promotable" in output
+    assert "committee_score_min_normal_trade" in output
+
+
+def test_build_staged_ignition_shortlist_marks_guardrail_pass_as_promotable() -> None:
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[
+            _make_trial(0, {"committee_score_min_normal_trade": 64.0}, 0.52, guardrail_pass=True),
+            _make_trial(1, {"committee_score_min_normal_trade": 62.0}, 0.48, guardrail_pass=False),
+        ],
+        best_params={"committee_score_min_normal_trade": 64.0},
+        best_score=0.52,
+        total_trials=2,
+        completed_trials=2,
+    )
+    shortlist = _build_staged_ignition_shortlist(report)
+    assert shortlist[0]["promotion_verdict"] == "promotable"
+    assert shortlist[1]["promotion_verdict"] == "not_promotable"
+
+
+def test_build_staged_ignition_shortlist_ranked_by_score_descending() -> None:
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[
+            _make_trial(0, {"x": 1}, 0.40),
+            _make_trial(1, {"x": 2}, 0.55),
+            _make_trial(2, {"x": 3}, 0.50),
+        ],
+        best_params={"x": 2},
+        best_score=0.55,
+        total_trials=3,
+        completed_trials=3,
+    )
+    shortlist = _build_staged_ignition_shortlist(report)
+    scores = [row["score"] for row in shortlist]
+    assert scores == sorted(scores, reverse=True)
+    assert shortlist[0]["params"]["x"] == 2
+
+
+def test_build_staged_ignition_shortlist_unscored_rows_appended_after_scored() -> None:
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[
+            _make_trial(0, {"x": 1}, 0.50),
+            _make_trial(1, {"x": 2}, None, guardrail_pass=False),
+            _make_trial(2, {"x": 3}, 0.45),
+        ],
+        best_params={"x": 1},
+        best_score=0.50,
+        total_trials=3,
+        completed_trials=2,
+    )
+    shortlist = _build_staged_ignition_shortlist(report)
+    # All three returned (top_n=5 default)
+    assert len(shortlist) == 3
+    # Scored rows come first
+    assert shortlist[0]["score"] is not None
+    assert shortlist[1]["score"] is not None
+    assert shortlist[2]["score"] is None
+
+
+def test_build_staged_ignition_shortlist_respects_top_n() -> None:
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[_make_trial(i, {"x": i}, float(i) * 0.1) for i in range(10)],
+        best_params={"x": 9},
+        best_score=0.9,
+        total_trials=10,
+        completed_trials=10,
+    )
+    shortlist = _build_staged_ignition_shortlist(report, top_n=3)
+    assert len(shortlist) == 3
+
+
+def test_build_staged_ignition_shortlist_surfaces_baseline_deltas_and_coverage() -> None:
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[
+            _make_trial(
+                0,
+                {"committee_score_min_normal_trade": 64.0},
+                0.52,
+                guardrail_pass=True,
+                win_rate_delta=0.04,
+                expectancy_delta=0.005,
+                source_coverage=0.80,
+            )
+        ],
+        best_params={"committee_score_min_normal_trade": 64.0},
+        best_score=0.52,
+        total_trials=1,
+        completed_trials=1,
+    )
+    shortlist = _build_staged_ignition_shortlist(report)
+    row = shortlist[0]
+    assert row["baseline_next_close_positive_rate_delta"] == pytest.approx(0.04)
+    assert row["baseline_next_close_expectancy_delta"] == pytest.approx(0.005)
+    assert row["source_coverage_pass_ratio"] == pytest.approx(0.80)
+
+
+def test_format_staged_ignition_summary_overall_verdict_promotion_available() -> None:
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[_make_trial(0, {"x": 1}, 0.55, guardrail_pass=True)],
+        best_params={"x": 1},
+        best_score=0.55,
+        total_trials=1,
+        completed_trials=1,
+    )
+    output = _format_staged_ignition_summary(report)
+    assert "PROMOTION AVAILABLE" in output
+
+
+def test_format_staged_ignition_summary_overall_verdict_keep_current_when_no_promotable() -> None:
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[_make_trial(0, {"x": 1}, 0.40, guardrail_pass=False)],
+        best_params={"x": 1},
+        best_score=0.40,
+        total_trials=1,
+        completed_trials=1,
+    )
+    output = _format_staged_ignition_summary(report)
+    assert "KEEP CURRENT IGNITION PROFILE" in output
+
+
+def test_format_staged_ignition_summary_includes_score_and_delta_context() -> None:
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[
+            _make_trial(
+                0,
+                {"committee_score_min_normal_trade": 64.0},
+                0.52,
+                guardrail_pass=True,
+                win_rate_delta=0.03,
+                expectancy_delta=0.004,
+                source_coverage=0.72,
+            )
+        ],
+        best_params={"committee_score_min_normal_trade": 64.0},
+        best_score=0.52,
+        total_trials=1,
+        completed_trials=1,
+    )
+    output = _format_staged_ignition_summary(report)
+    assert "0.52" in output or "score=0.5200" in output
+    assert "win_rate_delta" in output
+    assert "expectancy_delta" in output
+    assert "source_coverage_pass_ratio" in output
+
+
+def test_main_stage1_emits_ignition_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """stage1 main() must print the ignition summary alongside the generic report."""
+    import scripts.optimize_profile as opt_module
+
+    printed: list[str] = []
+    monkeypatch.setattr("builtins.print", lambda *args, **_: printed.append(" ".join(str(a) for a in args)))
+
+    fake_trial = TrialResult(
+        trial_index=0,
+        params={"committee_score_min_normal_trade": 64.0},
+        metrics={
+            "promotion_guardrail_pass": True,
+            "baseline_next_close_positive_rate_delta": 0.02,
+            "baseline_next_close_expectancy_delta": 0.003,
+            "source_coverage_pass_ratio": 0.80,
+        },
+        window_count=1,
+        score=0.52,
+    )
+    fake_report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=[fake_trial],
+        best_params=fake_trial.params,
+        best_score=fake_trial.score,
+        total_trials=1,
+        completed_trials=1,
+    )
+
+    monkeypatch.setattr(opt_module, "run_param_search", lambda **_: fake_report)
+    monkeypatch.setattr(opt_module, "save_search_report", lambda *_a, **_kw: Path("r.md"))
+    monkeypatch.setattr(opt_module, "save_search_payload", lambda *_a, **_kw: Path("r.json"))
+    monkeypatch.setattr(
+        opt_module,
+        "_build_staged_ignition_evaluator",
+        lambda *_, **__: lambda _p: {
+            "next_close_positive_rate": 0.62,
+            "next_close_expectancy": 0.012,
+            "promotion_guardrail_pass": True,
+            "baseline_next_close_positive_rate_delta": 0.02,
+            "baseline_next_close_expectancy_delta": 0.002,
+            "source_coverage_pass_ratio": 0.80,
+        },
+    )
+
+    exit_code = opt_module.main(
+        [
+            "--profile",
+            "ignition_breakout",
+            "--staged-mode",
+            "ignition_stage1",
+            "--input",
+            str(tmp_path / "window.json"),
+        ]
+    )
+
+    assert exit_code == 0
+    all_output = "\n".join(printed)
+    assert "Stage 1 Ignition" in all_output
+    assert "promotable" in all_output
