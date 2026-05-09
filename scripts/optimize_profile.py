@@ -401,9 +401,25 @@ def _build_staged_ignition_evaluator(
     logger.info("Staged ignition evaluator: pre-computing default baseline…")
     default_baseline = _default_evaluator({})
 
-    ignition_win_rate = ignition_baseline.get("next_close_positive_rate") or 0.0
-    ignition_expectancy = ignition_baseline.get("next_close_expectancy") or 0.0
-    default_win_rate = default_baseline.get("next_close_positive_rate") or 0.0
+    ignition_win_rate = ignition_baseline.get("next_close_positive_rate")
+    ignition_expectancy = ignition_baseline.get("next_close_expectancy")
+    default_win_rate = default_baseline.get("next_close_positive_rate")
+
+    if ignition_win_rate is None:
+        raise RuntimeError(
+            "Staged ignition evaluator: ignition_breakout baseline missing 'next_close_positive_rate'. "
+            "Cannot run stage1 promotion guardrail without a valid baseline."
+        )
+    if ignition_expectancy is None:
+        raise RuntimeError(
+            "Staged ignition evaluator: ignition_breakout baseline missing 'next_close_expectancy'. "
+            "Cannot run stage1 promotion guardrail without a valid baseline."
+        )
+    if default_win_rate is None:
+        raise RuntimeError(
+            "Staged ignition evaluator: default profile baseline missing 'next_close_positive_rate'. "
+            "Cannot run stage1 promotion guardrail without a valid baseline."
+        )
 
     logger.info(
         "Baselines — ignition_breakout: win_rate=%.4f expectancy=%.4f | default: win_rate=%.4f",
@@ -668,6 +684,11 @@ def main(argv: list[str] | None = None) -> int:
                 next_high_hit_threshold=args.next_high_hit_threshold,
             )
     elif args.tickers and args.start_date and args.end_date:
+        if args.staged_mode == "ignition_stage1":
+            parser.error(
+                "--staged-mode ignition_stage1 requires replay inputs (--input or --reports-root). "
+                "Walk-forward mode does not support staged evaluation."
+            )
         walk_forward_descriptor = "|".join(
             [
                 str(args.tickers),

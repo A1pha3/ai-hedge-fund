@@ -507,7 +507,13 @@ def test_main_stage1_forwards_staged_mode_into_grid(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(
         opt_module,
         "_build_replay_evaluator",
-        lambda *_, **__: lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6},
+        lambda *_, **__: lambda _params: {
+            "window_count": 1,
+            "window_coverage": 1.0,
+            "sample_weight": 0.5,
+            "next_close_positive_rate": 0.6,
+            "next_close_expectancy": 0.010,
+        },
     )
 
     try:
@@ -835,3 +841,112 @@ def test_staged_ignition_evaluator_guardrail_fails_when_below_default_only(
     metrics = evaluator({"committee_alpha_min_aggressive_trade": 55.0})
 
     assert metrics["promotion_guardrail_pass"] is False
+
+
+def test_staged_ignition_evaluator_raises_when_ignition_baseline_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Missing ignition_breakout baseline metrics must raise RuntimeError (fail closed, not pass)."""
+    import types as _types
+
+    fake_module = _types.ModuleType("scripts.btst_profile_replay_utils")
+
+    def fake_analyze_btst_profile_replay_window(
+        input_path: Path,
+        *,
+        profile_name: str = "ignition_breakout",
+        profile_overrides: dict | None = None,
+        **_: object,
+    ) -> dict[str, object]:
+        # Return a surface with missing next_close_positive_rate and next_close_expectancy
+        surface: dict[str, object] = {
+            "next_day_available_count": 0,
+            "closed_cycle_count": 0,
+            # Intentionally omit next_close_positive_rate and next_close_expectancy
+        }
+        return {
+            "surface_summaries": {"selected": surface, "tradeable": surface},
+            "source_coverage_summary": {},
+        }
+
+    fake_module.analyze_btst_profile_replay_window = fake_analyze_btst_profile_replay_window  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    input_path = tmp_path / "window_missing_baseline.json"
+    input_path.write_text("{}")
+
+    with pytest.raises(RuntimeError, match="ignition_breakout baseline missing"):
+        _build_staged_ignition_evaluator([input_path], base_profile="ignition_breakout")
+
+
+def test_staged_ignition_evaluator_raises_when_default_baseline_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Missing default profile baseline metrics must raise RuntimeError (fail closed, not pass)."""
+    import types as _types
+
+    fake_module = _types.ModuleType("scripts.btst_profile_replay_utils")
+
+    def fake_analyze_btst_profile_replay_window(
+        input_path: Path,
+        *,
+        profile_name: str = "ignition_breakout",
+        profile_overrides: dict | None = None,
+        **_: object,
+    ) -> dict[str, object]:
+        if profile_name == "default":
+            # Default profile returns no metrics — simulate missing data
+            surface: dict[str, object] = {"next_day_available_count": 0, "closed_cycle_count": 0}
+        else:
+            surface = {
+                "next_day_available_count": 8,
+                "closed_cycle_count": 5,
+                "next_close_positive_rate": 0.60,
+                "next_close_expectancy": 0.010,
+                "next_high_hit_rate_at_threshold": 0.50,
+                "next_close_payoff_ratio": 1.5,
+                "next_close_return_distribution": {"p10": -0.02, "median": 0.005},
+                "t_plus_2_close_positive_rate": 0.55,
+                "t_plus_2_close_return_distribution": {"median": 0.004},
+                "t_plus_3_close_positive_rate": 0.52,
+                "t_plus_3_close_expectancy": 0.008,
+            }
+        return {
+            "surface_summaries": {"selected": surface, "tradeable": surface},
+            "source_coverage_summary": {"flow_60_source_counts": {"exact_tick": 4}},
+        }
+
+    fake_module.analyze_btst_profile_replay_window = fake_analyze_btst_profile_replay_window  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    input_path = tmp_path / "window_missing_default.json"
+    input_path.write_text("{}")
+
+    with pytest.raises(RuntimeError, match="default profile baseline missing"):
+        _build_staged_ignition_evaluator([input_path], base_profile="ignition_breakout")
+
+
+def test_main_staged_mode_with_walk_forward_raises_cli_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """--staged-mode ignition_stage1 must be rejected when only walk-forward inputs are provided."""
+    import scripts.optimize_profile as opt_module
+
+    monkeypatch.setattr(sys, "argv", ["optimize_profile.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        opt_module.main(
+            [
+                "--profile",
+                "ignition_breakout",
+                "--staged-mode",
+                "ignition_stage1",
+                "--tickers",
+                "000001",
+                "--start-date",
+                "2024-01-01",
+                "--end-date",
+                "2024-06-30",
+            ]
+        )
+
+    # argparse.error() exits with code 2
+    assert exc_info.value.code == 2
