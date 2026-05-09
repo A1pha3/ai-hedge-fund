@@ -517,8 +517,12 @@ def _format_staged_ignition_summary(report: SearchReport) -> str:
     shortlist = _build_staged_ignition_shortlist(report)
     lines: list[str] = ["## Stage 1 Ignition Calibration Summary", ""]
 
-    promotable_rows = [row for row in shortlist if row.get("promotion_verdict") == "promotable"]
-    if promotable_rows:
+    # Overall verdict is derived from the *full* report.results, not just the displayed shortlist,
+    # so that a promotable candidate outside the top-N cap doesn't get silently hidden.
+    any_promotable_in_full_report = any(
+        bool((r.metrics or {}).get("promotion_guardrail_pass", False)) for r in report.results
+    )
+    if any_promotable_in_full_report:
         lines.append("**Overall verdict: PROMOTION AVAILABLE** — at least one candidate clears all guardrails.")
     else:
         lines.append("**Overall verdict: KEEP CURRENT IGNITION PROFILE** — no promotable candidates found.")

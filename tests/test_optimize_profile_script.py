@@ -1127,6 +1127,33 @@ def test_format_staged_ignition_summary_overall_verdict_keep_current_when_no_pro
     assert "KEEP CURRENT IGNITION PROFILE" in output
 
 
+def test_format_staged_ignition_summary_overall_verdict_uses_full_results_not_shortlist() -> None:
+    """Overall verdict must reflect the full report.results, not just the displayed shortlist.
+
+    When top_n=1 (default shortlist cap is 5 but only the best-scored candidate is shown), the
+    shortlist contains only the top-1 result which has guardrail_pass=False.  The 6th result (rank
+    6, outside the default top-5 shortlist) has guardrail_pass=True.  The overall verdict must be
+    PROMOTION AVAILABLE even though the shortlist alone would produce KEEP CURRENT IGNITION PROFILE.
+    """
+    # Build 6 results: rank 1-5 all fail guardrails, rank 6 passes.
+    results = [_make_trial(i, {"x": i}, float(i) * 0.01, guardrail_pass=False) for i in range(5)]
+    # rank 6 has the lowest score but passes the guardrail — outside the default top-5 shortlist
+    results.append(_make_trial(5, {"x": 5}, 0.001, guardrail_pass=True))
+    report = SearchReport(
+        objective=SearchObjective.EDGE,
+        results=results,
+        best_params={"x": 4},
+        best_score=0.04,
+        total_trials=6,
+        completed_trials=6,
+    )
+    output = _format_staged_ignition_summary(report)
+    # The displayed shortlist (top 5 by score) excludes rank-6; overall verdict must still detect it
+    assert "PROMOTION AVAILABLE" in output, (
+        "Overall verdict must scan full report.results, not only the displayed top-5 shortlist"
+    )
+
+
 def test_format_staged_ignition_summary_includes_score_and_delta_context() -> None:
     report = SearchReport(
         objective=SearchObjective.EDGE,
