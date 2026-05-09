@@ -361,6 +361,9 @@ def _build_replay_evaluator(
 # Tolerance for T+1 metric weakening; candidates within this margin still pass.
 _IGNITION_GUARDRAIL_TOLERANCE = 0.002
 
+# Minimum fraction of exact_tick sources required to pass the source-coverage guardrail.
+_IGNITION_SOURCE_COVERAGE_MIN_RATIO = 0.5
+
 
 def _build_staged_ignition_evaluator(
     input_paths: list[Path],
@@ -429,6 +432,7 @@ def _build_staged_ignition_evaluator(
             (float(cand_expectancy) - float(ignition_expectancy)) if cand_expectancy is not None else None
         )
 
+        source_coverage_pass_ratio = float(metrics.get("source_coverage_pass_ratio") or 0.0)
         if cand_win_rate is None or cand_expectancy is None:
             promotion_guardrail_pass = False
         else:
@@ -436,6 +440,7 @@ def _build_staged_ignition_evaluator(
                 float(cand_win_rate) >= float(ignition_win_rate) - _IGNITION_GUARDRAIL_TOLERANCE
                 and float(cand_expectancy) >= float(ignition_expectancy) - _IGNITION_GUARDRAIL_TOLERANCE
                 and float(cand_win_rate) >= float(default_win_rate) - _IGNITION_GUARDRAIL_TOLERANCE
+                and source_coverage_pass_ratio >= _IGNITION_SOURCE_COVERAGE_MIN_RATIO
             )
         metrics["promotion_guardrail_pass"] = promotion_guardrail_pass
 

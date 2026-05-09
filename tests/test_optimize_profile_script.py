@@ -591,26 +591,43 @@ def _make_fake_replay_module_for_staged(
     default_win_rate: float = 0.55,
     candidate_win_rate: float = 0.62,
     candidate_expectancy: float = 0.013,
+    source_coverage_summary: dict | None = None,
 ) -> types.ModuleType:
-    """Build a fake btst_profile_replay_utils module for staged evaluator tests."""
+    """Build a fake btst_profile_replay_utils module for staged evaluator tests.
+
+    Baseline calls (profile_overrides={}) return ignition/default rates.
+    Candidate calls (profile_overrides non-empty) return candidate_win_rate/expectancy,
+    allowing tests to distinguish the two reliably.
+    """
     fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+
+    _default_coverage = {
+        "flow_60_source_counts": {"exact_tick": 4, "bar_proxy": 1},
+        "persist_120_source_counts": {"exact_tick": 3},
+        "close_support_30_source_counts": {},
+        "committee_component_sources_counts": {},
+    }
+    coverage = source_coverage_summary if source_coverage_summary is not None else _default_coverage
 
     def fake_analyze_btst_profile_replay_window(
         input_path: Path,
         *,
         profile_name: str = "ignition_breakout",
+        profile_overrides: dict | None = None,
         **_: object,
     ) -> dict[str, object]:
+        overrides = profile_overrides or {}
         if profile_name == "default":
             win_rate = default_win_rate
             expectancy = 0.008
-        elif profile_name == "ignition_breakout":
-            # Baseline or candidate depending on whether overrides were passed
-            win_rate = ignition_win_rate
-            expectancy = ignition_expectancy
-        else:
+        elif overrides:
+            # Non-empty overrides → candidate evaluation
             win_rate = candidate_win_rate
             expectancy = candidate_expectancy
+        else:
+            # Empty overrides → baseline evaluation
+            win_rate = ignition_win_rate
+            expectancy = ignition_expectancy
 
         surface = {
             "next_day_available_count": 8,
@@ -627,12 +644,7 @@ def _make_fake_replay_module_for_staged(
         }
         return {
             "surface_summaries": {"selected": surface, "tradeable": surface},
-            "source_coverage_summary": {
-                "flow_60_source_counts": {"exact_tick": 4, "bar_proxy": 1},
-                "persist_120_source_counts": {"exact_tick": 3},
-                "close_support_30_source_counts": {},
-                "committee_component_sources_counts": {},
-            },
+            "source_coverage_summary": coverage,
         }
 
     fake_module.analyze_btst_profile_replay_window = fake_analyze_btst_profile_replay_window
@@ -678,8 +690,8 @@ def test_staged_ignition_evaluator_guardrail_passes_when_candidate_beats_baselin
     input_path.write_text("{}")
 
     evaluator = _build_staged_ignition_evaluator([input_path], base_profile="ignition_breakout")
-    # Baseline evaluation with {} returns ignition_win_rate=0.60 and default=0.55
-    metrics = evaluator({})
+    # Non-empty params trigger the candidate branch (candidate_win_rate=0.62 > ignition=0.60)
+    metrics = evaluator({"committee_alpha_min_aggressive_trade": 55.0})
 
     assert metrics["promotion_guardrail_pass"] is True
     assert metrics["baseline_next_close_positive_rate_delta"] is not None
@@ -688,11 +700,13 @@ def test_staged_ignition_evaluator_guardrail_passes_when_candidate_beats_baselin
 def test_staged_ignition_evaluator_guardrail_fails_when_candidate_below_baselines(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # Ignition baseline has high win rate; default also has a high rate
+    # Candidate win_rate (0.45) is clearly below both ignition (0.68) and default (0.65) baselines
     fake_module = _make_fake_replay_module_for_staged(
         ignition_win_rate=0.68,
         ignition_expectancy=0.015,
         default_win_rate=0.65,
+        candidate_win_rate=0.45,
+        candidate_expectancy=0.005,
     )
     monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
 
@@ -700,15 +714,43 @@ def test_staged_ignition_evaluator_guardrail_fails_when_candidate_below_baseline
     input_path.write_text("{}")
 
     evaluator = _build_staged_ignition_evaluator([input_path], base_profile="ignition_breakout")
-    # The candidate returns the same win_rate as the "ignition" profile (0.68)
-    # but the mock returns 0.68 for ignition regardless of overrides, so delta == 0
-    # The candidate_win_rate defaults to 0.62 which is below default_win_rate=0.65
+    # Non-empty params trigger the candidate branch in the fake (returns 0.45 win_rate)
     metrics = evaluator({"committee_alpha_min_aggressive_trade": 70.0})
 
-    # With ignition baseline at 0.68 and candidate at 0.68 — the same profile with overrides
-    # returns the same surface since fake_module ignores params.
-    # Either way, we test that the guardrail field is present and is a bool.
-    assert isinstance(metrics["promotion_guardrail_pass"], bool)
+    assert metrics["promotion_guardrail_pass"] is False
+    assert metrics["baseline_next_close_positive_rate_delta"] is not None
+    assert float(metrics["baseline_next_close_positive_rate_delta"]) < -0.1
+
+
+def test_staged_ignition_evaluator_guardrail_fails_when_source_coverage_too_low(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Candidate metrics are fine on win_rate/expectancy but source coverage is all proxy (no exact_tick)
+    low_coverage = {
+        "flow_60_source_counts": {"bar_proxy": 6, "daily_flow_proxy": 4},
+        "persist_120_source_counts": {"bar_proxy": 3},
+        "close_support_30_source_counts": {},
+        "committee_component_sources_counts": {},
+    }
+    fake_module = _make_fake_replay_module_for_staged(
+        ignition_win_rate=0.60,
+        ignition_expectancy=0.010,
+        default_win_rate=0.55,
+        candidate_win_rate=0.65,  # clearly above both baselines
+        candidate_expectancy=0.015,
+        source_coverage_summary=low_coverage,
+    )
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    input_path = tmp_path / "window_low_cov.json"
+    input_path.write_text("{}")
+
+    evaluator = _build_staged_ignition_evaluator([input_path], base_profile="ignition_breakout")
+    metrics = evaluator({"committee_alpha_min_aggressive_trade": 70.0})
+
+    # source_coverage_pass_ratio is 0.0 → guardrail must fail despite good win_rate
+    assert metrics["source_coverage_pass_ratio"] == pytest.approx(0.0)
+    assert metrics["promotion_guardrail_pass"] is False
 
 
 def test_staged_ignition_evaluator_source_coverage_ratio_from_replay(
