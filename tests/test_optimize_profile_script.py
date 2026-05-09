@@ -769,3 +769,69 @@ def test_staged_ignition_evaluator_source_coverage_ratio_from_replay(
     # persist_120: exact_tick=3 → 3 total, 3 strong
     # total: 8 slots, 7 exact_tick → 7/8 = 0.875
     assert metrics["source_coverage_pass_ratio"] == pytest.approx(7.0 / 8.0)
+
+
+def test_staged_ignition_evaluator_guardrail_passes_at_exact_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Candidate exactly equal to all baselines must pass (no tolerance: >= is strictly non-degrading)."""
+    fake_module = _make_fake_replay_module_for_staged(
+        ignition_win_rate=0.60,
+        ignition_expectancy=0.010,
+        default_win_rate=0.55,
+        candidate_win_rate=0.60,  # exactly equal to ignition baseline
+        candidate_expectancy=0.010,  # exactly equal to ignition expectancy
+    )
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    input_path = tmp_path / "window_exact.json"
+    input_path.write_text("{}")
+
+    evaluator = _build_staged_ignition_evaluator([input_path], base_profile="ignition_breakout")
+    metrics = evaluator({"committee_alpha_min_aggressive_trade": 55.0})
+
+    assert metrics["promotion_guardrail_pass"] is True
+
+
+def test_staged_ignition_evaluator_guardrail_fails_at_one_tick_below_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Candidate fractionally below ignition baseline must fail — no tolerance is allowed."""
+    fake_module = _make_fake_replay_module_for_staged(
+        ignition_win_rate=0.60,
+        ignition_expectancy=0.010,
+        default_win_rate=0.55,
+        candidate_win_rate=0.599,  # 0.001 below ignition — must fail
+        candidate_expectancy=0.010,
+    )
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    input_path = tmp_path / "window_one_tick_below.json"
+    input_path.write_text("{}")
+
+    evaluator = _build_staged_ignition_evaluator([input_path], base_profile="ignition_breakout")
+    metrics = evaluator({"committee_alpha_min_aggressive_trade": 55.0})
+
+    assert metrics["promotion_guardrail_pass"] is False
+
+
+def test_staged_ignition_evaluator_guardrail_fails_when_below_default_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Candidate beats ignition but falls below default win rate — must fail."""
+    fake_module = _make_fake_replay_module_for_staged(
+        ignition_win_rate=0.55,
+        ignition_expectancy=0.010,
+        default_win_rate=0.65,
+        candidate_win_rate=0.60,  # above ignition but below default
+        candidate_expectancy=0.010,
+    )
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    input_path = tmp_path / "window_below_default.json"
+    input_path.write_text("{}")
+
+    evaluator = _build_staged_ignition_evaluator([input_path], base_profile="ignition_breakout")
+    metrics = evaluator({"committee_alpha_min_aggressive_trade": 55.0})
+
+    assert metrics["promotion_guardrail_pass"] is False
