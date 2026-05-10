@@ -50,19 +50,20 @@ class CanonicalBTSTEvaluationBundle:
         }
 
 
+def coerce_numeric_metric_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
 def _collect_numeric_metrics(metrics: dict[str, Any], keys: Sequence[str]) -> dict[str, float | None]:
     collected: dict[str, float | None] = {}
     for key in keys:
-        value = metrics.get(key)
-        if value is None:
-            collected[key] = None
-            continue
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            collected[key] = None
-            continue
-        collected[key] = parsed if math.isfinite(parsed) else None
+        collected[key] = coerce_numeric_metric_value(metrics.get(key))
     return collected
 
 

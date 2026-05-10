@@ -277,6 +277,16 @@ def test_check_guardrails_treats_absent_key_as_violation():
     assert "next_close_positive_rate" in violations
 
 
+def test_check_guardrails_treats_custom_malformed_string_as_violation():
+    violations = check_guardrails({"custom_metric": "N/A"}, {"custom_metric": 0.54})
+    assert violations == ["custom_metric"]
+
+
+def test_check_guardrails_treats_custom_non_finite_value_as_violation():
+    violations = check_guardrails({"custom_metric": float("inf")}, {"custom_metric": 0.54})
+    assert violations == ["custom_metric"]
+
+
 def test_run_param_search_guardrail_failing_trials_ranked_last():
     """Trials that violate guardrails must appear after all passing trials."""
     space = ParamSpace(grid={"x": [1, 2, 3]})

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 
-from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle
+from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle, coerce_numeric_metric_value
 from src.utils.numeric import clip
 
 _logger = logging.getLogger(__name__)
@@ -182,8 +182,8 @@ def check_guardrails(
     for key, floor in guardrails.items():
         value = bundle.lookup(key)
         if value is None and key not in bundle.objective_metrics and key not in bundle.guardrail_metrics and key not in bundle.context_metrics:
-            value = metrics.get(key)
-        if value is None or float(value) < float(floor):
+            value = coerce_numeric_metric_value(metrics.get(key))
+        if value is None or value < float(floor):
             violations.append(key)
     return violations
 
