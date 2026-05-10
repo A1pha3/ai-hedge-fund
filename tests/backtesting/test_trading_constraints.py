@@ -85,6 +85,80 @@ def test_trade_executor_clears_diagnostics_after_noop_trade():
     assert executor.get_last_trade_diagnostics() == {}
 
 
+def test_trade_executor_clears_diagnostics_after_helper_level_buy_noop():
+    seeded_portfolio = Portfolio(tickers=["300724"], initial_cash=100000.0, margin_requirement=0.0)
+    cash_constrained_portfolio = Portfolio(tickers=["300724"], initial_cash=5.0, margin_requirement=0.0)
+    executor = TradeExecutor()
+    execution_inputs = TradeExecutionInputs(
+        daily_turnover=20_000_000.0,
+        liquidity_capacity_raw_100=42.0,
+        crowding_risk_raw_100=78.0,
+        gap_risk_raw_100=64.0,
+    )
+
+    executed = executor.execute_trade(
+        "300724",
+        "buy",
+        1000,
+        10.0,
+        seeded_portfolio,
+        execution_inputs=execution_inputs,
+        trade_date="20260422",
+    )
+    assert executed > 0
+    assert executor.get_last_trade_diagnostics()["constraint_bucket"] == "tightened"
+
+    noop_executed = executor.execute_trade(
+        "300724",
+        "buy",
+        1000,
+        10.0,
+        cash_constrained_portfolio,
+        execution_inputs=execution_inputs,
+        trade_date="20260423",
+    )
+
+    assert noop_executed == 0
+    assert executor.get_last_trade_diagnostics() == {}
+
+
+def test_trade_executor_clears_diagnostics_after_helper_level_sell_noop():
+    seeded_portfolio = Portfolio(tickers=["300724"], initial_cash=100000.0, margin_requirement=0.0)
+    empty_portfolio = Portfolio(tickers=["300724"], initial_cash=100000.0, margin_requirement=0.0)
+    executor = TradeExecutor()
+    execution_inputs = TradeExecutionInputs(
+        daily_turnover=20_000_000.0,
+        liquidity_capacity_raw_100=42.0,
+        crowding_risk_raw_100=78.0,
+        gap_risk_raw_100=64.0,
+    )
+
+    executed = executor.execute_trade(
+        "300724",
+        "buy",
+        1000,
+        10.0,
+        seeded_portfolio,
+        execution_inputs=execution_inputs,
+        trade_date="20260422",
+    )
+    assert executed > 0
+    assert executor.get_last_trade_diagnostics()["constraint_bucket"] == "tightened"
+
+    noop_executed = executor.execute_trade(
+        "300724",
+        "sell",
+        1000,
+        10.0,
+        empty_portfolio,
+        execution_inputs=execution_inputs,
+        trade_date="20260423",
+    )
+
+    assert noop_executed == 0
+    assert executor.get_last_trade_diagnostics() == {}
+
+
 @pytest.mark.parametrize(
     ("action", "trade_kwargs"),
     [

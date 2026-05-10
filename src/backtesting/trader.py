@@ -46,23 +46,31 @@ class TradeExecutor:
                 incremental_theme_exposure=resolved_inputs.incremental_theme_exposure,
             )
         resolved_constraints = resolve_trade_constraints(self._constraints, resolved_inputs)
-        self._last_trade_diagnostics = dict(resolved_constraints.diagnostics)
+        diagnostics = dict(resolved_constraints.diagnostics)
         slippage_rate = resolved_constraints.constraints.base_slippage_rate
 
         if action_enum == Action.BUY:
             if is_limit_up:
                 self._last_trade_diagnostics = {}
                 return 0
-            return execute_buy_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
+            executed = execute_buy_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
+            self._last_trade_diagnostics = diagnostics if executed > 0 else {}
+            return executed
         if action_enum == Action.SELL:
             if is_limit_down:
                 self._last_trade_diagnostics = {}
                 return 0
-            return execute_sell_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate, self._constraints.stamp_duty_rate, trade_date)
+            executed = execute_sell_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate, self._constraints.stamp_duty_rate, trade_date)
+            self._last_trade_diagnostics = diagnostics if executed > 0 else {}
+            return executed
         if action_enum == Action.SHORT:
-            return execute_short_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
+            executed = execute_short_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
+            self._last_trade_diagnostics = diagnostics if executed > 0 else {}
+            return executed
         if action_enum == Action.COVER:
-            return execute_cover_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
+            executed = execute_cover_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
+            self._last_trade_diagnostics = diagnostics if executed > 0 else {}
+            return executed
 
         # hold or unknown action
         self._last_trade_diagnostics = {}
