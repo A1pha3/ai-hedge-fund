@@ -25,6 +25,7 @@ from src.tools.api import get_price_data
 from .controller import AgentController
 from .portfolio import Portfolio
 from .trader import TradeExecutor
+from .trading_constraints import TradeExecutionInputs
 from .types import AgentOutput
 
 
@@ -182,6 +183,7 @@ def execute_agent_mode_trades(
             decision.get("quantity", 0),
             current_prices[ticker],
             portfolio,
+            execution_inputs=TradeExecutionInputs(daily_turnover=None),
             trade_date=trade_date,
         )
         executed_trades[ticker] = executed_qty

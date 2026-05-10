@@ -1,25 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from .portfolio import Portfolio
 from .trader_helpers import coerce_trade_action, execute_buy_trade, execute_cover_trade, execute_sell_trade, execute_short_trade
+from .trading_constraints import TradeExecutionInputs, TradingConstraints, resolve_trade_constraints
 from .types import Action, ActionLiteral
-
-
-@dataclass(frozen=True)
-class TradingConstraints:
-    commission_rate: float = 0.00025
-    stamp_duty_rate: float = 0.001
-    base_slippage_rate: float = 0.0015
-    low_liquidity_slippage_rate: float = 0.003
-    low_liquidity_turnover_threshold: float = 50_000_000.0
-
-
-def _effective_slippage_rate(constraints: TradingConstraints, daily_turnover: float | None) -> float:
-    if daily_turnover is not None and daily_turnover < constraints.low_liquidity_turnover_threshold:
-        return constraints.low_liquidity_slippage_rate
-    return constraints.base_slippage_rate
 
 
 class TradeExecutor:
@@ -27,6 +11,10 @@ class TradeExecutor:
 
     def __init__(self, constraints: TradingConstraints | None = None) -> None:
         self._constraints = constraints or TradingConstraints()
+        self._last_trade_diagnostics: dict[str, float | str | None] = {}
+
+    def get_last_trade_diagnostics(self) -> dict[str, float | str | None]:
+        return dict(self._last_trade_diagnostics)
 
     def execute_trade(
         self,
@@ -39,13 +27,26 @@ class TradeExecutor:
         is_limit_up: bool = False,
         is_limit_down: bool = False,
         daily_turnover: float | None = None,
+        execution_inputs: TradeExecutionInputs | None = None,
         trade_date: str | None = None,
     ) -> int:
         if quantity is None or quantity <= 0:
             return 0
 
         action_enum = coerce_trade_action(action)
-        slippage_rate = _effective_slippage_rate(self._constraints, daily_turnover)
+        resolved_inputs = execution_inputs if execution_inputs is not None else TradeExecutionInputs(daily_turnover=daily_turnover)
+        if resolved_inputs.daily_turnover is None and daily_turnover is not None:
+            resolved_inputs = TradeExecutionInputs(
+                daily_turnover=daily_turnover,
+                liquidity_capacity_raw_100=resolved_inputs.liquidity_capacity_raw_100,
+                crowding_risk_raw_100=resolved_inputs.crowding_risk_raw_100,
+                gap_risk_raw_100=resolved_inputs.gap_risk_raw_100,
+                projected_theme_exposure=resolved_inputs.projected_theme_exposure,
+                incremental_theme_exposure=resolved_inputs.incremental_theme_exposure,
+            )
+        resolved_constraints = resolve_trade_constraints(self._constraints, resolved_inputs)
+        self._last_trade_diagnostics = dict(resolved_constraints.diagnostics)
+        slippage_rate = resolved_constraints.constraints.base_slippage_rate
 
         if action_enum == Action.BUY:
             if is_limit_up:

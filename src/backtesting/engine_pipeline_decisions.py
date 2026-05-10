@@ -13,6 +13,7 @@ from collections.abc import Callable, Sequence
 
 from src.execution.models import ExecutionPlan, PendingOrder
 
+from .evaluation_bundle import build_canonical_btst_evaluation_bundle
 from .engine_pending_helpers import (
     dedupe_pending_orders,
     queue_limit_blocked_pipeline_decision,
@@ -21,12 +22,14 @@ from .engine_pending_helpers import (
 )
 from .portfolio import Portfolio
 from .trader import TradeExecutor
+from .trading_constraints import TradeExecutionInputs
 
 
 @dataclass(frozen=True)
 class PipelineDecisionExecutionInputs:
     price: float
     normalized_ticker: str
+    trade_execution_inputs: TradeExecutionInputs
 
 
 class PipelineDecisionExecutor:
@@ -127,6 +130,8 @@ class PipelineDecisionExecutor:
         execution_inputs = self._build_execution_inputs(
             ticker=ticker,
             current_prices=current_prices,
+            daily_turnovers=daily_turnovers,
+            watchlist_by_ticker=watchlist_by_ticker,
         )
         if execution_inputs is None:
             return
@@ -169,13 +174,25 @@ class PipelineDecisionExecutor:
         *,
         ticker: str,
         current_prices: dict[str, float],
+        daily_turnovers: dict[str, float],
+        watchlist_by_ticker: dict[str, Any],
     ) -> PipelineDecisionExecutionInputs | None:
         price = self._resolve_price(ticker=ticker, current_prices=current_prices)
         if price is None:
             return None
+        watch_item = watchlist_by_ticker.get(ticker)
+        bundle = build_canonical_btst_evaluation_bundle(getattr(watch_item, "metrics", None))
         return PipelineDecisionExecutionInputs(
             price=price,
             normalized_ticker=self._normalize_ticker(ticker),
+            trade_execution_inputs=TradeExecutionInputs(
+                daily_turnover=daily_turnovers.get(ticker),
+                liquidity_capacity_raw_100=bundle.lookup("liquidity_capacity_raw_100"),
+                crowding_risk_raw_100=bundle.lookup("crowding_risk_raw_100"),
+                gap_risk_raw_100=bundle.lookup("gap_risk_raw_100"),
+                projected_theme_exposure=(float(getattr(watch_item, "projected_theme_exposure", 0.0)) if watch_item is not None else None),
+                incremental_theme_exposure=(float(getattr(watch_item, "incremental_theme_exposure", 0.0)) if watch_item is not None else None),
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -221,6 +238,7 @@ class PipelineDecisionExecutor:
         price: float,
         normalized_ticker: str,
         daily_turnovers: dict[str, float],
+        trade_execution_inputs: TradeExecutionInputs,
         limit_up: set[str],
         limit_down: set[str],
         trade_date: str | None = None,
@@ -231,6 +249,7 @@ class PipelineDecisionExecutor:
             price=price,
             normalized_ticker=normalized_ticker,
             daily_turnovers=daily_turnovers,
+            trade_execution_inputs=trade_execution_inputs,
             limit_up=limit_up,
             limit_down=limit_down,
             trade_date=trade_date,
@@ -260,6 +279,7 @@ class PipelineDecisionExecutor:
             price=execution_inputs.price,
             normalized_ticker=execution_inputs.normalized_ticker,
             daily_turnovers=daily_turnovers,
+            trade_execution_inputs=execution_inputs.trade_execution_inputs,
             limit_up=limit_up,
             limit_down=limit_down,
             trade_date=trade_date_compact,
@@ -387,6 +407,7 @@ class PipelineDecisionExecutor:
         price: float,
         normalized_ticker: str,
         daily_turnovers: dict[str, float],
+        trade_execution_inputs: TradeExecutionInputs,
         limit_up: set[str],
         limit_down: set[str],
         trade_date: str | None = None,
@@ -400,6 +421,7 @@ class PipelineDecisionExecutor:
             is_limit_up=normalized_ticker in limit_up,
             is_limit_down=normalized_ticker in limit_down,
             daily_turnover=daily_turnovers.get(ticker),
+            execution_inputs=trade_execution_inputs,
             trade_date=trade_date,
         )
 
