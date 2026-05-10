@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle
 from src.backtesting.param_search import (
     ParamSpace,
     SearchObjective,
@@ -82,6 +83,27 @@ def test_compute_objective_score_edge_returns_none_for_missing():
 def test_compute_objective_score_btst_returns_none_for_missing():
     metrics = {"next_close_positive_rate": 0.6}
     assert compute_objective_score(metrics, SearchObjective.BTST) is None
+
+
+def test_build_canonical_btst_evaluation_bundle_separates_metric_roles():
+    bundle = build_canonical_btst_evaluation_bundle(
+        {
+            "next_close_positive_rate": 0.58,
+            "next_close_payoff_ratio": 1.9,
+            "next_close_expectancy": 0.012,
+            "next_high_hit_rate": 0.61,
+            "t_plus_2_close_positive_rate": 0.55,
+            "t_plus_3_close_positive_rate": 0.52,
+            "t_plus_3_close_expectancy": 0.011,
+            "downside_p10": -0.031,
+            "sample_weight": 0.74,
+            "projected_theme_exposure": 0.18,
+        }
+    )
+
+    assert bundle.objective_metrics["next_close_positive_rate"] == pytest.approx(0.58)
+    assert bundle.guardrail_metrics["downside_p10"] == pytest.approx(-0.031)
+    assert bundle.context_metrics["projected_theme_exposure"] == pytest.approx(0.18)
 
 
 def test_run_param_search_ranks_by_score():

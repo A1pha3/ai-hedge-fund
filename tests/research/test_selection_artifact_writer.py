@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.daily_pipeline_upstream_shadow_helpers import _build_upstream_shadow_release_entry
 from src.execution.daily_pipeline_phase4_entry_helpers import _build_upstream_shadow_observation_entry
@@ -280,6 +282,56 @@ def test_file_selection_artifact_writer_preserves_watchlist_intraday_metric_sour
     assert watchlist_entry["metrics"]["persist_120_source"] == "bar_proxy"
     assert raw_candidate_metrics["flow_60_source"] == "bar_proxy"
     assert raw_candidate_metrics["persist_120_source"] == "bar_proxy"
+
+
+def test_file_selection_artifact_writer_includes_canonical_btst_evaluation_bundle(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_eval_bundle")
+    watchlist = [
+        LayerCResult(
+            ticker="688183",
+            score_b=0.66,
+            score_c=0.21,
+            score_final=0.55,
+            quality_score=0.64,
+            decision="watch",
+            metrics={
+                "next_close_positive_rate": 0.58,
+                "next_close_payoff_ratio": 1.9,
+                "next_close_expectancy": 0.012,
+                "next_high_hit_rate": 0.61,
+                "t_plus_2_close_positive_rate": 0.55,
+                "t_plus_3_close_positive_rate": 0.52,
+                "t_plus_3_close_expectancy": 0.011,
+                "downside_p10": -0.031,
+                "sample_weight": 0.74,
+                "projected_theme_exposure": 0.18,
+            },
+        )
+    ]
+    selection_targets, dual_target_summary = build_selection_targets(
+        trade_date="20260322",
+        watchlist=watchlist,
+        rejected_entries=[],
+        buy_order_tickers=set(),
+        target_mode="short_trade_only",
+    )
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"watchlist_count": 1}, "funnel_diagnostics": {"filters": {}}},
+        watchlist=watchlist,
+        target_mode="short_trade_only",
+        selection_targets=selection_targets,
+        dual_target_summary=dual_target_summary,
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+    replay_input_payload = json.loads(Path(result.replay_input_path).read_text(encoding="utf-8"))
+    bundle = replay_input_payload["watchlist"][0]["metrics"]["canonical_btst_evaluation_bundle"]
+
+    assert bundle["objective_metrics"]["next_close_positive_rate"] == pytest.approx(0.58)
+    assert bundle["guardrail_metrics"]["downside_p10"] == pytest.approx(-0.031)
+    assert bundle["context_metrics"]["projected_theme_exposure"] == pytest.approx(0.18)
 
 
 def test_file_selection_artifact_writer_preserves_supplemental_intraday_metric_sources_in_replay_input(tmp_path):

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 
+from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle
 from src.utils.numeric import clip
 
 _logger = logging.getLogger(__name__)
@@ -79,13 +80,14 @@ def compute_objective_score(
             return None
         return 0.4 * sortino + 0.3 * sharpe - 0.3 * abs(max_dd)
     if objective == SearchObjective.EDGE:
-        win_rate = metrics.get("next_close_positive_rate")
-        payoff_ratio = metrics.get("next_close_payoff_ratio")
-        expectancy = metrics.get("next_close_expectancy")
-        next_high_hit_rate = metrics.get("next_high_hit_rate")
-        t_plus_2_positive_rate = metrics.get("t_plus_2_close_positive_rate")
-        downside_p10 = metrics.get("downside_p10")
-        sample_weight = metrics.get("sample_weight")
+        bundle = build_canonical_btst_evaluation_bundle(metrics)
+        win_rate = bundle.lookup("next_close_positive_rate")
+        payoff_ratio = bundle.lookup("next_close_payoff_ratio")
+        expectancy = bundle.lookup("next_close_expectancy")
+        next_high_hit_rate = bundle.lookup("next_high_hit_rate")
+        t_plus_2_positive_rate = bundle.lookup("t_plus_2_close_positive_rate")
+        downside_p10 = bundle.lookup("downside_p10")
+        sample_weight = bundle.lookup("sample_weight")
         if (
             win_rate is None
             or payoff_ratio is None
@@ -110,15 +112,16 @@ def compute_objective_score(
         )
         return edge_score * (0.40 + (0.60 * effective_sample_weight))
     if objective == SearchObjective.BTST:
-        win_rate = metrics.get("next_close_positive_rate")
-        payoff_ratio = metrics.get("next_close_payoff_ratio")
-        expectancy = metrics.get("next_close_expectancy")
-        next_high_hit_rate = metrics.get("next_high_hit_rate")
-        t_plus_2_positive_rate = metrics.get("t_plus_2_close_positive_rate")
-        t_plus_3_positive_rate = metrics.get("t_plus_3_close_positive_rate")
-        t_plus_3_expectancy = metrics.get("t_plus_3_close_expectancy")
-        downside_p10 = metrics.get("downside_p10")
-        sample_weight = metrics.get("sample_weight")
+        bundle = build_canonical_btst_evaluation_bundle(metrics)
+        win_rate = bundle.lookup("next_close_positive_rate")
+        payoff_ratio = bundle.lookup("next_close_payoff_ratio")
+        expectancy = bundle.lookup("next_close_expectancy")
+        next_high_hit_rate = bundle.lookup("next_high_hit_rate")
+        t_plus_2_positive_rate = bundle.lookup("t_plus_2_close_positive_rate")
+        t_plus_3_positive_rate = bundle.lookup("t_plus_3_close_positive_rate")
+        t_plus_3_expectancy = bundle.lookup("t_plus_3_close_expectancy")
+        downside_p10 = bundle.lookup("downside_p10")
+        sample_weight = bundle.lookup("sample_weight")
         if (
             win_rate is None
             or payoff_ratio is None
@@ -174,9 +177,12 @@ def check_guardrails(
     Returns:
         List of violated guardrail names (empty when all pass).
     """
+    bundle = build_canonical_btst_evaluation_bundle(metrics)
     violations: list[str] = []
     for key, floor in guardrails.items():
-        value = metrics.get(key)
+        value = bundle.lookup(key)
+        if value is None and key not in bundle.objective_metrics and key not in bundle.guardrail_metrics and key not in bundle.context_metrics:
+            value = metrics.get(key)
         if value is None or float(value) < float(floor):
             violations.append(key)
     return violations
