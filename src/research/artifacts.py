@@ -713,8 +713,14 @@ def build_selection_snapshot(
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     frontier_diagnostics = dict((plan.risk_metrics or {}).get("candidate_pool_frontier_expansion") or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
-    catalyst_theme_candidates = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
-    catalyst_theme_shadow_candidates = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("shadow_candidates", []) or [])
+    catalyst_theme_candidates = _attach_market_state_to_entries(
+        list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []),
+        market_state_payload={},
+    )
+    catalyst_theme_shadow_candidates = _attach_market_state_to_entries(
+        list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("shadow_candidates", []) or []),
+        market_state_payload={},
+    )
     return SelectionSnapshot(
         artifact_version=artifact_version,
         run_id=run_id,

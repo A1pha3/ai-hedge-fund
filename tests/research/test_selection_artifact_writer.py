@@ -127,6 +127,7 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
     assert (tmp_path / "2026-03-22" / "research_feedback.jsonl").exists()
     assert (tmp_path / "2026-03-22" / "selection_target_replay_input.json").exists()
     snapshot_text = (tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8")
+    snapshot_payload = json.loads(snapshot_text)
     replay_input_text = (tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8")
     review_text = (tmp_path / "2026-03-22" / "selection_review.md").read_text(encoding="utf-8")
     assert '"target_mode": "research_only"' in snapshot_text
@@ -140,6 +141,8 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
     assert '"catalyst_theme_candidates": [' in snapshot_text
     assert '"catalyst_theme_shadow_candidates": [' in snapshot_text
     assert '"replay_input_written": true' in snapshot_text
+    assert "canonical_btst_evaluation_bundle" in snapshot_payload["catalyst_theme_candidates"][0]["metrics"]
+    assert "canonical_btst_evaluation_bundle" in snapshot_payload["catalyst_theme_shadow_candidates"][0]["metrics"]
     assert '"watchlist": [' in replay_input_text
     assert '"buy_order_tickers": [' in replay_input_text
     assert '"supplemental_catalyst_theme_entries": [' in replay_input_text
