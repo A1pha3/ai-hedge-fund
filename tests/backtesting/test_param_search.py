@@ -143,6 +143,22 @@ def test_build_canonical_btst_evaluation_bundle_to_payload_coerces_numeric_value
     assert payload["context_metrics"]["projected_theme_exposure"] is None
 
 
+def test_build_canonical_btst_evaluation_bundle_treats_malformed_metric_values_as_missing():
+    bundle = build_canonical_btst_evaluation_bundle(
+        {
+            "next_close_positive_rate": "",
+            "downside_p10": "N/A",
+            "projected_theme_exposure": "bad-value",
+        }
+    )
+
+    payload = bundle.to_payload()
+
+    assert payload["objective_metrics"]["next_close_positive_rate"] is None
+    assert payload["guardrail_metrics"]["downside_p10"] is None
+    assert payload["context_metrics"]["projected_theme_exposure"] is None
+
+
 def test_run_param_search_ranks_by_score():
     space = ParamSpace(grid={"x": [1, 2, 3]})
 

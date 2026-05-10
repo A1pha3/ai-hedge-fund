@@ -50,7 +50,17 @@ class CanonicalBTSTEvaluationBundle:
 
 
 def _collect_numeric_metrics(metrics: dict[str, Any], keys: Sequence[str]) -> dict[str, float | None]:
-    return {key: (None if metrics.get(key) is None else float(metrics[key])) for key in keys}
+    collected: dict[str, float | None] = {}
+    for key in keys:
+        value = metrics.get(key)
+        if value is None:
+            collected[key] = None
+            continue
+        try:
+            collected[key] = float(value)
+        except (TypeError, ValueError):
+            collected[key] = None
+    return collected
 
 
 def build_canonical_btst_evaluation_bundle(metrics: dict[str, Any] | None) -> CanonicalBTSTEvaluationBundle:
