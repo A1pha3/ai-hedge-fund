@@ -2,6 +2,8 @@ import pandas as pd
 import pytest
 
 from src.backtesting.walk_forward import (
+    WalkForwardResult,
+    WalkForwardWindow,
     build_walk_forward_windows,
     run_walk_forward,
     summarize_walk_forward,
@@ -140,6 +142,36 @@ def test_summarize_walk_forward_attaches_promotion_gate_summary():
     assert "majority_non_positive_sharpe_windows" in summary["rollout_blockers"]
     assert summary["promotion_ready"] is False
     assert "majority_non_positive_sharpe_windows" in summary["promotion_blockers"]
+
+
+def test_summarize_walk_forward_blocks_missing_required_sharpe_data():
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-28",
+            ),
+            metrics={"sharpe_ratio": None, "sortino_ratio": 0.1, "max_drawdown": -8.0},
+        ),
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-02-01",
+                train_end="2026-02-28",
+                test_start="2026-03-01",
+                test_end="2026-03-31",
+            ),
+            metrics={"sharpe_ratio": None, "sortino_ratio": 0.2, "max_drawdown": -6.0},
+        ),
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert summary["rollout_ready"] is False
+    assert "missing_required_sharpe_data" in summary["rollout_blockers"]
+    assert summary["promotion_ready"] is False
+    assert "missing_required_sharpe_data" in summary["promotion_blockers"]
 
 
 def test_expanding_window_anchors_train_start():
