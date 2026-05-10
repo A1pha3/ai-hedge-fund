@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -57,9 +58,11 @@ def _collect_numeric_metrics(metrics: dict[str, Any], keys: Sequence[str]) -> di
             collected[key] = None
             continue
         try:
-            collected[key] = float(value)
+            parsed = float(value)
         except (TypeError, ValueError):
             collected[key] = None
+            continue
+        collected[key] = parsed if math.isfinite(parsed) else None
     return collected
 
 
