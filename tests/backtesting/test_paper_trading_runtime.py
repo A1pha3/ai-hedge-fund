@@ -399,6 +399,56 @@ def test_build_dual_target_session_summary_ignores_p6_risk_budget_overlay_when_m
     summary = _build_dual_target_session_summary(daily_events_path)
 
     assert "btst_risk_budget_p6_summary" not in summary
+    assert "promotion_gate_summary" not in summary
+
+
+def test_build_dual_target_session_summary_accumulates_promotion_gate_summary(tmp_path: Path):
+    daily_events_path = tmp_path / "daily_events.jsonl"
+    daily_events_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "event": "paper_trading_day",
+                        "current_plan": {
+                            "selection_targets": {"300724": {}},
+                            "risk_metrics": {
+                                "btst_risk_budget_p6_enforcement": {
+                                    "mode": "enforce",
+                                    "gate_distribution": {"normal_trade": 1},
+                                    "formal_exposure_distribution": {"reduced": 1},
+                                    "suppressed_position_summary": {"zero_budget_count": 0, "reduced_budget_count": 3},
+                                }
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "paper_trading_day",
+                        "current_plan": {
+                            "selection_targets": {"688313": {}},
+                            "risk_metrics": {
+                                "btst_risk_budget_p6_enforcement": {
+                                    "mode": "enforce",
+                                    "gate_distribution": {"shadow_only": 1},
+                                    "formal_exposure_distribution": {"zero_budget": 1},
+                                    "suppressed_position_summary": {"zero_budget_count": 1, "reduced_budget_count": 0},
+                                }
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = _build_dual_target_session_summary(daily_events_path)
+
+    assert summary["promotion_gate_summary"]["promotion_ready"] is False
+    assert summary["promotion_gate_summary"]["promotion_blockers"] == ["risk_budget_suppression_exceeded"]
 
 
 def test_build_dual_target_session_summary_returns_default_for_missing_file(tmp_path: Path):

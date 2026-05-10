@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Iterator
 
+from src.backtesting.promotion_gate import build_promotion_gate_summary
 from src.targets.router_build_helpers import build_reporting_target_summary
 
 if TYPE_CHECKING:
@@ -491,6 +492,7 @@ def _accumulate_btst_risk_budget_p6_counts(summary: dict, risk_metrics: dict[str
     p6_summary = summary.setdefault(
         "btst_risk_budget_p6_summary",
         {
+            "mode": "enforce",
             "gate_distribution": {},
             "formal_exposure_distribution": {},
             "suppressed_position_summary": {
@@ -506,3 +508,12 @@ def _accumulate_btst_risk_budget_p6_counts(summary: dict, risk_metrics: dict[str
     suppressed = dict(p6_payload.get("suppressed_position_summary") or {})
     p6_summary["suppressed_position_summary"]["zero_budget_count"] += int(suppressed.get("zero_budget_count") or 0)
     p6_summary["suppressed_position_summary"]["reduced_budget_count"] += int(suppressed.get("reduced_budget_count") or 0)
+    summary["promotion_gate_summary"] = build_promotion_gate_summary(
+        walk_forward_summary={"rollout_blockers": []},
+        risk_budget_summary={
+            "mode": str(p6_summary.get("mode") or "off"),
+            "gate_distribution": dict(p6_summary.get("gate_distribution") or {}),
+            "formal_exposure_distribution": dict(p6_summary.get("formal_exposure_distribution") or {}),
+            "suppressed_position_summary": dict(p6_summary.get("suppressed_position_summary") or {}),
+        },
+    )

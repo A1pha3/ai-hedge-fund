@@ -82,6 +82,16 @@ def _run_walk_forward_mode(args, build_engine) -> int:
         print(f"Average Sortino: {summary['avg_sortino']:.2f}")
     if summary["avg_max_drawdown"] is not None:
         print(f"Average Max Drawdown: {abs(summary['avg_max_drawdown']):.2f}%")
+    if "rollout_ready" in summary:
+        print(f"Rollout Ready: {'YES' if summary['rollout_ready'] else 'NO'}")
+    rollout_blockers = [str(item) for item in list(summary.get("rollout_blockers") or []) if str(item).strip()]
+    if rollout_blockers:
+        print(f"Rollout Blockers: {', '.join(rollout_blockers)}")
+    if "promotion_ready" in summary:
+        print(f"Promotion Ready: {'YES' if summary['promotion_ready'] else 'NO'}")
+    promotion_blockers = [str(item) for item in list(summary.get("promotion_blockers") or []) if str(item).strip()]
+    if promotion_blockers:
+        print(f"Promotion Blockers: {', '.join(promotion_blockers)}")
     return 0
 
 

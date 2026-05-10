@@ -9,6 +9,7 @@ from dateutil.relativedelta import relativedelta
 
 from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
+from .promotion_gate import build_promotion_gate_summary
 from .types import PerformanceMetrics
 
 
@@ -128,9 +129,28 @@ def run_walk_forward(
     return results
 
 
-def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, float | int | None]:
+def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, float | int | bool | list[str] | None]:
     if not results:
-        return {"window_count": 0, "avg_sharpe": None, "avg_sortino": None, "avg_max_drawdown": None}
+        base_summary: dict[str, float | int | bool | list[str] | None] = {
+            "window_count": 0,
+            "avg_sharpe": None,
+            "avg_sortino": None,
+            "avg_max_drawdown": None,
+            "positive_sharpe_window_count": 0,
+            "negative_sharpe_window_count": 0,
+            "zero_sharpe_window_count": 0,
+            "non_positive_sharpe_window_count": 0,
+            "positive_sharpe_window_ratio": 0.0,
+            "worst_sharpe": None,
+            "worst_max_drawdown": None,
+            "max_non_positive_sharpe_streak": 0,
+            "rollout_ready": False,
+            "rollout_blockers": ["no_walk_forward_windows"],
+        }
+        return {
+            **base_summary,
+            **build_promotion_gate_summary(walk_forward_summary=base_summary),
+        }
 
     sharpe_values = [item.metrics["sharpe_ratio"] for item in results if item.metrics.get("sharpe_ratio") is not None]
     sortino_values = [item.metrics["sortino_ratio"] for item in results if item.metrics.get("sortino_ratio") is not None]
@@ -142,9 +162,43 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
             return None
         return sum(clean_values) / len(clean_values)
 
-    return {
+    positive_sharpe_window_count = sum(1 for value in sharpe_values if float(value) > 0.0)
+    negative_sharpe_window_count = sum(1 for value in sharpe_values if float(value) < 0.0)
+    zero_sharpe_window_count = sum(1 for value in sharpe_values if float(value) == 0.0)
+    non_positive_sharpe_window_count = sum(1 for value in sharpe_values if float(value) <= 0.0)
+    positive_sharpe_window_ratio = round((positive_sharpe_window_count / len(sharpe_values)), 4) if sharpe_values else 0.0
+    worst_max_drawdown = min(max_drawdown_values) if max_drawdown_values else None
+    max_non_positive_sharpe_streak = 0
+    current_non_positive_sharpe_streak = 0
+    for result in results:
+        sharpe_value = result.metrics.get("sharpe_ratio")
+        if sharpe_value is not None and float(sharpe_value) <= 0.0:
+            current_non_positive_sharpe_streak += 1
+            max_non_positive_sharpe_streak = max(max_non_positive_sharpe_streak, current_non_positive_sharpe_streak)
+            continue
+        current_non_positive_sharpe_streak = 0
+
+    rollout_blockers: list[str] = []
+    if sharpe_values and non_positive_sharpe_window_count > (len(sharpe_values) / 2):
+        rollout_blockers.append("majority_non_positive_sharpe_windows")
+
+    base_summary: dict[str, float | int | bool | list[str] | None] = {
         "window_count": len(results),
         "avg_sharpe": _average(sharpe_values),
         "avg_sortino": _average(sortino_values),
         "avg_max_drawdown": _average(max_drawdown_values),
+        "positive_sharpe_window_count": positive_sharpe_window_count,
+        "negative_sharpe_window_count": negative_sharpe_window_count,
+        "zero_sharpe_window_count": zero_sharpe_window_count,
+        "non_positive_sharpe_window_count": non_positive_sharpe_window_count,
+        "positive_sharpe_window_ratio": positive_sharpe_window_ratio,
+        "worst_sharpe": min(sharpe_values) if sharpe_values else None,
+        "worst_max_drawdown": worst_max_drawdown,
+        "max_non_positive_sharpe_streak": max_non_positive_sharpe_streak,
+        "rollout_ready": not rollout_blockers,
+        "rollout_blockers": rollout_blockers,
+    }
+    return {
+        **base_summary,
+        **build_promotion_gate_summary(walk_forward_summary=base_summary),
     }

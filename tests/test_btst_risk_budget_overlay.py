@@ -152,6 +152,33 @@ def test_build_buy_orders_with_diagnostics_applies_p6_overlay_to_position_sizing
     assert diagnostics["btst_risk_budget_overlay"]["formal_exposure_distribution"] == {"reduced": 1}
 
 
+def test_btst_risk_budget_overlay_summary_emits_promotion_gate_inputs(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    watchlist = [_watchlist_item(score_final=0.55, quality_score=0.5)]
+    selection_targets = {"300724": _selection_target(gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True)}
+
+    buy_orders, diagnostics = build_buy_orders_with_diagnostics(
+        watchlist=watchlist,
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        trade_date="20260422",
+        candidate_by_ticker={"300724": CandidateStock(ticker="300724", name="Test", industry_sw="电子", avg_volume_20d=1000000.0)},
+        price_map={"300724": 10.0},
+        blocked_buy_tickers={},
+        selection_targets=selection_targets,
+        normalize_blocked_buy_tickers_fn=lambda payload: payload or {},
+        build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {}, "tickers": entries},
+        build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
+        resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
+        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        enforce_daily_trade_limit_fn=lambda plans, nav: plans,
+    )
+
+    assert len(buy_orders) == 1
+    assert diagnostics["btst_risk_budget_overlay"]["promotion_gate_inputs"]["mode"] == "enforce"
+    assert diagnostics["btst_risk_budget_overlay"]["promotion_gate_inputs"]["gate_distribution"] == {"normal_trade": 1}
+    assert diagnostics["btst_risk_budget_overlay"]["promotion_gate_inputs"]["suppressed_position_summary"] == {"zero_budget_count": 0, "reduced_budget_count": 1}
+
+
 
 def test_build_buy_orders_with_diagnostics_zeroes_watch_only_formal_exposure(monkeypatch):
     monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
