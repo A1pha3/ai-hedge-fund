@@ -123,6 +123,65 @@ def test_p6_risk_budget_matrix_caps_lower_quality_execution_eligible_case(monkey
     assert budget["execution_contract_bucket"] == "formal_capped"
 
 
+def test_p6_risk_budget_caps_otherwise_full_budget_when_committee_liquidity_capacity_is_weak(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    target = _selection_target(gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True)
+    target.short_trade.metrics_payload["committee"] = {
+        "components": {
+            "liquidity_capacity_raw_100": 45.0,
+        }
+    }
+
+    budget = _resolve_btst_position_budget(
+        item=_watchlist_item(score_final=0.88, quality_score=0.82),
+        selection_target=target,
+        candidate=CandidateStock(ticker="300724", name="Test", industry_sw="电子"),
+        nav=100000.0,
+    )
+
+    assert budget["execution_contract_bucket"] == "formal_capped"
+    assert budget["formal_risk_budget_ratio"] == pytest.approx(0.6)
+    assert budget["formal_exposure_bucket"] == "reduced"
+
+
+def test_p6_risk_budget_caps_otherwise_full_budget_when_committee_fragile_breakout_risk_is_elevated(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    target = _selection_target(gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True)
+    target.short_trade.metrics_payload["committee"] = {
+        "components": {
+            "liquidity_capacity_raw_100": 85.0,
+            "fragile_breakout_risk_raw_100": 72.0,
+            "gap_risk_raw_100": 35.0,
+        }
+    }
+
+    budget = _resolve_btst_position_budget(
+        item=_watchlist_item(score_final=0.88, quality_score=0.82),
+        selection_target=target,
+        candidate=CandidateStock(ticker="300724", name="Test", industry_sw="电子", avg_volume_20d=1_000_000.0),
+        nav=100000.0,
+    )
+
+    assert budget["execution_contract_bucket"] == "formal_capped"
+    assert budget["formal_risk_budget_ratio"] == pytest.approx(0.6)
+    assert budget["formal_exposure_bucket"] == "reduced"
+
+
+def test_p6_risk_budget_caps_otherwise_full_budget_when_candidate_liquidity_fallback_is_thin(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+
+    budget = _resolve_btst_position_budget(
+        item=_watchlist_item(score_final=0.88, quality_score=0.82),
+        selection_target=_selection_target(gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True),
+        candidate=CandidateStock(ticker="300724", name="Test", industry_sw="电子", avg_volume_20d=9_000.0),
+        nav=100000.0,
+    )
+
+    assert budget["execution_contract_bucket"] == "formal_capped"
+    assert budget["formal_risk_budget_ratio"] == pytest.approx(0.6)
+    assert budget["formal_exposure_bucket"] == "reduced"
+
+
 
 def test_build_buy_orders_with_diagnostics_applies_p6_overlay_to_position_sizing(monkeypatch):
     monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")

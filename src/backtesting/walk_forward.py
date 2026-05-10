@@ -26,6 +26,8 @@ WALK_FORWARD_PRESETS: dict[str, dict[str, int]] = {
     "extended": {"train_months": 2, "test_months": 2, "step_months": 1},
     "seasonal": {"train_months": 3, "test_months": 3, "step_months": 3},
 }
+ROLLOUT_MAX_NON_POSITIVE_SHARPE_STREAK = 2
+ROLLOUT_WORST_MAX_DRAWDOWN_FLOOR = -12.0
 
 
 @dataclass(frozen=True)
@@ -128,10 +130,26 @@ def run_walk_forward(
     return results
 
 
-def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, float | int | None]:
+def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, float | int | bool | list[str] | None]:
     if not results:
-        return {"window_count": 0, "avg_sharpe": None, "avg_sortino": None, "avg_max_drawdown": None}
+        return {
+            "window_count": 0,
+            "avg_sharpe": None,
+            "avg_sortino": None,
+            "avg_max_drawdown": None,
+            "positive_sharpe_window_count": 0,
+            "negative_sharpe_window_count": 0,
+            "zero_sharpe_window_count": 0,
+            "non_positive_sharpe_window_count": 0,
+            "positive_sharpe_window_ratio": None,
+            "worst_sharpe": None,
+            "worst_max_drawdown": None,
+            "max_non_positive_sharpe_streak": 0,
+            "rollout_ready": False,
+            "rollout_blockers": ["no_windows"],
+        }
 
+    sharpe_sequence = [item.metrics.get("sharpe_ratio") for item in results]
     sharpe_values = [item.metrics["sharpe_ratio"] for item in results if item.metrics.get("sharpe_ratio") is not None]
     sortino_values = [item.metrics["sortino_ratio"] for item in results if item.metrics.get("sortino_ratio") is not None]
     max_drawdown_values = [item.metrics["max_drawdown"] for item in results if item.metrics.get("max_drawdown") is not None]
@@ -142,9 +160,44 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
             return None
         return sum(clean_values) / len(clean_values)
 
+    positive_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) > 0.0)
+    negative_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) < 0.0)
+    zero_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) == 0.0)
+    non_positive_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) <= 0.0)
+    positive_sharpe_window_ratio = (positive_sharpe_window_count / len(sharpe_values)) if sharpe_values else None
+    max_non_positive_sharpe_streak = 0
+    current_non_positive_streak = 0
+    for value in sharpe_sequence:
+        if value is None:
+            current_non_positive_streak = 0
+        elif float(value or 0.0) <= 0.0:
+            current_non_positive_streak += 1
+            max_non_positive_sharpe_streak = max(max_non_positive_sharpe_streak, current_non_positive_streak)
+        else:
+            current_non_positive_streak = 0
+
+    worst_max_drawdown = min(max_drawdown_values) if max_drawdown_values else None
+    rollout_blockers: list[str] = []
+    if non_positive_sharpe_window_count > positive_sharpe_window_count:
+        rollout_blockers.append("majority_non_positive_sharpe_windows")
+    if max_non_positive_sharpe_streak >= ROLLOUT_MAX_NON_POSITIVE_SHARPE_STREAK:
+        rollout_blockers.append("non_positive_sharpe_streak_exceeded")
+    if worst_max_drawdown is not None and worst_max_drawdown <= ROLLOUT_WORST_MAX_DRAWDOWN_FLOOR:
+        rollout_blockers.append("worst_drawdown_breach")
+
     return {
         "window_count": len(results),
         "avg_sharpe": _average(sharpe_values),
         "avg_sortino": _average(sortino_values),
         "avg_max_drawdown": _average(max_drawdown_values),
+        "positive_sharpe_window_count": positive_sharpe_window_count,
+        "negative_sharpe_window_count": negative_sharpe_window_count,
+        "zero_sharpe_window_count": zero_sharpe_window_count,
+        "non_positive_sharpe_window_count": non_positive_sharpe_window_count,
+        "positive_sharpe_window_ratio": positive_sharpe_window_ratio,
+        "worst_sharpe": min(sharpe_values) if sharpe_values else None,
+        "worst_max_drawdown": worst_max_drawdown,
+        "max_non_positive_sharpe_streak": max_non_positive_sharpe_streak,
+        "rollout_ready": not rollout_blockers,
+        "rollout_blockers": rollout_blockers,
     }

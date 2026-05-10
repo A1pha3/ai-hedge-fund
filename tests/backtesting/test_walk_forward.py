@@ -89,6 +89,112 @@ def test_run_and_summarize_walk_forward():
     assert summary["avg_max_drawdown"] == -10.0
 
 
+def test_summarize_walk_forward_surfaces_rollout_robustness_stats():
+    class StubEngine:
+        def __init__(self, metrics):
+            self._metrics = metrics
+
+        def run_backtest(self):
+            return self._metrics
+
+    windows = build_walk_forward_windows(
+        "2026-01-01",
+        "2026-04-30",
+        train_months=1,
+        test_months=1,
+        step_months=1,
+    )
+    metrics_by_window = [
+        {"sharpe_ratio": 1.2, "sortino_ratio": 1.5, "max_drawdown": -6.0},
+        {"sharpe_ratio": 0.0, "sortino_ratio": 0.3, "max_drawdown": -8.0},
+        {"sharpe_ratio": -0.4, "sortino_ratio": -0.2, "max_drawdown": -14.0},
+    ]
+    results = run_walk_forward(
+        windows,
+        lambda window: StubEngine(metrics_by_window[windows.index(window)]),
+    )
+
+    summary = summarize_walk_forward(results)
+
+    assert summary["positive_sharpe_window_count"] == 1
+    assert summary["negative_sharpe_window_count"] == 1
+    assert summary["zero_sharpe_window_count"] == 1
+    assert summary["positive_sharpe_window_ratio"] == pytest.approx(1 / 3)
+    assert summary["worst_sharpe"] == pytest.approx(-0.4)
+    assert summary["worst_max_drawdown"] == pytest.approx(-14.0)
+
+
+def test_summarize_walk_forward_surfaces_rollout_readiness_and_streaks():
+    class StubEngine:
+        def __init__(self, metrics):
+            self._metrics = metrics
+
+        def run_backtest(self):
+            return self._metrics
+
+    windows = build_walk_forward_windows(
+        "2026-01-01",
+        "2026-05-31",
+        train_months=1,
+        test_months=1,
+        step_months=1,
+    )
+    metrics_by_window = [
+        {"sharpe_ratio": 1.0, "sortino_ratio": 1.3, "max_drawdown": -5.0},
+        {"sharpe_ratio": 0.0, "sortino_ratio": 0.1, "max_drawdown": -8.0},
+        {"sharpe_ratio": -0.2, "sortino_ratio": -0.1, "max_drawdown": -13.0},
+        {"sharpe_ratio": -0.1, "sortino_ratio": -0.2, "max_drawdown": -9.0},
+    ]
+    results = run_walk_forward(
+        windows,
+        lambda window: StubEngine(metrics_by_window[windows.index(window)]),
+    )
+
+    summary = summarize_walk_forward(results)
+
+    assert summary["non_positive_sharpe_window_count"] == 3
+    assert summary["max_non_positive_sharpe_streak"] == 3
+    assert summary["rollout_ready"] is False
+    assert "majority_non_positive_sharpe_windows" in list(summary["rollout_blockers"] or [])
+    assert "non_positive_sharpe_streak_exceeded" in list(summary["rollout_blockers"] or [])
+    assert "worst_drawdown_breach" in list(summary["rollout_blockers"] or [])
+
+
+def test_rollout_majority_gate_ignores_missing_sharpe_windows() -> None:
+    class StubEngine:
+        def __init__(self, metrics):
+            self._metrics = metrics
+
+        def run_backtest(self):
+            return self._metrics
+
+    windows = build_walk_forward_windows(
+        "2026-01-01",
+        "2026-06-30",
+        train_months=1,
+        test_months=1,
+        step_months=1,
+    )
+    metrics_by_window = [
+        {"sharpe_ratio": 1.5, "sortino_ratio": 1.2, "max_drawdown": -6.0},
+        {"sharpe_ratio": 0.8, "sortino_ratio": 0.7, "max_drawdown": -7.0},
+        {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": -5.0},
+        {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": -4.0},
+        {"sharpe_ratio": -0.3, "sortino_ratio": -0.1, "max_drawdown": -8.0},
+    ]
+    results = run_walk_forward(
+        windows,
+        lambda window: StubEngine(metrics_by_window[windows.index(window)]),
+    )
+
+    summary = summarize_walk_forward(results)
+
+    assert summary["positive_sharpe_window_count"] == 2
+    assert summary["non_positive_sharpe_window_count"] == 1
+    assert summary["positive_sharpe_window_ratio"] == pytest.approx(2 / 3)
+    assert "majority_non_positive_sharpe_windows" not in list(summary["rollout_blockers"] or [])
+
+
 def test_expanding_window_anchors_train_start():
     windows = build_walk_forward_windows(
         "2026-01-01",

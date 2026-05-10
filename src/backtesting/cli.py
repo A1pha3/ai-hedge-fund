@@ -82,6 +82,25 @@ def _run_walk_forward_mode(args, build_engine) -> int:
         print(f"Average Sortino: {summary['avg_sortino']:.2f}")
     if summary["avg_max_drawdown"] is not None:
         print(f"Average Max Drawdown: {abs(summary['avg_max_drawdown']):.2f}%")
+    if summary["positive_sharpe_window_ratio"] is not None:
+        print(
+            "Positive Sharpe Windows: "
+            f"{int(summary['positive_sharpe_window_count'])}/{summary['window_count']} "
+            f"({float(summary['positive_sharpe_window_ratio']):.0%})"
+        )
+    if int(summary.get("zero_sharpe_window_count") or 0) > 0:
+        print(f"Zero Sharpe Windows: {int(summary['zero_sharpe_window_count'])}")
+    if summary["worst_sharpe"] is not None:
+        print(f"Worst Window Sharpe: {summary['worst_sharpe']:.2f}")
+    if summary["worst_max_drawdown"] is not None:
+        print(f"Worst Window Max Drawdown: {abs(summary['worst_max_drawdown']):.2f}%")
+    if summary.get("max_non_positive_sharpe_streak") is not None:
+        print(f"Max Non-Positive Sharpe Streak: {int(summary['max_non_positive_sharpe_streak'])}")
+    if summary.get("rollout_ready") is not None:
+        print(f"Rollout Ready: {'YES' if bool(summary['rollout_ready']) else 'NO'}")
+        rollout_blockers = [str(blocker) for blocker in list(summary.get("rollout_blockers") or []) if str(blocker or "").strip()]
+        if rollout_blockers:
+            print(f"Rollout Blockers: {', '.join(rollout_blockers)}")
     return 0
 
 

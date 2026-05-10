@@ -29,6 +29,19 @@ def _as_float(payload: dict[str, Any], key: str, default: float = 0.0) -> float:
         return default
 
 
+def _optional_float(payload: dict[str, Any], key: str) -> float | None:
+    try:
+        value = payload.get(key)
+    except Exception:
+        return None
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 def _normalized_ratio(value: Any) -> float:
     try:
         numeric = float(value or 0.0)
@@ -45,6 +58,59 @@ def _support_score_100(value: float) -> float:
 
 def _risk_score_100(value: float) -> float:
     return round(100.0 * clamp_unit_interval(value), 4)
+
+
+def _shrink_support_score_for_evidence(base_support_score_100: float, evidence_weight: Any) -> float:
+    reliability = clamp_unit_interval(float(evidence_weight or 0.0))
+    multiplier = 0.70 + (0.30 * reliability)
+    return round(50.0 + ((float(base_support_score_100 or 50.0) - 50.0) * multiplier), 4)
+
+
+def _apply_prior_payoff_asymmetry_to_support_score(base_support_score_100: float, snapshot: dict[str, Any]) -> float:
+    historical_prior = dict(snapshot.get("historical_prior") or {})
+    if not historical_prior:
+        return round(float(base_support_score_100 or 0.0), 4)
+
+    next_close_positive_rate = _optional_float(historical_prior, "effective_next_close_positive_rate")
+    if next_close_positive_rate is None:
+        next_close_positive_rate = _optional_float(historical_prior, "shrunk_close_positive_rate")
+    if next_close_positive_rate is None:
+        next_close_positive_rate = _optional_float(historical_prior, "next_close_positive_rate")
+    if next_close_positive_rate is None:
+        next_close_positive_rate = _optional_float(historical_prior, "raw_next_close_positive_rate")
+
+    next_high_hit_rate = _optional_float(historical_prior, "effective_next_high_hit_rate_at_threshold")
+    if next_high_hit_rate is None:
+        next_high_hit_rate = _optional_float(historical_prior, "shrunk_high_hit_rate")
+    if next_high_hit_rate is None:
+        next_high_hit_rate = _optional_float(historical_prior, "next_high_hit_rate_at_threshold")
+    if next_high_hit_rate is None:
+        next_high_hit_rate = _optional_float(historical_prior, "raw_next_high_hit_rate_at_threshold")
+
+    next_open_to_close_return_mean = _optional_float(historical_prior, "effective_next_open_to_close_return_mean")
+    if next_open_to_close_return_mean is None:
+        next_open_to_close_return_mean = _optional_float(historical_prior, "next_open_to_close_return_mean")
+
+    penalty_points = 0.0
+    if next_open_to_close_return_mean is not None:
+        if next_open_to_close_return_mean <= 0.0:
+            penalty_points += 15.0
+        elif next_open_to_close_return_mean < 0.01:
+            penalty_points += 7.5
+
+    if next_high_hit_rate is not None and next_close_positive_rate is not None:
+        follow_through_gap = max(0.0, float(next_high_hit_rate) - float(next_close_positive_rate))
+        if follow_through_gap >= 0.20:
+            penalty_points += 10.0
+        elif follow_through_gap >= 0.12:
+            penalty_points += 5.0
+
+    if penalty_points <= 0.0:
+        return round(float(base_support_score_100 or 0.0), 4)
+
+    evidence_weight = clamp_unit_interval(float(historical_prior.get("evidence_weight", 0.0) or 0.0))
+    adjusted_score = float(base_support_score_100 or 0.0) - (penalty_points * (0.55 + (0.45 * evidence_weight)))
+    return round(max(20.0, adjusted_score), 4)
 
 
 def _step_score(value: float, thresholds: list[tuple[float, float]], fallback: float) -> float:
@@ -269,12 +335,17 @@ def _retention_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) 
         prior_retention_value = float(prior_retention_score or 0.0)
         if prior_retention_value <= 1.0:
             prior_retention_value = _support_score_100(prior_retention_value)
+        prior_retention_value = _apply_prior_payoff_asymmetry_to_support_score(prior_retention_value, snapshot)
         available_scores.append((_step_score(prior_retention_value, [(75.0, 90.0), (65.0, 75.0), (55.0, 60.0), (45.0, 40.0)], 20.0), 0.30))
     else:
         historical_continuation_prior_score = dict(snapshot.get("historical_continuation_prior_score") or {})
         if historical_continuation_prior_score:
             prior_retention_ratio = float(historical_continuation_prior_score.get("score", 0.0) or 0.0)
-            prior_retention_value = _support_score_100(prior_retention_ratio)
+            prior_retention_value = _shrink_support_score_for_evidence(
+                _support_score_100(prior_retention_ratio),
+                historical_continuation_prior_score.get("evidence_weight"),
+            )
+            prior_retention_value = _apply_prior_payoff_asymmetry_to_support_score(prior_retention_value, snapshot)
             available_scores.append((_step_score(prior_retention_value, [(75.0, 90.0), (65.0, 75.0), (55.0, 60.0), (45.0, 40.0)], 20.0), 0.30))
     if available_scores:
         total_weight = sum(weight for _, weight in available_scores)
@@ -282,6 +353,15 @@ def _retention_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) 
         return round(weighted_score, 4), "raw:retention_metrics"
     historical_continuation_prior_score = dict(snapshot.get("historical_continuation_prior_score") or {})
     prior_retention_score = float(historical_continuation_prior_score.get("score", 0.0) or 0.0)
+    prior_retention_score = clamp_unit_interval(
+        0.5
+        + (
+            (prior_retention_score - 0.5)
+            * (0.70 + (0.30 * clamp_unit_interval(float(historical_continuation_prior_score.get("evidence_weight", 0.0) or 0.0))))
+        )
+    )
+    prior_retention_support_100 = _apply_prior_payoff_asymmetry_to_support_score(_support_score_100(prior_retention_score), snapshot)
+    prior_retention_score = clamp_unit_interval((prior_retention_support_100 - 20.0) / 80.0)
     proxy = (0.60 * float(snapshot.get("close_retention_score", 0.0) or 0.0)) + (0.40 * prior_retention_score)
     return _support_score_100(proxy), "proxy:retention_support"
 
