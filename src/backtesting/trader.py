@@ -31,6 +31,7 @@ class TradeExecutor:
         trade_date: str | None = None,
     ) -> int:
         if quantity is None or quantity <= 0:
+            self._last_trade_diagnostics = {}
             return 0
 
         action_enum = coerce_trade_action(action)

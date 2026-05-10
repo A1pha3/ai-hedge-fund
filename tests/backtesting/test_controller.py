@@ -2,6 +2,9 @@ import pandas as pd
 
 from src.backtesting.engine import BacktestEngine
 from src.backtesting.controller import AgentController
+from src.backtesting.engine_agent_mode import execute_agent_mode_trades
+from src.backtesting.portfolio import Portfolio
+from src.backtesting.trading_constraints import TradeExecutionInputs
 
 
 def dummy_agent(**kwargs):
@@ -164,6 +167,27 @@ def test_agent_mode_t_plus_1_blocks_same_day_sell(monkeypatch):
     # Position should remain intact (sell was blocked)
     positions_after_sell_attempt = engine._portfolio.get_positions()
     assert positions_after_sell_attempt["AAPL"]["long"] == 10, "T+1 must block same-day sell in agent mode"
+
+
+def test_execute_agent_mode_trades_uses_baseline_execution_inputs_until_btst_payload_exists():
+    captured_execution_inputs: list[TradeExecutionInputs] = []
+
+    class StubExecutor:
+        def execute_trade(self, *args, **kwargs):
+            captured_execution_inputs.append(kwargs["execution_inputs"])
+            return 0
+
+    executed = execute_agent_mode_trades(
+        executor=StubExecutor(),
+        tickers=["AAPL"],
+        decisions={"AAPL": {"action": "buy", "quantity": 10}},
+        current_prices={"AAPL": 100.0},
+        portfolio=Portfolio(tickers=["AAPL"], initial_cash=100000.0, margin_requirement=0.0),
+        trade_date="2024-03-04",
+    )
+
+    assert executed == {"AAPL": 0}
+    assert captured_execution_inputs == [TradeExecutionInputs(daily_turnover=None)]
 
 
 def test_append_daily_state_updates_portfolio_rows_and_metrics(monkeypatch):
