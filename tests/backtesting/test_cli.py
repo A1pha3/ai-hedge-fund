@@ -120,7 +120,7 @@ def test_main_runs_engine_with_non_interactive_model_and_analysts(monkeypatch, c
     )
 
 
-def test_run_walk_forward_mode_prints_rollout_safety_summary(capsys):
+def test_run_walk_forward_mode_prints_rollout_and_promotion_summary(capsys):
     args = SimpleNamespace(
         start_date="2026-01-01",
         end_date="2026-04-30",
@@ -131,7 +131,6 @@ def test_run_walk_forward_mode_prints_rollout_safety_summary(capsys):
         window_mode="rolling",
         walk_forward_preset=None,
     )
-
     original_build = cli.build_walk_forward_windows
     original_run = cli.run_walk_forward
     original_summary = cli.summarize_walk_forward
@@ -152,9 +151,10 @@ def test_run_walk_forward_mode_prints_rollout_safety_summary(capsys):
             "worst_max_drawdown": -13.0,
             "max_non_positive_sharpe_streak": 1,
             "rollout_ready": False,
-            "rollout_blockers": ["majority_non_positive_sharpe_windows", "worst_drawdown_breach"],
+            "rollout_blockers": ["majority_non_positive_sharpe_windows"],
+            "promotion_ready": False,
+            "promotion_blockers": ["risk_budget_suppression_exceeded"],
         }
-
         assert cli._run_walk_forward_mode(args, lambda _start, _end: object()) == 0
     finally:
         cli.build_walk_forward_windows = original_build
@@ -163,4 +163,6 @@ def test_run_walk_forward_mode_prints_rollout_safety_summary(capsys):
 
     captured = capsys.readouterr()
     assert "Rollout Ready: NO" in captured.out
-    assert "Rollout Blockers: majority_non_positive_sharpe_windows, worst_drawdown_breach" in captured.out
+    assert "Rollout Blockers: majority_non_positive_sharpe_windows" in captured.out
+    assert "Promotion Ready: NO" in captured.out
+    assert "Promotion Blockers: risk_budget_suppression_exceeded" in captured.out

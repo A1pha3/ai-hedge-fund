@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Iterator
 
+from src.backtesting.promotion_gate import build_promotion_gate_summary
 from src.targets.router_build_helpers import build_reporting_target_summary
 
 if TYPE_CHECKING:
@@ -491,12 +492,15 @@ def _accumulate_btst_risk_budget_p6_counts(summary: dict, risk_metrics: dict[str
     p6_summary = summary.setdefault(
         "btst_risk_budget_p6_summary",
         {
+            "mode": "enforce",
             "gate_distribution": {},
             "formal_exposure_distribution": {},
             "suppressed_position_summary": {
                 "zero_budget_count": 0,
                 "reduced_budget_count": 0,
             },
+            "max_projected_theme_exposure": 0.0,
+            "max_incremental_theme_exposure": 0.0,
         },
     )
     for key, value in dict(p6_payload.get("gate_distribution") or {}).items():
@@ -506,3 +510,23 @@ def _accumulate_btst_risk_budget_p6_counts(summary: dict, risk_metrics: dict[str
     suppressed = dict(p6_payload.get("suppressed_position_summary") or {})
     p6_summary["suppressed_position_summary"]["zero_budget_count"] += int(suppressed.get("zero_budget_count") or 0)
     p6_summary["suppressed_position_summary"]["reduced_budget_count"] += int(suppressed.get("reduced_budget_count") or 0)
+    promotion_inputs = dict(p6_payload.get("promotion_gate_inputs") or {})
+    p6_summary["max_projected_theme_exposure"] = max(
+        float(p6_summary.get("max_projected_theme_exposure") or 0.0),
+        float(promotion_inputs.get("max_projected_theme_exposure", p6_payload.get("max_projected_theme_exposure", 0.0)) or 0.0),
+    )
+    p6_summary["max_incremental_theme_exposure"] = max(
+        float(p6_summary.get("max_incremental_theme_exposure") or 0.0),
+        float(promotion_inputs.get("max_incremental_theme_exposure", p6_payload.get("max_incremental_theme_exposure", 0.0)) or 0.0),
+    )
+    summary["promotion_gate_summary"] = build_promotion_gate_summary(
+        walk_forward_summary={"rollout_blockers": []},
+        risk_budget_summary={
+            "mode": str(p6_summary.get("mode") or "off"),
+            "gate_distribution": dict(p6_summary.get("gate_distribution") or {}),
+            "formal_exposure_distribution": dict(p6_summary.get("formal_exposure_distribution") or {}),
+            "suppressed_position_summary": dict(p6_summary.get("suppressed_position_summary") or {}),
+            "max_projected_theme_exposure": float(p6_summary.get("max_projected_theme_exposure") or 0.0),
+            "max_incremental_theme_exposure": float(p6_summary.get("max_incremental_theme_exposure") or 0.0),
+        },
+    )

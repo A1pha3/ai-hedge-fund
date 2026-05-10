@@ -528,13 +528,22 @@ def _serialize_market_state_payload(market_state: Any | None) -> dict[str, Any]:
     return {}
 
 
+def _append_canonical_btst_evaluation_bundle(metrics: dict[str, Any] | None) -> dict[str, Any]:
+    from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle
+
+    payload = dict(metrics or {})
+    payload["canonical_btst_evaluation_bundle"] = build_canonical_btst_evaluation_bundle(payload).to_payload()
+    return payload
+
+
 def _attach_market_state_to_entries(entries: list[dict[str, Any]], *, market_state_payload: dict[str, Any]) -> list[dict[str, Any]]:
-    if not market_state_payload:
-        return list(entries or [])
     attached_entries: list[dict[str, Any]] = []
     for entry in list(entries or []):
         updated_entry = dict(entry)
-        updated_entry["market_state"] = dict(market_state_payload)
+        if "metrics" in updated_entry and isinstance(updated_entry.get("metrics"), dict):
+            updated_entry["metrics"] = _append_canonical_btst_evaluation_bundle(updated_entry.get("metrics"))
+        if market_state_payload:
+            updated_entry["market_state"] = dict(market_state_payload)
         attached_entries.append(updated_entry)
     return attached_entries
 
@@ -593,7 +602,7 @@ def _serialize_layer_c_result_for_replay(item: LayerCResult, *, candidate_source
         "bc_conflict": item.bc_conflict,
         "candidate_source": candidate_source,
         "strategy_signals": _serialize_strategy_signals(item.strategy_signals),
-        "metrics": dict(item.metrics or {}),
+        "metrics": _append_canonical_btst_evaluation_bundle(item.metrics),
         "agent_contribution_summary": dict(item.agent_contribution_summary or {}),
         "market_state": item_market_state or dict(market_state_payload),
     }
@@ -704,8 +713,14 @@ def build_selection_snapshot(
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     frontier_diagnostics = dict((plan.risk_metrics or {}).get("candidate_pool_frontier_expansion") or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
-    catalyst_theme_candidates = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
-    catalyst_theme_shadow_candidates = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("shadow_candidates", []) or [])
+    catalyst_theme_candidates = _attach_market_state_to_entries(
+        list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []),
+        market_state_payload={},
+    )
+    catalyst_theme_shadow_candidates = _attach_market_state_to_entries(
+        list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("shadow_candidates", []) or []),
+        market_state_payload={},
+    )
     return SelectionSnapshot(
         artifact_version=artifact_version,
         run_id=run_id,

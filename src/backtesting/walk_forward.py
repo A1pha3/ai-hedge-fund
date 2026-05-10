@@ -9,6 +9,7 @@ from dateutil.relativedelta import relativedelta
 
 from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
+from .promotion_gate import build_promotion_gate_summary
 from .types import PerformanceMetrics
 
 
@@ -132,7 +133,7 @@ def run_walk_forward(
 
 def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, float | int | bool | list[str] | None]:
     if not results:
-        return {
+        base_summary: dict[str, float | int | bool | list[str] | None] = {
             "window_count": 0,
             "avg_sharpe": None,
             "avg_sortino": None,
@@ -146,7 +147,11 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
             "worst_max_drawdown": None,
             "max_non_positive_sharpe_streak": 0,
             "rollout_ready": False,
-            "rollout_blockers": ["no_windows"],
+            "rollout_blockers": ["no_walk_forward_windows"],
+        }
+        return {
+            **base_summary,
+            **build_promotion_gate_summary(walk_forward_summary=base_summary),
         }
 
     sharpe_sequence = [item.metrics.get("sharpe_ratio") for item in results]
@@ -178,6 +183,8 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
 
     worst_max_drawdown = min(max_drawdown_values) if max_drawdown_values else None
     rollout_blockers: list[str] = []
+    if len(sharpe_values) != len(results):
+        rollout_blockers.append("missing_required_sharpe_data")
     if non_positive_sharpe_window_count > positive_sharpe_window_count:
         rollout_blockers.append("majority_non_positive_sharpe_windows")
     if max_non_positive_sharpe_streak >= ROLLOUT_MAX_NON_POSITIVE_SHARPE_STREAK:
@@ -185,7 +192,7 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
     if worst_max_drawdown is not None and worst_max_drawdown <= ROLLOUT_WORST_MAX_DRAWDOWN_FLOOR:
         rollout_blockers.append("worst_drawdown_breach")
 
-    return {
+    base_summary: dict[str, float | int | bool | list[str] | None] = {
         "window_count": len(results),
         "avg_sharpe": _average(sharpe_values),
         "avg_sortino": _average(sortino_values),
@@ -200,4 +207,8 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
         "max_non_positive_sharpe_streak": max_non_positive_sharpe_streak,
         "rollout_ready": not rollout_blockers,
         "rollout_blockers": rollout_blockers,
+    }
+    return {
+        **base_summary,
+        **build_promotion_gate_summary(walk_forward_summary=base_summary),
     }

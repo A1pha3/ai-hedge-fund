@@ -101,6 +101,11 @@ def _run_walk_forward_mode(args, build_engine) -> int:
         rollout_blockers = [str(blocker) for blocker in list(summary.get("rollout_blockers") or []) if str(blocker or "").strip()]
         if rollout_blockers:
             print(f"Rollout Blockers: {', '.join(rollout_blockers)}")
+    if "promotion_ready" in summary:
+        print(f"Promotion Ready: {'YES' if summary['promotion_ready'] else 'NO'}")
+    promotion_blockers = [str(item) for item in list(summary.get("promotion_blockers") or []) if str(item).strip()]
+    if promotion_blockers:
+        print(f"Promotion Blockers: {', '.join(promotion_blockers)}")
     return 0
 
 

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle
 from src.backtesting.param_search import (
     ParamSpace,
     SearchObjective,
@@ -82,6 +83,96 @@ def test_compute_objective_score_edge_returns_none_for_missing():
 def test_compute_objective_score_btst_returns_none_for_missing():
     metrics = {"next_close_positive_rate": 0.6}
     assert compute_objective_score(metrics, SearchObjective.BTST) is None
+
+
+def test_build_canonical_btst_evaluation_bundle_separates_metric_roles():
+    bundle = build_canonical_btst_evaluation_bundle(
+        {
+            "next_close_positive_rate": 0.58,
+            "next_close_payoff_ratio": 1.9,
+            "next_close_expectancy": 0.012,
+            "next_high_hit_rate": 0.61,
+            "t_plus_2_close_positive_rate": 0.55,
+            "t_plus_3_close_positive_rate": 0.52,
+            "t_plus_3_close_expectancy": 0.011,
+            "downside_p10": -0.031,
+            "sample_weight": 0.74,
+            "projected_theme_exposure": 0.18,
+        }
+    )
+
+    assert bundle.objective_metrics["next_close_positive_rate"] == pytest.approx(0.58)
+    assert bundle.guardrail_metrics["downside_p10"] == pytest.approx(-0.031)
+    assert bundle.context_metrics["projected_theme_exposure"] == pytest.approx(0.18)
+
+
+def test_build_canonical_btst_evaluation_bundle_lookup_returns_values_across_metric_groups():
+    bundle = build_canonical_btst_evaluation_bundle(
+        {
+            "next_close_positive_rate": 0.58,
+            "downside_p10": -0.031,
+            "projected_theme_exposure": 0.18,
+        }
+    )
+
+    assert bundle.lookup("next_close_positive_rate") == pytest.approx(0.58)
+    assert bundle.lookup("downside_p10") == pytest.approx(-0.031)
+    assert bundle.lookup("projected_theme_exposure") == pytest.approx(0.18)
+    assert bundle.lookup("nonexistent_metric") is None
+
+
+def test_build_canonical_btst_evaluation_bundle_to_payload_coerces_numeric_values_and_preserves_missing_keys():
+    bundle = build_canonical_btst_evaluation_bundle(
+        {
+            "next_close_positive_rate": "0.58",
+            "next_close_payoff_ratio": 2,
+            "downside_p10": "-0.031",
+        }
+    )
+
+    payload = bundle.to_payload()
+
+    assert payload["objective_metrics"]["next_close_positive_rate"] == pytest.approx(0.58)
+    assert isinstance(payload["objective_metrics"]["next_close_positive_rate"], float)
+    assert payload["objective_metrics"]["next_close_payoff_ratio"] == pytest.approx(2.0)
+    assert isinstance(payload["objective_metrics"]["next_close_payoff_ratio"], float)
+    assert payload["guardrail_metrics"]["downside_p10"] == pytest.approx(-0.031)
+    assert isinstance(payload["guardrail_metrics"]["downside_p10"], float)
+    assert payload["objective_metrics"]["next_close_expectancy"] is None
+    assert payload["guardrail_metrics"]["incremental_theme_exposure"] is None
+    assert payload["context_metrics"]["projected_theme_exposure"] is None
+
+
+def test_build_canonical_btst_evaluation_bundle_treats_malformed_metric_values_as_missing():
+    bundle = build_canonical_btst_evaluation_bundle(
+        {
+            "next_close_positive_rate": "",
+            "downside_p10": "N/A",
+            "projected_theme_exposure": "bad-value",
+        }
+    )
+
+    payload = bundle.to_payload()
+
+    assert payload["objective_metrics"]["next_close_positive_rate"] is None
+    assert payload["guardrail_metrics"]["downside_p10"] is None
+    assert payload["context_metrics"]["projected_theme_exposure"] is None
+
+
+def test_build_canonical_btst_evaluation_bundle_treats_non_finite_metric_values_as_missing():
+    bundle = build_canonical_btst_evaluation_bundle(
+        {
+            "next_close_positive_rate": float("nan"),
+            "downside_p10": float("inf"),
+            "projected_theme_exposure": float("-inf"),
+        }
+    )
+
+    payload = bundle.to_payload()
+
+    assert payload["objective_metrics"]["next_close_positive_rate"] is None
+    assert payload["guardrail_metrics"]["downside_p10"] is None
+    assert payload["context_metrics"]["projected_theme_exposure"] is None
 
 
 def test_run_param_search_ranks_by_score():
@@ -184,6 +275,16 @@ def test_check_guardrails_treats_none_as_violation():
 def test_check_guardrails_treats_absent_key_as_violation():
     violations = check_guardrails({}, {"next_close_positive_rate": 0.54})
     assert "next_close_positive_rate" in violations
+
+
+def test_check_guardrails_treats_custom_malformed_string_as_violation():
+    violations = check_guardrails({"custom_metric": "N/A"}, {"custom_metric": 0.54})
+    assert violations == ["custom_metric"]
+
+
+def test_check_guardrails_treats_custom_non_finite_value_as_violation():
+    violations = check_guardrails({"custom_metric": float("inf")}, {"custom_metric": 0.54})
+    assert violations == ["custom_metric"]
 
 
 def test_run_param_search_guardrail_failing_trials_ranked_last():
