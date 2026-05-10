@@ -19,7 +19,7 @@ from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
 
 from .engine import BacktestEngine
 from .types import PerformanceMetrics
-from .walk_forward import build_walk_forward_windows, WalkForwardWindow
+from .walk_forward import WALK_FORWARD_PRESETS, WindowMode, build_walk_forward_windows, WalkForwardWindow
 
 
 def _slice_agent_results(agent_results: dict[str, dict[str, dict]], tickers: list[str]) -> dict[str, dict[str, dict]]:
@@ -228,7 +228,22 @@ def run_ab_comparison_walk_forward(
     baseline_pct_threshold: float = 3.0,
     baseline_top_n: int = 10,
     checkpoint_path: str | None = None,
+    window_mode: WindowMode = WindowMode.ROLLING,
+    walk_forward_preset: str | None = None,
 ) -> tuple[list[ABWindowMetrics], dict[str, float | int | None]]:
+    if walk_forward_preset is not None:
+        preset = WALK_FORWARD_PRESETS.get(walk_forward_preset)
+        if preset is None:
+            available = ", ".join(sorted(WALK_FORWARD_PRESETS))
+            raise ValueError(
+                f"Unknown walk-forward preset: {walk_forward_preset!r}. "
+                f"Available: {available}"
+            )
+        train_months = preset.get("train_months", train_months)
+        test_months = preset.get("test_months", test_months)
+        step_months = preset.get("step_months", step_months)
+        max_test_trading_days = preset.get("max_test_trading_days", max_test_trading_days)
+
     windows = build_walk_forward_windows(
         start_date,
         end_date,
@@ -236,6 +251,7 @@ def run_ab_comparison_walk_forward(
         test_months=test_months,
         step_months=step_months,
         max_test_trading_days=max_test_trading_days,
+        window_mode=window_mode,
     )
     agent_runner = make_backtest_agent_runner(agent, model_name, model_provider)
     compare_checkpoint = Path(checkpoint_path) if checkpoint_path else None

@@ -27,6 +27,11 @@ _BTST_GATE_RESTRICTIVENESS = {
     "normal_trade": 2,
     "aggressive_trade": 3,
 }
+_BTST_COMMITTEE_LIQUIDITY_CAPACITY_MIN_FORMAL_FULL = 60.0
+_BTST_FORMAL_FULL_FRAGILE_BREAKOUT_RISK_MAX = 60.0
+_BTST_FORMAL_FULL_GAP_RISK_MAX = 75.0
+_BTST_FORMAL_FULL_CROWDING_RISK_MAX = 70.0
+_BTST_FORMAL_FULL_FALLBACK_AVG_VOLUME_20D_MIN = 10_000.0
 
 
 def _resolve_btst_risk_budget_p6_mode() -> str:
@@ -98,7 +103,8 @@ def _resolve_btst_prior_quality_label(*, item: Any, selection_target: Any, short
     return "execution_ready"
 
 
-def _resolve_btst_execution_contract_bucket(*, item: Any, selection_target: Any, prior_quality_label: str) -> str:
+def _resolve_btst_execution_contract_bucket(*, item: Any, selection_target: Any, prior_quality_label: str, candidate: Any = None) -> str:
+    short_trade_result = _resolve_short_trade_target_result(selection_target)
     candidate_source = str(getattr(selection_target, "candidate_source", None) or "").strip().lower()
     execution_eligible = bool(getattr(selection_target, "execution_eligible", False))
     if candidate_source in {"upgrade_only", "research_only"}:
@@ -107,6 +113,28 @@ def _resolve_btst_execution_contract_bucket(*, item: Any, selection_target: Any,
         return prior_quality_label
     if not execution_eligible:
         return "watch_only"
+    liquidity_capacity_raw_100 = None
+    fragile_breakout_risk_raw_100 = None
+    gap_risk_raw_100 = None
+    crowding_risk_raw_100 = None
+    if short_trade_result is not None:
+        committee_payload = dict(getattr(short_trade_result, "metrics_payload", {}).get("committee") or {})
+        committee_components = dict(committee_payload.get("components") or {})
+        liquidity_capacity_raw_100 = _safe_float(committee_components.get("liquidity_capacity_raw_100"))
+        fragile_breakout_risk_raw_100 = _safe_float(committee_components.get("fragile_breakout_risk_raw_100"))
+        gap_risk_raw_100 = _safe_float(committee_components.get("gap_risk_raw_100"))
+        crowding_risk_raw_100 = _safe_float(committee_components.get("crowding_risk_raw_100"))
+    if liquidity_capacity_raw_100 is not None and liquidity_capacity_raw_100 < _BTST_COMMITTEE_LIQUIDITY_CAPACITY_MIN_FORMAL_FULL:
+        return "formal_capped"
+    if fragile_breakout_risk_raw_100 is not None and fragile_breakout_risk_raw_100 >= _BTST_FORMAL_FULL_FRAGILE_BREAKOUT_RISK_MAX:
+        return "formal_capped"
+    if gap_risk_raw_100 is not None and gap_risk_raw_100 >= _BTST_FORMAL_FULL_GAP_RISK_MAX:
+        return "formal_capped"
+    if crowding_risk_raw_100 is not None and crowding_risk_raw_100 >= _BTST_FORMAL_FULL_CROWDING_RISK_MAX:
+        return "formal_capped"
+    avg_volume_20d = _safe_float(getattr(candidate, "avg_volume_20d", None)) if candidate is not None else None
+    if liquidity_capacity_raw_100 is None and avg_volume_20d is not None and avg_volume_20d <= _BTST_FORMAL_FULL_FALLBACK_AVG_VOLUME_20D_MIN:
+        return "formal_capped"
     if float(getattr(item, "score_final", 0.0) or 0.0) >= 0.5 and float(getattr(item, "quality_score", 0.0) or 0.0) >= 0.6:
         return "formal_full"
     return "formal_capped"
@@ -133,10 +161,15 @@ def _normalize_btst_risk_budget_gate(*values: Any) -> str:
     return "normal_trade"
 
 
-def _resolve_btst_formal_risk_budget(*, item: Any, selection_target: Any, regime_gate_level: str) -> dict[str, Any]:
+def _resolve_btst_formal_risk_budget(*, item: Any, selection_target: Any, regime_gate_level: str, candidate: Any = None) -> dict[str, Any]:
     short_trade_result = _resolve_short_trade_target_result(selection_target)
     prior_quality_label = _resolve_btst_prior_quality_label(item=item, selection_target=selection_target, short_trade_result=short_trade_result)
-    execution_contract_bucket = _resolve_btst_execution_contract_bucket(item=item, selection_target=selection_target, prior_quality_label=prior_quality_label)
+    execution_contract_bucket = _resolve_btst_execution_contract_bucket(
+        item=item,
+        selection_target=selection_target,
+        prior_quality_label=prior_quality_label,
+        candidate=candidate,
+    )
     mode = _resolve_btst_risk_budget_p6_mode()
     gate_key = _normalize_btst_risk_budget_gate(
         getattr(selection_target, "btst_regime_gate", None),
@@ -258,6 +291,30 @@ def _build_btst_risk_budget_overlay_summary(*, candidate_plans: list[Any], filte
             summary["suppressed_position_summary"]["zero_budget_count"] += 1
         if bucket == "reduced":
             summary["suppressed_position_summary"]["reduced_budget_count"] += 1
+    projected_exposures = [
+        float(value)
+        for value in [
+            *[getattr(plan, "projected_theme_exposure", None) for plan in list(candidate_plans or [])],
+            *[entry.get("projected_theme_exposure") for entry in list(filtered_entries or [])],
+        ]
+        if value is not None
+    ]
+    incremental_exposures = [
+        float(value)
+        for value in [
+            *[getattr(plan, "incremental_theme_exposure", None) for plan in list(candidate_plans or [])],
+            *[entry.get("incremental_theme_exposure") for entry in list(filtered_entries or [])],
+        ]
+        if value is not None
+    ]
+    summary["promotion_gate_inputs"] = {
+        "mode": str(summary.get("mode") or "off"),
+        "gate_distribution": dict(summary.get("gate_distribution") or {}),
+        "formal_exposure_distribution": dict(summary.get("formal_exposure_distribution") or {}),
+        "suppressed_position_summary": dict(summary.get("suppressed_position_summary") or {}),
+        "max_projected_theme_exposure": round(max(projected_exposures), 4) if projected_exposures else 0.0,
+        "max_incremental_theme_exposure": round(max(incremental_exposures), 4) if incremental_exposures else 0.0,
+    }
     return summary
 
 
@@ -474,6 +531,7 @@ def _resolve_btst_position_budget(
         item=item,
         selection_target=selection_target,
         regime_gate_level=regime_gate_level,
+        candidate=candidate,
     )
     base_industry_quota = nav * industry_quota_ratio
     if risk_budget["risk_budget_mode"] == "enforce" and float(risk_budget["formal_risk_budget_ratio"]) > 1.0:

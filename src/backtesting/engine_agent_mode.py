@@ -25,6 +25,7 @@ from src.tools.api import get_price_data
 from .controller import AgentController
 from .portfolio import Portfolio
 from .trader import TradeExecutor
+from .trading_constraints import TradeExecutionInputs
 from .types import AgentOutput
 
 
@@ -182,6 +183,7 @@ def execute_agent_mode_trades(
             decision.get("quantity", 0),
             current_prices[ticker],
             portfolio,
+            execution_inputs=_build_agent_mode_execution_inputs(),
             trade_date=trade_date,
         )
         executed_trades[ticker] = executed_qty
@@ -196,6 +198,16 @@ def execute_agent_mode_trades(
                 trade_date_compact=trade_date,
             )
     return executed_trades
+
+
+def _build_agent_mode_execution_inputs() -> TradeExecutionInputs:
+    """Keep agent-mode executions on the baseline resolver path.
+
+    Agent mode currently submits action/quantity decisions without the BTST
+    fragility payload that pipeline mode can attach, so these trades should
+    resolve against baseline execution constraints until that data exists.
+    """
+    return TradeExecutionInputs(daily_turnover=None)
 
 
 def _record_agent_mode_buy_execution(

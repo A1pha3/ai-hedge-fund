@@ -19,7 +19,17 @@ from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
 
 
 
-def _selection_target(*, gate: str, prior_quality_label: str, execution_eligible: bool = True, candidate_source: str = "layer_c_watchlist") -> DualTargetEvaluation:
+def _selection_target(
+    *,
+    gate: str,
+    prior_quality_label: str,
+    execution_eligible: bool = True,
+    candidate_source: str = "layer_c_watchlist",
+    projected_theme_exposure: float = 0.0,
+    incremental_theme_exposure: float = 0.0,
+    theme_exposure_cap: float = 0.25,
+    incremental_theme_exposure_cap: float = 0.18,
+) -> DualTargetEvaluation:
     return DualTargetEvaluation(
         ticker="300724",
         trade_date="20260422",
@@ -40,7 +50,17 @@ def _selection_target(*, gate: str, prior_quality_label: str, execution_eligible
                         "regime_gate_level": gate,
                         "risk_level": gate,
                     }
-                }
+                },
+                "committee": {
+                    "thresholds": {
+                        "theme_exposure_cap": theme_exposure_cap,
+                        "incremental_theme_exposure_cap": incremental_theme_exposure_cap,
+                    },
+                    "components": {
+                        "projected_theme_exposure": projected_theme_exposure,
+                        "incremental_theme_exposure": incremental_theme_exposure,
+                    },
+                },
             },
         ),
     )
@@ -123,6 +143,65 @@ def test_p6_risk_budget_matrix_caps_lower_quality_execution_eligible_case(monkey
     assert budget["execution_contract_bucket"] == "formal_capped"
 
 
+def test_p6_risk_budget_caps_otherwise_full_budget_when_committee_liquidity_capacity_is_weak(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    target = _selection_target(gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True)
+    target.short_trade.metrics_payload["committee"] = {
+        "components": {
+            "liquidity_capacity_raw_100": 45.0,
+        }
+    }
+
+    budget = _resolve_btst_position_budget(
+        item=_watchlist_item(score_final=0.88, quality_score=0.82),
+        selection_target=target,
+        candidate=CandidateStock(ticker="300724", name="Test", industry_sw="电子"),
+        nav=100000.0,
+    )
+
+    assert budget["execution_contract_bucket"] == "formal_capped"
+    assert budget["formal_risk_budget_ratio"] == pytest.approx(0.6)
+    assert budget["formal_exposure_bucket"] == "reduced"
+
+
+def test_p6_risk_budget_caps_otherwise_full_budget_when_committee_fragile_breakout_risk_is_elevated(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    target = _selection_target(gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True)
+    target.short_trade.metrics_payload["committee"] = {
+        "components": {
+            "liquidity_capacity_raw_100": 85.0,
+            "fragile_breakout_risk_raw_100": 72.0,
+            "gap_risk_raw_100": 35.0,
+        }
+    }
+
+    budget = _resolve_btst_position_budget(
+        item=_watchlist_item(score_final=0.88, quality_score=0.82),
+        selection_target=target,
+        candidate=CandidateStock(ticker="300724", name="Test", industry_sw="电子", avg_volume_20d=1_000_000.0),
+        nav=100000.0,
+    )
+
+    assert budget["execution_contract_bucket"] == "formal_capped"
+    assert budget["formal_risk_budget_ratio"] == pytest.approx(0.6)
+    assert budget["formal_exposure_bucket"] == "reduced"
+
+
+def test_p6_risk_budget_caps_otherwise_full_budget_when_candidate_liquidity_fallback_is_thin(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+
+    budget = _resolve_btst_position_budget(
+        item=_watchlist_item(score_final=0.88, quality_score=0.82),
+        selection_target=_selection_target(gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True),
+        candidate=CandidateStock(ticker="300724", name="Test", industry_sw="电子", avg_volume_20d=9_000.0),
+        nav=100000.0,
+    )
+
+    assert budget["execution_contract_bucket"] == "formal_capped"
+    assert budget["formal_risk_budget_ratio"] == pytest.approx(0.6)
+    assert budget["formal_exposure_bucket"] == "reduced"
+
+
 
 def test_build_buy_orders_with_diagnostics_applies_p6_overlay_to_position_sizing(monkeypatch):
     monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
@@ -150,6 +229,68 @@ def test_build_buy_orders_with_diagnostics_applies_p6_overlay_to_position_sizing
     assert buy_orders[0].amount == pytest.approx(6000.0)
     assert buy_orders[0].risk_budget_ratio == pytest.approx(0.6)
     assert diagnostics["btst_risk_budget_overlay"]["formal_exposure_distribution"] == {"reduced": 1}
+
+
+def test_btst_risk_budget_overlay_summary_emits_promotion_gate_inputs(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    watchlist = [_watchlist_item(score_final=0.55, quality_score=0.5)]
+    selection_targets = {"300724": _selection_target(gate="normal_trade", prior_quality_label="execution_ready", execution_eligible=True)}
+
+    buy_orders, diagnostics = build_buy_orders_with_diagnostics(
+        watchlist=watchlist,
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        trade_date="20260422",
+        candidate_by_ticker={"300724": CandidateStock(ticker="300724", name="Test", industry_sw="电子", avg_volume_20d=1000000.0)},
+        price_map={"300724": 10.0},
+        blocked_buy_tickers={},
+        selection_targets=selection_targets,
+        normalize_blocked_buy_tickers_fn=lambda payload: payload or {},
+        build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {}, "tickers": entries},
+        build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
+        resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
+        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        enforce_daily_trade_limit_fn=lambda plans, nav: plans,
+    )
+
+    assert len(buy_orders) == 1
+    assert diagnostics["btst_risk_budget_overlay"]["promotion_gate_inputs"]["mode"] == "enforce"
+    assert diagnostics["btst_risk_budget_overlay"]["promotion_gate_inputs"]["gate_distribution"] == {"normal_trade": 1}
+    assert diagnostics["btst_risk_budget_overlay"]["promotion_gate_inputs"]["suppressed_position_summary"] == {"zero_budget_count": 0, "reduced_budget_count": 1}
+
+
+def test_btst_risk_budget_overlay_summary_emits_theme_exposure_maxima_for_promotion_gate(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P6_RISK_BUDGET_MODE", "enforce")
+    watchlist = [_watchlist_item(score_final=0.55, quality_score=0.5)]
+    selection_targets = {
+        "300724": _selection_target(
+            gate="normal_trade",
+            prior_quality_label="execution_ready",
+            execution_eligible=True,
+            projected_theme_exposure=0.37,
+            incremental_theme_exposure=0.19,
+        )
+    }
+
+    buy_orders, diagnostics = build_buy_orders_with_diagnostics(
+        watchlist=watchlist,
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        trade_date="20260422",
+        candidate_by_ticker={"300724": CandidateStock(ticker="300724", name="Test", industry_sw="电子", avg_volume_20d=1000000.0)},
+        price_map={"300724": 10.0},
+        blocked_buy_tickers={},
+        selection_targets=selection_targets,
+        normalize_blocked_buy_tickers_fn=lambda payload: payload or {},
+        build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {}, "tickers": entries},
+        build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
+        resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
+        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        enforce_daily_trade_limit_fn=lambda plans, nav: plans,
+    )
+
+    assert buy_orders == []
+    assert diagnostics["tickers"][0]["reason"] == "blocked_by_incremental_theme_exposure_cap"
+    assert diagnostics["btst_risk_budget_overlay"]["promotion_gate_inputs"]["max_projected_theme_exposure"] == pytest.approx(0.37)
+    assert diagnostics["btst_risk_budget_overlay"]["promotion_gate_inputs"]["max_incremental_theme_exposure"] == pytest.approx(0.19)
 
 
 

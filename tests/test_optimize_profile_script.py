@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 from pathlib import Path
@@ -15,9 +16,12 @@ from scripts.optimize_profile import (
     _build_staged_ignition_shortlist,
     _compute_source_coverage_pass_ratio,
     _format_staged_ignition_summary,
+    _load_focus_params,
     _parse_grid_params,
     _resolve_primary_surface,
+    build_stage_grid,
     resolve_grid_params,
+    resolve_guardrails,
 )
 from src.backtesting.param_search import SearchObjective, SearchReport, TrialResult
 from src.targets import build_short_trade_target_profile
@@ -71,6 +75,23 @@ def test_default_checkpoint_path_is_stable_and_input_sensitive() -> None:
     assert replay_a == replay_b
     assert replay_a != replay_c
     assert replay_a != walk
+
+
+def test_load_focus_params_uses_best_completed_trial_from_checkpoint(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "completed_trials": [
+                    {"params": {"select_threshold": 0.46}, "score": 0.31},
+                    {"params": {"select_threshold": 0.50}, "score": 0.42},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _load_focus_params(checkpoint) == {"select_threshold": 0.50}
 
 
 def test_parse_grid_params_coerces_boolean_literals() -> None:
@@ -284,6 +305,66 @@ def test_build_grid_params_uses_event_catalyst_preset_for_guarded_profile() -> N
     assert "breakout_freshness_weight" in grid
 
 
+def test_resolve_guardrails_uses_btst_replay_defaults_for_momentum_profile() -> None:
+    guardrails = resolve_guardrails(
+        profile_name="momentum_optimized",
+        objective="btst",
+        replay_mode=True,
+        raw_guardrails=[],
+    )
+
+    assert guardrails["next_close_positive_rate"] == pytest.approx(0.54)
+    assert guardrails["next_high_hit_rate"] == pytest.approx(0.56)
+    assert guardrails["downside_p10"] == pytest.approx(-0.06)
+    assert guardrails["window_coverage"] == pytest.approx(0.60)
+
+
+def test_resolve_guardrails_prefers_explicit_values_over_defaults() -> None:
+    guardrails = resolve_guardrails(
+        profile_name="momentum_optimized",
+        objective="btst",
+        replay_mode=True,
+        raw_guardrails=["next_close_positive_rate=0.57", "window_coverage=0.75"],
+    )
+
+    assert guardrails["next_close_positive_rate"] == pytest.approx(0.57)
+    assert guardrails["window_coverage"] == pytest.approx(0.75)
+    assert guardrails["next_high_hit_rate"] == pytest.approx(0.56)
+
+
+def test_build_stage_grid_focuses_numeric_ranges_around_best_params() -> None:
+    focused = build_stage_grid(
+        base_grid={
+            "select_threshold": [0.42, 0.46, 0.50, 0.54, 0.58],
+            "near_miss_threshold": [0.28, 0.32, 0.36, 0.40],
+            "profitability_relief_enabled": [False, True],
+        },
+        search_stage="focused",
+        focus_params={
+            "select_threshold": 0.50,
+            "near_miss_threshold": 0.36,
+            "profitability_relief_enabled": True,
+        },
+    )
+
+    assert focused["select_threshold"] == [0.46, 0.50, 0.54]
+    assert focused["near_miss_threshold"] == [0.32, 0.36, 0.40]
+    assert focused["profitability_relief_enabled"] == [True]
+
+
+def test_resolve_grid_params_uses_coarse_stage_preset_for_momentum_profile() -> None:
+    grid = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="momentum_optimized",
+        search_stage="coarse",
+    )
+
+    assert grid["select_threshold"] == [0.46, 0.50, 0.54]
+    assert grid["near_miss_threshold"] == [0.30, 0.34, 0.38]
+    assert "overhead_penalty_block_threshold" not in grid
+
+
 def test_main_integrates_event_catalyst_params_with_preset_grid(monkeypatch: pytest.MonkeyPatch) -> None:
     import scripts.optimize_profile as opt_module
 
@@ -334,6 +415,156 @@ def test_main_integrates_event_catalyst_params_with_preset_grid(monkeypatch: pyt
     assert captured_grid is not None, "ParamSpace was not initialized with a grid"
     assert "event_catalyst_selected_uplift" in captured_grid, "Event-catalyst params missing from grid used by main()"
     assert "select_threshold" in captured_grid, "Base preset params missing from grid used by main()"
+
+
+def test_main_passes_guardrails_and_focused_grid_to_run_param_search(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    focus_json = tmp_path / "focus.json"
+    focus_json.write_text('{"best_params": {"select_threshold": 0.50, "near_miss_threshold": 0.36}}', encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "_build_replay_evaluator",
+        lambda *args, **kwargs: (lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6}),
+    )
+
+    def fake_run_param_search(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(best_params={}, best_score=None, objective=kwargs["objective"], results=[], completed_trials=0, total_trials=1)
+
+    monkeypatch.setattr(optimize_profile, "run_param_search", fake_run_param_search)
+    monkeypatch.setattr(optimize_profile, "save_search_report", lambda report, output_path=None: Path(output_path or tmp_path / "report.md"))
+    monkeypatch.setattr(optimize_profile, "save_search_payload", lambda report, output_path=None: Path(output_path or tmp_path / "report.json"))
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--grid-params",
+            "select_threshold=0.42,0.46,0.50,0.54,0.58",
+            "near_miss_threshold=0.28,0.32,0.36,0.40",
+            "--input",
+            "dummy.json",
+            "--search-stage",
+            "focused",
+            "--focus-json",
+            str(focus_json),
+            "--guardrail",
+            "window_coverage=0.75",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["guardrails"] == {
+        "next_close_positive_rate": pytest.approx(0.54),
+        "next_high_hit_rate": pytest.approx(0.56),
+        "downside_p10": pytest.approx(-0.06),
+        "window_coverage": pytest.approx(0.75),
+    }
+    assert captured["space"].grid["select_threshold"] == [0.46, 0.50, 0.54]
+    assert captured["space"].grid["near_miss_threshold"] == [0.32, 0.36, 0.40]
+
+
+def test_main_uses_stage_preset_grid_before_focus_narrowing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    focus_json = tmp_path / "focus.json"
+    focus_json.write_text('{"best_params": {"select_threshold": 0.50, "near_miss_threshold": 0.34}}', encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "_build_replay_evaluator",
+        lambda *args, **kwargs: (lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6}),
+    )
+
+    def fake_run_param_search(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(best_params={}, best_score=None, objective=kwargs["objective"], results=[], completed_trials=0, total_trials=1)
+
+    monkeypatch.setattr(optimize_profile, "run_param_search", fake_run_param_search)
+    monkeypatch.setattr(optimize_profile, "save_search_report", lambda report, output_path=None: Path(output_path or tmp_path / "report.md"))
+    monkeypatch.setattr(optimize_profile, "save_search_payload", lambda report, output_path=None: Path(output_path or tmp_path / "report.json"))
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--preset-grid",
+            "--input",
+            "dummy.json",
+            "--search-stage",
+            "focused",
+            "--focus-json",
+            str(focus_json),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["space"].grid["select_threshold"] == [0.46, 0.50, 0.54]
+    assert captured["space"].grid["near_miss_threshold"] == [0.30, 0.34, 0.38]
+    assert "overhead_penalty_block_threshold" not in captured["space"].grid
+
+
+def test_main_writes_stage_metadata_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "_build_replay_evaluator",
+        lambda *args, **kwargs: (lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6}),
+    )
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params={"select_threshold": 0.50}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {"select_threshold": 0.50}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--preset-grid",
+            "--input",
+            "dummy.json",
+            "--search-stage",
+            "coarse",
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    metadata_payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert metadata_payload["metadata"]["search_stage"] == "coarse"
+    assert metadata_payload["metadata"]["guardrails"]["next_close_positive_rate"] == pytest.approx(0.54)
+    assert "## Search Metadata" in output_md.read_text(encoding="utf-8")
+    assert "Search Stage: **coarse**" in output_md.read_text(encoding="utf-8")
 
 
 def test_resolve_grid_params_uses_routed_btst_committee_preset_for_ignition_breakout() -> None:
@@ -1239,3 +1470,289 @@ def test_main_stage1_emits_ignition_summary(monkeypatch: pytest.MonkeyPatch, tmp
     all_output = "\n".join(printed)
     assert "Stage 1 Ignition" in all_output
     assert "promotable" in all_output
+
+
+def test_main_writes_best_candidate_comparison_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+
+    def fake_build_replay_evaluator(input_paths: list[Path], *, base_profile: str, next_high_hit_threshold: float = 0.02):
+        del input_paths, next_high_hit_threshold
+
+        def evaluator(params: dict[str, object]) -> dict[str, float]:
+            if base_profile == "default":
+                return {
+                    "next_close_positive_rate": 0.55,
+                    "next_high_hit_rate": 0.56,
+                    "next_close_expectancy": 0.010,
+                    "downside_p10": -0.050,
+                    "window_coverage": 0.80,
+                }
+            if params:
+                return {
+                    "next_close_positive_rate": 0.60,
+                    "next_high_hit_rate": 0.61,
+                    "next_close_expectancy": 0.018,
+                    "downside_p10": -0.040,
+                    "window_coverage": 0.85,
+                }
+            return {
+                "next_close_positive_rate": 0.57,
+                "next_high_hit_rate": 0.59,
+                "next_close_expectancy": 0.014,
+                "downside_p10": -0.045,
+                "window_coverage": 0.82,
+            }
+
+        return evaluator
+
+    monkeypatch.setattr(optimize_profile, "_build_replay_evaluator", fake_build_replay_evaluator)
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params={"select_threshold": 0.50}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {"select_threshold": 0.50}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--grid-params",
+            "select_threshold=0.50",
+            "--input",
+            "dummy.json",
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["comparison_summary"]["default"]["next_close_positive_rate_delta"] == pytest.approx(0.05)
+    assert payload["comparison_summary"]["momentum_optimized"]["next_high_hit_rate_delta"] == pytest.approx(0.02)
+    assert "## Baseline Comparison" in output_md.read_text(encoding="utf-8")
+
+
+def test_main_writes_rollout_recommendation_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+
+    def fake_build_replay_evaluator(input_paths: list[Path], *, base_profile: str, next_high_hit_threshold: float = 0.02):
+        del input_paths, next_high_hit_threshold
+
+        def evaluator(params: dict[str, object]) -> dict[str, float]:
+            if base_profile == "default":
+                return {
+                    "next_close_positive_rate": 0.55,
+                    "next_high_hit_rate": 0.56,
+                    "next_close_expectancy": 0.010,
+                    "downside_p10": -0.050,
+                    "window_coverage": 0.80,
+                }
+            if params:
+                return {
+                    "next_close_positive_rate": 0.60,
+                    "next_high_hit_rate": 0.61,
+                    "next_close_expectancy": 0.018,
+                    "downside_p10": -0.040,
+                    "window_coverage": 0.85,
+                }
+            return {
+                "next_close_positive_rate": 0.57,
+                "next_high_hit_rate": 0.59,
+                "next_close_expectancy": 0.014,
+                "downside_p10": -0.045,
+                "window_coverage": 0.82,
+            }
+
+        return evaluator
+
+    monkeypatch.setattr(optimize_profile, "_build_replay_evaluator", fake_build_replay_evaluator)
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params={"select_threshold": 0.50}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {"select_threshold": 0.50}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--grid-params",
+            "select_threshold=0.50",
+            "--input",
+            "dummy.json",
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["rollout_recommendation"] == "promote"
+    assert "Rollout Recommendation: **promote**" in output_md.read_text(encoding="utf-8")
+
+
+def test_main_focused_stage_can_autoload_best_params_from_checkpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "completed_trials": [
+                    {"params": {"select_threshold": 0.46, "near_miss_threshold": 0.30}, "score": 0.31},
+                    {"params": {"select_threshold": 0.50, "near_miss_threshold": 0.34}, "score": 0.42},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "_build_replay_evaluator",
+        lambda *args, **kwargs: (lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6}),
+    )
+
+    def fake_run_param_search(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(best_params={"select_threshold": 0.50, "near_miss_threshold": 0.34}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1)
+
+    monkeypatch.setattr(optimize_profile, "run_param_search", fake_run_param_search)
+    monkeypatch.setattr(optimize_profile, "save_search_report", lambda report, output_path=None: tmp_path / "report.md")
+    monkeypatch.setattr(optimize_profile, "save_search_payload", lambda report, output_path=None: tmp_path / "report.json")
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--preset-grid",
+            "--input",
+            "dummy.json",
+            "--search-stage",
+            "focused",
+            "--checkpoint",
+            str(checkpoint),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["space"].grid["select_threshold"] == [0.46, 0.50, 0.54]
+    assert captured["space"].grid["near_miss_threshold"] == [0.30, 0.34, 0.38]
+
+
+def test_main_staged_search_runs_coarse_then_focused(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_json = tmp_path / "report.json"
+    stage_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "_build_replay_evaluator",
+        lambda *args, **kwargs: (lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6}),
+    )
+
+    def fake_run_param_search(**kwargs: object) -> SimpleNamespace:
+        stage_calls.append(kwargs)
+        best_params = {"select_threshold": 0.50, "near_miss_threshold": 0.34} if len(stage_calls) == 1 else {"select_threshold": 0.54, "near_miss_threshold": 0.38}
+        best_score = 0.42 if len(stage_calls) == 1 else 0.47
+        return SimpleNamespace(best_params=best_params, best_score=best_score, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1)
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or tmp_path / "report.md")
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {"select_threshold": 0.54}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "run_param_search", fake_run_param_search)
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--preset-grid",
+            "--input",
+            "dummy.json",
+            "--search-stage",
+            "staged",
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    assert len(stage_calls) == 2
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["stage_results"]["coarse"]["best_score"] == pytest.approx(0.42)
+    assert payload["metadata"]["stage_results"]["focused"]["best_score"] == pytest.approx(0.47)
+
+
+def test_main_rejects_grids_over_max_combinations(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        optimize_profile,
+        "_build_replay_evaluator",
+        lambda *args, **kwargs: (lambda _params: {"window_count": 1, "window_coverage": 1.0, "sample_weight": 0.5, "next_close_positive_rate": 0.6}),
+    )
+
+    with pytest.raises(ValueError, match="max_combinations"):
+        optimize_profile.main(
+            [
+                "--profile",
+                "momentum_optimized",
+                "--objective",
+                "btst",
+                "--grid-params",
+                "select_threshold=0.46,0.50,0.54",
+                "near_miss_threshold=0.30,0.34,0.38",
+                "--input",
+                "dummy.json",
+                "--max-combinations",
+                "2",
+            ]
+        )

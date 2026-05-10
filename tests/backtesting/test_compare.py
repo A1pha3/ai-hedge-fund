@@ -179,3 +179,108 @@ def test_build_ab_comparison_payload():
     assert payload["summary"]["window_count"] == 1
     assert payload["windows"][0]["window"]["test_start"] == "2026-03-01"
     assert payload["windows"][0]["mvp"]["sortino_ratio"] == 1.6
+
+
+# ---------------------------------------------------------------------------
+# window_mode and walk_forward_preset propagation tests
+# ---------------------------------------------------------------------------
+
+
+def test_run_ab_comparison_walk_forward_passes_window_mode_expanding(monkeypatch):
+    """window_mode=expanding must be forwarded to build_walk_forward_windows."""
+    from src.backtesting.walk_forward import WindowMode
+
+    captured_kwargs = {}
+
+    def fake_build_walk_forward_windows(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return [WalkForwardWindow(train_start="2026-01-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31")]
+
+    class StubEngine:
+        def __init__(self, **kwargs):
+            self.pipeline = kwargs["pipeline"]
+
+        def run_backtest(self):
+            return {"sharpe_ratio": 1.0, "sortino_ratio": 1.0, "max_drawdown": -5.0}
+
+    monkeypatch.setattr("src.backtesting.compare.build_walk_forward_windows", fake_build_walk_forward_windows)
+    monkeypatch.setattr("src.backtesting.compare.BacktestEngine", StubEngine)
+
+    run_ab_comparison_walk_forward(
+        tickers=["000001"],
+        start_date="2026-01-01",
+        end_date="2026-06-30",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        window_mode=WindowMode.EXPANDING,
+    )
+
+    assert captured_kwargs.get("window_mode") == WindowMode.EXPANDING
+
+
+def test_run_ab_comparison_walk_forward_preset_overrides_month_args(monkeypatch):
+    """walk_forward_preset must override explicit train/test/step_months args."""
+    captured_kwargs = {}
+
+    def fake_build_walk_forward_windows(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return [WalkForwardWindow(train_start="2026-01-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31")]
+
+    class StubEngine:
+        def __init__(self, **kwargs):
+            self.pipeline = kwargs["pipeline"]
+
+        def run_backtest(self):
+            return {"sharpe_ratio": 1.0, "sortino_ratio": 1.0, "max_drawdown": -5.0}
+
+    monkeypatch.setattr("src.backtesting.compare.build_walk_forward_windows", fake_build_walk_forward_windows)
+    monkeypatch.setattr("src.backtesting.compare.BacktestEngine", StubEngine)
+
+    # Pass different explicit values; preset "standard" (2m/1m/1m) must win
+    run_ab_comparison_walk_forward(
+        tickers=["000001"],
+        start_date="2026-01-01",
+        end_date="2026-06-30",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        train_months=99,
+        test_months=99,
+        step_months=99,
+        walk_forward_preset="standard",
+    )
+
+    assert captured_kwargs["train_months"] == 2
+    assert captured_kwargs["test_months"] == 1
+    assert captured_kwargs["step_months"] == 1
+
+
+def test_run_ab_comparison_walk_forward_unknown_preset_raises(monkeypatch):
+    """Passing an unknown preset must raise ValueError immediately."""
+    monkeypatch.setattr(
+        "src.backtesting.compare.build_walk_forward_windows",
+        lambda *a, **kw: [],
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown walk-forward preset"):
+        run_ab_comparison_walk_forward(
+            tickers=["000001"],
+            start_date="2026-01-01",
+            end_date="2026-06-30",
+            initial_capital=100000.0,
+            model_name="test-model",
+            model_provider="test-provider",
+            selected_analysts=None,
+            initial_margin_requirement=0.0,
+            agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+            walk_forward_preset="nonexistent_preset",
+        )

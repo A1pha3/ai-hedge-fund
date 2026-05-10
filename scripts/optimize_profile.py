@@ -31,6 +31,43 @@ logger = get_logger(__name__)
 REPORTS_DIR = Path("data/reports")
 PARTIAL_HORIZON_WEIGHT_PENALTY = 0.85
 PARTIAL_T3_HORIZON_WEIGHT_PENALTY = 0.92
+DEFAULT_BTST_REPLAY_GUARDRAILS: dict[str, float] = {
+    "next_close_positive_rate": 0.54,
+    "next_high_hit_rate": 0.56,
+    "downside_p10": -0.06,
+    "window_coverage": 0.60,
+}
+MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS: dict[str, dict[str, list[Any]]] = {
+    "coarse": {
+        "select_threshold": [0.46, 0.50, 0.54],
+        "near_miss_threshold": [0.30, 0.34, 0.38],
+        "breakout_freshness_weight": [0.12, 0.16],
+        "trend_acceleration_weight": [0.18, 0.22],
+        "volume_expansion_quality_weight": [0.16, 0.20],
+        "close_strength_weight": [0.12, 0.16],
+        "catalyst_freshness_weight": [0.10, 0.14],
+        "momentum_strength_weight": [0.00, 0.06],
+        "short_term_reversal_weight": [0.00, 0.04],
+    },
+    "focused": {
+        "select_threshold": [0.46, 0.50, 0.54],
+        "near_miss_threshold": [0.30, 0.34, 0.38],
+        "breakout_freshness_weight": [0.12, 0.16],
+        "trend_acceleration_weight": [0.18, 0.22],
+        "volume_expansion_quality_weight": [0.16, 0.20],
+        "close_strength_weight": [0.12, 0.16],
+        "catalyst_freshness_weight": [0.10, 0.14],
+        "momentum_strength_weight": [0.00, 0.06],
+        "short_term_reversal_weight": [0.00, 0.04],
+    },
+}
+COMPARISON_METRICS: tuple[str, ...] = (
+    "next_close_positive_rate",
+    "next_high_hit_rate",
+    "next_close_expectancy",
+    "downside_p10",
+    "window_coverage",
+)
 
 
 def resolve_replay_input_paths(
@@ -116,6 +153,19 @@ def _parse_grid_params(raw: list[str]) -> dict[str, list[Any]]:
     return grid
 
 
+def _parse_guardrails(raw: list[str]) -> dict[str, float]:
+    guardrails: dict[str, float] = {}
+    for item in raw:
+        if "=" not in item:
+            raise ValueError(f"Invalid guardrail {item!r}; expected metric=floor")
+        key, raw_value = item.split("=", 1)
+        value = _safe_float(raw_value)
+        if value is None:
+            raise ValueError(f"Invalid guardrail floor for {key!r}: {raw_value!r}")
+        guardrails[key.strip()] = float(value)
+    return guardrails
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         if value is None:
@@ -123,6 +173,20 @@ def _safe_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def resolve_guardrails(
+    *,
+    profile_name: str,
+    objective: str,
+    replay_mode: bool,
+    raw_guardrails: list[str],
+) -> dict[str, float]:
+    resolved: dict[str, float] = {}
+    if replay_mode and profile_name == "momentum_optimized" and objective == SearchObjective.BTST.value:
+        resolved.update(DEFAULT_BTST_REPLAY_GUARDRAILS)
+    resolved.update(_parse_guardrails(raw_guardrails))
+    return resolved
 
 
 def _resolve_distribution_stat(surface: dict[str, Any], distribution_key: str, stat_key: str) -> float | None:
@@ -677,14 +741,21 @@ IGNITION_STAGE1_GRID: dict[str, list[Any]] = {
     "committee_fragile_breakout_risk_cap": [75.0, 80.0],
 }
 
-
-def resolve_grid_params(*, grid_params: list[str], preset_grid: bool, profile_name: str, staged_mode: str | None = None) -> dict[str, list[Any]]:
+def resolve_grid_params(
+    *,
+    grid_params: list[str],
+    preset_grid: bool,
+    profile_name: str,
+    search_stage: str = "full",
+    staged_mode: str | None = None,
+) -> dict[str, list[Any]]:
     """Resolve grid parameters with optional preset and profile-specific extensions.
 
     Args:
         grid_params: Raw grid parameter strings to parse
         preset_grid: Whether to include base preset grid
         profile_name: Profile name for profile-specific grid extensions
+        search_stage: Optional stage-aware preset variant
         staged_mode: Optional staged calibration mode (e.g. "ignition_stage1")
 
     Returns:
@@ -697,13 +768,229 @@ def resolve_grid_params(*, grid_params: list[str], preset_grid: bool, profile_na
                 f"--staged-mode ignition_stage1 is only valid for profile 'ignition_breakout', got '{profile_name}'"
             )
         return {**IGNITION_STAGE1_GRID, **resolved}
+    base_momentum_grid = MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS.get(search_stage, MOMENTUM_OPTIMIZED_GRID)
     if preset_grid and profile_name == "event_catalyst_guarded":
-        return {**MOMENTUM_OPTIMIZED_GRID, **EVENT_CATALYST_GRID, **resolved}
+        return {**base_momentum_grid, **EVENT_CATALYST_GRID, **resolved}
     if preset_grid and profile_name in ROUTED_BTST_COMMITTEE_PROFILES:
         return {**ROUTED_BTST_COMMITTEE_GRID, **resolved}
     if preset_grid:
-        return {**MOMENTUM_OPTIMIZED_GRID, **resolved}
+        return {**base_momentum_grid, **resolved}
     return resolved
+
+
+def _build_search_metadata(
+    *,
+    search_stage: str,
+    guardrails: dict[str, float],
+    focus_json: str | None,
+    checkpoint_path: str,
+    stage_results: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "search_stage": search_stage,
+        "guardrails": guardrails,
+        "focus_source": focus_json,
+        "checkpoint_path": checkpoint_path,
+    }
+    if stage_results is not None:
+        payload["stage_results"] = stage_results
+    return payload
+
+
+def _build_comparison_entry(*, candidate_metrics: dict[str, Any], baseline_metrics: dict[str, Any]) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "candidate": candidate_metrics,
+        "baseline": baseline_metrics,
+    }
+    for metric in COMPARISON_METRICS:
+        candidate_value = _safe_float(candidate_metrics.get(metric))
+        baseline_value = _safe_float(baseline_metrics.get(metric))
+        entry[f"{metric}_delta"] = None if candidate_value is None or baseline_value is None else candidate_value - baseline_value
+    return entry
+
+
+def _build_replay_comparison_summary(
+    *,
+    replay_input_paths: list[Path],
+    base_profile: str,
+    best_params: dict[str, Any],
+    next_high_hit_threshold: float,
+) -> dict[str, dict[str, Any]]:
+    candidate_metrics = _build_replay_evaluator(
+        replay_input_paths,
+        base_profile=base_profile,
+        next_high_hit_threshold=next_high_hit_threshold,
+    )(best_params)
+    baseline_names = [base_profile]
+    if base_profile != "default":
+        baseline_names.append("default")
+
+    summary: dict[str, dict[str, Any]] = {}
+    for baseline_name in baseline_names:
+        baseline_metrics = _build_replay_evaluator(
+            replay_input_paths,
+            base_profile=baseline_name,
+            next_high_hit_threshold=next_high_hit_threshold,
+        )({})
+        summary[baseline_name] = _build_comparison_entry(
+            candidate_metrics=candidate_metrics,
+            baseline_metrics=baseline_metrics,
+        )
+    return summary
+
+
+def _recommend_rollout_action(comparison_summary: dict[str, dict[str, Any]]) -> str:
+    if not comparison_summary:
+        return "hold"
+    for entry in comparison_summary.values():
+        for metric in COMPARISON_METRICS:
+            delta = _safe_float(entry.get(f"{metric}_delta"))
+            if delta is None or delta < 0:
+                return "hold"
+    return "promote"
+
+
+def _persist_search_metadata(
+    *,
+    md_path: Path,
+    json_path: Path,
+    metadata: dict[str, Any],
+    comparison_summary: dict[str, dict[str, Any]] | None = None,
+    rollout_recommendation: str | None = None,
+) -> None:
+    md_text = md_path.read_text(encoding="utf-8") if md_path.exists() else "# Parameter Search Report\n"
+    metadata_lines = [
+        "## Search Metadata",
+        "",
+        f"Search Stage: **{metadata['search_stage']}**",
+        f"Checkpoint: `{metadata['checkpoint_path']}`",
+    ]
+    if metadata.get("focus_source"):
+        metadata_lines.append(f"Focus Source: `{metadata['focus_source']}`")
+    if metadata.get("guardrails"):
+        metadata_lines.append("")
+        metadata_lines.append("Guardrails:")
+        for key, value in sorted(dict(metadata["guardrails"]).items()):
+            metadata_lines.append(f"- `{key}`: {value}")
+    md_block = "\n".join(metadata_lines)
+    base_md_text = md_text.split("## Search Metadata", 1)[0].rstrip() if "## Search Metadata" in md_text else md_text.rstrip()
+    md_sections = [base_md_text, md_block]
+    if comparison_summary:
+        comparison_lines = [
+            "## Baseline Comparison",
+            "",
+            "| Baseline | Close+ Δ | High-hit Δ | Expectancy Δ | Downside P10 Δ | Coverage Δ |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for baseline_name, entry in comparison_summary.items():
+            comparison_lines.append(
+                "| "
+                + baseline_name
+                + " | "
+                + " | ".join(
+                    f"{float(entry[f'{metric}_delta']):.4f}" if _safe_float(entry.get(f"{metric}_delta")) is not None else "N/A"
+                    for metric in COMPARISON_METRICS
+                )
+                + " |"
+            )
+        md_sections.append("\n".join(comparison_lines))
+    if rollout_recommendation:
+        md_sections.append(f"Rollout Recommendation: **{rollout_recommendation}**")
+    md_text = "\n\n".join(section for section in md_sections if section) + "\n"
+    md_path.write_text(md_text, encoding="utf-8")
+
+    payload = json.loads(json_path.read_text(encoding="utf-8")) if json_path.exists() else {}
+    payload["metadata"] = metadata
+    if comparison_summary is not None:
+        payload["comparison_summary"] = comparison_summary
+    if rollout_recommendation is not None:
+        payload["rollout_recommendation"] = rollout_recommendation
+    json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+
+def _load_focus_params(path: str | Path) -> dict[str, Any]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    best_params = payload.get("best_params")
+    if isinstance(best_params, dict):
+        return best_params
+    completed_trials = [trial for trial in list(payload.get("completed_trials") or []) if isinstance(trial.get("params"), dict)]
+    if completed_trials:
+        completed_trials.sort(key=lambda trial: float(trial.get("score") or float("-inf")), reverse=True)
+        return dict(completed_trials[0]["params"])
+    if isinstance(payload, dict):
+        return payload
+    raise ValueError(f"Could not load best_params from {path}")
+
+
+def _resolve_focus_params_source(*, focus_json: str | None, checkpoint_path: str | None) -> tuple[dict[str, Any], str]:
+    if focus_json:
+        return _load_focus_params(focus_json), str(focus_json)
+    if checkpoint_path and Path(checkpoint_path).exists():
+        return _load_focus_params(checkpoint_path), str(checkpoint_path)
+    raise ValueError("focused search stage requires --focus-json or an existing --checkpoint")
+
+
+def _stage_checkpoint_path(checkpoint_path: str, stage_name: str) -> str:
+    path = Path(checkpoint_path)
+    if path.suffix:
+        return str(path.with_name(f"{path.stem}_{stage_name}{path.suffix}"))
+    return f"{checkpoint_path}_{stage_name}"
+
+
+def _report_best_params(report: Any) -> dict[str, Any]:
+    if isinstance(report, dict):
+        params = report.get("best_params")
+        return dict(params) if isinstance(params, dict) else {}
+    params = getattr(report, "best_params", None)
+    return dict(params) if isinstance(params, dict) else {}
+
+
+def _report_best_score(report: Any) -> float | None:
+    if isinstance(report, dict):
+        return _safe_float(report.get("best_score"))
+    return _safe_float(getattr(report, "best_score", None))
+
+
+def _enforce_max_combinations(space: ParamSpace, max_combinations: int | None) -> None:
+    if max_combinations is None:
+        return
+    size = space.size()
+    if size > max_combinations:
+        raise ValueError(f"max_combinations exceeded: grid has {size} combinations, limit={max_combinations}")
+
+
+def build_stage_grid(
+    *,
+    base_grid: dict[str, list[Any]],
+    search_stage: str,
+    focus_params: dict[str, Any] | None = None,
+) -> dict[str, list[Any]]:
+    if search_stage != "focused":
+        return base_grid
+    if not focus_params:
+        raise ValueError("focused search stage requires focus_params")
+
+    focused_grid: dict[str, list[Any]] = {}
+    for key, values in base_grid.items():
+        focus_value = focus_params.get(key)
+        if focus_value is None:
+            focused_grid[key] = values
+            continue
+        if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in values):
+            if len(values) <= 3:
+                focused_grid[key] = values
+                continue
+            if focus_value in values:
+                focus_index = values.index(focus_value)
+            else:
+                focus_index = min(range(len(values)), key=lambda idx: abs(float(values[idx]) - float(focus_value)))
+            start = max(0, focus_index - 1)
+            end = min(len(values), start + 3)
+            start = max(0, end - 3)
+            focused_grid[key] = values[start:end]
+            continue
+        focused_grid[key] = [focus_value] if focus_value in values else values
+    return focused_grid
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -725,6 +1012,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-json", default=None, help="Output JSON path")
     parser.add_argument("--output-md", default=None, help="Output Markdown path")
     parser.add_argument("--checkpoint", default=None, help="Checkpoint file for resume")
+    parser.add_argument("--guardrail", action="append", default=None, help="Guardrail floor as metric=floor; may be repeated")
+    parser.add_argument("--search-stage", choices=["full", "coarse", "focused", "staged"], default="full", help="Search stage strategy")
+    parser.add_argument("--focus-json", default=None, help="JSON file with best_params for focused stage")
+    parser.add_argument("--max-combinations", type=int, default=None, help="Fail fast when grid size exceeds this budget")
     parser.add_argument("--next-high-hit-threshold", type=float, default=0.02)
     # Walk-forward mode args
     parser.add_argument("--tickers", default=None, help="Tickers for walk-forward mode")
@@ -746,6 +1037,7 @@ def main(argv: list[str] | None = None) -> int:
                 grid_params=args.grid_params or [],
                 preset_grid=args.preset_grid,
                 profile_name=args.profile,
+                search_stage=args.search_stage,
                 staged_mode=args.staged_mode,
             )
         except ValueError as exc:
@@ -753,14 +1045,29 @@ def main(argv: list[str] | None = None) -> int:
     else:
         parser.error("Specify --preset-grid or --grid-params")
 
+    focus_source = args.focus_json
+    if args.search_stage == "focused":
+        focus_params, focus_source = _resolve_focus_params_source(
+            focus_json=args.focus_json,
+            checkpoint_path=args.checkpoint,
+        )
+        grid = build_stage_grid(
+            base_grid=grid,
+            search_stage=args.search_stage,
+            focus_params=focus_params,
+        )
+
     space = ParamSpace(grid=grid)
+    _enforce_max_combinations(space, args.max_combinations)
     logger.info("Grid size: %d combinations", space.size())
 
     objective = SearchObjective(args.objective)
 
     replay_input_paths: list[Path] | None = None
     walk_forward_descriptor: str | None = None
+    replay_mode = False
     if args.input or (args.reports_root and args.weekly_start_date and args.weekly_end_date):
+        replay_mode = True
         replay_input_paths = resolve_replay_input_paths(
             input_paths=args.input,
             reports_root=args.reports_root,
@@ -820,15 +1127,102 @@ def main(argv: list[str] | None = None) -> int:
         replay_input_paths=replay_input_paths,
         walk_forward_descriptor=walk_forward_descriptor,
     )
-    report = run_param_search(
-        space=space,
-        objective=objective,
-        evaluator=evaluator,
-        checkpoint_path=checkpoint,
+    guardrails = resolve_guardrails(
+        profile_name=args.profile,
+        objective=args.objective,
+        replay_mode=replay_mode,
+        raw_guardrails=args.guardrail or [],
     )
+    stage_results = None
+    if args.search_stage == "staged":
+        coarse_grid = resolve_grid_params(
+            grid_params=args.grid_params or [],
+            preset_grid=args.preset_grid,
+            profile_name=args.profile,
+            search_stage="coarse",
+        )
+        coarse_space = ParamSpace(grid=coarse_grid)
+        _enforce_max_combinations(coarse_space, args.max_combinations)
+        coarse_checkpoint = _stage_checkpoint_path(checkpoint, "coarse")
+        coarse_report = run_param_search(
+            space=coarse_space,
+            objective=objective,
+            evaluator=evaluator,
+            checkpoint_path=coarse_checkpoint,
+            guardrails=guardrails or None,
+        )
+        coarse_best_params = _report_best_params(coarse_report)
+
+        focused_grid = resolve_grid_params(
+            grid_params=args.grid_params or [],
+            preset_grid=args.preset_grid,
+            profile_name=args.profile,
+            search_stage="focused",
+        )
+        focused_grid = build_stage_grid(
+            base_grid=focused_grid,
+            search_stage="focused",
+            focus_params=coarse_best_params,
+        )
+        space = ParamSpace(grid=focused_grid)
+        _enforce_max_combinations(space, args.max_combinations)
+        checkpoint = _stage_checkpoint_path(checkpoint, "focused")
+        report = run_param_search(
+            space=space,
+            objective=objective,
+            evaluator=evaluator,
+            checkpoint_path=checkpoint,
+            guardrails=guardrails or None,
+        )
+        stage_results = {
+            "coarse": {
+                "best_params": coarse_best_params,
+                "best_score": _report_best_score(coarse_report),
+                "checkpoint_path": coarse_checkpoint,
+            },
+            "focused": {
+                "best_params": _report_best_params(report),
+                "best_score": _report_best_score(report),
+                "checkpoint_path": checkpoint,
+            },
+        }
+        focus_source = coarse_checkpoint
+    else:
+        report = run_param_search(
+            space=space,
+            objective=objective,
+            evaluator=evaluator,
+            checkpoint_path=checkpoint,
+            guardrails=guardrails or None,
+        )
 
     md_path = save_search_report(report, args.output_md)
     json_path = save_search_payload(report, args.output_json)
+    metadata = _build_search_metadata(
+        search_stage=args.search_stage,
+        guardrails=guardrails,
+        focus_json=focus_source,
+        checkpoint_path=checkpoint,
+        stage_results=stage_results,
+    )
+    comparison_summary = None
+    rollout_recommendation = None
+    best_params = _report_best_params(report)
+    if replay_mode and replay_input_paths and best_params:
+        comparison_summary = _build_replay_comparison_summary(
+            replay_input_paths=replay_input_paths,
+            base_profile=args.profile,
+            best_params=best_params,
+            next_high_hit_threshold=args.next_high_hit_threshold,
+        )
+        rollout_recommendation = _recommend_rollout_action(comparison_summary)
+    _persist_search_metadata(
+        md_path=md_path,
+        json_path=json_path,
+        metadata=metadata,
+        comparison_summary=comparison_summary,
+        rollout_recommendation=rollout_recommendation,
+    )
     print(format_search_report(report))
     if args.staged_mode == "ignition_stage1":
         print(_format_staged_ignition_summary(report))

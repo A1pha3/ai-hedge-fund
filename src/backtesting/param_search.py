@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 
+from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle, coerce_numeric_metric_value
 from src.utils.numeric import clip
 
 _logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class TrialResult:
     metrics: dict[str, float | None]
     window_count: int
     score: float | None = None
+    failed_guardrails: tuple[str, ...] = ()
 
 
 @dataclass
@@ -78,13 +80,14 @@ def compute_objective_score(
             return None
         return 0.4 * sortino + 0.3 * sharpe - 0.3 * abs(max_dd)
     if objective == SearchObjective.EDGE:
-        win_rate = metrics.get("next_close_positive_rate")
-        payoff_ratio = metrics.get("next_close_payoff_ratio")
-        expectancy = metrics.get("next_close_expectancy")
-        next_high_hit_rate = metrics.get("next_high_hit_rate")
-        t_plus_2_positive_rate = metrics.get("t_plus_2_close_positive_rate")
-        downside_p10 = metrics.get("downside_p10")
-        sample_weight = metrics.get("sample_weight")
+        bundle = build_canonical_btst_evaluation_bundle(metrics)
+        win_rate = bundle.lookup("next_close_positive_rate")
+        payoff_ratio = bundle.lookup("next_close_payoff_ratio")
+        expectancy = bundle.lookup("next_close_expectancy")
+        next_high_hit_rate = bundle.lookup("next_high_hit_rate")
+        t_plus_2_positive_rate = bundle.lookup("t_plus_2_close_positive_rate")
+        downside_p10 = bundle.lookup("downside_p10")
+        sample_weight = bundle.lookup("sample_weight")
         if (
             win_rate is None
             or payoff_ratio is None
@@ -111,16 +114,16 @@ def compute_objective_score(
     if objective == SearchObjective.BTST:
         if metrics.get("promotion_guardrail_pass") is False:
             return None
-
-        win_rate = metrics.get("next_close_positive_rate")
-        payoff_ratio = metrics.get("next_close_payoff_ratio")
-        expectancy = metrics.get("next_close_expectancy")
-        next_high_hit_rate = metrics.get("next_high_hit_rate")
-        t_plus_2_positive_rate = metrics.get("t_plus_2_close_positive_rate")
-        t_plus_3_positive_rate = metrics.get("t_plus_3_close_positive_rate")
-        t_plus_3_expectancy = metrics.get("t_plus_3_close_expectancy")
-        downside_p10 = metrics.get("downside_p10")
-        sample_weight = metrics.get("sample_weight")
+        bundle = build_canonical_btst_evaluation_bundle(metrics)
+        win_rate = bundle.lookup("next_close_positive_rate")
+        payoff_ratio = bundle.lookup("next_close_payoff_ratio")
+        expectancy = bundle.lookup("next_close_expectancy")
+        next_high_hit_rate = bundle.lookup("next_high_hit_rate")
+        t_plus_2_positive_rate = bundle.lookup("t_plus_2_close_positive_rate")
+        t_plus_3_positive_rate = bundle.lookup("t_plus_3_close_positive_rate")
+        t_plus_3_expectancy = bundle.lookup("t_plus_3_close_expectancy")
+        downside_p10 = bundle.lookup("downside_p10")
+        sample_weight = bundle.lookup("sample_weight")
         if (
             win_rate is None
             or payoff_ratio is None
@@ -158,8 +161,8 @@ def compute_objective_score(
         )
 
         # Bounded bonus from positive baseline deltas; capped to prevent distortion.
-        pos_rate_delta = metrics.get("baseline_next_close_positive_rate_delta")
-        expectancy_delta = metrics.get("baseline_next_close_expectancy_delta")
+        pos_rate_delta = coerce_numeric_metric_value(metrics.get("baseline_next_close_positive_rate_delta"))
+        expectancy_delta = coerce_numeric_metric_value(metrics.get("baseline_next_close_expectancy_delta"))
         delta_bonus = 0.0
         if pos_rate_delta is not None and pos_rate_delta > 0:
             delta_bonus += clip(float(pos_rate_delta) * 1.5, 0.0, 0.04)
@@ -168,6 +171,33 @@ def compute_objective_score(
 
         return (base_score - floor_penalty + delta_bonus) * (0.35 + (0.65 * effective_sample_weight))
     return None
+
+
+def check_guardrails(
+    metrics: dict[str, float | None],
+    guardrails: dict[str, float],
+) -> list[str]:
+    """Return names of guardrail constraints that are violated.
+
+    A guardrail maps a metric key to its minimum acceptable value.  A violation
+    occurs when the metric is absent (None) or strictly below the floor.
+
+    Args:
+        metrics: Evaluated metrics dict from the evaluator.
+        guardrails: Mapping of metric name → minimum acceptable float value.
+
+    Returns:
+        List of violated guardrail names (empty when all pass).
+    """
+    bundle = build_canonical_btst_evaluation_bundle(metrics)
+    violations: list[str] = []
+    for key, floor in guardrails.items():
+        value = bundle.lookup(key)
+        if value is None and key not in bundle.objective_metrics and key not in bundle.guardrail_metrics and key not in bundle.context_metrics:
+            value = coerce_numeric_metric_value(metrics.get(key))
+        if value is None or value < float(floor):
+            violations.append(key)
+    return violations
 
 
 def _load_checkpoint(path: Path) -> dict[str, Any]:
@@ -193,6 +223,7 @@ def run_param_search(
     objective: SearchObjective = SearchObjective.COMPOSITE,
     evaluator: Callable[[dict[str, Any]], dict[str, float | None]],
     checkpoint_path: str | Path | None = None,
+    guardrails: dict[str, float] | None = None,
 ) -> SearchReport:
     """Run grid search over profile parameters.
 
@@ -202,9 +233,16 @@ def run_param_search(
         evaluator: Callable that takes a params dict and returns metrics dict
                    with keys like sharpe_ratio, sortino_ratio, max_drawdown.
         checkpoint_path: Optional path for checkpointing completed trials.
+        guardrails: Optional mapping of metric name → minimum acceptable value.
+            Trials that violate any guardrail are ranked after all passing trials
+            regardless of their objective score.  Use this to enforce hard floors
+            on win rate, downside tail, or other protected metrics so the search
+            never silently promotes a candidate that regresses on quality gates.
 
     Returns:
-        SearchReport with ranked results.
+        SearchReport with ranked results.  Guardrail-failing trials appear at
+        the end of ``report.results``; ``report.best_params`` reflects only the
+        top-ranked passing trial (or the overall top trial when all fail).
     """
     combos = space.combinations()
     report = SearchReport(
@@ -218,12 +256,14 @@ def run_param_search(
     if cp_path:
         cp_data = _load_checkpoint(cp_path)
         for trial_data in cp_data.get("completed_trials", []):
+            raw_failed = trial_data.get("failed_guardrails") or []
             tr = TrialResult(
                 trial_index=trial_data["trial_index"],
                 params=trial_data["params"],
                 metrics=trial_data["metrics"],
                 window_count=trial_data.get("window_count", 0),
                 score=trial_data.get("score"),
+                failed_guardrails=tuple(raw_failed),
             )
             completed_map[_trial_key(tr.params)] = tr
 
@@ -237,6 +277,7 @@ def run_param_search(
         _logger.info("Trial %d/%d: %s", i + 1, len(combos), _params_summary(params))
         metrics = evaluator(params)
         score = compute_objective_score(metrics, objective)
+        violations = check_guardrails(metrics, guardrails) if guardrails else []
 
         result = TrialResult(
             trial_index=i,
@@ -244,6 +285,7 @@ def run_param_search(
             metrics=metrics,
             window_count=metrics.get("window_count", 1),
             score=score,
+            failed_guardrails=tuple(violations),
         )
         report.results.append(result)
         report.completed_trials += 1
@@ -258,19 +300,25 @@ def run_param_search(
                         "metrics": r.metrics,
                         "window_count": r.window_count,
                         "score": r.score,
+                        "failed_guardrails": list(r.failed_guardrails),
                     }
                     for r in completed_map.values()
                 ]
             })
 
+    # Guardrail-failing trials are always ranked after passing ones regardless
+    # of their objective score.  Within each tier, rank by score descending.
     ranked = sorted(
         report.results,
-        key=lambda r: (r.score is None, -(r.score or 0)),
+        key=lambda r: (bool(r.failed_guardrails), r.score is None, -(r.score or 0)),
     )
     report.results = ranked
-    if ranked and ranked[0].score is not None:
-        report.best_params = ranked[0].params
-        report.best_score = ranked[0].score
+    # best_params and best_score reflect the top passing trial, falling back to
+    # the overall top only when every trial failed guardrails.
+    top = next((r for r in ranked if not r.failed_guardrails), None) or (ranked[0] if ranked else None)
+    if top and top.score is not None:
+        report.best_params = top.params
+        report.best_score = top.score
 
     return report
 
@@ -297,14 +345,23 @@ def format_search_report(report: SearchReport) -> str:
             lines.append(f"- `{k}`: {v}")
         lines.append("")
 
+    passing = [r for r in report.results if not r.failed_guardrails]
+    failing = [r for r in report.results if r.failed_guardrails]
+    if failing:
+        lines.append(f"Guardrail violations: **{len(failing)}** trial(s) ranked last due to failed guardrails")
+        lines.append("")
+
     lines.append("## Top 10 Trials")
     lines.append("")
-    lines.append("| Rank | Score | " + " | ".join(sorted(report.results[0].params.keys()) if report.results else []) + " |")
-    lines.append("| --- | --- | " + " | ".join(["---"] * (len(report.results[0].params) if report.results else 0)) + " |")
+    param_keys = sorted(report.results[0].params.keys()) if report.results else []
+    header_extra = " | Guardrail violations" if any(r.failed_guardrails for r in report.results) else ""
+    lines.append("| Rank | Score | " + " | ".join(param_keys) + header_extra + " |")
+    lines.append("| --- | --- | " + " | ".join(["---"] * len(param_keys)) + (" | ---" if header_extra else "") + " |")
     for rank, result in enumerate(report.results[:10], 1):
         score_str = f"{result.score:.4f}" if result.score is not None else "N/A"
-        param_values = [str(result.params.get(k, "")) for k in sorted(result.params.keys())] if report.results else []
-        lines.append(f"| {rank} | {score_str} | " + " | ".join(param_values) + " |")
+        param_values = [str(result.params.get(k, "")) for k in param_keys]
+        guardrail_col = (" | " + ", ".join(result.failed_guardrails)) if header_extra else ""
+        lines.append(f"| {rank} | {score_str} | " + " | ".join(param_values) + guardrail_col + " |")
     lines.append("")
 
     return "\n".join(lines)
@@ -332,6 +389,7 @@ def save_search_payload(report: SearchReport, output_path: str | Path | None = N
                 "metrics": r.metrics,
                 "window_count": r.window_count,
                 "score": r.score,
+                "failed_guardrails": list(r.failed_guardrails),
             }
             for r in report.results
         ],

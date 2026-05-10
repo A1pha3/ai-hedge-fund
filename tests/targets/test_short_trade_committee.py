@@ -264,6 +264,81 @@ def test_retention_group_uses_failed_breakout_metric_when_present() -> None:
     assert degraded_snapshot["committee_components"]["retention_raw_100"] < baseline_snapshot["committee_components"]["retention_raw_100"]
 
 
+def test_retention_group_shrinks_historical_prior_support_when_evidence_is_thin() -> None:
+    low_evidence_entry = _make_committee_entry()
+    low_evidence_entry["metrics"] = {}
+    low_evidence_entry["historical_prior"].update(
+        {
+            "evaluable_count": 2,
+            "next_close_positive_rate": 0.68,
+            "next_high_hit_rate_at_threshold": 0.72,
+            "next_open_to_close_return_mean": 0.019,
+        }
+    )
+    high_evidence_entry = _make_committee_entry()
+    high_evidence_entry["metrics"] = {}
+    high_evidence_entry["historical_prior"].update(
+        {
+            "evaluable_count": 12,
+            "next_close_positive_rate": 0.68,
+            "next_high_hit_rate_at_threshold": 0.72,
+            "next_open_to_close_return_mean": 0.019,
+        }
+    )
+
+    low_evidence_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=low_evidence_entry,
+        profile_overrides=_base_profile_overrides(),
+    )
+    high_evidence_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=high_evidence_entry,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert low_evidence_snapshot["committee_component_sources"]["retention_raw_100"] == "raw:retention_metrics"
+    assert high_evidence_snapshot["committee_component_sources"]["retention_raw_100"] == "raw:retention_metrics"
+    assert low_evidence_snapshot["historical_continuation_prior_score"]["score"] < high_evidence_snapshot["historical_continuation_prior_score"]["score"]
+    assert low_evidence_snapshot["committee_components"]["retention_raw_100"] < high_evidence_snapshot["committee_components"]["retention_raw_100"]
+
+
+def test_retention_group_penalizes_negative_payoff_continuation_history() -> None:
+    baseline_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "retention_proxy": 0.78,
+                "supply_pressure_60": 0.08,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+    adverse_entry = _make_committee_entry(
+        metrics={
+            "retention_proxy": 0.78,
+            "supply_pressure_60": 0.08,
+        }
+    )
+    adverse_entry["historical_prior"].update(
+        {
+            "evaluable_count": 9,
+            "next_close_positive_rate": 0.56,
+            "next_high_hit_rate_at_threshold": 0.78,
+            "next_open_to_close_return_mean": -0.006,
+        }
+    )
+    adverse_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=adverse_entry,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert adverse_snapshot["committee_components"]["retention_raw_100"] < baseline_snapshot["committee_components"]["retention_raw_100"]
+    assert adverse_snapshot["beta_execution_score"] < baseline_snapshot["beta_execution_score"]
+    assert adverse_snapshot["committee_component_sources"]["retention_raw_100"] == "raw:retention_metrics"
+
+
 def test_flow_group_uses_persist_metric_when_present() -> None:
     baseline_snapshot = build_short_trade_target_snapshot_from_entry(
         trade_date="20260328",
