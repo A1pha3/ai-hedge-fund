@@ -51,10 +51,12 @@ class TradeExecutor:
 
         if action_enum == Action.BUY:
             if is_limit_up:
+                self._last_trade_diagnostics = {}
                 return 0
             return execute_buy_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
         if action_enum == Action.SELL:
             if is_limit_down:
+                self._last_trade_diagnostics = {}
                 return 0
             return execute_sell_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate, self._constraints.stamp_duty_rate, trade_date)
         if action_enum == Action.SHORT:
@@ -63,4 +65,5 @@ class TradeExecutor:
             return execute_cover_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
 
         # hold or unknown action
+        self._last_trade_diagnostics = {}
         return 0
