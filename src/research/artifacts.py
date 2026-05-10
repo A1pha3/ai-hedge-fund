@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 from typing import Any, Protocol, TYPE_CHECKING
 
-from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle
 from src.execution.daily_pipeline_candidate_helpers import (
     qualify_short_trade_boundary_candidate_from_snapshot,
 )
@@ -530,6 +529,8 @@ def _serialize_market_state_payload(market_state: Any | None) -> dict[str, Any]:
 
 
 def _append_canonical_btst_evaluation_bundle(metrics: dict[str, Any] | None) -> dict[str, Any]:
+    from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle
+
     payload = dict(metrics or {})
     payload["canonical_btst_evaluation_bundle"] = build_canonical_btst_evaluation_bundle(payload).to_payload()
     return payload

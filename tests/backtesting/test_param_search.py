@@ -106,6 +106,43 @@ def test_build_canonical_btst_evaluation_bundle_separates_metric_roles():
     assert bundle.context_metrics["projected_theme_exposure"] == pytest.approx(0.18)
 
 
+def test_build_canonical_btst_evaluation_bundle_lookup_returns_values_across_metric_groups():
+    bundle = build_canonical_btst_evaluation_bundle(
+        {
+            "next_close_positive_rate": 0.58,
+            "downside_p10": -0.031,
+            "projected_theme_exposure": 0.18,
+        }
+    )
+
+    assert bundle.lookup("next_close_positive_rate") == pytest.approx(0.58)
+    assert bundle.lookup("downside_p10") == pytest.approx(-0.031)
+    assert bundle.lookup("projected_theme_exposure") == pytest.approx(0.18)
+    assert bundle.lookup("nonexistent_metric") is None
+
+
+def test_build_canonical_btst_evaluation_bundle_to_payload_coerces_numeric_values_and_preserves_missing_keys():
+    bundle = build_canonical_btst_evaluation_bundle(
+        {
+            "next_close_positive_rate": "0.58",
+            "next_close_payoff_ratio": 2,
+            "downside_p10": "-0.031",
+        }
+    )
+
+    payload = bundle.to_payload()
+
+    assert payload["objective_metrics"]["next_close_positive_rate"] == pytest.approx(0.58)
+    assert isinstance(payload["objective_metrics"]["next_close_positive_rate"], float)
+    assert payload["objective_metrics"]["next_close_payoff_ratio"] == pytest.approx(2.0)
+    assert isinstance(payload["objective_metrics"]["next_close_payoff_ratio"], float)
+    assert payload["guardrail_metrics"]["downside_p10"] == pytest.approx(-0.031)
+    assert isinstance(payload["guardrail_metrics"]["downside_p10"], float)
+    assert payload["objective_metrics"]["next_close_expectancy"] is None
+    assert payload["guardrail_metrics"]["incremental_theme_exposure"] is None
+    assert payload["context_metrics"]["projected_theme_exposure"] is None
+
+
 def test_run_param_search_ranks_by_score():
     space = ParamSpace(grid={"x": [1, 2, 3]})
 
