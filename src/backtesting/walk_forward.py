@@ -179,7 +179,7 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
         current_non_positive_sharpe_streak = 0
 
     rollout_blockers: list[str] = []
-    if not sharpe_values:
+    if len(sharpe_values) != len(results):
         rollout_blockers.append("missing_required_sharpe_data")
     if sharpe_values and non_positive_sharpe_window_count > (len(sharpe_values) / 2):
         rollout_blockers.append("majority_non_positive_sharpe_windows")

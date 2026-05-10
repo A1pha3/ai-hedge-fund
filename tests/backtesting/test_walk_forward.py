@@ -99,8 +99,9 @@ def test_build_promotion_gate_summary_adds_risk_budget_blocker():
             "mode": "enforce",
             "suppressed_position_summary": {"zero_budget_count": 3, "reduced_budget_count": 2},
             "formal_exposure_distribution": {"zero_budget": 3, "reduced": 2},
+            "max_projected_theme_exposure": 0.36,
+            "max_incremental_theme_exposure": 0.14,
         },
-        exposure_summary={"max_projected_theme_exposure": 0.36, "max_incremental_theme_exposure": 0.14},
     )
 
     assert summary["promotion_ready"] is False
@@ -154,6 +155,36 @@ def test_summarize_walk_forward_blocks_missing_required_sharpe_data():
                 test_end="2026-02-28",
             ),
             metrics={"sharpe_ratio": None, "sortino_ratio": 0.1, "max_drawdown": -8.0},
+        ),
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-02-01",
+                train_end="2026-02-28",
+                test_start="2026-03-01",
+                test_end="2026-03-31",
+            ),
+            metrics={"sharpe_ratio": None, "sortino_ratio": 0.2, "max_drawdown": -6.0},
+        ),
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert summary["rollout_ready"] is False
+    assert "missing_required_sharpe_data" in summary["rollout_blockers"]
+    assert summary["promotion_ready"] is False
+    assert "missing_required_sharpe_data" in summary["promotion_blockers"]
+
+
+def test_summarize_walk_forward_blocks_when_any_window_is_missing_required_sharpe_data():
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-28",
+            ),
+            metrics={"sharpe_ratio": 0.4, "sortino_ratio": 0.5, "max_drawdown": -8.0},
         ),
         WalkForwardResult(
             window=WalkForwardWindow(

@@ -11,7 +11,11 @@ def build_promotion_gate_summary(
 ) -> dict[str, Any]:
     blockers = [str(item) for item in list(walk_forward_summary.get("rollout_blockers") or []) if str(item).strip()]
     risk_payload = dict(risk_budget_summary or {})
-    exposure_payload = dict(exposure_summary or {})
+    exposure_payload = {
+        **risk_payload,
+        **dict(risk_payload.get("promotion_gate_inputs") or {}),
+        **dict(exposure_summary or {}),
+    }
     suppressed = dict(risk_payload.get("suppressed_position_summary") or {})
 
     if str(risk_payload.get("mode") or "off").strip().lower() == "enforce":

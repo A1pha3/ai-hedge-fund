@@ -451,6 +451,44 @@ def test_build_dual_target_session_summary_accumulates_promotion_gate_summary(tm
     assert summary["promotion_gate_summary"]["promotion_blockers"] == ["risk_budget_suppression_exceeded"]
 
 
+def test_build_dual_target_session_summary_surfaces_theme_exposure_cap_breach_from_btst_overlay_payload(tmp_path: Path):
+    daily_events_path = tmp_path / "daily_events.jsonl"
+    daily_events_path.write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "current_plan": {
+                    "selection_targets": {"300724": {}},
+                    "risk_metrics": {
+                        "funnel_diagnostics": {
+                            "filters": {
+                                "buy_orders": {
+                                    "btst_risk_budget_overlay": {
+                                        "mode": "enforce",
+                                        "promotion_gate_inputs": {
+                                            "mode": "enforce",
+                                            "max_projected_theme_exposure": 0.37,
+                                            "max_incremental_theme_exposure": 0.13,
+                                            "suppressed_position_summary": {"zero_budget_count": 0, "reduced_budget_count": 0},
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = _build_dual_target_session_summary(daily_events_path)
+
+    assert summary["promotion_gate_summary"]["promotion_ready"] is False
+    assert summary["promotion_gate_summary"]["promotion_blockers"] == ["theme_exposure_cap_breach"]
+
+
 def test_build_dual_target_session_summary_returns_default_for_missing_file(tmp_path: Path):
     summary = _build_dual_target_session_summary(tmp_path / "missing.jsonl")
 

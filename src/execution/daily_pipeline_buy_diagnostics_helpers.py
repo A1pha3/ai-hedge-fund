@@ -258,11 +258,29 @@ def _build_btst_risk_budget_overlay_summary(*, candidate_plans: list[Any], filte
             summary["suppressed_position_summary"]["zero_budget_count"] += 1
         if bucket == "reduced":
             summary["suppressed_position_summary"]["reduced_budget_count"] += 1
+    projected_exposures = [
+        float(value)
+        for value in [
+            *[getattr(plan, "projected_theme_exposure", None) for plan in list(candidate_plans or [])],
+            *[entry.get("projected_theme_exposure") for entry in list(filtered_entries or [])],
+        ]
+        if value is not None
+    ]
+    incremental_exposures = [
+        float(value)
+        for value in [
+            *[getattr(plan, "incremental_theme_exposure", None) for plan in list(candidate_plans or [])],
+            *[entry.get("incremental_theme_exposure") for entry in list(filtered_entries or [])],
+        ]
+        if value is not None
+    ]
     summary["promotion_gate_inputs"] = {
         "mode": str(summary.get("mode") or "off"),
         "gate_distribution": dict(summary.get("gate_distribution") or {}),
         "formal_exposure_distribution": dict(summary.get("formal_exposure_distribution") or {}),
         "suppressed_position_summary": dict(summary.get("suppressed_position_summary") or {}),
+        "max_projected_theme_exposure": round(max(projected_exposures), 4) if projected_exposures else 0.0,
+        "max_incremental_theme_exposure": round(max(incremental_exposures), 4) if incremental_exposures else 0.0,
     }
     return summary
 
