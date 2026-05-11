@@ -94,6 +94,19 @@ def test_load_focus_params_uses_best_completed_trial_from_checkpoint(tmp_path: P
     assert _load_focus_params(checkpoint) == {"select_threshold": 0.50}
 
 
+def test_optimize_profile_fixture_files_use_descriptive_names() -> None:
+    source = Path(__file__).read_text(encoding="utf-8")
+    legacy_report_name = "fake" + ".md"
+    legacy_payload_name = "fake" + ".json"
+
+    assert legacy_report_name not in source
+    assert legacy_payload_name not in source
+    assert 'Path("optimize_profile_fixture.md")' in source
+    assert 'Path("optimize_profile_fixture.json")' in source
+    assert Path("optimize_profile_fixture.md").exists()
+    assert Path("optimize_profile_fixture.json").exists()
+
+
 def test_parse_grid_params_coerces_boolean_literals() -> None:
     grid = _parse_grid_params(
         [
@@ -385,8 +398,8 @@ def test_main_integrates_event_catalyst_params_with_preset_grid(monkeypatch: pyt
         return {"top_params": {}, "top_value": 0.0, "evaluations": 0}
 
     monkeypatch.setattr(opt_module, "run_param_search", fake_run_param_search)
-    monkeypatch.setattr(opt_module, "save_search_report", lambda *_: Path("fake.md"))
-    monkeypatch.setattr(opt_module, "save_search_payload", lambda *_: Path("fake.json"))
+    monkeypatch.setattr(opt_module, "save_search_report", lambda *_: Path("optimize_profile_fixture.md"))
+    monkeypatch.setattr(opt_module, "save_search_payload", lambda *_: Path("optimize_profile_fixture.json"))
     monkeypatch.setattr(opt_module, "format_search_report", lambda _: "")
 
     monkeypatch.setattr(
@@ -739,8 +752,8 @@ def test_main_stage1_forwards_staged_mode_into_grid(monkeypatch: pytest.MonkeyPa
         "run_param_search",
         lambda **_: SearchReport(objective=SearchObjective.EDGE, results=[], best_params={}, best_score=None, total_trials=0, completed_trials=0),
     )
-    monkeypatch.setattr(opt_module, "save_search_report", lambda *_: Path("fake.md"))
-    monkeypatch.setattr(opt_module, "save_search_payload", lambda *_: Path("fake.json"))
+    monkeypatch.setattr(opt_module, "save_search_report", lambda *_: Path("optimize_profile_fixture.md"))
+    monkeypatch.setattr(opt_module, "save_search_payload", lambda *_: Path("optimize_profile_fixture.json"))
     monkeypatch.setattr(opt_module, "format_search_report", lambda _: "")
     monkeypatch.setattr(
         opt_module,

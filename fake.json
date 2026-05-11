@@ -1,8 +1,0 @@
-{
-  "metadata": {
-    "search_stage": "full",
-    "guardrails": {},
-    "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_event_catalyst_guarded_9133a730438a_checkpoint.json"
-  }
-}

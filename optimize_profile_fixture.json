@@ -1,0 +1,8 @@
+{
+  "metadata": {
+    "search_stage": "full",
+    "guardrails": {},
+    "focus_source": null,
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_f835564c98ef_checkpoint.json"
+  }
+}
