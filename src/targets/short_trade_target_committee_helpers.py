@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from functools import lru_cache
+import importlib.util
+import os
+import sys
 from typing import Any
 
 from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state_metrics
@@ -14,6 +18,25 @@ COMMITTEE_PROFILE_BY_GATE = {
     "shadow_only": "shadow_research",
     "halt": "shadow_research",
 }
+
+
+@lru_cache(maxsize=1)
+def _get_btst_evaluation_bundle_module() -> Any:
+    eval_module_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backtesting", "evaluation_bundle.py"))
+    spec = importlib.util.spec_from_file_location("evaluation_bundle_cached", eval_module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load evaluation_bundle from {eval_module_path}")
+    eval_module = sys.modules.get("evaluation_bundle_cached")
+    if eval_module is None:
+        eval_module = importlib.util.module_from_spec(spec)
+        sys.modules["evaluation_bundle_cached"] = eval_module
+        spec.loader.exec_module(eval_module)
+    return eval_module
+
+
+def _get_btst_gap_risk_cap_raw_100() -> float | None:
+    eval_module = _get_btst_evaluation_bundle_module()
+    return eval_module.coerce_numeric_metric_value(eval_module.BTST_EXECUTION_GUARDRAILS.get("gap_risk_raw_100", {}).get("max"))
 
 
 def _append_unique(values: list[str], value: str) -> None:
@@ -603,23 +626,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     close_structure_raw_100, close_structure_source = _close_structure_raw_score(snapshot, raw_metrics)
     supply_pressure_risk_raw_100, supply_pressure_source = _supply_pressure_risk_raw_score(snapshot, raw_metrics)
     gap_risk_raw_100, gap_risk_source = _gap_risk_raw_score(snapshot, raw_metrics)
-    # Reuse shared BTST execution guardrail for gap risk cap (if configured).
-    # Load evaluation_bundle directly from file to avoid importing the backtesting package
-    # (which would trigger package-level imports and create a circular import chain).
-    import importlib.util
-    import os
-
-    _eval_module_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backtesting", "evaluation_bundle.py"))
-    spec = importlib.util.spec_from_file_location("evaluation_bundle_dynamic", _eval_module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load evaluation_bundle from {_eval_module_path}")
-    _eval_mod = importlib.util.module_from_spec(spec)
-    import sys
-    # Ensure the dynamic module is available in sys.modules so dataclass processing and
-    # other runtime introspection work correctly.
-    sys.modules["evaluation_bundle_dynamic"] = _eval_mod
-    spec.loader.exec_module(_eval_mod)
-    gap_risk_cap_raw_100 = _eval_mod.coerce_numeric_metric_value(_eval_mod.BTST_EXECUTION_GUARDRAILS.get("gap_risk_raw_100", {}).get("max"))
+    gap_risk_cap_raw_100 = _get_btst_gap_risk_cap_raw_100()
     liquidity_capacity_raw_100, liquidity_capacity_source = _liquidity_capacity_raw_score(snapshot, raw_metrics, input_data)
     crowding_risk_raw_100, crowding_source = _crowding_risk_raw_score(snapshot, raw_metrics)
     fragile_breakout_activation_raw_100, fragile_breakout_activation_source = _fragile_breakout_activation_raw_score(
@@ -727,7 +734,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     # lanes disable selected_enforced; otherwise high-gap-risk candidates can still be
     # formally selected through the advisory path.
     if bool(getattr(profile, "committee_enabled", False)) and gap_risk_cap_raw_100 is not None:
-        gap_risk_val = _eval_mod.coerce_numeric_metric_value(gap_risk_raw_100)
+        gap_risk_val = _get_btst_evaluation_bundle_module().coerce_numeric_metric_value(gap_risk_raw_100)
         # If we cannot coerce the observed gap risk to a finite number treat conservatively and block
         if gap_risk_val is None:
             fail_reasons.append("committee_gap_risk_cap_exceeded")
