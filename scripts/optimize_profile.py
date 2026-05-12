@@ -16,6 +16,7 @@ from typing import Any, Callable
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.param_search import (
     format_search_report,
+    GuardrailSpec,
     ParamSpace,
     run_param_search,
     save_search_payload,
@@ -31,11 +32,16 @@ logger = get_logger(__name__)
 REPORTS_DIR = Path("data/reports")
 PARTIAL_HORIZON_WEIGHT_PENALTY = 0.85
 PARTIAL_T3_HORIZON_WEIGHT_PENALTY = 0.92
-DEFAULT_BTST_REPLAY_GUARDRAILS: dict[str, float] = {
+DEFAULT_BTST_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
     "next_close_positive_rate": 0.54,
     "next_high_hit_rate": 0.56,
     "downside_p10": -0.06,
     "window_coverage": 0.60,
+    "projected_theme_exposure": {"max": 0.35},
+    "incremental_theme_exposure": {"max": 0.12},
+    "liquidity_capacity_raw_100": {"min": 50.0},
+    "crowding_risk_raw_100": {"max": 70.0},
+    "gap_risk_raw_100": {"max": 60.0},
 }
 MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS: dict[str, dict[str, list[Any]]] = {
     "coarse": {
@@ -67,7 +73,42 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "next_close_expectancy",
     "downside_p10",
     "window_coverage",
+    "liquidity_capacity_raw_100",
+    "crowding_risk_raw_100",
+    "gap_risk_raw_100",
+    "projected_theme_exposure",
+    "incremental_theme_exposure",
 )
+COMPARISON_METRIC_LABELS: dict[str, str] = {
+    "next_close_positive_rate": "Close+",
+    "next_high_hit_rate": "High-hit",
+    "next_close_expectancy": "Expectancy",
+    "downside_p10": "Downside P10",
+    "window_coverage": "Coverage",
+    "liquidity_capacity_raw_100": "Liquidity",
+    "crowding_risk_raw_100": "Crowding",
+    "gap_risk_raw_100": "Gap Risk",
+    "projected_theme_exposure": "Projected Exp",
+    "incremental_theme_exposure": "Incremental Exp",
+}
+LOWER_IS_BETTER_COMPARISON_METRICS = {
+    "crowding_risk_raw_100",
+    "gap_risk_raw_100",
+    "projected_theme_exposure",
+    "incremental_theme_exposure",
+}
+COMPARISON_METRIC_EPSILON: dict[str, float] = {
+    "next_close_positive_rate": 0.0,
+    "next_high_hit_rate": 0.0,
+    "next_close_expectancy": 0.0,
+    "downside_p10": 0.002,
+    "window_coverage": 0.002,
+    "projected_theme_exposure": 0.005,
+    "incremental_theme_exposure": 0.005,
+    "liquidity_capacity_raw_100": 1.0,
+    "crowding_risk_raw_100": 1.0,
+    "gap_risk_raw_100": 1.0,
+}
 
 
 def resolve_replay_input_paths(
@@ -153,16 +194,45 @@ def _parse_grid_params(raw: list[str]) -> dict[str, list[Any]]:
     return grid
 
 
-def _parse_guardrails(raw: list[str]) -> dict[str, float]:
-    guardrails: dict[str, float] = {}
+def _normalize_guardrail_spec(spec: GuardrailSpec) -> dict[str, float]:
+    if isinstance(spec, dict):
+        normalized: dict[str, float] = {}
+        if spec.get("min") is not None:
+            normalized["min"] = float(spec["min"])
+        if spec.get("max") is not None:
+            normalized["max"] = float(spec["max"])
+        if not normalized:
+            raise ValueError("Guardrail spec dict must contain min and/or max")
+        return normalized
+    return {"min": float(spec)}
+
+
+def _parse_guardrails(raw: list[str]) -> dict[str, GuardrailSpec]:
+    guardrails: dict[str, GuardrailSpec] = {}
     for item in raw:
-        if "=" not in item:
-            raise ValueError(f"Invalid guardrail {item!r}; expected metric=floor")
-        key, raw_value = item.split("=", 1)
+        operator = None
+        if "<=" in item:
+            key, raw_value = item.split("<=", 1)
+            operator = "max"
+        elif ">=" in item:
+            key, raw_value = item.split(">=", 1)
+            operator = "min"
+        elif "=" in item:
+            key, raw_value = item.split("=", 1)
+            operator = "legacy_min"
+        else:
+            raise ValueError(f"Invalid guardrail {item!r}; expected metric=floor, metric>=floor, or metric<=cap")
         value = _safe_float(raw_value)
         if value is None:
             raise ValueError(f"Invalid guardrail floor for {key!r}: {raw_value!r}")
-        guardrails[key.strip()] = float(value)
+        normalized_key = key.strip()
+        if operator == "legacy_min":
+            guardrails[normalized_key] = float(value)
+            continue
+        existing = guardrails.get(normalized_key)
+        merged = _normalize_guardrail_spec(existing) if existing is not None else {}
+        merged[operator] = float(value)
+        guardrails[normalized_key] = merged
     return guardrails
 
 
@@ -175,14 +245,25 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _format_guardrail_spec(spec: GuardrailSpec) -> str:
+    if isinstance(spec, dict):
+        parts: list[str] = []
+        if spec.get("min") is not None:
+            parts.append(f"min={float(spec['min'])}")
+        if spec.get("max") is not None:
+            parts.append(f"max={float(spec['max'])}")
+        return ", ".join(parts)
+    return str(float(spec))
+
+
 def resolve_guardrails(
     *,
     profile_name: str,
     objective: str,
     replay_mode: bool,
     raw_guardrails: list[str],
-) -> dict[str, float]:
-    resolved: dict[str, float] = {}
+) -> dict[str, GuardrailSpec]:
+    resolved: dict[str, GuardrailSpec] = {}
     if replay_mode and profile_name == "momentum_optimized" and objective == SearchObjective.BTST.value:
         resolved.update(DEFAULT_BTST_REPLAY_GUARDRAILS)
     resolved.update(_parse_guardrails(raw_guardrails))
@@ -192,6 +273,32 @@ def resolve_guardrails(
 def _resolve_distribution_stat(surface: dict[str, Any], distribution_key: str, stat_key: str) -> float | None:
     distribution = dict(surface.get(distribution_key) or {})
     return _safe_float(distribution.get(stat_key))
+
+
+def _extract_committee_component_metric(row: dict[str, Any], metric_key: str) -> float | None:
+    metrics_payload = dict(row.get("metrics_payload") or {})
+    committee_payload = dict(metrics_payload.get("committee") or {})
+    committee_components = dict(committee_payload.get("components") or {})
+    component_value = _safe_float(committee_components.get(metric_key))
+    if component_value is not None:
+        return component_value
+    return _safe_float(metrics_payload.get(metric_key))
+
+
+def _resolve_scope_rows(rows: list[dict[str, Any]], *, primary_scope: str) -> list[dict[str, Any]]:
+    allowed_decisions = {"selected"} if primary_scope == "selected" else {"selected", "near_miss"}
+    return [dict(row or {}) for row in rows if str(row.get("decision") or "").strip() in allowed_decisions]
+
+
+def _average_scope_metric(rows: list[dict[str, Any]], metric_key: str) -> float | None:
+    numeric_values = [
+        float(value)
+        for value in (_extract_committee_component_metric(row, metric_key) for row in rows)
+        if value is not None
+    ]
+    if not numeric_values:
+        return None
+    return sum(numeric_values) / len(numeric_values)
 
 
 def _resolve_primary_surface(
@@ -284,7 +391,25 @@ def _build_replay_evaluator(
             "t_plus_3_close_expectancy": [],
             "downside_p10": [],
             "sample_weight": [],
+            "projected_theme_exposure": [],
+            "incremental_theme_exposure": [],
+            "liquidity_capacity_raw_100": [],
+            "crowding_risk_raw_100": [],
+            "gap_risk_raw_100": [],
         }
+
+        # For metrics that should be sample-weighted, keep a parallel list of weights
+        total_metric_weights: dict[str, list[float]] = {
+            "next_close_positive_rate": [],
+            "next_close_payoff_ratio": [],
+            "next_close_expectancy": [],
+            "next_high_hit_rate": [],
+            "t_plus_2_close_positive_rate": [],
+            "t_plus_3_close_positive_rate": [],
+            "t_plus_3_close_expectancy": [],
+            "downside_p10": [],
+        }
+
         window_count = 0
         source_coverage_summaries: list[dict[str, Any]] = []
 
@@ -335,6 +460,7 @@ def _build_replay_evaluator(
                     logger.warning("Trial skipped due missing metrics for %s scope=%s", input_path, primary_scope)
                     continue
 
+                scoped_rows = _resolve_scope_rows(list(result.get("rows") or []), primary_scope=primary_scope)
                 next_day_count = int(primary_surface.get("next_day_available_count") or 0)
                 closed_cycle_count = int(primary_surface.get("closed_cycle_count") or 0)
                 next_day_weight = min(1.0, max(0.0, next_day_count / 10.0))
@@ -349,16 +475,37 @@ def _build_replay_evaluator(
                 total_metrics["sharpe"].append(sharpe_proxy)
                 total_metrics["sortino"].append(sortino_proxy)
                 total_metrics["max_dd"].append(max_dd_proxy)
+                # Primary quality metrics: append values and corresponding sample_weight for later weighted averaging
                 total_metrics["next_close_positive_rate"].append(next_close_positive_rate)
+                total_metric_weights["next_close_positive_rate"].append(sample_weight)
                 if next_close_payoff_ratio is not None:
                     total_metrics["next_close_payoff_ratio"].append(next_close_payoff_ratio)
+                    total_metric_weights["next_close_payoff_ratio"].append(sample_weight)
                 total_metrics["next_close_expectancy"].append(next_close_expectancy)
+                total_metric_weights["next_close_expectancy"].append(sample_weight)
                 total_metrics["next_high_hit_rate"].append(next_high_hit_rate)
+                total_metric_weights["next_high_hit_rate"].append(sample_weight)
                 total_metrics["t_plus_2_close_positive_rate"].append(t_plus_2_close_positive_rate)
+                total_metric_weights["t_plus_2_close_positive_rate"].append(sample_weight)
                 total_metrics["t_plus_3_close_positive_rate"].append(t_plus_3_close_positive_rate)
+                total_metric_weights["t_plus_3_close_positive_rate"].append(sample_weight)
                 total_metrics["t_plus_3_close_expectancy"].append(t_plus_3_close_expectancy)
+                total_metric_weights["t_plus_3_close_expectancy"].append(sample_weight)
                 total_metrics["downside_p10"].append(max_dd_proxy)
+                total_metric_weights["downside_p10"].append(sample_weight)
+                # Still track raw sample_weight list for reporting
                 total_metrics["sample_weight"].append(sample_weight)
+
+                for metric_key in (
+                    "projected_theme_exposure",
+                    "incremental_theme_exposure",
+                    "liquidity_capacity_raw_100",
+                    "crowding_risk_raw_100",
+                    "gap_risk_raw_100",
+                ):
+                    metric_value = _average_scope_metric(scoped_rows, metric_key)
+                    if metric_value is not None:
+                        total_metrics[metric_key].append(metric_value)
                 window_count += 1
                 coverage_summary = dict(result.get("source_coverage_summary") or {})
                 if coverage_summary:
@@ -389,15 +536,32 @@ def _build_replay_evaluator(
         avg_sharpe = sum(total_metrics["sharpe"]) / len(total_metrics["sharpe"]) if total_metrics["sharpe"] else None
         avg_sortino = sum(total_metrics["sortino"]) / len(total_metrics["sortino"]) if total_metrics["sortino"] else None
         avg_max_dd = sum(total_metrics["max_dd"]) / len(total_metrics["max_dd"]) if total_metrics["max_dd"] else None
-        avg_next_close_positive_rate = sum(total_metrics["next_close_positive_rate"]) / len(total_metrics["next_close_positive_rate"]) if total_metrics["next_close_positive_rate"] else None
-        avg_next_close_payoff_ratio = sum(total_metrics["next_close_payoff_ratio"]) / len(total_metrics["next_close_payoff_ratio"]) if total_metrics["next_close_payoff_ratio"] else None
-        avg_next_close_expectancy = sum(total_metrics["next_close_expectancy"]) / len(total_metrics["next_close_expectancy"]) if total_metrics["next_close_expectancy"] else None
-        avg_next_high_hit_rate = sum(total_metrics["next_high_hit_rate"]) / len(total_metrics["next_high_hit_rate"]) if total_metrics["next_high_hit_rate"] else None
-        avg_t_plus_2_close_positive_rate = sum(total_metrics["t_plus_2_close_positive_rate"]) / len(total_metrics["t_plus_2_close_positive_rate"]) if total_metrics["t_plus_2_close_positive_rate"] else None
-        avg_t_plus_3_close_positive_rate = sum(total_metrics["t_plus_3_close_positive_rate"]) / len(total_metrics["t_plus_3_close_positive_rate"]) if total_metrics["t_plus_3_close_positive_rate"] else None
-        avg_t_plus_3_close_expectancy = sum(total_metrics["t_plus_3_close_expectancy"]) / len(total_metrics["t_plus_3_close_expectancy"]) if total_metrics["t_plus_3_close_expectancy"] else None
-        avg_downside_p10 = sum(total_metrics["downside_p10"]) / len(total_metrics["downside_p10"]) if total_metrics["downside_p10"] else None
+
+        def _weighted_avg(values: list[float], weights: list[float]) -> float | None:
+            if not values:
+                return None
+            total_w = sum(weights) if weights else 0.0
+            if total_w <= 0.0:
+                return None
+            return sum(v * w for v, w in zip(values, weights)) / total_w
+
+        # Primary quality metrics use sample-weighted averages
+        avg_next_close_positive_rate = _weighted_avg(total_metrics["next_close_positive_rate"], total_metric_weights["next_close_positive_rate"])
+        avg_next_close_payoff_ratio = _weighted_avg(total_metrics["next_close_payoff_ratio"], total_metric_weights["next_close_payoff_ratio"])
+        avg_next_close_expectancy = _weighted_avg(total_metrics["next_close_expectancy"], total_metric_weights["next_close_expectancy"])
+        avg_next_high_hit_rate = _weighted_avg(total_metrics["next_high_hit_rate"], total_metric_weights["next_high_hit_rate"])
+        avg_t_plus_2_close_positive_rate = _weighted_avg(total_metrics["t_plus_2_close_positive_rate"], total_metric_weights["t_plus_2_close_positive_rate"])
+        avg_t_plus_3_close_positive_rate = _weighted_avg(total_metrics["t_plus_3_close_positive_rate"], total_metric_weights["t_plus_3_close_positive_rate"])
+        avg_t_plus_3_close_expectancy = _weighted_avg(total_metrics["t_plus_3_close_expectancy"], total_metric_weights["t_plus_3_close_expectancy"])
+        avg_downside_p10 = _weighted_avg(total_metrics["downside_p10"], total_metric_weights["downside_p10"])
+
+        # Execution/exposure and other metrics remain simple unweighted means
         avg_sample_weight = sum(total_metrics["sample_weight"]) / len(total_metrics["sample_weight"]) if total_metrics["sample_weight"] else None
+        avg_projected_theme_exposure = sum(total_metrics["projected_theme_exposure"]) / len(total_metrics["projected_theme_exposure"]) if total_metrics["projected_theme_exposure"] else None
+        avg_incremental_theme_exposure = sum(total_metrics["incremental_theme_exposure"]) / len(total_metrics["incremental_theme_exposure"]) if total_metrics["incremental_theme_exposure"] else None
+        avg_liquidity_capacity_raw_100 = sum(total_metrics["liquidity_capacity_raw_100"]) / len(total_metrics["liquidity_capacity_raw_100"]) if total_metrics["liquidity_capacity_raw_100"] else None
+        avg_crowding_risk_raw_100 = sum(total_metrics["crowding_risk_raw_100"]) / len(total_metrics["crowding_risk_raw_100"]) if total_metrics["crowding_risk_raw_100"] else None
+        avg_gap_risk_raw_100 = sum(total_metrics["gap_risk_raw_100"]) / len(total_metrics["gap_risk_raw_100"]) if total_metrics["gap_risk_raw_100"] else None
         window_coverage = float(window_count) / float(len(input_paths) or 1)
         effective_sample_weight = max(0.0, min(1.0, avg_sample_weight * window_coverage)) if avg_sample_weight is not None else None
         source_coverage_pass_ratio = _compute_source_coverage_pass_ratio(source_coverage_summaries)
@@ -418,6 +582,11 @@ def _build_replay_evaluator(
             "window_coverage": window_coverage,
             "window_count": window_count,
             "source_coverage_pass_ratio": source_coverage_pass_ratio,
+            "projected_theme_exposure": avg_projected_theme_exposure,
+            "incremental_theme_exposure": avg_incremental_theme_exposure,
+            "liquidity_capacity_raw_100": avg_liquidity_capacity_raw_100,
+            "crowding_risk_raw_100": avg_crowding_risk_raw_100,
+            "gap_risk_raw_100": avg_gap_risk_raw_100,
         }
 
     return evaluator
@@ -781,7 +950,7 @@ def resolve_grid_params(
 def _build_search_metadata(
     *,
     search_stage: str,
-    guardrails: dict[str, float],
+    guardrails: dict[str, GuardrailSpec],
     focus_json: str | None,
     checkpoint_path: str,
     stage_results: dict[str, Any] | None = None,
@@ -839,15 +1008,43 @@ def _build_replay_comparison_summary(
     return summary
 
 
-def _recommend_rollout_action(comparison_summary: dict[str, dict[str, Any]]) -> str:
+def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str, Any]]) -> dict[str, Any]:
     if not comparison_summary:
-        return "hold"
-    for entry in comparison_summary.values():
+        return {
+            "action": "hold",
+            "blockers": ["missing_comparison_summary"],
+            "baseline_verdicts": {},
+        }
+
+    blockers: list[str] = []
+    baseline_verdicts: dict[str, dict[str, Any]] = {}
+    for baseline_name, entry in comparison_summary.items():
+        baseline_blockers: list[str] = []
         for metric in COMPARISON_METRICS:
             delta = _safe_float(entry.get(f"{metric}_delta"))
-            if delta is None or delta < 0:
-                return "hold"
-    return "promote"
+            if delta is None:
+                baseline_blockers.append(f"missing_{metric}_delta_vs_{baseline_name}")
+                continue
+            epsilon = float(COMPARISON_METRIC_EPSILON.get(metric, 0.0) or 0.0)
+            metric_regressed = delta > epsilon if metric in LOWER_IS_BETTER_COMPARISON_METRICS else delta < -epsilon
+            if metric_regressed:
+                baseline_blockers.append(f"{metric}_regressed_vs_{baseline_name}")
+        blockers.extend(baseline_blockers)
+        baseline_verdicts[baseline_name] = {
+            "status": "pass" if not baseline_blockers else "blocked",
+            "blockers": baseline_blockers,
+        }
+
+    deduped_blockers = list(dict.fromkeys(blockers))
+    return {
+        "action": "promote" if not deduped_blockers else "hold",
+        "blockers": deduped_blockers,
+        "baseline_verdicts": baseline_verdicts,
+    }
+
+
+def _recommend_rollout_action(comparison_summary: dict[str, dict[str, Any]]) -> str:
+    return str(_build_rollout_recommendation_payload(comparison_summary).get("action") or "hold")
 
 
 def _persist_search_metadata(
@@ -857,6 +1054,7 @@ def _persist_search_metadata(
     metadata: dict[str, Any],
     comparison_summary: dict[str, dict[str, Any]] | None = None,
     rollout_recommendation: str | None = None,
+    rollout_recommendation_details: dict[str, Any] | None = None,
 ) -> None:
     md_text = md_path.read_text(encoding="utf-8") if md_path.exists() else "# Parameter Search Report\n"
     metadata_lines = [
@@ -871,16 +1069,17 @@ def _persist_search_metadata(
         metadata_lines.append("")
         metadata_lines.append("Guardrails:")
         for key, value in sorted(dict(metadata["guardrails"]).items()):
-            metadata_lines.append(f"- `{key}`: {value}")
+            metadata_lines.append(f"- `{key}`: {_format_guardrail_spec(value)}")
     md_block = "\n".join(metadata_lines)
     base_md_text = md_text.split("## Search Metadata", 1)[0].rstrip() if "## Search Metadata" in md_text else md_text.rstrip()
     md_sections = [base_md_text, md_block]
     if comparison_summary:
+        metric_headers = [COMPARISON_METRIC_LABELS[metric] for metric in COMPARISON_METRICS]
         comparison_lines = [
             "## Baseline Comparison",
             "",
-            "| Baseline | Close+ Δ | High-hit Δ | Expectancy Δ | Downside P10 Δ | Coverage Δ |",
-            "| --- | --- | --- | --- | --- | --- |",
+            "| Baseline | " + " | ".join(f"{label} Δ" for label in metric_headers) + " |",
+            "| --- | " + " | ".join("---" for _ in metric_headers) + " |",
         ]
         for baseline_name, entry in comparison_summary.items():
             comparison_lines.append(
@@ -895,7 +1094,13 @@ def _persist_search_metadata(
             )
         md_sections.append("\n".join(comparison_lines))
     if rollout_recommendation:
-        md_sections.append(f"Rollout Recommendation: **{rollout_recommendation}**")
+        rollout_lines = [f"Rollout Recommendation: **{rollout_recommendation}**"]
+        blockers = list((rollout_recommendation_details or {}).get("blockers") or [])
+        if blockers:
+            rollout_lines.append("")
+            rollout_lines.append("Rollout Blockers:")
+            rollout_lines.extend(f"- `{blocker}`" for blocker in blockers)
+        md_sections.append("\n".join(rollout_lines))
     md_text = "\n\n".join(section for section in md_sections if section) + "\n"
     md_path.write_text(md_text, encoding="utf-8")
 
@@ -905,6 +1110,8 @@ def _persist_search_metadata(
         payload["comparison_summary"] = comparison_summary
     if rollout_recommendation is not None:
         payload["rollout_recommendation"] = rollout_recommendation
+    if rollout_recommendation_details is not None:
+        payload["rollout_recommendation_details"] = rollout_recommendation_details
     json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
 
 
@@ -1012,7 +1219,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-json", default=None, help="Output JSON path")
     parser.add_argument("--output-md", default=None, help="Output Markdown path")
     parser.add_argument("--checkpoint", default=None, help="Checkpoint file for resume")
-    parser.add_argument("--guardrail", action="append", default=None, help="Guardrail floor as metric=floor; may be repeated")
+    parser.add_argument("--guardrail", action="append", default=None, help="Guardrail bound as metric=floor, metric>=floor, or metric<=cap; may be repeated")
     parser.add_argument("--search-stage", choices=["full", "coarse", "focused", "staged"], default="full", help="Search stage strategy")
     parser.add_argument("--focus-json", default=None, help="JSON file with best_params for focused stage")
     parser.add_argument("--max-combinations", type=int, default=None, help="Fail fast when grid size exceeds this budget")
@@ -1207,6 +1414,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     comparison_summary = None
     rollout_recommendation = None
+    rollout_recommendation_details = None
     best_params = _report_best_params(report)
     if replay_mode and replay_input_paths and best_params:
         comparison_summary = _build_replay_comparison_summary(
@@ -1215,13 +1423,15 @@ def main(argv: list[str] | None = None) -> int:
             best_params=best_params,
             next_high_hit_threshold=args.next_high_hit_threshold,
         )
-        rollout_recommendation = _recommend_rollout_action(comparison_summary)
+        rollout_recommendation_details = _build_rollout_recommendation_payload(comparison_summary)
+        rollout_recommendation = str(rollout_recommendation_details.get("action") or "hold")
     _persist_search_metadata(
         md_path=md_path,
         json_path=json_path,
         metadata=metadata,
         comparison_summary=comparison_summary,
         rollout_recommendation=rollout_recommendation,
+        rollout_recommendation_details=rollout_recommendation_details,
     )
     print(format_search_report(report))
     if args.staged_mode == "ignition_stage1":

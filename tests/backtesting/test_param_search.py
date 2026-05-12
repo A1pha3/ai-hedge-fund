@@ -399,6 +399,40 @@ def test_check_guardrails_treats_custom_non_finite_value_as_violation():
     assert violations == ["custom_metric"]
 
 
+def test_check_guardrails_supports_explicit_max_bounds():
+    metrics = {
+        "projected_theme_exposure": 0.18,
+        "crowding_risk_raw_100": 68.0,
+    }
+
+    violations = check_guardrails(
+        metrics,
+        {
+            "projected_theme_exposure": {"max": 0.20},
+            "crowding_risk_raw_100": {"max": 70.0},
+        },
+    )
+
+    assert violations == []
+
+
+def test_check_guardrails_detects_mixed_min_and_max_bound_violations():
+    metrics = {
+        "next_close_positive_rate": 0.53,
+        "projected_theme_exposure": 0.21,
+    }
+
+    violations = check_guardrails(
+        metrics,
+        {
+            "next_close_positive_rate": {"min": 0.54},
+            "projected_theme_exposure": {"max": 0.20},
+        },
+    )
+
+    assert violations == ["next_close_positive_rate", "projected_theme_exposure"]
+
+
 def test_run_param_search_guardrail_failing_trials_ranked_last():
     """Trials that violate guardrails must appear after all passing trials."""
     space = ParamSpace(grid={"x": [1, 2, 3]})
@@ -434,6 +468,29 @@ def test_run_param_search_guardrail_failing_trials_ranked_last():
     # x=3 trial must have the win-rate guardrail in its failed_guardrails
     x3_trial = next(r for r in report.results if r.params["x"] == 3)
     assert "next_close_positive_rate" in x3_trial.failed_guardrails
+
+
+def test_run_param_search_ranks_trials_last_when_explicit_max_guardrail_is_breached():
+    space = ParamSpace(grid={"x": [1, 2]})
+
+    def evaluator(params):
+        return {
+            "sharpe_ratio": float(params["x"]),
+            "sortino_ratio": 1.0,
+            "max_drawdown": -0.1,
+            "projected_theme_exposure": 0.18 if params["x"] == 1 else 0.24,
+        }
+
+    report = run_param_search(
+        space=space,
+        objective=SearchObjective.SHARPE,
+        evaluator=evaluator,
+        guardrails={"projected_theme_exposure": {"max": 0.20}},
+    )
+
+    assert report.best_params == {"x": 1}
+    assert report.results[-1].params == {"x": 2}
+    assert report.results[-1].failed_guardrails == ("projected_theme_exposure",)
 
 
 def test_run_param_search_guardrail_all_failing_falls_back_to_best_overall():

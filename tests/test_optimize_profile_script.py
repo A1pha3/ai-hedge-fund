@@ -156,6 +156,136 @@ def test_replay_evaluator_scales_sample_weight_by_window_coverage(monkeypatch: p
     assert metrics["sample_weight"] == pytest.approx(0.25)
 
 
+def test_replay_evaluator_weights_primary_quality_metrics_by_sample_weight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Primary quality metrics should be averaged using per-window sample_weight.
+
+    Two windows: one well-supported (weight=1.0) and one thin (weight=0.1).
+    Weighted average should favor the well-supported window.
+    """
+    fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+
+    def fake_analyze_btst_profile_replay_window(input_path: Path, **_: object) -> dict[str, object]:
+        if "thin" in str(input_path):
+            # thin-support window: next_day_available_count=1 -> next_day_weight=0.1; closed_cycle_count=1 -> closed_cycle_weight=0.166.. => sample_weight=0.1
+            selected_surface = {
+                "next_day_available_count": 1,
+                "closed_cycle_count": 1,
+                "next_close_positive_rate": 0.10,
+                "next_high_hit_rate_at_threshold": 0.12,
+                "next_close_payoff_ratio": 0.5,
+                "next_close_expectancy": 0.002,
+                "t_plus_2_close_positive_rate": 0.11,
+                "t_plus_3_close_positive_rate": 0.09,
+                "t_plus_3_close_expectancy": 0.001,
+                "next_close_return_distribution": {"p10": -0.05, "median": 0.0005},
+                "t_plus_2_close_return_distribution": {"median": 0.0006},
+                "t_plus_3_close_return_distribution": {"median": 0.0007},
+            }
+        else:
+            # well-supported window: next_day_available_count=10, closed_cycle_count=6 => sample_weight=1.0
+            selected_surface = {
+                "next_day_available_count": 10,
+                "closed_cycle_count": 6,
+                "next_close_positive_rate": 0.60,
+                "next_high_hit_rate_at_threshold": 0.50,
+                "next_close_payoff_ratio": 1.40,
+                "next_close_expectancy": 0.01,
+                "t_plus_2_close_positive_rate": 0.55,
+                "t_plus_3_close_positive_rate": 0.53,
+                "t_plus_3_close_expectancy": 0.012,
+                "next_close_return_distribution": {"p10": -0.02, "median": 0.002},
+                "t_plus_2_close_return_distribution": {"median": 0.005},
+                "t_plus_3_close_return_distribution": {"median": 0.007},
+            }
+        return {"surface_summaries": {"selected": selected_surface, "tradeable": selected_surface}}
+
+    fake_module.analyze_btst_profile_replay_window = fake_analyze_btst_profile_replay_window
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    evaluator = _build_replay_evaluator(
+        [Path("window_well.json"), Path("window_thin.json")],
+        base_profile="default",
+    )
+
+    metrics = evaluator({})
+
+    # Compute expected weighted averages manually
+    w1 = 1.0
+    w2 = 0.1
+    denom = w1 + w2
+    assert metrics["window_count"] == 2
+    # next_close_positive_rate weighted: (0.60*1.0 + 0.10*0.1)/1.1
+    assert metrics["next_close_positive_rate"] == pytest.approx((0.60 * w1 + 0.10 * w2) / denom)
+    assert metrics["next_close_payoff_ratio"] == pytest.approx((1.40 * w1 + 0.5 * w2) / denom)
+    assert metrics["next_close_expectancy"] == pytest.approx((0.01 * w1 + 0.002 * w2) / denom)
+    assert metrics["next_high_hit_rate"] == pytest.approx((0.50 * w1 + 0.12 * w2) / denom)
+    assert metrics["t_plus_2_close_positive_rate"] == pytest.approx((0.55 * w1 + 0.11 * w2) / denom)
+    assert metrics["t_plus_3_close_positive_rate"] == pytest.approx((0.53 * w1 + 0.09 * w2) / denom)
+    assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 * w1 + 0.001 * w2) / denom)
+    assert metrics["downside_p10"] == pytest.approx((-0.02 * w1 + -0.05 * w2) / denom)
+
+
+def test_replay_evaluator_keeps_execution_and_exposure_metrics_unweighted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Execution/exposure metrics must remain unweighted by sample_weight and use simple mean across windows."""
+    fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+
+    def fake_analyze_btst_profile_replay_window(input_path: Path, **_: object) -> dict[str, object]:
+        if "thin" in str(input_path):
+            selected_surface = {
+                "next_day_available_count": 1,
+                "closed_cycle_count": 1,
+                "next_close_positive_rate": 0.50,
+                "next_high_hit_rate_at_threshold": 0.40,
+                "next_close_payoff_ratio": 1.1,
+                "next_close_expectancy": 0.009,
+                "next_close_return_distribution": {"p10": -0.03, "median": -0.001},
+                "t_plus_2_close_return_distribution": {"median": 0.002},
+                "t_plus_3_close_return_distribution": {"median": 0.003},
+            }
+            rows = [
+                {
+                    "decision": "selected",
+                    "metrics_payload": {"committee": {"components": {"projected_theme_exposure": 0.90, "incremental_theme_exposure": 0.30, "liquidity_capacity_raw_100": 30.0, "crowding_risk_raw_100": 10.0, "gap_risk_raw_100": 5.0}}},
+                }
+            ]
+        else:
+            selected_surface = {
+                "next_day_available_count": 10,
+                "closed_cycle_count": 6,
+                "next_close_positive_rate": 0.60,
+                "next_high_hit_rate_at_threshold": 0.50,
+                "next_close_payoff_ratio": 1.40,
+                "next_close_expectancy": 0.01,
+                "next_close_return_distribution": {"p10": -0.02, "median": 0.002},
+                "t_plus_2_close_return_distribution": {"median": 0.005},
+                "t_plus_3_close_return_distribution": {"median": 0.007},
+            }
+            rows = [
+                {
+                    "decision": "selected",
+                    "metrics_payload": {"committee": {"components": {"projected_theme_exposure": 0.10, "incremental_theme_exposure": 0.05, "liquidity_capacity_raw_100": 70.0, "crowding_risk_raw_100": 80.0, "gap_risk_raw_100": 65.0}}},
+                }
+            ]
+        return {"surface_summaries": {"selected": selected_surface, "tradeable": selected_surface}, "rows": rows}
+
+    fake_module.analyze_btst_profile_replay_window = fake_analyze_btst_profile_replay_window
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    evaluator = _build_replay_evaluator(
+        [Path("window_well.json"), Path("window_thin.json")],
+        base_profile="default",
+    )
+
+    metrics = evaluator({})
+
+    # Unweighted mean across windows: projected_theme_exposure -> (0.10 + 0.90) / 2 = 0.5
+    assert metrics["projected_theme_exposure"] == pytest.approx(0.5)
+    assert metrics["incremental_theme_exposure"] == pytest.approx((0.05 + 0.30) / 2.0)
+    assert metrics["liquidity_capacity_raw_100"] == pytest.approx((70.0 + 30.0) / 2.0)
+    assert metrics["crowding_risk_raw_100"] == pytest.approx((80.0 + 10.0) / 2.0)
+    assert metrics["gap_risk_raw_100"] == pytest.approx((65.0 + 5.0) / 2.0)
+
+
 def test_replay_evaluator_keeps_partial_horizon_windows_with_penalty(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
 
@@ -206,9 +336,12 @@ def test_replay_evaluator_keeps_partial_horizon_windows_with_penalty(monkeypatch
     assert metrics["window_coverage"] == pytest.approx(1.0)
     assert metrics["sample_weight"] == pytest.approx((0.5 + (0.5 * 0.85)) / 2.0)
     # Partial horizon falls back to next_close_positive_rate for t+2 positive rate.
-    assert metrics["t_plus_2_close_positive_rate"] == pytest.approx((0.55 + 0.60) / 2.0)
-    assert metrics["t_plus_3_close_positive_rate"] == pytest.approx((0.53 + 0.60) / 2.0)
-    assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 + 0.01) / 2.0)
+    w1 = 0.5
+    w2 = 0.5 * 0.85
+    denom = w1 + w2
+    assert metrics["t_plus_2_close_positive_rate"] == pytest.approx((0.55 * w1 + 0.60 * w2) / denom)
+    assert metrics["t_plus_3_close_positive_rate"] == pytest.approx((0.53 * w1 + 0.60 * w2) / denom)
+    assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 * w1 + 0.01 * w2) / denom)
 
 
 def test_replay_evaluator_keeps_windows_with_missing_payoff_ratio(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -248,6 +381,75 @@ def test_replay_evaluator_keeps_windows_with_missing_payoff_ratio(monkeypatch: p
     assert metrics["window_coverage"] == pytest.approx(1.0)
     # Missing payoff window is kept, and payoff average uses available windows only.
     assert metrics["next_close_payoff_ratio"] == pytest.approx(1.40)
+
+
+def test_replay_evaluator_aggregates_execution_and_exposure_metrics_from_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+
+    def fake_analyze_btst_profile_replay_window(input_path: Path, **_: object) -> dict[str, object]:
+        selected_surface = {
+            "next_day_available_count": 6,
+            "closed_cycle_count": 3,
+            "next_close_positive_rate": 0.60,
+            "next_high_hit_rate_at_threshold": 0.50,
+            "next_close_payoff_ratio": 1.40,
+            "next_close_expectancy": 0.01,
+            "t_plus_2_close_positive_rate": 0.55,
+            "next_close_return_distribution": {"p10": -0.02},
+            "t_plus_2_close_return_distribution": {"median": 0.005},
+            "t_plus_3_close_positive_rate": 0.53,
+            "t_plus_3_close_expectancy": 0.012,
+            "t_plus_3_close_return_distribution": {"median": 0.007},
+        }
+        return {
+            "surface_summaries": {"selected": selected_surface, "tradeable": selected_surface},
+            "rows": [
+                {
+                    "decision": "selected",
+                    "metrics_payload": {
+                        "committee": {
+                            "components": {
+                                "liquidity_capacity_raw_100": 80.0,
+                                "crowding_risk_raw_100": 35.0,
+                                "gap_risk_raw_100": 25.0,
+                                "projected_theme_exposure": 0.18,
+                                "incremental_theme_exposure": 0.08,
+                            }
+                        }
+                    },
+                },
+                {
+                    "decision": "selected",
+                    "metrics_payload": {
+                        "committee": {
+                            "components": {
+                                "liquidity_capacity_raw_100": 60.0,
+                                "crowding_risk_raw_100": 55.0,
+                                "gap_risk_raw_100": 45.0,
+                                "projected_theme_exposure": 0.22,
+                                "incremental_theme_exposure": 0.10,
+                            }
+                        }
+                    },
+                },
+            ],
+        }
+
+    fake_module.analyze_btst_profile_replay_window = fake_analyze_btst_profile_replay_window
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    evaluator = _build_replay_evaluator(
+        [Path("window_full.json")],
+        base_profile="default",
+    )
+
+    metrics = evaluator({})
+
+    assert metrics["liquidity_capacity_raw_100"] == pytest.approx(70.0)
+    assert metrics["crowding_risk_raw_100"] == pytest.approx(45.0)
+    assert metrics["gap_risk_raw_100"] == pytest.approx(35.0)
+    assert metrics["projected_theme_exposure"] == pytest.approx(0.20)
+    assert metrics["incremental_theme_exposure"] == pytest.approx(0.09)
 
 
 def test_replay_evaluator_applies_lighter_penalty_for_missing_t_plus_3_only(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -296,8 +498,11 @@ def test_replay_evaluator_applies_lighter_penalty_for_missing_t_plus_3_only(monk
 
     assert metrics["window_count"] == 2
     assert metrics["sample_weight"] == pytest.approx((0.5 + (0.5 * 0.92)) / 2.0)
-    assert metrics["t_plus_3_close_positive_rate"] == pytest.approx((0.53 + 0.55) / 2.0)
-    assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 + 0.008) / 2.0)
+    w1 = 0.5
+    w2 = 0.5 * 0.92
+    denom = w1 + w2
+    assert metrics["t_plus_3_close_positive_rate"] == pytest.approx((0.53 * w1 + 0.55 * w2) / denom)
+    assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 * w1 + 0.008 * w2) / denom)
 
 
 def test_build_grid_params_uses_event_catalyst_preset_for_guarded_profile() -> None:
@@ -343,6 +548,35 @@ def test_resolve_guardrails_prefers_explicit_values_over_defaults() -> None:
     assert guardrails["next_close_positive_rate"] == pytest.approx(0.57)
     assert guardrails["window_coverage"] == pytest.approx(0.75)
     assert guardrails["next_high_hit_rate"] == pytest.approx(0.56)
+
+
+def test_parse_guardrails_supports_explicit_min_and_max_bounds() -> None:
+    guardrails = optimize_profile._parse_guardrails(
+        [
+            "next_close_positive_rate>=0.57",
+            "projected_theme_exposure<=0.20",
+        ]
+    )
+
+    assert guardrails == {
+        "next_close_positive_rate": {"min": pytest.approx(0.57)},
+        "projected_theme_exposure": {"max": pytest.approx(0.20)},
+    }
+
+
+def test_resolve_guardrails_includes_execution_and_exposure_defaults_for_momentum_profile() -> None:
+    guardrails = resolve_guardrails(
+        profile_name="momentum_optimized",
+        objective="btst",
+        replay_mode=True,
+        raw_guardrails=[],
+    )
+
+    assert guardrails["projected_theme_exposure"] == {"max": pytest.approx(0.35)}
+    assert guardrails["incremental_theme_exposure"] == {"max": pytest.approx(0.12)}
+    assert guardrails["liquidity_capacity_raw_100"] == {"min": pytest.approx(50.0)}
+    assert guardrails["crowding_risk_raw_100"] == {"max": pytest.approx(70.0)}
+    assert guardrails["gap_risk_raw_100"] == {"max": pytest.approx(60.0)}
 
 
 def test_build_stage_grid_focuses_numeric_ranges_around_best_params() -> None:
@@ -477,6 +711,11 @@ def test_main_passes_guardrails_and_focused_grid_to_run_param_search(monkeypatch
         "next_high_hit_rate": pytest.approx(0.56),
         "downside_p10": pytest.approx(-0.06),
         "window_coverage": pytest.approx(0.75),
+        "projected_theme_exposure": {"max": pytest.approx(0.35)},
+        "incremental_theme_exposure": {"max": pytest.approx(0.12)},
+        "liquidity_capacity_raw_100": {"min": pytest.approx(50.0)},
+        "crowding_risk_raw_100": {"max": pytest.approx(70.0)},
+        "gap_risk_raw_100": {"max": pytest.approx(60.0)},
     }
     assert captured["space"].grid["select_threshold"] == [0.46, 0.50, 0.54]
     assert captured["space"].grid["near_miss_threshold"] == [0.32, 0.36, 0.40]
@@ -1500,6 +1739,11 @@ def test_main_writes_best_candidate_comparison_to_output_files(monkeypatch: pyte
                     "next_close_expectancy": 0.010,
                     "downside_p10": -0.050,
                     "window_coverage": 0.80,
+                    "liquidity_capacity_raw_100": 58.0,
+                    "crowding_risk_raw_100": 44.0,
+                    "gap_risk_raw_100": 38.0,
+                    "projected_theme_exposure": 0.22,
+                    "incremental_theme_exposure": 0.11,
                 }
             if params:
                 return {
@@ -1508,6 +1752,11 @@ def test_main_writes_best_candidate_comparison_to_output_files(monkeypatch: pyte
                     "next_close_expectancy": 0.018,
                     "downside_p10": -0.040,
                     "window_coverage": 0.85,
+                    "liquidity_capacity_raw_100": 66.0,
+                    "crowding_risk_raw_100": 36.0,
+                    "gap_risk_raw_100": 30.0,
+                    "projected_theme_exposure": 0.18,
+                    "incremental_theme_exposure": 0.08,
                 }
             return {
                 "next_close_positive_rate": 0.57,
@@ -1515,6 +1764,11 @@ def test_main_writes_best_candidate_comparison_to_output_files(monkeypatch: pyte
                 "next_close_expectancy": 0.014,
                 "downside_p10": -0.045,
                 "window_coverage": 0.82,
+                "liquidity_capacity_raw_100": 61.0,
+                "crowding_risk_raw_100": 40.0,
+                "gap_risk_raw_100": 34.0,
+                "projected_theme_exposure": 0.20,
+                "incremental_theme_exposure": 0.09,
             }
 
         return evaluator
@@ -1564,6 +1818,189 @@ def test_main_writes_best_candidate_comparison_to_output_files(monkeypatch: pyte
     assert "## Baseline Comparison" in output_md.read_text(encoding="utf-8")
 
 
+def test_recommend_rollout_action_allows_lower_is_better_metric_improvements() -> None:
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.004,
+            "downside_p10_delta": 0.005,
+            "window_coverage_delta": 0.03,
+            "liquidity_capacity_raw_100_delta": 6.0,
+            "crowding_risk_raw_100_delta": -8.0,
+            "gap_risk_raw_100_delta": -5.0,
+            "projected_theme_exposure_delta": -0.04,
+            "incremental_theme_exposure_delta": -0.02,
+        }
+    }
+
+    assert optimize_profile._recommend_rollout_action(comparison_summary) == "promote"
+
+
+def test_build_rollout_recommendation_payload_surfaces_directional_blockers() -> None:
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.004,
+            "downside_p10_delta": 0.005,
+            "window_coverage_delta": 0.03,
+            "liquidity_capacity_raw_100_delta": 6.0,
+            "crowding_risk_raw_100_delta": 4.0,
+            "gap_risk_raw_100_delta": -5.0,
+            "projected_theme_exposure_delta": -0.04,
+            "incremental_theme_exposure_delta": -0.02,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["action"] == "hold"
+    assert "crowding_risk_raw_100_regressed_vs_default" in payload["blockers"]
+    assert payload["baseline_verdicts"]["default"]["status"] == "blocked"
+
+
+def test_build_rollout_recommendation_payload_ignores_sub_noise_execution_and_exposure_deltas() -> None:
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.004,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": -0.001,
+            "liquidity_capacity_raw_100_delta": -0.8,
+            "crowding_risk_raw_100_delta": 0.8,
+            "gap_risk_raw_100_delta": 0.9,
+            "projected_theme_exposure_delta": 0.004,
+            "incremental_theme_exposure_delta": 0.004,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["action"] == "promote"
+    assert payload["blockers"] == []
+
+
+def test_build_rollout_recommendation_payload_blocks_meaningful_regression_beyond_epsilon() -> None:
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.004,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": -0.003,
+            "liquidity_capacity_raw_100_delta": -1.2,
+            "crowding_risk_raw_100_delta": 1.2,
+            "gap_risk_raw_100_delta": 1.1,
+            "projected_theme_exposure_delta": 0.006,
+            "incremental_theme_exposure_delta": 0.006,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["action"] == "hold"
+    assert "window_coverage_regressed_vs_default" in payload["blockers"]
+    assert "liquidity_capacity_raw_100_regressed_vs_default" in payload["blockers"]
+    assert "crowding_risk_raw_100_regressed_vs_default" in payload["blockers"]
+
+
+def test_main_persists_execution_aware_rollout_details_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+
+    def fake_build_replay_evaluator(input_paths: list[Path], *, base_profile: str, next_high_hit_threshold: float = 0.02):
+        del input_paths, next_high_hit_threshold
+
+        def evaluator(params: dict[str, object]) -> dict[str, float]:
+            if base_profile == "default":
+                return {
+                    "next_close_positive_rate": 0.55,
+                    "next_high_hit_rate": 0.56,
+                    "next_close_expectancy": 0.010,
+                    "downside_p10": -0.050,
+                    "window_coverage": 0.80,
+                    "liquidity_capacity_raw_100": 58.0,
+                    "crowding_risk_raw_100": 44.0,
+                    "gap_risk_raw_100": 38.0,
+                    "projected_theme_exposure": 0.22,
+                    "incremental_theme_exposure": 0.11,
+                }
+            if params:
+                return {
+                    "next_close_positive_rate": 0.60,
+                    "next_high_hit_rate": 0.61,
+                    "next_close_expectancy": 0.018,
+                    "downside_p10": -0.040,
+                    "window_coverage": 0.85,
+                    "liquidity_capacity_raw_100": 66.0,
+                    "crowding_risk_raw_100": 36.0,
+                    "gap_risk_raw_100": 30.0,
+                    "projected_theme_exposure": 0.18,
+                    "incremental_theme_exposure": 0.08,
+                }
+            return {
+                "next_close_positive_rate": 0.57,
+                "next_high_hit_rate": 0.59,
+                "next_close_expectancy": 0.014,
+                "downside_p10": -0.045,
+                "window_coverage": 0.82,
+                "liquidity_capacity_raw_100": 61.0,
+                "crowding_risk_raw_100": 40.0,
+                "gap_risk_raw_100": 34.0,
+                "projected_theme_exposure": 0.20,
+                "incremental_theme_exposure": 0.09,
+            }
+
+        return evaluator
+
+    monkeypatch.setattr(optimize_profile, "_build_replay_evaluator", fake_build_replay_evaluator)
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params={"select_threshold": 0.50}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {"select_threshold": 0.50}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--grid-params",
+            "select_threshold=0.50",
+            "--input",
+            "dummy.json",
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["comparison_summary"]["default"]["crowding_risk_raw_100_delta"] == pytest.approx(-8.0)
+    assert payload["comparison_summary"]["default"]["projected_theme_exposure_delta"] == pytest.approx(-0.04)
+    assert payload["rollout_recommendation_details"]["action"] == "promote"
+    assert "Crowding Δ" in output_md.read_text(encoding="utf-8")
+
+
 def test_main_writes_rollout_recommendation_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     output_md = tmp_path / "report.md"
     output_json = tmp_path / "report.json"
@@ -1579,6 +2016,11 @@ def test_main_writes_rollout_recommendation_to_output_files(monkeypatch: pytest.
                     "next_close_expectancy": 0.010,
                     "downside_p10": -0.050,
                     "window_coverage": 0.80,
+                    "liquidity_capacity_raw_100": 58.0,
+                    "crowding_risk_raw_100": 44.0,
+                    "gap_risk_raw_100": 38.0,
+                    "projected_theme_exposure": 0.22,
+                    "incremental_theme_exposure": 0.11,
                 }
             if params:
                 return {
@@ -1587,6 +2029,11 @@ def test_main_writes_rollout_recommendation_to_output_files(monkeypatch: pytest.
                     "next_close_expectancy": 0.018,
                     "downside_p10": -0.040,
                     "window_coverage": 0.85,
+                    "liquidity_capacity_raw_100": 66.0,
+                    "crowding_risk_raw_100": 36.0,
+                    "gap_risk_raw_100": 30.0,
+                    "projected_theme_exposure": 0.18,
+                    "incremental_theme_exposure": 0.08,
                 }
             return {
                 "next_close_positive_rate": 0.57,
@@ -1594,6 +2041,11 @@ def test_main_writes_rollout_recommendation_to_output_files(monkeypatch: pytest.
                 "next_close_expectancy": 0.014,
                 "downside_p10": -0.045,
                 "window_coverage": 0.82,
+                "liquidity_capacity_raw_100": 61.0,
+                "crowding_risk_raw_100": 40.0,
+                "gap_risk_raw_100": 34.0,
+                "projected_theme_exposure": 0.20,
+                "incremental_theme_exposure": 0.09,
             }
 
         return evaluator

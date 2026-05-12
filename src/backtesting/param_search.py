@@ -19,6 +19,8 @@ from src.utils.numeric import clip
 
 _logger = logging.getLogger(__name__)
 
+GuardrailSpec = float | int | dict[str, float]
+
 
 class SearchObjective(StrEnum):
     SHARPE = "sharpe"
@@ -175,27 +177,48 @@ def compute_objective_score(
 
 def check_guardrails(
     metrics: dict[str, float | None],
-    guardrails: dict[str, float],
+    guardrails: dict[str, GuardrailSpec],
 ) -> list[str]:
     """Return names of guardrail constraints that are violated.
 
-    A guardrail maps a metric key to its minimum acceptable value.  A violation
-    occurs when the metric is absent (None) or strictly below the floor.
+    A guardrail maps a metric key to either:
+    - a legacy minimum acceptable value, or
+    - a dict with ``min`` and/or ``max`` bounds.
+
+    A violation occurs when the metric is absent (None), below the minimum, or
+    above the maximum.
 
     Args:
         metrics: Evaluated metrics dict from the evaluator.
-        guardrails: Mapping of metric name → minimum acceptable float value.
+        guardrails: Mapping of metric name → legacy minimum float value or a
+            bound dict with ``min`` and/or ``max`` values.
 
     Returns:
         List of violated guardrail names (empty when all pass).
     """
+    def _normalize_guardrail_bounds(spec: GuardrailSpec) -> dict[str, float]:
+        if isinstance(spec, dict):
+            bounds: dict[str, float] = {}
+            if spec.get("min") is not None:
+                bounds["min"] = float(spec["min"])
+            if spec.get("max") is not None:
+                bounds["max"] = float(spec["max"])
+            if not bounds:
+                raise ValueError("guardrail dict must contain min and/or max")
+            return bounds
+        return {"min": float(spec)}
+
     bundle = build_canonical_btst_evaluation_bundle(metrics)
     violations: list[str] = []
-    for key, floor in guardrails.items():
+    for key, spec in guardrails.items():
         value = bundle.lookup(key)
         if value is None and key not in bundle.objective_metrics and key not in bundle.guardrail_metrics and key not in bundle.context_metrics:
             value = coerce_numeric_metric_value(metrics.get(key))
-        if value is None or value < float(floor):
+        bounds = _normalize_guardrail_bounds(spec)
+        if value is None:
+            violations.append(key)
+            continue
+        if ("min" in bounds and value < bounds["min"]) or ("max" in bounds and value > bounds["max"]):
             violations.append(key)
     return violations
 
@@ -223,7 +246,7 @@ def run_param_search(
     objective: SearchObjective = SearchObjective.COMPOSITE,
     evaluator: Callable[[dict[str, Any]], dict[str, float | None]],
     checkpoint_path: str | Path | None = None,
-    guardrails: dict[str, float] | None = None,
+    guardrails: dict[str, GuardrailSpec] | None = None,
 ) -> SearchReport:
     """Run grid search over profile parameters.
 
@@ -233,11 +256,13 @@ def run_param_search(
         evaluator: Callable that takes a params dict and returns metrics dict
                    with keys like sharpe_ratio, sortino_ratio, max_drawdown.
         checkpoint_path: Optional path for checkpointing completed trials.
-        guardrails: Optional mapping of metric name → minimum acceptable value.
-            Trials that violate any guardrail are ranked after all passing trials
-            regardless of their objective score.  Use this to enforce hard floors
-            on win rate, downside tail, or other protected metrics so the search
-            never silently promotes a candidate that regresses on quality gates.
+        guardrails: Optional mapping of metric name → bound spec. Legacy float
+            values act as minimum floors; dict specs may define ``min`` and/or
+            ``max``. Trials that violate any guardrail are ranked after all
+            passing trials regardless of their objective score. Use this to
+            enforce hard floors/caps on win rate, downside tail, exposure, or
+            other protected metrics so the search never silently promotes a
+            candidate that regresses on quality gates.
 
     Returns:
         SearchReport with ranked results.  Guardrail-failing trials appear at
