@@ -1100,3 +1100,102 @@ def test_committee_theme_direction_rank_cap_blocks_sixth_theme_candidate() -> No
     assert governed_result.decision == "near_miss"
     assert "committee_theme_direction_rank_exceeded" in governed_result.downgrade_reasons
     assert governed_result.metrics_payload["committee"]["components"]["theme_direction_rank"] == pytest.approx(6.0)
+
+
+def test_committee_gap_risk_cap_blocks_formal_selected_candidate_between_veto_and_rollout_bands() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "gap_to_limit": 0.015,
+        }
+    )
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides={**_base_profile_overrides(), "committee_enabled": False},
+    )
+    governed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert baseline_result.decision == "selected"
+    assert governed_result.decision == "near_miss"
+    assert "committee_gap_risk_cap_exceeded" in governed_result.downgrade_reasons
+    assert governed_result.metrics_payload["committee"]["components"]["gap_risk_raw_100"] == pytest.approx(80.0)
+
+
+def test_committee_gap_risk_cap_leaves_disabled_committee_payload_selected() -> None:
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "sector_amt_share": 0.060,
+                "flow_60": 0.12,
+                "retention_proxy": 0.78,
+                "gap_to_limit": 0.015,
+            }
+        ),
+        profile_overrides={**_base_profile_overrides(), "committee_enabled": False},
+    )
+
+    assert snapshot["committee_enabled"] is False
+    assert snapshot["committee_selected_pass"] is True
+    assert snapshot["committee_gate_status"]["formal_selected"] == "pass"
+    assert "committee_gap_risk_cap_exceeded" not in snapshot["committee_fail_reasons"]
+
+
+def test_committee_gap_risk_cap_allows_candidate_exactly_at_rollout_safe_boundary() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "gap_to_limit": 0.02,
+        }
+    )
+
+    governed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert governed_result.decision == "selected"
+    assert "committee_gap_risk_cap_exceeded" not in governed_result.downgrade_reasons
+    assert governed_result.metrics_payload["committee"]["components"]["gap_risk_raw_100"] == pytest.approx(60.0)
+
+
+def test_committee_gap_risk_cap_blocks_advisory_continuation_lane_selection() -> None:
+    entry = _make_committee_entry(
+        metrics={
+            "sector_amt_share": 0.060,
+            "flow_60": 0.12,
+            "retention_proxy": 0.78,
+            "gap_to_limit": 0.015,
+        }
+    )
+    entry["candidate_source"] = "catalyst_theme"
+    entry["historical_prior"]["execution_quality_label"] = "close_continuation"
+    entry["historical_prior"]["entry_timing_bias"] = "confirm_then_hold"
+
+    governed_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert governed_result.decision == "near_miss"
+    assert "committee_gap_risk_cap_exceeded" in governed_result.downgrade_reasons
+    assert governed_result.metrics_payload["committee"]["thresholds"]["selected_enforced"] is False
+    assert "catalyst_theme_continuation_lane" in governed_result.metrics_payload["committee"]["advisory_reasons"]
+    assert governed_result.metrics_payload["committee"]["selected_pass"] is False
+    assert governed_result.metrics_payload["committee"]["gate_status"]["formal_selected"] == "fail"

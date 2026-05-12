@@ -1,0 +1,156 @@
+{
+  "metadata": {
+    "search_stage": "full",
+    "guardrails": {},
+    "focus_source": null,
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_dcf32a7e73c1_checkpoint.json"
+  },
+  "comparison_summary": {
+    "ignition_breakout": {
+      "candidate": {
+        "sharpe_ratio": null,
+        "sortino_ratio": null,
+        "max_drawdown": null,
+        "next_close_positive_rate": null,
+        "next_close_payoff_ratio": null,
+        "next_close_expectancy": null,
+        "next_high_hit_rate": null,
+        "t_plus_2_close_positive_rate": null,
+        "t_plus_3_close_positive_rate": null,
+        "t_plus_3_close_expectancy": null,
+        "downside_p10": null,
+        "sample_weight": null,
+        "window_coverage": 0.0,
+        "window_count": 0,
+        "source_coverage_pass_ratio": 0.0
+      },
+      "baseline": {
+        "sharpe_ratio": null,
+        "sortino_ratio": null,
+        "max_drawdown": null,
+        "next_close_positive_rate": null,
+        "next_close_payoff_ratio": null,
+        "next_close_expectancy": null,
+        "next_high_hit_rate": null,
+        "t_plus_2_close_positive_rate": null,
+        "t_plus_3_close_positive_rate": null,
+        "t_plus_3_close_expectancy": null,
+        "downside_p10": null,
+        "sample_weight": null,
+        "window_coverage": 0.0,
+        "window_count": 0,
+        "source_coverage_pass_ratio": 0.0
+      },
+      "next_close_positive_rate_delta": null,
+      "next_high_hit_rate_delta": null,
+      "next_close_expectancy_delta": null,
+      "downside_p10_delta": null,
+      "window_coverage_delta": 0.0,
+      "liquidity_capacity_raw_100_delta": null,
+      "crowding_risk_raw_100_delta": null,
+      "gap_risk_raw_100_delta": null,
+      "projected_theme_exposure_delta": null,
+      "incremental_theme_exposure_delta": null
+    },
+    "default": {
+      "candidate": {
+        "sharpe_ratio": null,
+        "sortino_ratio": null,
+        "max_drawdown": null,
+        "next_close_positive_rate": null,
+        "next_close_payoff_ratio": null,
+        "next_close_expectancy": null,
+        "next_high_hit_rate": null,
+        "t_plus_2_close_positive_rate": null,
+        "t_plus_3_close_positive_rate": null,
+        "t_plus_3_close_expectancy": null,
+        "downside_p10": null,
+        "sample_weight": null,
+        "window_coverage": 0.0,
+        "window_count": 0,
+        "source_coverage_pass_ratio": 0.0
+      },
+      "baseline": {
+        "sharpe_ratio": null,
+        "sortino_ratio": null,
+        "max_drawdown": null,
+        "next_close_positive_rate": null,
+        "next_close_payoff_ratio": null,
+        "next_close_expectancy": null,
+        "next_high_hit_rate": null,
+        "t_plus_2_close_positive_rate": null,
+        "t_plus_3_close_positive_rate": null,
+        "t_plus_3_close_expectancy": null,
+        "downside_p10": null,
+        "sample_weight": null,
+        "window_coverage": 0.0,
+        "window_count": 0,
+        "source_coverage_pass_ratio": 0.0
+      },
+      "next_close_positive_rate_delta": null,
+      "next_high_hit_rate_delta": null,
+      "next_close_expectancy_delta": null,
+      "downside_p10_delta": null,
+      "window_coverage_delta": 0.0,
+      "liquidity_capacity_raw_100_delta": null,
+      "crowding_risk_raw_100_delta": null,
+      "gap_risk_raw_100_delta": null,
+      "projected_theme_exposure_delta": null,
+      "incremental_theme_exposure_delta": null
+    }
+  },
+  "rollout_recommendation": "hold",
+  "rollout_recommendation_details": {
+    "action": "hold",
+    "blockers": [
+      "missing_next_close_positive_rate_delta_vs_ignition_breakout",
+      "missing_next_high_hit_rate_delta_vs_ignition_breakout",
+      "missing_next_close_expectancy_delta_vs_ignition_breakout",
+      "missing_downside_p10_delta_vs_ignition_breakout",
+      "missing_liquidity_capacity_raw_100_delta_vs_ignition_breakout",
+      "missing_crowding_risk_raw_100_delta_vs_ignition_breakout",
+      "missing_gap_risk_raw_100_delta_vs_ignition_breakout",
+      "missing_projected_theme_exposure_delta_vs_ignition_breakout",
+      "missing_incremental_theme_exposure_delta_vs_ignition_breakout",
+      "missing_next_close_positive_rate_delta_vs_default",
+      "missing_next_high_hit_rate_delta_vs_default",
+      "missing_next_close_expectancy_delta_vs_default",
+      "missing_downside_p10_delta_vs_default",
+      "missing_liquidity_capacity_raw_100_delta_vs_default",
+      "missing_crowding_risk_raw_100_delta_vs_default",
+      "missing_gap_risk_raw_100_delta_vs_default",
+      "missing_projected_theme_exposure_delta_vs_default",
+      "missing_incremental_theme_exposure_delta_vs_default"
+    ],
+    "baseline_verdicts": {
+      "ignition_breakout": {
+        "status": "blocked",
+        "blockers": [
+          "missing_next_close_positive_rate_delta_vs_ignition_breakout",
+          "missing_next_high_hit_rate_delta_vs_ignition_breakout",
+          "missing_next_close_expectancy_delta_vs_ignition_breakout",
+          "missing_downside_p10_delta_vs_ignition_breakout",
+          "missing_liquidity_capacity_raw_100_delta_vs_ignition_breakout",
+          "missing_crowding_risk_raw_100_delta_vs_ignition_breakout",
+          "missing_gap_risk_raw_100_delta_vs_ignition_breakout",
+          "missing_projected_theme_exposure_delta_vs_ignition_breakout",
+          "missing_incremental_theme_exposure_delta_vs_ignition_breakout"
+        ]
+      },
+      "default": {
+        "status": "blocked",
+        "blockers": [
+          "missing_next_close_positive_rate_delta_vs_default",
+          "missing_next_high_hit_rate_delta_vs_default",
+          "missing_next_close_expectancy_delta_vs_default",
+          "missing_downside_p10_delta_vs_default",
+          "missing_liquidity_capacity_raw_100_delta_vs_default",
+          "missing_crowding_risk_raw_100_delta_vs_default",
+          "missing_gap_risk_raw_100_delta_vs_default",
+          "missing_projected_theme_exposure_delta_vs_default",
+          "missing_incremental_theme_exposure_delta_vs_default"
+        ]
+      }
+    }
+  }
+}

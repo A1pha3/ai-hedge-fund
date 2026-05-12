@@ -1,0 +1,35 @@
+# Parameter Search Report
+
+## Search Metadata
+
+Search Stage: **full**
+Checkpoint: `data/reports/param_search_ignition_breakout_dcf32a7e73c1_checkpoint.json`
+
+## Baseline Comparison
+
+| Baseline | Close+ Δ | High-hit Δ | Expectancy Δ | Downside P10 Δ | Coverage Δ | Liquidity Δ | Crowding Δ | Gap Risk Δ | Projected Exp Δ | Incremental Exp Δ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ignition_breakout | N/A | N/A | N/A | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A |
+| default | N/A | N/A | N/A | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A |
+
+Rollout Recommendation: **hold**
+
+Rollout Blockers:
+- `missing_next_close_positive_rate_delta_vs_ignition_breakout`
+- `missing_next_high_hit_rate_delta_vs_ignition_breakout`
+- `missing_next_close_expectancy_delta_vs_ignition_breakout`
+- `missing_downside_p10_delta_vs_ignition_breakout`
+- `missing_liquidity_capacity_raw_100_delta_vs_ignition_breakout`
+- `missing_crowding_risk_raw_100_delta_vs_ignition_breakout`
+- `missing_gap_risk_raw_100_delta_vs_ignition_breakout`
+- `missing_projected_theme_exposure_delta_vs_ignition_breakout`
+- `missing_incremental_theme_exposure_delta_vs_ignition_breakout`
+- `missing_next_close_positive_rate_delta_vs_default`
+- `missing_next_high_hit_rate_delta_vs_default`
+- `missing_next_close_expectancy_delta_vs_default`
+- `missing_downside_p10_delta_vs_default`
+- `missing_liquidity_capacity_raw_100_delta_vs_default`
+- `missing_crowding_risk_raw_100_delta_vs_default`
+- `missing_gap_risk_raw_100_delta_vs_default`
+- `missing_projected_theme_exposure_delta_vs_default`
+- `missing_incremental_theme_exposure_delta_vs_default`

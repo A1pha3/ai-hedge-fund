@@ -603,6 +603,23 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     close_structure_raw_100, close_structure_source = _close_structure_raw_score(snapshot, raw_metrics)
     supply_pressure_risk_raw_100, supply_pressure_source = _supply_pressure_risk_raw_score(snapshot, raw_metrics)
     gap_risk_raw_100, gap_risk_source = _gap_risk_raw_score(snapshot, raw_metrics)
+    # Reuse shared BTST execution guardrail for gap risk cap (if configured).
+    # Load evaluation_bundle directly from file to avoid importing the backtesting package
+    # (which would trigger package-level imports and create a circular import chain).
+    import importlib.util
+    import os
+
+    _eval_module_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backtesting", "evaluation_bundle.py"))
+    spec = importlib.util.spec_from_file_location("evaluation_bundle_dynamic", _eval_module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load evaluation_bundle from {_eval_module_path}")
+    _eval_mod = importlib.util.module_from_spec(spec)
+    import sys
+    # Ensure the dynamic module is available in sys.modules so dataclass processing and
+    # other runtime introspection work correctly.
+    sys.modules["evaluation_bundle_dynamic"] = _eval_mod
+    spec.loader.exec_module(_eval_mod)
+    gap_risk_cap_raw_100 = _eval_mod.coerce_numeric_metric_value(_eval_mod.BTST_EXECUTION_GUARDRAILS.get("gap_risk_raw_100", {}).get("max"))
     liquidity_capacity_raw_100, liquidity_capacity_source = _liquidity_capacity_raw_score(snapshot, raw_metrics, input_data)
     crowding_risk_raw_100, crowding_source = _crowding_risk_raw_score(snapshot, raw_metrics)
     fragile_breakout_activation_raw_100, fragile_breakout_activation_source = _fragile_breakout_activation_raw_score(
@@ -706,6 +723,17 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         vetoes.append("committee_failed_breakout_metric_veto")
 
     fail_reasons: list[str] = []
+    # Shared BTST gap-risk guardrail must remain active even when advisory continuation
+    # lanes disable selected_enforced; otherwise high-gap-risk candidates can still be
+    # formally selected through the advisory path.
+    if bool(getattr(profile, "committee_enabled", False)) and gap_risk_cap_raw_100 is not None:
+        gap_risk_val = _eval_mod.coerce_numeric_metric_value(gap_risk_raw_100)
+        # If we cannot coerce the observed gap risk to a finite number treat conservatively and block
+        if gap_risk_val is None:
+            fail_reasons.append("committee_gap_risk_cap_exceeded")
+        elif gap_risk_val > gap_risk_cap_raw_100:
+            fail_reasons.append("committee_gap_risk_cap_exceeded")
+
     if bool(thresholds["selected_enforced"]):
         if alpha_edge_score < float(thresholds["alpha_min"]):
             fail_reasons.append("committee_alpha_below_selected_min")
@@ -749,14 +777,14 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         formal_selected_allowed = False
         fail_reasons.append("committee_shadow_profile_only")
 
-    selected_pass = formal_selected_allowed and not vetoes and (not bool(thresholds["selected_enforced"]) or not fail_reasons)
+    selected_pass = formal_selected_allowed and not vetoes and not fail_reasons
     component_status = {
         "alpha": "pass" if alpha_edge_score >= float(thresholds["alpha_min"]) else "advisory" if not bool(thresholds["selected_enforced"]) else "fail",
         "beta": "pass" if beta_execution_score >= float(thresholds["beta_min"]) else "advisory" if not bool(thresholds["selected_enforced"]) else "fail",
         "gamma": "pass" if gamma_risk_score >= float(thresholds["gamma_min"]) else "advisory" if not bool(thresholds["selected_enforced"]) else "fail",
         "committee": "pass" if committee_score >= float(thresholds["committee_min"]) else "advisory" if not bool(thresholds["selected_enforced"]) else "fail",
         "veto": "fail" if vetoes else "pass",
-        "formal_selected": "pass" if selected_pass else "shadow_only" if effective_gate in SHADOW_ONLY_GATES and bool(getattr(profile, "committee_shadow_only_blocks_selected", True)) else "fail" if bool(thresholds["selected_enforced"]) or vetoes else "advisory",
+        "formal_selected": "pass" if selected_pass else "shadow_only" if effective_gate in SHADOW_ONLY_GATES and bool(getattr(profile, "committee_shadow_only_blocks_selected", True)) else "fail" if bool(thresholds["selected_enforced"]) or vetoes or fail_reasons else "advisory",
     }
 
     return {
@@ -777,6 +805,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "formal_selected_allowed": formal_selected_allowed,
             "theme_exposure_cap": round(float(getattr(profile, "committee_theme_exposure_cap", 0.25) or 0.25), 4),
             "incremental_theme_exposure_cap": round(float(getattr(profile, "committee_incremental_theme_exposure_cap", 0.18) or 0.18), 4),
+            "gap_risk_cap_raw_100": round(float(gap_risk_cap_raw_100), 4) if gap_risk_cap_raw_100 is not None else None,
             "isolated_theme_peer_count_min": round(float(getattr(profile, "committee_isolated_theme_peer_count_min", 2.0) or 2.0), 4),
             "theme_direction_rank_max": round(float(getattr(profile, "committee_theme_direction_rank_max", 5.0) or 5.0), 4),
         },
