@@ -159,6 +159,23 @@ def test_build_promotion_gate_summary_adds_risk_budget_blocker():
     assert "theme_exposure_cap_breach" in summary["promotion_blockers"]
 
 
+def test_build_promotion_gate_summary_adds_execution_feasibility_blockers():
+    summary = build_promotion_gate_summary(
+        walk_forward_summary={
+            "rollout_ready": True,
+            "rollout_blockers": [],
+            "liquidity_capacity_raw_100": 45.0,
+            "crowding_risk_raw_100": 72.0,
+            "gap_risk_raw_100": 63.0,
+        }
+    )
+
+    assert summary["promotion_ready"] is False
+    assert "liquidity_capacity_floor_breach" in summary["promotion_blockers"]
+    assert "crowding_risk_cap_breach" in summary["promotion_blockers"]
+    assert "gap_risk_cap_breach" in summary["promotion_blockers"]
+
+
 def test_summarize_walk_forward_blocks_too_short_test_windows():
     results = [
         WalkForwardResult(
@@ -178,6 +195,45 @@ def test_summarize_walk_forward_blocks_too_short_test_windows():
     assert "test_window_too_short" in summary["rollout_blockers"]
     assert summary["promotion_ready"] is False
     assert "test_window_too_short" in summary["promotion_blockers"]
+
+
+def test_summarize_walk_forward_blocks_btst_quality_floor_breaches():
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-28",
+            ),
+            metrics={
+                "sharpe_ratio": 0.8,
+                "sortino_ratio": 1.1,
+                "max_drawdown": -4.0,
+                "test_trading_days": 12,
+                "next_close_positive_rate": 0.50,
+                "next_high_hit_rate": 0.54,
+                "t_plus_2_close_positive_rate": 0.50,
+                "t_plus_3_close_positive_rate": 0.48,
+                "t_plus_3_close_expectancy": -0.01,
+                "downside_p10": -0.07,
+                "sample_weight": 0.55,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert summary["rollout_ready"] is False
+    assert "btst_quality_next_close_positive_rate_floor_breach" in summary["rollout_blockers"]
+    assert "btst_quality_next_high_hit_rate_floor_breach" in summary["rollout_blockers"]
+    assert "btst_quality_t_plus_2_close_positive_rate_floor_breach" in summary["rollout_blockers"]
+    assert "btst_quality_t_plus_3_close_positive_rate_floor_breach" in summary["rollout_blockers"]
+    assert "btst_quality_t_plus_3_close_expectancy_floor_breach" in summary["rollout_blockers"]
+    assert "btst_quality_downside_p10_floor_breach" in summary["rollout_blockers"]
+    assert "btst_quality_sample_weight_floor_breach" in summary["rollout_blockers"]
+    assert summary["promotion_ready"] is False
+    assert "btst_quality_next_close_positive_rate_floor_breach" in summary["promotion_blockers"]
 
 
 def test_summarize_walk_forward_allows_longer_test_windows():

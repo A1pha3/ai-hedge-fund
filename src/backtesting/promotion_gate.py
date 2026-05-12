@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .evaluation_bundle import build_btst_execution_blockers
+
 
 def build_promotion_gate_summary(
     *,
@@ -10,8 +12,10 @@ def build_promotion_gate_summary(
     exposure_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     blockers = [str(item) for item in list(walk_forward_summary.get("rollout_blockers") or []) if str(item).strip()]
+    walk_forward_payload = dict(walk_forward_summary or {})
     risk_payload = dict(risk_budget_summary or {})
     exposure_payload = {
+        **walk_forward_payload,
         **risk_payload,
         **dict(risk_payload.get("promotion_gate_inputs") or {}),
         **dict(exposure_summary or {}),
@@ -28,6 +32,8 @@ def build_promotion_gate_summary(
     max_incremental = float(exposure_payload.get("max_incremental_theme_exposure") or 0.0)
     if max_projected >= 0.35 or max_incremental >= 0.12:
         blockers.append("theme_exposure_cap_breach")
+
+    blockers.extend(build_btst_execution_blockers(exposure_payload))
 
     deduped_blockers = list(dict.fromkeys(blockers))
     return {

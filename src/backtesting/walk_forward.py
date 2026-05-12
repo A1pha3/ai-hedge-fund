@@ -9,6 +9,7 @@ from dateutil.relativedelta import relativedelta
 
 from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
+from .evaluation_bundle import BTST_QUALITY_FLOORS, build_btst_quality_floor_blockers, build_canonical_btst_evaluation_bundle
 from .promotion_gate import build_promotion_gate_summary
 from .types import PerformanceMetrics
 
@@ -208,12 +209,39 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
     sortino_values = [item.metrics["sortino_ratio"] for item in results if item.metrics.get("sortino_ratio") is not None]
     max_drawdown_values = [item.metrics["max_drawdown"] for item in results if item.metrics.get("max_drawdown") is not None]
     test_trading_days = [_resolve_test_trading_days(item) for item in results]
+    btst_metric_keys = tuple(key for key in BTST_QUALITY_FLOORS if key != "window_coverage")
+    btst_metric_values: dict[str, list[float]] = {key: [] for key in btst_metric_keys}
+    execution_metric_keys = (
+        "projected_theme_exposure",
+        "incremental_theme_exposure",
+        "liquidity_capacity_raw_100",
+        "crowding_risk_raw_100",
+        "gap_risk_raw_100",
+    )
+    execution_metric_values: dict[str, list[float]] = {key: [] for key in execution_metric_keys}
+    btst_complete_window_count = 0
 
     def _average(values: list[float | None]) -> float | None:
         clean_values = [value for value in values if value is not None]
         if not clean_values:
             return None
         return sum(clean_values) / len(clean_values)
+
+    for item in results:
+        bundle = build_canonical_btst_evaluation_bundle(item.metrics)
+        window_has_complete_btst_quality = True
+        for metric_key in btst_metric_keys:
+            value = bundle.lookup(metric_key)
+            if value is None:
+                window_has_complete_btst_quality = False
+                continue
+            btst_metric_values[metric_key].append(float(value))
+        for metric_key in execution_metric_keys:
+            value = bundle.lookup(metric_key)
+            if value is not None:
+                execution_metric_values[metric_key].append(float(value))
+        if window_has_complete_btst_quality:
+            btst_complete_window_count += 1
 
     positive_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) > 0.0)
     negative_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) < 0.0)
@@ -244,6 +272,18 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
     if test_trading_days and min(test_trading_days) < MIN_TEST_TRADING_DAYS_FOR_ROLLOUT:
         rollout_blockers.append("test_window_too_short")
 
+    btst_quality_summary: dict[str, float | None] = {
+        metric_key: _average(btst_metric_values[metric_key]) for metric_key in btst_metric_keys
+    }
+    btst_quality_summary["window_coverage"] = (
+        float(btst_complete_window_count) / float(len(results)) if btst_complete_window_count > 0 else None
+    )
+    execution_summary: dict[str, float | None] = {
+        metric_key: _average(execution_metric_values[metric_key]) for metric_key in execution_metric_keys
+    }
+    if any(value is not None for value in btst_quality_summary.values()):
+        rollout_blockers.extend(build_btst_quality_floor_blockers(btst_quality_summary))
+
     base_summary: dict[str, float | int | bool | list[str] | None] = {
         "window_count": len(results),
         "avg_sharpe": _average(sharpe_values),
@@ -257,6 +297,8 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
         "worst_sharpe": min(sharpe_values) if sharpe_values else None,
         "worst_max_drawdown": worst_max_drawdown,
         "max_non_positive_sharpe_streak": max_non_positive_sharpe_streak,
+        **btst_quality_summary,
+        **execution_summary,
         "rollout_ready": not rollout_blockers,
         "rollout_blockers": rollout_blockers,
     }

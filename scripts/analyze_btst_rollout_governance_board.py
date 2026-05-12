@@ -167,14 +167,20 @@ def _build_rollout_governance_rows(payloads: dict[str, Any]) -> list[dict[str, A
             "ticker": "001309",
             "governance_tier": "primary_roll_forward_only",
             "status": primary_roll.get("roll_forward_verdict"),
-            "blocker": "cross_window_stability_missing",
-            "next_step": list(primary_window_validation_runbook.get("rerun_commands") or list(primary_window_gap.get("next_step_commands") or list(primary_roll.get("next_actions") or [""])))[0],
+            "blocker": list(primary_roll.get("promotion_blockers") or ["cross_window_stability_missing"])[0],
+            "next_step": (
+                list(primary_roll.get("next_actions") or [""])[0]
+                if list(primary_roll.get("promotion_blockers") or [])
+                else list(primary_window_validation_runbook.get("rerun_commands") or list(primary_window_gap.get("next_step_commands") or list(primary_roll.get("next_actions") or [""])))[0]
+            ),
             "evidence": {
                 "target_case_count": primary_roll.get("target_case_count"),
                 "distinct_window_count": primary_roll.get("distinct_window_count"),
                 "next_close_positive_rate": primary_roll.get("next_close_positive_rate"),
                 "missing_window_count": primary_window_gap.get("missing_window_count"),
                 "scanned_window_count": len(list(primary_window_validation_runbook.get("window_scan_rows") or [])),
+                "promotion_ready": primary_roll.get("promotion_ready"),
+                "promotion_blockers": list(primary_roll.get("promotion_blockers") or []),
             },
         },
         {
@@ -240,13 +246,23 @@ def _build_rollout_governance_rows(payloads: dict[str, Any]) -> list[dict[str, A
 
 
 def _build_rollout_next_tasks(governance_rows: list[dict[str, Any]], recurring_close_ticker: str, recurring_intraday_ticker: str) -> list[dict[str, Any]]:
-    return [
-        {
+    primary_blocker = str(governance_rows[0].get("blocker") or "")
+    if primary_blocker and primary_blocker != "cross_window_stability_missing":
+        primary_task = {
+            "task_id": "001309_promotion_blocker_remediation",
+            "title": "解除 001309 promotion blocker",
+            "why_now": f"001309 当前被 promotion blocker 卡住：{primary_blocker}。",
+            "next_step": governance_rows[0]["next_step"],
+        }
+    else:
+        primary_task = {
             "task_id": "001309_independent_window_validation",
             "title": "补 001309 独立窗口证据",
             "why_now": "这是当前唯一 primary lane，但仍缺跨窗口稳定复现。",
             "next_step": governance_rows[0]["next_step"],
-        },
+        }
+    return [
+        primary_task,
         {
             "task_id": f"{recurring_close_ticker}_recurring_shadow_validation",
             "title": f"推进 {recurring_close_ticker} recurring shadow 验证",

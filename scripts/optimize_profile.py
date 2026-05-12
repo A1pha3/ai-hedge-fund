@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
+from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
 from src.backtesting.param_search import (
     format_search_report,
     GuardrailSpec,
@@ -33,15 +34,15 @@ REPORTS_DIR = Path("data/reports")
 PARTIAL_HORIZON_WEIGHT_PENALTY = 0.85
 PARTIAL_T3_HORIZON_WEIGHT_PENALTY = 0.92
 DEFAULT_BTST_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
-    "next_close_positive_rate": 0.54,
-    "next_high_hit_rate": 0.56,
-    "downside_p10": -0.06,
-    "window_coverage": 0.60,
+    "next_close_positive_rate": BTST_QUALITY_FLOORS["next_close_positive_rate"],
+    "next_high_hit_rate": BTST_QUALITY_FLOORS["next_high_hit_rate"],
+    "downside_p10": BTST_QUALITY_FLOORS["downside_p10"],
+    "window_coverage": BTST_QUALITY_FLOORS["window_coverage"],
     "projected_theme_exposure": {"max": 0.35},
     "incremental_theme_exposure": {"max": 0.12},
-    "liquidity_capacity_raw_100": {"min": 50.0},
-    "crowding_risk_raw_100": {"max": 70.0},
-    "gap_risk_raw_100": {"max": 60.0},
+    "liquidity_capacity_raw_100": dict(BTST_EXECUTION_GUARDRAILS["liquidity_capacity_raw_100"]),
+    "crowding_risk_raw_100": dict(BTST_EXECUTION_GUARDRAILS["crowding_risk_raw_100"]),
+    "gap_risk_raw_100": dict(BTST_EXECUTION_GUARDRAILS["gap_risk_raw_100"]),
 }
 MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS: dict[str, dict[str, list[Any]]] = {
     "coarse": {

@@ -283,3 +283,61 @@ def test_analyze_btst_rollout_governance_board_threads_payload(monkeypatch, tmp_
     assert analysis["next_3_tasks"] == [{"task_id": "001309_independent_window_validation"}]
     assert analysis["penalty_frontier_summary"] == {"frontier_id": "broad_penalty_relief"}
     assert analysis["recommendation"] == "governance recommendation"
+
+
+def test_analyze_btst_rollout_governance_board_propagates_primary_promotion_blockers(tmp_path):
+    action_board = tmp_path / "action_board.json"
+    primary_roll = tmp_path / "primary_roll.json"
+    shadow_expansion = tmp_path / "shadow_expansion.json"
+    shadow_lane = tmp_path / "shadow_lane.json"
+    primary_gap = tmp_path / "primary_gap.json"
+    recurring_runbook = tmp_path / "recurring_runbook.json"
+    primary_window_runbook = tmp_path / "primary_window_runbook.json"
+    shadow_peer_scan = tmp_path / "shadow_peer_scan.json"
+    structural_shadow_runbook = tmp_path / "structural_shadow_runbook.json"
+    for path in (
+        action_board,
+        shadow_expansion,
+        shadow_lane,
+        primary_gap,
+        recurring_runbook,
+        primary_window_runbook,
+        shadow_peer_scan,
+        structural_shadow_runbook,
+    ):
+        path.write_text("{}", encoding="utf-8")
+
+    action_board.write_text(json.dumps({"generated_on": "2026-03-30", "board_rows": []}, ensure_ascii=False) + "\n", encoding="utf-8")
+    primary_roll.write_text(
+        json.dumps(
+            {
+                "roll_forward_verdict": "halt_or_rollback",
+                "promotion_ready": False,
+                "promotion_blockers": ["liquidity_capacity_floor_breach"],
+                "target_case_count": 3,
+                "distinct_window_count": 3,
+                "next_close_positive_rate": 0.75,
+                "next_actions": ["recheck liquidity feasibility"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_rollout_governance_board(
+        action_board,
+        primary_roll_forward_path=primary_roll,
+        shadow_expansion_path=shadow_expansion,
+        shadow_lane_priority_path=shadow_lane,
+        primary_window_gap_path=primary_gap,
+        recurring_shadow_runbook_path=recurring_runbook,
+        primary_window_validation_runbook_path=primary_window_runbook,
+        shadow_peer_scan_path=shadow_peer_scan,
+        structural_shadow_runbook_path=structural_shadow_runbook,
+    )
+
+    assert analysis["governance_rows"][0]["status"] == "halt_or_rollback"
+    assert analysis["governance_rows"][0]["blocker"] == "liquidity_capacity_floor_breach"
+    assert analysis["next_3_tasks"][0]["task_id"] == "001309_promotion_blocker_remediation"
+    assert "liquidity_capacity_floor_breach" in analysis["next_3_tasks"][0]["why_now"]

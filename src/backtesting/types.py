@@ -131,3 +131,13 @@ class PerformanceMetrics(TypedDict, total=False):
     win_rate: float | None
     total_trades: int | None
     test_trading_days: int | None
+    next_close_positive_rate: float | None
+    next_close_payoff_ratio: float | None
+    next_close_expectancy: float | None
+    next_high_hit_rate: float | None
+    t_plus_2_close_positive_rate: float | None
+    t_plus_3_close_positive_rate: float | None
+    t_plus_3_close_expectancy: float | None
+    downside_p10: float | None
+    sample_weight: float | None
+    window_coverage: float | None

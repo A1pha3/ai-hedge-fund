@@ -52,17 +52,22 @@ def analyze_btst_primary_roll_forward(
     short_trade_trade_date_count = int(candidate_row.get("short_trade_trade_date_count") or 0)
     distinct_window_count = int(candidate_row.get("distinct_window_count") or 0)
     transition_locality = str(candidate_row.get("transition_locality") or "not_in_candidate_scan")
+    promotion_ready = bool(execution_row.get("promotion_ready", True))
+    promotion_blockers = [str(item) for item in list(execution_row.get("promotion_blockers") or []) if str(item).strip()]
 
     keep_guardrails_ok = (
         str(execution_row.get("action_tier") or "") == "primary_promote"
         and changed_non_target_case_count == 0
         and next_close_return_mean > 0
         and next_close_positive_rate >= 0.75
+        and promotion_ready
     )
     multi_window_ready = transition_locality == "multi_window_stable" or distinct_window_count >= 2
     default_upgrade_eligible = keep_guardrails_ok and multi_window_ready
 
     evidence_gaps: list[str] = []
+    if promotion_blockers:
+        evidence_gaps.append(f"promotion_blockers={','.join(promotion_blockers)}，当前 promotion gate 尚未放行。")
     if target_case_count < 2:
         evidence_gaps.append("target_case_count<2，当前 primary 入口样本仍偏少。")
     if short_trade_trade_date_count < 3:
@@ -110,6 +115,8 @@ def analyze_btst_primary_roll_forward(
         "window_keys": list(candidate_row.get("window_keys") or []),
         "role_counts": dict(candidate_row.get("role_counts") or {}),
         "keep_guardrails_ok": keep_guardrails_ok,
+        "promotion_ready": promotion_ready,
+        "promotion_blockers": promotion_blockers,
         "default_upgrade_eligible": default_upgrade_eligible,
         "roll_forward_verdict": roll_forward_verdict,
         "evidence_gaps": evidence_gaps,
