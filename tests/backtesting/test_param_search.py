@@ -331,6 +331,64 @@ def test_check_guardrails_treats_absent_key_as_violation():
     assert "next_close_positive_rate" in violations
 
 
+def test_check_guardrails_treats_partial_horizon_canonical_metric_absence_as_violation_even_with_fallback_fields():
+    metrics = {
+        "next_close_positive_rate": 0.60,
+        "next_close_payoff_ratio": 2.0,
+        "next_close_expectancy": 0.01,
+        "next_high_hit_rate": 0.50,
+        "t_plus_3_close_positive_rate": 0.58,
+        "t_plus_3_close_expectancy": 0.012,
+        "downside_p10": -0.02,
+        "sample_weight": 0.80,
+    }
+
+    violations = check_guardrails(
+        metrics,
+        {
+            "next_close_positive_rate": 0.54,
+            "t_plus_2_close_positive_rate": 0.54,
+        },
+    )
+
+    assert violations == ["t_plus_2_close_positive_rate"]
+
+
+def test_check_guardrails_treats_malformed_partial_horizon_canonical_metric_as_violation():
+    metrics = {
+        "next_close_positive_rate": 0.60,
+        "t_plus_2_close_positive_rate": "N/A",
+        "t_plus_3_close_positive_rate": 0.53,
+    }
+
+    violations = check_guardrails(
+        metrics,
+        {
+            "next_close_positive_rate": 0.54,
+            "t_plus_2_close_positive_rate": 0.54,
+        },
+    )
+
+    assert violations == ["t_plus_2_close_positive_rate"]
+
+
+def test_check_guardrails_treats_raw_only_guardrail_metric_as_violation_when_canonical_key_is_absent():
+    metrics = {
+        "next_close_positive_rate": 0.60,
+        "t_plus_2_close_positive_rate_raw_100": 72.0,
+    }
+
+    violations = check_guardrails(
+        metrics,
+        {
+            "next_close_positive_rate": 0.54,
+            "t_plus_2_close_positive_rate": 0.54,
+        },
+    )
+
+    assert violations == ["t_plus_2_close_positive_rate"]
+
+
 def test_check_guardrails_treats_custom_malformed_string_as_violation():
     violations = check_guardrails({"custom_metric": "N/A"}, {"custom_metric": 0.54})
     assert violations == ["custom_metric"]
@@ -440,6 +498,42 @@ def test_run_param_search_guardrail_checkpoint_roundtrip(tmp_path):
 
     assert call_count == 0, "should not re-evaluate; completed trial loaded from checkpoint"
     assert "next_close_positive_rate" in report2.results[0].failed_guardrails
+
+
+def test_run_param_search_persists_failed_guardrails_for_every_trial_in_checkpoint(tmp_path):
+    cp_path = tmp_path / "checkpoint.json"
+    space = ParamSpace(grid={"x": [1, 2]})
+
+    def evaluator(params):
+        if params["x"] == 1:
+            return {
+                "sharpe_ratio": 0.5,
+                "sortino_ratio": 1.0,
+                "max_drawdown": -0.1,
+                "next_close_positive_rate": 0.60,
+            }
+        return {
+            "sharpe_ratio": 0.4,
+            "sortino_ratio": 1.0,
+            "max_drawdown": -0.1,
+            "next_close_positive_rate": 0.40,
+        }
+
+    report = run_param_search(
+        space=space,
+        objective=SearchObjective.SHARPE,
+        evaluator=evaluator,
+        checkpoint_path=cp_path,
+        guardrails={"next_close_positive_rate": 0.54},
+    )
+
+    payload = json.loads(cp_path.read_text())
+    completed_by_x = {item["params"]["x"]: item["failed_guardrails"] for item in payload["completed_trials"]}
+
+    assert report.completed_trials == 2
+    assert len(payload["completed_trials"]) == 2
+    assert completed_by_x[1] == []
+    assert completed_by_x[2] == ["next_close_positive_rate"]
 
 
 def test_run_param_search_without_guardrails_unchanged_behavior():

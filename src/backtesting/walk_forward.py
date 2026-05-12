@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from dateutil.relativedelta import relativedelta
@@ -29,6 +29,7 @@ WALK_FORWARD_PRESETS: dict[str, dict[str, int]] = {
 }
 ROLLOUT_MAX_NON_POSITIVE_SHARPE_STREAK = 2
 ROLLOUT_WORST_MAX_DRAWDOWN_FLOOR = -12.0
+MIN_TEST_TRADING_DAYS_FOR_ROLLOUT = 5
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,47 @@ def _truncate_test_end_by_trading_days(test_start: datetime, test_end: datetime,
     return datetime.strptime(open_dates[capped_index], "%Y%m%d")
 
 
+def _estimate_test_trading_days(test_start: str, test_end: str) -> int:
+    start = datetime.strptime(test_start, "%Y-%m-%d")
+    end = datetime.strptime(test_end, "%Y-%m-%d")
+    if end < start:
+        return 0
+
+    trading_days = 0
+    current = start
+    while current <= end:
+        if current.weekday() < 5:
+            trading_days += 1
+        current += timedelta(days=1)
+    return trading_days
+
+
+def _resolve_calendar_test_trading_days(test_start: str, test_end: str) -> int | None:
+    pro = _get_pro()
+    if pro is None:
+        return None
+
+    df = _cached_tushare_dataframe_call(
+        pro,
+        "trade_cal",
+        exchange="",
+        start_date=test_start.replace("-", ""),
+        end_date=test_end.replace("-", ""),
+        is_open=1,
+        fields="cal_date,is_open",
+    )
+    if df is None or df.empty:
+        return None
+    return len(df)
+
+
+def _resolve_test_trading_days(result: WalkForwardResult) -> int:
+    explicit_test_trading_days = result.metrics.get("test_trading_days")
+    if explicit_test_trading_days is not None:
+        return int(explicit_test_trading_days)
+    return _estimate_test_trading_days(result.window.test_start, result.window.test_end)
+
+
 def run_walk_forward(
     windows: Sequence[WalkForwardWindow],
     engine_factory: Callable[[WalkForwardWindow], object],
@@ -127,6 +169,13 @@ def run_walk_forward(
     for window in windows:
         engine = engine_factory(window)
         metrics = engine.run_backtest()
+        if metrics.get("test_trading_days") is None:
+            calendar_test_trading_days = _resolve_calendar_test_trading_days(window.test_start, window.test_end)
+            if calendar_test_trading_days is not None:
+                metrics = {
+                    **metrics,
+                    "test_trading_days": calendar_test_trading_days,
+                }
         results.append(WalkForwardResult(window=window, metrics=metrics))
     return results
 
@@ -158,6 +207,7 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
     sharpe_values = [item.metrics["sharpe_ratio"] for item in results if item.metrics.get("sharpe_ratio") is not None]
     sortino_values = [item.metrics["sortino_ratio"] for item in results if item.metrics.get("sortino_ratio") is not None]
     max_drawdown_values = [item.metrics["max_drawdown"] for item in results if item.metrics.get("max_drawdown") is not None]
+    test_trading_days = [_resolve_test_trading_days(item) for item in results]
 
     def _average(values: list[float | None]) -> float | None:
         clean_values = [value for value in values if value is not None]
@@ -191,6 +241,8 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
         rollout_blockers.append("non_positive_sharpe_streak_exceeded")
     if worst_max_drawdown is not None and worst_max_drawdown <= ROLLOUT_WORST_MAX_DRAWDOWN_FLOOR:
         rollout_blockers.append("worst_drawdown_breach")
+    if test_trading_days and min(test_trading_days) < MIN_TEST_TRADING_DAYS_FOR_ROLLOUT:
+        rollout_blockers.append("test_window_too_short")
 
     base_summary: dict[str, float | int | bool | list[str] | None] = {
         "window_count": len(results),

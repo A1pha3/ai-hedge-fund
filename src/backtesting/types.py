@@ -130,3 +130,4 @@ class PerformanceMetrics(TypedDict, total=False):
     portfolio_beta: float | None
     win_rate: float | None
     total_trades: int | None
+    test_trading_days: int | None

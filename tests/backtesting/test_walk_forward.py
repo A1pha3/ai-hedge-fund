@@ -92,6 +92,56 @@ def test_run_and_summarize_walk_forward():
     assert summary["avg_max_drawdown"] == -10.0
 
 
+def test_run_walk_forward_preserves_engine_reported_test_trading_days():
+    windows = [
+        WalkForwardWindow(
+            train_start="2026-01-01",
+            train_end="2026-01-31",
+            test_start="2026-02-01",
+            test_end="2026-02-28",
+        )
+    ]
+
+    class StubEngine:
+        def run_backtest(self):
+            return {"sharpe_ratio": 0.6, "sortino_ratio": 0.7, "max_drawdown": -4.0, "test_trading_days": 4}
+
+    results = run_walk_forward(windows, lambda window: StubEngine())
+    summary = summarize_walk_forward(results)
+
+    assert results[0].metrics["test_trading_days"] == 4
+    assert summary["rollout_ready"] is False
+    assert "test_window_too_short" in summary["rollout_blockers"]
+
+
+def test_run_walk_forward_injects_trade_calendar_test_trading_days_when_available(monkeypatch):
+    monkeypatch.setattr("src.backtesting.walk_forward._get_pro", lambda: object())
+    monkeypatch.setattr(
+        "src.backtesting.walk_forward._cached_tushare_dataframe_call",
+        lambda *args, **kwargs: pd.DataFrame({"cal_date": ["20260506", "20260507", "20260508", "20260509"]}),
+    )
+
+    windows = [
+        WalkForwardWindow(
+            train_start="2026-04-01",
+            train_end="2026-04-30",
+            test_start="2026-05-01",
+            test_end="2026-05-08",
+        )
+    ]
+
+    class StubEngine:
+        def run_backtest(self):
+            return {"sharpe_ratio": 0.6, "sortino_ratio": 0.7, "max_drawdown": -4.0}
+
+    results = run_walk_forward(windows, lambda window: StubEngine())
+    summary = summarize_walk_forward(results)
+
+    assert results[0].metrics["test_trading_days"] == 4
+    assert summary["rollout_ready"] is False
+    assert "test_window_too_short" in summary["rollout_blockers"]
+
+
 def test_build_promotion_gate_summary_adds_risk_budget_blocker():
     summary = build_promotion_gate_summary(
         walk_forward_summary={"rollout_ready": True, "rollout_blockers": []},
@@ -107,6 +157,71 @@ def test_build_promotion_gate_summary_adds_risk_budget_blocker():
     assert summary["promotion_ready"] is False
     assert "risk_budget_suppression_exceeded" in summary["promotion_blockers"]
     assert "theme_exposure_cap_breach" in summary["promotion_blockers"]
+
+
+def test_summarize_walk_forward_blocks_too_short_test_windows():
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-03",
+            ),
+            metrics={"sharpe_ratio": 0.6, "sortino_ratio": 0.7, "max_drawdown": -4.0},
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert summary["rollout_ready"] is False
+    assert "test_window_too_short" in summary["rollout_blockers"]
+    assert summary["promotion_ready"] is False
+    assert "test_window_too_short" in summary["promotion_blockers"]
+
+
+def test_summarize_walk_forward_allows_longer_test_windows():
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-16",
+            ),
+            metrics={"sharpe_ratio": 0.6, "sortino_ratio": 0.7, "max_drawdown": -4.0},
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert summary["rollout_ready"] is True
+    assert "test_window_too_short" not in summary["rollout_blockers"]
+    assert summary["promotion_ready"] is True
+
+
+def test_summarize_walk_forward_prefers_explicit_test_trading_days():
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-28",
+            ),
+            metrics={
+                "sharpe_ratio": 0.6,
+                "sortino_ratio": 0.7,
+                "max_drawdown": -4.0,
+                "test_trading_days": 12,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert summary["rollout_ready"] is True
+    assert "test_window_too_short" not in summary["rollout_blockers"]
 
 
 def test_summarize_walk_forward_attaches_promotion_gate_summary():

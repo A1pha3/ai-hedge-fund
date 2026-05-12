@@ -1,5 +1,7 @@
 import pytest
 
+from src.backtesting.portfolio import Portfolio
+from src.backtesting.trader_helpers import _resolve_buy_execution, _resolve_execution_slippage_rate, _resolve_short_open_execution
 from src.backtesting.trader import TradeExecutor, TradingConstraints
 
 
@@ -56,6 +58,138 @@ def test_trade_executor_applies_slippage_and_fees(portfolio):
     assert sell_qty == 10
     snapshot_after_sell = portfolio.get_snapshot()
     assert snapshot_after_sell["cash"] == pytest.approx(100_000.0 - 1_111.0 + 900.0 - 18.0)
+
+
+def test_trade_executor_scales_slippage_with_order_size_when_turnover_is_available():
+    small_order_portfolio = Portfolio(tickers=["AAPL"], initial_cash=100_000.0, margin_requirement=0.0)
+    large_order_portfolio = Portfolio(tickers=["AAPL"], initial_cash=100_000.0, margin_requirement=0.0)
+    executor = TradeExecutor(
+        TradingConstraints(
+            commission_rate=0.0,
+            stamp_duty_rate=0.0,
+            base_slippage_rate=0.01,
+            low_liquidity_slippage_rate=0.01,
+        )
+    )
+
+    executor.execute_trade("AAPL", "buy", 10, 100.0, small_order_portfolio, daily_turnover=100_000.0)
+    executor.execute_trade("AAPL", "buy", 1_000, 100.0, large_order_portfolio, daily_turnover=100_000.0)
+
+    small_cost_basis = small_order_portfolio.get_snapshot()["positions"]["AAPL"]["long_cost_basis"]
+    large_cost_basis = large_order_portfolio.get_snapshot()["positions"]["AAPL"]["long_cost_basis"]
+
+    assert large_cost_basis > small_cost_basis
+
+
+def test_trade_executor_keeps_flat_slippage_when_turnover_is_missing():
+    portfolio = Portfolio(tickers=["AAPL"], initial_cash=100_000.0, margin_requirement=0.0)
+    executor = TradeExecutor(
+        TradingConstraints(
+            commission_rate=0.0,
+            stamp_duty_rate=0.0,
+            base_slippage_rate=0.01,
+            low_liquidity_slippage_rate=0.01,
+        )
+    )
+
+    executor.execute_trade("AAPL", "buy", 10, 100.0, portfolio)
+
+    snapshot = portfolio.get_snapshot()
+    assert snapshot["positions"]["AAPL"]["long_cost_basis"] == pytest.approx(101.0)
+
+
+def test_resolve_execution_slippage_rate_scales_with_participation_ratio_and_caps_at_one():
+    assert _resolve_execution_slippage_rate(0.01, 10, 100.0, 100_000.0) == pytest.approx(0.0101)
+    assert _resolve_execution_slippage_rate(0.01, 2_000, 100.0, 100_000.0) == pytest.approx(0.02)
+
+
+def test_resolve_buy_execution_uses_cash_capped_quantity_for_market_impact():
+    portfolio = Portfolio(tickers=["AAPL"], initial_cash=10_000.0, margin_requirement=0.0)
+
+    quantity, executed_price = _resolve_buy_execution(1_000, 100.0, portfolio, 0.01, 0.0, 100_000.0)
+
+    assert quantity == 98
+    assert executed_price == pytest.approx(101.098)
+
+
+def test_resolve_short_open_execution_uses_margin_capped_quantity_for_market_impact():
+    portfolio = Portfolio(tickers=["AAPL"], initial_cash=5_000.0, margin_requirement=0.5)
+
+    quantity, executed_price = _resolve_short_open_execution(1_000, 100.0, portfolio, 0.01, 100_000.0)
+
+    assert quantity == 101
+    assert executed_price == pytest.approx(98.899)
+
+
+@pytest.mark.parametrize(
+    ("action", "quantity", "expected_cash_delta"),
+    [
+        ("buy", 10, -1_010.0),
+    ],
+)
+def test_trade_executor_preserves_buy_fee_semantics_with_turnover(action, quantity, expected_cash_delta):
+    portfolio = Portfolio(tickers=["AAPL"], initial_cash=100_000.0, margin_requirement=0.0)
+    executor = TradeExecutor(
+        TradingConstraints(
+            commission_rate=0.01,
+            stamp_duty_rate=0.001,
+            base_slippage_rate=0.0,
+            low_liquidity_slippage_rate=0.0,
+        )
+    )
+
+    starting_cash = portfolio.get_cash()
+    executed = executor.execute_trade("AAPL", action, quantity, 100.0, portfolio, daily_turnover=100_000.0)
+
+    assert executed == quantity
+    assert portfolio.get_cash() - starting_cash == pytest.approx(expected_cash_delta)
+
+
+def test_trade_executor_preserves_sell_fee_semantics_with_turnover():
+    portfolio = Portfolio(tickers=["AAPL"], initial_cash=100_000.0, margin_requirement=0.0)
+    portfolio.apply_long_buy("AAPL", 10, 100.0)
+    portfolio.record_long_entry("AAPL", "2024-01-15", reset=True)
+    executor = TradeExecutor(
+        TradingConstraints(
+            commission_rate=0.01,
+            stamp_duty_rate=0.001,
+            base_slippage_rate=0.0,
+            low_liquidity_slippage_rate=0.0,
+        )
+    )
+
+    starting_cash = portfolio.get_cash()
+    executed = executor.execute_trade("AAPL", "sell", 10, 100.0, portfolio, daily_turnover=100_000.0)
+
+    assert executed == 10
+    assert portfolio.get_cash() - starting_cash == pytest.approx(989.0)
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_cash_delta"),
+    [
+        ("short", 990.0),
+        ("cover", -1_010.0),
+    ],
+)
+def test_trade_executor_preserves_short_and_cover_fee_semantics_with_turnover(action, expected_cash_delta):
+    portfolio = Portfolio(tickers=["AAPL"], initial_cash=100_000.0, margin_requirement=0.0)
+    if action == "cover":
+        portfolio.apply_short_open("AAPL", 10, 100.0)
+    executor = TradeExecutor(
+        TradingConstraints(
+            commission_rate=0.01,
+            stamp_duty_rate=0.001,
+            base_slippage_rate=0.0,
+            low_liquidity_slippage_rate=0.0,
+        )
+    )
+
+    starting_cash = portfolio.get_cash()
+    executed = executor.execute_trade("AAPL", action, 10, 100.0, portfolio, daily_turnover=100_000.0)
+
+    assert executed == 10
+    assert portfolio.get_cash() - starting_cash == pytest.approx(expected_cash_delta)
 
 
 def test_trade_executor_enforces_t_plus_1_same_day_sell_blocked(portfolio):

@@ -53,22 +53,56 @@ class TradeExecutor:
             if is_limit_up:
                 self._last_trade_diagnostics = {}
                 return 0
-            executed = execute_buy_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
+            executed = execute_buy_trade(
+                ticker,
+                quantity,
+                current_price,
+                portfolio,
+                slippage_rate,
+                self._constraints.commission_rate,
+                resolved_inputs.daily_turnover,
+            )
             self._last_trade_diagnostics = diagnostics if executed > 0 else {}
             return executed
         if action_enum == Action.SELL:
             if is_limit_down:
                 self._last_trade_diagnostics = {}
                 return 0
-            executed = execute_sell_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate, self._constraints.stamp_duty_rate, trade_date)
+            executed = execute_sell_trade(
+                ticker,
+                quantity,
+                current_price,
+                portfolio,
+                slippage_rate,
+                self._constraints.commission_rate,
+                self._constraints.stamp_duty_rate,
+                trade_date,
+                resolved_inputs.daily_turnover,
+            )
             self._last_trade_diagnostics = diagnostics if executed > 0 else {}
             return executed
         if action_enum == Action.SHORT:
-            executed = execute_short_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
+            executed = execute_short_trade(
+                ticker,
+                quantity,
+                current_price,
+                portfolio,
+                slippage_rate,
+                self._constraints.commission_rate,
+                resolved_inputs.daily_turnover,
+            )
             self._last_trade_diagnostics = diagnostics if executed > 0 else {}
             return executed
         if action_enum == Action.COVER:
-            executed = execute_cover_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
+            executed = execute_cover_trade(
+                ticker,
+                quantity,
+                current_price,
+                portfolio,
+                slippage_rate,
+                self._constraints.commission_rate,
+                resolved_inputs.daily_turnover,
+            )
             self._last_trade_diagnostics = diagnostics if executed > 0 else {}
             return executed
 
