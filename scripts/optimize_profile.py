@@ -1361,6 +1361,10 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "runner_composite_score_sector_resonance_weight": [0.0, 0.05, 0.10],
     # Task 5 (Round 10): quiet breakout cross-factor weight.
     "runner_composite_score_quiet_breakout_weight": [0.0, 0.05, 0.10, 0.15],
+    # Task 1 (Round 18): R16/R17 new-factor weights — net inflow, volume-price divergence quality, t0 tail strength.
+    "runner_composite_score_net_inflow_weight": [0.0, 0.05, 0.10, 0.15],
+    "runner_composite_score_volume_price_divergence_weight": [0.0, 0.05, 0.10, 0.15],
+    "runner_composite_score_t0_tail_weight": [0.0, 0.05, 0.10, 0.15],
     "runner_escape_gap_risk_raw_100_max": [40.0, 45.0, 52.0],
     "runner_escape_projected_theme_exposure_max": [0.24, 0.28, 0.32],
     "runner_escape_candidate_pool_avg_amount_share_of_cutoff_min": [0.85, 1.0, 1.15],
@@ -1384,6 +1388,10 @@ BTST_FACTOR_TO_PROBE_WEIGHT_KEY: dict[str, str] = {
     "close_strength": "runner_composite_score_close_strength_weight",
     "volatility_regime": "runner_composite_score_volatility_regime_weight",
     "sector_resonance": "runner_composite_score_sector_resonance_weight",
+    # Task 1 (Round 18): R16/R17 new factors now have grid weight axes.
+    "t0_estimated_net_inflow_ratio": "runner_composite_score_net_inflow_weight",
+    "volume_price_divergence_score": "runner_composite_score_volume_price_divergence_weight",
+    "t0_tail_strength": "runner_composite_score_t0_tail_weight",
 }
 
 # Standard step size for weight candidates in BTST_RUNNER_PROBE_GRID.

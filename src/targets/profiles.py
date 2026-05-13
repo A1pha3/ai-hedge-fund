@@ -301,6 +301,16 @@ class ShortTradeTargetProfile:
     # Task 5 (Round 10): quiet breakout cross-factor — high momentum × low volatility synergy.
     # Captures "安静突破" setups where breakout freshness is amplified by a calm volatility regime.
     runner_composite_score_quiet_breakout_weight: float = 0.0
+    # Task 1 (Round 18): R16/R17 new-factor composite weights.
+    # runner_composite_score_net_inflow_weight: weight for t0_estimated_net_inflow_ratio mapped to [0,1].
+    #   Positive net inflow (buying pressure) → higher runner quality signal.
+    # runner_composite_score_volume_price_divergence_weight: weight for volume_price_divergence INVERSE
+    #   (1 − divergence_score), so low divergence (clean breakout bar) → higher runner quality signal.
+    # runner_composite_score_t0_tail_weight: weight for t0_tail_strength (close/high), high → 尾盘强势.
+    # All three default to 0.0 (disabled) for backward-compatibility; non-zero values enable the factors.
+    runner_composite_score_net_inflow_weight: float = 0.0
+    runner_composite_score_volume_price_divergence_weight: float = 0.0
+    runner_composite_score_t0_tail_weight: float = 0.0
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:

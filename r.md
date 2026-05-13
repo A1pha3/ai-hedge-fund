@@ -3,14 +3,14 @@
 ## Search Metadata
 
 Search Stage: **full**
-Checkpoint: `data/reports/param_search_ignition_breakout_d2756824c06c_checkpoint.json`
+Checkpoint: `data/reports/param_search_ignition_breakout_31bc0ec644c2_checkpoint.json`
 
 ## Baseline Comparison
 
-| Baseline | Close+ Δ | High-hit Δ | Expectancy Δ | Downside P10 Δ | Coverage Δ | Liquidity Δ | Crowding Δ | Gap Risk Δ | Projected Exp Δ | Incremental Exp Δ | Runner 20% Hit Δ | Time-to-20% Med Δ | Runner Count Δ | Runner Escape % Δ | Avg Escaped Score Δ | T+2 Close+ Δ | T+2 Payoff Δ | T+3 Close+ Δ | T+3 Expectancy Δ | T+3 Payoff Δ |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ignition_breakout | N/A | N/A | N/A | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| default | N/A | N/A | N/A | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| Baseline | Close+ Δ | High-hit Δ | Expectancy Δ | Downside P10 Δ | Coverage Δ | Liquidity Δ | Crowding Δ | Gap Risk Δ | Projected Exp Δ | Incremental Exp Δ | Runner 20% Hit Δ | Time-to-20% Med Δ | Runner Count Δ | Runner Escape % Δ | Avg Escaped Score Δ | T+2 Close+ Δ | T+2 Payoff Δ | T+3 Close+ Δ | T+3 Expectancy Δ | T+3 Payoff Δ | IC Quality Frac Δ | Pool Avg Score Δ | Intraday DD P10 Δ | SL-2% Rate Δ | SL-3% Rate Δ | SL-5% Rate Δ | T1→T2 Autocorr Δ | T2→T3 Autocorr Δ | Gap-Up Cont. Δ | Vol-Price Div% Δ | Pred Range P75 Δ | HighVol Warn% Δ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ignition_breakout | N/A | N/A | N/A | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| default | N/A | N/A | N/A | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 
 Rollout Recommendation: **hold**
 

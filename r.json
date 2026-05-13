@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_d2756824c06c_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_31bc0ec644c2_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -64,7 +64,19 @@
       "t_plus_2_close_payoff_ratio_delta": null,
       "t_plus_3_close_positive_rate_delta": null,
       "t_plus_3_close_expectancy_delta": null,
-      "t_plus_3_close_payoff_ratio_delta": null
+      "t_plus_3_close_payoff_ratio_delta": null,
+      "ic_positive_factor_fraction_delta": null,
+      "candidate_pool_avg_composite_score_delta": null,
+      "t_plus_1_intraday_drawdown_p10_delta": null,
+      "stop_loss_trigger_rate_2pct_delta": null,
+      "stop_loss_trigger_rate_3pct_delta": null,
+      "stop_loss_trigger_rate_5pct_delta": null,
+      "cross_day_autocorr_t1_vs_t2_delta": null,
+      "cross_day_autocorr_t2_vs_t3_delta": null,
+      "gap_continuation_rate_delta": null,
+      "volume_price_divergence_rate_delta": null,
+      "predicted_range_pct_p75_delta": null,
+      "high_volatility_warning_rate_delta": null
     },
     "default": {
       "candidate": {
@@ -124,7 +136,19 @@
       "t_plus_2_close_payoff_ratio_delta": null,
       "t_plus_3_close_positive_rate_delta": null,
       "t_plus_3_close_expectancy_delta": null,
-      "t_plus_3_close_payoff_ratio_delta": null
+      "t_plus_3_close_payoff_ratio_delta": null,
+      "ic_positive_factor_fraction_delta": null,
+      "candidate_pool_avg_composite_score_delta": null,
+      "t_plus_1_intraday_drawdown_p10_delta": null,
+      "stop_loss_trigger_rate_2pct_delta": null,
+      "stop_loss_trigger_rate_3pct_delta": null,
+      "stop_loss_trigger_rate_5pct_delta": null,
+      "cross_day_autocorr_t1_vs_t2_delta": null,
+      "cross_day_autocorr_t2_vs_t3_delta": null,
+      "gap_continuation_rate_delta": null,
+      "volume_price_divergence_rate_delta": null,
+      "predicted_range_pct_p75_delta": null,
+      "high_volatility_warning_rate_delta": null
     }
   },
   "rollout_recommendation": "hold",

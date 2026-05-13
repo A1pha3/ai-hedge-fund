@@ -1033,6 +1033,248 @@ def compute_sell_timing_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 2 (Round 18): Multi-period momentum alignment score (多周期动量一致性)
+# ---------------------------------------------------------------------------
+# Measures how consistently forward returns are positive across T+1, T+2, and T+3 horizons.
+# A high alignment score indicates that BTST candidates are showing genuine multi-day momentum
+# (rather than one-day pops that immediately reverse), which makes the breakout signal more
+# reliable.  Three alignment tiers are reported:
+#
+#   full_aligned_rate   — fraction of rows where T+1 > 0 AND T+2 > 0 AND T+3 > 0 (三日连涨)
+#   partial_aligned_rate — fraction of rows where at least 2 of the 3 horizons are positive
+#   t1_t2_aligned_rate  — fraction of rows where T+1 > 0 AND T+2 > 0 (two-day continuation)
+#
+# alignment_score ∈ [0, 1]:  weighted average giving more weight to full alignment.
+#   formula: (full_aligned_count × 1.0 + t1_t2_only_count × 0.5) / total_count
+#
+# Only rows with all three forward returns present are included in the denominator, so
+# the metric is only available in "closed" evaluation windows.
+
+
+def compute_multi_period_momentum_alignment(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute multi-period momentum alignment across T+1, T+2, T+3 horizons (Task 2, Round 18).
+
+    Evaluates how consistently the forward return is positive across three consecutive horizons.
+    A high ``full_aligned_rate`` (all three days positive) signals genuine multi-day momentum
+    — the BTST breakout is continuing rather than reversing after T+1.
+
+    Args:
+        rows: BTST candidate rows.  Must contain ``next_close_return`` (T+1),
+            ``t_plus_2_close_return`` (T+2), and ``t_plus_3_close_return`` (T+3) for a row
+            to be included in the aligned-sample denominator.
+
+    Returns:
+        Dict with keys:
+
+        - ``full_aligned_rate`` (float | None): fraction of rows with T+1 > 0 AND T+2 > 0 AND T+3 > 0.
+        - ``partial_aligned_rate`` (float | None): fraction where ≥ 2 of 3 horizons positive.
+        - ``t1_t2_aligned_rate`` (float | None): fraction where T+1 > 0 AND T+2 > 0 (two-day continuation).
+        - ``alignment_score`` (float | None): weighted index ∈ [0, 1]; higher = stronger momentum.
+        - ``aligned_sample_count`` (int): rows with all three forward returns present.
+        - ``t1_positive_rate`` (float | None): T+1 win rate within the three-horizon sample.
+        - ``t2_positive_rate`` (float | None): T+2 win rate within the three-horizon sample.
+        - ``t3_positive_rate`` (float | None): T+3 win rate within the three-horizon sample.
+    """
+    full_aligned: int = 0
+    partial_aligned: int = 0
+    t1_t2_aligned: int = 0
+    t1_positive: int = 0
+    t2_positive: int = 0
+    t3_positive: int = 0
+    total: int = 0
+
+    for row in rows:
+        r1 = row.get("next_close_return")
+        r2 = row.get("t_plus_2_close_return")
+        r3 = row.get("t_plus_3_close_return")
+        if r1 is None or r2 is None or r3 is None:
+            continue
+        try:
+            f1 = float(r1)
+            f2 = float(r2)
+            f3 = float(r3)
+        except (TypeError, ValueError):
+            continue
+        total += 1
+        pos1 = f1 > 0.0
+        pos2 = f2 > 0.0
+        pos3 = f3 > 0.0
+        if pos1:
+            t1_positive += 1
+        if pos2:
+            t2_positive += 1
+        if pos3:
+            t3_positive += 1
+        if pos1 and pos2 and pos3:
+            full_aligned += 1
+        if (pos1 and pos2) or (pos1 and pos3) or (pos2 and pos3):
+            partial_aligned += 1
+        if pos1 and pos2:
+            t1_t2_aligned += 1
+
+    if total == 0:
+        return {
+            "full_aligned_rate": None,
+            "partial_aligned_rate": None,
+            "t1_t2_aligned_rate": None,
+            "alignment_score": None,
+            "aligned_sample_count": 0,
+            "t1_positive_rate": None,
+            "t2_positive_rate": None,
+            "t3_positive_rate": None,
+        }
+
+    full_aligned_rate: float = round(full_aligned / total, 4)
+    partial_aligned_rate: float = round(partial_aligned / total, 4)
+    t1_t2_aligned_rate: float = round(t1_t2_aligned / total, 4)
+    t1_positive_rate: float = round(t1_positive / total, 4)
+    t2_positive_rate: float = round(t2_positive / total, 4)
+    t3_positive_rate: float = round(t3_positive / total, 4)
+    # Weighted alignment score: full 3-day alignment counts fully; T+1&T+2 only counts half.
+    t1_t2_only_count: int = t1_t2_aligned - full_aligned
+    alignment_score: float = round((full_aligned * 1.0 + t1_t2_only_count * 0.5) / total, 4)
+
+    return {
+        "full_aligned_rate": full_aligned_rate,
+        "partial_aligned_rate": partial_aligned_rate,
+        "t1_t2_aligned_rate": t1_t2_aligned_rate,
+        "alignment_score": alignment_score,
+        "aligned_sample_count": total,
+        "t1_positive_rate": t1_positive_rate,
+        "t2_positive_rate": t2_positive_rate,
+        "t3_positive_rate": t3_positive_rate,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 18): t0_tail_strength factor stratification (尾盘强度分层验证)
+# ---------------------------------------------------------------------------
+# Validates the monotonicity hypothesis for the t0_tail_strength factor introduced in R17:
+# "高尾盘强度 → 高T+1胜率".  The rows are divided into three quantile strata by t0_tail_strength:
+#
+#   "low"   — bottom third  (t0_tail_strength < p33)
+#   "mid"   — middle third  (p33 ≤ t0_tail_strength < p67)
+#   "high"  — top third     (t0_tail_strength ≥ p67)
+#
+# For each stratum, win rate and payoff ratio (avg_win / avg_loss_abs) are computed and
+# surfaced so analysts can confirm that high t0_tail_strength candidates genuinely outperform.
+# If monotonicity holds (low_win_rate < mid_win_rate < high_win_rate) ``monotone_win_rate``
+# is set to True; similarly for payoff ratios.
+_TAIL_STRENGTH_STRATA: tuple[str, ...] = ("low", "mid", "high")
+
+
+def compute_t0_tail_strength_stratification(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Stratify candidates by t0_tail_strength and compute per-stratum T+1 metrics (Task 3, Round 18).
+
+    Divides rows into three equal-sized strata by t0_tail_strength (low / mid / high third)
+    and computes win rate and payoff ratio for each stratum.  Monotonicity flags confirm whether
+    higher t0_tail_strength consistently predicts better T+1 outcomes.
+
+    Args:
+        rows: BTST candidate rows with both ``t0_tail_strength`` (float ∈ (0, 1]) and
+            ``next_close_return`` (float).  Rows missing either field are excluded.
+
+    Returns:
+        Dict with keys:
+
+        - ``low`` / ``mid`` / ``high`` (dict): per-stratum statistics with:
+            - ``win_rate`` (float | None), ``payoff_ratio`` (float | None),
+              ``average_win`` (float | None), ``average_loss_abs`` (float | None), ``count`` (int).
+        - ``monotone_win_rate`` (bool | None): True when low < mid < high win rates.
+        - ``monotone_payoff_ratio`` (bool | None): True when low < mid < high payoff ratios.
+        - ``stratification_sample_count`` (int): total rows with valid tail_strength and return data.
+        - ``p33_threshold`` (float | None): 33rd-percentile boundary between low and mid strata.
+        - ``p67_threshold`` (float | None): 67th-percentile boundary between mid and high strata.
+    """
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        ts = row.get("t0_tail_strength")
+        ncr = row.get("next_close_return")
+        if ts is None or ncr is None:
+            continue
+        try:
+            paired.append((float(ts), float(ncr)))
+        except (TypeError, ValueError):
+            continue
+
+    empty_stratum: dict[str, Any] = {"win_rate": None, "payoff_ratio": None, "average_win": None, "average_loss_abs": None, "count": 0}
+    if len(paired) < 3:
+        return {
+            "low": empty_stratum,
+            "mid": empty_stratum,
+            "high": empty_stratum,
+            "monotone_win_rate": None,
+            "monotone_payoff_ratio": None,
+            "stratification_sample_count": len(paired),
+            "p33_threshold": None,
+            "p67_threshold": None,
+        }
+
+    sorted_pairs = sorted(paired, key=lambda x: x[0])
+    n = len(sorted_pairs)
+    # Compute p33 and p67 thresholds from sorted t0_tail_strength values.
+    tail_strengths = [p[0] for p in sorted_pairs]
+
+    def _pct(values: list[float], pct: float) -> float:
+        max_idx = len(values) - 1
+        if max_idx <= 0:
+            return round(values[0], 4)
+        scaled = max(0.0, min(1.0, pct)) * max_idx
+        lo = int(scaled)
+        hi = min(max_idx, lo + 1)
+        if lo == hi:
+            return round(values[lo], 4)
+        return round(values[lo] + (values[hi] - values[lo]) * (scaled - lo), 4)
+
+    p33 = _pct(tail_strengths, 1.0 / 3.0)
+    p67 = _pct(tail_strengths, 2.0 / 3.0)
+
+    def _stratum_stats(returns: list[float]) -> dict[str, Any]:
+        if not returns:
+            return dict(empty_stratum)
+        wins = [r for r in returns if r > 0.0]
+        losses = [r for r in returns if r < 0.0]
+        win_rate: float | None = round(len(wins) / len(returns), 4)
+        avg_win: float | None = round(sum(wins) / len(wins), 4) if wins else None
+        avg_loss_abs: float | None = round(abs(sum(losses) / len(losses)), 4) if losses else None
+        payoff: float | None = round(avg_win / avg_loss_abs, 4) if avg_win is not None and avg_loss_abs is not None and avg_loss_abs > 0 else None
+        return {"win_rate": win_rate, "payoff_ratio": payoff, "average_win": avg_win, "average_loss_abs": avg_loss_abs, "count": len(returns)}
+
+    low_returns = [r for ts_val, r in sorted_pairs if ts_val < p33]
+    mid_returns = [r for ts_val, r in sorted_pairs if p33 <= ts_val < p67]
+    high_returns = [r for ts_val, r in sorted_pairs if ts_val >= p67]
+
+    low_stats = _stratum_stats(low_returns)
+    mid_stats = _stratum_stats(mid_returns)
+    high_stats = _stratum_stats(high_returns)
+
+    low_wr = low_stats["win_rate"]
+    mid_wr = mid_stats["win_rate"]
+    high_wr = high_stats["win_rate"]
+    monotone_win_rate: bool | None = None
+    if low_wr is not None and mid_wr is not None and high_wr is not None:
+        monotone_win_rate = bool(low_wr < mid_wr < high_wr)
+
+    low_pr = low_stats["payoff_ratio"]
+    mid_pr = mid_stats["payoff_ratio"]
+    high_pr = high_stats["payoff_ratio"]
+    monotone_payoff_ratio: bool | None = None
+    if low_pr is not None and mid_pr is not None and high_pr is not None:
+        monotone_payoff_ratio = bool(low_pr < mid_pr < high_pr)
+
+    return {
+        "low": low_stats,
+        "mid": mid_stats,
+        "high": high_stats,
+        "monotone_win_rate": monotone_win_rate,
+        "monotone_payoff_ratio": monotone_payoff_ratio,
+        "stratification_sample_count": len(paired),
+        "p33_threshold": p33,
+        "p67_threshold": p67,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -1146,6 +1388,19 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # Task 3 (Round 17): sell-timing optimisation.
     # Uses T+1 OHLC to identify whether early/mid/late exit maximises median return.
     sell_timing_analysis: dict[str, Any] = compute_sell_timing_analysis(next_day_rows)
+
+    # -----------------------------------------------------------------------
+    # Round 18 analytics — wired into build_surface_summary.
+    # -----------------------------------------------------------------------
+    # Task 2 (Round 18): Multi-period momentum alignment score.
+    # Measures how consistently T+1, T+2, T+3 forward returns are all positive.
+    # full_aligned_rate = fraction of rows with T+1>0 AND T+2>0 AND T+3>0.
+    # alignment_score ∈ [0,1]: weighted index giving full credit for 3-day alignment.
+    multi_period_momentum_alignment: dict[str, Any] = compute_multi_period_momentum_alignment(t_plus_3_rows)
+    # Task 3 (Round 18): t0_tail_strength stratification (尾盘强度分层验证).
+    # Divides rows into low/mid/high t0_tail_strength thirds and computes T+1 win rate
+    # and payoff ratio per stratum.  monotone_win_rate=True validates the R17 factor hypothesis.
+    t0_tail_strength_stratification: dict[str, Any] = compute_t0_tail_strength_stratification(next_day_rows)
 
     return {
         "total_count": len(rows),
@@ -1264,6 +1519,23 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "optimal_exit_window": sell_timing_analysis.get("optimal_exit_window"),
         "open_vs_high_ratio_mean": sell_timing_analysis.get("open_vs_high_ratio_mean"),
         "open_significantly_below_high": sell_timing_analysis.get("open_significantly_below_high"),
+        # -----------------------------------------------------------------------
+        # Round 18 analytics
+        # -----------------------------------------------------------------------
+        # Task 2 (Round 18): multi-period momentum alignment score.
+        # full_aligned_rate: fraction of rows with T+1 > 0 AND T+2 > 0 AND T+3 > 0 (三日连涨).
+        # alignment_score: weighted index ∈ [0, 1] — full credit for 3-day, half for T+1&T+2 only.
+        # aligned_sample_count: rows with all three horizons available (denominator).
+        "multi_period_momentum_alignment": multi_period_momentum_alignment,
+        "multi_period_full_aligned_rate": multi_period_momentum_alignment.get("full_aligned_rate"),
+        "multi_period_alignment_score": multi_period_momentum_alignment.get("alignment_score"),
+        "multi_period_aligned_sample_count": multi_period_momentum_alignment.get("aligned_sample_count"),
+        # Task 3 (Round 18): t0_tail_strength stratification (尾盘强度分层验证).
+        # Per-stratum (low/mid/high t0_tail_strength thirds) win rate and payoff ratio.
+        # monotone_win_rate=True validates the hypothesis that high t0_tail_strength → high T+1 win rate.
+        "t0_tail_strength_stratification": t0_tail_strength_stratification,
+        "t0_tail_strength_monotone_win_rate": t0_tail_strength_stratification.get("monotone_win_rate"),
+        "t0_tail_strength_monotone_payoff_ratio": t0_tail_strength_stratification.get("monotone_payoff_ratio"),
     }
 
 

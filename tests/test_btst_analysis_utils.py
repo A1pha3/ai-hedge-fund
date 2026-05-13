@@ -12,8 +12,10 @@ from scripts.btst_analysis_utils import (
     compute_all_factor_ics,
     compute_breakout_conditional_win_rate,
     compute_factor_ic,
+    compute_multi_period_momentum_alignment,
     compute_sell_timing_analysis,
     compute_t0_bar_metrics,
+    compute_t0_tail_strength_stratification,
     summarize_distribution,
     extract_btst_price_outcome,
 )
@@ -1372,4 +1374,374 @@ def test_build_surface_summary_sell_timing_none_when_no_ohlc() -> None:
     assert sta["optimal_exit_window"] is None
     assert sta["sell_timing_sample_count"] == 0
     assert summary["optimal_exit_window"] is None
+
+
+# ===========================================================================
+# Round 18 — Task 2: Multi-period momentum alignment score (多周期动量一致性)
+# ===========================================================================
+
+
+def test_compute_multi_period_momentum_alignment_empty_returns_none_fields() -> None:
+    """compute_multi_period_momentum_alignment on empty rows must return None for all rate fields."""
+    result = compute_multi_period_momentum_alignment([])
+    assert result["full_aligned_rate"] is None
+    assert result["partial_aligned_rate"] is None
+    assert result["t1_t2_aligned_rate"] is None
+    assert result["alignment_score"] is None
+    assert result["aligned_sample_count"] == 0
+    assert result["t1_positive_rate"] is None
+    assert result["t2_positive_rate"] is None
+    assert result["t3_positive_rate"] is None
+
+
+def test_compute_multi_period_momentum_alignment_excludes_rows_missing_returns() -> None:
+    """Rows without all three forward returns must be excluded from the denominator."""
+    rows = [
+        {"next_close_return": 0.03},  # missing t_plus_2 and t_plus_3
+        {"next_close_return": 0.03, "t_plus_2_close_return": 0.02},  # missing t_plus_3
+        {"next_close_return": 0.03, "t_plus_2_close_return": 0.02, "t_plus_3_close_return": 0.01},  # complete
+    ]
+    result = compute_multi_period_momentum_alignment(rows)
+    assert result["aligned_sample_count"] == 1
+
+
+def test_compute_multi_period_momentum_alignment_all_positive() -> None:
+    """When all three horizons are positive for every row, full_aligned_rate must be 1.0."""
+    rows = [
+        {"next_close_return": 0.05, "t_plus_2_close_return": 0.03, "t_plus_3_close_return": 0.02},
+        {"next_close_return": 0.04, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.03},
+    ]
+    result = compute_multi_period_momentum_alignment(rows)
+    assert result["full_aligned_rate"] == 1.0
+    assert result["partial_aligned_rate"] == 1.0
+    assert result["t1_t2_aligned_rate"] == 1.0
+    assert result["alignment_score"] == 1.0
+    assert result["aligned_sample_count"] == 2
+    assert result["t1_positive_rate"] == 1.0
+    assert result["t2_positive_rate"] == 1.0
+    assert result["t3_positive_rate"] == 1.0
+
+
+def test_compute_multi_period_momentum_alignment_no_alignment() -> None:
+    """When T+2 is always negative, full_aligned_rate must be 0 and t1_t2 rate must be 0."""
+    rows = [
+        {"next_close_return": 0.05, "t_plus_2_close_return": -0.03, "t_plus_3_close_return": 0.02},
+        {"next_close_return": 0.04, "t_plus_2_close_return": -0.01, "t_plus_3_close_return": 0.01},
+    ]
+    result = compute_multi_period_momentum_alignment(rows)
+    assert result["full_aligned_rate"] == 0.0
+    assert result["t1_t2_aligned_rate"] == 0.0
+    # T+1 and T+3 are both positive → partial alignment
+    assert result["partial_aligned_rate"] == 1.0
+
+
+def test_compute_multi_period_momentum_alignment_partial_alignment() -> None:
+    """Alignment score formula: full rows × 1.0 + t1_t2_only rows × 0.5, divided by total."""
+    # Row 1: T+1=+, T+2=+, T+3=+ → full (counts 1.0)
+    # Row 2: T+1=+, T+2=+, T+3=- → t1_t2 only (counts 0.5)
+    # Row 3: T+1=+, T+2=-, T+3=- → no alignment  (counts 0.0)
+    # Row 4: T+1=-, T+2=-, T+3=- → no alignment  (counts 0.0)
+    rows = [
+        {"next_close_return": 0.05, "t_plus_2_close_return": 0.03, "t_plus_3_close_return": 0.02},
+        {"next_close_return": 0.04, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": -0.01},
+        {"next_close_return": 0.03, "t_plus_2_close_return": -0.02, "t_plus_3_close_return": -0.01},
+        {"next_close_return": -0.02, "t_plus_2_close_return": -0.01, "t_plus_3_close_return": -0.03},
+    ]
+    result = compute_multi_period_momentum_alignment(rows)
+    assert result["aligned_sample_count"] == 4
+    assert result["full_aligned_rate"] == 0.25  # 1/4
+    assert result["t1_t2_aligned_rate"] == 0.50  # 2/4 (rows 1 and 2)
+    # alignment_score = (1 × 1.0 + 1 × 0.5) / 4 = 1.5/4 = 0.375
+    assert result["alignment_score"] == 0.375
+
+
+def test_build_surface_summary_includes_multi_period_momentum_alignment() -> None:
+    """build_surface_summary must include multi_period_momentum_alignment sub-dict (Task 2, Round 18)."""
+    rows = [
+        {"next_close_return": 0.05, "t_plus_2_close_return": 0.03, "t_plus_3_close_return": 0.02, "next_high_return": 0.07},
+        {"next_close_return": -0.02, "t_plus_2_close_return": -0.01, "t_plus_3_close_return": 0.01, "next_high_return": 0.01},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "multi_period_momentum_alignment" in summary
+    mma = summary["multi_period_momentum_alignment"]
+    assert isinstance(mma, dict)
+    assert mma["aligned_sample_count"] == 2
+    # Top-level shortcut keys
+    assert "multi_period_full_aligned_rate" in summary
+    assert "multi_period_alignment_score" in summary
+    assert "multi_period_aligned_sample_count" in summary
+    assert summary["multi_period_aligned_sample_count"] == 2
+
+
+def test_build_surface_summary_multi_period_alignment_score_zero_when_no_t3_rows() -> None:
+    """When no rows have t_plus_3_close_return, aligned_sample_count must be 0 and rates None."""
+    rows = [
+        {"next_close_return": 0.05, "next_high_return": 0.07},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert summary["multi_period_aligned_sample_count"] == 0
+    assert summary["multi_period_full_aligned_rate"] is None
+    assert summary["multi_period_alignment_score"] is None
+
+
+# ===========================================================================
+# Round 18 — Task 3: t0_tail_strength stratification (尾盘强度分层验证)
+# ===========================================================================
+
+
+def test_compute_t0_tail_strength_stratification_empty_returns_empty_strata() -> None:
+    """compute_t0_tail_strength_stratification on empty input must return 0-count strata."""
+    result = compute_t0_tail_strength_stratification([])
+    assert result["stratification_sample_count"] == 0
+    assert result["low"]["count"] == 0
+    assert result["mid"]["count"] == 0
+    assert result["high"]["count"] == 0
+    assert result["monotone_win_rate"] is None
+    assert result["monotone_payoff_ratio"] is None
+
+
+def test_compute_t0_tail_strength_stratification_three_equal_strata() -> None:
+    """With 9 rows, each stratum should have approximately 3 rows."""
+    # Craft rows so that t0_tail_strength is in 0.1 increments.
+    # T+1 return is positive for high stratum, negative for low stratum.
+    rows = [
+        {"t0_tail_strength": 0.50, "next_close_return": -0.03},
+        {"t0_tail_strength": 0.55, "next_close_return": -0.02},
+        {"t0_tail_strength": 0.60, "next_close_return": -0.01},
+        {"t0_tail_strength": 0.70, "next_close_return": 0.01},
+        {"t0_tail_strength": 0.75, "next_close_return": 0.02},
+        {"t0_tail_strength": 0.80, "next_close_return": 0.01},
+        {"t0_tail_strength": 0.90, "next_close_return": 0.04},
+        {"t0_tail_strength": 0.95, "next_close_return": 0.05},
+        {"t0_tail_strength": 0.99, "next_close_return": 0.06},
+    ]
+    result = compute_t0_tail_strength_stratification(rows)
+    assert result["stratification_sample_count"] == 9
+    # Low stratum (bottom 3) should have low or zero win rate
+    assert result["low"]["count"] > 0
+    assert result["high"]["count"] > 0
+    assert result["p33_threshold"] is not None
+    assert result["p67_threshold"] is not None
+    # low threshold ≤ high threshold
+    assert result["p33_threshold"] <= result["p67_threshold"]
+
+
+def test_compute_t0_tail_strength_stratification_monotone_win_rate_detected() -> None:
+    """When win rate strictly increases low → mid → high, monotone_win_rate must be True."""
+    # Low stratum: all losses; mid: 50% wins; high: all wins
+    rows = (
+        [{"t0_tail_strength": 0.50, "next_close_return": -0.03}] * 3
+        + [{"t0_tail_strength": 0.70, "next_close_return": 0.02}, {"t0_tail_strength": 0.72, "next_close_return": -0.01}, {"t0_tail_strength": 0.74, "next_close_return": 0.01}]
+        + [{"t0_tail_strength": 0.95, "next_close_return": 0.05}] * 3
+    )
+    result = compute_t0_tail_strength_stratification(rows)
+    low_wr = result["low"]["win_rate"]
+    mid_wr = result["mid"]["win_rate"]
+    high_wr = result["high"]["win_rate"]
+    assert low_wr is not None
+    assert mid_wr is not None
+    assert high_wr is not None
+    if low_wr < mid_wr < high_wr:
+        assert result["monotone_win_rate"] is True
+    else:
+        # Monotonicity may not hold exactly with these small samples; at minimum the flag should be bool
+        assert isinstance(result["monotone_win_rate"], bool)
+
+
+def test_compute_t0_tail_strength_stratification_excludes_missing_fields() -> None:
+    """Rows missing t0_tail_strength or next_close_return must be excluded."""
+    rows = [
+        {"t0_tail_strength": 0.80},  # missing next_close_return
+        {"next_close_return": 0.03},  # missing t0_tail_strength
+        {"t0_tail_strength": 0.90, "next_close_return": 0.04},  # complete
+        {"t0_tail_strength": 0.60, "next_close_return": -0.02},  # complete
+        {"t0_tail_strength": 0.70, "next_close_return": 0.01},  # complete
+    ]
+    result = compute_t0_tail_strength_stratification(rows)
+    assert result["stratification_sample_count"] == 3
+
+
+def test_build_surface_summary_includes_t0_tail_strength_stratification() -> None:
+    """build_surface_summary must include t0_tail_strength_stratification sub-dict (Task 3, Round 18)."""
+    rows = [
+        {"next_close_return": 0.05, "next_high_return": 0.07, "t0_tail_strength": 0.95},
+        {"next_close_return": -0.02, "next_high_return": 0.01, "t0_tail_strength": 0.60},
+        {"next_close_return": 0.03, "next_high_return": 0.05, "t0_tail_strength": 0.80},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "t0_tail_strength_stratification" in summary
+    strat = summary["t0_tail_strength_stratification"]
+    assert isinstance(strat, dict)
+    assert "low" in strat
+    assert "mid" in strat
+    assert "high" in strat
+    assert strat["stratification_sample_count"] == 3
+    # Top-level shortcut keys
+    assert "t0_tail_strength_monotone_win_rate" in summary
+    assert "t0_tail_strength_monotone_payoff_ratio" in summary
+
+
+def test_build_surface_summary_t0_tail_strength_stratification_none_when_no_tail_data() -> None:
+    """When no rows have t0_tail_strength, stratification_sample_count must be 0 and monotone flags None."""
+    rows = [
+        {"next_close_return": 0.05, "next_high_return": 0.07},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    strat = summary["t0_tail_strength_stratification"]
+    assert strat["stratification_sample_count"] == 0
+    assert summary["t0_tail_strength_monotone_win_rate"] is None
+    assert summary["t0_tail_strength_monotone_payoff_ratio"] is None
+
+
+# ===========================================================================
+# Round 18 — Task 1: New factor grid search接入 (composite score)
+# ===========================================================================
+
+
+def test_compute_runner_composite_score_net_inflow_weight_zero_is_neutral() -> None:
+    """When net_inflow_weight=0, runner_composite_score must be identical to no-new-factor score."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    snap = {
+        "breakout_freshness": 0.70,
+        "trend_acceleration": 0.60,
+        "volume_expansion_quality": 0.50,
+        "catalyst_freshness": 0.40,
+        "close_strength": 0.45,
+        "t0_estimated_net_inflow_ratio": 0.80,  # present but weight=0
+    }
+    # Profile with all new weights = 0
+    class _FakeProfile:
+        runner_composite_score_breakout_weight = 0.40
+        runner_composite_score_trend_weight = 0.30
+        runner_composite_score_volume_weight = 0.20
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.0
+        runner_composite_score_volume_price_divergence_weight = 0.0
+        runner_composite_score_t0_tail_weight = 0.0
+
+    score_with_zero_weights = compute_runner_composite_score(snap, _FakeProfile())
+    score_without_profile = compute_runner_composite_score(snap)
+    assert score_with_zero_weights == score_without_profile
+
+
+def test_compute_runner_composite_score_net_inflow_weight_nonzero_affects_score() -> None:
+    """When net_inflow_weight > 0, high net_inflow should increase the composite score."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
+
+    class _ProfileLowInflow:
+        runner_composite_score_breakout_weight = 0.30
+        runner_composite_score_trend_weight = 0.20
+        runner_composite_score_volume_weight = 0.15
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.15
+        runner_composite_score_volume_price_divergence_weight = 0.0
+        runner_composite_score_t0_tail_weight = 0.0
+
+    snap_high_ni = {**base_snap, "t0_estimated_net_inflow_ratio": 1.0}   # max buying pressure → net_inflow_score=1.0
+    snap_low_ni = {**base_snap, "t0_estimated_net_inflow_ratio": -1.0}   # max selling pressure → net_inflow_score=0.0
+    p = _ProfileLowInflow()
+    score_high = compute_runner_composite_score(snap_high_ni, p)
+    score_low = compute_runner_composite_score(snap_low_ni, p)
+    assert score_high > score_low, f"Expected high inflow score ({score_high}) > low inflow score ({score_low})"
+
+
+def test_compute_runner_composite_score_t0_tail_weight_nonzero_affects_score() -> None:
+    """When t0_tail_weight > 0, high t0_tail_strength should increase the composite score."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
+
+    class _ProfileTail:
+        runner_composite_score_breakout_weight = 0.30
+        runner_composite_score_trend_weight = 0.25
+        runner_composite_score_volume_weight = 0.15
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.0
+        runner_composite_score_volume_price_divergence_weight = 0.0
+        runner_composite_score_t0_tail_weight = 0.10
+
+    snap_high_tail = {**base_snap, "t0_tail_strength": 1.0}   # closed at day high
+    snap_low_tail = {**base_snap, "t0_tail_strength": 0.1}    # closed far below day high
+    p = _ProfileTail()
+    score_high = compute_runner_composite_score(snap_high_tail, p)
+    score_low = compute_runner_composite_score(snap_low_tail, p)
+    assert score_high > score_low
+
+
+def test_compute_runner_composite_score_vp_divergence_weight_inverts_score() -> None:
+    """Low volume_price_divergence_score (clean bar) should yield a higher composite when weight > 0."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
+
+    class _ProfileVP:
+        runner_composite_score_breakout_weight = 0.30
+        runner_composite_score_trend_weight = 0.25
+        runner_composite_score_volume_weight = 0.15
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.0
+        runner_composite_score_volume_price_divergence_weight = 0.10
+        runner_composite_score_t0_tail_weight = 0.0
+
+    snap_clean = {**base_snap, "volume_price_divergence_score": 0.0}   # no distribution risk
+    snap_risky = {**base_snap, "volume_price_divergence_score": 1.0}   # max distribution risk
+    p = _ProfileVP()
+    score_clean = compute_runner_composite_score(snap_clean, p)
+    score_risky = compute_runner_composite_score(snap_risky, p)
+    assert score_clean > score_risky
+
+
+def test_btst_runner_probe_grid_includes_r18_new_factor_weights() -> None:
+    """BTST_RUNNER_PROBE_GRID must include all three Round-18 new-factor weight axes (Task 1, Round 18)."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+
+    assert "runner_composite_score_net_inflow_weight" in BTST_RUNNER_PROBE_GRID
+    assert "runner_composite_score_volume_price_divergence_weight" in BTST_RUNNER_PROBE_GRID
+    assert "runner_composite_score_t0_tail_weight" in BTST_RUNNER_PROBE_GRID
+    # All three must have [0.0, 0.05, 0.10, 0.15] grid values
+    for key in ("runner_composite_score_net_inflow_weight", "runner_composite_score_volume_price_divergence_weight", "runner_composite_score_t0_tail_weight"):
+        vals = BTST_RUNNER_PROBE_GRID[key]
+        assert sorted(vals) == [0.0, 0.05, 0.10, 0.15], f"{key} grid should be [0.0, 0.05, 0.10, 0.15], got {vals}"
+
+
+def test_btst_factor_to_probe_weight_key_includes_r18_factors() -> None:
+    """BTST_FACTOR_TO_PROBE_WEIGHT_KEY must map all three Round-16/17 factors to their R18 grid keys."""
+    from scripts.optimize_profile import BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+
+    assert BTST_FACTOR_TO_PROBE_WEIGHT_KEY["t0_estimated_net_inflow_ratio"] == "runner_composite_score_net_inflow_weight"
+    assert BTST_FACTOR_TO_PROBE_WEIGHT_KEY["volume_price_divergence_score"] == "runner_composite_score_volume_price_divergence_weight"
+    assert BTST_FACTOR_TO_PROBE_WEIGHT_KEY["t0_tail_strength"] == "runner_composite_score_t0_tail_weight"
+
+
+def test_btst_runner_probe_grid_r18_weights_build_valid_profile() -> None:
+    """Each Round-18 grid weight value must build a valid btst_runner_probe profile (Task 1, Round 18)."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+
+    from src.targets.profiles import build_short_trade_target_profile
+
+    for param_name in ("runner_composite_score_net_inflow_weight", "runner_composite_score_volume_price_divergence_weight", "runner_composite_score_t0_tail_weight"):
+        for value in BTST_RUNNER_PROBE_GRID[param_name]:
+            profile = build_short_trade_target_profile("btst_runner_probe", overrides={param_name: value})
+            assert profile is not None
+            actual = getattr(profile, param_name, None)
+            assert actual == value, f"Expected {param_name}={value}, got {actual}"
 

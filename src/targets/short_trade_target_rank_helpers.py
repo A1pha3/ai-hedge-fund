@@ -639,9 +639,27 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     w_vr = float(getattr(profile, "runner_composite_score_volatility_regime_weight", 0.0) or 0.0)
     w_sr = float(getattr(profile, "runner_composite_score_sector_resonance_weight", 0.0) or 0.0)
     w_qb = float(getattr(profile, "runner_composite_score_quiet_breakout_weight", 0.0) or 0.0)
-    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr + w_qb
+    # Task 1 (Round 18): R16/R17 new-factor weights.
+    w_ni = float(getattr(profile, "runner_composite_score_net_inflow_weight", 0.0) or 0.0)
+    w_vp = float(getattr(profile, "runner_composite_score_volume_price_divergence_weight", 0.0) or 0.0)
+    w_ts = float(getattr(profile, "runner_composite_score_t0_tail_weight", 0.0) or 0.0)
+    # net_inflow_ratio is in [-1, +1]; map to [0, 1]: buying pressure score = (val + 1) / 2.
+    # Absent / None → neutral 0.5 (no information, doesn't penalise).
+    raw_ni = snapshot.get("t0_estimated_net_inflow_ratio")
+    net_inflow_score: float = (float(raw_ni) + 1.0) / 2.0 if raw_ni is not None else 0.5
+    net_inflow_score = round(max(0.0, min(1.0, net_inflow_score)), 4)
+    # volume_price_divergence_score is in [0, 1] where HIGH = distribution risk.
+    # For composite score we want LOW risk → HIGH quality: quality = 1 − divergence_score.
+    raw_vp = snapshot.get("volume_price_divergence_score")
+    vp_quality_score: float = 1.0 - float(raw_vp) if raw_vp is not None else 0.5
+    vp_quality_score = round(max(0.0, min(1.0, vp_quality_score)), 4)
+    # t0_tail_strength is in (0, 1]; already a quality proxy — use directly.
+    raw_ts = snapshot.get("t0_tail_strength")
+    t0_tail_score: float = float(raw_ts) if raw_ts is not None else 0.5
+    t0_tail_score = round(max(0.0, min(1.0, t0_tail_score)), 4)
+    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr + w_qb + w_ni + w_vp + w_ts
     if total_weight <= 0.0:
         return 0.0
-    raw = w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score
+    raw = (w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score + w_ni * net_inflow_score + w_vp * vp_quality_score + w_ts * t0_tail_score)
     return round(raw / total_weight, 4)
 
