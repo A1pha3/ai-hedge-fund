@@ -175,10 +175,13 @@ def test_build_surface_summary_includes_runner_metrics() -> None:
 
 
 def test_btst_factor_names_contains_seven_factors() -> None:
-    """BTST_FACTOR_NAMES must list exactly the seven primary scoring factors."""
-    assert len(BTST_FACTOR_NAMES) == 7
-    expected = {"breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength", "volatility_regime", "sector_resonance"}
-    assert set(BTST_FACTOR_NAMES) == expected
+    """BTST_FACTOR_NAMES must contain the seven original scoring factors plus the Round-16 additions."""
+    # Round 16 adds t0_estimated_net_inflow_ratio and volume_price_divergence_score → 9 total.
+    assert len(BTST_FACTOR_NAMES) == 9
+    expected_original = {"breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength", "volatility_regime", "sector_resonance"}
+    expected_r16 = {"t0_estimated_net_inflow_ratio", "volume_price_divergence_score"}
+    assert expected_original.issubset(set(BTST_FACTOR_NAMES))
+    assert expected_r16.issubset(set(BTST_FACTOR_NAMES))
 
 
 def test_compute_factor_ic_perfect_positive_correlation() -> None:
@@ -242,12 +245,15 @@ def test_compute_all_factor_ics_nonzero_for_sufficient_data() -> None:
             "close_strength": random.random(),
             "volatility_regime": random.random(),
             "sector_resonance": random.random(),
+            # Round 16 factors: must also be present for IC to be non-None
+            "t0_estimated_net_inflow_ratio": random.uniform(-1.0, 1.0),
+            "volume_price_divergence_score": random.random(),
             "next_close_return": random.uniform(-0.05, 0.1),
         }
         for _ in range(20)
     ]
     ics = compute_all_factor_ics(rows)
-    # All 7 factors have data → all ICs should be float, not None
+    # All 9 factors have data → all ICs should be float, not None
     assert all(isinstance(v, float) for v in ics.values()), f"Some ICs were None: {ics}"
     assert all(-1.0 <= v <= 1.0 for v in ics.values())
 
@@ -281,8 +287,11 @@ def test_build_surface_summary_includes_ic_sub_dicts() -> None:
     ic_nc = summary["factor_ic_next_close"]
     assert isinstance(ic_nc, dict)
     assert set(ic_nc.keys()) == set(BTST_FACTOR_NAMES)
-    # All factors are perfectly correlated with next_close_return in this synthetic data
-    assert all(v == pytest.approx(1.0, abs=1e-4) for v in ic_nc.values()), f"Expected IC≈1.0: {ic_nc}"
+    # Original 7 factors are perfectly correlated with next_close_return; R16 factors are absent → None.
+    original_factors = {"breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength", "volatility_regime", "sector_resonance"}
+    r16_factors = {"t0_estimated_net_inflow_ratio", "volume_price_divergence_score"}
+    assert all(ic_nc[f] == pytest.approx(1.0, abs=1e-4) for f in original_factors), f"Expected IC≈1.0: {ic_nc}"
+    assert all(ic_nc[f] is None for f in r16_factors), f"R16 factors should be None (no data): {ic_nc}"
 
 
 # ---------------------------------------------------------------------------
@@ -440,10 +449,14 @@ def test_build_surface_summary_includes_ic_weight_suggestions() -> None:
     assert "ic_weight_suggestions" in summary
     suggestions = summary["ic_weight_suggestions"]
     assert isinstance(suggestions, dict)
-    # All 7 BTST factors should have suggestions (IC ≈ 1.0 → "increase")
-    for factor in BTST_FACTOR_NAMES:
-        assert factor in suggestions
+    # All original 7 BTST factors are present in rows with data → each gets a suggestion.
+    # R16 factors lack data in these rows (None IC) → excluded from suggestions by design.
+    original_factors = {"breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength", "volatility_regime", "sector_resonance"}
+    for factor in original_factors:
+        assert factor in suggestions, f"Expected suggestion for {factor}"
         assert suggestions[factor] in ("reduce", "maintain", "increase")
+    # All suggestions present must have valid labels
+    assert all(v in ("reduce", "maintain", "increase") for v in suggestions.values())
 
 
 # ---------------------------------------------------------------------------
@@ -872,3 +885,200 @@ def test_build_surface_summary_gap_continuation_rate_none_when_no_open_gap_data(
     ]
     summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
     assert summary["gap_continuation_rate"] is None
+
+
+# ---------------------------------------------------------------------------
+# Round 16 — Task 1: T0 net inflow ratio (t0_estimated_net_inflow_ratio)
+# Task 2: volume-price divergence (volume_price_divergence_score / flag)
+# Task 3: predicted range pct + stop-loss linkage
+# ---------------------------------------------------------------------------
+
+from scripts.btst_analysis_utils import (  # noqa: E402 — grouped import for R16
+    compute_t0_bar_metrics,
+    compute_predicted_range_stop_loss_linkage,
+    UP_BAR_PRICE_CHANGE_MIN,
+    UPPER_SHADOW_DIVERGENCE_THRESHOLD,
+    HIGH_VOL_RANGE_THRESHOLD,
+    HIGH_VOL_STOP_LOSS_RATE_THRESHOLD,
+)
+
+
+# ---- compute_t0_bar_metrics -----------------------------------------------
+
+def test_compute_t0_bar_metrics_up_bar_strong() -> None:
+    """Up bar that closes near its high → low divergence score, no divergence flag."""
+    # open=10, high=11, low=10, close=10.9 → price_change_pct=0.09, upper_shadow=(11-10.9)/(11-10)=0.10
+    result = compute_t0_bar_metrics(10.0, 11.0, 10.0, 10.9)
+    assert result["t0_estimated_net_inflow_ratio"] == pytest.approx((10.9 - 10.0) / (11.0 - 10.0) * 2 - 1, abs=1e-6)
+    # upper_shadow_pct = 0.10, which is ≤ UPPER_SHADOW_DIVERGENCE_THRESHOLD → divergence_flag=False
+    assert result["volume_price_divergence_flag"] is False
+    # divergence_score for up bar = upper_shadow_pct = 0.10
+    assert result["volume_price_divergence_score"] == pytest.approx(0.10, abs=1e-6)
+    assert result["t0_predicted_range_pct"] == pytest.approx(0.1, abs=1e-6)  # (11-10)/open=1/10=0.1
+
+
+def test_compute_t0_bar_metrics_up_bar_weak_divergence() -> None:
+    """Up bar that closes near its low (large upper shadow) → divergence flag=True."""
+    # open=10, high=11, low=10, close=10.21 → price_change_pct=0.021 > 0.02
+    # upper_shadow = (11 - 10.21)/(11 - 10) = 0.79 > UPPER_SHADOW_DIVERGENCE_THRESHOLD=0.45
+    result = compute_t0_bar_metrics(10.0, 11.0, 10.0, 10.21)
+    assert result["volume_price_divergence_flag"] is True
+    assert result["volume_price_divergence_score"] == pytest.approx(0.79, abs=1e-6)
+    # net_inflow_ratio: (close - low)/(high - low) * 2 - 1
+    assert result["t0_estimated_net_inflow_ratio"] == pytest.approx(0.21 * 2 - 1, abs=1e-6)  # negative → selling pressure
+
+
+def test_compute_t0_bar_metrics_down_bar() -> None:
+    """Down bar (close < open) → divergence flag always False, score reflects lower shadow bias."""
+    # open=10.5, high=11, low=10, close=10.1 → price_change_pct = (10.1-10.5)/10.5 < 0 → is_up_bar=False
+    result = compute_t0_bar_metrics(10.5, 11.0, 10.0, 10.1)
+    assert result["volume_price_divergence_flag"] is False
+    # down bar score = 1 - (close - low)/(high - low) = 1 - 0.1/1.0 = 0.9
+    assert result["volume_price_divergence_score"] == pytest.approx(0.9, abs=1e-6)
+    # net_inflow_ratio: (10.1 - 10) / 1.0 * 2 - 1 = -0.8
+    assert result["t0_estimated_net_inflow_ratio"] == pytest.approx(-0.8, abs=1e-6)
+
+
+def test_compute_t0_bar_metrics_doji_bar() -> None:
+    """Edge case: doji (high == low) → uses epsilon denominator, no ZeroDivisionError."""
+    result = compute_t0_bar_metrics(10.0, 10.0, 10.0, 10.0)
+    # With ε denominator all ratios are well-defined (0 or bounded)
+    assert isinstance(result["t0_estimated_net_inflow_ratio"], float)
+    assert isinstance(result["volume_price_divergence_score"], float)
+    assert isinstance(result["volume_price_divergence_flag"], bool)
+    assert result["t0_predicted_range_pct"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_compute_t0_bar_metrics_net_inflow_ratio_boundary() -> None:
+    """Net inflow ratio is -1 at the low and +1 at the high."""
+    # Closed exactly at low: (low - low)/(high - low)*2 - 1 = -1
+    result_low = compute_t0_bar_metrics(10.0, 11.0, 9.0, 9.0)
+    assert result_low["t0_estimated_net_inflow_ratio"] == pytest.approx(-1.0, abs=1e-6)
+    # Closed exactly at high: (high - low)/(high - low)*2 - 1 = +1
+    result_high = compute_t0_bar_metrics(10.0, 11.0, 9.0, 11.0)
+    assert result_high["t0_estimated_net_inflow_ratio"] == pytest.approx(1.0, abs=1e-6)
+
+
+# ---- compute_predicted_range_stop_loss_linkage ----------------------------
+
+def test_compute_predicted_range_stop_loss_linkage_warning_triggered() -> None:
+    """Warning fires when p75 > HIGH_VOL_RANGE_THRESHOLD and stop_loss_3pct > threshold."""
+    # 10 values all > 0.04 → p75 > 0.04; stop_loss rate = 0.30 > 0.25
+    high_ranges = [0.05, 0.06, 0.07, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+    result = compute_predicted_range_stop_loss_linkage(high_ranges, 0.30)
+    assert result["predicted_range_stop_loss_warning"] is True
+    assert result["predicted_range_pct_p75"] is not None
+    assert result["predicted_range_pct_p75"] > HIGH_VOL_RANGE_THRESHOLD
+    assert result["high_volatility_warning_rate"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_compute_predicted_range_stop_loss_linkage_no_warning_low_range() -> None:
+    """No warning when p75 ≤ HIGH_VOL_RANGE_THRESHOLD."""
+    low_ranges = [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+    result = compute_predicted_range_stop_loss_linkage(low_ranges, 0.30)
+    assert result["predicted_range_stop_loss_warning"] is False
+    assert result["high_volatility_warning_rate"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_compute_predicted_range_stop_loss_linkage_no_warning_low_stop_loss() -> None:
+    """No warning when stop_loss rate is low even if range is high."""
+    high_ranges = [0.05, 0.06, 0.07, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+    result = compute_predicted_range_stop_loss_linkage(high_ranges, 0.10)  # below threshold
+    assert result["predicted_range_stop_loss_warning"] is False
+
+
+def test_compute_predicted_range_stop_loss_linkage_empty_list() -> None:
+    """Empty range list → all keys present with None values."""
+    result = compute_predicted_range_stop_loss_linkage([], None)
+    assert result["predicted_range_pct_p75"] is None
+    assert result["predicted_range_stop_loss_warning"] is None
+    assert result["high_volatility_warning_rate"] is None
+
+
+def test_compute_predicted_range_stop_loss_linkage_none_stop_loss() -> None:
+    """None stop_loss_trigger_rate → warning is None (cannot evaluate joint condition)."""
+    high_ranges = [0.05, 0.06, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+    result = compute_predicted_range_stop_loss_linkage(high_ranges, None)
+    assert result["predicted_range_stop_loss_warning"] is None
+    assert result["predicted_range_pct_p75"] is not None  # distribution stats available
+
+
+# ---- build_surface_summary R16 integration --------------------------------
+
+def _make_r16_row(
+    net_inflow: float,
+    div_score: float,
+    div_flag: bool,
+    range_pct: float,
+    open_price: float = 10.0,
+    close: float = 10.5,
+) -> dict:
+    """Build a minimal surface row with all R16 fields populated."""
+    return {
+        "next_close_return": 0.05,
+        "next_open_return": 0.02,
+        "next_high_return": 0.07,
+        "next_open_to_close_return": 0.03,
+        "t_plus_2_close_return": 0.04,
+        "t_plus_3_close_return": 0.03,
+        "t0_estimated_net_inflow_ratio": net_inflow,
+        "volume_price_divergence_score": div_score,
+        "volume_price_divergence_flag": div_flag,
+        "t0_predicted_range_pct": range_pct,
+        "t0_open": open_price,
+        "t0_close": close,
+        "t0_high": close + range_pct * open_price / 2,
+        "t0_low": close - range_pct * open_price / 2,
+    }
+
+
+def test_build_surface_summary_includes_r16_metrics() -> None:
+    """build_surface_summary must expose R16 aggregation keys when T0 bar data is present."""
+    rows = [
+        _make_r16_row(0.5, 0.2, False, 0.03),
+        _make_r16_row(-0.3, 0.7, True, 0.06),
+        _make_r16_row(0.8, 0.1, False, 0.02),
+        _make_r16_row(0.2, 0.8, True, 0.07),
+        _make_r16_row(-0.6, 0.4, False, 0.01),
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+
+    # R16 Task 2 — volume-price divergence rate
+    assert "volume_price_divergence_rate" in summary
+    assert summary["volume_price_divergence_rate"] == pytest.approx(2 / 5, abs=1e-6)  # 2 of 5 flagged
+
+    # R16 Task 3 — predicted range distribution
+    assert "t0_predicted_range_pct_distribution" in summary
+    dist = summary["t0_predicted_range_pct_distribution"]
+    assert dist is not None
+    assert "p75" in dist
+
+    # R16 Task 3 — warning key must be present
+    assert "predicted_range_stop_loss_warning" in summary
+    # R16 Task 3 — high_volatility_warning_rate
+    assert "high_volatility_warning_rate" in summary
+
+
+def test_build_surface_summary_r16_none_when_no_t0_bar_data() -> None:
+    """R16 metrics must be None when rows have no T0 bar fields."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.07, "next_open_to_close_return": 0.03, "t_plus_2_close_return": 0.04, "t_plus_3_close_return": 0.03},
+        {"next_close_return": -0.02, "next_open_return": 0.01, "next_high_return": 0.03, "next_open_to_close_return": 0.01, "t_plus_2_close_return": -0.01, "t_plus_3_close_return": -0.02},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+
+    assert summary["volume_price_divergence_rate"] is None
+    # t0_predicted_range_pct_distribution is always a dict; when no range data, count==0 and all stats are None.
+    dist = summary["t0_predicted_range_pct_distribution"]
+    assert isinstance(dist, dict)
+    assert dist["count"] == 0
+    assert dist["p75"] is None
+    assert summary["predicted_range_stop_loss_warning"] is None
+    assert summary["high_volatility_warning_rate"] is None
+
+
+def test_compute_t0_bar_metrics_flag_price_change_boundary() -> None:
+    """Divergence flag must NOT fire when price_change_pct is exactly at the boundary (< UP_BAR_PRICE_CHANGE_MIN)."""
+    # price_change_pct = (10.019 - 10.0) / 10.0 = 0.0019 < 0.02 → no flag despite large upper shadow
+    result = compute_t0_bar_metrics(10.0, 11.0, 10.0, 10.019)
+    assert result["volume_price_divergence_flag"] is False

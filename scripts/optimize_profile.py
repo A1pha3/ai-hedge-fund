@@ -146,6 +146,11 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "cross_day_autocorr_t2_vs_t3",
     # Task 2 (Round 15): opening-gap continuation rate.
     "gap_continuation_rate",
+    # Task 2 (Round 16): volume-price divergence rate — fraction of false-breakout bars.
+    "volume_price_divergence_rate",
+    # Task 3 (Round 16): T0 predicted range p75 and high-volatility warning rate.
+    "predicted_range_pct_p75",
+    "high_volatility_warning_rate",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -182,6 +187,11 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "cross_day_autocorr_t2_vs_t3": "T2→T3 Autocorr",
     # Task 2 (Round 15): gap continuation rate
     "gap_continuation_rate": "Gap-Up Cont.",
+    # Task 2 (Round 16): volume-price divergence rate
+    "volume_price_divergence_rate": "Vol-Price Div%",
+    # Task 3 (Round 16): predicted range percentile and warning rate
+    "predicted_range_pct_p75": "Pred Range P75",
+    "high_volatility_warning_rate": "HighVol Warn%",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -197,6 +207,12 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "stop_loss_trigger_rate_2pct",
     "stop_loss_trigger_rate_3pct",
     "stop_loss_trigger_rate_5pct",
+    # Task 2 (Round 16): volume-price divergence rate — higher = more false-breakout bars = worse.
+    "volume_price_divergence_rate",
+    # Task 3 (Round 16): predicted range p75 — higher = more volatile regime = lower-is-better.
+    "predicted_range_pct_p75",
+    # Task 3 (Round 16): high-volatility warning rate — higher = more high-vol sessions = lower-is-better.
+    "high_volatility_warning_rate",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -228,6 +244,11 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "cross_day_autocorr_t2_vs_t3",
     # Task 2 (Round 15): gap continuation rate — optional; pre-Round-15 surfaces omit it.
     "gap_continuation_rate",
+    # Task 2 (Round 16): volume-price divergence rate — optional; pre-Round-16 surfaces omit it.
+    "volume_price_divergence_rate",
+    # Task 3 (Round 16): predicted range and high-volatility warning — optional; pre-Round-16 surfaces omit these.
+    "predicted_range_pct_p75",
+    "high_volatility_warning_rate",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -264,6 +285,12 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "cross_day_autocorr_t2_vs_t3": 0.01,
     # Task 2 (Round 15): gap continuation rate — 1 % tolerance
     "gap_continuation_rate": 0.01,
+    # Task 2 (Round 16): volume-price divergence rate — 1 % tolerance
+    "volume_price_divergence_rate": 0.01,
+    # Task 3 (Round 16): predicted range p75 — 0.5 % tolerance
+    "predicted_range_pct_p75": 0.005,
+    # Task 3 (Round 16): high-volatility warning rate — 1 % tolerance
+    "high_volatility_warning_rate": 0.01,
 }
 
 

@@ -19,6 +19,11 @@ BTST_FACTOR_NAMES: tuple[str, ...] = (
     "close_strength",
     "volatility_regime",
     "sector_resonance",
+    # Task 1 (Round 16): single-bar T0 net inflow ratio — measures buying pressure from T0 OHLCV.
+    "t0_estimated_net_inflow_ratio",
+    # Task 2 (Round 16): bar-structure divergence score — upper-shadow ratio on up-bars signals
+    # distribution risk; high values predict T+1 reversal.
+    "volume_price_divergence_score",
 )
 
 
@@ -262,6 +267,14 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
             "cycle_status": "missing_next_day",
         }
 
+    # Task 1-3 (Round 16): T0 OHLCV for bar-metric computation.
+    trade_open_raw: float | None = safe_float(trade_row.get("open"))
+    trade_high_raw: float | None = safe_float(trade_row.get("high"))
+    trade_low_raw: float | None = safe_float(trade_row.get("low"))
+    _t0_bar_metrics: dict[str, Any] = {}
+    if trade_open_raw is not None and trade_high_raw is not None and trade_low_raw is not None and trade_open_raw > 0 and trade_high_raw >= trade_low_raw:
+        _t0_bar_metrics = compute_t0_bar_metrics(trade_open_raw, trade_high_raw, trade_low_raw, trade_close)
+
     t_plus_2_close = None
     t_plus_2_trade_date = None
     t_plus_3_close = None
@@ -338,6 +351,9 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         "max_future_high_trade_date_2_5d": max_future_high_trade_date_2_5d,
         "time_to_hit_20pct": time_to_hit_20pct,
         "future_high_hit_20pct_2_5d": future_high_hit_20pct_2_5d,
+        # Task 1-3 (Round 16): T0 bar metrics — net inflow ratio, divergence score/flag, predicted range.
+        # Absent (key not present) when T0 OHLCV is incomplete.
+        **_t0_bar_metrics,
     }
 
 
@@ -691,6 +707,116 @@ def compute_gap_continuation_rate(rows: list[dict[str, Any]], open_gap_threshold
     return {"gap_continuation_rate": round(continued / len(gap_rows), 4), "gap_up_bar_count": len(gap_rows), "gap_open_threshold_used": round(open_gap_threshold, 4)}
 
 
+# ---------------------------------------------------------------------------
+# Task 1 (Round 16) — T0 estimated net inflow ratio (资金流向因子)
+# Task 2 (Round 16) — Volume-price divergence (量价背离检测)
+# Task 3 (Round 16) — T0 predicted range pct + volatility/stop_loss linkage
+# ---------------------------------------------------------------------------
+# Task 1: T0 Net Inflow Ratio
+# Approximates T0 buying/selling pressure from a single OHLCV bar.
+# Formula: position of close within the bar's range mapped to [-1, +1].
+#   +1 → close at day high  (pure buying pressure)
+#   -1 → close at day low   (pure selling pressure)
+#    0 → close at midpoint  (balanced)
+# Source: classic Williams %R / buying-pressure ratio used in A-share technical analysis.
+# Task 2: Volume-Price Divergence
+# Detects "假阳线" (false breakout) bar structure: price rises but closes far below the day
+# high, leaving a large upper shadow — sellers dominated above the close.
+# For up-bars:  divergence_score = (high − close) / (high − low + ε)  → [0, 1]
+#   0 = closed at high (no upper shadow, confirmed buying)
+#   1 = closed at low  (all gains reversed, strong distribution)
+# For down-bars: divergence_score = (close − low) / (high − low + ε) (selling above)
+# divergence_flag fires when: (close/open − 1) ≥ UP_BAR_PRICE_CHANGE_MIN AND upper_shadow > threshold.
+# Task 3: T0 Predicted Range Pct
+# Uses T0 bar range (high − low) / open as a single-bar proxy for next-day volatility.
+# Wired into stop_loss linkage: when p75(predicted_range_pct) > 4 % AND stop_loss_3pct rate > 25 %,
+# the combined flag warns that the strategy is operating in a high-volatility / high-stop regime.
+UP_BAR_PRICE_CHANGE_MIN: float = 0.02       # T0 up bar threshold to check for divergence
+UPPER_SHADOW_DIVERGENCE_THRESHOLD: float = 0.45  # upper shadow > 45 % of range → divergence flag
+HIGH_VOL_RANGE_THRESHOLD: float = 0.04     # T0 range > 4 % of open → high-volatility bar
+HIGH_VOL_STOP_LOSS_RATE_THRESHOLD: float = 0.25  # stop_loss_3pct > 25 % jointly triggers warning
+
+
+def compute_t0_bar_metrics(trade_open: float, trade_high: float, trade_low: float, trade_close: float) -> dict[str, Any]:
+    """Compute single-bar T0 metrics for R16 Tasks 1, 2, and 3.
+
+    All inputs are expected to be positive floats representing a single daily OHLCV bar on the
+    trade day.  Returns a dict with the following keys:
+
+    - ``t0_estimated_net_inflow_ratio`` (float): buying pressure in [-1, +1]; +1 = pure buying.
+    - ``volume_price_divergence_score`` (float): bar-structure distribution risk in [0, 1]; 0 = no risk.
+    - ``volume_price_divergence_flag`` (bool): True when bar is a confirmed false-breakout pattern.
+    - ``t0_predicted_range_pct`` (float): T0 bar range as fraction of open (e.g. 0.05 = 5 % range).
+    """
+    epsilon: float = 1e-6
+    safe_range: float = max(trade_high - trade_low, epsilon)
+    safe_open: float = max(trade_open, epsilon)
+
+    # Task 1 — net inflow ratio: (close − low) / range × 2 − 1 → [−1, +1]
+    t0_estimated_net_inflow_ratio: float = round((trade_close - trade_low) / safe_range * 2.0 - 1.0, 4)
+
+    # Task 2 — upper-shadow fraction
+    upper_shadow_pct: float = (trade_high - trade_close) / safe_range
+    is_up_bar: bool = trade_close >= trade_open
+    if is_up_bar:
+        # Distribution risk for up-bars: large upper shadow = sellers above close
+        volume_price_divergence_score: float = round(upper_shadow_pct, 4)
+    else:
+        # For down-bars: lower shadow means buyers stepped in; score = 1 − (close−low)/range
+        lower_shadow_pct: float = (trade_close - trade_low) / safe_range
+        volume_price_divergence_score = round(1.0 - lower_shadow_pct, 4)
+
+    price_change_pct: float = (trade_close - trade_open) / safe_open
+    volume_price_divergence_flag: bool = bool(
+        is_up_bar
+        and price_change_pct >= UP_BAR_PRICE_CHANGE_MIN
+        and upper_shadow_pct > UPPER_SHADOW_DIVERGENCE_THRESHOLD
+    )
+
+    # Task 3 — T0 bar range as fraction of open (volatility proxy)
+    t0_predicted_range_pct: float = round((trade_high - trade_low) / safe_open, 4)
+
+    return {
+        "t0_estimated_net_inflow_ratio": t0_estimated_net_inflow_ratio,
+        "volume_price_divergence_score": volume_price_divergence_score,
+        "volume_price_divergence_flag": volume_price_divergence_flag,
+        "t0_predicted_range_pct": t0_predicted_range_pct,
+    }
+
+
+def compute_predicted_range_stop_loss_linkage(predicted_range_pcts: list[float], stop_loss_trigger_rate_3pct: float | None) -> dict[str, Any]:
+    """Compute the joint high-volatility / stop-loss warning.
+
+    Returns:
+
+    - ``high_volatility_warning_rate`` (float | None): fraction of rows where T0 range > 4 %.
+    - ``predicted_range_pct_p75`` (float | None): 75th-percentile T0 predicted range.
+    - ``predicted_range_stop_loss_warning`` (bool | None): True when p75 > HIGH_VOL_RANGE_THRESHOLD
+      AND stop_loss_3pct > HIGH_VOL_STOP_LOSS_RATE_THRESHOLD — signals high-volatility regime
+      with elevated stop-out risk.  None when either component is unavailable.
+    """
+    if not predicted_range_pcts:
+        return {"high_volatility_warning_rate": None, "predicted_range_pct_p75": None, "predicted_range_stop_loss_warning": None}
+
+    high_vol_count: int = sum(1 for v in predicted_range_pcts if v > HIGH_VOL_RANGE_THRESHOLD)
+    high_volatility_warning_rate: float = round(high_vol_count / len(predicted_range_pcts), 4)
+    dist: dict[str, Any] = summarize_distribution(predicted_range_pcts)
+    predicted_range_pct_p75: float | None = dist.get("p75")
+
+    predicted_range_stop_loss_warning: bool | None = None
+    if predicted_range_pct_p75 is not None and stop_loss_trigger_rate_3pct is not None:
+        predicted_range_stop_loss_warning = bool(
+            predicted_range_pct_p75 > HIGH_VOL_RANGE_THRESHOLD
+            and stop_loss_trigger_rate_3pct > HIGH_VOL_STOP_LOSS_RATE_THRESHOLD
+        )
+
+    return {
+        "high_volatility_warning_rate": high_volatility_warning_rate,
+        "predicted_range_pct_p75": predicted_range_pct_p75,
+        "predicted_range_stop_loss_warning": predicted_range_stop_loss_warning,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -766,6 +892,28 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # Task 2 (Round 15): opening-gap continuation rate — how often stocks that gap up ≥ 2 %
     # at T+1 open continue to rise intraday (next_open_to_close_return > 0).
     gap_continuation_stats = compute_gap_continuation_rate(next_day_rows)
+
+    # -----------------------------------------------------------------------
+    # Task 1 (Round 16): T0 net inflow ratio — IC-tracked buying pressure factor.
+    # Factor values are spread directly into rows from extract_btst_price_outcome;
+    # IC is auto-computed via compute_all_factor_ics (t0_estimated_net_inflow_ratio is in
+    # BTST_FACTOR_NAMES since Round 16).
+    # Task 2 (Round 16): volume-price divergence — bar-structure reversal risk.
+    # volume_price_divergence_flag fires on 假阳线 (false breakout) bars: price up ≥ 2 %
+    # but upper shadow > 45 % of range.  volume_price_divergence_rate > 0.30 in the
+    # surface warns that many candidates are forming weak breakout candles.
+    # Task 3 (Round 16): T0 predicted range pct — single-bar volatility proxy.
+    # t0_predicted_range_pct = (high − low) / open for the trade day.
+    # Linked to stop_loss: when p75 > 4 % AND stop_loss_3pct rate > 25 %, issues a
+    # combined volatility / stop-out warning.
+    # -----------------------------------------------------------------------
+    _t0_inflow_values: list[float] = [float(row["t0_estimated_net_inflow_ratio"]) for row in next_day_rows if row.get("t0_estimated_net_inflow_ratio") is not None]
+    _vp_div_flags: list[bool] = [bool(row["volume_price_divergence_flag"]) for row in next_day_rows if row.get("volume_price_divergence_flag") is not None]
+    _vp_div_scores: list[float] = [float(row["volume_price_divergence_score"]) for row in next_day_rows if row.get("volume_price_divergence_score") is not None]
+    _t0_range_pcts: list[float] = [float(row["t0_predicted_range_pct"]) for row in next_day_rows if row.get("t0_predicted_range_pct") is not None]
+    volume_price_divergence_rate: float | None = round(sum(_vp_div_flags) / len(_vp_div_flags), 4) if _vp_div_flags else None
+    t0_predicted_range_distribution: dict[str, Any] = summarize_distribution(_t0_range_pcts)
+    _range_stop_linkage: dict[str, Any] = compute_predicted_range_stop_loss_linkage(_t0_range_pcts, stop_loss_trigger_rates.get("stop_loss_3pct"))
 
     return {
         "total_count": len(rows),
@@ -846,6 +994,23 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         # A high rate (≥ 0.50) supports "buy at open" execution; a low rate suggests waiting for confirmation.
         "gap_continuation_stats": gap_continuation_stats,
         "gap_continuation_rate": gap_continuation_stats.get("gap_continuation_rate"),
+        # Task 1 (Round 16): T0 net inflow ratio distribution — IC-tracked buying pressure on trade day.
+        # ic_next_close for this factor is captured in factor_ic_next_close under "t0_estimated_net_inflow_ratio".
+        "t0_estimated_net_inflow_ratio_distribution": summarize_distribution(_t0_inflow_values),
+        # Task 2 (Round 16): volume-price divergence — bar-structure reversal risk signal.
+        # volume_price_divergence_rate: fraction of bars flagged as 假阳线 (false breakout).
+        # volume_price_divergence_score_distribution: spread of reversal risk scores.
+        "volume_price_divergence_rate": volume_price_divergence_rate,
+        "volume_price_divergence_score_distribution": summarize_distribution(_vp_div_scores),
+        # Task 3 (Round 16): T0 predicted range pct — single-bar volatility proxy + stop_loss linkage.
+        # t0_predicted_range_pct_distribution: distribution of T0 bar ranges across the window.
+        # high_volatility_warning_rate: fraction of bars where range > 4 % (high-vol sessions).
+        # predicted_range_pct_p75: 75th-percentile T0 range — key percentile for regime assessment.
+        # predicted_range_stop_loss_warning: joint flag (p75 > 4 % AND stop_loss_3pct > 25 %).
+        "t0_predicted_range_pct_distribution": t0_predicted_range_distribution,
+        "high_volatility_warning_rate": _range_stop_linkage.get("high_volatility_warning_rate"),
+        "predicted_range_pct_p75": _range_stop_linkage.get("predicted_range_pct_p75"),
+        "predicted_range_stop_loss_warning": _range_stop_linkage.get("predicted_range_stop_loss_warning"),
     }
 
 
