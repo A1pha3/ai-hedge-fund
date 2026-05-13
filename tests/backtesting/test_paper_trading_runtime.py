@@ -10,6 +10,7 @@ import pandas as pd
 from src.execution.models import ExecutionPlan
 from src.execution.models import LayerCResult
 from src.execution.daily_pipeline import _serialize_short_trade_target_profile
+from src.paper_trading.runtime_session_helpers import build_session_summary
 from src.paper_trading.runtime import _build_dual_target_session_summary, _build_reporting_target_session_summary, _build_llm_error_digest, _build_llm_observability_summary, _build_llm_route_provenance, _build_paper_trading_engine, _build_runtime_recorder_and_engine, _finalize_paper_trading_session, _prepare_session_runtime_context, run_paper_trading_session
 from src.portfolio.models import PositionPlan
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
@@ -321,6 +322,118 @@ def test_build_reporting_target_session_summary_rebuckets_formal_execution_block
     assert summary["short_trade_rejected_count"] == 1
     assert summary["p2_execution_blocked_count"] == 1
     assert summary["target_mode_counts"] == {"short_trade_only": 1}
+
+
+def test_build_session_summary_includes_optimization_profile_resolution() -> None:
+    summary = build_session_summary(
+        start_date="2026-05-12",
+        end_date="2026-05-12",
+        tickers=[],
+        initial_capital=100000.0,
+        resolved_model_name="MiniMax-M2.7",
+        resolved_model_provider="MiniMax",
+        selected_analysts=None,
+        fast_selected_analysts=None,
+        short_trade_target_profile_name="momentum_optimized",
+        short_trade_target_profile_overrides={"select_threshold": 0.48},
+        frozen_plan_source_path=None,
+        selection_target="short_trade_only",
+        metrics={},
+        portfolio_values=[],
+        final_portfolio_snapshot={},
+        llm_route_provenance={},
+        execution_plan_provenance={},
+        dual_target_summary={},
+        reporting_target_summary={},
+        llm_observability_summary={},
+        llm_error_digest={},
+        data_cache_summary={},
+        cache_benchmark_summary=None,
+        cache_benchmark_status={},
+        research_feedback_summary={},
+        recorder_day_count=1,
+        recorder_executed_trade_days=0,
+        recorder_total_executed_orders=0,
+        daily_events_path=Path("daily_events.jsonl"),
+        timing_log_path=Path("pipeline_timings.jsonl"),
+        summary_path=Path("session_summary.json"),
+        selection_artifact_root=Path("selection_artifacts"),
+        feedback_summary_path=Path("research_feedback_summary.json"),
+        cache_benchmark_artifacts={},
+        llm_metrics_artifacts={},
+        optimization_profile_resolution={
+            "mode": "optimized",
+            "profile_name": "momentum_optimized",
+            "profile_overrides": {"select_threshold": 0.48},
+            "source_type": "optimize_profile",
+            "source_path": "data/reports/param_search_latest.json",
+            "validated_by": "walk_forward_and_rollout",
+            "trade_date": "2026-05-12",
+            "status": "ready",
+            "fallback_reason": None,
+            "manifest_path": "data/reports/btst_latest_optimized_profile.json",
+        },
+    )
+
+    assert summary["optimization_profile_resolution"]["mode"] == "optimized"
+    assert summary["optimization_profile_resolution"]["profile_name"] == "momentum_optimized"
+
+
+def test_build_session_summary_persists_default_fallback_optimization_profile_resolution() -> None:
+    summary = build_session_summary(
+        start_date="2026-05-12",
+        end_date="2026-05-12",
+        tickers=[],
+        initial_capital=100000.0,
+        resolved_model_name="MiniMax-M2.7",
+        resolved_model_provider="MiniMax",
+        selected_analysts=None,
+        fast_selected_analysts=None,
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+        frozen_plan_source_path=None,
+        selection_target="short_trade_only",
+        metrics={},
+        portfolio_values=[],
+        final_portfolio_snapshot={},
+        llm_route_provenance={},
+        execution_plan_provenance={},
+        dual_target_summary={},
+        reporting_target_summary={},
+        llm_observability_summary={},
+        llm_error_digest={},
+        data_cache_summary={},
+        cache_benchmark_summary=None,
+        cache_benchmark_status={},
+        research_feedback_summary={},
+        recorder_day_count=1,
+        recorder_executed_trade_days=0,
+        recorder_total_executed_orders=0,
+        daily_events_path=Path("daily_events.jsonl"),
+        timing_log_path=Path("pipeline_timings.jsonl"),
+        summary_path=Path("session_summary.json"),
+        selection_artifact_root=Path("selection_artifacts"),
+        feedback_summary_path=Path("research_feedback_summary.json"),
+        cache_benchmark_artifacts={},
+        llm_metrics_artifacts={},
+        optimization_profile_resolution={
+            "mode": "default_fallback",
+            "profile_name": "default",
+            "profile_overrides": {},
+            "source_type": "optimize_profile",
+            "source_path": "data/reports/param_search_latest.json",
+            "validated_by": "walk_forward_and_rollout",
+            "trade_date": "2026-05-12",
+            "status": "pending",
+            "fallback_reason": "optimized_profile_manifest_invalid",
+            "manifest_path": "data/reports/btst_latest_optimized_profile.json",
+        },
+    )
+
+    assert summary["optimization_profile_resolution"]["mode"] == "default_fallback"
+    assert summary["optimization_profile_resolution"]["profile_name"] == "default"
+    assert summary["optimization_profile_resolution"]["fallback_reason"] == "optimized_profile_manifest_invalid"
+    assert summary["optimization_profile_resolution"]["status"] == "pending"
 
 
 def test_build_dual_target_session_summary_accumulates_p6_risk_budget_overlay(tmp_path: Path):

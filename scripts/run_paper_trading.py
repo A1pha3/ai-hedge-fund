@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.paper_trading.optimized_profile_resolution import resolve_btst_optimized_profile_manifest
+
 
 AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES = int(os.getenv("AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES", "2"))
 AUTO_SHADOW_CORRIDOR_MIN_GATE_SHARE = float(os.getenv("AUTO_SHADOW_CORRIDOR_MIN_GATE_SHARE", "2.25"))
@@ -17,11 +19,17 @@ AUTO_SHADOW_CORRIDOR_LOW_GATE_MAX_CUTOFF_SHARE = float(os.getenv("AUTO_SHADOW_CO
 AUTO_SHADOW_REBUCKET_MIN_GATE_SHARE = float(os.getenv("AUTO_SHADOW_REBUCKET_MIN_GATE_SHARE", "5.0"))
 AUTO_SHADOW_RECALL_MAX_CLOSEST_PRE_TRUNCATION_GAP = int(os.getenv("AUTO_SHADOW_RECALL_MAX_CLOSEST_PRE_TRUNCATION_GAP", "1200"))
 AUTO_SHADOW_FOLLOWUP_MIN_NEXT_CLOSE_POSITIVE_RATE = float(os.getenv("AUTO_SHADOW_FOLLOWUP_MIN_NEXT_CLOSE_POSITIVE_RATE", "0.5"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_OPTIMIZED_PROFILE_MANIFEST_PATH = REPO_ROOT / "data" / "reports" / "btst_latest_optimized_profile.json"
 
 
 def _default_output_dir(start_date: str, end_date: str) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Path("data/reports") / f"paper_trading_{start_date}_{end_date}_{timestamp}"
+
+
+def _default_optimized_profile_manifest_path() -> Path:
+    return DEFAULT_OPTIMIZED_PROFILE_MANIFEST_PATH
 
 
 def generate_btst_followup_artifacts(report_dir: Path, trade_date: str, next_trade_date: str | None = None) -> dict[str, str] | None:
@@ -101,8 +109,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-benchmark-clear-first", action="store_true", help="Clear the local cache before running the post-session benchmark; use with caution")
     parser.add_argument("--analysts", default=None, help="Optional comma-separated analyst keys for a lower-cost replay subset")
     parser.add_argument("--fast-analysts", default=None, help="Optional comma-separated analyst keys used only for the fast agent tier")
-    parser.add_argument("--short-trade-target-profile", default=DEFAULT_SHORT_TRADE_TARGET_PROFILE, help="Short-trade target profile for replay selection logic")
+    parser.add_argument("--short-trade-target-profile", default=None, help="Short-trade target profile for replay selection logic")
     parser.add_argument("--short-trade-target-overrides", default=None, help="JSON object with short-trade target profile overrides")
+    parser.add_argument(
+        "--optimized-profile-manifest",
+        default=str(_default_optimized_profile_manifest_path()),
+        help="Canonical manifest describing the latest approved BTST optimized profile",
+    )
     parser.add_argument("--analysts-all", action="store_true", help="Use all analysts explicitly")
     parser.add_argument("--analyst-concurrency-limit", type=int, default=None, help="Optional ANALYST_CONCURRENCY_LIMIT override for replay throughput control")
     parser.add_argument("--enable-data-snapshots", action="store_true", help="Enable data snapshot exports and store them under the report output directory by default")
@@ -526,12 +539,23 @@ def _run_paper_trading_session(*, disable_data_snapshots: bool = False, **kwargs
 
 def _resolve_paper_trading_runtime_inputs(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir) if args.output_dir else _default_output_dir(args.start_date, args.end_date)
+    explicit_short_trade_target_profile = str(getattr(args, "short_trade_target_profile", None) or "").strip()
+    explicit_short_trade_target_overrides = _resolve_short_trade_target_overrides(getattr(args, "short_trade_target_overrides", None))
+    has_explicit_short_trade_target_inputs = bool(explicit_short_trade_target_profile) or explicit_short_trade_target_overrides is not None
+    optimization_profile_resolution: dict[str, Any] = {}
+    if getattr(args, "selection_target", None) == "short_trade_only" and not has_explicit_short_trade_target_inputs:
+        optimization_profile_resolution = resolve_btst_optimized_profile_manifest(getattr(args, "optimized_profile_manifest", _default_optimized_profile_manifest_path()))
+    short_trade_target_profile = explicit_short_trade_target_profile or str(optimization_profile_resolution.get("profile_name") or "")
+    short_trade_target_overrides = (
+        explicit_short_trade_target_overrides if explicit_short_trade_target_overrides is not None else optimization_profile_resolution.get("profile_overrides", {})
+    )
     return {
         "tickers": _parse_csv_tokens(args.tickers),
         "selected_analysts": _resolve_selected_analysts(args.analysts, args.analysts_all),
         "fast_selected_analysts": _resolve_selected_analysts(args.fast_analysts, False),
-        "short_trade_target_profile": str(args.short_trade_target_profile or DEFAULT_SHORT_TRADE_TARGET_PROFILE).strip() or DEFAULT_SHORT_TRADE_TARGET_PROFILE,
-        "short_trade_target_overrides": _resolve_short_trade_target_overrides(args.short_trade_target_overrides),
+        "short_trade_target_profile": short_trade_target_profile or DEFAULT_SHORT_TRADE_TARGET_PROFILE,
+        "short_trade_target_overrides": short_trade_target_overrides,
+        "optimization_profile_resolution": optimization_profile_resolution,
         "output_dir": output_dir,
         "auto_shadow_focus": _derive_shadow_focus_tickers_from_reports(_resolve_reports_root_from_output_dir(output_dir)),
     }
@@ -590,6 +614,7 @@ def _print_paper_trading_run_summary(
     fast_selected_analysts: list[str] | None,
     short_trade_target_profile: str,
     short_trade_target_overrides: dict[str, Any],
+    optimization_profile_resolution: dict[str, Any],
     auto_shadow_focus: dict[str, list[str]],
     shadow_focus_env: dict[str, str],
 ) -> None:
@@ -600,6 +625,7 @@ def _print_paper_trading_run_summary(
         resolved_model_provider=resolved_model_provider,
         short_trade_target_profile=short_trade_target_profile,
         short_trade_target_overrides=short_trade_target_overrides,
+        optimization_profile_resolution=optimization_profile_resolution,
     )
     _print_shadow_focus_summary(auto_shadow_focus, shadow_focus_env)
     print(f"paper_trading_selected_analysts={','.join(selected_analysts) if selected_analysts else 'all'}")
@@ -621,6 +647,7 @@ def _print_paper_trading_runtime_summary(
     resolved_model_provider: str,
     short_trade_target_profile: str,
     short_trade_target_overrides: dict[str, Any],
+    optimization_profile_resolution: dict[str, Any],
 ) -> None:
     print(f"paper_trading_model_route={resolved_model_provider}:{resolved_model_name}")
     print(f"paper_trading_output_dir={artifacts.output_dir}")
@@ -631,6 +658,12 @@ def _print_paper_trading_runtime_summary(
     print(f"paper_trading_short_trade_target_profile={short_trade_target_profile}")
     if short_trade_target_overrides:
         print(f"paper_trading_short_trade_target_overrides={json.dumps(short_trade_target_overrides, ensure_ascii=False, sort_keys=True)}")
+    if optimization_profile_resolution:
+        print(f"paper_trading_optimization_profile_mode={optimization_profile_resolution.get('mode')}")
+        if optimization_profile_resolution.get("manifest_path"):
+            print(f"paper_trading_optimization_profile_manifest={optimization_profile_resolution['manifest_path']}")
+        if optimization_profile_resolution.get("fallback_reason"):
+            print(f"paper_trading_optimization_profile_fallback_reason={optimization_profile_resolution['fallback_reason']}")
 
 
 def _print_shadow_focus_summary(auto_shadow_focus: dict[str, list[str]], shadow_focus_env: dict[str, str]) -> None:
@@ -692,6 +725,7 @@ def main() -> None:
     fast_selected_analysts = runtime_inputs["fast_selected_analysts"]
     short_trade_target_profile = runtime_inputs["short_trade_target_profile"]
     short_trade_target_overrides = runtime_inputs["short_trade_target_overrides"]
+    optimization_profile_resolution = runtime_inputs["optimization_profile_resolution"]
     output_dir = runtime_inputs["output_dir"]
     auto_shadow_focus = runtime_inputs["auto_shadow_focus"]
     shadow_focus_env = _apply_shadow_focus_env_overrides(args, auto_shadow_focus)
@@ -719,6 +753,7 @@ def main() -> None:
         fast_selected_analysts=fast_selected_analysts,
         short_trade_target_profile_name=short_trade_target_profile,
         short_trade_target_profile_overrides=short_trade_target_overrides,
+        optimization_profile_resolution=optimization_profile_resolution,
         frozen_plan_source=args.frozen_plan_source,
         selection_target=args.selection_target,
         cache_benchmark=args.cache_benchmark,
@@ -734,6 +769,7 @@ def main() -> None:
         fast_selected_analysts=fast_selected_analysts,
         short_trade_target_profile=short_trade_target_profile,
         short_trade_target_overrides=short_trade_target_overrides,
+        optimization_profile_resolution=optimization_profile_resolution,
         auto_shadow_focus=auto_shadow_focus,
         shadow_focus_env=shadow_focus_env,
     )

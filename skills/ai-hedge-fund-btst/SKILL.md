@@ -37,6 +37,8 @@ This skill runs the repo's BTST next-day document workflow.
 3. Run the multi-agent BTST pipeline.
   - Use short_trade_only for this skill.
   - Keep MiniMax / MiniMax-M2.7 unless the user explicitly overrides model routing.
+  - Default this workflow to the latest approved optimized profile manifest when it is ready.
+  - If the user supplies explicit short-trade profile inputs, treat them as an intentional bypass of manifest autoselect and do not label the run as optimized unless the artifacts explicitly support that claim.
   - Default invocation:
 
   ```bash
@@ -44,6 +46,7 @@ This skill runs the repo's BTST next-day document workflow.
     --start-date YYYY-MM-DD \
     --end-date YYYY-MM-DD \
     --selection-target short_trade_only \
+    --optimized-profile-manifest data/reports/btst_latest_optimized_profile.json \
     --model-provider MiniMax \
     --model-name MiniMax-M2.7 \
     --output-dir data/reports/paper_trading_YYYYMMDD_YYYYMMDD_live_m2_7_short_trade_only_YYYYMMDD_plan
@@ -51,7 +54,9 @@ This skill runs the repo's BTST next-day document workflow.
 
 4. Read current artifacts.
   - MANDATORY: load references/artifact-reading.md before drafting.
-  - Prefer session_summary.json as the source of truth for artifact paths.
+  - Treat session_summary.json as the source of truth for artifact paths and optimization-profile provenance.
+  - Read optimization_profile_resolution from session_summary.json before inferring whether the run used the latest optimized manifest or a default fallback.
+  - If session_summary.json shows default fallback, the final docs must say so explicitly instead of silently presenting the run as optimized.
   - Prefer JSON artifacts for structure and Markdown artifacts for prose fallback.
 
 5. Write final documents.
@@ -77,6 +82,8 @@ This skill runs the repo's BTST next-day document workflow.
 - If a long-running command pauses for interactive input, ask the user for the required answer and continue.
 - If source artifacts cannot be produced, stop and report the blocker instead of fabricating deliverables.
 - Never treat the report directory name as the source of truth when session_summary.json exists; reruns can change suffixes while session_summary keeps the real artifact index.
+- Never claim an optimized-profile run unless session_summary.json or downstream artifacts support that provenance.
+- If optimization_profile_resolution reports mode=default_fallback, surface the fallback state and reason where the final docs describe multi-agent execution provenance.
 
 ## Optional context
 

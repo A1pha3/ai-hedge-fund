@@ -401,6 +401,7 @@ def _finalize_paper_trading_session(
     cache_benchmark: bool,
     cache_benchmark_ticker: str | None,
     cache_benchmark_clear_first: bool,
+    optimization_profile_resolution: dict[str, Any] | None = None,
 ) -> tuple[dict, Path]:
     research_feedback_summary, feedback_summary_path = _write_research_feedback_summary(context.session_paths.selection_artifact_root)
     monitoring_summary = _build_runtime_monitoring_summary(context)
@@ -425,6 +426,7 @@ def _finalize_paper_trading_session(
             fast_selected_analysts=fast_selected_analysts,
             short_trade_target_profile_name=short_trade_target_profile_name,
             short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+            optimization_profile_resolution=optimization_profile_resolution,
             selection_target=selection_target,
             research_feedback_summary=research_feedback_summary,
             feedback_summary_path=feedback_summary_path,
@@ -459,6 +461,7 @@ def _build_runtime_session_summary_inputs(
     cache_benchmark_summary: dict,
     cache_benchmark_artifacts: dict,
     cache_benchmark_status: str,
+    optimization_profile_resolution: dict[str, Any] | None = None,
 ) -> dict:
     return build_runtime_session_summary_inputs_helper(
         context=context,
@@ -479,6 +482,7 @@ def _build_runtime_session_summary_inputs(
         cache_benchmark_summary=cache_benchmark_summary,
         cache_benchmark_artifacts=cache_benchmark_artifacts,
         cache_benchmark_status=cache_benchmark_status,
+        optimization_profile_resolution=optimization_profile_resolution,
         serialize_portfolio_values_fn=_serialize_portfolio_values,
     )
 
@@ -494,6 +498,7 @@ def _build_runtime_session_summary_metadata(
     fast_selected_analysts: list[str] | None,
     short_trade_target_profile_name: str,
     short_trade_target_profile_overrides: dict[str, object] | None,
+    optimization_profile_resolution: dict[str, Any] | None,
     selection_target: str,
 ) -> dict:
     return build_runtime_session_summary_metadata_helper(
@@ -506,6 +511,7 @@ def _build_runtime_session_summary_metadata(
         fast_selected_analysts=fast_selected_analysts,
         short_trade_target_profile_name=short_trade_target_profile_name,
         short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+        optimization_profile_resolution=optimization_profile_resolution,
         selection_target=selection_target,
     )
 
@@ -611,6 +617,7 @@ def _finalize_runtime_run(
     fast_selected_analysts: list[str] | None,
     short_trade_target_profile_name: str,
     short_trade_target_profile_overrides: dict[str, object] | None,
+    optimization_profile_resolution: dict[str, Any] | None,
     selection_target: str,
     cache_benchmark: bool,
     cache_benchmark_ticker: str | None,
@@ -627,6 +634,7 @@ def _finalize_runtime_run(
         fast_selected_analysts=fast_selected_analysts,
         short_trade_target_profile_name=short_trade_target_profile_name,
         short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+        optimization_profile_resolution=optimization_profile_resolution,
         selection_target=selection_target,
         cache_benchmark=cache_benchmark,
         cache_benchmark_ticker=cache_benchmark_ticker,
@@ -649,6 +657,7 @@ def _build_runtime_finalization_inputs(
     fast_selected_analysts: list[str] | None,
     short_trade_target_profile_name: str,
     short_trade_target_profile_overrides: dict[str, object] | None,
+    optimization_profile_resolution: dict[str, Any] | None,
     selection_target: str,
     cache_benchmark: bool,
     cache_benchmark_ticker: str | None,
@@ -665,6 +674,7 @@ def _build_runtime_finalization_inputs(
         fast_selected_analysts=fast_selected_analysts,
         short_trade_target_profile_name=short_trade_target_profile_name,
         short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+        optimization_profile_resolution=optimization_profile_resolution,
         selection_target=selection_target,
         cache_benchmark=cache_benchmark,
         cache_benchmark_ticker=cache_benchmark_ticker,
@@ -685,6 +695,7 @@ def run_paper_trading_session(
     fast_selected_analysts: list[str] | None = None,
     short_trade_target_profile_name: str = "default",
     short_trade_target_profile_overrides: dict[str, object] | None = None,
+    optimization_profile_resolution: dict[str, Any] | None = None,
     initial_margin_requirement: float = 0.0,
     agent: Callable = run_hedge_fund,
     pipeline: DailyPipeline | None = None,
@@ -706,6 +717,7 @@ def run_paper_trading_session(
         fast_selected_analysts=fast_selected_analysts,
         short_trade_target_profile_name=short_trade_target_profile_name,
         short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+        optimization_profile_resolution=optimization_profile_resolution,
         initial_margin_requirement=initial_margin_requirement,
         agent=agent,
         pipeline=pipeline,

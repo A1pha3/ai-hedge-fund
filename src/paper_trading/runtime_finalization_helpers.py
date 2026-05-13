@@ -21,6 +21,7 @@ def build_runtime_session_summary_metadata(
     short_trade_target_profile_name: str,
     short_trade_target_profile_overrides: dict[str, object] | None,
     selection_target: str,
+    optimization_profile_resolution: dict[str, Any] | None = None,
 ) -> dict:
     return {
         "start_date": start_date,
@@ -33,6 +34,7 @@ def build_runtime_session_summary_metadata(
         "fast_selected_analysts": fast_selected_analysts,
         "short_trade_target_profile_name": short_trade_target_profile_name,
         "short_trade_target_profile_overrides": short_trade_target_profile_overrides,
+        "optimization_profile_resolution": dict(optimization_profile_resolution or {}),
         "frozen_plan_source_path": context.session_paths.frozen_plan_source_path,
         "selection_target": selection_target,
     }
@@ -96,6 +98,7 @@ def build_runtime_session_summary_inputs(
     cache_benchmark_artifacts: dict,
     cache_benchmark_status: str,
     serialize_portfolio_values_fn: Callable[[Any], list[dict]],
+    optimization_profile_resolution: dict[str, Any] | None = None,
 ) -> dict:
     return {
         **build_runtime_session_summary_metadata(
@@ -108,6 +111,7 @@ def build_runtime_session_summary_inputs(
             fast_selected_analysts=fast_selected_analysts,
             short_trade_target_profile_name=short_trade_target_profile_name,
             short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+            optimization_profile_resolution=optimization_profile_resolution,
             selection_target=selection_target,
         ),
         "metrics": dict(metrics),
@@ -125,6 +129,7 @@ def build_runtime_session_summary_inputs(
             cache_benchmark_artifacts=cache_benchmark_artifacts,
             llm_metrics_artifacts=monitoring_summary["llm_metrics_artifacts"],
         ),
+        "optimization_profile_resolution": dict(optimization_profile_resolution or {}),
     }
 
 
@@ -144,6 +149,7 @@ def build_runtime_finalization_inputs(
     cache_benchmark: bool,
     cache_benchmark_ticker: str | None,
     cache_benchmark_clear_first: bool,
+    optimization_profile_resolution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "context": context,
@@ -160,6 +166,7 @@ def build_runtime_finalization_inputs(
         "cache_benchmark": cache_benchmark,
         "cache_benchmark_ticker": cache_benchmark_ticker,
         "cache_benchmark_clear_first": cache_benchmark_clear_first,
+        "optimization_profile_resolution": optimization_profile_resolution,
     }
 
 

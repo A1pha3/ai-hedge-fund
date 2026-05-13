@@ -4,6 +4,8 @@ import os
 from types import SimpleNamespace
 from pathlib import Path
 
+import json
+from src.paper_trading.optimized_profile_resolution import resolve_btst_optimized_profile_manifest
 import scripts.run_paper_trading as run_paper_trading_script
 
 
@@ -63,6 +65,287 @@ def test_resolve_runtime_inputs_uses_adaptive_default_profile(monkeypatch, tmp_p
     runtime_inputs = run_paper_trading_script._resolve_paper_trading_runtime_inputs(args)
 
     assert runtime_inputs["short_trade_target_profile"] == "default"
+
+
+def test_resolve_runtime_inputs_scopes_optimized_manifest_resolution_to_short_trade_only(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda _reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+    resolve_calls: list[Path] = []
+
+    def fake_resolve_btst_optimized_profile_manifest(path: str | Path) -> dict[str, object]:
+        resolve_calls.append(Path(path))
+        return {
+            "mode": "optimized",
+            "profile_name": "momentum_optimized",
+            "profile_overrides": {"select_threshold": 0.48},
+            "source_type": "optimize_profile",
+            "source_path": str(tmp_path / "source.json"),
+            "validated_by": "walk_forward_and_rollout",
+            "trade_date": "2026-05-12",
+            "status": "ready",
+            "fallback_reason": None,
+            "manifest_path": str(tmp_path / "btst_latest_optimized_profile.json"),
+        }
+
+    monkeypatch.setattr(run_paper_trading_script, "resolve_btst_optimized_profile_manifest", fake_resolve_btst_optimized_profile_manifest)
+    args = SimpleNamespace(
+        start_date="2026-03-23",
+        end_date="2026-03-26",
+        tickers="",
+        analysts=None,
+        analysts_all=False,
+        fast_analysts=None,
+        short_trade_target_profile=None,
+        short_trade_target_overrides=None,
+        output_dir=str(tmp_path / "paper"),
+        selection_target="research_only",
+        optimized_profile_manifest=str(tmp_path / "btst_latest_optimized_profile.json"),
+    )
+
+    runtime_inputs = run_paper_trading_script._resolve_paper_trading_runtime_inputs(args)
+
+    assert resolve_calls == []
+    assert runtime_inputs["short_trade_target_profile"] == "default"
+    assert runtime_inputs["short_trade_target_overrides"] == {}
+    assert runtime_inputs["optimization_profile_resolution"] == {}
+
+
+def test_resolve_runtime_inputs_uses_repo_root_default_manifest_when_cwd_changes(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda _reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+    manifest_paths: list[Path] = []
+
+    def fake_resolve_btst_optimized_profile_manifest(path: str | Path) -> dict[str, object]:
+        manifest_paths.append(Path(path))
+        return {
+            "mode": "optimized",
+            "profile_name": "momentum_optimized",
+            "profile_overrides": {},
+            "source_type": "optimize_profile",
+            "source_path": str(tmp_path / "source.json"),
+            "validated_by": "walk_forward_and_rollout",
+            "trade_date": "2026-05-12",
+            "status": "ready",
+            "fallback_reason": None,
+            "manifest_path": str(path),
+        }
+
+    monkeypatch.setattr(run_paper_trading_script, "resolve_btst_optimized_profile_manifest", fake_resolve_btst_optimized_profile_manifest)
+    other_cwd = tmp_path / "outside_repo"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+    args = SimpleNamespace(
+        start_date="2026-03-23",
+        end_date="2026-03-26",
+        tickers="",
+        analysts=None,
+        analysts_all=False,
+        fast_analysts=None,
+        short_trade_target_profile=None,
+        short_trade_target_overrides=None,
+        output_dir=str(tmp_path / "paper"),
+        selection_target="short_trade_only",
+    )
+
+    run_paper_trading_script._resolve_paper_trading_runtime_inputs(args)
+
+    assert manifest_paths == [run_paper_trading_script.DEFAULT_OPTIMIZED_PROFILE_MANIFEST_PATH]
+
+
+def test_run_paper_trading_resolves_optimized_manifest_before_pipeline(monkeypatch, tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "profile_name": "momentum_optimized",
+                "profile_overrides": {"select_threshold": 0.48},
+                "source_type": "optimize_profile",
+                "source_path": str(tmp_path / "source.json"),
+                "validated_by": "walk_forward_and_rollout",
+                "trade_date": "2026-05-12",
+                "status": "ready",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "source.json").write_text("{}", encoding="utf-8")
+
+    resolved_before_pipeline: list[str] = []
+    captured: dict[str, object] = {}
+
+    def fake_resolve_btst_optimized_profile_manifest(path: str | Path) -> dict[str, object]:
+        resolved_before_pipeline.append(str(path))
+        return {
+            "mode": "optimized",
+            "profile_name": "momentum_optimized",
+            "profile_overrides": {"select_threshold": 0.48},
+            "source_type": "optimize_profile",
+            "source_path": str(tmp_path / "source.json"),
+            "validated_by": "walk_forward_and_rollout",
+            "trade_date": "2026-05-12",
+            "status": "ready",
+            "fallback_reason": None,
+            "manifest_path": str(manifest_path),
+        }
+
+    def fake_run_paper_trading_session(**kwargs: object) -> tuple[dict[str, object], Path]:
+        assert resolved_before_pipeline == [str(manifest_path)]
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output_dir=tmp_path / "paper_trading",
+            daily_events_path=tmp_path / "paper_trading" / "daily_events.jsonl",
+            timing_log_path=tmp_path / "paper_trading" / "pipeline_timings.jsonl",
+            summary_path=tmp_path / "paper_trading" / "session_summary.json",
+        )
+
+    monkeypatch.setattr(run_paper_trading_script, "resolve_btst_optimized_profile_manifest", fake_resolve_btst_optimized_profile_manifest)
+    monkeypatch.setattr(run_paper_trading_script, "_run_paper_trading_session", fake_run_paper_trading_session)
+    monkeypatch.setattr(run_paper_trading_script, "_resolve_model_route", lambda model_name, model_provider: ("test-model", "test-provider"))
+    monkeypatch.setattr(run_paper_trading_script, "_print_btst_followup_artifacts", lambda *args, **kwargs: None)
+
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "parse_args",
+        lambda: SimpleNamespace(
+            start_date="2026-05-12",
+            end_date="2026-05-12",
+            tickers="",
+            initial_capital=100000.0,
+            model_name=None,
+            model_provider=None,
+            selection_target="short_trade_only",
+            output_dir=str(tmp_path / "paper_trading"),
+            frozen_plan_source=None,
+            cache_benchmark=False,
+            cache_benchmark_ticker=None,
+            cache_benchmark_clear_first=False,
+            analysts=None,
+            fast_analysts=None,
+            short_trade_target_profile=None,
+            short_trade_target_overrides=None,
+            analysts_all=False,
+            analyst_concurrency_limit=None,
+            disable_data_snapshots=True,
+            candidate_pool_shadow_focus_tickers=None,
+            candidate_pool_shadow_corridor_focus_tickers=None,
+            candidate_pool_shadow_rebucket_focus_tickers=None,
+            upstream_shadow_release_liquidity_corridor_score_min=None,
+            upstream_shadow_release_post_gate_rebucket_score_min=None,
+            optimized_profile_manifest=str(manifest_path),
+            enable_data_snapshots=False,
+        ),
+    )
+
+    run_paper_trading_script.main()
+
+    assert captured["short_trade_target_profile_name"] == "momentum_optimized"
+    assert captured["short_trade_target_profile_overrides"] == {"select_threshold": 0.48}
+
+
+def test_resolve_runtime_inputs_explicit_profile_skips_manifest_autoselect(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda _reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+
+    def fail_if_manifest_resolved(_path: str | Path) -> dict[str, object]:
+        raise AssertionError("optimized manifest should not be resolved when explicit short-trade profile is provided")
+
+    monkeypatch.setattr(run_paper_trading_script, "resolve_btst_optimized_profile_manifest", fail_if_manifest_resolved)
+    args = SimpleNamespace(
+        start_date="2026-03-23",
+        end_date="2026-03-26",
+        tickers="",
+        analysts=None,
+        analysts_all=False,
+        fast_analysts=None,
+        short_trade_target_profile="manual_profile",
+        short_trade_target_overrides=None,
+        output_dir=str(tmp_path / "paper"),
+        selection_target="short_trade_only",
+        optimized_profile_manifest=str(tmp_path / "btst_latest_optimized_profile.json"),
+    )
+
+    runtime_inputs = run_paper_trading_script._resolve_paper_trading_runtime_inputs(args)
+
+    assert runtime_inputs["short_trade_target_profile"] == "manual_profile"
+    assert runtime_inputs["short_trade_target_overrides"] == {}
+    assert runtime_inputs["optimization_profile_resolution"] == {}
+
+
+def test_resolve_runtime_inputs_explicit_overrides_skip_manifest_autoselect(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda _reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+
+    def fail_if_manifest_resolved(_path: str | Path) -> dict[str, object]:
+        raise AssertionError("optimized manifest should not be resolved when explicit short-trade overrides are provided")
+
+    monkeypatch.setattr(run_paper_trading_script, "resolve_btst_optimized_profile_manifest", fail_if_manifest_resolved)
+    args = SimpleNamespace(
+        start_date="2026-03-23",
+        end_date="2026-03-26",
+        tickers="",
+        analysts=None,
+        analysts_all=False,
+        fast_analysts=None,
+        short_trade_target_profile=None,
+        short_trade_target_overrides='{"select_threshold": 0.61}',
+        output_dir=str(tmp_path / "paper"),
+        selection_target="short_trade_only",
+        optimized_profile_manifest=str(tmp_path / "btst_latest_optimized_profile.json"),
+    )
+
+    runtime_inputs = run_paper_trading_script._resolve_paper_trading_runtime_inputs(args)
+
+    assert runtime_inputs["short_trade_target_profile"] == "default"
+    assert runtime_inputs["short_trade_target_overrides"] == {"select_threshold": 0.61}
+    assert runtime_inputs["optimization_profile_resolution"] == {}
 
 
 def test_derive_shadow_focus_tickers_from_reports_picks_continuation_followup(tmp_path: Path) -> None:
@@ -979,3 +1262,271 @@ def test_run_paper_trading_session_reasserts_snapshot_path_after_runtime_import(
             os.environ.pop("DATA_SNAPSHOT_PATH", None)
         else:
             os.environ["DATA_SNAPSHOT_PATH"] = original_snapshot_path
+
+
+def test_main_summary_prints_optimized_profile_fallback_provenance(monkeypatch, capsys, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "parse_args",
+        lambda: SimpleNamespace(
+            start_date="2026-03-23",
+            end_date="2026-03-26",
+            tickers="",
+            initial_capital=100000.0,
+            model_name=None,
+            model_provider=None,
+            selection_target="short_trade_only",
+            output_dir=str(tmp_path / "paper_trading"),
+            frozen_plan_source=None,
+            cache_benchmark=False,
+            cache_benchmark_ticker=None,
+            cache_benchmark_clear_first=False,
+            analysts=None,
+            fast_analysts=None,
+            short_trade_target_profile=None,
+            short_trade_target_overrides=None,
+            analysts_all=False,
+            analyst_concurrency_limit=None,
+            disable_data_snapshots=True,
+            candidate_pool_shadow_focus_tickers=None,
+            candidate_pool_shadow_corridor_focus_tickers=None,
+            candidate_pool_shadow_rebucket_focus_tickers=None,
+            upstream_shadow_release_liquidity_corridor_score_min=None,
+            upstream_shadow_release_post_gate_rebucket_score_min=None,
+            optimized_profile_manifest=str(tmp_path / "missing_manifest.json"),
+            enable_data_snapshots=False,
+        ),
+    )
+    monkeypatch.setattr(run_paper_trading_script, "_resolve_model_route", lambda model_name, model_provider: ("test-model", "test-provider"))
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda _reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "resolve_btst_optimized_profile_manifest",
+        lambda path: {
+            "mode": "default_fallback",
+            "profile_name": "default",
+            "profile_overrides": {},
+            "source_type": None,
+            "source_path": None,
+            "validated_by": None,
+            "trade_date": None,
+            "status": "missing",
+            "fallback_reason": "optimized_profile_manifest_missing",
+            "manifest_path": str(path),
+        },
+    )
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_run_paper_trading_session",
+        lambda **kwargs: SimpleNamespace(
+            output_dir=tmp_path / "paper_trading",
+            daily_events_path=tmp_path / "paper_trading" / "daily_events.jsonl",
+            timing_log_path=tmp_path / "paper_trading" / "pipeline_timings.jsonl",
+            summary_path=tmp_path / "paper_trading" / "session_summary.json",
+        ),
+    )
+    monkeypatch.setattr(run_paper_trading_script, "_print_btst_followup_artifacts", lambda *args, **kwargs: None)
+
+    run_paper_trading_script.main()
+
+    stdout = capsys.readouterr().out
+    assert "paper_trading_optimization_profile_mode=default_fallback" in stdout
+    assert "paper_trading_optimization_profile_fallback_reason=optimized_profile_manifest_missing" in stdout
+    assert f"paper_trading_optimization_profile_manifest={tmp_path / 'missing_manifest.json'}" in stdout
+
+
+def test_resolve_btst_optimized_profile_manifest_returns_ready_profile(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "profile_name": "momentum_optimized",
+                "profile_overrides": {"select_threshold": 0.48, "near_miss_threshold": 0.34},
+                "source_type": "optimize_profile",
+                "source_path": str(tmp_path / "param_search_latest.json"),
+                "validated_by": "walk_forward_and_rollout",
+                "trade_date": "2026-05-12",
+                "status": "ready",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "param_search_latest.json").write_text("{}", encoding="utf-8")
+
+    result = resolve_btst_optimized_profile_manifest(manifest_path)
+
+    assert result["mode"] == "optimized"
+    assert result["profile_name"] == "momentum_optimized"
+    assert result["profile_overrides"] == {"select_threshold": 0.48, "near_miss_threshold": 0.34}
+    assert result["fallback_reason"] is None
+
+
+def test_resolve_btst_optimized_profile_manifest_returns_default_fallback_when_manifest_missing(tmp_path: Path) -> None:
+    result = resolve_btst_optimized_profile_manifest(tmp_path / "missing.json")
+
+    assert result["mode"] == "default_fallback"
+    assert result["profile_name"] == "default"
+    assert result["profile_overrides"] == {}
+    assert result["fallback_reason"] == "optimized_profile_manifest_missing"
+
+
+def test_resolve_btst_optimized_profile_manifest_handles_malformed_json_and_returns_default_fallback(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    # write malformed JSON
+    manifest_path.write_text("{ this is : not valid json }", encoding="utf-8")
+
+    result = resolve_btst_optimized_profile_manifest(manifest_path)
+
+    assert result["mode"] == "default_fallback"
+    assert result["profile_name"] == "default"
+    assert result["profile_overrides"] == {}
+    assert result["fallback_reason"] == "optimized_profile_manifest_malformed"
+
+
+def test_resolve_btst_optimized_profile_manifest_handles_non_utf8_bytes_and_returns_default_fallback(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    # write raw non-UTF8 bytes (invalid UTF-8 sequence) to ensure decoder errors are handled
+    manifest_path.write_bytes(b"\xff\xfe\xff\x00")
+
+    result = resolve_btst_optimized_profile_manifest(manifest_path)
+
+    assert result["mode"] == "default_fallback"
+    assert result["profile_name"] == "default"
+    assert result["profile_overrides"] == {}
+    assert result["fallback_reason"] == "optimized_profile_manifest_malformed"
+
+
+def test_resolve_btst_optimized_profile_manifest_resolves_relative_source_path_against_manifest_location(tmp_path: Path, monkeypatch) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    # source_path provided relative to the manifest location
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "profile_name": "momentum_optimized",
+                "profile_overrides": {"select_threshold": 0.48},
+                "source_type": "optimize_profile",
+                "source_path": "param_search_latest.json",
+                "validated_by": "walk_forward_and_rollout",
+                "trade_date": "2026-05-12",
+                "status": "ready",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # write the source file next to the manifest
+    (tmp_path / "param_search_latest.json").write_text("{}", encoding="utf-8")
+
+    # change cwd to a different location to ensure relative paths are resolved against manifest
+    other_dir = tmp_path / "other_cwd"
+    other_dir.mkdir()
+    monkeypatch.chdir(other_dir)
+
+    result = resolve_btst_optimized_profile_manifest(manifest_path)
+
+    assert result["mode"] == "optimized"
+    # source_path should be normalized to an absolute/resolved path pointing at the file next to the manifest
+    assert Path(result["source_path"]).exists()
+    assert Path(result["source_path"]).samefile(tmp_path / "param_search_latest.json")
+
+
+def test_resolve_btst_optimized_profile_manifest_rejects_non_dict_profile_overrides(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "profile_name": "momentum_optimized",
+                # invalid: list is not an acceptable profile_overrides value for optimized manifests
+                "profile_overrides": [],
+                "source_type": "optimize_profile",
+                "source_path": str(tmp_path / "param_search_latest.json"),
+                "validated_by": "walk_forward_and_rollout",
+                "trade_date": "2026-05-12",
+                "status": "ready",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "param_search_latest.json").write_text("{}", encoding="utf-8")
+
+    result = resolve_btst_optimized_profile_manifest(manifest_path)
+
+    assert result["mode"] == "default_fallback"
+    assert result["fallback_reason"] == "optimized_profile_manifest_invalid"
+
+
+def test_resolve_btst_optimized_profile_manifest_falls_back_for_directory_manifest(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "manifest_dir"
+    manifest_dir.mkdir()
+
+    result = resolve_btst_optimized_profile_manifest(manifest_dir)
+
+    assert result["mode"] == "default_fallback"
+    assert result["profile_name"] == "default"
+    assert result["profile_overrides"] == {}
+    assert result["fallback_reason"] == "optimized_profile_manifest_unreadable"
+
+
+def test_resolve_btst_optimized_profile_manifest_falls_back_when_source_path_is_directory(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "profile_name": "momentum_optimized",
+                "profile_overrides": {"select_threshold": 0.48},
+                "source_type": "optimize_profile",
+                "source_path": str(tmp_path / "param_search_dir"),
+                "validated_by": "walk_forward_and_rollout",
+                "trade_date": "2026-05-12",
+                "status": "ready",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "param_search_dir").mkdir()
+
+    result = resolve_btst_optimized_profile_manifest(manifest_path)
+
+    assert result["mode"] == "default_fallback"
+    assert result["profile_name"] == "default"
+    assert result["profile_overrides"] == {}
+    assert result["fallback_reason"] == "optimized_profile_source_missing"
+
+
+def test_resolve_btst_optimized_profile_manifest_returns_default_fallback_when_manifest_not_ready(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "profile_name": "momentum_optimized",
+                "profile_overrides": {"select_threshold": 0.48},
+                "source_type": "optimize_profile",
+                "source_path": str(tmp_path / "param_search_latest.json"),
+                "validated_by": "walk_forward_and_rollout",
+                "trade_date": "2026-05-12",
+                "status": "pending",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "param_search_latest.json").write_text("{}", encoding="utf-8")
+
+    result = resolve_btst_optimized_profile_manifest(manifest_path)
+
+    assert result["mode"] == "default_fallback"
+    assert result["profile_name"] == "default"
+    assert result["profile_overrides"] == {}
+    assert result["status"] == "pending"
+    assert result["fallback_reason"] == "optimized_profile_manifest_invalid"

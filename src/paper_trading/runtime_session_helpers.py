@@ -190,6 +190,7 @@ def build_session_summary(
     feedback_summary_path: Path,
     cache_benchmark_artifacts: dict[str, str],
     llm_metrics_artifacts: dict[str, str],
+    optimization_profile_resolution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     summary = {
         "mode": "paper_trading",
@@ -226,6 +227,7 @@ def build_session_summary(
         "data_cache_benchmark": cache_benchmark_summary,
         "data_cache_benchmark_status": cache_benchmark_status,
         "research_feedback_summary": research_feedback_summary,
+        "optimization_profile_resolution": dict(optimization_profile_resolution or {}),
         "daily_event_stats": {
             "day_count": recorder_day_count,
             "executed_trade_days": recorder_executed_trade_days,

@@ -14,7 +14,10 @@ Load this file before drafting any BTST output.
 
 - Prefer JSON when you need counts, lane labels, hierarchy, or source paths.
 - Use Markdown when you need the artifact's own narrative wording, audit summary, or natural-language recommendation.
-- If session_summary.json exists, treat it as the path index for btst followup artifacts.
+- If session_summary.json exists, treat it as the path index for btst followup artifacts and the authority for multi-agent provenance.
+- Read optimization_profile_resolution from session_summary.json before inferring optimized-profile provenance. Prefer it over directory names or human assumptions when deciding whether the run used the latest optimized manifest or default fallback.
+- If optimization_profile_resolution is missing, fall back to legacy short_trade_target_profile_name and short_trade_target_profile_overrides fields without inventing optimized provenance that the artifacts do not prove.
+- Do not claim an optimized run unless session_summary.json or downstream artifacts actually support it. If fallback happened, surface the fallback reason where relevant in the final docs.
 - If btst_full_report.py returns target day N/A on the newest usable date, recompute or verify the real next trading day before writing final documents.
 - If session_summary and a downstream artifact disagree, trust the downstream BTST artifact for candidate semantics and trust session_summary for file locations.
 
