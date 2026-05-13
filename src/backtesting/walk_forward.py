@@ -37,6 +37,7 @@ RUNNER_TAIL_HIT_ABSOLUTE_MIN = 0.12
 RUNNER_T1_WIN_RATE_REGRESSION_FLOOR = -0.04
 RUNNER_DOWNSIDE_REGRESSION_FLOOR = -0.015
 RUNNER_COMPOSITE_SCORE_QUALITY_FLOOR = 0.50
+RUNNER_ESCAPE_RATE_MIN = 0.03
 
 
 @dataclass(frozen=True)
@@ -375,6 +376,7 @@ def classify_runner_rollout_verdict(
         "t1_win_rate_delta": None,
         "downside_delta": None,
         "avg_composite_score_escaped": runner_summary.get("avg_composite_score_escaped"),
+        "avg_runner_escape_rate": runner_summary.get("avg_runner_escape_rate"),
     }
 
     if baseline_summary is not None:
@@ -391,6 +393,13 @@ def classify_runner_rollout_verdict(
     # Absolute floor: if tail hit below minimum, always keep precision baseline
     if tail_hit < RUNNER_TAIL_HIT_ABSOLUTE_MIN:
         detail["verdict_reason"] = "tail_hit_below_absolute_min"
+        return "keep_precision_baseline", detail
+
+    # Absolute floor: if escape rate is below minimum, the profile can't capture
+    # runners in production regardless of signal quality — always keep precision baseline.
+    escape_rate = runner_summary.get("avg_runner_escape_rate")
+    if escape_rate is not None and float(escape_rate) < RUNNER_ESCAPE_RATE_MIN:
+        detail["verdict_reason"] = "runner_escape_rate_below_floor"
         return "keep_precision_baseline", detail
 
     if baseline_tail_hit is not None:

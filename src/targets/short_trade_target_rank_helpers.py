@@ -530,16 +530,16 @@ def _apply_rank_based_decision_cap(
 
 
 def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None) -> float:
-    """Runner-priority composite score combining six key runner signals.
+    """Runner-priority composite score combining seven key runner signals.
 
     Weights are read from the profile when provided (fields: runner_composite_score_breakout_weight,
     runner_composite_score_trend_weight, runner_composite_score_volume_weight,
     runner_composite_score_catalyst_weight, runner_composite_score_close_strength_weight,
-    runner_composite_score_volatility_regime_weight).
+    runner_composite_score_volatility_regime_weight, runner_composite_score_sector_resonance_weight).
     Falls back to defaults when profile is absent:
       breakout_freshness=0.40, trend_acceleration=0.30,
       volume_expansion_quality=0.20, catalyst_freshness=0.10, close_strength=0.10,
-      volatility_regime=0.0 (disabled by default).
+      volatility_regime=0.0 (disabled by default), sector_resonance=0.0 (disabled by default).
 
     Weights are automatically normalized by their sum so the score is always in [0.0, 1.0]
     regardless of whether the provided weights happen to sum to 1.0.  This makes grid-search
@@ -552,6 +552,9 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     ``volatility_regime_score`` penalizes high-volatility environments: score=1.0 at normal
     regime (volatility_regime ≤ 1.0, atr_ratio ≤ 0.065), decaying to 0.0 at crisis thresholds
     (volatility_regime ≥ 1.35, atr_ratio ≥ 0.11).  Neutral 0.5 when no volatility data present.
+    ``sector_resonance_score`` rewards sector-aligned runners — stocks whose price action
+    aligns with the broader sector trend have higher gap-up persistence and lower whipsaw risk.
+    Already in [0.0, 1.0]; neutral 0.5 when no sector data present.
     """
     breakout = float(snapshot.get("breakout_freshness") or 0.0)
     trend = float(snapshot.get("trend_acceleration") or 0.0)
@@ -566,14 +569,17 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
         vr_risk = max((volatility_regime - 1.0) / 0.35, 0.0) if volatility_regime > 0 else 0.0
         atr_risk = max((atr_ratio - 0.065) / 0.045, 0.0) if atr_ratio > 0 else 0.0
         volatility_regime_score = round(1.0 - min(max(vr_risk, atr_risk), 1.0), 4)
+    raw_sector = float(snapshot.get("sector_resonance") or 0.0)
+    sector_resonance_score = round(min(max(raw_sector, 0.0), 1.0), 4) if raw_sector > 0.0 else 0.5
     w_b = float(getattr(profile, "runner_composite_score_breakout_weight", 0.40) or 0.40)
     w_t = float(getattr(profile, "runner_composite_score_trend_weight", 0.30) or 0.30)
     w_v = float(getattr(profile, "runner_composite_score_volume_weight", 0.20) or 0.20)
     w_c = float(getattr(profile, "runner_composite_score_catalyst_weight", 0.10) or 0.10)
     w_cs = float(getattr(profile, "runner_composite_score_close_strength_weight", 0.10) or 0.10)
     w_vr = float(getattr(profile, "runner_composite_score_volatility_regime_weight", 0.0) or 0.0)
-    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr
+    w_sr = float(getattr(profile, "runner_composite_score_sector_resonance_weight", 0.0) or 0.0)
+    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr
     if total_weight <= 0.0:
         return 0.0
-    raw = w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score
+    raw = w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score
     return round(raw / total_weight, 4)

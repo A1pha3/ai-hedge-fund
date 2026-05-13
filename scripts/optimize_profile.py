@@ -1011,6 +1011,10 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "runner_composite_score_close_strength_weight": [0.05, 0.10, 0.15],
     "historical_continuation_score_weight": [0.0, 0.05, 0.10],
     "runner_composite_score_volatility_regime_weight": [0.0, 0.05, 0.10],
+    "runner_composite_score_sector_resonance_weight": [0.0, 0.05, 0.10],
+    "runner_escape_gap_risk_raw_100_max": [40.0, 45.0, 52.0],
+    "runner_escape_projected_theme_exposure_max": [0.24, 0.28, 0.32],
+    "runner_escape_candidate_pool_avg_amount_share_of_cutoff_min": [0.85, 1.0, 1.15],
 }
 
 IGNITION_STAGE1_GRID: dict[str, list[Any]] = {
