@@ -312,6 +312,11 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     runner_hit_rate = None if not runner_rows else round(runner_capture_count / len(runner_rows), 4)
     time_to_hit_values = [float(row["time_to_hit_20pct"]) for row in runner_rows if row.get("time_to_hit_20pct") is not None]
 
+    escaped_rows = [row for row in rows if str(row.get("runner_escape") or "") == "pass"]
+    runner_escape_rate = round(len(escaped_rows) / len(rows), 4) if rows else None
+    escaped_scores = [float(row["runner_composite_score"]) for row in escaped_rows if row.get("runner_composite_score") is not None]
+    avg_composite_score_escaped = round(sum(escaped_scores) / len(escaped_scores), 4) if escaped_scores else None
+
     return {
         "total_count": len(rows),
         "next_day_available_count": len(next_day_rows),
@@ -352,6 +357,8 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "max_future_high_return_2_5d_hit_rate_at_20pct": runner_hit_rate,
         "max_future_high_return_2_5d_distribution": summarize_distribution([float(row["max_future_high_return_2_5d"]) for row in runner_rows]),
         "time_to_hit_20pct_median": summarize_distribution(time_to_hit_values)["median"] if time_to_hit_values else None,
+        "runner_escape_rate": runner_escape_rate,
+        "avg_composite_score_escaped": avg_composite_score_escaped,
     }
 
 

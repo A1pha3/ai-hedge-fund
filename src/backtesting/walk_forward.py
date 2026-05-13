@@ -36,6 +36,7 @@ RUNNER_TAIL_HIT_IMPROVEMENT_MIN = 0.05
 RUNNER_TAIL_HIT_ABSOLUTE_MIN = 0.12
 RUNNER_T1_WIN_RATE_REGRESSION_FLOOR = -0.04
 RUNNER_DOWNSIDE_REGRESSION_FLOOR = -0.015
+RUNNER_COMPOSITE_SCORE_QUALITY_FLOOR = 0.50
 
 
 @dataclass(frozen=True)
@@ -288,6 +289,10 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
             rollout_blockers.append("btst_runner_tail_hit_floor_breach")
     runner_capture_count_values = [item.metrics.get("runner_capture_count") for item in results if item.metrics.get("runner_capture_count") is not None]
     total_runner_capture_count = int(sum(float(v) for v in runner_capture_count_values)) if runner_capture_count_values else None
+    runner_escape_rate_values = [item.metrics.get("runner_escape_rate") for item in results if item.metrics.get("runner_escape_rate") is not None]
+    avg_runner_escape_rate = _average(runner_escape_rate_values) if runner_escape_rate_values else None
+    composite_score_escaped_values = [item.metrics.get("avg_composite_score_escaped") for item in results if item.metrics.get("avg_composite_score_escaped") is not None]
+    avg_composite_score_escaped = _average(composite_score_escaped_values) if composite_score_escaped_values else None
 
     btst_quality_summary: dict[str, float | None] = {
         metric_key: _average(btst_metric_values[metric_key]) for metric_key in btst_metric_keys
@@ -318,6 +323,8 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
         **execution_summary,
         "avg_runner_tail_hit_rate": avg_runner_tail_hit_rate,
         "total_runner_capture_count": total_runner_capture_count,
+        "avg_runner_escape_rate": avg_runner_escape_rate,
+        "avg_composite_score_escaped": avg_composite_score_escaped,
         "rollout_ready": not rollout_blockers,
         "rollout_blockers": rollout_blockers,
     }
@@ -367,6 +374,7 @@ def classify_runner_rollout_verdict(
         "tail_hit_delta": None,
         "t1_win_rate_delta": None,
         "downside_delta": None,
+        "avg_composite_score_escaped": runner_summary.get("avg_composite_score_escaped"),
     }
 
     if baseline_summary is not None:
@@ -403,4 +411,10 @@ def classify_runner_rollout_verdict(
             return "coverage_only_not_runner_better", detail
 
     detail["verdict_reason"] = "meets_all_runner_criteria"
+    # Composite quality gate: if avg score of escaped runners is below floor, downgrade.
+    # This check is optional — only applies when avg_composite_score_escaped is available.
+    composite_score_escaped = runner_summary.get("avg_composite_score_escaped")
+    if composite_score_escaped is not None and float(composite_score_escaped) < RUNNER_COMPOSITE_SCORE_QUALITY_FLOOR:
+        detail["verdict_reason"] = "low_runner_composite_quality"
+        return "tail_hit_better_but_t1_risky", detail
     return "promotable_runner_profile", detail

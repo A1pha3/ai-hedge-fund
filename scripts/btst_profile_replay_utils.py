@@ -449,6 +449,8 @@ def _build_replayed_rows(
                 "replay_input_path": str(replay_input_path),
                 **price_outcome,
                 **metric_source_fields,
+                "runner_escape": source_entry.get("runner_escape"),
+                "runner_composite_score": source_entry.get("runner_composite_score"),
             }
         )
     return rows

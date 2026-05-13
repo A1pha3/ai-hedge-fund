@@ -90,6 +90,8 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "max_future_high_return_2_5d_hit_rate_at_20pct",
     "time_to_hit_20pct_median",
     "runner_capture_count",
+    "runner_escape_rate",
+    "avg_composite_score_escaped",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -105,6 +107,8 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "max_future_high_return_2_5d_hit_rate_at_20pct": "Runner 20% Hit",
     "time_to_hit_20pct_median": "Time-to-20% Med",
     "runner_capture_count": "Runner Count",
+    "runner_escape_rate": "Runner Escape %",
+    "avg_composite_score_escaped": "Avg Escaped Score",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -119,6 +123,8 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "max_future_high_return_2_5d_hit_rate_at_20pct",
     "time_to_hit_20pct_median",
     "runner_capture_count",
+    "runner_escape_rate",
+    "avg_composite_score_escaped",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -134,6 +140,8 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "max_future_high_return_2_5d_hit_rate_at_20pct": 0.01,
     "time_to_hit_20pct_median": 0.1,
     "runner_capture_count": 1.0,
+    "runner_escape_rate": 0.01,
+    "avg_composite_score_escaped": 0.01,
 }
 
 
@@ -427,6 +435,8 @@ def _build_replay_evaluator(
             "max_future_high_return_2_5d_hit_rate_at_20pct": [],
             "runner_capture_count": [],
             "time_to_hit_20pct_median": [],
+            "runner_escape_rate": [],
+            "avg_composite_score_escaped": [],
         }
 
         # For metrics that should be sample-weighted, keep a parallel list of weights
@@ -544,6 +554,12 @@ def _build_replay_evaluator(
                 if time_to_hit_20pct is not None:
                     total_metrics["time_to_hit_20pct_median"].append(time_to_hit_20pct)
                     total_metric_weights["time_to_hit_20pct_median"].append(sample_weight)
+                escape_rate = _safe_float(primary_surface.get("runner_escape_rate"))
+                if escape_rate is not None:
+                    total_metrics["runner_escape_rate"].append(escape_rate)
+                avg_escaped_score = _safe_float(primary_surface.get("avg_composite_score_escaped"))
+                if avg_escaped_score is not None:
+                    total_metrics["avg_composite_score_escaped"].append(avg_escaped_score)
                 if primary_scope == "selected":
                     selected_surfaces.append(primary_surface)
 
@@ -610,6 +626,8 @@ def _build_replay_evaluator(
         avg_runner_tail_hit_rate = _weighted_avg(total_metrics["max_future_high_return_2_5d_hit_rate_at_20pct"], total_metric_weights["max_future_high_return_2_5d_hit_rate_at_20pct"])
         total_runner_capture_count = int(sum(total_metrics["runner_capture_count"])) if total_metrics["runner_capture_count"] else 0
         avg_time_to_hit_20pct = _weighted_avg(total_metrics["time_to_hit_20pct_median"], total_metric_weights["time_to_hit_20pct_median"])
+        avg_runner_escape_rate = sum(total_metrics["runner_escape_rate"]) / len(total_metrics["runner_escape_rate"]) if total_metrics["runner_escape_rate"] else None
+        avg_composite_score_escaped = sum(total_metrics["avg_composite_score_escaped"]) / len(total_metrics["avg_composite_score_escaped"]) if total_metrics["avg_composite_score_escaped"] else None
 
         def _weighted_average_distribution_median(surfaces: list[dict[str, Any]], dist_key: str) -> float | None:
             """Compute sample-weighted average of distribution medians from selected surfaces."""
@@ -667,6 +685,8 @@ def _build_replay_evaluator(
             "runner_capture_count": total_runner_capture_count,
             "median_max_future_high_return_2_5d": median_max_future_high_return_2_5d,
             "time_to_hit_20pct_median": avg_time_to_hit_20pct,
+            "runner_escape_rate": avg_runner_escape_rate,
+            "avg_composite_score_escaped": avg_composite_score_escaped,
         }
 
     return evaluator
@@ -987,6 +1007,7 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "runner_composite_score_volume_weight": [0.15, 0.20, 0.25],
     "runner_composite_score_catalyst_weight": [0.05, 0.10, 0.15],
     "runner_composite_score_close_strength_weight": [0.05, 0.10, 0.15],
+    "historical_continuation_score_weight": [0.0, 0.05, 0.10],
 }
 
 IGNITION_STAGE1_GRID: dict[str, list[Any]] = {
