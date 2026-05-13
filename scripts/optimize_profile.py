@@ -1365,6 +1365,8 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "runner_composite_score_net_inflow_weight": [0.0, 0.05, 0.10, 0.15],
     "runner_composite_score_volume_price_divergence_weight": [0.0, 0.05, 0.10, 0.15],
     "runner_composite_score_t0_tail_weight": [0.0, 0.05, 0.10, 0.15],
+    # Task 2 (Round 19): multi-period momentum alignment weight — T+1/T+2/T+3 continuation score.
+    "runner_composite_score_momentum_alignment_weight": [0.0, 0.05, 0.10, 0.15],
     "runner_escape_gap_risk_raw_100_max": [40.0, 45.0, 52.0],
     "runner_escape_projected_theme_exposure_max": [0.24, 0.28, 0.32],
     "runner_escape_candidate_pool_avg_amount_share_of_cutoff_min": [0.85, 1.0, 1.15],

@@ -6,13 +6,16 @@ import pytest
 from scripts.btst_analysis_utils import (
     BTST_FACTOR_NAMES,
     BREAKOUT_FRESHNESS_SIGNAL_THRESHOLD,
+    INTRADAY_HIGH_TIMING_THRESHOLD,
     OPEN_VS_HIGH_SIGNIFICANT_DISCOUNT_THRESHOLD,
     build_surface_summary,
     compare_reports,
     compute_all_factor_ics,
     compute_breakout_conditional_win_rate,
     compute_factor_ic,
+    compute_intraday_high_timing_distribution,
     compute_multi_period_momentum_alignment,
+    compute_sector_concentration_gini,
     compute_sell_timing_analysis,
     compute_t0_bar_metrics,
     compute_t0_tail_strength_stratification,
@@ -1744,4 +1747,375 @@ def test_btst_runner_probe_grid_r18_weights_build_valid_profile() -> None:
             assert profile is not None
             actual = getattr(profile, param_name, None)
             assert actual == value, f"Expected {param_name}={value}, got {actual}"
+
+
+# =============================================================================
+# Round 19 — Task 1: sector_concentration_gini (板块集中度基尼系数)
+# =============================================================================
+
+def test_compute_sector_concentration_gini_empty_rows_returns_none() -> None:
+    """compute_sector_concentration_gini on empty rows must return None gini and zero counts."""
+    from scripts.btst_analysis_utils import compute_sector_concentration_gini
+    result = compute_sector_concentration_gini([])
+    assert result["sector_concentration_gini"] is None
+    assert result["sector_count"] == 0
+    assert result["sample_count"] == 0
+    assert result["sector_distribution"] == {}
+
+
+def test_compute_sector_concentration_gini_no_industry_field_returns_none() -> None:
+    """Rows without 'industry' field should be skipped — gini returns None."""
+    from scripts.btst_analysis_utils import compute_sector_concentration_gini
+    rows = [{"close": 10.0}, {"close": 11.0}, {"ticker": "000001"}]
+    result = compute_sector_concentration_gini(rows)
+    assert result["sector_concentration_gini"] is None
+    assert result["sample_count"] == 0
+
+
+def test_compute_sector_concentration_gini_single_sector_returns_1() -> None:
+    """All rows from one sector must return Gini = 1.0 (maximum concentration)."""
+    from scripts.btst_analysis_utils import compute_sector_concentration_gini
+    rows = [{"industry": "Tech"}, {"industry": "Tech"}, {"industry": "Tech"}]
+    result = compute_sector_concentration_gini(rows)
+    assert result["sector_concentration_gini"] == 1.0
+    assert result["sector_count"] == 1
+    assert result["sample_count"] == 3
+
+
+def test_compute_sector_concentration_gini_perfectly_equal_distribution() -> None:
+    """Equal counts across all sectors must yield Gini = 0.0 (perfect diversity)."""
+    from scripts.btst_analysis_utils import compute_sector_concentration_gini
+    rows = [{"industry": "Tech"}, {"industry": "Pharma"}, {"industry": "Auto"}, {"industry": "Finance"}, {"industry": "Consumer"}]
+    result = compute_sector_concentration_gini(rows)
+    assert result["sector_concentration_gini"] == pytest.approx(0.0, abs=1e-4)
+    assert result["sector_count"] == 5
+
+
+def test_compute_sector_concentration_gini_concentrated_pool_higher_than_diverse() -> None:
+    """Concentrated pool (most stocks in one sector) must yield higher Gini than diverse pool."""
+    from scripts.btst_analysis_utils import compute_sector_concentration_gini
+    diverse = [{"industry": s} for s in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]]
+    concentrated = [{"industry": "Tech"}] * 8 + [{"industry": "Pharma"}] * 2
+    g_diverse = compute_sector_concentration_gini(diverse)["sector_concentration_gini"]
+    g_conc = compute_sector_concentration_gini(concentrated)["sector_concentration_gini"]
+    assert g_diverse is not None
+    assert g_conc is not None
+    assert g_conc > g_diverse
+
+
+def test_compute_sector_concentration_gini_result_in_valid_range() -> None:
+    """Gini must be in [0.0, 1.0] for any realistic input."""
+    from scripts.btst_analysis_utils import compute_sector_concentration_gini
+    rows = [{"industry": "Tech"}] * 15 + [{"industry": "Pharma"}] * 3 + [{"industry": "Auto"}] * 2
+    result = compute_sector_concentration_gini(rows)
+    g = result["sector_concentration_gini"]
+    assert g is not None
+    assert 0.0 <= g <= 1.0
+
+
+def test_compute_sector_concentration_gini_sector_distribution_top10() -> None:
+    """sector_distribution must contain fraction (0–1) values summing to ≤ 1.0."""
+    from scripts.btst_analysis_utils import compute_sector_concentration_gini
+    rows = [{"industry": chr(65 + i % 12)} for i in range(120)]   # 12 distinct sectors
+    result = compute_sector_concentration_gini(rows)
+    dist = result["sector_distribution"]
+    assert len(dist) <= 10, "sector_distribution should surface at most 10 sectors"
+    assert all(0.0 <= v <= 1.0 for v in dist.values()), "fractions must be in [0, 1]"
+    assert sum(dist.values()) <= 1.0 + 1e-6, "fractions across top-10 should not exceed 1.0"
+
+
+def test_build_surface_summary_includes_sector_concentration_gini() -> None:
+    """build_surface_summary must expose 'sector_concentration_gini' when rows have 'industry'."""
+    import random
+    sectors = ["Tech", "Pharma", "Auto", "Finance", "Consumer"]
+    rows: list[dict] = []
+    for i in range(30):
+        rows.append({
+            "industry": random.choice(sectors),
+            "next_close_return": random.uniform(-0.05, 0.10),
+            "next_open_return": random.uniform(-0.02, 0.05),
+            "next_high_return": random.uniform(0.01, 0.15),
+            "next_open": 10.0 + random.uniform(-1, 1),
+            "next_high": 11.0 + random.uniform(-0.5, 0.5),
+            "next_close": 10.5 + random.uniform(-0.5, 0.5),
+            "next_intraday_drawdown": random.uniform(-0.05, 0.0),
+            "next_open_to_close_return": random.uniform(-0.03, 0.03),
+            "runner_composite_score": random.uniform(0.3, 0.9),
+            "t_plus_2_close_return": random.uniform(-0.05, 0.10),
+            "t_plus_3_close_return": random.uniform(-0.05, 0.10),
+        })
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "sector_concentration_gini" in summary
+    g = summary["sector_concentration_gini"]
+    assert g is not None
+    assert 0.0 <= g <= 1.0
+    assert "sector_distribution" in summary
+    assert "sector_count" in summary
+
+
+def test_build_surface_summary_sector_gini_none_when_no_industry() -> None:
+    """sector_concentration_gini must be None when rows lack 'industry' field."""
+    rows: list[dict] = [{"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.08, "next_open": 10.0, "next_high": 11.0, "next_close": 10.5, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "runner_composite_score": 0.6}]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert summary["sector_concentration_gini"] is None
+
+
+def test_btst_quality_caps_includes_sector_concentration_gini() -> None:
+    """BTST_QUALITY_CAPS must contain 'sector_concentration_gini' with cap value 0.60 (Task 1, Round 19)."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "sector_concentration_gini" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["sector_concentration_gini"] == pytest.approx(0.60, abs=1e-6)
+
+
+def test_guardrail_keys_includes_sector_concentration_gini() -> None:
+    """_GUARDRAIL_KEYS must include 'sector_concentration_gini' (Task 1, Round 19)."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "sector_concentration_gini" in _GUARDRAIL_KEYS
+
+
+# =============================================================================
+# Round 19 — Task 2: alignment_score → composite score weight
+# =============================================================================
+
+def test_profile_has_momentum_alignment_weight_field() -> None:
+    """ShortTradeTargetProfile must expose runner_composite_score_momentum_alignment_weight (Task 2, R19)."""
+    from src.targets.profiles import get_short_trade_target_profile
+    p = get_short_trade_target_profile("default")
+    assert hasattr(p, "runner_composite_score_momentum_alignment_weight")
+    assert p.runner_composite_score_momentum_alignment_weight == pytest.approx(0.0, abs=1e-9)
+
+
+def test_btst_runner_probe_grid_includes_momentum_alignment_weight() -> None:
+    """BTST_RUNNER_PROBE_GRID must include runner_composite_score_momentum_alignment_weight (Task 2, R19)."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+    assert "runner_composite_score_momentum_alignment_weight" in BTST_RUNNER_PROBE_GRID
+    vals = BTST_RUNNER_PROBE_GRID["runner_composite_score_momentum_alignment_weight"]
+    assert sorted(vals) == [0.0, 0.05, 0.10, 0.15], f"Expected [0.0, 0.05, 0.10, 0.15], got {vals}"
+
+
+def test_compute_runner_composite_score_momentum_alignment_weight_zero_is_neutral() -> None:
+    """When momentum_alignment_weight=0, presence/absence of multi_period_alignment_score must not change score."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    base_snap = {"breakout_freshness": 0.60, "trend_acceleration": 0.55, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.40, "close_strength": 0.45}
+
+    class _ProfileNoMA:
+        runner_composite_score_breakout_weight = 0.40
+        runner_composite_score_trend_weight = 0.30
+        runner_composite_score_volume_weight = 0.20
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.0
+        runner_composite_score_volume_price_divergence_weight = 0.0
+        runner_composite_score_t0_tail_weight = 0.0
+        runner_composite_score_momentum_alignment_weight = 0.0
+
+    score_with = compute_runner_composite_score({**base_snap, "multi_period_alignment_score": 1.0}, _ProfileNoMA())
+    score_without = compute_runner_composite_score(base_snap, _ProfileNoMA())
+    assert score_with == pytest.approx(score_without, abs=1e-6), "weight=0 must make alignment score neutral"
+
+
+def test_compute_runner_composite_score_high_alignment_beats_low_when_weight_nonzero() -> None:
+    """High multi_period_alignment_score must yield higher composite than low when weight > 0 (Task 2, R19)."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
+
+    class _ProfileMA:
+        runner_composite_score_breakout_weight = 0.30
+        runner_composite_score_trend_weight = 0.25
+        runner_composite_score_volume_weight = 0.15
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.0
+        runner_composite_score_volume_price_divergence_weight = 0.0
+        runner_composite_score_t0_tail_weight = 0.0
+        runner_composite_score_momentum_alignment_weight = 0.10
+
+    s_high = compute_runner_composite_score({**base_snap, "multi_period_alignment_score": 1.0}, _ProfileMA())
+    s_low = compute_runner_composite_score({**base_snap, "multi_period_alignment_score": 0.0}, _ProfileMA())
+    assert s_high > s_low, f"High alignment ({s_high}) should beat low alignment ({s_low}) when weight > 0"
+
+
+def test_compute_runner_composite_score_missing_alignment_uses_neutral() -> None:
+    """Missing multi_period_alignment_score must use neutral 0.5 (no penalty, no bonus) (Task 2, R19)."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
+
+    class _ProfileMA:
+        runner_composite_score_breakout_weight = 0.30
+        runner_composite_score_trend_weight = 0.25
+        runner_composite_score_volume_weight = 0.15
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.0
+        runner_composite_score_volume_price_divergence_weight = 0.0
+        runner_composite_score_t0_tail_weight = 0.0
+        runner_composite_score_momentum_alignment_weight = 0.10
+
+    s_neutral_explicit = compute_runner_composite_score({**base_snap, "multi_period_alignment_score": 0.5}, _ProfileMA())
+    s_absent = compute_runner_composite_score(base_snap, _ProfileMA())
+    assert s_absent == pytest.approx(s_neutral_explicit, abs=1e-5), "absent field should behave like 0.5 (neutral)"
+
+
+def test_btst_runner_probe_grid_momentum_alignment_builds_valid_profile() -> None:
+    """Each R19 grid value must build a valid btst_runner_probe profile (Task 2, Round 19)."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+    from src.targets.profiles import build_short_trade_target_profile
+    param = "runner_composite_score_momentum_alignment_weight"
+    for value in BTST_RUNNER_PROBE_GRID[param]:
+        profile = build_short_trade_target_profile("btst_runner_probe", overrides={param: value})
+        assert profile is not None
+        assert getattr(profile, param) == pytest.approx(value, abs=1e-9), f"Expected {param}={value}"
+
+
+# =============================================================================
+# Round 19 — Task 3: intraday_high_timing_distribution (高点时间分布分析)
+# =============================================================================
+
+def test_compute_intraday_high_timing_empty_rows() -> None:
+    """compute_intraday_high_timing_distribution on empty rows must return None fractions and zero counts."""
+    from scripts.btst_analysis_utils import compute_intraday_high_timing_distribution
+    result = compute_intraday_high_timing_distribution([])
+    assert result["early_fraction"] is None
+    assert result["mid_fraction"] is None
+    assert result["late_fraction"] is None
+    assert result["sample_count"] == 0
+    assert result["early_dominated"] is None
+    assert result["late_dominated"] is None
+
+
+def test_compute_intraday_high_timing_rows_missing_ohlc_skipped() -> None:
+    """Rows without next_open/next_high/next_close must be silently skipped."""
+    from scripts.btst_analysis_utils import compute_intraday_high_timing_distribution
+    rows = [{"close": 10.0}, {"ticker": "000001"}, {"next_open": 10.0}]  # missing fields
+    result = compute_intraday_high_timing_distribution(rows)
+    assert result["sample_count"] == 0
+    assert result["early_fraction"] is None
+
+
+def test_compute_intraday_high_timing_all_early_session() -> None:
+    """When open == high for all rows, all bars should be classified as early and early_dominated=True."""
+    from scripts.btst_analysis_utils import compute_intraday_high_timing_distribution
+    rows = [{"next_open": 10.2, "next_high": 10.2, "next_close": 9.8} for _ in range(5)]
+    result = compute_intraday_high_timing_distribution(rows)
+    assert result["early_fraction"] == pytest.approx(1.0, abs=1e-4)
+    assert result["mid_fraction"] == pytest.approx(0.0, abs=1e-4)
+    assert result["late_fraction"] == pytest.approx(0.0, abs=1e-4)
+    assert result["early_dominated"] is True
+    assert result["late_dominated"] is False
+    assert result["sample_count"] == 5
+
+
+def test_compute_intraday_high_timing_all_late_session() -> None:
+    """When close ≈ high and open << high for all rows, all should be late and late_dominated=True."""
+    from scripts.btst_analysis_utils import compute_intraday_high_timing_distribution
+    rows = [{"next_open": 9.5, "next_high": 10.2, "next_close": 10.19} for _ in range(5)]
+    result = compute_intraday_high_timing_distribution(rows)
+    assert result["late_fraction"] == pytest.approx(1.0, abs=1e-4)
+    assert result["early_fraction"] == pytest.approx(0.0, abs=1e-4)
+    assert result["late_dominated"] is True
+    assert result["early_dominated"] is False
+
+
+def test_compute_intraday_high_timing_all_mid_session() -> None:
+    """When neither open nor close is near the high, all bars should be mid-session."""
+    from scripts.btst_analysis_utils import compute_intraday_high_timing_distribution
+    rows = [{"next_open": 9.5, "next_high": 11.0, "next_close": 9.8} for _ in range(5)]
+    result = compute_intraday_high_timing_distribution(rows)
+    assert result["mid_fraction"] == pytest.approx(1.0, abs=1e-4)
+    assert result["early_fraction"] == pytest.approx(0.0, abs=1e-4)
+    assert result["late_fraction"] == pytest.approx(0.0, abs=1e-4)
+
+
+def test_compute_intraday_high_timing_mixed_distribution() -> None:
+    """Mixed early/mid/late bars should produce fractions that sum to 1.0."""
+    from scripts.btst_analysis_utils import compute_intraday_high_timing_distribution
+    rows = [
+        {"next_open": 10.2, "next_high": 10.2, "next_close": 9.8},    # early
+        {"next_open": 10.2, "next_high": 10.2, "next_close": 9.9},    # early
+        {"next_open": 9.5, "next_high": 11.0, "next_close": 9.8},     # mid
+        {"next_open": 9.5, "next_high": 10.0, "next_close": 9.95},    # late (9.95/10.0 = 0.995 >= 0.97)
+    ]
+    result = compute_intraday_high_timing_distribution(rows)
+    assert result["sample_count"] == 4
+    total = (result["early_fraction"] or 0) + (result["mid_fraction"] or 0) + (result["late_fraction"] or 0)
+    assert total == pytest.approx(1.0, abs=1e-4), f"fractions must sum to 1.0, got {total}"
+
+
+def test_compute_intraday_high_timing_early_dominated_threshold() -> None:
+    """early_dominated must be True when more than 50 % of bars are early-session."""
+    from scripts.btst_analysis_utils import compute_intraday_high_timing_distribution
+    rows = (
+        [{"next_open": 10.2, "next_high": 10.2, "next_close": 9.8}] * 6 +   # 6 early
+        [{"next_open": 9.5, "next_high": 11.0, "next_close": 9.8}] * 4      # 4 mid
+    )
+    result = compute_intraday_high_timing_distribution(rows)
+    assert result["early_dominated"] is True
+
+
+def test_compute_intraday_high_timing_not_dominated_when_split() -> None:
+    """early_dominated and late_dominated must both be False when no group exceeds 50 %."""
+    from scripts.btst_analysis_utils import compute_intraday_high_timing_distribution
+    rows = (
+        [{"next_open": 10.2, "next_high": 10.2, "next_close": 9.8}] * 4 +   # early
+        [{"next_open": 9.5, "next_high": 11.0, "next_close": 9.8}] * 3 +    # mid
+        [{"next_open": 9.5, "next_high": 10.2, "next_close": 10.19}] * 3    # late
+    )
+    result = compute_intraday_high_timing_distribution(rows)
+    assert result["early_dominated"] is False
+    assert result["late_dominated"] is False
+
+
+def test_build_surface_summary_includes_intraday_high_timing() -> None:
+    """build_surface_summary must expose intraday_high_timing and shortcut keys (Task 3, R19)."""
+    import random
+    rows: list[dict] = []
+    for _ in range(20):
+        next_open = 10.0 + random.uniform(-0.5, 0.5)
+        next_high = next_open + random.uniform(0.1, 1.0)
+        next_close = next_open + random.uniform(-0.3, 0.8)
+        rows.append({
+            "next_open_return": (next_open / 10.0) - 1,
+            "next_high_return": (next_high / 10.0) - 1,
+            "next_close_return": (next_close / 10.0) - 1,
+            "next_open": next_open,
+            "next_high": next_high,
+            "next_close": next_close,
+            "next_intraday_drawdown": random.uniform(-0.04, 0.0),
+            "next_open_to_close_return": (next_close / next_open) - 1,
+            "runner_composite_score": random.uniform(0.3, 0.9),
+            "t_plus_2_close_return": random.uniform(-0.05, 0.10),
+            "t_plus_3_close_return": random.uniform(-0.05, 0.10),
+        })
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "intraday_high_timing" in summary
+    assert "high_timing_early_fraction" in summary
+    assert "high_timing_mid_fraction" in summary
+    assert "high_timing_late_fraction" in summary
+    assert "high_timing_early_dominated" in summary
+    assert "high_timing_late_dominated" in summary
+    ef = summary["high_timing_early_fraction"]
+    mf = summary["high_timing_mid_fraction"]
+    lf = summary["high_timing_late_fraction"]
+    if ef is not None and mf is not None and lf is not None:
+        assert ef + mf + lf == pytest.approx(1.0, abs=1e-3)
+
+
+def test_build_surface_summary_high_timing_none_when_no_ohlc() -> None:
+    """high_timing_early_fraction must be None when rows lack next_open/next_high/next_close."""
+    rows: list[dict] = [{"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.08, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "runner_composite_score": 0.6}]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert summary["high_timing_early_fraction"] is None
+    assert summary["high_timing_late_fraction"] is None
 

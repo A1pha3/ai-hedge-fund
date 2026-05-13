@@ -37,6 +37,9 @@ _GUARDRAIL_KEYS = (
     # Task 2 (Round 13): excess kurtosis of T+1 next-close returns — fat-tail distributional cap guardrail.
     # Extremely fat-tailed returns inflate apparent win rate and payoff metrics; this key acts as a cap.
     "next_close_return_kurtosis",
+    # Task 1 (Round 19): sector concentration Gini coefficient — portfolio diversification guardrail.
+    # A Gini near 1 means nearly all candidates are from a single sector, creating correlated risk.
+    "sector_concentration_gini",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -81,6 +84,13 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # means extreme outlier returns dominate the apparent win rate / payoff ratio, severely
     # over-stating strategy robustness.  Profiles above this cap should be penalised.
     "next_close_return_kurtosis": 5.0,
+    # Task 1 (Round 19): sector concentration Gini cap.
+    # A Gini coefficient > 0.60 indicates the candidate pool is concentrated in too few
+    # sectors.  When most selected runners come from the same sector, a single adverse
+    # sector event can wipe out the entire BTST portfolio simultaneously — systemic risk.
+    # Profiles with Gini > 0.60 are flagged; optimization should prefer more-diversified
+    # parameter combinations.
+    "sector_concentration_gini": 0.60,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

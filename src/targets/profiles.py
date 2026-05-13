@@ -311,6 +311,12 @@ class ShortTradeTargetProfile:
     runner_composite_score_net_inflow_weight: float = 0.0
     runner_composite_score_volume_price_divergence_weight: float = 0.0
     runner_composite_score_t0_tail_weight: float = 0.0
+    # Task 2 (Round 19): multi-period momentum alignment weight for composite score.
+    # multi_period_alignment_score ∈ [0, 1] — window-level metric measuring T+1/T+2/T+3
+    # return alignment; attached to each snapshot by the evaluation pipeline.
+    # High alignment = genuine multi-day momentum continuation (三日连涨倾向).
+    # Default 0.0 (disabled) for backward compatibility; non-zero values activate the factor.
+    runner_composite_score_momentum_alignment_weight: float = 0.0
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:

@@ -1275,6 +1275,152 @@ def compute_t0_tail_strength_stratification(rows: list[dict[str, Any]]) -> dict[
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 1 (Round 19): Sector concentration Gini coefficient (板块集中度基尼系数)
+# ---------------------------------------------------------------------------
+# Measures how concentrated the candidate pool (or escaped runners) is across sectors.
+# A low Gini (near 0) indicates candidates are spread evenly across many sectors, reducing
+# correlated-sector risk.  A high Gini (near 1) means most candidates cluster in one sector —
+# a single adverse sector event would take down the entire portfolio.
+#
+# Formula: Gini coefficient of the per-sector count distribution.
+#   Sort sector counts ascending: v_1 ≤ v_2 ≤ … ≤ v_k
+#   G = (2 × Σ_i i × v_i) / (k × Σ_i v_i) − (k+1)/k
+#
+# Guardrail cap: sector_concentration_gini ≤ 0.60.
+# When fewer than 2 sectors are present (or no industry labels), returns None.
+
+
+def compute_sector_concentration_gini(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute Gini coefficient of sector (industry) distribution across *rows* (Task 1, Round 19).
+
+    Measures how unevenly candidates are distributed across A-share industry categories.
+    A Gini near 0.0 means candidates span many sectors evenly (low concentration risk).
+    A Gini near 1.0 means nearly all candidates belong to one sector (high concentration risk).
+
+    The Gini formula used is the standard sorted-values formula:
+        G = (2 × Σ_i (rank_i × count_i)) / (k × total) − (k+1)/k
+    where counts are sorted ascending, rank_i is 1-based position in that sorted order,
+    k = number of distinct sectors, total = sum of all counts.
+
+    Args:
+        rows: BTST candidate rows.  Each row should have an ``industry`` (str) field.
+            Rows missing the field are silently skipped.
+
+    Returns:
+        Dict with keys:
+
+        - ``sector_concentration_gini`` (float | None): Gini ∈ [0, 1]; None when < 2 sectors.
+        - ``sector_distribution`` (dict[str, float]): top-10 sectors → fraction of total.
+        - ``sector_count`` (int): number of distinct sectors observed.
+        - ``sample_count`` (int): rows with a non-empty ``industry`` label.
+    """
+    from collections import Counter
+    industries: list[str] = [str(row["industry"]) for row in rows if row.get("industry")]
+    if not industries:
+        return {"sector_concentration_gini": None, "sector_distribution": {}, "sector_count": 0, "sample_count": 0}
+    counts: Counter[str] = Counter(industries)
+    k: int = len(counts)
+    total: int = sum(counts.values())
+    sector_distribution: dict[str, float] = {sector: round(cnt / total, 4) for sector, cnt in counts.most_common(10)}
+    if k < 2:
+        # All candidates in one sector → maximum concentration (Gini = 1.0).
+        return {"sector_concentration_gini": 1.0, "sector_distribution": sector_distribution, "sector_count": k, "sample_count": len(industries)}
+    sorted_counts: list[int] = sorted(counts.values())
+    gini_numerator: float = sum((i + 1) * v for i, v in enumerate(sorted_counts))
+    gini: float = round((2.0 * gini_numerator / (k * total)) - (k + 1) / k, 4)
+    gini = max(0.0, min(1.0, gini))
+    return {"sector_concentration_gini": gini, "sector_distribution": sector_distribution, "sector_count": k, "sample_count": len(industries)}
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 19): T+1 intraday high-point timing distribution (高点时间分布分析)
+# ---------------------------------------------------------------------------
+# Uses T+1 OHLC data to infer when the intraday high price was established.
+# Without tick data, we approximate using open/high and close/high ratios:
+#
+#   early  (9:30–10:30 proxy): next_open / next_high ≥ 0.97
+#          → The day opened at or very near the high — price weakened from the open.
+#          Implication: BUY AT OPEN to capture the early pop.
+#
+#   late   (14:00–15:00 proxy): next_close / next_high ≥ 0.97 AND open/high < 0.97
+#          → Price strengthened into the close and ended near the high.
+#          Implication: Hold to close (or buy on dips intraday); no need to chase at open.
+#
+#   mid    (10:30–14:00 proxy): all other bars
+#          → High established in the middle of the session.
+#
+# early_dominated (bool): early_fraction > 0.50 → open-execution strategy is optimal.
+# late_dominated  (bool): late_fraction > 0.50  → momentum persists into close.
+#
+# INTRADAY_HIGH_TIMING_THRESHOLD: ratio above which open/close is considered "near" the high.
+
+INTRADAY_HIGH_TIMING_THRESHOLD: float = 0.97  # open or close within 3 % of the day high
+
+
+def compute_intraday_high_timing_distribution(rows: list[dict[str, Any]], *, threshold: float = INTRADAY_HIGH_TIMING_THRESHOLD) -> dict[str, Any]:
+    """Classify T+1 intraday high-point timing into early/mid/late session buckets (Task 3, Round 19).
+
+    Approximates intraday high timing from T+1 OHLC ratios without requiring tick data:
+
+    - **early**: ``next_open / next_high ≥ threshold`` — high set at/near the open.
+    - **late**: ``next_close / next_high ≥ threshold`` AND ``next_open / next_high < threshold``
+      — high set at/near the close.
+    - **mid**: all other rows — high established during the mid-session.
+
+    Args:
+        rows: BTST candidate rows.  Must contain ``next_open``, ``next_high``, ``next_close``
+            as numeric fields.  Rows missing any of these are skipped.
+        threshold: Ratio above which open/close is considered "near" the day high.
+            Default :data:`INTRADAY_HIGH_TIMING_THRESHOLD` = 0.97.
+
+    Returns:
+        Dict with keys:
+
+        - ``early_fraction`` (float | None): fraction of bars where high set near open.
+        - ``mid_fraction`` (float | None): fraction of bars with mid-session high.
+        - ``late_fraction`` (float | None): fraction of bars where high set near close.
+        - ``early_count``, ``mid_count``, ``late_count`` (int): raw counts.
+        - ``sample_count`` (int): total bars included.
+        - ``early_dominated`` (bool | None): True when early_fraction > 0.50.
+        - ``late_dominated`` (bool | None): True when late_fraction > 0.50.
+        - ``threshold_used`` (float): the ratio threshold applied.
+    """
+    early_count: int = 0
+    mid_count: int = 0
+    late_count: int = 0
+    total: int = 0
+    for row in rows:
+        raw_open = row.get("next_open")
+        raw_high = row.get("next_high")
+        raw_close = row.get("next_close")
+        if raw_open is None or raw_high is None or raw_close is None:
+            continue
+        try:
+            no: float = float(raw_open)
+            nh: float = float(raw_high)
+            nc: float = float(raw_close)
+        except (TypeError, ValueError):
+            continue
+        if nh <= 0.0:
+            continue
+        total += 1
+        open_to_high: float = no / nh
+        close_to_high: float = nc / nh
+        if open_to_high >= threshold:
+            early_count += 1
+        elif close_to_high >= threshold:
+            late_count += 1
+        else:
+            mid_count += 1
+    if total == 0:
+        return {"early_fraction": None, "mid_fraction": None, "late_fraction": None, "early_count": 0, "mid_count": 0, "late_count": 0, "sample_count": 0, "early_dominated": None, "late_dominated": None, "threshold_used": round(threshold, 4)}
+    ef: float = round(early_count / total, 4)
+    mf: float = round(mid_count / total, 4)
+    lf: float = round(late_count / total, 4)
+    return {"early_fraction": ef, "mid_fraction": mf, "late_fraction": lf, "early_count": early_count, "mid_count": mid_count, "late_count": late_count, "sample_count": total, "early_dominated": ef > 0.50, "late_dominated": lf > 0.50, "threshold_used": round(threshold, 4)}
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -1401,6 +1547,20 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # Divides rows into low/mid/high t0_tail_strength thirds and computes T+1 win rate
     # and payoff ratio per stratum.  monotone_win_rate=True validates the R17 factor hypothesis.
     t0_tail_strength_stratification: dict[str, Any] = compute_t0_tail_strength_stratification(next_day_rows)
+
+    # -----------------------------------------------------------------------
+    # Round 19 analytics — wired into build_surface_summary.
+    # -----------------------------------------------------------------------
+    # Task 1 (Round 19): Sector concentration Gini coefficient (板块集中度基尼系数).
+    # Measures how concentrated the candidate pool is across A-share industry categories.
+    # Gini ≈ 0 → diversified across sectors.  Gini → 1 → nearly all from one sector.
+    # Guardrail cap: sector_concentration_gini ≤ 0.60 (enforced in BTST_QUALITY_CAPS).
+    sector_concentration_result: dict[str, Any] = compute_sector_concentration_gini(rows)
+    # Task 3 (Round 19): T+1 intraday high-point timing distribution (高点时间分布).
+    # Classifies each T+1 bar into early/mid/late session based on open/high and close/high ratios.
+    # early_dominated=True → buy-at-open execution is optimal for this window.
+    # late_dominated=True  → momentum persists into close; chase is viable.
+    intraday_high_timing: dict[str, Any] = compute_intraday_high_timing_distribution(next_day_rows)
 
     return {
         "total_count": len(rows),
@@ -1536,6 +1696,27 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "t0_tail_strength_stratification": t0_tail_strength_stratification,
         "t0_tail_strength_monotone_win_rate": t0_tail_strength_stratification.get("monotone_win_rate"),
         "t0_tail_strength_monotone_payoff_ratio": t0_tail_strength_stratification.get("monotone_payoff_ratio"),
+        # -----------------------------------------------------------------------
+        # Round 19 analytics
+        # -----------------------------------------------------------------------
+        # Task 1 (Round 19): sector concentration Gini.
+        # sector_concentration_gini ∈ [0, 1]; cap guardrail ≤ 0.60 in BTST_QUALITY_CAPS.
+        # sector_distribution: top-10 sectors with their fraction of the candidate pool.
+        "sector_concentration_gini_result": sector_concentration_result,
+        "sector_concentration_gini": sector_concentration_result.get("sector_concentration_gini"),
+        "sector_distribution": sector_concentration_result.get("sector_distribution", {}),
+        "sector_count": sector_concentration_result.get("sector_count"),
+        # Task 3 (Round 19): T+1 intraday high-point timing distribution.
+        # early_fraction: fraction of bars where the high was set near the open (>97% open/high).
+        # late_fraction: fraction of bars where the high was set near the close (>97% close/high).
+        # early_dominated: True when early_fraction > 0.50 → buy-at-open execution is optimal.
+        # late_dominated: True when late_fraction > 0.50 → momentum persists into close.
+        "intraday_high_timing": intraday_high_timing,
+        "high_timing_early_fraction": intraday_high_timing.get("early_fraction"),
+        "high_timing_mid_fraction": intraday_high_timing.get("mid_fraction"),
+        "high_timing_late_fraction": intraday_high_timing.get("late_fraction"),
+        "high_timing_early_dominated": intraday_high_timing.get("early_dominated"),
+        "high_timing_late_dominated": intraday_high_timing.get("late_dominated"),
     }
 
 
