@@ -283,3 +283,164 @@ def test_build_surface_summary_includes_ic_sub_dicts() -> None:
     assert set(ic_nc.keys()) == set(BTST_FACTOR_NAMES)
     # All factors are perfectly correlated with next_close_return in this synthetic data
     assert all(v == pytest.approx(1.0, abs=1e-4) for v in ic_nc.values()), f"Expected IC≈1.0: {ic_nc}"
+
+
+# ---------------------------------------------------------------------------
+# Round 12 Task 1 — T+1 intraday drawdown label and surface summary
+# ---------------------------------------------------------------------------
+
+from scripts.btst_analysis_utils import compute_ic_weight_suggestions
+
+
+def _base_row_with_drawdown(next_open: float, next_low: float, next_close: float) -> dict:
+    """Build a minimal labeled row for drawdown tests."""
+    next_intraday_drawdown = (next_low / next_open - 1.0) if next_open > 0 else None
+    return {
+        "date": "2026-03-20",
+        "ticker": "000001",
+        "next_close_return": next_close / next_open - 1.0 if next_open > 0 else None,
+        "next_open_return": 0.0,
+        "next_close": next_close,
+        "next_open": next_open,
+        "next_high": max(next_open, next_close),
+        "next_low": next_low,
+        "next_low_return": next_low / next_open - 1.0 if next_open > 0 else None,
+        "next_intraday_drawdown": next_intraday_drawdown,
+        "next_high_return": max(next_open, next_close) / next_open - 1.0 if next_open > 0 else None,
+        "t_plus_2_close_return": 0.01,
+        "t_plus_3_close_return": 0.01,
+        "max_future_high_return_2_5d": 0.05,
+    }
+
+
+def test_build_surface_summary_exposes_t_plus_1_intraday_drawdown_p10() -> None:
+    """build_surface_summary must compute t_plus_1_intraday_drawdown_p10 as the P10 of intraday drawdowns."""
+    # 10 rows with known drawdowns: -0.01, -0.02, ..., -0.10
+    rows = [_base_row_with_drawdown(10.0, 10.0 * (1.0 - i * 0.01), 10.05) for i in range(1, 11)]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+
+    assert "t_plus_1_intraday_drawdown_p10" in summary
+    val = summary["t_plus_1_intraday_drawdown_p10"]
+    assert val is not None
+    # P10 of [-0.01, -0.02, ..., -0.10] must be ≤ -0.01 (at the low end)
+    assert isinstance(val, float)
+    assert val < 0.0, f"P10 of negative drawdowns must be negative, got {val}"
+
+
+def test_build_surface_summary_intraday_drawdown_p10_is_none_when_no_drawdown_data() -> None:
+    """t_plus_1_intraday_drawdown_p10 must be None when rows lack next_intraday_drawdown."""
+    rows = [
+        {
+            "date": "2026-03-20",
+            "ticker": "000001",
+            "next_close_return": 0.02,
+            "next_open_return": 0.0,
+            "next_close": 10.2,
+            "next_open": 10.0,
+            "next_high": 10.3,
+            "next_low": None,
+            "next_low_return": None,
+            "next_intraday_drawdown": None,
+            "next_high_return": 0.03,
+            "t_plus_2_close_return": 0.01,
+            "t_plus_3_close_return": 0.01,
+            "max_future_high_return_2_5d": 0.05,
+        }
+        for _ in range(5)
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+
+    assert summary.get("t_plus_1_intraday_drawdown_p10") is None
+
+
+def test_build_surface_summary_includes_next_intraday_drawdown_distribution() -> None:
+    """Surface summary must include next_intraday_drawdown_distribution key with valid stats."""
+    rows = [_base_row_with_drawdown(10.0, 9.8, 10.1)] * 6
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+
+    assert "next_intraday_drawdown_distribution" in summary
+    dist = summary["next_intraday_drawdown_distribution"]
+    assert isinstance(dist, dict)
+    assert "p10" in dist
+    assert dist["p10"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Round 12 Task 3 — IC weight suggestions
+# ---------------------------------------------------------------------------
+
+
+def test_compute_ic_weight_suggestions_reduce_when_ic_below_downgrade_threshold() -> None:
+    """Factors with IC < 0.02 must receive 'reduce' suggestion."""
+    result = compute_ic_weight_suggestions({"breakout_freshness": 0.01})
+    assert result["breakout_freshness"] == "reduce"
+
+
+def test_compute_ic_weight_suggestions_increase_when_ic_above_upgrade_threshold() -> None:
+    """Factors with IC >= 0.05 must receive 'increase' suggestion."""
+    result = compute_ic_weight_suggestions({"trend_acceleration": 0.05})
+    assert result["trend_acceleration"] == "increase"
+
+
+def test_compute_ic_weight_suggestions_maintain_when_ic_in_middle_range() -> None:
+    """Factors with IC in [0.02, 0.05) must receive 'maintain' suggestion."""
+    result = compute_ic_weight_suggestions({"volume_expansion_quality": 0.03})
+    assert result["volume_expansion_quality"] == "maintain"
+
+
+def test_compute_ic_weight_suggestions_at_boundaries() -> None:
+    """Boundary values: IC == 0.02 → maintain; IC == 0.049 → maintain; IC == 0.05 → increase."""
+    result = compute_ic_weight_suggestions({
+        "a": 0.02,    # >= downgrade threshold; < upgrade → maintain
+        "b": 0.049,   # just below upgrade → maintain
+        "c": 0.05,    # at upgrade → increase
+        "d": 0.019,   # just below downgrade → reduce
+    })
+    assert result["a"] == "maintain"
+    assert result["b"] == "maintain"
+    assert result["c"] == "increase"
+    assert result["d"] == "reduce"
+
+
+def test_compute_ic_weight_suggestions_excludes_none_ic() -> None:
+    """Factors with None IC must be excluded from the output dict."""
+    result = compute_ic_weight_suggestions({
+        "breakout_freshness": 0.06,
+        "sector_resonance": None,
+    })
+    assert "sector_resonance" not in result
+    assert "breakout_freshness" in result
+
+
+def test_compute_ic_weight_suggestions_empty_input() -> None:
+    """Empty input must return empty dict."""
+    assert compute_ic_weight_suggestions({}) == {}
+
+
+def test_build_surface_summary_includes_ic_weight_suggestions() -> None:
+    """build_surface_summary must include 'ic_weight_suggestions' dict for factors with IC data."""
+    # Factor values and next_close_return vary together (perfect positive correlation)
+    # so Spearman IC ≈ 1.0, which is above IC_WEIGHT_UPGRADE_THRESHOLD (0.05) → "increase"
+    rows = [
+        {
+            **_base_row_with_drawdown(10.0, 9.9, 10.0 + float(i) * 0.01),
+            "next_close_return": float(i) * 0.01,   # override: varies 0.01 … 0.10
+            "breakout_freshness": float(i) / 10,
+            "trend_acceleration": float(i) / 10,
+            "volume_expansion_quality": float(i) / 10,
+            "catalyst_freshness": float(i) / 10,
+            "close_strength": float(i) / 10,
+            "volatility_regime": float(i) / 10,
+            "sector_resonance": float(i) / 10,
+        }
+        for i in range(1, 11)
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+
+    assert "ic_weight_suggestions" in summary
+    suggestions = summary["ic_weight_suggestions"]
+    assert isinstance(suggestions, dict)
+    # All 7 BTST factors should have suggestions (IC ≈ 1.0 → "increase")
+    for factor in BTST_FACTOR_NAMES:
+        assert factor in suggestions
+        assert suggestions[factor] in ("reduce", "maintain", "increase")

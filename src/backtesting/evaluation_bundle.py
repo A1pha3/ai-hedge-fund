@@ -27,6 +27,10 @@ _GUARDRAIL_KEYS = (
     "window_coverage",
     "incremental_theme_exposure",
     "avg_composite_score_escaped",
+    # Task 1 (Round 12): T+1 intraday drawdown tail-risk guardrail.
+    # A very negative P10 indicates the strategy routinely suffers large intraday adverse
+    # excursions from the open even when the day closes higher — hurting real P&L.
+    "t_plus_1_intraday_drawdown_p10",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -48,6 +52,11 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     "sample_weight": 0.60,
     "window_coverage": 0.60,
     "avg_composite_score_escaped": 0.45,
+    # Task 1 (Round 12): T+1 intraday drawdown floor.
+    # The worst 10% of intraday open-to-low dips must not exceed -7 %.
+    # Positions that routinely suffer >7% intraday draws blow real-money P&L
+    # even when the daily close return is positive.
+    "t_plus_1_intraday_drawdown_p10": -0.07,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

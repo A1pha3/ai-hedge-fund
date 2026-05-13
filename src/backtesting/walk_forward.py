@@ -496,3 +496,64 @@ def classify_runner_rollout_verdict(
         detail["verdict_reason"] = "low_runner_composite_quality"
         return "tail_hit_better_but_t1_risky", detail
     return "promotable_runner_profile", detail
+
+
+# Verdict priority ordering — higher index means better/more preferred.
+# Used by select_best_promotable_candidate to rank candidates when multiple pass checks.
+_VERDICT_PRIORITY: dict[str, int] = {
+    "keep_precision_baseline": 0,
+    "coverage_only_not_runner_better": 1,
+    "tail_hit_better_but_t1_risky": 2,
+    "promotable_runner_profile": 3,
+}
+
+
+def select_best_promotable_candidate(
+    candidates: Sequence[tuple[str, dict]],
+    baseline_summary: dict | None = None,
+) -> tuple[str | None, str | None, dict]:
+    """Evaluate a list of runner candidates and return the best promotable one.
+
+    Replaces the manual single-candidate workflow of calling
+    :func:`classify_runner_rollout_verdict` individually for each profile variant.
+    The function evaluates every candidate, ranks them by verdict quality, and
+    returns the winner — or ``(None, None, {})`` when the list is empty.
+
+    Priority (highest to lowest):
+    1. ``promotable_runner_profile``
+    2. ``tail_hit_better_but_t1_risky``
+    3. ``coverage_only_not_runner_better``
+    4. ``keep_precision_baseline``
+
+    Ties within the same verdict class are broken by descending
+    ``avg_runner_tail_hit_rate`` so the most aggressive runner wins.
+
+    Args:
+        candidates: Sequence of ``(label, runner_summary)`` pairs.  *label* is an
+            arbitrary string that identifies the candidate (e.g. ``"half_life_90"``
+            or ``"threshold_0.50"``).
+        baseline_summary: Optional baseline walk-forward summary dict with the same
+            keys as *runner_summary*.  Forwarded to :func:`classify_runner_rollout_verdict`
+            for each candidate so relative comparisons are consistent.
+
+    Returns:
+        A three-tuple ``(best_label, best_verdict, best_detail)`` where:
+        - *best_label* is the label of the winning candidate (or ``None``).
+        - *best_verdict* is its verdict string (or ``None``).
+        - *best_detail* is the detail dict from :func:`classify_runner_rollout_verdict`
+          (empty dict when there are no candidates).
+    """
+    if not candidates:
+        return None, None, {}
+
+    scored: list[tuple[int, float, str, str, dict]] = []
+    for label, runner_summary in candidates:
+        verdict, detail = classify_runner_rollout_verdict(runner_summary, baseline_summary)
+        priority = _VERDICT_PRIORITY.get(verdict, 0)
+        tail_hit = float(runner_summary.get("avg_runner_tail_hit_rate") or 0.0)
+        scored.append((priority, tail_hit, label, verdict, detail))
+
+    # Sort descending: highest priority first, then highest tail_hit as tie-breaker
+    scored.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    _best_priority, _best_tail_hit, best_label, best_verdict, best_detail = scored[0]
+    return best_label, best_verdict, best_detail

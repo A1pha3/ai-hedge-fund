@@ -135,6 +135,8 @@ COMPARISON_METRICS: tuple[str, ...] = (
     # Task 1 (Round 11): IC quality fraction
     "ic_positive_factor_fraction",
     "candidate_pool_avg_composite_score",
+    # Task 1 (Round 12): T+1 intraday drawdown tail-risk metric
+    "t_plus_1_intraday_drawdown_p10",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -160,6 +162,8 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     # Task 1 (Round 11)
     "ic_positive_factor_fraction": "IC Quality Frac",
     "candidate_pool_avg_composite_score": "Pool Avg Score",
+    # Task 1 (Round 12)
+    "t_plus_1_intraday_drawdown_p10": "Intraday DD P10",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -167,6 +171,9 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "projected_theme_exposure",
     "incremental_theme_exposure",
     "time_to_hit_20pct_median",
+    # Task 1 (Round 12): intraday drawdown — more negative is worse (lower is worse, but we
+    # want higher/less-negative values to be preferred, so this metric is NOT in lower-is-better).
+    # A floor guardrail enforces the minimum via BTST_QUALITY_FLOORS.
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -185,6 +192,9 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # may not expose them.  Their absence must not block rollout.
     "ic_positive_factor_fraction",
     "candidate_pool_avg_composite_score",
+    # Task 1 (Round 12): intraday drawdown is optional — surfaces produced before Round 12
+    # will not carry this field; its absence must not block rollout.
+    "t_plus_1_intraday_drawdown_p10",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -210,6 +220,8 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     # Task 1 (Round 11)
     "ic_positive_factor_fraction": 0.01,
     "candidate_pool_avg_composite_score": 0.01,
+    # Task 1 (Round 12)
+    "t_plus_1_intraday_drawdown_p10": 0.002,
 }
 
 
@@ -584,9 +596,13 @@ def _build_replay_evaluator(
             "avg_composite_score_escaped": [],
             # Task 3 (Round 11): candidate pool quality
             "candidate_pool_avg_composite_score": [],
+            # Task 1 (Round 12): T+1 intraday drawdown tail-risk metric
+            "t_plus_1_intraday_drawdown_p10": [],
         }
         # Task 1 (Round 11): per-factor IC accumulator across replay windows
         total_factor_ics: dict[str, list[float]] = {f: [] for f in BTST_FACTOR_NAMES}
+        # Task 3 (Round 12): IC weight suggestions accumulator across replay windows (mode vote)
+        total_ic_weight_suggestions: dict[str, list[str]] = {f: [] for f in BTST_FACTOR_NAMES}
 
         # For metrics that should be sample-weighted, keep a parallel list of weights
         total_metric_weights: dict[str, list[float]] = {
@@ -602,6 +618,8 @@ def _build_replay_evaluator(
             "downside_p10": [],
             "max_future_high_return_2_5d_hit_rate_at_20pct": [],
             "time_to_hit_20pct_median": [],
+            # Task 1 (Round 12): intraday drawdown is also sample-weighted
+            "t_plus_1_intraday_drawdown_p10": [],
         }
 
         # Track selected surfaces for runner median distribution aggregation
@@ -753,10 +771,21 @@ def _build_replay_evaluator(
                     _ic_val = _safe_float(surface_factor_ic_next_close.get(_factor_name))
                     if _ic_val is not None:
                         total_factor_ics[_factor_name].append(_ic_val)
+                # Task 3 (Round 12): accumulate per-factor IC weight suggestions (mode-vote across windows).
+                surface_ic_suggestions = dict(primary_surface.get("ic_weight_suggestions") or {})
+                for _factor_name in BTST_FACTOR_NAMES:
+                    _suggestion = surface_ic_suggestions.get(_factor_name)
+                    if _suggestion is not None:
+                        total_ic_weight_suggestions[_factor_name].append(str(_suggestion))
                 # Task 3 (Round 11): candidate pool average composite score for quality gate.
                 pool_avg_score = _safe_float(primary_surface.get("candidate_pool_avg_composite_score"))
                 if pool_avg_score is not None:
                     total_metrics["candidate_pool_avg_composite_score"].append(pool_avg_score)
+                # Task 1 (Round 12): T+1 intraday drawdown P10 — sample-weighted like other BTST quality metrics.
+                intraday_dd_p10 = _safe_float(primary_surface.get("t_plus_1_intraday_drawdown_p10"))
+                if intraday_dd_p10 is not None:
+                    total_metrics["t_plus_1_intraday_drawdown_p10"].append(intraday_dd_p10)
+                    total_metric_weights["t_plus_1_intraday_drawdown_p10"].append(sample_weight)
                 if primary_scope == "selected":
                     selected_surfaces.append(primary_surface)
 
@@ -840,8 +869,32 @@ def _build_replay_evaluator(
         ic_positive_count = sum(1 for f in ic_factors_with_data if (avg_factor_ics[f] or 0.0) >= IC_SIGNAL_MIN)
         ic_positive_factor_fraction: float | None = (float(ic_positive_count) / float(len(ic_factors_with_data))) if ic_factors_with_data else None
 
+        # Task 3 (Round 12): aggregate IC weight suggestions via majority-vote across windows.
+        # For each factor, pick the suggestion that appears most frequently across replay windows;
+        # ties are broken in the conservative direction: "reduce" > "maintain" > "increase".
+        from collections import Counter as _Counter
+
+        def _mode_suggestion(suggestions: list[str]) -> str | None:
+            if not suggestions:
+                return None
+            counts = _Counter(suggestions)
+            # Tie-breaking priority: reduce > maintain > increase
+            for preferred in ("reduce", "maintain", "increase"):
+                if counts[preferred] == max(counts.values()):
+                    return preferred
+            return counts.most_common(1)[0][0]
+
+        aggregated_ic_weight_suggestions: dict[str, str] = {
+            f: _mode_suggestion(total_ic_weight_suggestions[f])  # type: ignore[misc]
+            for f in BTST_FACTOR_NAMES
+            if total_ic_weight_suggestions[f]
+        }
+
         # Task 3 (Round 11): aggregate candidate pool quality across windows.
         avg_candidate_pool_composite_score = (sum(total_metrics["candidate_pool_avg_composite_score"]) / len(total_metrics["candidate_pool_avg_composite_score"])) if total_metrics["candidate_pool_avg_composite_score"] else None
+
+        # Task 1 (Round 12): sample-weighted average T+1 intraday drawdown P10.
+        avg_t_plus_1_intraday_drawdown_p10 = _weighted_avg(total_metrics["t_plus_1_intraday_drawdown_p10"], total_metric_weights["t_plus_1_intraday_drawdown_p10"])
 
         def _weighted_average_distribution_median(surfaces: list[dict[str, Any]], dist_key: str) -> float | None:
             """Compute sample-weighted average of distribution medians from selected surfaces."""
@@ -908,6 +961,10 @@ def _build_replay_evaluator(
             **{f"avg_factor_ic_{f}": avg_factor_ics.get(f) for f in BTST_FACTOR_NAMES},
             # Task 3 (Round 11): candidate pool quality
             "candidate_pool_avg_composite_score": avg_candidate_pool_composite_score,
+            # Task 1 (Round 12): T+1 intraday drawdown tail-risk metric
+            "t_plus_1_intraday_drawdown_p10": avg_t_plus_1_intraday_drawdown_p10,
+            # Task 3 (Round 12): IC weight suggestions (majority-vote across replay windows)
+            "ic_weight_suggestions": aggregated_ic_weight_suggestions,
         }
 
     return evaluator

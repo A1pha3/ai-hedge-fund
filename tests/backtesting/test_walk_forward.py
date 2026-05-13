@@ -834,3 +834,96 @@ def test_summarize_walk_forward_exposes_recency_half_life_days() -> None:
     summary = summarize_walk_forward(results)
     assert "recency_half_life_days" in summary
     assert summary["recency_half_life_days"] == WALK_FORWARD_RECENCY_HALF_LIFE_DAYS
+
+
+# ---------------------------------------------------------------------------
+# Round 12 Task 2 — Multi-candidate rollout selection
+# ---------------------------------------------------------------------------
+
+from src.backtesting.walk_forward import select_best_promotable_candidate
+
+
+def _promotable_summary(tail_hit: float = 0.20) -> dict:
+    """Build a runner summary that classify_runner_rollout_verdict marks 'promotable_runner_profile'."""
+    return {"avg_runner_tail_hit_rate": tail_hit, "next_close_positive_rate": 0.62, "downside_p10": -0.02}
+
+
+def _keep_baseline_summary() -> dict:
+    """Build a runner summary that yields 'keep_precision_baseline'."""
+    return {"avg_runner_tail_hit_rate": 0.08, "next_close_positive_rate": 0.62, "downside_p10": -0.02}
+
+
+def test_select_best_promotable_candidate_returns_none_for_empty_list() -> None:
+    """Empty candidate list must return (None, None, {})."""
+    label, verdict, detail = select_best_promotable_candidate([])
+    assert label is None
+    assert verdict is None
+    assert detail == {}
+
+
+def test_select_best_promotable_candidate_single_promotable_is_returned() -> None:
+    """Single promotable candidate must be returned as best."""
+    candidates = [("profile_a", _promotable_summary())]
+    label, verdict, detail = select_best_promotable_candidate(candidates)
+    assert label == "profile_a"
+    assert verdict == "promotable_runner_profile"
+
+
+def test_select_best_promotable_candidate_prefers_promotable_over_keep_baseline() -> None:
+    """promotable_runner_profile must beat keep_precision_baseline regardless of order."""
+    candidates = [
+        ("keep", _keep_baseline_summary()),
+        ("promote", _promotable_summary()),
+    ]
+    label, verdict, detail = select_best_promotable_candidate(candidates)
+    assert label == "promote"
+    assert verdict == "promotable_runner_profile"
+
+
+def test_select_best_promotable_candidate_prefers_higher_tail_hit_when_same_verdict() -> None:
+    """When two candidates share the same verdict, the one with higher tail hit rate wins."""
+    candidates = [
+        ("low", _promotable_summary(tail_hit=0.18)),
+        ("high", _promotable_summary(tail_hit=0.25)),
+    ]
+    label, verdict, detail = select_best_promotable_candidate(candidates)
+    assert label == "high"
+    assert verdict == "promotable_runner_profile"
+
+
+def test_select_best_promotable_candidate_keeps_single_keep_baseline_candidate() -> None:
+    """When all candidates are keep_precision_baseline the best one is still returned."""
+    candidates = [("only_keep", _keep_baseline_summary())]
+    label, verdict, detail = select_best_promotable_candidate(candidates)
+    assert label == "only_keep"
+    assert verdict == "keep_precision_baseline"
+
+
+def test_select_best_promotable_candidate_verdict_priority_order() -> None:
+    """Priority: promotable > tail_risky > coverage_only > keep_baseline."""
+    # coverage_only: small tail hit delta vs baseline, no regression
+    baseline = {"avg_runner_tail_hit_rate": 0.13, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    coverage_only = {"avg_runner_tail_hit_rate": 0.15, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    # tail_risky: big delta but T+1 regression
+    tail_risky = {"avg_runner_tail_hit_rate": 0.22, "next_close_positive_rate": 0.52, "downside_p10": -0.02}
+
+    candidates = [
+        ("keep", _keep_baseline_summary()),
+        ("coverage", coverage_only),
+        ("risky", tail_risky),
+    ]
+    label, verdict, detail = select_best_promotable_candidate(candidates, baseline_summary=baseline)
+    # tail_risky wins over coverage_only and keep_baseline even with no promotable
+    assert label == "risky"
+    assert verdict == "tail_hit_better_but_t1_risky"
+
+
+def test_select_best_promotable_candidate_uses_baseline_for_all_candidates() -> None:
+    """baseline_summary must be forwarded to each individual verdict classification."""
+    baseline = {"avg_runner_tail_hit_rate": 0.14, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    # This runner would be promotable only when compared against the baseline
+    runner = {"avg_runner_tail_hit_rate": 0.22, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    candidates = [("runner", runner)]
+    label, verdict, _detail = select_best_promotable_candidate(candidates, baseline_summary=baseline)
+    assert label == "runner"
+    assert verdict == "promotable_runner_profile"

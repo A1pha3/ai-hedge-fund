@@ -3319,3 +3319,92 @@ def test_replay_evaluator_pool_quality_none_when_missing(monkeypatch: pytest.Mon
     metrics = evaluator({})
 
     assert metrics.get("candidate_pool_avg_composite_score") is None
+
+
+# ---------------------------------------------------------------------------
+# Round 12 Task 1 — Intraday drawdown metric in replay evaluator
+# ---------------------------------------------------------------------------
+
+
+def test_replay_evaluator_reads_intraday_drawdown_p10_from_surface(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evaluator must aggregate t_plus_1_intraday_drawdown_p10 via sample-weighted average."""
+    surface = _base_replay_surface()
+    surface["t_plus_1_intraday_drawdown_p10"] = -0.04
+    _make_fake_module_with_surface(surface, monkeypatch)
+
+    evaluator = _build_replay_evaluator(
+        [Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")],
+        base_profile="default",
+    )
+    metrics = evaluator({})
+
+    assert "t_plus_1_intraday_drawdown_p10" in metrics
+    val = metrics["t_plus_1_intraday_drawdown_p10"]
+    assert val is not None
+    assert val == pytest.approx(-0.04, abs=0.005)
+
+
+def test_replay_evaluator_intraday_drawdown_p10_none_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When surface has no t_plus_1_intraday_drawdown_p10, the evaluator must return None for the metric."""
+    surface = _base_replay_surface()
+    # No t_plus_1_intraday_drawdown_p10 injected
+    _make_fake_module_with_surface(surface, monkeypatch)
+
+    evaluator = _build_replay_evaluator(
+        [Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")],
+        base_profile="default",
+    )
+    metrics = evaluator({})
+
+    assert metrics.get("t_plus_1_intraday_drawdown_p10") is None
+
+
+# ---------------------------------------------------------------------------
+# Round 12 Task 3 — IC weight suggestions aggregated across replay windows
+# ---------------------------------------------------------------------------
+
+
+def test_replay_evaluator_returns_ic_weight_suggestions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evaluator must aggregate ic_weight_suggestions via majority-vote and return the dict."""
+    surface = _base_replay_surface()
+    surface["ic_weight_suggestions"] = {
+        "breakout_freshness": "increase",
+        "trend_acceleration": "maintain",
+        "volume_expansion_quality": "reduce",
+        "catalyst_freshness": "maintain",
+        "close_strength": "increase",
+        "volatility_regime": "maintain",
+        "sector_resonance": "reduce",
+    }
+    _make_fake_module_with_surface(surface, monkeypatch)
+
+    evaluator = _build_replay_evaluator(
+        [Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")],
+        base_profile="default",
+    )
+    metrics = evaluator({})
+
+    assert "ic_weight_suggestions" in metrics
+    suggestions = metrics["ic_weight_suggestions"]
+    assert isinstance(suggestions, dict)
+    # With a single window the majority-vote should reproduce the original suggestions exactly
+    assert suggestions.get("breakout_freshness") == "increase"
+    assert suggestions.get("volume_expansion_quality") == "reduce"
+    assert suggestions.get("trend_acceleration") == "maintain"
+
+
+def test_replay_evaluator_ic_weight_suggestions_empty_when_no_surface_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ic_weight_suggestions must be an empty dict when surface has no ic_weight_suggestions."""
+    surface = _base_replay_surface()
+    # No ic_weight_suggestions injected
+    _make_fake_module_with_surface(surface, monkeypatch)
+
+    evaluator = _build_replay_evaluator(
+        [Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")],
+        base_profile="default",
+    )
+    metrics = evaluator({})
+
+    # key must exist but be an empty dict (no votes accumulated)
+    assert "ic_weight_suggestions" in metrics
+    assert metrics["ic_weight_suggestions"] == {}

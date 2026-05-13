@@ -83,6 +83,50 @@ def compute_all_factor_ics(rows: list[dict[str, Any]], return_col: str = "next_c
     """
     return {factor: compute_factor_ic(rows, factor, return_col) for factor in BTST_FACTOR_NAMES}
 
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 12) — IC dynamic weight suggestions
+# ---------------------------------------------------------------------------
+# When a factor's average Spearman IC persistently stays below IC_WEIGHT_DOWNGRADE_THRESHOLD
+# the optimizer should de-emphasise it; when it clearly exceeds IC_WEIGHT_UPGRADE_THRESHOLD
+# the factor is a strong predictor and its weight can be raised.  These thresholds are used
+# by compute_ic_weight_suggestions to generate per-factor recommendations that are written
+# into the surface report so the optimizer can pick them up in the next search round.
+IC_WEIGHT_DOWNGRADE_THRESHOLD: float = 0.02   # IC below this → suggest reducing weight
+IC_WEIGHT_UPGRADE_THRESHOLD: float = 0.05     # IC above this → suggest maintaining / increasing
+
+
+def compute_ic_weight_suggestions(avg_factor_ics: dict[str, float | None]) -> dict[str, str]:
+    """Return per-factor weight adjustment suggestions based on average Spearman IC values.
+
+    Each factor receives one of three labels:
+    - ``"reduce"``: average IC is below :data:`IC_WEIGHT_DOWNGRADE_THRESHOLD` — factor is
+      weakly predictive and its composite weight should be lowered in the next search round.
+    - ``"increase"``: average IC is at or above :data:`IC_WEIGHT_UPGRADE_THRESHOLD` — factor
+      is a strong predictor; its weight can be raised or maintained at a premium level.
+    - ``"maintain"``: average IC is between the two thresholds — no change recommended.
+
+    Factors with ``None`` IC (insufficient data) are excluded from the output.
+
+    Args:
+        avg_factor_ics: Mapping of factor name → average IC value (or ``None``).
+
+    Returns:
+        Dict mapping factor name → suggestion string for factors with valid IC data.
+    """
+    suggestions: dict[str, str] = {}
+    for factor, ic_val in avg_factor_ics.items():
+        if ic_val is None:
+            continue
+        ic = float(ic_val)
+        if ic < IC_WEIGHT_DOWNGRADE_THRESHOLD:
+            suggestions[factor] = "reduce"
+        elif ic >= IC_WEIGHT_UPGRADE_THRESHOLD:
+            suggestions[factor] = "increase"
+        else:
+            suggestions[factor] = "maintain"
+    return suggestions
+
 import pandas as pd
 
 from scripts.btst_data_utils import (
@@ -210,6 +254,7 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
     trade_close = safe_float(trade_row.get("close"))
     next_open = safe_float(next_row.get("open"))
     next_high = safe_float(next_row.get("high"))
+    next_low = safe_float(next_row.get("low"))
     next_close = safe_float(next_row.get("close"))
     if trade_close is None or trade_close <= 0 or next_open is None or next_high is None or next_close is None:
         return {
@@ -266,9 +311,15 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         "next_trade_date": future_days.index[0].strftime("%Y-%m-%d"),
         "next_open": round(next_open, 4),
         "next_high": round(next_high, 4),
+        "next_low": round_or_none(next_low),
         "next_close": round(next_close, 4),
         "next_open_return": round((next_open / trade_close) - 1.0, 4),
         "next_high_return": round((next_high / trade_close) - 1.0, 4),
+        # Task 1 (Round 12): T+1 intraday drawdown = low / open − 1 for next trading day.
+        # Measures maximum adverse excursion from the open — negative when price dips below
+        # the open.  Used to compute t_plus_1_intraday_drawdown_p10 in build_surface_summary.
+        "next_low_return": None if next_low is None else round((next_low / trade_close) - 1.0, 4),
+        "next_intraday_drawdown": None if (next_low is None or next_open is None or next_open <= 0) else round((next_low / next_open) - 1.0, 4),
         "next_close_return": round((next_close / trade_close) - 1.0, 4),
         "next_open_to_close_return": round((next_close / next_open) - 1.0, 4),
         "t_plus_2_trade_date": t_plus_2_trade_date,
@@ -376,6 +427,12 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     t_plus_2_close_returns = [float(row["t_plus_2_close_return"]) for row in closed_rows if row.get("t_plus_2_close_return") is not None]
     t_plus_3_close_returns = [float(row["t_plus_3_close_return"]) for row in t_plus_3_rows if row.get("t_plus_3_close_return") is not None]
 
+    # Task 1 (Round 12): T+1 intraday drawdown = low / open − 1 for the next trading day.
+    # Negative values indicate the stock fell below the open intraday (adverse excursion).
+    # P10 represents the worst-10th-percentile intraday dip and acts as a tail-risk floor.
+    next_intraday_drawdown_values = [float(row["next_intraday_drawdown"]) for row in next_day_rows if row.get("next_intraday_drawdown") is not None]
+    t_plus_1_intraday_drawdown_p10 = summarize_distribution(next_intraday_drawdown_values).get("p10") if next_intraday_drawdown_values else None
+
     next_high_hits = sum(1 for value in next_high_returns if value >= next_high_hit_threshold)
     next_close_positive = sum(1 for value in next_close_returns if value > 0)
     t_plus_2_positive = sum(1 for value in t_plus_2_close_returns if value > 0)
@@ -398,6 +455,14 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # "矮子里拔将军" (best of a bad lot) — the optimizer uses this as an optional quality guardrail.
     all_composite_scores = [float(row["runner_composite_score"]) for row in rows if row.get("runner_composite_score") is not None]
     candidate_pool_avg_composite_score = round(sum(all_composite_scores) / len(all_composite_scores), 4) if all_composite_scores else None
+
+    # Task 1 (Round 10) — factor IC vs forward returns
+    factor_ic_next_close = compute_all_factor_ics(next_day_rows, "next_close_return")
+    factor_ic_t_plus_2 = compute_all_factor_ics(closed_rows, "t_plus_2_close_return")
+    factor_ic_t_plus_3 = compute_all_factor_ics(t_plus_3_rows, "t_plus_3_close_return")
+    # Task 3 (Round 12): IC weight suggestions — use T+1 ICs as primary signal since that
+    # is the most data-rich horizon; written to the surface so the optimizer can surface them.
+    ic_weight_suggestions = compute_ic_weight_suggestions(factor_ic_next_close)
 
     return {
         "total_count": len(rows),
@@ -444,10 +509,15 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "avg_composite_score_escaped": avg_composite_score_escaped,
         # Task 3 (Round 11): pool-level quality
         "candidate_pool_avg_composite_score": candidate_pool_avg_composite_score,
+        # Task 1 (Round 12): T+1 intraday drawdown (open-to-low) tail-risk metric
+        "t_plus_1_intraday_drawdown_p10": t_plus_1_intraday_drawdown_p10,
+        "next_intraday_drawdown_distribution": summarize_distribution(next_intraday_drawdown_values),
         # Task 1 (Round 10) — factor IC vs forward returns
-        "factor_ic_next_close": compute_all_factor_ics(next_day_rows, "next_close_return"),
-        "factor_ic_t_plus_2": compute_all_factor_ics(closed_rows, "t_plus_2_close_return"),
-        "factor_ic_t_plus_3": compute_all_factor_ics(t_plus_3_rows, "t_plus_3_close_return"),
+        "factor_ic_next_close": factor_ic_next_close,
+        "factor_ic_t_plus_2": factor_ic_t_plus_2,
+        "factor_ic_t_plus_3": factor_ic_t_plus_3,
+        # Task 3 (Round 12): per-factor IC weight adjustment suggestions
+        "ic_weight_suggestions": ic_weight_suggestions,
     }
 
 
