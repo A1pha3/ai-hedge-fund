@@ -40,6 +40,9 @@ _GUARDRAIL_KEYS = (
     # Task 1 (Round 19): sector concentration Gini coefficient — portfolio diversification guardrail.
     # A Gini near 1 means nearly all candidates are from a single sector, creating correlated risk.
     "sector_concentration_gini",
+    # Task 1 (Round 20, Beta): realized payoff ratio — win_avg_return / abs(loss_avg_return).
+    # Floor ≥ 1.0: per-trade average win must exceed per-trade average loss (basic edge requirement).
+    "realized_payoff_ratio",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -71,6 +74,10 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Strategies where selected runners routinely gap down on T+1 open (e.g. limit-up reversal)
     # destroy real-money P&L even if the T+1 close is positive.
     "avg_escape_gap_cost": -0.03,
+    # Task 1 (Round 20, Beta): realized payoff ratio floor.
+    # The per-trade win/loss asymmetry must be ≥ 1.0: average wins must exceed average losses.
+    # Strategies where avg_loss > avg_win destroy capital even at moderate win rates.
+    "realized_payoff_ratio": 1.0,
 }
 
 # ---------------------------------------------------------------------------

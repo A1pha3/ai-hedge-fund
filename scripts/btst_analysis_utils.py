@@ -1562,6 +1562,119 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # late_dominated=True  → momentum persists into close; chase is viable.
     intraday_high_timing: dict[str, Any] = compute_intraday_high_timing_distribution(next_day_rows)
 
+    # -----------------------------------------------------------------------
+    # Round 20 analytics — wired into build_surface_summary.
+    # -----------------------------------------------------------------------
+    # Task 1 (Round 20, Beta): Realized payoff ratio — win_avg_return / abs(loss_avg_return).
+    # Explicitly named standalone metric for the core execution quality KPI.
+    # win_avg_return: mean return of positive-return rows (same as next_close_edge["average_win"]).
+    # loss_avg_return: mean return of negative-return rows (negative value, sign-preserved).
+    # realized_payoff_ratio: win_avg_return / abs(loss_avg_return); NaN/default 2.0 when no loss samples.
+    # Quality floor: realized_payoff_ratio ≥ 1.0 (wins must exceed losses on a per-trade basis).
+    _win_avg_return: float | None = next_close_edge["average_win"]
+    _loss_avg_return_abs: float | None = next_close_edge["average_loss_abs"]
+    _loss_avg_return: float | None = (-_loss_avg_return_abs) if _loss_avg_return_abs is not None else None
+    _realized_payoff_ratio: float | None = next_close_edge["payoff_ratio"]  # = average_win / average_loss_abs
+
+    # Task 2 (Round 20, Alpha): High-confidence selection rate and score-weighted win rate.
+    # Validates whether composite_score has predictive power by stratifying on score level.
+    # high_confidence_selection_rate: fraction of total rows where runner_composite_score ≥ 0.65.
+    # score_weighted_win_rate: sum(score_i × outcome_i) / sum(score_i) — more stable than simple win rate.
+    # score_win_rate_lift: score_weighted_win_rate − simple_win_rate; positive lift validates scoring.
+    # high_confidence_win_rate: win rate restricted to composite_score ≥ 0.65 rows (min 5 samples).
+    _HIGH_CONFIDENCE_SCORE_THRESHOLD: float = 0.65
+    _score_return_pairs: list[tuple[float, float]] = [
+        (float(row["runner_composite_score"]), float(row["next_close_return"]))
+        for row in next_day_rows
+        if row.get("runner_composite_score") is not None and row.get("next_close_return") is not None
+    ]
+    _total_score_sum: float = sum(s for s, _ in _score_return_pairs)
+    _score_weighted_win_rate: float | None
+    if _total_score_sum > 0.0 and _score_return_pairs:
+        _score_weighted_win_rate = round(sum(s for s, ret in _score_return_pairs if ret > 0.0) / _total_score_sum, 4)
+    else:
+        _score_weighted_win_rate = None
+    _simple_win_rate: float | None = (round(next_close_positive / len(next_day_rows), 4) if next_day_rows else None)
+    _score_win_rate_lift: float | None = (round(_score_weighted_win_rate - _simple_win_rate, 4) if _score_weighted_win_rate is not None and _simple_win_rate is not None else None)
+    _hc_rows: list[dict[str, Any]] = [row for row in next_day_rows if row.get("runner_composite_score") is not None and float(row["runner_composite_score"]) >= _HIGH_CONFIDENCE_SCORE_THRESHOLD]
+    _hc_returns: list[float] = [float(row["next_close_return"]) for row in _hc_rows if row.get("next_close_return") is not None]
+    _high_confidence_selection_rate: float | None = (round(len(_hc_rows) / len(rows), 4) if rows else None)
+    _high_confidence_win_rate: float | None
+    if len(_hc_returns) >= 5:
+        _high_confidence_win_rate = round(sum(1 for r in _hc_returns if r > 0.0) / len(_hc_returns), 4)
+    else:
+        _high_confidence_win_rate = None
+
+    # Task 3 (Round 20, Gamma): Consecutive limit-up identification and risk statistics (连板识别).
+    # A股连板股（连续涨停）有完全不同的风险特征.
+    # Approximation: t_minus_1_return ≥ 0.095 AND t_minus_2_return ≥ 0.095.
+    # Fallback when prior-day return fields absent: breakout_freshness ≥ 0.80 as proxy for recent limit-up.
+    # consecutive_limit_up_rate: fraction of total rows classified as consecutive limit-up.
+    # limit_up_win_rate: T+1 win rate for limit-up subset (NaN if < 3 samples).
+    # limit_up_avg_payoff: mean T+1 next_close_return for limit-up subset.
+    # non_limit_up_win_rate: T+1 win rate for non-limit-up subset.
+    # limit_up_risk_premium: limit_up_avg_payoff − non_limit_up_win_rate × avg_win (approximate).
+    def _is_consecutive_limit_up_row(row: dict[str, Any]) -> bool | None:
+        """Return True if the row is a consecutive limit-up candidate; None if data missing."""
+        t1 = row.get("t_minus_1_return")
+        t2 = row.get("t_minus_2_return")
+        if t1 is not None and t2 is not None:
+            try:
+                return float(t1) >= 0.095 and float(t2) >= 0.095
+            except (TypeError, ValueError):
+                return None
+        # Fallback proxy: breakout_freshness ≥ 0.80 suggests recent limit-up momentum.
+        bf = row.get("breakout_freshness")
+        if bf is not None:
+            try:
+                return float(bf) >= 0.80
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    _limit_up_classified: list[tuple[bool, float | None]] = []  # (is_limit_up, next_close_return or None)
+    for _row in next_day_rows:
+        _flag = _is_consecutive_limit_up_row(_row)
+        if _flag is None:
+            continue
+        try:
+            _ncr_val: float | None = float(_row["next_close_return"]) if _row.get("next_close_return") is not None else None
+        except (TypeError, ValueError):
+            _ncr_val = None
+        _limit_up_classified.append((_flag, _ncr_val))
+
+    _lu_rows_returns: list[float] = [r for is_lu, r in _limit_up_classified if is_lu and r is not None]  # type: ignore[misc]
+    _non_lu_rows_returns: list[float] = [r for is_lu, r in _limit_up_classified if not is_lu and r is not None]  # type: ignore[misc]
+
+    _consecutive_limit_up_rate: float | None
+    if rows and _limit_up_classified:
+        _consecutive_limit_up_rate = round(sum(1 for is_lu, _ in _limit_up_classified if is_lu) / len(rows), 4)
+    else:
+        _consecutive_limit_up_rate = None
+
+    _limit_up_win_rate: float | None
+    _limit_up_avg_payoff: float | None
+    if len(_lu_rows_returns) >= 3:
+        _limit_up_win_rate = round(sum(1 for r in _lu_rows_returns if r > 0.0) / len(_lu_rows_returns), 4)
+        _limit_up_avg_payoff = round(sum(_lu_rows_returns) / len(_lu_rows_returns), 4)
+    else:
+        _limit_up_win_rate = None
+        _limit_up_avg_payoff = None
+
+    _non_limit_up_win_rate: float | None
+    if len(_non_lu_rows_returns) >= 3:
+        _non_limit_up_win_rate = round(sum(1 for r in _non_lu_rows_returns if r > 0.0) / len(_non_lu_rows_returns), 4)
+    else:
+        _non_limit_up_win_rate = None
+
+    # limit_up_risk_premium ≈ limit_up_avg_payoff − non_limit_up_win_rate × avg_win
+    # Measures whether limit-up stocks deliver excess return vs the baseline expected payoff.
+    _limit_up_risk_premium: float | None
+    if _limit_up_avg_payoff is not None and _non_limit_up_win_rate is not None and _win_avg_return is not None:
+        _limit_up_risk_premium = round(_limit_up_avg_payoff - _non_limit_up_win_rate * _win_avg_return, 4)
+    else:
+        _limit_up_risk_premium = None
+
     return {
         "total_count": len(rows),
         # Task 2 (Round 14): explicit candidate_pool_size (= total_count) for walk-forward pool tracking.
@@ -1717,6 +1830,37 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "high_timing_late_fraction": intraday_high_timing.get("late_fraction"),
         "high_timing_early_dominated": intraday_high_timing.get("early_dominated"),
         "high_timing_late_dominated": intraday_high_timing.get("late_dominated"),
+        # -----------------------------------------------------------------------
+        # Round 20 analytics
+        # -----------------------------------------------------------------------
+        # Task 1 (Round 20, Beta): realized payoff ratio — explicit win/loss asymmetry KPI.
+        # win_avg_return: mean next_close_return for winning rows (positive value).
+        # loss_avg_return: mean next_close_return for losing rows (negative value, sign-preserved).
+        # realized_payoff_ratio: win_avg_return / abs(loss_avg_return); quality floor ≥ 1.0.
+        "win_avg_return": _win_avg_return,
+        "loss_avg_return": _loss_avg_return,
+        "realized_payoff_ratio": _realized_payoff_ratio,
+        # Task 2 (Round 20, Alpha): score-conditioned win rate metrics.
+        # high_confidence_selection_rate: fraction of rows with runner_composite_score ≥ 0.65.
+        # score_weighted_win_rate: score-weighted win rate — more stable estimator than simple rate.
+        # score_win_rate_lift: score_weighted_win_rate − simple_win_rate (positive = score has value).
+        # high_confidence_win_rate: win rate restricted to high-confidence subset (min 5 samples).
+        "high_confidence_selection_rate": _high_confidence_selection_rate,
+        "score_weighted_win_rate": _score_weighted_win_rate,
+        "score_win_rate_lift": _score_win_rate_lift,
+        "high_confidence_win_rate": _high_confidence_win_rate,
+        # Task 3 (Round 20, Gamma): consecutive limit-up (连板) identification and risk statistics.
+        # Uses t_minus_1_return/t_minus_2_return ≥ 0.095 when available; falls back to breakout_freshness ≥ 0.80.
+        # consecutive_limit_up_rate: fraction of total rows classified as consecutive limit-up.
+        # limit_up_win_rate: T+1 win rate for limit-up subset (NaN if < 3 samples).
+        # limit_up_avg_payoff: mean T+1 next_close_return for limit-up subset.
+        # non_limit_up_win_rate: T+1 win rate for non-limit-up subset.
+        # limit_up_risk_premium: limit_up_avg_payoff − non_limit_up_win_rate × avg_win (approximate).
+        "consecutive_limit_up_rate": _consecutive_limit_up_rate,
+        "limit_up_win_rate": _limit_up_win_rate,
+        "limit_up_avg_payoff": _limit_up_avg_payoff,
+        "non_limit_up_win_rate": _non_limit_up_win_rate,
+        "limit_up_risk_premium": _limit_up_risk_premium,
     }
 
 

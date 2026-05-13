@@ -2119,3 +2119,178 @@ def test_build_surface_summary_high_timing_none_when_no_ohlc() -> None:
     assert summary["high_timing_early_fraction"] is None
     assert summary["high_timing_late_fraction"] is None
 
+
+
+# ===========================================================================
+# Round 20 tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 20, Beta): realized payoff ratio
+# ---------------------------------------------------------------------------
+
+def test_build_surface_summary_exposes_realized_payoff_ratio() -> None:
+    """build_surface_summary must expose realized_payoff_ratio, win_avg_return, loss_avg_return (Task 1, R20)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.08, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "runner_composite_score": 0.7},
+        {"next_close_return": 0.04, "next_open_return": 0.01, "next_high_return": 0.06, "next_intraday_drawdown": -0.02, "next_open_to_close_return": 0.01, "runner_composite_score": 0.65},
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.03, "next_open_to_close_return": -0.01, "runner_composite_score": 0.4},
+        {"next_close_return": -0.03, "next_open_return": -0.02, "next_high_return": 0.00, "next_intraday_drawdown": -0.04, "next_open_to_close_return": -0.02, "runner_composite_score": 0.35},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "realized_payoff_ratio" in summary
+    assert "win_avg_return" in summary
+    assert "loss_avg_return" in summary
+
+
+def test_realized_payoff_ratio_correct_value() -> None:
+    """realized_payoff_ratio must equal win_avg / abs(loss_avg) (Task 1, R20)."""
+    rows = [
+        {"next_close_return": 0.06, "next_open_return": 0.01, "next_high_return": 0.07, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.7},
+        {"next_close_return": 0.04, "next_open_return": 0.01, "next_high_return": 0.05, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.6},
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.03, "next_open_to_close_return": -0.01, "runner_composite_score": 0.4},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    # win_avg = (0.06 + 0.04) / 2 = 0.05; loss_avg = -0.02; ratio = 0.05 / 0.02 = 2.5
+    assert summary["win_avg_return"] == pytest.approx(0.05, abs=1e-4)
+    assert summary["loss_avg_return"] == pytest.approx(-0.02, abs=1e-4)
+    assert summary["realized_payoff_ratio"] == pytest.approx(2.5, abs=1e-3)
+
+
+def test_realized_payoff_ratio_none_when_no_losses() -> None:
+    """realized_payoff_ratio must be None when there are no losing rows (Task 1, R20)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.07, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "runner_composite_score": 0.7},
+        {"next_close_return": 0.03, "next_open_return": 0.01, "next_high_return": 0.05, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.6},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert summary["loss_avg_return"] is None
+    assert summary["realized_payoff_ratio"] is None
+
+
+def test_loss_avg_return_is_negative_value() -> None:
+    """loss_avg_return must be negative (sign-preserved, not abs) (Task 1, R20)."""
+    rows = [
+        {"next_close_return": 0.04, "next_open_return": 0.01, "next_high_return": 0.06, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.7},
+        {"next_close_return": -0.03, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.04, "next_open_to_close_return": -0.01, "runner_composite_score": 0.4},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert summary["loss_avg_return"] is not None
+    assert summary["loss_avg_return"] < 0.0, "loss_avg_return must be negative (sign-preserved)"
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 20, Alpha): score-conditioned win rate metrics
+# ---------------------------------------------------------------------------
+
+def test_build_surface_summary_exposes_score_conditioned_metrics() -> None:
+    """build_surface_summary must expose high_confidence_selection_rate, score_weighted_win_rate, score_win_rate_lift, high_confidence_win_rate (Task 2, R20)."""
+    import random
+    rows = []
+    for i in range(20):
+        score = 0.4 + (i / 20.0) * 0.5  # scores from 0.4 to 0.9
+        ret = 0.04 if i % 2 == 0 else -0.02
+        rows.append({
+            "next_close_return": ret, "next_open_return": 0.01, "next_high_return": 0.07,
+            "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01,
+            "runner_composite_score": score,
+        })
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "high_confidence_selection_rate" in summary
+    assert "score_weighted_win_rate" in summary
+    assert "score_win_rate_lift" in summary
+    assert "high_confidence_win_rate" in summary
+
+
+def test_high_confidence_selection_rate_correct() -> None:
+    """high_confidence_selection_rate must equal fraction of rows with score >= 0.65 (Task 2, R20)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.01, "next_high_return": 0.06, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.70},
+        {"next_close_return": 0.03, "next_open_return": 0.01, "next_high_return": 0.04, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.65},
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.01, "runner_composite_score": 0.40},
+        {"next_close_return": -0.01, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.01, "runner_composite_score": 0.30},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    # 2 out of 4 rows have score >= 0.65
+    assert summary["high_confidence_selection_rate"] == pytest.approx(0.50, abs=1e-4)
+
+
+def test_score_weighted_win_rate_weights_higher_scores_more() -> None:
+    """score_weighted_win_rate must be > simple win rate when wins have higher scores (Task 2, R20)."""
+    rows = [
+        {"next_close_return": 0.06, "next_open_return": 0.01, "next_high_return": 0.08, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.90},  # win, high score
+        {"next_close_return": 0.04, "next_open_return": 0.01, "next_high_return": 0.06, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.85},  # win, high score
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.01, "runner_composite_score": 0.20},  # loss, low score
+        {"next_close_return": -0.03, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.01, "runner_composite_score": 0.15},  # loss, low score
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    # simple win rate = 2/4 = 0.5; wins have high scores → score_weighted > 0.5
+    assert summary["score_weighted_win_rate"] is not None
+    assert summary["score_weighted_win_rate"] > 0.5, "score_weighted_win_rate should exceed simple win rate when wins have higher scores"
+    assert summary["score_win_rate_lift"] is not None
+    assert summary["score_win_rate_lift"] > 0.0, "lift should be positive when wins cluster in high-score region"
+
+
+def test_high_confidence_win_rate_none_when_insufficient_samples() -> None:
+    """high_confidence_win_rate must be None when < 5 high-confidence rows (Task 2, R20)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.01, "next_high_return": 0.06, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.70},
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.01, "runner_composite_score": 0.30},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    # Only 1 row has score >= 0.65 (which is < 5 threshold) → None
+    assert summary["high_confidence_win_rate"] is None
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 20, Gamma): consecutive limit-up identification
+# ---------------------------------------------------------------------------
+
+def test_build_surface_summary_exposes_limit_up_metrics() -> None:
+    """build_surface_summary must expose consecutive_limit_up_rate, limit_up_win_rate, limit_up_avg_payoff, non_limit_up_win_rate, limit_up_risk_premium (Task 3, R20)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.08, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "breakout_freshness": 0.85, "runner_composite_score": 0.7},
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.03, "next_open_to_close_return": -0.01, "breakout_freshness": 0.50, "runner_composite_score": 0.5},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "consecutive_limit_up_rate" in summary
+    assert "limit_up_win_rate" in summary
+    assert "limit_up_avg_payoff" in summary
+    assert "non_limit_up_win_rate" in summary
+    assert "limit_up_risk_premium" in summary
+
+
+def test_consecutive_limit_up_rate_uses_breakout_freshness_fallback() -> None:
+    """When t_minus_1_return is absent, breakout_freshness >= 0.80 should be used as proxy (Task 3, R20)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.08, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "breakout_freshness": 0.90, "runner_composite_score": 0.7},
+        {"next_close_return": 0.03, "next_open_return": 0.01, "next_high_return": 0.05, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "breakout_freshness": 0.85, "runner_composite_score": 0.65},
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.01, "breakout_freshness": 0.50, "runner_composite_score": 0.4},
+        {"next_close_return": 0.01, "next_open_return": 0.01, "next_high_return": 0.03, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "breakout_freshness": 0.30, "runner_composite_score": 0.35},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    # 2 out of 4 rows have breakout_freshness >= 0.80 → rate = 0.5
+    assert summary["consecutive_limit_up_rate"] == pytest.approx(0.50, abs=1e-4)
+
+
+def test_consecutive_limit_up_uses_exact_fields_when_available() -> None:
+    """When t_minus_1_return and t_minus_2_return are present, exact check should be used (Task 3, R20)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.08, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "t_minus_1_return": 0.10, "t_minus_2_return": 0.097, "runner_composite_score": 0.7},  # consecutive LU
+        {"next_close_return": 0.03, "next_open_return": 0.01, "next_high_return": 0.05, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "t_minus_1_return": 0.10, "t_minus_2_return": 0.04, "runner_composite_score": 0.6},   # only 1 LU
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.01, "t_minus_1_return": 0.02, "t_minus_2_return": 0.03, "runner_composite_score": 0.4},  # not LU
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    # Only 1 row has both t_minus_1_return >= 0.095 AND t_minus_2_return >= 0.095
+    assert summary["consecutive_limit_up_rate"] == pytest.approx(1.0 / 3.0, abs=1e-4)
+
+
+def test_limit_up_win_rate_none_when_fewer_than_3_samples() -> None:
+    """limit_up_win_rate must be None when limit-up subset has < 3 rows (Task 3, R20)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.08, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "breakout_freshness": 0.90, "runner_composite_score": 0.7},
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_intraday_drawdown": -0.03, "next_open_to_close_return": -0.01, "breakout_freshness": 0.50, "runner_composite_score": 0.4},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    # Only 1 row is consecutive limit-up (< 3 min threshold)
+    assert summary["limit_up_win_rate"] is None

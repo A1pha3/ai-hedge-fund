@@ -151,6 +151,17 @@ COMPARISON_METRICS: tuple[str, ...] = (
     # Task 3 (Round 16): T0 predicted range p75 and high-volatility warning rate.
     "predicted_range_pct_p75",
     "high_volatility_warning_rate",
+    # Task 1 (Round 20, Beta): realized payoff ratio — explicit win/loss asymmetry KPI.
+    "realized_payoff_ratio",
+    # Task 2 (Round 20, Alpha): score-conditioned selection quality metrics.
+    "high_confidence_selection_rate",
+    "score_weighted_win_rate",
+    "score_win_rate_lift",
+    "high_confidence_win_rate",
+    # Task 3 (Round 20, Gamma): consecutive limit-up risk statistics.
+    "consecutive_limit_up_rate",
+    "limit_up_win_rate",
+    "non_limit_up_win_rate",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -192,6 +203,17 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     # Task 3 (Round 16): predicted range percentile and warning rate
     "predicted_range_pct_p75": "Pred Range P75",
     "high_volatility_warning_rate": "HighVol Warn%",
+    # Task 1 (Round 20, Beta): realized payoff ratio
+    "realized_payoff_ratio": "Realized Payoff",
+    # Task 2 (Round 20, Alpha): score-conditioned metrics
+    "high_confidence_selection_rate": "HC Select%",
+    "score_weighted_win_rate": "Score-Wtd WR",
+    "score_win_rate_lift": "Score WR Lift",
+    "high_confidence_win_rate": "HC WinRate",
+    # Task 3 (Round 20, Gamma): limit-up risk statistics
+    "consecutive_limit_up_rate": "Consec LU%",
+    "limit_up_win_rate": "LU WinRate",
+    "non_limit_up_win_rate": "Non-LU WR",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -213,6 +235,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "predicted_range_pct_p75",
     # Task 3 (Round 16): high-volatility warning rate — higher = more high-vol sessions = lower-is-better.
     "high_volatility_warning_rate",
+    # Task 3 (Round 20, Gamma): consecutive limit-up rate — higher = more limit-up risk in pool = lower-is-better.
+    "consecutive_limit_up_rate",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -249,6 +273,17 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 3 (Round 16): predicted range and high-volatility warning — optional; pre-Round-16 surfaces omit these.
     "predicted_range_pct_p75",
     "high_volatility_warning_rate",
+    # Task 1 (Round 20, Beta): realized payoff ratio — optional; pre-Round-20 surfaces omit it.
+    "realized_payoff_ratio",
+    # Task 2 (Round 20, Alpha): score-conditioned metrics — optional; pre-Round-20 surfaces omit these.
+    "high_confidence_selection_rate",
+    "score_weighted_win_rate",
+    "score_win_rate_lift",
+    "high_confidence_win_rate",
+    # Task 3 (Round 20, Gamma): limit-up risk statistics — optional; pre-Round-20 surfaces omit these.
+    "consecutive_limit_up_rate",
+    "limit_up_win_rate",
+    "non_limit_up_win_rate",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -291,6 +326,17 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "predicted_range_pct_p75": 0.005,
     # Task 3 (Round 16): high-volatility warning rate — 1 % tolerance
     "high_volatility_warning_rate": 0.01,
+    # Task 1 (Round 20, Beta): realized payoff ratio — 1 % tolerance
+    "realized_payoff_ratio": 0.01,
+    # Task 2 (Round 20, Alpha): score-conditioned metrics — 0.5 % tolerance each
+    "high_confidence_selection_rate": 0.005,
+    "score_weighted_win_rate": 0.005,
+    "score_win_rate_lift": 0.005,
+    "high_confidence_win_rate": 0.005,
+    # Task 3 (Round 20, Gamma): limit-up risk statistics — 1 % tolerance each
+    "consecutive_limit_up_rate": 0.01,
+    "limit_up_win_rate": 0.01,
+    "non_limit_up_win_rate": 0.01,
 }
 
 
@@ -667,6 +713,8 @@ def _build_replay_evaluator(
             "candidate_pool_avg_composite_score": [],
             # Task 1 (Round 12): T+1 intraday drawdown tail-risk metric
             "t_plus_1_intraday_drawdown_p10": [],
+            # Task 1 (Round 20, Beta): realized payoff ratio — sample-weighted quality guardrail.
+            "realized_payoff_ratio": [],
         }
         # Task 1 (Round 11): per-factor IC accumulator across replay windows
         total_factor_ics: dict[str, list[float]] = {f: [] for f in BTST_FACTOR_NAMES}
@@ -689,6 +737,8 @@ def _build_replay_evaluator(
             "time_to_hit_20pct_median": [],
             # Task 1 (Round 12): intraday drawdown is also sample-weighted
             "t_plus_1_intraday_drawdown_p10": [],
+            # Task 1 (Round 20, Beta): realized payoff ratio is also sample-weighted
+            "realized_payoff_ratio": [],
         }
 
         # Track selected surfaces for runner median distribution aggregation
@@ -855,6 +905,11 @@ def _build_replay_evaluator(
                 if intraday_dd_p10 is not None:
                     total_metrics["t_plus_1_intraday_drawdown_p10"].append(intraday_dd_p10)
                     total_metric_weights["t_plus_1_intraday_drawdown_p10"].append(sample_weight)
+                # Task 1 (Round 20, Beta): realized payoff ratio — sample-weighted quality guardrail.
+                realized_payoff_ratio_val = _safe_float(primary_surface.get("realized_payoff_ratio"))
+                if realized_payoff_ratio_val is not None:
+                    total_metrics["realized_payoff_ratio"].append(realized_payoff_ratio_val)
+                    total_metric_weights["realized_payoff_ratio"].append(sample_weight)
                 if primary_scope == "selected":
                     selected_surfaces.append(primary_surface)
 
@@ -964,6 +1019,8 @@ def _build_replay_evaluator(
 
         # Task 1 (Round 12): sample-weighted average T+1 intraday drawdown P10.
         avg_t_plus_1_intraday_drawdown_p10 = _weighted_avg(total_metrics["t_plus_1_intraday_drawdown_p10"], total_metric_weights["t_plus_1_intraday_drawdown_p10"])
+        # Task 1 (Round 20, Beta): sample-weighted average realized payoff ratio.
+        avg_realized_payoff_ratio = _weighted_avg(total_metrics["realized_payoff_ratio"], total_metric_weights["realized_payoff_ratio"])
 
         def _weighted_average_distribution_median(surfaces: list[dict[str, Any]], dist_key: str) -> float | None:
             """Compute sample-weighted average of distribution medians from selected surfaces."""
@@ -1034,6 +1091,8 @@ def _build_replay_evaluator(
             "t_plus_1_intraday_drawdown_p10": avg_t_plus_1_intraday_drawdown_p10,
             # Task 3 (Round 12): IC weight suggestions (majority-vote across replay windows)
             "ic_weight_suggestions": aggregated_ic_weight_suggestions,
+            # Task 1 (Round 20, Beta): realized payoff ratio — win/loss asymmetry quality guardrail.
+            "realized_payoff_ratio": avg_realized_payoff_ratio,
         }
 
     return evaluator

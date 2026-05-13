@@ -3679,3 +3679,130 @@ def test_r15_all_comparison_metrics_have_labels() -> None:
     """Every metric in COMPARISON_METRICS must have a corresponding label (invariant check)."""
     for metric in COMPARISON_METRICS:
         assert metric in COMPARISON_METRIC_LABELS, f"COMPARISON_METRICS entry '{metric}' has no label in COMPARISON_METRIC_LABELS"
+
+
+# ===========================================================================
+# Round 20 tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 20, Beta): realized_payoff_ratio in COMPARISON_METRICS
+# ---------------------------------------------------------------------------
+
+def test_r20_realized_payoff_ratio_in_comparison_metrics() -> None:
+    """realized_payoff_ratio must be in COMPARISON_METRICS (Task 1, Round 20)."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "realized_payoff_ratio" in COMPARISON_METRICS
+
+
+def test_r20_realized_payoff_ratio_has_label() -> None:
+    """realized_payoff_ratio must have a human-readable label (Task 1, Round 20)."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "realized_payoff_ratio" in COMPARISON_METRIC_LABELS
+
+
+def test_r20_realized_payoff_ratio_is_optional() -> None:
+    """realized_payoff_ratio must be optional (pre-Round-20 surfaces lack it) (Task 1, Round 20)."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "realized_payoff_ratio" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r20_realized_payoff_ratio_has_epsilon() -> None:
+    """realized_payoff_ratio must have an epsilon in COMPARISON_METRIC_EPSILON (Task 1, Round 20)."""
+    from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+    assert "realized_payoff_ratio" in COMPARISON_METRIC_EPSILON
+
+
+def test_r20_realized_payoff_ratio_floor_in_btst_quality_floors() -> None:
+    """realized_payoff_ratio must have a floor of 1.0 in BTST_QUALITY_FLOORS (Task 1, Round 20)."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "realized_payoff_ratio" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["realized_payoff_ratio"] == pytest.approx(1.0)
+
+
+def test_r20_realized_payoff_ratio_floor_triggers_blocker() -> None:
+    """Floor breach on realized_payoff_ratio must trigger a blocker label (Task 1, Round 20)."""
+    from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+    metrics = {"realized_payoff_ratio": 0.8, "next_close_positive_rate": 0.60, "next_high_hit_rate": 0.62, "t_plus_2_close_positive_rate": 0.55, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_positive_rate": 0.52, "t_plus_3_close_expectancy": 0.01, "t_plus_3_close_payoff_ratio": 1.05, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.80, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.05, "avg_escape_gap_cost": -0.01}
+    blockers = build_btst_quality_floor_blockers(metrics)
+    assert any("realized_payoff_ratio" in b for b in blockers), f"Expected realized_payoff_ratio blocker, got: {blockers}"
+
+
+def test_r20_realized_payoff_ratio_no_blocker_when_above_floor() -> None:
+    """No blocker for realized_payoff_ratio when it meets the floor (Task 1, Round 20)."""
+    from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+    metrics = {"realized_payoff_ratio": 1.5, "next_close_positive_rate": 0.60, "next_high_hit_rate": 0.62, "t_plus_2_close_positive_rate": 0.55, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_positive_rate": 0.52, "t_plus_3_close_expectancy": 0.01, "t_plus_3_close_payoff_ratio": 1.05, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.80, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.05, "avg_escape_gap_cost": -0.01}
+    blockers = build_btst_quality_floor_blockers(metrics)
+    assert not any("realized_payoff_ratio" in b for b in blockers), f"Unexpected realized_payoff_ratio blocker: {blockers}"
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 20, Alpha): score-conditioned metrics in COMPARISON_METRICS
+# ---------------------------------------------------------------------------
+
+def test_r20_score_conditioned_metrics_in_comparison_metrics() -> None:
+    """All Task 2 Round 20 score-conditioned metrics must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate"):
+        assert key in COMPARISON_METRICS, f"{key} missing from COMPARISON_METRICS"
+
+
+def test_r20_score_conditioned_metrics_have_labels() -> None:
+    """All Task 2 Round 20 score-conditioned metrics must have labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for key in ("high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate"):
+        assert key in COMPARISON_METRIC_LABELS, f"{key} missing from COMPARISON_METRIC_LABELS"
+
+
+def test_r20_score_conditioned_metrics_are_optional() -> None:
+    """All Task 2 Round 20 score-conditioned metrics must be optional."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
+
+
+def test_r20_score_conditioned_metrics_have_epsilon() -> None:
+    """All Task 2 Round 20 score-conditioned metrics must have epsilon values."""
+    from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+    for key in ("high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate"):
+        assert key in COMPARISON_METRIC_EPSILON, f"{key} missing from COMPARISON_METRIC_EPSILON"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 20, Gamma): limit-up risk metrics in COMPARISON_METRICS
+# ---------------------------------------------------------------------------
+
+def test_r20_limit_up_metrics_in_comparison_metrics() -> None:
+    """All Task 3 Round 20 limit-up metrics must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("consecutive_limit_up_rate", "limit_up_win_rate", "non_limit_up_win_rate"):
+        assert key in COMPARISON_METRICS, f"{key} missing from COMPARISON_METRICS"
+
+
+def test_r20_limit_up_metrics_have_labels() -> None:
+    """All Task 3 Round 20 limit-up metrics must have labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for key in ("consecutive_limit_up_rate", "limit_up_win_rate", "non_limit_up_win_rate"):
+        assert key in COMPARISON_METRIC_LABELS, f"{key} missing from COMPARISON_METRIC_LABELS"
+
+
+def test_r20_limit_up_metrics_are_optional() -> None:
+    """All Task 3 Round 20 limit-up metrics must be optional."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("consecutive_limit_up_rate", "limit_up_win_rate", "non_limit_up_win_rate"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
+
+
+def test_r20_consecutive_limit_up_rate_is_lower_is_better() -> None:
+    """consecutive_limit_up_rate must be in LOWER_IS_BETTER_COMPARISON_METRICS (Task 3, Round 20)."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "consecutive_limit_up_rate" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r20_all_new_metrics_have_labels() -> None:
+    """All Round 20 new metrics in COMPARISON_METRICS must have labels (invariant check)."""
+    from scripts.optimize_profile import COMPARISON_METRICS, COMPARISON_METRIC_LABELS
+    r20_metrics = ("realized_payoff_ratio", "high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate", "consecutive_limit_up_rate", "limit_up_win_rate", "non_limit_up_win_rate")
+    for metric in r20_metrics:
+        assert metric in COMPARISON_METRICS, f"{metric} must be in COMPARISON_METRICS"
+        assert metric in COMPARISON_METRIC_LABELS, f"{metric} must be in COMPARISON_METRIC_LABELS"
