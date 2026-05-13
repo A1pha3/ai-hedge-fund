@@ -78,6 +78,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # The per-trade win/loss asymmetry must be ≥ 1.0: average wins must exceed average losses.
     # Strategies where avg_loss > avg_win destroy capital even at moderate win rates.
     "realized_payoff_ratio": 1.0,
+    # Task 2 (Round 23, Alpha): half-Kelly position sizing floor.
+    # half-Kelly ≥ 0.02 means the strategy has enough positive expected value to warrant
+    # at least a 2 % position size per trade; values below 0.02 indicate insufficient edge.
+    "kelly_fraction_half": 0.02,
+    # Task 3 (Round 23, Beta): regime win-rate consistency score floor.
+    # regime_consistency_score = 1 − regime_win_rate_range; a score ≥ 0.70 ensures the
+    # three-regime win-rate spread does not exceed 30 %.  Strategies with a lower score
+    # exhibit severe bull-market dependency and carry high out-of-sample regime risk.
+    "regime_consistency_score": 0.70,
 }
 
 # ---------------------------------------------------------------------------

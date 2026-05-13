@@ -1691,6 +1691,195 @@ def compute_score_position_tiers(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 2 (Round 23, Alpha): Kelly fraction position sizing
+# ---------------------------------------------------------------------------
+# Translates T+1 win rate and realised payoff ratio into a Kelly-optimal position
+# fraction and the more conservative half-Kelly recommendation.  Per-tier (high/low
+# composite-score) Kelly fractions are also computed to guide differential sizing.
+
+
+def compute_kelly_position_fractions(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute Kelly and half-Kelly position-sizing fractions from T+1 return distribution.
+
+    Kelly formula: ``f* = (p × b − q) / b = p − q / b``
+
+    where ``p`` = win rate, ``q = 1 − p``, and ``b = avg_win / avg_loss_abs``
+    (the realised payoff ratio).  The result is clipped to ``[0, 0.50]``; negative
+    Kelly (zero expected value) is set to 0.
+
+    Tier fractions use the P33/P67 ``runner_composite_score`` split so callers can
+    size positions larger for high-score candidates.  Rows missing either field are
+    excluded from the tier calculation.  A tier requires at least 5 valid rows;
+    otherwise its fraction is ``None``.
+
+    Args:
+        rows: BTST candidate rows with ``next_close_return`` (required for overall
+            Kelly) and optionally ``runner_composite_score`` (required for tier Kelly).
+
+    Returns:
+        Dict with keys:
+
+        - ``kelly_fraction_full``      — full Kelly fraction ∈ [0, 0.50].
+        - ``kelly_fraction_half``      — half-Kelly (more conservative) = full / 2.
+        - ``kelly_fraction_tier_high`` — half-Kelly for P67+ score tier (or ``None``).
+        - ``kelly_fraction_tier_low``  — half-Kelly for P33− score tier (or ``None``).
+        - ``kelly_positive``           — ``True`` when the strategy has positive expected value.
+        - ``kelly_edge``               — raw edge = ``p × b − q`` (un-normalised expected return).
+    """
+    _MIN_ROWS: int = 5
+    _MAX_FRACTION: float = 0.50
+
+    def _kelly_from_returns(rets: list[float]) -> tuple[float, float, float, bool]:
+        """Return (kelly_full, kelly_half, edge, kelly_positive) from a return list."""
+        if len(rets) < _MIN_ROWS:
+            return 0.0, 0.0, 0.0, False
+        pos_rets: list[float] = [r for r in rets if r > 0.0]
+        neg_abs: list[float] = [abs(r) for r in rets if r <= 0.0]
+        p: float = len(pos_rets) / len(rets)
+        q: float = 1.0 - p
+        avg_win: float = sum(pos_rets) / len(pos_rets) if pos_rets else 0.0
+        avg_loss_abs: float = sum(neg_abs) / len(neg_abs) if neg_abs else 0.0
+        if avg_win <= 0.0 or avg_loss_abs < 1e-9:
+            return 0.0, 0.0, 0.0, False
+        b: float = avg_win / avg_loss_abs
+        edge: float = round(p * b - q, 4)
+        if edge <= 0.0:
+            return 0.0, 0.0, edge, False
+        kelly_full: float = round(min(edge / b, _MAX_FRACTION), 4)
+        kelly_half: float = round(kelly_full / 2.0, 4)
+        return kelly_full, kelly_half, edge, True
+
+    # Overall Kelly from all rows with next_close_return.
+    all_returns: list[float] = [float(row["next_close_return"]) for row in rows if row.get("next_close_return") is not None]
+    kelly_full, kelly_half, kelly_edge, kelly_positive = _kelly_from_returns(all_returns)
+
+    # Tier Kelly — split by runner_composite_score P33/P67.
+    kelly_tier_high: float | None = None
+    kelly_tier_low: float | None = None
+    scored_pairs: list[tuple[float, float]] = [(float(row["runner_composite_score"]), float(row["next_close_return"])) for row in rows if row.get("runner_composite_score") is not None and row.get("next_close_return") is not None]
+    if scored_pairs:
+        _scores_sorted: list[float] = sorted(s for s, _ in scored_pairs)
+        _n: int = len(_scores_sorted)
+
+        def _percentile(p: float) -> float:
+            idx: float = (p / 100.0) * (_n - 1)
+            lo: int = int(idx)
+            hi: int = min(lo + 1, _n - 1)
+            return _scores_sorted[lo] + (idx - lo) * (_scores_sorted[hi] - _scores_sorted[lo])
+
+        p33: float = _percentile(33.0)
+        p67: float = _percentile(67.0)
+        high_rets: list[float] = [ret for s, ret in scored_pairs if s > p67]
+        low_rets: list[float] = [ret for s, ret in scored_pairs if s < p33]
+        _kf_high, kelly_tier_high, _, _ = _kelly_from_returns(high_rets)  # noqa: F841
+        _kf_low, kelly_tier_low, _, _ = _kelly_from_returns(low_rets)  # noqa: F841
+        kelly_tier_high = None if not high_rets or len(high_rets) < _MIN_ROWS else kelly_tier_high
+        kelly_tier_low = None if not low_rets or len(low_rets) < _MIN_ROWS else kelly_tier_low
+
+    return {
+        "kelly_fraction_full": round(kelly_full, 4),
+        "kelly_fraction_half": round(kelly_half, 4),
+        "kelly_fraction_tier_high": kelly_tier_high,
+        "kelly_fraction_tier_low": kelly_tier_low,
+        "kelly_positive": kelly_positive,
+        "kelly_edge": round(kelly_edge, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 23, Beta): Regime win-rate consistency check
+# ---------------------------------------------------------------------------
+# Validates that T+1 win rate is stable across bull / bear / sideways regimes.
+# A strategy that achieves 60 % overall but only 20 % in bear markets is fragile
+# and unlikely to survive out-of-sample regime shifts.
+
+
+def compute_regime_consistency_check(rows: list[dict[str, Any]], surface_summary: dict[str, Any]) -> dict[str, Any]:
+    """Check cross-regime win-rate stability using the regime_conditional_stats sub-dict.
+
+    Extracts per-regime win rates from ``surface_summary["regime_conditional_stats"]``,
+    discards regimes with fewer than ``_MIN_REGIME_COUNT`` rows (data insufficient),
+    and computes spread / dispersion metrics.  At least 2 valid regimes are required;
+    otherwise all output values are ``None``.
+
+    The ``regime_consistency_score = 1 − regime_win_rate_range`` represents the
+    fraction of the [0, 1] win-rate space *not* consumed by cross-regime spread.
+    A score ≥ 0.85 is excellent; ≥ 0.70 is the quality floor.
+
+    ``bear_market_win_rate_deficit`` is computed as
+    ``overall_win_rate (from rows) − bear regime win rate``.  A large positive
+    value (> 0.20) flags heavy bull-market dependency.
+
+    Args:
+        rows: BTST candidate rows; used only to compute the overall win rate for
+            the ``bear_market_win_rate_deficit`` field.
+        surface_summary: Dict containing ``regime_conditional_stats`` as returned
+            by :func:`build_regime_conditional_stats` (or wrapped by
+            :func:`build_surface_summary`).
+
+    Returns:
+        Dict with keys:
+
+        - ``regime_win_rate_range``        — max − min across valid regimes (float or None).
+        - ``regime_win_rate_std``          — population std of regime win rates (float or None).
+        - ``regime_consistency_score``     — 1 − range ∈ [0, 1]; higher = more stable.
+        - ``worst_regime``                 — name of regime with lowest win rate.
+        - ``worst_regime_win_rate``        — win rate of the worst regime.
+        - ``regime_robustness_flag``       — True when range < 0.15 (strong robustness).
+        - ``bear_market_win_rate_deficit`` — overall_win_rate − bear_win_rate (float or None).
+    """
+    _NULL: dict[str, Any] = {"regime_win_rate_range": None, "regime_win_rate_std": None, "regime_consistency_score": None, "worst_regime": None, "worst_regime_win_rate": None, "regime_robustness_flag": None, "bear_market_win_rate_deficit": None}
+    _MIN_REGIME_COUNT: int = 5
+    _ROBUSTNESS_RANGE_THRESHOLD: float = 0.15
+
+    regime_stats: dict[str, Any] = surface_summary.get("regime_conditional_stats", {})
+    if not regime_stats:
+        return _NULL
+
+    regime_win_rates: dict[str, float] = {}
+    for regime in ("bull", "bear", "sideways"):
+        data = regime_stats.get(regime, {})
+        count: int = int(data.get("count") or 0)
+        win_rate = data.get("next_close_positive_rate")
+        if count >= _MIN_REGIME_COUNT and win_rate is not None:
+            try:
+                regime_win_rates[regime] = float(win_rate)
+            except (TypeError, ValueError):
+                pass
+
+    if len(regime_win_rates) < 2:
+        return _NULL
+
+    wr_values: list[float] = list(regime_win_rates.values())
+    wr_range: float = round(max(wr_values) - min(wr_values), 4)
+    wr_mean: float = sum(wr_values) / len(wr_values)
+    wr_std: float = round((sum((v - wr_mean) ** 2 for v in wr_values) / len(wr_values)) ** 0.5, 4)
+    consistency_score: float = round(max(0.0, 1.0 - wr_range), 4)
+    worst_regime: str = min(regime_win_rates, key=lambda k: regime_win_rates[k])
+    worst_regime_win_rate: float = round(regime_win_rates[worst_regime], 4)
+    robustness_flag: bool = wr_range < _ROBUSTNESS_RANGE_THRESHOLD
+
+    # Bear-market deficit vs overall win rate (computed directly from rows).
+    bear_deficit: float | None = None
+    all_returns: list[float] = [float(row["next_close_return"]) for row in rows if row.get("next_close_return") is not None]
+    if all_returns:
+        overall_wr: float = sum(1 for r in all_returns if r > 0.0) / len(all_returns)
+        bear_wr = regime_win_rates.get("bear")
+        if bear_wr is not None:
+            bear_deficit = round(overall_wr - bear_wr, 4)
+
+    return {
+        "regime_win_rate_range": wr_range,
+        "regime_win_rate_std": wr_std,
+        "regime_consistency_score": consistency_score,
+        "worst_regime": worst_regime,
+        "worst_regime_win_rate": worst_regime_win_rate,
+        "regime_robustness_flag": robustness_flag,
+        "bear_market_win_rate_deficit": bear_deficit,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -1841,6 +2030,19 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # Task 3 (Round 22, Beta): Score percentile position-tier stratification.
     # Divides the candidate pool into low/mid/high composite score terciles.
     _score_position_tiers: dict[str, Any] = compute_score_position_tiers(next_day_rows)
+
+    # -----------------------------------------------------------------------
+    # Round 23 analytics — wired into build_surface_summary.
+    # -----------------------------------------------------------------------
+    # Task 2 (Round 23, Alpha): Kelly fraction position-sizing recommendations.
+    # Translates T+1 win rate and realised payoff ratio into full-Kelly and half-Kelly
+    # position fractions.  Tier fractions use P33/P67 composite-score splits.
+    # Quality floor: kelly_fraction_half ≥ 0.02 (strategy has positive edge).
+    _kelly_fractions: dict[str, Any] = compute_kelly_position_fractions(next_day_rows)
+    # Task 3 (Round 23, Beta): Regime win-rate consistency check.
+    # Compares T+1 win rate across bull/bear/sideways regimes to flag bull-market dependency.
+    # regime_consistency_score = 1 − regime_win_rate_range; floor ≥ 0.70.
+    _regime_consistency: dict[str, Any] = compute_regime_consistency_check(rows, {"regime_conditional_stats": regime_conditional_stats})
 
     # -----------------------------------------------------------------------
     # Round 21 analytics — wired into build_surface_summary.
@@ -2201,6 +2403,36 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "tier_monotone_win_rate": _score_position_tiers.get("tier_monotone_win_rate"),
         "tier_win_rate_spread": _score_position_tiers.get("tier_win_rate_spread"),
         "tier_payoff_spread": _score_position_tiers.get("tier_payoff_spread"),
+        # -----------------------------------------------------------------------
+        # Round 23 analytics
+        # -----------------------------------------------------------------------
+        # Task 2 (Round 23, Alpha): Kelly fraction position-sizing recommendations.
+        # kelly_fraction_full: optimal position size per Kelly criterion, clipped to [0, 0.50].
+        # kelly_fraction_half: half-Kelly (more conservative); quality floor ≥ 0.02.
+        # kelly_fraction_tier_{high,low}: tier-specific half-Kelly fractions.
+        # kelly_positive: True when the strategy has positive expected value (edge > 0).
+        # kelly_edge: raw edge = p × b − q (un-normalised expected return).
+        "kelly_position_fractions": _kelly_fractions,
+        "kelly_fraction_full": _kelly_fractions.get("kelly_fraction_full"),
+        "kelly_fraction_half": _kelly_fractions.get("kelly_fraction_half"),
+        "kelly_fraction_tier_high": _kelly_fractions.get("kelly_fraction_tier_high"),
+        "kelly_fraction_tier_low": _kelly_fractions.get("kelly_fraction_tier_low"),
+        "kelly_positive": _kelly_fractions.get("kelly_positive"),
+        "kelly_edge": _kelly_fractions.get("kelly_edge"),
+        # Task 3 (Round 23, Beta): regime win-rate consistency check.
+        # regime_win_rate_range: max − min win rate across valid regimes.
+        # regime_consistency_score: 1 − range ∈ [0, 1]; floor ≥ 0.70.
+        # worst_regime: name of the regime with the lowest win rate.
+        # regime_robustness_flag: True when range < 0.15 (strong regime robustness).
+        # bear_market_win_rate_deficit: overall_win_rate − bear_win_rate.
+        "regime_consistency_check": _regime_consistency,
+        "regime_win_rate_range": _regime_consistency.get("regime_win_rate_range"),
+        "regime_win_rate_std": _regime_consistency.get("regime_win_rate_std"),
+        "regime_consistency_score": _regime_consistency.get("regime_consistency_score"),
+        "worst_regime": _regime_consistency.get("worst_regime"),
+        "worst_regime_win_rate": _regime_consistency.get("worst_regime_win_rate"),
+        "regime_robustness_flag": _regime_consistency.get("regime_robustness_flag"),
+        "bear_market_win_rate_deficit": _regime_consistency.get("bear_market_win_rate_deficit"),
     }
 
 

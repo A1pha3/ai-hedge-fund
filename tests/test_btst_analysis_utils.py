@@ -2294,3 +2294,198 @@ def test_limit_up_win_rate_none_when_fewer_than_3_samples() -> None:
     summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
     # Only 1 row is consecutive limit-up (< 3 min threshold)
     assert summary["limit_up_win_rate"] is None
+
+
+# ---------------------------------------------------------------------------
+# Round 23 tests — Task 2 (Alpha): compute_kelly_position_fractions
+# ---------------------------------------------------------------------------
+
+
+from scripts.btst_analysis_utils import compute_kelly_position_fractions, compute_regime_consistency_check
+
+
+def test_r23_kelly_standard_calculation() -> None:
+    """Kelly formula with p=0.6, b=2.0: f* = p - q/b = 0.6 - 0.4/2.0 = 0.4; half = 0.2."""
+    # 6 wins of +0.02, 4 losses of -0.01 → p=0.6, avg_win=0.02, avg_loss=0.01, b=2.0
+    rows = [{"next_close_return": 0.02, "runner_composite_score": float(i) / 9} for i in range(6)]
+    rows += [{"next_close_return": -0.01, "runner_composite_score": float(i) / 9} for i in range(4)]
+    result = compute_kelly_position_fractions(rows)
+    assert result["kelly_positive"] is True
+    assert result["kelly_edge"] == pytest.approx(0.8, abs=0.01)  # p*b - q = 0.6*2 - 0.4 = 0.8
+    assert result["kelly_fraction_full"] == pytest.approx(0.4, abs=0.02)
+    assert result["kelly_fraction_half"] == pytest.approx(0.2, abs=0.01)
+
+
+def test_r23_kelly_negative_edge_returns_zero() -> None:
+    """When strategy has negative expected value Kelly fraction must be 0.0."""
+    # 3 wins of +0.01, 7 losses of -0.05 → p=0.3, b=0.2, edge negative
+    rows = [{"next_close_return": 0.01, "runner_composite_score": 0.5} for _ in range(3)]
+    rows += [{"next_close_return": -0.05, "runner_composite_score": 0.5} for _ in range(7)]
+    result = compute_kelly_position_fractions(rows)
+    assert result["kelly_positive"] is False
+    assert result["kelly_fraction_full"] == 0.0
+    assert result["kelly_fraction_half"] == 0.0
+
+
+def test_r23_kelly_fraction_capped_at_half() -> None:
+    """Kelly fraction must be clipped to [0, 0.50] even for very high-edge scenarios."""
+    # 95 % win rate, large payoff → raw kelly >> 0.50
+    rows = [{"next_close_return": 0.10, "runner_composite_score": 0.9} for _ in range(19)]
+    rows += [{"next_close_return": -0.01, "runner_composite_score": 0.1} for _ in range(1)]
+    result = compute_kelly_position_fractions(rows)
+    assert result["kelly_fraction_full"] <= 0.50
+
+
+def test_r23_kelly_insufficient_data_returns_zero() -> None:
+    """Fewer than 5 rows must return kelly_fraction_full = 0.0 and kelly_positive = False."""
+    rows = [{"next_close_return": 0.05, "runner_composite_score": 0.7}]
+    result = compute_kelly_position_fractions(rows)
+    assert result["kelly_fraction_full"] == 0.0
+    assert result["kelly_positive"] is False
+
+
+def test_r23_kelly_tier_high_greater_than_tier_low_when_score_predictive() -> None:
+    """When high-score rows win more, kelly_fraction_tier_high must exceed tier_low."""
+    # High score rows: 8 wins out of 10 (+0.02 wins, -0.01 losses)
+    # Low score rows: 4 wins out of 10
+    rows = []
+    for i in range(8):
+        rows.append({"next_close_return": 0.02, "runner_composite_score": 0.85 + i * 0.01})
+    for i in range(2):
+        rows.append({"next_close_return": -0.01, "runner_composite_score": 0.80 + i * 0.01})
+    for i in range(4):
+        rows.append({"next_close_return": 0.02, "runner_composite_score": 0.10 + i * 0.01})
+    for i in range(6):
+        rows.append({"next_close_return": -0.01, "runner_composite_score": 0.05 + i * 0.01})
+    result = compute_kelly_position_fractions(rows)
+    if result["kelly_fraction_tier_high"] is not None and result["kelly_fraction_tier_low"] is not None:
+        assert result["kelly_fraction_tier_high"] >= result["kelly_fraction_tier_low"]
+
+
+def test_r23_kelly_output_keys_present() -> None:
+    """compute_kelly_position_fractions must always return all six expected keys."""
+    result = compute_kelly_position_fractions([])
+    for key in ("kelly_fraction_full", "kelly_fraction_half", "kelly_fraction_tier_high", "kelly_fraction_tier_low", "kelly_positive", "kelly_edge"):
+        assert key in result, f"key '{key}' missing from Kelly result"
+
+
+def test_r23_kelly_quality_floors_include_half_kelly() -> None:
+    """BTST_QUALITY_FLOORS must include kelly_fraction_half with value 0.02."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "kelly_fraction_half" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["kelly_fraction_half"] == pytest.approx(0.02)
+
+
+def test_r23_kelly_surface_summary_exposes_kelly_fields() -> None:
+    """build_surface_summary must expose kelly_fraction_full, kelly_fraction_half, kelly_positive, kelly_edge."""
+    rows = [
+        {"next_close_return": 0.03, "next_open_return": 0.01, "next_high_return": 0.05, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "runner_composite_score": 0.7},
+        {"next_close_return": 0.02, "next_open_return": 0.01, "next_high_return": 0.04, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.01, "runner_composite_score": 0.6},
+        {"next_close_return": -0.01, "next_open_return": -0.005, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.005, "runner_composite_score": 0.3},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    for key in ("kelly_fraction_full", "kelly_fraction_half", "kelly_positive", "kelly_edge"):
+        assert key in summary, f"'{key}' missing from build_surface_summary output"
+
+
+# ---------------------------------------------------------------------------
+# Round 23 tests — Task 3 (Beta): compute_regime_consistency_check
+# ---------------------------------------------------------------------------
+
+
+def _make_regime_summary(bull_wr: float, bear_wr: float, sideways_wr: float, min_count: int = 10) -> dict:
+    """Helper: build a minimal surface_summary containing regime_conditional_stats."""
+    return {
+        "regime_conditional_stats": {
+            "bull": {"count": min_count, "next_close_positive_rate": bull_wr},
+            "bear": {"count": min_count, "next_close_positive_rate": bear_wr},
+            "sideways": {"count": min_count, "next_close_positive_rate": sideways_wr},
+        }
+    }
+
+
+def test_r23_regime_consistency_range_computation() -> None:
+    """regime_win_rate_range must equal max − min across regimes."""
+    surface = _make_regime_summary(0.65, 0.40, 0.55)
+    result = compute_regime_consistency_check([], surface)
+    assert result["regime_win_rate_range"] == pytest.approx(0.65 - 0.40, abs=1e-4)
+
+
+def test_r23_regime_consistency_score_formula() -> None:
+    """regime_consistency_score must equal 1 − regime_win_rate_range."""
+    surface = _make_regime_summary(0.60, 0.50, 0.55)
+    result = compute_regime_consistency_check([], surface)
+    assert result["regime_consistency_score"] == pytest.approx(1.0 - result["regime_win_rate_range"], abs=1e-4)
+
+
+def test_r23_regime_robustness_flag_below_threshold() -> None:
+    """regime_robustness_flag must be True when range < 0.15."""
+    surface = _make_regime_summary(0.62, 0.55, 0.58)
+    result = compute_regime_consistency_check([], surface)
+    assert result["regime_robustness_flag"] is True
+
+
+def test_r23_regime_robustness_flag_above_threshold() -> None:
+    """regime_robustness_flag must be False when range >= 0.15."""
+    surface = _make_regime_summary(0.70, 0.50, 0.60)
+    result = compute_regime_consistency_check([], surface)
+    assert result["regime_robustness_flag"] is False
+
+
+def test_r23_regime_worst_regime_identified() -> None:
+    """worst_regime must be the regime with the lowest win rate."""
+    surface = _make_regime_summary(0.65, 0.42, 0.58)
+    result = compute_regime_consistency_check([], surface)
+    assert result["worst_regime"] == "bear"
+    assert result["worst_regime_win_rate"] == pytest.approx(0.42, abs=1e-4)
+
+
+def test_r23_regime_insufficient_data_returns_none() -> None:
+    """When fewer than 2 regimes have sufficient counts, all values must be None."""
+    surface = {
+        "regime_conditional_stats": {
+            "bull": {"count": 2, "next_close_positive_rate": 0.60},
+            "bear": {"count": 3, "next_close_positive_rate": 0.40},
+            "sideways": {"count": 4, "next_close_positive_rate": 0.55},
+        }
+    }
+    result = compute_regime_consistency_check([], surface)
+    assert result["regime_win_rate_range"] is None
+    assert result["regime_consistency_score"] is None
+    assert result["regime_robustness_flag"] is None
+
+
+def test_r23_regime_empty_surface_returns_none() -> None:
+    """An empty surface_summary must return all None values gracefully."""
+    result = compute_regime_consistency_check([], {})
+    assert result["regime_win_rate_range"] is None
+
+
+def test_r23_regime_bear_deficit_from_rows() -> None:
+    """bear_market_win_rate_deficit must equal overall_win_rate − bear_win_rate."""
+    rows = [{"next_close_return": 0.03} for _ in range(6)] + [{"next_close_return": -0.02} for _ in range(4)]
+    surface = _make_regime_summary(0.70, 0.45, 0.58)
+    result = compute_regime_consistency_check(rows, surface)
+    # overall win rate = 6/10 = 0.60; bear_win_rate = 0.45; deficit = 0.15
+    assert result["bear_market_win_rate_deficit"] == pytest.approx(0.60 - 0.45, abs=0.01)
+
+
+def test_r23_regime_quality_floors_include_consistency_score() -> None:
+    """BTST_QUALITY_FLOORS must include regime_consistency_score with value 0.70."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "regime_consistency_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["regime_consistency_score"] == pytest.approx(0.70)
+
+
+def test_r23_regime_surface_summary_exposes_consistency_fields() -> None:
+    """build_surface_summary must expose regime_consistency_score and regime_robustness_flag."""
+    rows = [
+        {"next_close_return": 0.03, "next_open_return": 0.01, "next_high_return": 0.05, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.02, "runner_composite_score": 0.7, "trade_date": "20240101"},
+        {"next_close_return": -0.01, "next_open_return": -0.005, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.005, "runner_composite_score": 0.3, "trade_date": "20240102"},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "regime_consistency_score" in summary
+    assert "regime_robustness_flag" in summary
+    assert "worst_regime" in summary
+    assert "bear_market_win_rate_deficit" in summary
+

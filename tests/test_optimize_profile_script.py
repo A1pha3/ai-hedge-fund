@@ -4272,3 +4272,91 @@ def test_r22_new_metrics_have_epsilon() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
     for m in ("t1_vs_t2_sharpe_diff", "hold_period_confidence", "tier_win_rate_spread", "tier_monotone_win_rate"):
         assert m in COMPARISON_METRIC_EPSILON, f"{m} missing from COMPARISON_METRIC_EPSILON"
+
+
+# ---------------------------------------------------------------------------
+# Round 23 tests — Task 1 (Gamma): BTST_RUNNER_LEAN_PROBE_GRID and lean_mode
+# ---------------------------------------------------------------------------
+
+
+def test_r23_lean_grid_is_subset_of_full_grid() -> None:
+    """Every axis in BTST_RUNNER_LEAN_PROBE_GRID must also exist in BTST_RUNNER_PROBE_GRID."""
+    from scripts.optimize_profile import BTST_RUNNER_LEAN_PROBE_GRID, BTST_RUNNER_PROBE_GRID
+    for key in BTST_RUNNER_LEAN_PROBE_GRID:
+        assert key in BTST_RUNNER_PROBE_GRID, f"lean grid axis '{key}' is absent from full BTST_RUNNER_PROBE_GRID"
+
+
+def test_r23_lean_grid_axis_count_constant() -> None:
+    """LEAN_GRID_AXIS_COUNT must equal len(BTST_RUNNER_LEAN_PROBE_GRID)."""
+    from scripts.optimize_profile import BTST_RUNNER_LEAN_PROBE_GRID, LEAN_GRID_AXIS_COUNT
+    assert LEAN_GRID_AXIS_COUNT == len(BTST_RUNNER_LEAN_PROBE_GRID)
+
+
+def test_r23_full_grid_axis_count_constant() -> None:
+    """FULL_GRID_AXIS_COUNT must equal len(BTST_RUNNER_PROBE_GRID)."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID, FULL_GRID_AXIS_COUNT
+    assert FULL_GRID_AXIS_COUNT == len(BTST_RUNNER_PROBE_GRID)
+
+
+def test_r23_lean_mode_true_uses_lean_grid() -> None:
+    """resolve_grid_params with lean_mode=True must return only lean-grid axes (no extras from full grid)."""
+    from scripts.optimize_profile import BTST_RUNNER_LEAN_PROBE_GRID, BTST_RUNNER_PROBE_GRID, resolve_grid_params
+    lean_result = resolve_grid_params(grid_params=[], preset_grid=True, profile_name="btst_runner_probe", lean_mode=True)
+    # All lean axes must be present.
+    for key in BTST_RUNNER_LEAN_PROBE_GRID:
+        assert key in lean_result, f"lean axis '{key}' missing from lean_mode=True result"
+    # At least one full-grid axis that is NOT in the lean grid must be absent.
+    full_only_axes = [k for k in BTST_RUNNER_PROBE_GRID if k not in BTST_RUNNER_LEAN_PROBE_GRID]
+    assert full_only_axes, "No full-grid-only axes found; lean grid may equal full grid"
+    for key in full_only_axes:
+        assert key not in lean_result, f"full-only axis '{key}' should be absent in lean_mode=True result"
+
+
+def test_r23_lean_mode_false_uses_full_grid() -> None:
+    """resolve_grid_params with lean_mode=False must include all full-grid axes."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID, resolve_grid_params
+    full_result = resolve_grid_params(grid_params=[], preset_grid=True, profile_name="btst_runner_probe", lean_mode=False)
+    for key in BTST_RUNNER_PROBE_GRID:
+        assert key in full_result, f"full grid axis '{key}' missing from lean_mode=False result"
+
+
+def test_r23_lean_mode_default_is_false() -> None:
+    """resolve_grid_params must default to lean_mode=False (full grid)."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID, resolve_grid_params
+    default_result = resolve_grid_params(grid_params=[], preset_grid=True, profile_name="btst_runner_probe")
+    for key in BTST_RUNNER_PROBE_GRID:
+        assert key in default_result, f"full grid axis '{key}' missing when lean_mode not specified"
+
+
+def test_r23_lean_grid_size_smaller_than_full() -> None:
+    """LEAN_GRID_AXIS_COUNT must be strictly smaller than FULL_GRID_AXIS_COUNT."""
+    from scripts.optimize_profile import FULL_GRID_AXIS_COUNT, LEAN_GRID_AXIS_COUNT
+    assert LEAN_GRID_AXIS_COUNT < FULL_GRID_AXIS_COUNT, f"lean grid ({LEAN_GRID_AXIS_COUNT}) is not smaller than full grid ({FULL_GRID_AXIS_COUNT})"
+
+
+def test_r23_new_metrics_in_comparison_metrics() -> None:
+    """Round 23 new metrics must all be present in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for m in ("kelly_fraction_half", "kelly_positive", "regime_consistency_score", "regime_robustness_flag"):
+        assert m in COMPARISON_METRICS, f"{m} missing from COMPARISON_METRICS"
+
+
+def test_r23_new_metrics_have_labels() -> None:
+    """Round 23 new metrics must have entries in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for m in ("kelly_fraction_half", "kelly_positive", "regime_consistency_score", "regime_robustness_flag"):
+        assert m in COMPARISON_METRIC_LABELS, f"{m} missing from COMPARISON_METRIC_LABELS"
+
+
+def test_r23_new_metrics_are_optional() -> None:
+    """Round 23 new metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for m in ("kelly_fraction_half", "kelly_positive", "regime_consistency_score", "regime_robustness_flag"):
+        assert m in OPTIONAL_COMPARISON_METRICS, f"{m} missing from OPTIONAL_COMPARISON_METRICS"
+
+
+def test_r23_new_metrics_have_epsilon() -> None:
+    """Round 23 new metrics must have epsilon entries in COMPARISON_METRIC_EPSILON."""
+    from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+    for m in ("kelly_fraction_half", "kelly_positive", "regime_consistency_score", "regime_robustness_flag"):
+        assert m in COMPARISON_METRIC_EPSILON, f"{m} missing from COMPARISON_METRIC_EPSILON"

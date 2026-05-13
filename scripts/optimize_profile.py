@@ -171,6 +171,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     # Task 3 (Round 22, Beta): score percentile position-tier metrics.
     "tier_win_rate_spread",
     "tier_monotone_win_rate",
+    # Task 2 (Round 23, Alpha): Kelly fraction position sizing — half-Kelly sizing recommendation.
+    "kelly_fraction_half",
+    "kelly_positive",
+    # Task 3 (Round 23, Beta): regime win-rate consistency — stability across bull/bear/sideways.
+    "regime_consistency_score",
+    "regime_robustness_flag",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -232,6 +238,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     # Task 3 (Round 22, Beta): score position tiers
     "tier_win_rate_spread": "Tier WR Spread",
     "tier_monotone_win_rate": "Tier Mono WR",
+    # Task 2 (Round 23, Alpha): Kelly fraction position sizing
+    "kelly_fraction_half": "Half-Kelly Size",
+    "kelly_positive": "Kelly Positive",
+    # Task 3 (Round 23, Beta): regime win-rate consistency
+    "regime_consistency_score": "Regime Consistency",
+    "regime_robustness_flag": "Regime Robust",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -311,6 +323,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 3 (Round 22, Beta): score position tiers — optional; pre-Round-22 surfaces omit these.
     "tier_win_rate_spread",
     "tier_monotone_win_rate",
+    # Task 2 (Round 23, Alpha): Kelly fraction — optional; pre-Round-23 surfaces omit these.
+    "kelly_fraction_half",
+    "kelly_positive",
+    # Task 3 (Round 23, Beta): regime consistency — optional; pre-Round-23 surfaces omit these.
+    "regime_consistency_score",
+    "regime_robustness_flag",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -373,6 +391,12 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     # Task 3 (Round 22, Beta): score position tier metrics — 0.5 % tolerance
     "tier_win_rate_spread": 0.005,
     "tier_monotone_win_rate": 0.0,
+    # Task 2 (Round 23, Alpha): Kelly fraction — 0.5 % tolerance
+    "kelly_fraction_half": 0.005,
+    "kelly_positive": 0.0,
+    # Task 3 (Round 23, Beta): regime consistency — 0.5 % tolerance
+    "regime_consistency_score": 0.005,
+    "regime_robustness_flag": 0.0,
 }
 
 
@@ -1505,6 +1529,57 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
 }
 
 # ---------------------------------------------------------------------------
+# Task 1 (Round 23, Gamma): Lean PROBE_GRID — reduced axis set for fast search and lower overfitting risk.
+# ---------------------------------------------------------------------------
+# BTST_RUNNER_LEAN_PROBE_GRID retains the ~11 highest-importance axes from the full grid,
+# selected on the basis of: (a) theoretical factor centrality, (b) R21 IC/IR stability,
+# and (c) surface-metric correlation results (R22 advisory output).  All other axes are
+# left out of the grid so the optimizer uses the profile's static default values.
+# Lean mode halves the search space compared to the full 21-axis grid, reducing both
+# compute cost and the risk of spurious in-sample overfitting on short replay windows.
+#
+# Selection rationale per axis:
+#   runner_composite_score_breakout_weight   — highest-IC factor; theoretically dominant
+#   runner_escape_breakout_freshness_min     — direct escape gate tied to the same factor
+#   runner_composite_score_catalyst_weight   — event-driven premium; R21 positive IC
+#   runner_composite_score_close_strength_weight — late-session bid persistence signal
+#   runner_composite_score_t0_tail_weight    — R17 factor; close/high proxy for overnight hold
+#   runner_composite_score_net_inflow_weight — R16 buying-pressure factor with positive IC
+#   runner_composite_score_trend_weight      — trend acceleration; traditionally important
+#   runner_composite_score_volatility_regime_weight — regime-adaptive risk weight
+#   recency_half_life_days                   — temporal decay hyper-parameter; drives weighting
+#   runner_escape_composite_score_min        — quality gate; controls precision vs recall
+#   runner_escape_gap_risk_raw_100_max       — overnight gap-risk guard; prevents blow-ups
+BTST_RUNNER_LEAN_PROBE_GRID: dict[str, list[Any]] = {
+    # Core factor weight — highest IC; theoretically dominant in composite score.
+    "runner_composite_score_breakout_weight": [0.35, 0.40, 0.45],
+    # Escape-gate threshold tied to the core breakout factor.
+    "runner_escape_breakout_freshness_min": [0.25, 0.30, 0.35, 0.40],
+    # Event-driven momentum premium (催化剂新鲜度).
+    "runner_composite_score_catalyst_weight": [0.05, 0.10, 0.15],
+    # Late-session bid strength (收盘强度): close-relative-to-high proxy for overnight continuation.
+    "runner_composite_score_close_strength_weight": [0.05, 0.10, 0.15],
+    # T0 tail-session strength (R17): close/high ratio — late buying pressure.
+    "runner_composite_score_t0_tail_weight": [0.0, 0.05, 0.10, 0.15],
+    # T0 net inflow ratio (R16): buying-pressure signal with positive IC.
+    "runner_composite_score_net_inflow_weight": [0.0, 0.05, 0.10, 0.15],
+    # Trend acceleration — traditionally high-importance across backtesting rounds.
+    "runner_composite_score_trend_weight": [0.25, 0.30, 0.35],
+    # Volatility regime weight — adjusts composite score for high-vol environments.
+    "runner_composite_score_volatility_regime_weight": [0.0, 0.05, 0.10],
+    # Temporal decay hyper-parameter — how fast older windows lose influence.
+    "recency_half_life_days": list(RECENCY_HALF_LIFE_CANDIDATES),
+    # Minimum composite score gate for runner escape (quality floor).
+    "runner_escape_composite_score_min": [0.0, 0.40, 0.45, 0.50],
+    # Overnight gap-risk cap: prevents selecting runners with excessive T+1 gap exposure.
+    "runner_escape_gap_risk_raw_100_max": [40.0, 45.0, 52.0],
+}
+
+# Axis counts — used in tests and logging to verify grid dimensions without re-counting.
+FULL_GRID_AXIS_COUNT: int = len(BTST_RUNNER_PROBE_GRID)
+LEAN_GRID_AXIS_COUNT: int = len(BTST_RUNNER_LEAN_PROBE_GRID)
+
+# ---------------------------------------------------------------------------
 # Task 3 (Round 13) — IC weight feedback loop: factor → probe grid weight key mapping
 # ---------------------------------------------------------------------------
 # Maps each BTST factor name (as returned by compute_ic_weight_suggestions) to its
@@ -1696,6 +1771,7 @@ def resolve_grid_params(
     search_stage: str = "full",
     staged_mode: str | None = None,
     ic_weight_suggestions: dict[str, str] | None = None,
+    lean_mode: bool = False,
 ) -> dict[str, list[Any]]:
     """Resolve grid parameters with optional preset and profile-specific extensions.
 
@@ -1710,6 +1786,11 @@ def resolve_grid_params(
             When provided and the profile is ``btst_runner_probe``, the probe grid
             search bounds are automatically tightened / expanded via
             :func:`apply_ic_feedback_to_probe_grid` (Task 3, Round 13).
+        lean_mode: When ``True`` and profile is ``btst_runner_probe``, use
+            :data:`BTST_RUNNER_LEAN_PROBE_GRID` (≈11 high-importance axes) instead of
+            the full 21-axis :data:`BTST_RUNNER_PROBE_GRID`.  Lean mode reduces search
+            cost and overfitting risk at the expense of exploring fewer hyperparameter
+            combinations.  Ignored for all other profiles.  (Task 1, Round 23, Gamma.)
 
     Returns:
         Merged grid dictionary with parsed params taking precedence
@@ -1727,8 +1808,10 @@ def resolve_grid_params(
     if preset_grid and profile_name in ROUTED_BTST_COMMITTEE_PROFILES:
         return {**ROUTED_BTST_COMMITTEE_GRID, **resolved}
     if preset_grid and profile_name == "btst_runner_probe":
+        # Task 1 (Round 23, Gamma): select lean vs full probe grid based on lean_mode flag.
         # Task 3 (Round 13): apply IC feedback to prune / expand weight candidates before search.
-        base_runner_grid = apply_ic_feedback_to_probe_grid(ic_weight_suggestions, BTST_RUNNER_PROBE_GRID) if ic_weight_suggestions else dict(BTST_RUNNER_PROBE_GRID)
+        base_probe_grid: dict[str, list[Any]] = BTST_RUNNER_LEAN_PROBE_GRID if lean_mode else BTST_RUNNER_PROBE_GRID
+        base_runner_grid = apply_ic_feedback_to_probe_grid(ic_weight_suggestions, base_probe_grid) if ic_weight_suggestions else dict(base_probe_grid)
         return {**base_runner_grid, **resolved}
     if preset_grid:
         return {**base_momentum_grid, **resolved}
