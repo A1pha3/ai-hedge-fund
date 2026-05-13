@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_factor_ic_temporal_trend, compute_verdict_calibration, compute_optimal_hold_period, compute_score_position_tiers, compute_profile_health_score, compute_selection_churn_metrics
+from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_factor_ic_temporal_trend, compute_verdict_calibration, compute_optimal_hold_period, compute_score_position_tiers, compute_profile_health_score, compute_selection_churn_metrics, compute_parameter_stability_metrics
 from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
@@ -215,6 +215,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "overfit_score",
     # Task 3 (Round 29, Beta): weekday win-rate spread — captures A-share calendar effect magnitude.
     "weekday_win_rate_spread",
+    # Task 1 (Round 30, Gamma): parameter drift score — cross-window metric stability (lower = more stable).
+    "param_drift_score",
+    # Task 2 (Round 30, Alpha): monthly win-rate spread — captures A-share seasonal / monthly calendar effect.
+    "monthly_win_rate_spread",
+    # Task 3 (Round 30, Beta): nonlinear factor count — number of factors with threshold/U-shape effects (lower = better).
+    "nonlinear_factor_count",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -320,6 +326,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "overfit_score": "Overfit Score",
     # Task 3 (Round 29, Beta): weekday win-rate spread
     "weekday_win_rate_spread": "Weekday WR Spread",
+    # Task 1 (Round 30, Gamma): parameter drift score
+    "param_drift_score": "Param Drift Score",
+    # Task 2 (Round 30, Alpha): monthly win-rate spread
+    "monthly_win_rate_spread": "Monthly WR Spread",
+    # Task 3 (Round 30, Beta): nonlinear factor count
+    "nonlinear_factor_count": "Nonlinear Factor Count",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -351,6 +363,10 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "high_correlation_pair_count",
     # Task 2 (Round 29, Gamma): IS/OOS overfit score — higher = more overfit = lower-is-better.
     "overfit_score",
+    # Task 1 (Round 30, Gamma): parameter drift score — higher = more unstable parameters = lower-is-better.
+    "param_drift_score",
+    # Task 3 (Round 30, Beta): nonlinear factor count — more nonlinear factors = more linear-scoring bias = lower-is-better.
+    "nonlinear_factor_count",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -451,6 +467,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "overfit_score",
     # Task 3 (Round 29, Beta): weekday win-rate spread — optional; pre-Round-29 outputs omit it.
     "weekday_win_rate_spread",
+    # Task 1 (Round 30, Gamma): parameter drift score — optional; pre-Round-30 outputs omit it.
+    "param_drift_score",
+    # Task 2 (Round 30, Alpha): monthly win-rate spread — optional; pre-Round-30 outputs omit it.
+    "monthly_win_rate_spread",
+    # Task 3 (Round 30, Beta): nonlinear factor count — optional; pre-Round-30 outputs omit it.
+    "nonlinear_factor_count",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1311,6 +1333,9 @@ def _build_replay_evaluator(
         # Task 2 (Round 25, Beta): selection churn / window-stability metrics.
         # Measures how much the win-rate and payoff ratio fluctuate between adjacent replay windows.
         selection_churn: dict[str, Any] = compute_selection_churn_metrics(all_primary_surfaces)
+        # Task 1 (Round 30, Gamma): parameter stability metrics — cross-window drift of key surface metrics.
+        # Requires ≥ 3 windows; returns param_drift_score = median relative drift across tracked keys.
+        param_stability: dict[str, Any] = compute_parameter_stability_metrics(all_primary_surfaces)
         # Task 1 (Round 25, Gamma): profile health score computed from aggregated evaluator metrics.
         # Build a lightweight proxy dict from the averaged metrics so ic_positive_factor_fraction
         # is available (unlike the per-surface call inside build_surface_summary).
@@ -1341,6 +1366,15 @@ def _build_replay_evaluator(
             "overly_easy_floors": floor_suggestions_result.get("overly_easy_floors", []),
             "overly_strict_floors": floor_suggestions_result.get("overly_strict_floors", []),
         }
+
+        # Task 2 (Round 30, Alpha): average monthly_win_rate_spread across replay windows.
+        _monthly_spread_vals = [float(s["monthly_win_rate_spread"]) for s in all_primary_surfaces if s.get("monthly_win_rate_spread") is not None]
+        avg_monthly_win_rate_spread: float | None = round(sum(_monthly_spread_vals) / len(_monthly_spread_vals), 4) if _monthly_spread_vals else None
+        # Task 3 (Round 30, Beta): average nonlinear_factor_count and avg_nonlinearity_ratio across replay windows.
+        _nonlinear_count_vals = [float(s["nonlinear_factor_count"]) for s in all_primary_surfaces if s.get("nonlinear_factor_count") is not None]
+        avg_nonlinear_factor_count: float | None = round(sum(_nonlinear_count_vals) / len(_nonlinear_count_vals), 2) if _nonlinear_count_vals else None
+        _nonlinear_ratio_vals = [float(s["avg_nonlinearity_ratio"]) for s in all_primary_surfaces if s.get("avg_nonlinearity_ratio") is not None]
+        avg_nonlinearity_ratio: float | None = round(sum(_nonlinear_ratio_vals) / len(_nonlinear_ratio_vals), 4) if _nonlinear_ratio_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1439,6 +1473,19 @@ def _build_replay_evaluator(
             # concentration_risk_level: derived from avg pool → avg recommended_max_positions.
             "recommended_max_positions": avg_recommended_max_positions,
             "concentration_risk_level": _concentration_risk_level,
+            # Task 1 (Round 30, Gamma): parameter stability metrics — cross-window drift of surface metrics.
+            # param_drift_score: median relative drift (std / range); lower = more stable parameters.
+            # parameter_stability_grade: A(<0.15) / B(<0.30) / C(<0.50) / D(≥0.50).
+            "param_stability_metrics": param_stability,
+            "param_drift_score": param_stability.get("param_drift_score"),
+            "parameter_stability_grade": param_stability.get("parameter_stability_grade"),
+            "most_stable_param": param_stability.get("most_stable_param"),
+            "most_unstable_param": param_stability.get("most_unstable_param"),
+            # Task 2 (Round 30, Alpha): monthly win-rate spread — captures seasonal calendar effects.
+            "monthly_win_rate_spread": avg_monthly_win_rate_spread,
+            # Task 3 (Round 30, Beta): nonlinear factor count — number of factors with U-shape/threshold effects.
+            "nonlinear_factor_count": avg_nonlinear_factor_count,
+            "avg_nonlinearity_ratio": avg_nonlinearity_ratio,
         }
 
     return evaluator

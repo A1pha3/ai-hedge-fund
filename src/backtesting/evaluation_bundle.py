@@ -158,6 +158,11 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # (relative to IS), indicating the parameter set is over-tuned to historical data.
     # Profiles with overfit_score > 0.30 carry high out-of-sample degradation risk.
     "overfit_score": 0.30,
+    # Task 1 (Round 30, Gamma): parameter drift score cap.
+    # param_drift_score = median relative drift (std/range) across key surface metrics between windows.
+    # A score above 0.50 means parameter metrics are highly unstable across walk-forward windows,
+    # indicating serious over-fitting or regime sensitivity in the parameter set.
+    "param_drift_score": 0.50,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

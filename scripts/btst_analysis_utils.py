@@ -2852,6 +2852,162 @@ def compute_weekday_performance_analysis(rows: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 30, Task 2 (Alpha): 月份效应分析 — monthly calendar-effect analysis.
+# Identifies best/worst trading month (1-12) by T+1 win rate; seasonal_effect_strong when spread > 0.10.
+# ---------------------------------------------------------------------------
+
+
+def compute_monthly_performance_analysis(rows: list[dict]) -> dict:
+    """按月份（1-12）分析BTST胜率和平均收益，识别A股市场月历效应（1月效应等）。
+
+    Uses ``date`` (YYYY-MM-DD format) and ``next_close_return`` fields.
+    A month is included only when it has ≥ 5 samples; months with fewer observations
+    are excluded from spread / best / worst calculations.  When fewer than 2 months
+    have valid samples, most aggregated fields return None.
+
+    Args:
+        rows: BTST candidate rows.
+
+    Returns:
+        Dict with keys:
+
+        - ``monthly_win_rates``: dict[int, float] — win rate per valid month (1-12).
+        - ``monthly_avg_returns``: dict[int, float] — mean return per valid month.
+        - ``best_month``: int | None — month with highest win rate.
+        - ``worst_month``: int | None — month with lowest win rate.
+        - ``monthly_win_rate_spread``: float | None — max − min win rate across valid months.
+        - ``january_effect_present``: bool — True when month-1 win rate > mean × 1.05 and month 1 is valid.
+        - ``seasonal_effect_strong``: bool — True when spread > 0.10.
+    """
+    _null: dict = {
+        "monthly_win_rates": {},
+        "monthly_avg_returns": {},
+        "best_month": None,
+        "worst_month": None,
+        "monthly_win_rate_spread": None,
+        "january_effect_present": False,
+        "seasonal_effect_strong": False,
+    }
+    buckets: dict[int, list[float]] = {m: [] for m in range(1, 13)}
+    for row in rows:
+        date_val = row.get("date")
+        ret_val = row.get("next_close_return")
+        if date_val is None or ret_val is None:
+            continue
+        try:
+            month = _datetime.strptime(str(date_val), "%Y-%m-%d").month
+            buckets[month].append(float(ret_val))
+        except (ValueError, TypeError):
+            continue
+    monthly_win_rates: dict[int, float] = {}
+    monthly_avg_returns: dict[int, float] = {}
+    for month, rets in buckets.items():
+        if len(rets) < 5:
+            continue
+        monthly_win_rates[month] = round(sum(1 for r in rets if r > 0.0) / len(rets), 4)
+        monthly_avg_returns[month] = round(sum(rets) / len(rets), 4)
+    if len(monthly_win_rates) < 2:
+        return {**_null, "monthly_win_rates": monthly_win_rates, "monthly_avg_returns": monthly_avg_returns}
+    best_m = max(monthly_win_rates, key=lambda m: monthly_win_rates[m])
+    worst_m = min(monthly_win_rates, key=lambda m: monthly_win_rates[m])
+    spread = round(monthly_win_rates[best_m] - monthly_win_rates[worst_m], 4)
+    mean_wr = sum(monthly_win_rates.values()) / len(monthly_win_rates)
+    jan_present = bool(1 in monthly_win_rates and monthly_win_rates[1] > mean_wr * 1.05)
+    return {
+        "monthly_win_rates": monthly_win_rates,
+        "monthly_avg_returns": monthly_avg_returns,
+        "best_month": best_m,
+        "worst_month": worst_m,
+        "monthly_win_rate_spread": spread,
+        "january_effect_present": jan_present,
+        "seasonal_effect_strong": spread > 0.10,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 30, Task 3 (Beta): 因子非线性检测 — factor nonlinearity detection.
+# Detects U-shaped / threshold effects via tertile-split deviation from linearity.
+# ---------------------------------------------------------------------------
+
+
+def compute_factor_nonlinearity(rows: list[dict]) -> dict:
+    """检测每个BTST因子与T+1收益之间是否存在非线性关系（三分位阈值效应检测）。
+
+    Splits each factor into low/mid/high tertiles (P33/P67) and measures how
+    much the mid-tertile mean return deviates from the linear interpolation
+    between the low and high tertile means.
+
+    Args:
+        rows: BTST candidate rows with factor values and ``next_close_return``.
+
+    Returns:
+        Dict with keys:
+
+        - ``nonlinear_factor_names``: list[str] — factors with nonlinearity_ratio > 0.30.
+        - ``nonlinear_factor_count``: int — number of nonlinear factors.
+        - ``most_nonlinear_factor``: str | None — factor with highest nonlinearity_ratio.
+        - ``avg_nonlinearity_ratio``: float | None — mean ratio across all valid factors.
+        - ``binning_recommended_factors``: list[str] — same as nonlinear_factor_names.
+    """
+    _null: dict = {
+        "nonlinear_factor_names": [],
+        "nonlinear_factor_count": 0,
+        "most_nonlinear_factor": None,
+        "avg_nonlinearity_ratio": None,
+        "binning_recommended_factors": [],
+    }
+    valid_rows = [row for row in rows if row.get("next_close_return") is not None]
+    if len(valid_rows) < 15:
+        return _null
+
+    nonlinearity_ratios: dict[str, float] = {}
+    for factor in BTST_FACTOR_NAMES:
+        paired: list[tuple[float, float]] = []
+        for row in valid_rows:
+            fv = row.get(factor)
+            rv = row.get("next_close_return")
+            if fv is None or rv is None:
+                continue
+            try:
+                paired.append((float(fv), float(rv)))
+            except (TypeError, ValueError):
+                continue
+        if len(paired) < 15:
+            continue
+        factor_vals = [p[0] for p in paired]
+        n = len(factor_vals)
+        sorted_fv = sorted(factor_vals)
+        p33 = sorted_fv[int(n * 1 / 3)]
+        p67 = sorted_fv[int(n * 2 / 3)]
+        low_rets = [rv for fv, rv in paired if fv <= p33]
+        mid_rets = [rv for fv, rv in paired if p33 < fv <= p67]
+        high_rets = [rv for fv, rv in paired if fv > p67]
+        if len(low_rets) < 5 or len(mid_rets) < 5 or len(high_rets) < 5:
+            continue
+        mean_low = sum(low_rets) / len(low_rets)
+        mean_mid = sum(mid_rets) / len(mid_rets)
+        mean_high = sum(high_rets) / len(high_rets)
+        linear_score = abs(mean_high - mean_low)
+        nonlinear_deviation = abs(mean_mid - (mean_high + mean_low) / 2.0)
+        nonlinearity_ratio = nonlinear_deviation / max(linear_score, 0.001)
+        nonlinearity_ratios[factor] = round(nonlinearity_ratio, 4)
+
+    if not nonlinearity_ratios:
+        return _null
+
+    nonlinear_names = [f for f, r in nonlinearity_ratios.items() if r > 0.30]
+    most_nonlinear = max(nonlinearity_ratios, key=lambda f: nonlinearity_ratios[f])
+    avg_ratio = round(sum(nonlinearity_ratios.values()) / len(nonlinearity_ratios), 4)
+    return {
+        "nonlinear_factor_names": nonlinear_names,
+        "nonlinear_factor_count": len(nonlinear_names),
+        "most_nonlinear_factor": most_nonlinear,
+        "avg_nonlinearity_ratio": avg_ratio,
+        "binning_recommended_factors": nonlinear_names,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -3577,6 +3733,27 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["calendar_effect_strong"] = _weekday_perf.get("calendar_effect_strong")
     _surface_result["recommended_avoid_weekday"] = _weekday_perf.get("recommended_avoid_weekday")
     # -----------------------------------------------------------------------
+    # Round 30, Task 2 (Alpha): 月份效应分析 — monthly calendar-effect analysis.
+    # Identifies best/worst month by T+1 win rate; seasonal_effect_strong when spread > 0.10.
+    # -----------------------------------------------------------------------
+    _monthly_perf: dict[str, Any] = compute_monthly_performance_analysis(rows)
+    _surface_result["monthly_performance"] = _monthly_perf
+    _surface_result["monthly_win_rate_spread"] = _monthly_perf.get("monthly_win_rate_spread")
+    _surface_result["best_month"] = _monthly_perf.get("best_month")
+    _surface_result["worst_month"] = _monthly_perf.get("worst_month")
+    _surface_result["january_effect_present"] = _monthly_perf.get("january_effect_present")
+    _surface_result["seasonal_effect_strong"] = _monthly_perf.get("seasonal_effect_strong")
+    # -----------------------------------------------------------------------
+    # Round 30, Task 3 (Beta): 因子非线性检测 — factor nonlinearity detection.
+    # Tertile-split deviation analysis; nonlinear_factor_count lower-is-better.
+    # -----------------------------------------------------------------------
+    _factor_nonlin: dict[str, Any] = compute_factor_nonlinearity(rows)
+    _surface_result["factor_nonlinearity"] = _factor_nonlin
+    _surface_result["nonlinear_factor_count"] = _factor_nonlin.get("nonlinear_factor_count")
+    _surface_result["avg_nonlinearity_ratio"] = _factor_nonlin.get("avg_nonlinearity_ratio")
+    _surface_result["most_nonlinear_factor"] = _factor_nonlin.get("most_nonlinear_factor")
+    _surface_result["nonlinear_factor_names"] = _factor_nonlin.get("nonlinear_factor_names")
+    # -----------------------------------------------------------------------
     # Round 25, Task 1 (Gamma): Profile health score — aggregate all quality
     # indicators into a single 0-100 score so strategists can compare profiles
     # at a glance without scanning dozens of individual metrics.
@@ -4154,6 +4331,110 @@ def compute_selection_churn_metrics(all_window_summaries: list[dict[str, Any]]) 
         "window_count": len(all_window_summaries),
         "stable_window_fraction": stable_window_fraction,
         "estimated_cost_drag_bps": estimated_cost_drag_bps,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 30, Task 1 (Gamma): 参数稳定性追踪 — cross-window parameter drift analysis.
+# Tracks drift of key surface metrics across walk-forward windows to identify
+# over-fitted profiles whose metrics fluctuate wildly between windows.
+# ---------------------------------------------------------------------------
+
+_PARAM_STABILITY_DEFAULT_KEYS: tuple[str, ...] = (
+    "next_close_positive_rate",
+    "next_close_expectancy",
+    "candidate_pool_avg_composite_score",
+    "realized_payoff_ratio",
+    "regime_consistency_score",
+)
+
+
+def compute_parameter_stability_metrics(
+    window_summaries: list[dict],
+    param_keys: list[str] | None = None,
+) -> dict:
+    """跨walk-forward窗口追踪关键指标的漂移程度，识别高度不稳定参数（过拟合信号）。
+
+    For each tracked key, extracts its non-None scalar values across windows and
+    computes ``std / (max − min + 1e-8)`` as the relative drift score.
+    The overall ``param_drift_score`` is the median across all tracked keys.
+
+    Args:
+        window_summaries: Ordered list of per-window surface summary dicts.
+        param_keys: Keys to track.  Defaults to :data:`_PARAM_STABILITY_DEFAULT_KEYS`.
+
+    Returns:
+        Dict with keys:
+
+        - ``param_drift_score``: float | None — median relative drift; None when < 3 windows.
+        - ``most_stable_param``: str | None — key with lowest relative drift.
+        - ``most_unstable_param``: str | None — key with highest relative drift.
+        - ``unstable_param_count``: int — number of keys with relative drift > 0.40.
+        - ``parameter_stability_grade``: str | None — A(<0.15)/B(<0.30)/C(<0.50)/D(≥0.50).
+        - ``param_drift_by_key``: dict[str, float] — per-key relative drift scores.
+    """
+    _null: dict = {
+        "param_drift_score": None,
+        "most_stable_param": None,
+        "most_unstable_param": None,
+        "unstable_param_count": 0,
+        "parameter_stability_grade": None,
+        "param_drift_by_key": {},
+    }
+    keys: list[str] = list(param_keys) if param_keys is not None else list(_PARAM_STABILITY_DEFAULT_KEYS)
+    if len(window_summaries) < 3:
+        return _null
+
+    drift_by_key: dict[str, float] = {}
+    for key in keys:
+        vals: list[float] = []
+        for s in window_summaries:
+            raw = s.get(key)
+            if raw is None:
+                continue
+            try:
+                vals.append(float(raw))
+            except (TypeError, ValueError):
+                continue
+        if len(vals) < 3:
+            continue
+        n = len(vals)
+        mean_v = sum(vals) / n
+        std_v = (sum((v - mean_v) ** 2 for v in vals) / n) ** 0.5
+        range_v = max(vals) - min(vals)
+        drift_by_key[key] = round(std_v / (range_v + 1e-8), 4)
+
+    if not drift_by_key:
+        return _null
+
+    sorted_drifts = sorted(drift_by_key.values())
+    n_d = len(sorted_drifts)
+    if n_d % 2 == 1:
+        median_drift = sorted_drifts[n_d // 2]
+    else:
+        median_drift = (sorted_drifts[n_d // 2 - 1] + sorted_drifts[n_d // 2]) / 2.0
+    median_drift = round(median_drift, 4)
+
+    most_stable = min(drift_by_key, key=lambda k: drift_by_key[k])
+    most_unstable = max(drift_by_key, key=lambda k: drift_by_key[k])
+    unstable_count = sum(1 for v in drift_by_key.values() if v > 0.40)
+
+    if median_drift < 0.15:
+        grade = "A"
+    elif median_drift < 0.30:
+        grade = "B"
+    elif median_drift < 0.50:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {
+        "param_drift_score": median_drift,
+        "most_stable_param": most_stable,
+        "most_unstable_param": most_unstable,
+        "unstable_param_count": unstable_count,
+        "parameter_stability_grade": grade,
+        "param_drift_by_key": drift_by_key,
     }
 
 

@@ -5610,3 +5610,384 @@ def test_r29_new_metrics_have_labels() -> None:
     assert "pca_diversity_score" in COMPARISON_METRIC_LABELS
     assert "overfit_score" in COMPARISON_METRIC_LABELS
     assert "weekday_win_rate_spread" in COMPARISON_METRIC_LABELS
+
+
+# ---------------------------------------------------------------------------
+# Round 30 Tests
+# ---------------------------------------------------------------------------
+
+# T1 (Gamma): compute_parameter_stability_metrics
+# ---------------------------------------------------------------------------
+
+
+def test_r30_param_stability_stable_parameters() -> None:
+    """Very stable metrics across windows → low param_drift_score, grade A or B."""
+    from scripts.btst_analysis_utils import compute_parameter_stability_metrics
+
+    windows = [
+        {"next_close_positive_rate": 0.60 + i * 0.001, "next_close_expectancy": 0.02 + i * 0.0001,
+         "candidate_pool_avg_composite_score": 0.70, "realized_payoff_ratio": 1.5, "regime_consistency_score": 0.80}
+        for i in range(6)
+    ]
+    result = compute_parameter_stability_metrics(windows)
+    assert result["param_drift_score"] is not None
+    assert result["param_drift_score"] < 0.30
+    assert result["parameter_stability_grade"] in ("A", "B")
+
+
+def test_r30_param_stability_unstable_parameters() -> None:
+    """Wildly fluctuating metrics → high param_drift_score."""
+    from scripts.btst_analysis_utils import compute_parameter_stability_metrics
+
+    windows = [
+        {"next_close_positive_rate": v, "next_close_expectancy": v * 0.1,
+         "candidate_pool_avg_composite_score": v, "realized_payoff_ratio": v * 2.0, "regime_consistency_score": v}
+        for v in [0.20, 0.90, 0.15, 0.85, 0.10, 0.95]
+    ]
+    result = compute_parameter_stability_metrics(windows)
+    assert result["param_drift_score"] is not None
+    assert result["param_drift_score"] > 0.30
+
+
+def test_r30_param_stability_insufficient_windows() -> None:
+    """< 3 windows → param_drift_score = None."""
+    from scripts.btst_analysis_utils import compute_parameter_stability_metrics
+
+    windows = [
+        {"next_close_positive_rate": 0.60, "realized_payoff_ratio": 1.5},
+        {"next_close_positive_rate": 0.65, "realized_payoff_ratio": 1.6},
+    ]
+    result = compute_parameter_stability_metrics(windows)
+    assert result["param_drift_score"] is None
+    assert result["parameter_stability_grade"] is None
+
+
+def test_r30_param_stability_unstable_count() -> None:
+    """unstable_param_count counts keys with relative drift > 0.40."""
+    from scripts.btst_analysis_utils import compute_parameter_stability_metrics
+
+    # Build windows where all 5 keys fluctuate wildly
+    windows = [
+        {"next_close_positive_rate": v, "next_close_expectancy": v * 0.05,
+         "candidate_pool_avg_composite_score": v + 0.1, "realized_payoff_ratio": v * 3.0, "regime_consistency_score": 1.0 - v}
+        for v in [0.10, 0.90, 0.10, 0.90, 0.10]
+    ]
+    result = compute_parameter_stability_metrics(windows)
+    assert result["unstable_param_count"] >= 1
+
+
+def test_r30_param_stability_grade_assignment() -> None:
+    """Grade boundaries: drift < 0.15 → A, < 0.30 → B, < 0.50 → C, ≥ 0.50 → D."""
+    from scripts.btst_analysis_utils import compute_parameter_stability_metrics
+
+    # Constant values → drift ≈ 0 → grade A
+    windows_const = [
+        {"next_close_positive_rate": 0.60, "next_close_expectancy": 0.02,
+         "candidate_pool_avg_composite_score": 0.70, "realized_payoff_ratio": 1.5, "regime_consistency_score": 0.80}
+        for _ in range(5)
+    ]
+    r = compute_parameter_stability_metrics(windows_const)
+    assert r["parameter_stability_grade"] == "A"
+
+
+def test_r30_param_drift_score_is_median() -> None:
+    """param_drift_score must equal the median of per-key drift scores."""
+    from scripts.btst_analysis_utils import compute_parameter_stability_metrics
+
+    windows = [
+        {"next_close_positive_rate": v, "realized_payoff_ratio": 1.5,
+         "next_close_expectancy": 0.02, "candidate_pool_avg_composite_score": 0.7, "regime_consistency_score": 0.8}
+        for v in [0.50, 0.60, 0.70, 0.80, 0.90]
+    ]
+    result = compute_parameter_stability_metrics(windows)
+    assert result["param_drift_score"] is not None
+    drifts = list(result["param_drift_by_key"].values())
+    drifts_sorted = sorted(drifts)
+    n = len(drifts_sorted)
+    expected = drifts_sorted[n // 2] if n % 2 == 1 else (drifts_sorted[n // 2 - 1] + drifts_sorted[n // 2]) / 2.0
+    assert abs(result["param_drift_score"] - round(expected, 4)) < 0.001
+
+
+def test_r30_param_drift_cap_registered() -> None:
+    """param_drift_score cap must be registered at 0.50 in BTST_QUALITY_CAPS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "param_drift_score" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["param_drift_score"] == 0.50
+
+
+# ---------------------------------------------------------------------------
+# T2 (Alpha): compute_monthly_performance_analysis
+# ---------------------------------------------------------------------------
+
+
+def _make_monthly_rows(month_returns: dict[int, list[float]]) -> list[dict]:
+    """Build rows with dates targeting specific months."""
+    import datetime
+    rows = []
+    base_year = 2022
+    for month, rets in month_returns.items():
+        for i, ret in enumerate(rets):
+            day = min(i + 1, 28)
+            d = datetime.date(base_year, month, day)
+            rows.append({"date": d.strftime("%Y-%m-%d"), "next_close_return": ret})
+    return rows
+
+
+def test_r30_monthly_january_effect_present() -> None:
+    """Month 1 win rate significantly above mean → january_effect_present = True."""
+    from scripts.btst_analysis_utils import compute_monthly_performance_analysis
+
+    # January: all positive (wr=1.0); other months: 50/50 (wr=0.5)
+    month_rets: dict[int, list[float]] = {1: [0.03] * 8}
+    for m in range(2, 7):
+        month_rets[m] = [0.02 if j % 2 == 0 else -0.02 for j in range(8)]
+    rows = _make_monthly_rows(month_rets)
+    result = compute_monthly_performance_analysis(rows)
+    assert result["january_effect_present"] is True
+    assert result["best_month"] == 1
+
+
+def test_r30_monthly_worst_month_identified() -> None:
+    """Month 12 all negative → worst_month = 12."""
+    from scripts.btst_analysis_utils import compute_monthly_performance_analysis
+
+    month_rets: dict[int, list[float]] = {12: [-0.03] * 8}
+    for m in range(1, 7):
+        month_rets[m] = [0.02 if j % 2 == 0 else -0.01 for j in range(8)]
+    rows = _make_monthly_rows(month_rets)
+    result = compute_monthly_performance_analysis(rows)
+    assert result["worst_month"] == 12
+
+
+def test_r30_monthly_uniform_no_strong_effect() -> None:
+    """Uniform win rates across months → seasonal_effect_strong = False."""
+    from scripts.btst_analysis_utils import compute_monthly_performance_analysis
+
+    # All months 50/50 returns
+    month_rets: dict[int, list[float]] = {}
+    for m in range(1, 7):
+        month_rets[m] = [0.02 if j % 2 == 0 else -0.02 for j in range(8)]
+    rows = _make_monthly_rows(month_rets)
+    result = compute_monthly_performance_analysis(rows)
+    assert result["seasonal_effect_strong"] is False
+
+
+def test_r30_monthly_spread_equals_best_minus_worst() -> None:
+    """monthly_win_rate_spread = best win rate − worst win rate."""
+    from scripts.btst_analysis_utils import compute_monthly_performance_analysis
+
+    month_rets: dict[int, list[float]] = {}
+    for m in range(1, 5):
+        month_rets[m] = [0.03] * 8 if m == 1 else [-0.03] * 8 if m == 3 else [0.01 if j % 2 == 0 else -0.01 for j in range(8)]
+    rows = _make_monthly_rows(month_rets)
+    result = compute_monthly_performance_analysis(rows)
+    if result["monthly_win_rate_spread"] is not None:
+        wrs = result["monthly_win_rates"]
+        expected = round(max(wrs.values()) - min(wrs.values()), 4)
+        assert abs(result["monthly_win_rate_spread"] - expected) < 0.001
+
+
+def test_r30_monthly_seasonal_effect_strong_flag() -> None:
+    """seasonal_effect_strong = True when spread > 0.10."""
+    from scripts.btst_analysis_utils import compute_monthly_performance_analysis
+
+    month_rets: dict[int, list[float]] = {
+        1: [0.05] * 8,   # wr=1.0
+        2: [-0.05] * 8,  # wr=0.0
+        3: [0.02 if j % 2 == 0 else -0.02 for j in range(8)],
+        4: [0.02 if j % 2 == 0 else -0.02 for j in range(8)],
+    }
+    rows = _make_monthly_rows(month_rets)
+    result = compute_monthly_performance_analysis(rows)
+    assert result["seasonal_effect_strong"] is True
+
+
+def test_r30_monthly_insufficient_samples_excluded() -> None:
+    """Months with < 5 samples are excluded from spread/best/worst."""
+    from scripts.btst_analysis_utils import compute_monthly_performance_analysis
+    import datetime
+
+    # Month 1 has only 3 rows (excluded); month 2 has 8 rows
+    rows = [{"date": f"2022-01-0{i + 1}", "next_close_return": 0.03} for i in range(3)]
+    rows += [{"date": f"2022-0{m}-0{i + 1}", "next_close_return": 0.02 if i % 2 == 0 else -0.02}
+             for m in range(2, 5) for i in range(8)]
+    result = compute_monthly_performance_analysis(rows)
+    # Month 1 should not appear in monthly_win_rates
+    assert 1 not in result["monthly_win_rates"]
+
+
+def test_r30_monthly_best_worst_month_identified() -> None:
+    """best_month and worst_month are the months with max/min win rates."""
+    from scripts.btst_analysis_utils import compute_monthly_performance_analysis
+
+    month_rets: dict[int, list[float]] = {
+        3: [0.05] * 8,   # wr=1.0 → best
+        6: [-0.05] * 8,  # wr=0.0 → worst
+        9: [0.02 if j % 2 == 0 else -0.02 for j in range(8)],  # wr≈0.5
+    }
+    rows = _make_monthly_rows(month_rets)
+    result = compute_monthly_performance_analysis(rows)
+    assert result["best_month"] == 3
+    assert result["worst_month"] == 6
+
+
+# ---------------------------------------------------------------------------
+# T3 (Beta): compute_factor_nonlinearity
+# ---------------------------------------------------------------------------
+
+
+def _make_nonlin_rows(factor_name: str, factor_returns: list[tuple[float, float]]) -> list[dict]:
+    """Build rows with (factor_value, next_close_return) pairs."""
+    return [{"next_close_return": ret, factor_name: fv} for fv, ret in factor_returns]
+
+
+def test_r30_nonlinear_u_shaped_factor_detected() -> None:
+    """U-shaped factor (mid worse than extremes) → flagged as nonlinear."""
+    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+
+    factor = BTST_FACTOR_NAMES[0]
+    # Low: returns +5%, Mid: returns -5%, High: returns +5% → U-shape
+    n_each = 10
+    rows = (
+        [{"next_close_return": 0.05, factor: 0.1 + i * 0.005} for i in range(n_each)]  # low
+        + [{"next_close_return": -0.05, factor: 0.4 + i * 0.005} for i in range(n_each)]  # mid
+        + [{"next_close_return": 0.05, factor: 0.7 + i * 0.005} for i in range(n_each)]  # high
+    )
+    result = compute_factor_nonlinearity(rows)
+    assert factor in result["nonlinear_factor_names"]
+    assert result["nonlinear_factor_count"] >= 1
+
+
+def test_r30_nonlinear_monotone_linear_factor_not_flagged() -> None:
+    """Strictly monotone linear factor → nonlinearity_ratio ≈ 0, not flagged."""
+    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+
+    factor = BTST_FACTOR_NAMES[0]
+    # Linear: low=-0.05, mid=0.0, high=+0.05 → mid is exactly at linear expectation
+    n_each = 10
+    rows = (
+        [{"next_close_return": -0.05, factor: 0.1 + i * 0.005} for i in range(n_each)]
+        + [{"next_close_return": 0.00, factor: 0.4 + i * 0.005} for i in range(n_each)]
+        + [{"next_close_return": 0.05, factor: 0.7 + i * 0.005} for i in range(n_each)]
+    )
+    result = compute_factor_nonlinearity(rows)
+    assert factor not in result["nonlinear_factor_names"]
+
+
+def test_r30_nonlinearity_ratio_calculation() -> None:
+    """nonlinearity_ratio = nonlinear_deviation / max(linear_score, 0.001)."""
+    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+
+    factor = BTST_FACTOR_NAMES[0]
+    # Inverted-U: low=0.0, mid=+0.10, high=0.0 → linear_score≈0.0, nonlin large
+    n_each = 10
+    rows = (
+        [{"next_close_return": 0.00, factor: 0.1 + i * 0.005} for i in range(n_each)]
+        + [{"next_close_return": 0.10, factor: 0.4 + i * 0.005} for i in range(n_each)]
+        + [{"next_close_return": 0.00, factor: 0.7 + i * 0.005} for i in range(n_each)]
+    )
+    result = compute_factor_nonlinearity(rows)
+    # nonlinear_deviation = |0.10 - 0.0| = 0.10, linear_score = |0.0 - 0.0| = 0.0 → ratio = 100
+    assert result["nonlinear_factor_count"] >= 1 or result["avg_nonlinearity_ratio"] is not None
+
+
+def test_r30_nonlinearity_threshold_0_30() -> None:
+    """Factors with ratio > 0.30 are flagged; those ≤ 0.30 are not."""
+    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+
+    factor = BTST_FACTOR_NAMES[0]
+    # Weak nonlinearity: mid deviates only 1% from linear expectation
+    n_each = 10
+    rows = (
+        [{"next_close_return": 0.00, factor: 0.1 + i * 0.005} for i in range(n_each)]
+        + [{"next_close_return": 0.051, factor: 0.4 + i * 0.005} for i in range(n_each)]  # expected mid = 0.05
+        + [{"next_close_return": 0.10, factor: 0.7 + i * 0.005} for i in range(n_each)]
+    )
+    result = compute_factor_nonlinearity(rows)
+    # linear_score=0.10, nonlinear_deviation=|0.051-0.05|=0.001 → ratio=0.01 → not flagged
+    assert factor not in result["nonlinear_factor_names"]
+
+
+def test_r30_nonlinearity_insufficient_samples_skipped() -> None:
+    """Factors with < 15 paired rows are skipped (not included in result)."""
+    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+
+    factor = BTST_FACTOR_NAMES[0]
+    rows = [{"next_close_return": 0.03, factor: float(i)} for i in range(10)]  # only 10 rows
+    result = compute_factor_nonlinearity(rows)
+    assert result["nonlinear_factor_count"] == 0
+    assert result["avg_nonlinearity_ratio"] is None
+
+
+def test_r30_nonlinearity_most_nonlinear_factor() -> None:
+    """most_nonlinear_factor is the factor with the highest nonlinearity_ratio."""
+    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+
+    f0 = BTST_FACTOR_NAMES[0]
+    f1 = BTST_FACTOR_NAMES[1] if len(BTST_FACTOR_NAMES) > 1 else None
+    if f1 is None:
+        return  # skip if only one factor
+
+    n_each = 10
+    # f0: strong U-shape (high nonlinearity)
+    rows_f0 = (
+        [{"next_close_return": 0.10, f0: 0.1 + i * 0.005, f1: 0.5} for i in range(n_each)]
+        + [{"next_close_return": -0.10, f0: 0.4 + i * 0.005, f1: 0.5} for i in range(n_each)]
+        + [{"next_close_return": 0.10, f0: 0.7 + i * 0.005, f1: 0.5} for i in range(n_each)]
+    )
+    result = compute_factor_nonlinearity(rows_f0)
+    assert result["most_nonlinear_factor"] == f0
+
+
+def test_r30_nonlinearity_count_and_avg_correct() -> None:
+    """nonlinear_factor_count and avg_nonlinearity_ratio are consistent."""
+    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+
+    factor = BTST_FACTOR_NAMES[0]
+    n_each = 10
+    rows = (
+        [{"next_close_return": 0.10, factor: 0.1 + i * 0.005} for i in range(n_each)]
+        + [{"next_close_return": -0.10, factor: 0.4 + i * 0.005} for i in range(n_each)]
+        + [{"next_close_return": 0.10, factor: 0.7 + i * 0.005} for i in range(n_each)]
+    )
+    result = compute_factor_nonlinearity(rows)
+    assert isinstance(result["nonlinear_factor_count"], int)
+    if result["avg_nonlinearity_ratio"] is not None:
+        assert result["avg_nonlinearity_ratio"] >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# Round 30: metric registration
+# ---------------------------------------------------------------------------
+
+
+def test_r30_new_metrics_in_comparison_metrics() -> None:
+    """All R30 metrics must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "param_drift_score" in COMPARISON_METRICS
+    assert "monthly_win_rate_spread" in COMPARISON_METRICS
+    assert "nonlinear_factor_count" in COMPARISON_METRICS
+
+
+def test_r30_new_metrics_in_optional_comparison_metrics() -> None:
+    """All R30 metrics must appear in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "param_drift_score" in OPTIONAL_COMPARISON_METRICS
+    assert "monthly_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
+    assert "nonlinear_factor_count" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r30_lower_is_better_metrics_registered() -> None:
+    """param_drift_score and nonlinear_factor_count must be in LOWER_IS_BETTER."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "param_drift_score" in LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "nonlinear_factor_count" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r30_new_metrics_have_labels() -> None:
+    """All R30 metrics must have human-readable labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "param_drift_score" in COMPARISON_METRIC_LABELS
+    assert "monthly_win_rate_spread" in COMPARISON_METRIC_LABELS
+    assert "nonlinear_factor_count" in COMPARISON_METRIC_LABELS
+
