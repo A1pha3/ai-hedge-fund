@@ -49,6 +49,12 @@ _GUARDRAIL_KEYS = (
     # Task 2 (Round 27, Gamma): composite score spread floor guardrail.
     # score_spread_p95_p5 < 0.10 means the scoring function barely differentiates candidates.
     "score_spread_p95_p5",
+    # Task 1 (Round 29, Alpha): PCA effective factor rank floor guardrail.
+    # effective_factor_rank < 3 means the 12 factors collapse into fewer than 3 independent signals.
+    "effective_factor_rank",
+    # Task 2 (Round 29, Gamma): IS/OOS overfit score cap guardrail.
+    # overfit_score > 0.30 means IS performance is materially better than OOS — overfit risk.
+    "overfit_score",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -120,6 +126,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # on extreme down-days while rejecting strategies that massively bleed on bear days.
     # Strategies below −0.005 bear alpha lack regime robustness and carry hidden Beta risk.
     "bear_alpha_avg": -0.005,
+    # Task 1 (Round 29, Alpha): effective factor rank floor.
+    # effective_factor_rank = number of PCA principal components needed to explain ≥ 80 % of
+    # factor variance.  A rank of 1 or 2 means nearly all factors load on the same latent
+    # dimension — the 12 scoring factors are essentially one signal wearing many costumes.
+    # Floor ≥ 3 ensures the strategy relies on at least 3 genuinely independent signal dimensions.
+    "effective_factor_rank": 3,
 }
 
 # ---------------------------------------------------------------------------
@@ -140,6 +152,12 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # Profiles with Gini > 0.60 are flagged; optimization should prefer more-diversified
     # parameter combinations.
     "sector_concentration_gini": 0.60,
+    # Task 2 (Round 29, Gamma): IS/OOS overfit score cap.
+    # overfit_score = normalised gap between in-sample and out-of-sample performance.
+    # A score above 0.30 means the IS metrics are more than 30 % better than OOS metrics
+    # (relative to IS), indicating the parameter set is over-tuned to historical data.
+    # Profiles with overfit_score > 0.30 carry high out-of-sample degradation risk.
+    "overfit_score": 0.30,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

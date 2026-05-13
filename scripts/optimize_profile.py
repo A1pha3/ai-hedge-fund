@@ -209,6 +209,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "all_regimes_positive_alpha",
     # Task 3 (Round 28, Beta): post-loss recovery T+2 positive rate.
     "post_loss_t2_positive_rate",
+    # Task 1 (Round 29, Alpha): PCA factor diversity score — closer to 1 = more orthogonal factors.
+    "pca_diversity_score",
+    # Task 2 (Round 29, Gamma): IS/OOS overfit score — lower is better (cap ≤ 0.30).
+    "overfit_score",
+    # Task 3 (Round 29, Beta): weekday win-rate spread — captures A-share calendar effect magnitude.
+    "weekday_win_rate_spread",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -308,6 +314,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "all_regimes_positive_alpha": "All Regimes Pos Alpha",
     # Task 3 (Round 28, Beta): post-loss recovery
     "post_loss_t2_positive_rate": "Post-Loss T2 Pos%",
+    # Task 1 (Round 29, Alpha): PCA factor diversity score
+    "pca_diversity_score": "PCA Diversity Score",
+    # Task 2 (Round 29, Gamma): IS/OOS overfit score
+    "overfit_score": "Overfit Score",
+    # Task 3 (Round 29, Beta): weekday win-rate spread
+    "weekday_win_rate_spread": "Weekday WR Spread",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -337,6 +349,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "win_rate_window_volatility",
     # Task 1 (Round 28, Alpha): high correlation pair count — more redundant pairs = worse = lower-is-better.
     "high_correlation_pair_count",
+    # Task 2 (Round 29, Gamma): IS/OOS overfit score — higher = more overfit = lower-is-better.
+    "overfit_score",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -431,6 +445,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "all_regimes_positive_alpha",
     # Task 3 (Round 28, Beta): post-loss recovery — optional; pre-Round-28 outputs omit it.
     "post_loss_t2_positive_rate",
+    # Task 1 (Round 29, Alpha): PCA factor diversity score — optional; pre-Round-29 outputs omit it.
+    "pca_diversity_score",
+    # Task 2 (Round 29, Gamma): IS/OOS overfit score — optional; pre-Round-29 outputs omit it.
+    "overfit_score",
+    # Task 3 (Round 29, Beta): weekday win-rate spread — optional; pre-Round-29 outputs omit it.
+    "weekday_win_rate_spread",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,

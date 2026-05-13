@@ -5214,3 +5214,399 @@ def test_r28_bear_alpha_floor_in_btst_quality_floors() -> None:
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "bear_alpha_avg" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["bear_alpha_avg"] == -0.005
+
+
+# ===========================================================================
+# Round 29 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1 (Alpha): compute_factor_pca_analysis
+# ---------------------------------------------------------------------------
+
+
+def test_r29_pca_fully_correlated_rank1() -> None:
+    """All factors identical → PC1 explains 100 %, effective_factor_rank = 1."""
+    from scripts.btst_analysis_utils import compute_factor_pca_analysis
+
+    factor_names = ["breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness"]
+    rows = []
+    for i in range(20):
+        v = float(i)
+        rows.append({f: v for f in factor_names})
+    result = compute_factor_pca_analysis(rows)
+    assert result["effective_factor_rank"] == 1
+    assert result["pca_diversity_score"] is not None
+    assert 0.0 < result["pca_diversity_score"] <= 1.0
+
+
+def test_r29_pca_fully_orthogonal_high_rank() -> None:
+    """Fully independent factors → effective_rank ≥ 2 (more PCs needed for 80 %)."""
+    import numpy as np
+    from scripts.btst_analysis_utils import compute_factor_pca_analysis
+
+    np.random.seed(42)
+    factor_names = ["breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness"]
+    data = np.random.randn(50, len(factor_names))
+    rows = [{f: float(data[i, j]) for j, f in enumerate(factor_names)} for i in range(50)]
+    result = compute_factor_pca_analysis(rows)
+    assert result["effective_factor_rank"] is not None
+    assert result["effective_factor_rank"] >= 2
+
+
+def test_r29_pca_too_few_rows_returns_null() -> None:
+    """Fewer than 10 aligned rows → all None fields."""
+    from scripts.btst_analysis_utils import compute_factor_pca_analysis
+
+    rows = [{"breakout_freshness": 0.5, "trend_acceleration": 0.3} for _ in range(8)]
+    result = compute_factor_pca_analysis(rows)
+    assert result["effective_factor_rank"] is None
+    assert result["pca_diversity_score"] is None
+    assert result["explained_variance_ratio"] is None
+
+
+def test_r29_pca_diversity_score_in_unit_interval() -> None:
+    """pca_diversity_score must always be in (0, 1]."""
+    import numpy as np
+    from scripts.btst_analysis_utils import compute_factor_pca_analysis
+
+    np.random.seed(7)
+    factor_names = ["breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength"]
+    data = np.random.randn(30, len(factor_names))
+    rows = [{f: float(data[i, j]) for j, f in enumerate(factor_names)} for i in range(30)]
+    result = compute_factor_pca_analysis(rows)
+    assert result["pca_diversity_score"] is not None
+    assert 0.0 < result["pca_diversity_score"] <= 1.0
+
+
+def test_r29_pca_pc1_dominant_factors_at_most_3() -> None:
+    """pc1_dominant_factors should return at most 3 factor names."""
+    import numpy as np
+    from scripts.btst_analysis_utils import compute_factor_pca_analysis
+
+    np.random.seed(13)
+    factor_names = ["breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness"]
+    data = np.random.randn(20, len(factor_names))
+    rows = [{f: float(data[i, j]) for j, f in enumerate(factor_names)} for i in range(20)]
+    result = compute_factor_pca_analysis(rows)
+    assert isinstance(result["pc1_dominant_factors"], list)
+    assert len(result["pc1_dominant_factors"]) <= 3
+
+
+def test_r29_pca_redundancy_candidates_are_factor_names() -> None:
+    """redundancy_reduction_candidates contains valid factor name strings."""
+    import numpy as np
+    from scripts.btst_analysis_utils import compute_factor_pca_analysis, BTST_FACTOR_NAMES
+
+    np.random.seed(99)
+    n = 30
+    base = np.random.randn(n)
+    noise = np.random.randn(n) * 0.01
+    rows = [{"breakout_freshness": float(base[i]), "trend_acceleration": float(base[i] + noise[i]), "volume_expansion_quality": float(np.random.randn())} for i in range(n)]
+    result = compute_factor_pca_analysis(rows)
+    for name in result["redundancy_reduction_candidates"]:
+        assert isinstance(name, str)
+        assert name in BTST_FACTOR_NAMES
+
+
+def test_r29_pca_absent_f11_f12_graceful_skip() -> None:
+    """F11/F12 absent from rows → analysis still works on remaining factors."""
+    import numpy as np
+    from scripts.btst_analysis_utils import compute_factor_pca_analysis
+
+    np.random.seed(5)
+    factor_names = ["breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength"]
+    data = np.random.randn(20, len(factor_names))
+    rows = [{f: float(data[i, j]) for j, f in enumerate(factor_names)} for i in range(20)]
+    result = compute_factor_pca_analysis(rows)
+    # Should produce results without F11/F12
+    assert result["pca_diversity_score"] is not None
+    assert result["effective_factor_rank"] is not None
+
+
+def test_r29_pca_explained_variance_sums_to_one() -> None:
+    """explained_variance_ratio must sum to ≈ 1.0."""
+    import numpy as np
+    from scripts.btst_analysis_utils import compute_factor_pca_analysis
+
+    np.random.seed(21)
+    factor_names = ["breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness"]
+    data = np.random.randn(25, len(factor_names))
+    rows = [{f: float(data[i, j]) for j, f in enumerate(factor_names)} for i in range(25)]
+    result = compute_factor_pca_analysis(rows)
+    if result["explained_variance_ratio"] is not None:
+        total = sum(result["explained_variance_ratio"])
+        assert abs(total - 1.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# T2 (Gamma): compute_in_sample_oos_gap
+# ---------------------------------------------------------------------------
+
+
+def test_r29_oos_gap_overfit_warning_triggered() -> None:
+    """IS much better than OOS → overfit_warning_flag = True."""
+    from scripts.btst_analysis_utils import compute_in_sample_oos_gap
+
+    rows = []
+    for i in range(14):
+        rows.append({"date": f"2024-01-{i + 1:02d}", "next_close_return": 0.05})
+    for i in range(6):
+        rows.append({"date": f"2024-03-{i + 1:02d}", "next_close_return": -0.05})
+    result = compute_in_sample_oos_gap(rows)
+    assert result["overfit_warning_flag"] is True
+    assert result["win_rate_gap"] is not None and result["win_rate_gap"] > 0
+
+
+def test_r29_oos_gap_no_overfit_when_similar() -> None:
+    """IS = OOS (identical alternating pattern) → overfit_score = 0, flag = False."""
+    from scripts.btst_analysis_utils import compute_in_sample_oos_gap
+
+    # Strict alternating win/loss produces exactly 50% WR in both IS and OOS portions
+    rows = [{"date": f"2024-01-{i + 1:02d}", "next_close_return": 0.01 if i % 2 == 0 else -0.01} for i in range(20)]
+    result = compute_in_sample_oos_gap(rows)
+    assert result["overfit_score"] is not None
+    assert result["overfit_warning_flag"] is False
+
+
+def test_r29_oos_gap_oos_better_than_is() -> None:
+    """OOS better than IS → negative win_rate_gap, flag = False."""
+    from scripts.btst_analysis_utils import compute_in_sample_oos_gap
+
+    rows = []
+    for i in range(14):
+        rows.append({"date": f"2024-01-{i + 1:02d}", "next_close_return": 0.01 if i % 2 == 0 else -0.01})
+    for i in range(6):
+        rows.append({"date": f"2024-03-{i + 1:02d}", "next_close_return": 0.02 if i < 5 else -0.01})
+    result = compute_in_sample_oos_gap(rows)
+    assert result["win_rate_gap"] is not None
+    assert result["win_rate_gap"] < 0
+    assert result["overfit_warning_flag"] is False
+
+
+def test_r29_oos_gap_too_few_rows_returns_null() -> None:
+    """Fewer than ~17 total rows → None fields (IS or OOS set < 5)."""
+    from scripts.btst_analysis_utils import compute_in_sample_oos_gap
+
+    rows = [{"date": f"2024-01-{i + 1:02d}", "next_close_return": 0.01} for i in range(10)]
+    result = compute_in_sample_oos_gap(rows)
+    assert result["overfit_score"] is None
+    assert result["is_win_rate"] is None
+
+
+def test_r29_oos_gap_win_rate_gap_consistency() -> None:
+    """win_rate_gap must equal is_win_rate - oos_win_rate."""
+    from scripts.btst_analysis_utils import compute_in_sample_oos_gap
+
+    rows = [{"date": f"2024-01-{i + 1:02d}", "next_close_return": 0.03 if i < 14 else -0.02} for i in range(20)]
+    result = compute_in_sample_oos_gap(rows)
+    if result["win_rate_gap"] is not None:
+        expected = round((result["is_win_rate"] or 0.0) - (result["oos_win_rate"] or 0.0), 4)
+        assert abs(result["win_rate_gap"] - expected) < 0.001
+
+
+def test_r29_oos_gap_flag_consistent_with_score() -> None:
+    """overfit_warning_flag must be True iff overfit_score > 0.20."""
+    from scripts.btst_analysis_utils import compute_in_sample_oos_gap
+
+    rows = []
+    for i in range(14):
+        rows.append({"date": f"2024-01-{i + 1:02d}", "next_close_return": 0.021 if i % 2 == 0 else -0.001})
+    for i in range(6):
+        rows.append({"date": f"2024-03-{i + 1:02d}", "next_close_return": 0.018 if i % 2 == 0 else -0.002})
+    result = compute_in_sample_oos_gap(rows)
+    assert result["overfit_score"] is not None
+    assert result["overfit_warning_flag"] == (result["overfit_score"] > 0.20)
+
+
+def test_r29_oos_gap_missing_date_rows_skipped() -> None:
+    """Rows without date or next_close_return excluded gracefully."""
+    from scripts.btst_analysis_utils import compute_in_sample_oos_gap
+
+    rows = [{"next_close_return": 0.01}] * 5
+    rows += [{"date": f"2024-01-{i + 1:02d}", "next_close_return": 0.01} for i in range(20)]
+    result = compute_in_sample_oos_gap(rows)
+    assert result["overfit_score"] is not None
+
+
+# ---------------------------------------------------------------------------
+# T3 (Beta): compute_weekday_performance_analysis
+# ---------------------------------------------------------------------------
+
+
+def test_r29_weekday_monday_worst() -> None:
+    """Monday (0) always negative → worst_weekday = 0."""
+    import datetime
+    from scripts.btst_analysis_utils import compute_weekday_performance_analysis
+
+    rows = []
+    d = datetime.date(2024, 1, 1)
+    while len(rows) < 55:
+        wd = d.weekday()
+        if wd < 5:
+            rows.append({"date": d.strftime("%Y-%m-%d"), "next_close_return": -0.03 if wd == 0 else 0.03})
+        d += datetime.timedelta(days=1)
+    result = compute_weekday_performance_analysis(rows)
+    assert result["worst_weekday"] == 0
+    assert result["recommended_avoid_weekday"] == 0
+
+
+def test_r29_weekday_friday_worst() -> None:
+    """Friday (4) always negative → worst_weekday = 4."""
+    import datetime
+    from scripts.btst_analysis_utils import compute_weekday_performance_analysis
+
+    rows = []
+    d = datetime.date(2024, 1, 1)
+    while len(rows) < 55:
+        wd = d.weekday()
+        if wd < 5:
+            rows.append({"date": d.strftime("%Y-%m-%d"), "next_close_return": -0.03 if wd == 4 else 0.03})
+        d += datetime.timedelta(days=1)
+    result = compute_weekday_performance_analysis(rows)
+    assert result["worst_weekday"] == 4
+
+
+def test_r29_weekday_uniform_no_strong_effect() -> None:
+    """Uniform returns → calendar_effect_strong = False (small spread)."""
+    import datetime
+    from scripts.btst_analysis_utils import compute_weekday_performance_analysis
+
+    rows = []
+    d = datetime.date(2024, 1, 1)
+    i = 0
+    while len(rows) < 50:
+        wd = d.weekday()
+        if wd < 5:
+            rows.append({"date": d.strftime("%Y-%m-%d"), "next_close_return": 0.01 if i % 2 == 0 else -0.01})
+            i += 1
+        d += datetime.timedelta(days=1)
+    result = compute_weekday_performance_analysis(rows)
+    assert result["weekday_win_rate_spread"] is not None
+    assert result["calendar_effect_strong"] is False
+
+
+def test_r29_weekday_spread_equals_best_minus_worst() -> None:
+    """weekday_win_rate_spread = weekday_best_win_rate - weekday_worst_win_rate."""
+    import datetime
+    from scripts.btst_analysis_utils import compute_weekday_performance_analysis
+
+    rows = []
+    d = datetime.date(2024, 1, 1)
+    while len(rows) < 55:
+        wd = d.weekday()
+        if wd < 5:
+            ret = 0.03 if wd == 1 else (-0.03 if wd == 3 else 0.01)
+            rows.append({"date": d.strftime("%Y-%m-%d"), "next_close_return": ret})
+        d += datetime.timedelta(days=1)
+    result = compute_weekday_performance_analysis(rows)
+    if result["weekday_win_rate_spread"] is not None:
+        expected = round((result["weekday_best_win_rate"] or 0.0) - (result["weekday_worst_win_rate"] or 0.0), 4)
+        assert abs(result["weekday_win_rate_spread"] - expected) < 0.001
+
+
+def test_r29_weekday_calendar_effect_strong_flag() -> None:
+    """calendar_effect_strong = True when spread > 0.10."""
+    import datetime
+    from scripts.btst_analysis_utils import compute_weekday_performance_analysis
+
+    rows = []
+    d = datetime.date(2024, 1, 1)
+    while len(rows) < 65:
+        wd = d.weekday()
+        if wd < 5:
+            ret = 0.03 if wd == 0 else (-0.03 if wd == 2 else 0.01)
+            rows.append({"date": d.strftime("%Y-%m-%d"), "next_close_return": ret})
+        d += datetime.timedelta(days=1)
+    result = compute_weekday_performance_analysis(rows)
+    assert result["calendar_effect_strong"] is True
+    assert result["weekday_win_rate_spread"] is not None and result["weekday_win_rate_spread"] > 0.10
+
+
+def test_r29_weekday_insufficient_samples_per_day_excluded() -> None:
+    """Weekday with < 5 samples excluded; < 2 valid weekdays → mostly None."""
+    from scripts.btst_analysis_utils import compute_weekday_performance_analysis
+
+    rows = [
+        {"date": "2024-01-01", "next_close_return": 0.01},
+        {"date": "2024-01-08", "next_close_return": 0.01},
+        {"date": "2024-01-15", "next_close_return": 0.01},
+    ]
+    result = compute_weekday_performance_analysis(rows)
+    assert result["best_weekday"] is None
+    assert 0 not in result["weekday_win_rates"]
+
+
+def test_r29_weekday_best_weekday_identified() -> None:
+    """best_weekday = weekday with highest win rate."""
+    import datetime
+    from scripts.btst_analysis_utils import compute_weekday_performance_analysis
+
+    rows = []
+    d = datetime.date(2024, 1, 1)
+    while len(rows) < 55:
+        wd = d.weekday()
+        if wd < 5:
+            rows.append({"date": d.strftime("%Y-%m-%d"), "next_close_return": 0.04 if wd == 1 else -0.01})
+        d += datetime.timedelta(days=1)
+    result = compute_weekday_performance_analysis(rows)
+    if result["best_weekday"] is not None:
+        assert result["best_weekday"] == 1
+
+
+def test_r29_weekday_win_rates_keys_are_ints() -> None:
+    """weekday_win_rates dict keys must be integers 0–4."""
+    import datetime
+    from scripts.btst_analysis_utils import compute_weekday_performance_analysis
+
+    rows = []
+    d = datetime.date(2024, 1, 1)
+    while len(rows) < 40:
+        wd = d.weekday()
+        if wd < 5:
+            rows.append({"date": d.strftime("%Y-%m-%d"), "next_close_return": 0.01})
+        d += datetime.timedelta(days=1)
+    result = compute_weekday_performance_analysis(rows)
+    for k in result["weekday_win_rates"]:
+        assert isinstance(k, int) and 0 <= k <= 4
+
+
+# ---------------------------------------------------------------------------
+# Round 29: floor / cap / metric registration
+# ---------------------------------------------------------------------------
+
+
+def test_r29_effective_factor_rank_floor_registered() -> None:
+    """effective_factor_rank floor must be registered at 3."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "effective_factor_rank" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["effective_factor_rank"] == 3
+
+
+def test_r29_overfit_score_cap_registered() -> None:
+    """overfit_score cap must be registered at 0.30."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "overfit_score" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["overfit_score"] == 0.30
+
+
+def test_r29_new_metrics_in_optional_comparison_metrics() -> None:
+    """All R29 metrics must appear in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "pca_diversity_score" in OPTIONAL_COMPARISON_METRICS
+    assert "overfit_score" in OPTIONAL_COMPARISON_METRICS
+    assert "weekday_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r29_overfit_score_in_lower_is_better_metrics() -> None:
+    """overfit_score must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "overfit_score" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r29_new_metrics_have_labels() -> None:
+    """All R29 metrics must have human-readable labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "pca_diversity_score" in COMPARISON_METRIC_LABELS
+    assert "overfit_score" in COMPARISON_METRIC_LABELS
+    assert "weekday_win_rate_spread" in COMPARISON_METRIC_LABELS

@@ -94,7 +94,10 @@
       "high_correlation_pair_count_delta": null,
       "alpha_consistency_score_delta": null,
       "all_regimes_positive_alpha_delta": null,
-      "post_loss_t2_positive_rate_delta": null
+      "post_loss_t2_positive_rate_delta": null,
+      "pca_diversity_score_delta": null,
+      "overfit_score_delta": null,
+      "weekday_win_rate_spread_delta": null
     },
     "default": {
       "candidate": {
@@ -179,7 +182,10 @@
       "high_correlation_pair_count_delta": null,
       "alpha_consistency_score_delta": null,
       "all_regimes_positive_alpha_delta": null,
-      "post_loss_t2_positive_rate_delta": null
+      "post_loss_t2_positive_rate_delta": null,
+      "pca_diversity_score_delta": null,
+      "overfit_score_delta": null,
+      "weekday_win_rate_spread_delta": null
     }
   },
   "rollout_recommendation": "hold",

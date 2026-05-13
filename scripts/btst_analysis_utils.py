@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
+from datetime import datetime as _datetime
 from pathlib import Path
 from statistics import mean
 from typing import Any
+
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Task 1 (Round 10) — Factor IC validation
@@ -2636,6 +2639,219 @@ def compute_post_loss_recovery_analysis(rows: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 1 (Round 29, Alpha): PCA因子正交化分析
+# ---------------------------------------------------------------------------
+
+
+def compute_factor_pca_analysis(rows: list[dict]) -> dict:
+    """PCA因子正交化分析：对12个BTST因子做主成分分析，量化独立信号维度数量。
+
+    Uses numpy SVD (no sklearn). F11/F12 (momentum_confirmation_score, volume_momentum_score)
+    are included only when present in at least one row; otherwise gracefully skipped.
+    Requires at least 10 aligned rows (all active factors non-missing); returns None fields otherwise.
+
+    Args:
+        rows: BTST candidate rows. Factor values looked up via BTST_FACTOR_NAMES.
+
+    Returns:
+        Dict with keys:
+
+        - ``effective_factor_rank``: int | None — minimum PCs needed to explain ≥ 80 % variance.
+        - ``pca_diversity_score``: float | None — effective_factor_rank / k (0=all-same, 1=fully-orthogonal).
+        - ``pc1_dominant_factors``: list[str] — top-3 factors by |loading| on PC1 (main shared driver).
+        - ``redundancy_reduction_candidates``: list[str] — factors with |PC1 loading| > 0.40 (co-move with PC1).
+        - ``explained_variance_ratio``: list[float] | None — per-PC explained variance fraction.
+    """
+    _null: dict = {"effective_factor_rank": None, "pca_diversity_score": None, "pc1_dominant_factors": [], "redundancy_reduction_candidates": [], "explained_variance_ratio": None}
+    if len(rows) < 10:
+        return _null
+    # Identify factors present in at least one row (graceful skip for absent cross-factors F11/F12).
+    available: list[str] = [f for f in BTST_FACTOR_NAMES if any(row.get(f) is not None for row in rows)]
+    k = len(available)
+    if k < 2:
+        return _null
+    # Build aligned matrix: only rows where ALL k factors are non-missing.
+    aligned: list[list[float]] = []
+    for row in rows:
+        vals = [row.get(f) for f in available]
+        if any(v is None for v in vals):
+            continue
+        try:
+            aligned.append([float(v) for v in vals])  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+    n = len(aligned)
+    if n < 10:
+        return _null
+    # Standardise (mean=0, std=1); skip columns with near-zero variance.
+    X = np.array(aligned, dtype=float)  # (n, k)
+    col_means = X.mean(axis=0)
+    col_stds = X.std(axis=0)
+    active_cols: list[int] = [j for j in range(k) if col_stds[j] > 1e-8]
+    if len(active_cols) < 2:
+        return _null
+    X_s = (X[:, active_cols] - col_means[active_cols]) / col_stds[active_cols]
+    active_factors: list[str] = [available[j] for j in active_cols]
+    ka = len(active_cols)
+    # SVD-based PCA: X_s = U S Vt; rows of Vt are principal components (PC loadings).
+    U, S, Vt = np.linalg.svd(X_s, full_matrices=False)
+    ev = S ** 2
+    evr_arr = ev / ev.sum()
+    evr: list[float] = evr_arr.tolist()
+    # effective_factor_rank = number of PCs needed to reach 80 % cumulative explained variance.
+    cumvar = 0.0
+    effective_factor_rank: int = ka
+    for idx, ratio in enumerate(evr):
+        cumvar += ratio
+        if cumvar >= 0.80:
+            effective_factor_rank = idx + 1
+            break
+    pca_diversity_score = round(effective_factor_rank / ka, 4)
+    # PC1 loadings = first row of Vt (absolute values = factor contribution to PC1).
+    pc1_abs: list[tuple[str, float]] = [(active_factors[j], float(abs(Vt[0, j]))) for j in range(ka)]
+    pc1_sorted = sorted(pc1_abs, key=lambda t: t[1], reverse=True)
+    pc1_dominant_factors: list[str] = [name for name, _ in pc1_sorted[:3]]
+    redundancy_reduction_candidates: list[str] = [name for name, v in pc1_abs if v > 0.40]
+    return {
+        "effective_factor_rank": int(effective_factor_rank),
+        "pca_diversity_score": pca_diversity_score,
+        "pc1_dominant_factors": pc1_dominant_factors,
+        "redundancy_reduction_candidates": redundancy_reduction_candidates,
+        "explained_variance_ratio": [round(v, 4) for v in evr],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 29, Gamma): 样本内外差距检测
+# ---------------------------------------------------------------------------
+
+
+def compute_in_sample_oos_gap(rows: list[dict]) -> dict:
+    """检测样本内外（IS/OOS）性能差距，防止参数过拟合。
+
+    Chronological 70/30 split (sorted by ``date``): first 70 % rows = in-sample (IS),
+    last 30 % = out-of-sample (OOS).  Requires at least 5 rows in each set.
+
+    Args:
+        rows: BTST candidate rows. Fields used: ``date`` (YYYY-MM-DD), ``next_close_return``.
+
+    Returns:
+        Dict with keys:
+
+        - ``is_win_rate`` / ``oos_win_rate``: float | None — T+1 win rate in IS/OOS.
+        - ``win_rate_gap``: float | None — IS − OOS win rate.
+        - ``is_avg_return`` / ``oos_avg_return``: float | None — mean T+1 return in IS/OOS.
+        - ``return_gap``: float | None — IS − OOS avg return.
+        - ``overfit_score``: float | None — normalised IS/OOS gap (≈0 = no overfit).
+        - ``overfit_warning_flag``: bool — True when overfit_score > 0.20.
+    """
+    _null: dict = {"is_win_rate": None, "oos_win_rate": None, "win_rate_gap": None, "is_avg_return": None, "oos_avg_return": None, "return_gap": None, "overfit_score": None, "overfit_warning_flag": False}
+    valid: list[dict] = [row for row in rows if row.get("date") is not None and row.get("next_close_return") is not None]
+    if not valid:
+        return _null
+    try:
+        valid_sorted = sorted(valid, key=lambda r: str(r["date"]))
+    except Exception:
+        return _null
+    n = len(valid_sorted)
+    split = max(1, int(n * 0.70))
+    is_rows = valid_sorted[:split]
+    oos_rows = valid_sorted[split:]
+    if len(is_rows) < 5 or len(oos_rows) < 5:
+        return _null
+
+    def _stats(subset: list[dict]) -> tuple[float, float]:
+        rets = [float(r["next_close_return"]) for r in subset]
+        wr = sum(1 for v in rets if v > 0.0) / len(rets)
+        ar = sum(rets) / len(rets)
+        return wr, ar
+
+    is_wr, is_ar = _stats(is_rows)
+    oos_wr, oos_ar = _stats(oos_rows)
+    win_rate_gap = round(is_wr - oos_wr, 4)
+    return_gap = round(is_ar - oos_ar, 4)
+    # Normalised composite overfit score: each component is gap / IS-value (capped by small epsilon).
+    overfit_score = round(0.5 * win_rate_gap / max(is_wr, 0.01) + 0.5 * return_gap / max(is_ar, 0.001), 4)
+    return {
+        "is_win_rate": round(is_wr, 4),
+        "oos_win_rate": round(oos_wr, 4),
+        "win_rate_gap": win_rate_gap,
+        "is_avg_return": round(is_ar, 4),
+        "oos_avg_return": round(oos_ar, 4),
+        "return_gap": return_gap,
+        "overfit_score": overfit_score,
+        "overfit_warning_flag": overfit_score > 0.20,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 29, Beta): 星期效应分析
+# ---------------------------------------------------------------------------
+
+
+def compute_weekday_performance_analysis(rows: list[dict]) -> dict:
+    """按交易星期（周一到周五）分析BTST胜率和平均收益，识别A股日历效应。
+
+    Uses ``date`` (YYYY-MM-DD format) and ``next_close_return`` fields.
+    Weekday encoding: 0=Monday, 1=Tuesday, ..., 4=Friday.
+    A weekday is included only when it has ≥ 5 samples; weekdays with fewer observations
+    are excluded from spread / best / worst calculations.  When fewer than 2 weekdays
+    have valid samples, most aggregated fields return None.
+
+    Args:
+        rows: BTST candidate rows.
+
+    Returns:
+        Dict with keys:
+
+        - ``weekday_win_rates``: dict[int, float] — win rate per valid weekday.
+        - ``weekday_avg_returns``: dict[int, float] — mean return per valid weekday.
+        - ``best_weekday``: int | None — weekday with highest win rate (0–4).
+        - ``worst_weekday``: int | None — weekday with lowest win rate (0–4).
+        - ``weekday_best_win_rate``: float | None
+        - ``weekday_worst_win_rate``: float | None
+        - ``weekday_win_rate_spread``: float | None — max − min win rate across valid weekdays.
+        - ``recommended_avoid_weekday``: int | None — equals worst_weekday.
+        - ``calendar_effect_strong``: bool — True when spread > 0.10.
+    """
+    _null: dict = {"weekday_win_rates": {}, "weekday_avg_returns": {}, "best_weekday": None, "worst_weekday": None, "weekday_best_win_rate": None, "weekday_worst_win_rate": None, "weekday_win_rate_spread": None, "recommended_avoid_weekday": None, "calendar_effect_strong": False}
+    buckets: dict[int, list[float]] = {d: [] for d in range(5)}
+    for row in rows:
+        date_val = row.get("date")
+        ret_val = row.get("next_close_return")
+        if date_val is None or ret_val is None:
+            continue
+        try:
+            wd = _datetime.strptime(str(date_val), "%Y-%m-%d").weekday()
+            buckets[wd].append(float(ret_val))
+        except (ValueError, TypeError):
+            continue
+    weekday_win_rates: dict[int, float] = {}
+    weekday_avg_returns: dict[int, float] = {}
+    for wd, rets in buckets.items():
+        if len(rets) < 5:
+            continue
+        weekday_win_rates[wd] = round(sum(1 for r in rets if r > 0.0) / len(rets), 4)
+        weekday_avg_returns[wd] = round(sum(rets) / len(rets), 4)
+    if len(weekday_win_rates) < 2:
+        return {**_null, "weekday_win_rates": weekday_win_rates, "weekday_avg_returns": weekday_avg_returns}
+    best_wd = max(weekday_win_rates, key=lambda d: weekday_win_rates[d])
+    worst_wd = min(weekday_win_rates, key=lambda d: weekday_win_rates[d])
+    spread = round(weekday_win_rates[best_wd] - weekday_win_rates[worst_wd], 4)
+    return {
+        "weekday_win_rates": weekday_win_rates,
+        "weekday_avg_returns": weekday_avg_returns,
+        "best_weekday": best_wd,
+        "worst_weekday": worst_wd,
+        "weekday_best_win_rate": weekday_win_rates[best_wd],
+        "weekday_worst_win_rate": weekday_win_rates[worst_wd],
+        "weekday_win_rate_spread": spread,
+        "recommended_avoid_weekday": worst_wd,
+        "calendar_effect_strong": spread > 0.10,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -3326,6 +3542,40 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["post_loss_t2_avg_return"] = _post_loss_recovery.get("post_loss_t2_avg_return")
     _surface_result["mean_reversion_signal"] = _post_loss_recovery.get("mean_reversion_signal")
     _surface_result["hold_through_loss_beneficial"] = _post_loss_recovery.get("hold_through_loss_beneficial")
+    # -----------------------------------------------------------------------
+    # Round 29, Task 1 (Alpha): PCA因子正交化分析.
+    # Quantifies the true number of independent signal dimensions across all BTST factors.
+    # effective_factor_rank = min PCs to explain ≥ 80 % variance (floor ≥ 3).
+    # pca_diversity_score = effective_factor_rank / k — closer to 1 means more orthogonal factors.
+    # -----------------------------------------------------------------------
+    _factor_pca: dict[str, Any] = compute_factor_pca_analysis(rows)
+    _surface_result["factor_pca_analysis"] = _factor_pca
+    _surface_result["effective_factor_rank"] = _factor_pca.get("effective_factor_rank")
+    _surface_result["pca_diversity_score"] = _factor_pca.get("pca_diversity_score")
+    _surface_result["pc1_dominant_factors"] = _factor_pca.get("pc1_dominant_factors")
+    _surface_result["redundancy_reduction_candidates"] = _factor_pca.get("redundancy_reduction_candidates")
+    # -----------------------------------------------------------------------
+    # Round 29, Task 2 (Gamma): 样本内外差距检测 — IS/OOS overfit detection.
+    # Chronological 70/30 split; overfit_score > 0.30 triggers cap breach.
+    # -----------------------------------------------------------------------
+    _oos_gap: dict[str, Any] = compute_in_sample_oos_gap(rows)
+    _surface_result["in_sample_oos_gap"] = _oos_gap
+    _surface_result["overfit_score"] = _oos_gap.get("overfit_score")
+    _surface_result["win_rate_gap"] = _oos_gap.get("win_rate_gap")
+    _surface_result["overfit_warning_flag"] = _oos_gap.get("overfit_warning_flag")
+    _surface_result["is_win_rate"] = _oos_gap.get("is_win_rate")
+    _surface_result["oos_win_rate"] = _oos_gap.get("oos_win_rate")
+    # -----------------------------------------------------------------------
+    # Round 29, Task 3 (Beta): 星期效应分析 — weekday calendar-effect analysis.
+    # Identifies best/worst trading weekday by T+1 win rate; calendar_effect_strong when spread > 0.10.
+    # -----------------------------------------------------------------------
+    _weekday_perf: dict[str, Any] = compute_weekday_performance_analysis(rows)
+    _surface_result["weekday_performance"] = _weekday_perf
+    _surface_result["weekday_win_rate_spread"] = _weekday_perf.get("weekday_win_rate_spread")
+    _surface_result["best_weekday"] = _weekday_perf.get("best_weekday")
+    _surface_result["worst_weekday"] = _weekday_perf.get("worst_weekday")
+    _surface_result["calendar_effect_strong"] = _weekday_perf.get("calendar_effect_strong")
+    _surface_result["recommended_avoid_weekday"] = _weekday_perf.get("recommended_avoid_weekday")
     # -----------------------------------------------------------------------
     # Round 25, Task 1 (Gamma): Profile health score — aggregate all quality
     # indicators into a single 0-100 score so strategists can compare profiles
