@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_factor_ic_temporal_trend, compute_verdict_calibration, compute_optimal_hold_period, compute_score_position_tiers, compute_profile_health_score, compute_selection_churn_metrics, compute_parameter_stability_metrics
+from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_factor_ic_temporal_trend, compute_verdict_calibration, compute_optimal_hold_period, compute_score_position_tiers, compute_profile_health_score, compute_selection_churn_metrics, compute_parameter_stability_metrics, compute_score_stability_across_windows
 from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
@@ -221,6 +221,10 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "monthly_win_rate_spread",
     # Task 3 (Round 30, Beta): nonlinear factor count — number of factors with threshold/U-shape effects (lower = better).
     "nonlinear_factor_count",
+    # Task 1 (Round 31, Alpha): return time-series autocorrelation lag-1 — regime persistence signal.
+    "autocorr_lag1",
+    # Task 2 (Round 31, Gamma): composite score CV across windows — scoring system stability (lower = better).
+    "score_cv_across_windows",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -332,6 +336,10 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "monthly_win_rate_spread": "Monthly WR Spread",
     # Task 3 (Round 30, Beta): nonlinear factor count
     "nonlinear_factor_count": "Nonlinear Factor Count",
+    # Task 1 (Round 31, Alpha): return autocorrelation lag-1
+    "autocorr_lag1": "Return Autocorr Lag1",
+    # Task 2 (Round 31, Gamma): score CV across windows
+    "score_cv_across_windows": "Score CV Across Windows",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -367,6 +375,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "param_drift_score",
     # Task 3 (Round 30, Beta): nonlinear factor count — more nonlinear factors = more linear-scoring bias = lower-is-better.
     "nonlinear_factor_count",
+    # Task 2 (Round 31, Gamma): score CV across windows — higher CV = less stable scoring = lower-is-better.
+    "score_cv_across_windows",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -473,6 +483,10 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "monthly_win_rate_spread",
     # Task 3 (Round 30, Beta): nonlinear factor count — optional; pre-Round-30 outputs omit it.
     "nonlinear_factor_count",
+    # Task 1 (Round 31, Alpha): return autocorrelation — optional; pre-Round-31 outputs omit it.
+    "autocorr_lag1",
+    # Task 2 (Round 31, Gamma): score CV across windows — optional; pre-Round-31 outputs omit it.
+    "score_cv_across_windows",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -561,6 +575,10 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "score_discrimination_index": 0.005,
     # Task 3 (Round 27, Beta): max positions — exact integer comparison; 0 tolerance
     "recommended_max_positions": 0.0,
+    # Task 1 (Round 31, Alpha): return autocorrelation — 1 % tolerance
+    "autocorr_lag1": 0.01,
+    # Task 2 (Round 31, Gamma): score CV across windows — 0.5 % tolerance
+    "score_cv_across_windows": 0.005,
 }
 
 
@@ -1375,6 +1393,11 @@ def _build_replay_evaluator(
         avg_nonlinear_factor_count: float | None = round(sum(_nonlinear_count_vals) / len(_nonlinear_count_vals), 2) if _nonlinear_count_vals else None
         _nonlinear_ratio_vals = [float(s["avg_nonlinearity_ratio"]) for s in all_primary_surfaces if s.get("avg_nonlinearity_ratio") is not None]
         avg_nonlinearity_ratio: float | None = round(sum(_nonlinear_ratio_vals) / len(_nonlinear_ratio_vals), 4) if _nonlinear_ratio_vals else None
+        # Task 2 (Round 31, Gamma): composite score stability across windows.
+        _score_stability: dict[str, Any] = compute_score_stability_across_windows(all_primary_surfaces)
+        # Task 1 (Round 31, Alpha): average autocorr_lag1 across replay windows.
+        _autocorr_lag1_vals = [float(s["autocorr_lag1"]) for s in all_primary_surfaces if s.get("autocorr_lag1") is not None]
+        avg_autocorr_lag1: float | None = round(sum(_autocorr_lag1_vals) / len(_autocorr_lag1_vals), 4) if _autocorr_lag1_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1486,6 +1509,14 @@ def _build_replay_evaluator(
             # Task 3 (Round 30, Beta): nonlinear factor count — number of factors with U-shape/threshold effects.
             "nonlinear_factor_count": avg_nonlinear_factor_count,
             "avg_nonlinearity_ratio": avg_nonlinearity_ratio,
+            # Task 1 (Round 31, Alpha): return autocorrelation lag-1 — average across replay windows.
+            "autocorr_lag1": avg_autocorr_lag1,
+            # Task 2 (Round 31, Gamma): composite score stability across windows.
+            "score_stability_across_windows": _score_stability,
+            "score_cv_across_windows": _score_stability.get("score_cv_across_windows"),
+            "score_mean_across_windows": _score_stability.get("score_mean_across_windows"),
+            "score_trend_across_windows": _score_stability.get("score_trend_across_windows"),
+            "score_system_stable": _score_stability.get("score_system_stable"),
         }
 
     return evaluator
@@ -1828,6 +1859,8 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "runner_escape_composite_score_min": [0.0, 0.40, 0.45, 0.50],
     # Task 4 (Round 10): recency half-life grid.
     "recency_half_life_days": list(RECENCY_HALF_LIFE_CANDIDATES),
+    # Task 3 (Round 31, Beta): F13 relative sector strength rank weight.
+    "runner_composite_score_rs_sector_rank_weight": [0.0, 0.05, 0.10, 0.15, 0.20],
 }
 
 # ---------------------------------------------------------------------------
@@ -1903,6 +1936,8 @@ BTST_FACTOR_TO_PROBE_WEIGHT_KEY: dict[str, str] = {
     # Task 1 (Round 26, Alpha): cross-factor F11/F12 mappings.
     "momentum_confirmation_score": "runner_composite_score_momentum_confirmation_weight",
     "volume_momentum_score": "runner_composite_score_volume_momentum_weight",
+    # Task 3 (Round 31, Beta): F13 relative sector strength rank mapping.
+    "rs_sector_rank": "runner_composite_score_rs_sector_rank_weight",
 }
 
 # Standard step size for weight candidates in BTST_RUNNER_PROBE_GRID.

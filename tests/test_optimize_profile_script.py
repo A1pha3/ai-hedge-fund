@@ -5991,3 +5991,249 @@ def test_r30_new_metrics_have_labels() -> None:
     assert "monthly_win_rate_spread" in COMPARISON_METRIC_LABELS
     assert "nonlinear_factor_count" in COMPARISON_METRIC_LABELS
 
+
+# ===========================================================================
+# Round 31 Tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Alpha): compute_factor_return_autocorr — 7 tests
+# ---------------------------------------------------------------------------
+
+
+def test_r31_autocorr_positive_trend_sequence() -> None:
+    """Strong trending sequence → autocorr_lag1 > 0 and momentum_persistence=True."""
+    from scripts.btst_analysis_utils import compute_factor_return_autocorr
+
+    # Alternating positive/negative but trending upward: 0.01, 0.02, ..., 0.10 x 2
+    rows = [{"date": f"2024-01-{i+1:02d}", "next_close_return": 0.01 * (i + 1)} for i in range(15)]
+    result = compute_factor_return_autocorr(rows)
+    assert result["autocorr_lag1"] is not None
+    assert result["autocorr_lag1"] > 0
+    assert result["momentum_persistence"] is True
+
+
+def test_r31_autocorr_negative_mean_reversion() -> None:
+    """Alternating positive/negative sequence → autocorr_lag1 < 0 and mean_reversion_tendency=True."""
+    from scripts.btst_analysis_utils import compute_factor_return_autocorr
+
+    vals = [0.05 * (1 if i % 2 == 0 else -1) for i in range(20)]
+    rows = [{"date": f"2024-01-{i+1:02d}", "next_close_return": vals[i]} for i in range(20)]
+    result = compute_factor_return_autocorr(rows)
+    assert result["autocorr_lag1"] is not None
+    assert result["autocorr_lag1"] < 0
+    assert result["mean_reversion_tendency"] is True
+
+
+def test_r31_autocorr_insufficient_data_returns_none() -> None:
+    """Fewer than 10 valid rows → all values are None."""
+    from scripts.btst_analysis_utils import compute_factor_return_autocorr
+
+    rows = [{"date": f"2024-01-{i+1:02d}", "next_close_return": 0.01} for i in range(5)]
+    result = compute_factor_return_autocorr(rows)
+    assert result["autocorr_lag1"] is None
+    assert result["autocorr_lag2"] is None
+    assert result["longest_win_streak"] is None
+
+
+def test_r31_autocorr_lag2_computed() -> None:
+    """Lag-2 autocorrelation should be computed when n >= 12."""
+    from scripts.btst_analysis_utils import compute_factor_return_autocorr
+
+    rows = [{"date": f"2024-01-{i+1:02d}", "next_close_return": 0.01 * (i + 1)} for i in range(15)]
+    result = compute_factor_return_autocorr(rows)
+    assert result["autocorr_lag2"] is not None
+
+
+def test_r31_autocorr_win_loss_streaks_computed() -> None:
+    """Win/loss streaks are correctly identified."""
+    from scripts.btst_analysis_utils import compute_factor_return_autocorr
+
+    # 5 wins, 5 losses, 5 wins
+    vals = [0.01] * 5 + [-0.01] * 5 + [0.01] * 5
+    rows = [{"date": f"2024-01-{i+1:02d}", "next_close_return": vals[i]} for i in range(15)]
+    result = compute_factor_return_autocorr(rows)
+    assert result["longest_win_streak"] == 5
+    assert result["longest_loss_streak"] == 5
+    assert result["mean_win_streak"] is not None
+    assert result["mean_loss_streak"] is not None
+
+
+def test_r31_autocorr_significant_flag() -> None:
+    """autocorr_significant=True when abs(lag1) > 0.15."""
+    from scripts.btst_analysis_utils import compute_factor_return_autocorr
+
+    # Strong alternating = large negative autocorr
+    vals = [0.05 * (1 if i % 2 == 0 else -1) for i in range(20)]
+    rows = [{"date": f"2024-01-{i+1:02d}", "next_close_return": vals[i]} for i in range(20)]
+    result = compute_factor_return_autocorr(rows)
+    assert result["autocorr_significant"] is True
+
+
+def test_r31_autocorr_random_sequence_small_abs() -> None:
+    """Near-constant sequence has abs autocorr < 1 (sanity check)."""
+    from scripts.btst_analysis_utils import compute_factor_return_autocorr
+
+    # Same value every day → zero variance → None
+    rows = [{"date": f"2024-01-{i+1:02d}", "next_close_return": 0.02} for i in range(15)]
+    result = compute_factor_return_autocorr(rows)
+    # All same values → Pearson undefined → None
+    assert result["autocorr_lag1"] is None
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Gamma): compute_score_stability_across_windows — 7 tests
+# ---------------------------------------------------------------------------
+
+
+def test_r31_score_stability_stable_system() -> None:
+    """Constant scores → low CV → score_system_stable=True."""
+    from scripts.btst_analysis_utils import compute_score_stability_across_windows
+
+    windows = [{"candidate_pool_avg_composite_score": 0.60, "next_close_positive_rate": 0.55} for _ in range(5)]
+    result = compute_score_stability_across_windows(windows)
+    assert result["score_cv_across_windows"] is not None
+    assert result["score_cv_across_windows"] < 0.15
+    assert result["score_system_stable"] is True
+
+
+def test_r31_score_stability_unstable_system() -> None:
+    """Highly variable scores → high CV → score_system_stable=False."""
+    from scripts.btst_analysis_utils import compute_score_stability_across_windows
+
+    scores = [0.20, 0.80, 0.20, 0.80, 0.20, 0.80]
+    windows = [{"candidate_pool_avg_composite_score": s, "next_close_positive_rate": 0.55} for s in scores]
+    result = compute_score_stability_across_windows(windows)
+    assert result["score_cv_across_windows"] is not None
+    assert result["score_cv_across_windows"] >= 0.15
+    assert result["score_system_stable"] is False
+
+
+def test_r31_score_stability_insufficient_windows_returns_none() -> None:
+    """Fewer than 3 windows → all None."""
+    from scripts.btst_analysis_utils import compute_score_stability_across_windows
+
+    windows = [{"candidate_pool_avg_composite_score": 0.60} for _ in range(2)]
+    result = compute_score_stability_across_windows(windows)
+    assert result["score_cv_across_windows"] is None
+    assert result["score_system_stable"] is None
+
+
+def test_r31_score_stability_cv_calculation() -> None:
+    """CV = std / mean, validated manually."""
+    from scripts.btst_analysis_utils import compute_score_stability_across_windows
+
+    scores = [0.5, 0.6, 0.7]
+    windows = [{"candidate_pool_avg_composite_score": s} for s in scores]
+    result = compute_score_stability_across_windows(windows)
+    mean_s = sum(scores) / 3
+    std_s = (sum((s - mean_s) ** 2 for s in scores) / 3) ** 0.5
+    expected_cv = round(std_s / mean_s, 4)
+    assert abs(result["score_cv_across_windows"] - expected_cv) < 0.001
+
+
+def test_r31_score_stability_positive_trend() -> None:
+    """Rising scores → positive score_trend_across_windows."""
+    from scripts.btst_analysis_utils import compute_score_stability_across_windows
+
+    scores = [0.40, 0.50, 0.60, 0.70, 0.80]
+    windows = [{"candidate_pool_avg_composite_score": s} for s in scores]
+    result = compute_score_stability_across_windows(windows)
+    assert result["score_trend_across_windows"] is not None
+    assert result["score_trend_across_windows"] > 0
+
+
+def test_r31_score_stability_win_rate_corr_positive() -> None:
+    """When score and win_rate move together → positive Spearman correlation."""
+    from scripts.btst_analysis_utils import compute_score_stability_across_windows
+
+    data = [{"candidate_pool_avg_composite_score": 0.4 + i * 0.05, "next_close_positive_rate": 0.50 + i * 0.02} for i in range(6)]
+    result = compute_score_stability_across_windows(data)
+    assert result["win_rate_score_corr"] is not None
+    assert result["win_rate_score_corr"] > 0
+
+
+def test_r31_score_cv_cap_registered() -> None:
+    """score_cv_across_windows cap must be 0.30 in BTST_QUALITY_CAPS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "score_cv_across_windows" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["score_cv_across_windows"] == 0.30
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Beta): F13 rs_sector_rank — 6 tests
+# ---------------------------------------------------------------------------
+
+
+def test_r31_f13_in_btst_factor_names() -> None:
+    """BTST_FACTOR_NAMES must contain 'rs_sector_rank'."""
+    from scripts.btst_analysis_utils import BTST_FACTOR_NAMES
+    assert "rs_sector_rank" in BTST_FACTOR_NAMES
+
+
+def test_r31_f13_profile_has_weight_field() -> None:
+    """ShortTradeTargetProfile must have runner_composite_score_rs_sector_rank_weight defaulting to 0.0."""
+    from src.targets.profiles import ShortTradeTargetProfile
+    profile = ShortTradeTargetProfile(name="test_r31")
+    assert hasattr(profile, "runner_composite_score_rs_sector_rank_weight")
+    assert profile.runner_composite_score_rs_sector_rank_weight == 0.0
+
+
+def test_r31_f13_probe_grid_has_rs_sector_rank_axis() -> None:
+    """BTST_RUNNER_PROBE_GRID must include runner_composite_score_rs_sector_rank_weight axis."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+    assert "runner_composite_score_rs_sector_rank_weight" in BTST_RUNNER_PROBE_GRID
+    assert 0.0 in BTST_RUNNER_PROBE_GRID["runner_composite_score_rs_sector_rank_weight"]
+
+
+def test_r31_f13_full_grid_axis_count_24() -> None:
+    """FULL_GRID_AXIS_COUNT must equal 24 after adding F13 axis."""
+    from scripts.optimize_profile import FULL_GRID_AXIS_COUNT
+    assert FULL_GRID_AXIS_COUNT == 24
+
+
+def test_r31_f13_factor_to_probe_weight_key_mapping() -> None:
+    """BTST_FACTOR_TO_PROBE_WEIGHT_KEY must map rs_sector_rank to the correct grid key."""
+    from scripts.optimize_profile import BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    assert "rs_sector_rank" in BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    assert BTST_FACTOR_TO_PROBE_WEIGHT_KEY["rs_sector_rank"] == "runner_composite_score_rs_sector_rank_weight"
+
+
+def test_r31_f13_weight_positive_changes_score() -> None:
+    """compute_runner_composite_score changes output when rs_sector_rank weight is non-zero."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    class _ProfileZero:
+        runner_composite_score_breakout_weight = 0.40
+        runner_composite_score_trend_weight = 0.30
+        runner_composite_score_volume_weight = 0.20
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.0
+        runner_composite_score_volume_price_divergence_weight = 0.0
+        runner_composite_score_t0_tail_weight = 0.0
+        runner_composite_score_momentum_alignment_weight = 0.0
+        runner_composite_score_momentum_confirmation_weight = 0.0
+        runner_composite_score_volume_momentum_weight = 0.0
+        runner_composite_score_rs_sector_rank_weight = 0.0
+
+    class _ProfileWithRS(_ProfileZero):
+        runner_composite_score_rs_sector_rank_weight = 0.20
+
+    snapshot = {
+        "breakout_freshness": 0.8,
+        "trend_acceleration": 0.6,
+        "volume_expansion_quality": 0.7,
+        "catalyst_freshness": 0.5,
+        "close_strength": 0.9,
+        "sector_resonance": 0.3,
+    }
+    score_zero = compute_runner_composite_score(snapshot, _ProfileZero())
+    score_with_rs = compute_runner_composite_score(snapshot, _ProfileWithRS())
+    # F13 = (0.3 + 0.9) / 2 = 0.60, which differs from some other factor contributions
+    # so the scores should differ when weight > 0
+    assert score_zero != score_with_rs

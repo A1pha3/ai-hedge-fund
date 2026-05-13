@@ -584,7 +584,8 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     runner_composite_score_quiet_breakout_weight, runner_composite_score_net_inflow_weight,
     runner_composite_score_volume_price_divergence_weight, runner_composite_score_t0_tail_weight,
     runner_composite_score_momentum_alignment_weight,
-    runner_composite_score_momentum_confirmation_weight, runner_composite_score_volume_momentum_weight).
+    runner_composite_score_momentum_confirmation_weight, runner_composite_score_volume_momentum_weight,
+    runner_composite_score_rs_sector_rank_weight).
     Falls back to defaults when profile is absent:
       breakout_freshness=0.40, trend_acceleration=0.30,
       volume_expansion_quality=0.20, catalyst_freshness=0.10, close_strength=0.10,
@@ -651,6 +652,8 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     # Task 1 (Round 26, Alpha): cross-factor F11/F12 weights.
     w_mc = float(getattr(profile, "runner_composite_score_momentum_confirmation_weight", 0.0) or 0.0)
     w_vm = float(getattr(profile, "runner_composite_score_volume_momentum_weight", 0.0) or 0.0)
+    # Task 3 (Round 31, Beta): F13 — relative sector strength rank weight.
+    w_rs = float(getattr(profile, "runner_composite_score_rs_sector_rank_weight", 0.0) or 0.0)
     # net_inflow_ratio is in [-1, +1]; map to [0, 1]: buying pressure score = (val + 1) / 2.
     # Absent / None → neutral 0.5 (no information, doesn't penalise).
     raw_ni = snapshot.get("t0_estimated_net_inflow_ratio")
@@ -682,9 +685,20 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     raw_ts2 = snapshot.get("t0_tail_strength")
     volume_momentum_score: float = (float(raw_veq) if raw_veq is not None else 0.5) * (float(raw_ts2) if raw_ts2 is not None else 0.5)
     volume_momentum_score = round(max(0.0, min(1.0, volume_momentum_score)), 4)
-    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr + w_qb + w_ni + w_vp + w_ts + w_ma + w_mc + w_vm
+    # Task 3 (Round 31, Beta): F13 — rs_sector_rank = (sector_resonance + close_strength) / 2.
+    # Measures individual stock's relative strength within its sector.  Neutral 0.5 when data absent.
+    raw_sr_f13 = snapshot.get("sector_resonance")
+    raw_cs_f13 = snapshot.get("close_strength")
+    if raw_sr_f13 is not None and raw_cs_f13 is not None:
+        rs_sector_rank_score: float = (float(raw_sr_f13) + float(raw_cs_f13)) / 2.0
+    elif snapshot.get("rs_sector_rank") is not None:
+        rs_sector_rank_score = float(snapshot["rs_sector_rank"])
+    else:
+        rs_sector_rank_score = 0.5
+    rs_sector_rank_score = round(max(0.0, min(1.0, rs_sector_rank_score)), 4)
+    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr + w_qb + w_ni + w_vp + w_ts + w_ma + w_mc + w_vm + w_rs
     if total_weight <= 0.0:
         return 0.0
-    raw = (w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score + w_ni * net_inflow_score + w_vp * vp_quality_score + w_ts * t0_tail_score + w_ma * momentum_alignment_score + w_mc * momentum_confirmation_score + w_vm * volume_momentum_score)
+    raw = (w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score + w_ni * net_inflow_score + w_vp * vp_quality_score + w_ts * t0_tail_score + w_ma * momentum_alignment_score + w_mc * momentum_confirmation_score + w_vm * volume_momentum_score + w_rs * rs_sector_rank_score)
     return round(raw / total_weight, 4)
 

@@ -163,6 +163,11 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # A score above 0.50 means parameter metrics are highly unstable across walk-forward windows,
     # indicating serious over-fitting or regime sensitivity in the parameter set.
     "param_drift_score": 0.50,
+    # Task 2 (Round 31, Gamma): score CV across windows cap.
+    # score_cv_across_windows = std / mean of candidate_pool_avg_composite_score across replay windows.
+    # A CV above 0.30 means the scoring system produces wildly inconsistent evaluations window-to-window,
+    # indicating that factor weights are regime-sensitive and the composite score lacks generality.
+    "score_cv_across_windows": 0.30,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

@@ -39,6 +39,10 @@ BTST_FACTOR_NAMES: tuple[str, ...] = (
     # volume_expansion_quality × t0_tail_strength: expanding volume AND late-session bid persistence.
     # Signals sustained institutional accumulation rather than ephemeral intraday spike.
     "volume_momentum_score",
+    # Task 3 (Round 31, Beta): F13 — relative sector strength rank.
+    # (sector_resonance + close_strength) / 2: individual stock's outperformance within its sector.
+    # High value = sector rotation leader (强于板块的个股), most likely to lead sector moves.
+    "rs_sector_rank",
 )
 
 
@@ -138,6 +142,13 @@ def compute_all_factor_ics(rows: list[dict[str, Any]], return_col: str = "next_c
     for row in rows:
         row["momentum_confirmation_score"] = row.get("breakout_freshness", 0.5) * row.get("close_strength", 0.5)
         row["volume_momentum_score"] = row.get("volume_expansion_quality", 0.5) * row.get("t0_tail_strength", 0.5)
+        # Task 3 (Round 31, Beta): inject F13 rs_sector_rank = (sector_resonance + close_strength) / 2.
+        sr = row.get("sector_resonance")
+        cs = row.get("close_strength")
+        if sr is not None and cs is not None:
+            row["rs_sector_rank"] = (float(sr) + float(cs)) / 2.0
+        else:
+            row.setdefault("rs_sector_rank", None)
     return {factor: compute_factor_ic(rows, factor, return_col) for factor in BTST_FACTOR_NAMES}
 
 
@@ -3754,10 +3765,25 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["most_nonlinear_factor"] = _factor_nonlin.get("most_nonlinear_factor")
     _surface_result["nonlinear_factor_names"] = _factor_nonlin.get("nonlinear_factor_names")
     # -----------------------------------------------------------------------
-    # Round 25, Task 1 (Gamma): Profile health score — aggregate all quality
-    # indicators into a single 0-100 score so strategists can compare profiles
-    # at a glance without scanning dozens of individual metrics.
+    # Round 31, Task 1 (Alpha): Factor return time-series autocorrelation.
+    # Detects regime persistence (momentum) or mean-reversion in the return series.
     # -----------------------------------------------------------------------
+    # Inject rs_sector_rank before computing autocorr (F13 needed in rows).
+    for _row in rows:
+        _sr = _row.get("sector_resonance")
+        _cs = _row.get("close_strength")
+        if _sr is not None and _cs is not None:
+            _row["rs_sector_rank"] = (float(_sr) + float(_cs)) / 2.0
+    _return_autocorr: dict[str, Any] = compute_factor_return_autocorr(next_day_rows)
+    _surface_result["return_autocorr"] = _return_autocorr
+    _surface_result["autocorr_lag1"] = _return_autocorr.get("autocorr_lag1")
+    _surface_result["autocorr_lag2"] = _return_autocorr.get("autocorr_lag2")
+    _surface_result["longest_win_streak"] = _return_autocorr.get("longest_win_streak")
+    _surface_result["longest_loss_streak"] = _return_autocorr.get("longest_loss_streak")
+    _surface_result["autocorr_significant"] = _return_autocorr.get("autocorr_significant")
+    _surface_result["momentum_persistence"] = _return_autocorr.get("momentum_persistence")
+    _surface_result["mean_reversion_tendency"] = _return_autocorr.get("mean_reversion_tendency")
+
     _health: dict[str, Any] = compute_profile_health_score(_surface_result)
     _surface_result["profile_health_score"] = _health["profile_health_score"]
     _surface_result["profile_health_grade"] = _health["profile_health_grade"]
@@ -4435,6 +4461,216 @@ def compute_parameter_stability_metrics(
         "unstable_param_count": unstable_count,
         "parameter_stability_grade": grade,
         "param_drift_by_key": drift_by_key,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 31, Alpha): Factor return time-series autocorrelation analysis
+# ---------------------------------------------------------------------------
+# Detects regime persistence (momentum continuation) or mean-reversion tendencies
+# in the BTST return series by computing Pearson lag-1 and lag-2 autocorrelations
+# and win/loss streak statistics.
+
+
+def compute_factor_return_autocorr(rows: list[dict]) -> dict:
+    """Compute Pearson lag-1/lag-2 autocorrelation and run-length statistics on next_close_return.
+
+    Args:
+        rows: BTST candidate rows containing ``date`` and ``next_close_return`` fields.
+              Rows missing either field are skipped.
+
+    Returns:
+        Dict with keys:
+
+        - ``autocorr_lag1``: float | None — Pearson correlation between r[t] and r[t+1].
+        - ``autocorr_lag2``: float | None — Pearson correlation between r[t] and r[t+2].
+        - ``longest_win_streak``: int | None — max consecutive days with positive return.
+        - ``longest_loss_streak``: int | None — max consecutive days with negative return.
+        - ``mean_win_streak``: float | None — average length of win runs.
+        - ``mean_loss_streak``: float | None — average length of loss runs.
+        - ``autocorr_significant``: bool | None — abs(autocorr_lag1) > 0.15.
+        - ``momentum_persistence``: bool | None — autocorr_lag1 > 0.10 (trend continuation).
+        - ``mean_reversion_tendency``: bool | None — autocorr_lag1 < -0.10 (reversal tendency).
+
+        Returns all-None dict when fewer than 10 valid rows are available.
+    """
+    _null: dict = {
+        "autocorr_lag1": None,
+        "autocorr_lag2": None,
+        "longest_win_streak": None,
+        "longest_loss_streak": None,
+        "mean_win_streak": None,
+        "mean_loss_streak": None,
+        "autocorr_significant": None,
+        "momentum_persistence": None,
+        "mean_reversion_tendency": None,
+    }
+    # Extract (date, return) pairs; sort by date then drop date for numeric series.
+    pairs: list[tuple[str, float]] = []
+    for row in rows:
+        d = row.get("date")
+        r = row.get("next_close_return")
+        if d is None or r is None:
+            continue
+        try:
+            pairs.append((str(d), float(r)))
+        except (TypeError, ValueError):
+            continue
+    pairs.sort(key=lambda x: x[0])
+    ret: list[float] = [p[1] for p in pairs]
+    n = len(ret)
+    if n < 10:
+        return _null
+
+    def _pearson(xs: list[float], ys: list[float]) -> float | None:
+        """Pearson correlation between xs and ys (must be same length, >= 5)."""
+        m = len(xs)
+        if m < 5 or m != len(ys):
+            return None
+        mx = sum(xs) / m
+        my = sum(ys) / m
+        num = sum((xs[i] - mx) * (ys[i] - my) for i in range(m))
+        dx = sum((v - mx) ** 2 for v in xs) ** 0.5
+        dy = sum((v - my) ** 2 for v in ys) ** 0.5
+        if dx == 0.0 or dy == 0.0:
+            return None
+        return round(num / (dx * dy), 4)
+
+    lag1 = _pearson(ret[:-1], ret[1:])
+    lag2 = _pearson(ret[:-2], ret[2:]) if n >= 12 else None
+
+    # Compute win/loss runs
+    win_streaks: list[int] = []
+    loss_streaks: list[int] = []
+    cur_w = 0
+    cur_l = 0
+    for r in ret:
+        if r > 0:
+            cur_w += 1
+            if cur_l > 0:
+                loss_streaks.append(cur_l)
+                cur_l = 0
+        elif r < 0:
+            cur_l += 1
+            if cur_w > 0:
+                win_streaks.append(cur_w)
+                cur_w = 0
+        else:
+            if cur_w > 0:
+                win_streaks.append(cur_w)
+                cur_w = 0
+            if cur_l > 0:
+                loss_streaks.append(cur_l)
+                cur_l = 0
+    if cur_w > 0:
+        win_streaks.append(cur_w)
+    if cur_l > 0:
+        loss_streaks.append(cur_l)
+
+    longest_win = max(win_streaks) if win_streaks else 0
+    longest_loss = max(loss_streaks) if loss_streaks else 0
+    mean_win = round(sum(win_streaks) / len(win_streaks), 4) if win_streaks else None
+    mean_loss = round(sum(loss_streaks) / len(loss_streaks), 4) if loss_streaks else None
+
+    autocorr_significant: bool | None = (abs(lag1) > 0.15) if lag1 is not None else None
+    momentum_persistence: bool | None = (lag1 > 0.10) if lag1 is not None else None
+    mean_reversion_tendency: bool | None = (lag1 < -0.10) if lag1 is not None else None
+
+    return {
+        "autocorr_lag1": lag1,
+        "autocorr_lag2": lag2,
+        "longest_win_streak": longest_win,
+        "longest_loss_streak": longest_loss,
+        "mean_win_streak": mean_win,
+        "mean_loss_streak": mean_loss,
+        "autocorr_significant": autocorr_significant,
+        "momentum_persistence": momentum_persistence,
+        "mean_reversion_tendency": mean_reversion_tendency,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 31, Gamma): Score stability across walk-forward windows
+# ---------------------------------------------------------------------------
+# Tracks composite_score mean, std, and trend across replay windows to detect
+# whether the scoring system produces consistent evaluations (low CV = stable).
+
+
+def compute_score_stability_across_windows(window_summaries: list[dict]) -> dict:
+    """Measure stability of candidate_pool_avg_composite_score across replay windows.
+
+    Args:
+        window_summaries: Ordered list of per-window surface summary dicts, each containing
+                          ``candidate_pool_avg_composite_score`` and optionally
+                          ``next_close_positive_rate``.
+
+    Returns:
+        Dict with keys:
+
+        - ``score_mean_across_windows``: float | None — mean composite score across windows.
+        - ``score_std_across_windows``: float | None — standard deviation across windows.
+        - ``score_cv_across_windows``: float | None — coefficient of variation (std / mean).
+        - ``score_trend_across_windows``: float | None — OLS slope of score vs window index.
+        - ``win_rate_score_corr``: float | None — Spearman(avg_score, win_rate) across windows.
+        - ``score_system_stable``: bool | None — True when score_cv < 0.15.
+
+        Returns all-None dict when fewer than 3 windows have score data.
+    """
+    _null: dict = {
+        "score_mean_across_windows": None,
+        "score_std_across_windows": None,
+        "score_cv_across_windows": None,
+        "score_trend_across_windows": None,
+        "win_rate_score_corr": None,
+        "score_system_stable": None,
+    }
+    scores: list[float] = []
+    win_rates: list[float] = []
+    for s in window_summaries:
+        sc = s.get("candidate_pool_avg_composite_score")
+        wr = s.get("next_close_positive_rate")
+        if sc is None:
+            continue
+        try:
+            scores.append(float(sc))
+            win_rates.append(float(wr) if wr is not None else float("nan"))
+        except (TypeError, ValueError):
+            continue
+    if len(scores) < 3:
+        return _null
+
+    n = len(scores)
+    score_mean = round(sum(scores) / n, 4)
+    score_std = round((sum((v - score_mean) ** 2 for v in scores) / n) ** 0.5, 4)
+    score_cv = round(score_std / score_mean, 4) if score_mean != 0.0 else None
+
+    # OLS linear slope: x = window index (0-based)
+    xs = list(range(n))
+    ys = scores
+    x_mean = sum(xs) / n
+    y_mean = sum(ys) / n
+    sx2 = sum((x - x_mean) ** 2 for x in xs)
+    sxy = sum((xs[i] - x_mean) * (ys[i] - y_mean) for i in range(n))
+    score_trend = round(sxy / sx2, 6) if sx2 != 0.0 else 0.0
+
+    # Spearman correlation between scores and win rates
+    valid_pairs = [(scores[i], win_rates[i]) for i in range(n) if not (win_rates[i] != win_rates[i])]  # filter nan
+    if len(valid_pairs) >= 3:
+        sc_list = [p[0] for p in valid_pairs]
+        wr_list = [p[1] for p in valid_pairs]
+        win_rate_score_corr = _spearman_corr(sc_list, wr_list)
+    else:
+        win_rate_score_corr = None
+
+    score_system_stable: bool | None = (score_cv < 0.15) if score_cv is not None else None
+
+    return {
+        "score_mean_across_windows": score_mean,
+        "score_std_across_windows": score_std,
+        "score_cv_across_windows": score_cv,
+        "score_trend_across_windows": score_trend,
+        "win_rate_score_corr": win_rate_score_corr,
+        "score_system_stable": score_system_stable,
     }
 
 

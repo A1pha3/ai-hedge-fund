@@ -185,19 +185,22 @@ def test_build_surface_summary_includes_runner_metrics() -> None:
 
 
 def test_btst_factor_names_contains_seven_factors() -> None:
-    """BTST_FACTOR_NAMES must contain the seven original scoring factors plus the Round-16, Round-17, and Round-26 additions."""
+    """BTST_FACTOR_NAMES must contain the seven original scoring factors plus the Round-16, Round-17, Round-26, and Round-31 additions."""
     # Round 16 adds t0_estimated_net_inflow_ratio and volume_price_divergence_score (→ 9).
     # Round 17 adds t0_tail_strength (→ 10 total).
     # Round 26 adds momentum_confirmation_score and volume_momentum_score (→ 12 total).
-    assert len(BTST_FACTOR_NAMES) == 12
+    # Round 31 adds rs_sector_rank (→ 13 total).
+    assert len(BTST_FACTOR_NAMES) == 13
     expected_original = {"breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength", "volatility_regime", "sector_resonance"}
     expected_r16 = {"t0_estimated_net_inflow_ratio", "volume_price_divergence_score"}
     expected_r17 = {"t0_tail_strength"}
     expected_r26 = {"momentum_confirmation_score", "volume_momentum_score"}
+    expected_r31 = {"rs_sector_rank"}
     assert expected_original.issubset(set(BTST_FACTOR_NAMES))
     assert expected_r16.issubset(set(BTST_FACTOR_NAMES))
     assert expected_r17.issubset(set(BTST_FACTOR_NAMES))
     assert expected_r26.issubset(set(BTST_FACTOR_NAMES))
+    assert expected_r31.issubset(set(BTST_FACTOR_NAMES))
 
 
 def test_compute_factor_ic_perfect_positive_correlation() -> None:

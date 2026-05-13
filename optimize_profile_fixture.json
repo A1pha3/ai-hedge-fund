@@ -100,7 +100,9 @@
       "weekday_win_rate_spread_delta": null,
       "param_drift_score_delta": null,
       "monthly_win_rate_spread_delta": null,
-      "nonlinear_factor_count_delta": null
+      "nonlinear_factor_count_delta": null,
+      "autocorr_lag1_delta": null,
+      "score_cv_across_windows_delta": null
     },
     "default": {
       "candidate": {
@@ -191,7 +193,9 @@
       "weekday_win_rate_spread_delta": null,
       "param_drift_score_delta": null,
       "monthly_win_rate_spread_delta": null,
-      "nonlinear_factor_count_delta": null
+      "nonlinear_factor_count_delta": null,
+      "autocorr_lag1_delta": null,
+      "score_cv_across_windows_delta": null
     }
   },
   "rollout_recommendation": "hold",

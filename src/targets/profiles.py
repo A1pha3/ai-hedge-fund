@@ -325,6 +325,10 @@ class ShortTradeTargetProfile:
     # volume_momentum_score = volume_expansion_quality × t0_tail_strength.
     # Default 0.0 (disabled); non-zero activates the volume-price continuation signal.
     runner_composite_score_volume_momentum_weight: float = 0.0
+    # Task 3 (Round 31, Beta): F13 — relative sector strength rank weight.
+    # rs_sector_rank = (sector_resonance + close_strength) / 2 — individual stock's outperformance
+    # within its sector.  Default 0.0 (disabled) ensures no behavioral change for existing profiles.
+    runner_composite_score_rs_sector_rank_weight: float = 0.0
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:
