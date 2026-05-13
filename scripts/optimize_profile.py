@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
+from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
 from src.backtesting.param_search import (
@@ -1048,6 +1049,46 @@ def _recommend_rollout_action(comparison_summary: dict[str, dict[str, Any]]) -> 
     return str(_build_rollout_recommendation_payload(comparison_summary).get("action") or "hold")
 
 
+def _build_optimized_profile_manifest_publication(
+    *,
+    objective: SearchObjective,
+    replay_mode: bool,
+    replay_input_paths: list[Path] | None,
+    best_params: dict[str, Any] | None,
+    rollout_recommendation: str | None,
+    profile_name: str,
+    source_path: str | Path,
+    manifest_path: str | Path,
+) -> dict[str, Any]:
+    resolved_manifest_path = Path(manifest_path).expanduser().resolve()
+    if objective != SearchObjective.BTST:
+        return {
+            "status": "skipped",
+            "reason": "non_btst_objective",
+            "manifest_path": str(resolved_manifest_path),
+        }
+    if not replay_mode or not replay_input_paths:
+        return {
+            "status": "skipped",
+            "reason": "non_replay_run",
+            "manifest_path": str(resolved_manifest_path),
+        }
+    if best_params is None:
+        return {
+            "status": "skipped",
+            "reason": "missing_best_params",
+            "manifest_path": str(resolved_manifest_path),
+        }
+    return publish_btst_optimized_profile_manifest(
+        manifest_path=resolved_manifest_path,
+        rollout_recommendation=rollout_recommendation or "hold",
+        profile_name=profile_name,
+        profile_overrides=best_params,
+        source_path=source_path,
+        replay_input_paths=replay_input_paths,
+    )
+
+
 def _persist_search_metadata(
     *,
     md_path: Path,
@@ -1056,6 +1097,7 @@ def _persist_search_metadata(
     comparison_summary: dict[str, dict[str, Any]] | None = None,
     rollout_recommendation: str | None = None,
     rollout_recommendation_details: dict[str, Any] | None = None,
+    optimized_profile_manifest_publication: dict[str, Any] | None = None,
 ) -> None:
     md_text = md_path.read_text(encoding="utf-8") if md_path.exists() else "# Parameter Search Report\n"
     metadata_lines = [
@@ -1102,6 +1144,15 @@ def _persist_search_metadata(
             rollout_lines.append("Rollout Blockers:")
             rollout_lines.extend(f"- `{blocker}`" for blocker in blockers)
         md_sections.append("\n".join(rollout_lines))
+    if optimized_profile_manifest_publication:
+        publication_lines = [f"Optimized Profile Manifest Publication: **{optimized_profile_manifest_publication['status']}**"]
+        manifest_path = optimized_profile_manifest_publication.get("manifest_path")
+        if manifest_path:
+            publication_lines.append(f"- manifest_path: `{manifest_path}`")
+        reason = optimized_profile_manifest_publication.get("reason")
+        if reason:
+            publication_lines.append(f"- reason: `{reason}`")
+        md_sections.append("\n".join(publication_lines))
     md_text = "\n\n".join(section for section in md_sections if section) + "\n"
     md_path.write_text(md_text, encoding="utf-8")
 
@@ -1113,6 +1164,8 @@ def _persist_search_metadata(
         payload["rollout_recommendation"] = rollout_recommendation
     if rollout_recommendation_details is not None:
         payload["rollout_recommendation_details"] = rollout_recommendation_details
+    if optimized_profile_manifest_publication is not None:
+        payload["optimized_profile_manifest_publication"] = optimized_profile_manifest_publication
     json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
 
 
@@ -1145,12 +1198,12 @@ def _stage_checkpoint_path(checkpoint_path: str, stage_name: str) -> str:
     return f"{checkpoint_path}_{stage_name}"
 
 
-def _report_best_params(report: Any) -> dict[str, Any]:
+def _report_best_params(report: Any) -> dict[str, Any] | None:
     if isinstance(report, dict):
         params = report.get("best_params")
-        return dict(params) if isinstance(params, dict) else {}
+        return dict(params) if isinstance(params, dict) else None
     params = getattr(report, "best_params", None)
-    return dict(params) if isinstance(params, dict) else {}
+    return dict(params) if isinstance(params, dict) else None
 
 
 def _report_best_score(report: Any) -> float | None:
@@ -1417,7 +1470,7 @@ def main(argv: list[str] | None = None) -> int:
     rollout_recommendation = None
     rollout_recommendation_details = None
     best_params = _report_best_params(report)
-    if replay_mode and replay_input_paths and best_params:
+    if replay_mode and replay_input_paths and best_params is not None:
         comparison_summary = _build_replay_comparison_summary(
             replay_input_paths=replay_input_paths,
             base_profile=args.profile,
@@ -1426,6 +1479,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         rollout_recommendation_details = _build_rollout_recommendation_payload(comparison_summary)
         rollout_recommendation = str(rollout_recommendation_details.get("action") or "hold")
+    optimized_profile_manifest_publication = _build_optimized_profile_manifest_publication(
+        objective=objective,
+        replay_mode=replay_mode,
+        replay_input_paths=replay_input_paths,
+        best_params=best_params,
+        rollout_recommendation=rollout_recommendation,
+        profile_name=args.profile,
+        source_path=json_path,
+        manifest_path=REPORTS_DIR / "btst_latest_optimized_profile.json",
+    )
     _persist_search_metadata(
         md_path=md_path,
         json_path=json_path,
@@ -1433,6 +1496,7 @@ def main(argv: list[str] | None = None) -> int:
         comparison_summary=comparison_summary,
         rollout_recommendation=rollout_recommendation,
         rollout_recommendation_details=rollout_recommendation_details,
+        optimized_profile_manifest_publication=optimized_profile_manifest_publication,
     )
     print(format_search_report(report))
     if args.staged_mode == "ignition_stage1":

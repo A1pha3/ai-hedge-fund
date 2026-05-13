@@ -9,6 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 import scripts.optimize_profile as optimize_profile
+from scripts.btst_optimized_profile_manifest_helpers import (
+    build_ready_btst_optimized_profile_manifest,
+    derive_latest_replay_trade_date,
+    publish_btst_optimized_profile_manifest,
+)
 from scripts.optimize_profile import (
     _build_default_checkpoint_path,
     _build_replay_evaluator,
@@ -2093,6 +2098,524 @@ def test_main_writes_rollout_recommendation_to_output_files(monkeypatch: pytest.
     assert "Rollout Recommendation: **promote**" in output_md.read_text(encoding="utf-8")
 
 
+def test_main_publishes_ready_btst_manifest_when_rollout_recommendation_is_promote(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+    manifest_path = tmp_path / "reports" / "btst_latest_optimized_profile.json"
+    replay_input = tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json"
+
+    def fake_build_replay_evaluator(input_paths: list[Path], *, base_profile: str, next_high_hit_threshold: float = 0.02):
+        del input_paths, next_high_hit_threshold
+
+        def evaluator(params: dict[str, object]) -> dict[str, float]:
+            if base_profile == "default":
+                return {
+                    "next_close_positive_rate": 0.55,
+                    "next_high_hit_rate": 0.56,
+                    "next_close_expectancy": 0.010,
+                    "downside_p10": -0.050,
+                    "window_coverage": 0.80,
+                    "liquidity_capacity_raw_100": 58.0,
+                    "crowding_risk_raw_100": 44.0,
+                    "gap_risk_raw_100": 38.0,
+                    "projected_theme_exposure": 0.22,
+                    "incremental_theme_exposure": 0.11,
+                }
+            if params:
+                return {
+                    "next_close_positive_rate": 0.60,
+                    "next_high_hit_rate": 0.61,
+                    "next_close_expectancy": 0.018,
+                    "downside_p10": -0.040,
+                    "window_coverage": 0.85,
+                    "liquidity_capacity_raw_100": 66.0,
+                    "crowding_risk_raw_100": 36.0,
+                    "gap_risk_raw_100": 30.0,
+                    "projected_theme_exposure": 0.18,
+                    "incremental_theme_exposure": 0.08,
+                }
+            return {
+                "next_close_positive_rate": 0.57,
+                "next_high_hit_rate": 0.59,
+                "next_close_expectancy": 0.014,
+                "downside_p10": -0.045,
+                "window_coverage": 0.82,
+                "liquidity_capacity_raw_100": 61.0,
+                "crowding_risk_raw_100": 40.0,
+                "gap_risk_raw_100": 34.0,
+                "projected_theme_exposure": 0.20,
+                "incremental_theme_exposure": 0.09,
+            }
+
+        return evaluator
+
+    monkeypatch.setattr(optimize_profile, "_build_replay_evaluator", fake_build_replay_evaluator)
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params={"select_threshold": 0.50}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+    monkeypatch.setattr(optimize_profile, "REPORTS_DIR", manifest_path.parent)
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {"select_threshold": 0.50}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--grid-params",
+            "select_threshold=0.50",
+            "--input",
+            str(replay_input),
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    assert manifest_path.exists()
+    published_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert published_manifest["status"] == "ready"
+    assert published_manifest["profile_name"] == "momentum_optimized"
+    assert published_manifest["profile_overrides"] == {"select_threshold": 0.50}
+    assert published_manifest["trade_date"] == "2026-05-12"
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["optimized_profile_manifest_publication"]["status"] == "published"
+    assert payload["optimized_profile_manifest_publication"]["reason"] == "promoted_btst_profile"
+    assert payload["optimized_profile_manifest_publication"]["manifest_path"] == str(manifest_path.resolve())
+    assert payload["optimized_profile_manifest_publication"]["payload"] == published_manifest
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "Optimized Profile Manifest Publication: **published**" in markdown
+    assert f"- manifest_path: `{manifest_path.resolve()}`" in markdown
+    assert "- reason: `promoted_btst_profile`" in markdown
+
+
+def test_main_skips_manifest_publish_when_rollout_recommendation_holds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+    manifest_path = tmp_path / "reports" / "btst_latest_optimized_profile.json"
+    replay_input = tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json"
+
+    def fake_build_replay_evaluator(input_paths: list[Path], *, base_profile: str, next_high_hit_threshold: float = 0.02):
+        del input_paths, next_high_hit_threshold
+
+        def evaluator(params: dict[str, object]) -> dict[str, float]:
+            if base_profile == "default":
+                return {
+                    "next_close_positive_rate": 0.60,
+                    "next_high_hit_rate": 0.61,
+                    "next_close_expectancy": 0.018,
+                    "downside_p10": -0.040,
+                    "window_coverage": 0.85,
+                    "liquidity_capacity_raw_100": 66.0,
+                    "crowding_risk_raw_100": 36.0,
+                    "gap_risk_raw_100": 30.0,
+                    "projected_theme_exposure": 0.18,
+                    "incremental_theme_exposure": 0.08,
+                }
+            if params:
+                return {
+                    "next_close_positive_rate": 0.55,
+                    "next_high_hit_rate": 0.56,
+                    "next_close_expectancy": 0.010,
+                    "downside_p10": -0.050,
+                    "window_coverage": 0.80,
+                    "liquidity_capacity_raw_100": 58.0,
+                    "crowding_risk_raw_100": 44.0,
+                    "gap_risk_raw_100": 38.0,
+                    "projected_theme_exposure": 0.22,
+                    "incremental_theme_exposure": 0.11,
+                }
+            return {
+                "next_close_positive_rate": 0.57,
+                "next_high_hit_rate": 0.59,
+                "next_close_expectancy": 0.014,
+                "downside_p10": -0.045,
+                "window_coverage": 0.82,
+                "liquidity_capacity_raw_100": 61.0,
+                "crowding_risk_raw_100": 40.0,
+                "gap_risk_raw_100": 34.0,
+                "projected_theme_exposure": 0.20,
+                "incremental_theme_exposure": 0.09,
+            }
+
+        return evaluator
+
+    monkeypatch.setattr(optimize_profile, "_build_replay_evaluator", fake_build_replay_evaluator)
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params={"select_threshold": 0.50}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+    monkeypatch.setattr(optimize_profile, "REPORTS_DIR", manifest_path.parent)
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {"select_threshold": 0.50}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--grid-params",
+            "select_threshold=0.50",
+            "--input",
+            str(replay_input),
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    assert not manifest_path.exists()
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["optimized_profile_manifest_publication"]["status"] == "skipped"
+    assert payload["optimized_profile_manifest_publication"]["reason"] == "rollout_recommendation_hold"
+    assert payload["optimized_profile_manifest_publication"]["manifest_path"] == str(manifest_path.resolve())
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "Optimized Profile Manifest Publication: **skipped**" in markdown
+    assert f"- manifest_path: `{manifest_path.resolve()}`" in markdown
+    assert "- reason: `rollout_recommendation_hold`" in markdown
+
+
+def test_main_emits_manifest_publication_for_non_btst_replay_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+    manifest_path = tmp_path / "reports" / "btst_latest_optimized_profile.json"
+    replay_input = tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json"
+
+    def fake_build_replay_evaluator(input_paths: list[Path], *, base_profile: str, next_high_hit_threshold: float = 0.02):
+        del input_paths, next_high_hit_threshold
+
+        def evaluator(params: dict[str, object]) -> dict[str, float]:
+            if base_profile == "default":
+                return {
+                    "next_close_positive_rate": 0.55,
+                    "next_high_hit_rate": 0.56,
+                    "next_close_expectancy": 0.010,
+                    "downside_p10": -0.050,
+                    "window_coverage": 0.80,
+                    "liquidity_capacity_raw_100": 58.0,
+                    "crowding_risk_raw_100": 44.0,
+                    "gap_risk_raw_100": 38.0,
+                    "projected_theme_exposure": 0.22,
+                    "incremental_theme_exposure": 0.11,
+                }
+            if params:
+                return {
+                    "next_close_positive_rate": 0.60,
+                    "next_high_hit_rate": 0.61,
+                    "next_close_expectancy": 0.018,
+                    "downside_p10": -0.040,
+                    "window_coverage": 0.85,
+                    "liquidity_capacity_raw_100": 66.0,
+                    "crowding_risk_raw_100": 36.0,
+                    "gap_risk_raw_100": 30.0,
+                    "projected_theme_exposure": 0.18,
+                    "incremental_theme_exposure": 0.08,
+                }
+            return {
+                "next_close_positive_rate": 0.57,
+                "next_high_hit_rate": 0.59,
+                "next_close_expectancy": 0.014,
+                "downside_p10": -0.045,
+                "window_coverage": 0.82,
+                "liquidity_capacity_raw_100": 61.0,
+                "crowding_risk_raw_100": 40.0,
+                "gap_risk_raw_100": 34.0,
+                "projected_theme_exposure": 0.20,
+                "incremental_theme_exposure": 0.09,
+            }
+
+        return evaluator
+
+    monkeypatch.setattr(optimize_profile, "_build_replay_evaluator", fake_build_replay_evaluator)
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params={"select_threshold": 0.50}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+    monkeypatch.setattr(optimize_profile, "REPORTS_DIR", manifest_path.parent)
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {"select_threshold": 0.50}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "edge",
+            "--grid-params",
+            "select_threshold=0.50",
+            "--input",
+            str(replay_input),
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    assert not manifest_path.exists()
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["optimized_profile_manifest_publication"]["status"] == "skipped"
+    assert payload["optimized_profile_manifest_publication"]["reason"] == "non_btst_objective"
+    assert payload["optimized_profile_manifest_publication"]["manifest_path"] == str(manifest_path.resolve())
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "Optimized Profile Manifest Publication: **skipped**" in markdown
+    assert f"- manifest_path: `{manifest_path.resolve()}`" in markdown
+    assert "- reason: `non_btst_objective`" in markdown
+
+
+def test_main_emits_manifest_publication_for_non_replay_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+    manifest_path = tmp_path / "reports" / "btst_latest_optimized_profile.json"
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params={"select_threshold": 0.50}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+    monkeypatch.setattr(optimize_profile, "REPORTS_DIR", manifest_path.parent)
+    monkeypatch.setattr(optimize_profile, "_build_walk_forward_evaluator", lambda **kwargs: (lambda params: {"score": 1.0}))
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {"select_threshold": 0.50}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--grid-params",
+            "select_threshold=0.50",
+            "--tickers",
+            "000001",
+            "--start-date",
+            "2026-01-01",
+            "--end-date",
+            "2026-02-01",
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    assert not manifest_path.exists()
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["optimized_profile_manifest_publication"]["status"] == "skipped"
+    assert payload["optimized_profile_manifest_publication"]["reason"] == "non_replay_run"
+    assert payload["optimized_profile_manifest_publication"]["manifest_path"] == str(manifest_path.resolve())
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "Optimized Profile Manifest Publication: **skipped**" in markdown
+    assert f"- manifest_path: `{manifest_path.resolve()}`" in markdown
+    assert "- reason: `non_replay_run`" in markdown
+
+
+def test_main_emits_manifest_publication_when_best_params_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+    manifest_path = tmp_path / "reports" / "btst_latest_optimized_profile.json"
+    replay_input = tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json"
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params=None, best_score=None, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+    monkeypatch.setattr(optimize_profile, "REPORTS_DIR", manifest_path.parent)
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--grid-params",
+            "select_threshold=0.50",
+            "--input",
+            str(replay_input),
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    assert not manifest_path.exists()
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["optimized_profile_manifest_publication"]["status"] == "skipped"
+    assert payload["optimized_profile_manifest_publication"]["reason"] == "missing_best_params"
+    assert payload["optimized_profile_manifest_publication"]["manifest_path"] == str(manifest_path.resolve())
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "Optimized Profile Manifest Publication: **skipped**" in markdown
+    assert f"- manifest_path: `{manifest_path.resolve()}`" in markdown
+    assert "- reason: `missing_best_params`" in markdown
+
+
+def test_main_publishes_manifest_for_empty_best_params(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_md = tmp_path / "report.md"
+    output_json = tmp_path / "report.json"
+    manifest_path = tmp_path / "reports" / "btst_latest_optimized_profile.json"
+    replay_input = tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json"
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "run_param_search",
+        lambda **kwargs: SimpleNamespace(best_params={}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
+    )
+    monkeypatch.setattr(optimize_profile, "REPORTS_DIR", manifest_path.parent)
+
+    comparison_called = False
+
+    def fake_build_replay_comparison_summary(*, replay_input_paths: list[Path], base_profile: str, best_params: dict[str, object], next_high_hit_threshold: float) -> dict[str, dict[str, object]]:
+        nonlocal comparison_called
+        del replay_input_paths, base_profile, next_high_hit_threshold
+        assert best_params == {}
+        comparison_called = True
+        return {"momentum_optimized": {"next_close_positive_rate": 0.61}, "default": {"next_close_positive_rate": 0.58}}
+
+    def fake_build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str, object]]) -> dict[str, object]:
+        assert comparison_summary["momentum_optimized"]["next_close_positive_rate"] == 0.61
+        return {"action": "promote"}
+
+    def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_md)
+        path.write_text("# Parameter Search Report\n", encoding="utf-8")
+        return path
+
+    def fake_save_search_payload(report: object, output_path: str | None = None) -> Path:
+        path = Path(output_path or output_json)
+        path.write_text('{"best_params": {}}', encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(optimize_profile, "_build_replay_comparison_summary", fake_build_replay_comparison_summary)
+    monkeypatch.setattr(optimize_profile, "_build_rollout_recommendation_payload", fake_build_rollout_recommendation_payload)
+    monkeypatch.setattr(optimize_profile, "save_search_report", fake_save_search_report)
+    monkeypatch.setattr(optimize_profile, "save_search_payload", fake_save_search_payload)
+    monkeypatch.setattr(optimize_profile, "format_search_report", lambda report: "ok")
+
+    exit_code = optimize_profile.main(
+        [
+            "--profile",
+            "momentum_optimized",
+            "--objective",
+            "btst",
+            "--grid-params",
+            "select_threshold=0.50",
+            "--input",
+            str(replay_input),
+            "--output-md",
+            str(output_md),
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    assert exit_code == 0
+    assert comparison_called is True
+    assert manifest_path.exists()
+
+    published_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert published_manifest["status"] == "ready"
+    assert published_manifest["profile_name"] == "momentum_optimized"
+    assert published_manifest["profile_overrides"] == {}
+    assert published_manifest["trade_date"] == "2026-05-12"
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["optimized_profile_manifest_publication"]["status"] == "published"
+    assert payload["optimized_profile_manifest_publication"]["reason"] == "promoted_btst_profile"
+    assert payload["optimized_profile_manifest_publication"]["manifest_path"] == str(manifest_path.resolve())
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "Optimized Profile Manifest Publication: **published**" in markdown
+    assert f"- manifest_path: `{manifest_path.resolve()}`" in markdown
+    assert "- reason: `promoted_btst_profile`" in markdown
+
+
 def test_main_focused_stage_can_autoload_best_params_from_checkpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     checkpoint = tmp_path / "checkpoint.json"
     checkpoint.write_text(
@@ -2221,3 +2744,112 @@ def test_main_rejects_grids_over_max_combinations(monkeypatch: pytest.MonkeyPatc
                 "2",
             ]
         )
+
+
+def test_derive_latest_replay_trade_date_returns_latest_date_from_replay_inputs() -> None:
+    replay_input_paths = [
+        Path("data/reports/run_1/selection_artifacts/2026-05-09/selection_target_replay_input.json"),
+        Path("data/reports/run_1/selection_artifacts/2026-05-12/selection_target_replay_input.json"),
+        Path("data/reports/run_1/selection_artifacts/2026-05-10/selection_target_replay_input.json"),
+    ]
+
+    assert derive_latest_replay_trade_date(replay_input_paths) == "2026-05-12"
+
+
+def test_derive_latest_replay_trade_date_returns_none_when_replay_dates_cannot_be_derived() -> None:
+    replay_input_paths = [
+        Path("data/reports/run_1/selection_artifacts/not-a-date/selection_target_replay_input.json"),
+        Path("data/reports/run_1/selection_artifacts/2026-05-12/other.json"),
+    ]
+
+    assert derive_latest_replay_trade_date(replay_input_paths) is None
+
+
+def test_publish_btst_optimized_profile_manifest_writes_ready_manifest(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    source_path = tmp_path / "report.json"
+    source_path.write_text("{}", encoding="utf-8")
+
+    result = publish_btst_optimized_profile_manifest(
+        manifest_path=manifest_path,
+        rollout_recommendation="promote",
+        profile_name="momentum_optimized",
+        profile_overrides={"select_threshold": 0.48, "near_miss_threshold": 0.34},
+        source_path=source_path,
+        replay_input_paths=[
+            tmp_path / "selection_artifacts" / "2026-05-10" / "selection_target_replay_input.json",
+            tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json",
+        ],
+    )
+
+    assert result["status"] == "published"
+    assert result["reason"] == "promoted_btst_profile"
+    assert result["manifest_path"] == str(manifest_path.resolve())
+    assert manifest_path.exists()
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert result["payload"] == payload
+    assert payload == build_ready_btst_optimized_profile_manifest(
+        profile_name="momentum_optimized",
+        profile_overrides={"select_threshold": 0.48, "near_miss_threshold": 0.34},
+        source_path=source_path,
+        replay_input_paths=[
+            tmp_path / "selection_artifacts" / "2026-05-10" / "selection_target_replay_input.json",
+            tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json",
+        ],
+    )
+    assert payload["trade_date"] == "2026-05-12"
+    assert payload["status"] == "ready"
+
+
+def test_publish_btst_optimized_profile_manifest_promote_writes_null_trade_date_when_unavailable(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    source_path = tmp_path / "report.json"
+    source_path.write_text("{}", encoding="utf-8")
+
+    result = publish_btst_optimized_profile_manifest(
+        manifest_path=manifest_path,
+        rollout_recommendation="promote",
+        profile_name="momentum_optimized",
+        profile_overrides={"select_threshold": 0.48},
+        source_path=source_path,
+        replay_input_paths=[
+            tmp_path / "selection_artifacts" / "not-a-date" / "selection_target_replay_input.json",
+            tmp_path / "selection_artifacts" / "2026-05-12" / "unexpected.json",
+        ],
+    )
+
+    assert result["status"] == "published"
+    assert result["reason"] == "promoted_btst_profile"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["trade_date"] is None
+    assert result["payload"] == payload
+
+
+def test_publish_btst_optimized_profile_manifest_skips_hold_without_overwriting_existing_ready(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    existing_payload = {
+        "profile_name": "momentum_optimized",
+        "profile_overrides": {"select_threshold": 0.48},
+        "source_type": "optimize_profile",
+        "source_path": str(tmp_path / "existing_report.json"),
+        "validated_by": "walk_forward_and_rollout",
+        "trade_date": "2026-05-11",
+        "status": "ready",
+    }
+    manifest_path.write_text(json.dumps(existing_payload, indent=2), encoding="utf-8")
+
+    result = publish_btst_optimized_profile_manifest(
+        manifest_path=manifest_path,
+        rollout_recommendation="hold",
+        profile_name="candidate_profile",
+        profile_overrides={"select_threshold": 0.55},
+        source_path=tmp_path / "candidate_report.json",
+        replay_input_paths=[tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json"],
+    )
+
+    assert result == {
+        "status": "skipped",
+        "reason": "rollout_recommendation_hold",
+        "manifest_path": str(manifest_path.resolve()),
+    }
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == existing_payload
