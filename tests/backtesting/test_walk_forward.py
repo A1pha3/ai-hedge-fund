@@ -719,3 +719,118 @@ def test_classify_runner_rollout_verdict_promotable_with_baseline():
     # tail_hit_delta = 0.08 >= 0.05, no T+1 or downside regression
     assert verdict == "promotable_runner_profile"
     assert abs(detail["tail_hit_delta"] - 0.08) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# Round 11 Task 4 — Walk-forward recency weighting
+# ---------------------------------------------------------------------------
+
+from src.backtesting.walk_forward import (
+    _compute_walk_forward_recency_weight,
+    WALK_FORWARD_RECENCY_HALF_LIFE_DAYS,
+    WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR,
+)
+
+
+def test_compute_walk_forward_recency_weight_same_date_returns_one() -> None:
+    """Window with test_start equal to reference_date must receive weight 1.0."""
+    assert _compute_walk_forward_recency_weight("2026-03-20", "2026-03-20") == pytest.approx(1.0)
+
+
+def test_compute_walk_forward_recency_weight_older_window_less_than_one() -> None:
+    """A window 90 days before the reference should receive weight ~0.5 (half life)."""
+    weight = _compute_walk_forward_recency_weight("2025-12-20", "2026-03-20")  # ~90 days
+    assert weight < 1.0
+    assert weight >= WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR
+    # Approximately 0.5 at the half-life
+    assert weight == pytest.approx(0.5, abs=0.05)
+
+
+def test_compute_walk_forward_recency_weight_respects_floor() -> None:
+    """A very old window must not go below WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR."""
+    weight = _compute_walk_forward_recency_weight("2020-01-01", "2026-03-20")
+    assert weight == pytest.approx(WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR)
+
+
+def test_compute_walk_forward_recency_weight_future_date_clamps_to_one() -> None:
+    """A window with test_start after reference_date must return 1.0 (no bonus for future windows)."""
+    weight = _compute_walk_forward_recency_weight("2026-06-01", "2026-03-20")
+    assert weight == pytest.approx(1.0)
+
+
+def test_summarize_walk_forward_time_weights_btst_quality_metrics() -> None:
+    """Recent windows must dominate BTST quality averages when they differ substantially.
+
+    Two windows have identical Sharpe/drawdown but very different BTST quality metrics.
+    The recent window (large next_close_positive_rate) must pull the weighted average up
+    compared to an equal-weight average.
+    """
+    def _make_result(test_start: str, next_close_positive_rate: float) -> WalkForwardResult:
+        return WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2025-01-01",
+                train_end="2025-01-31",
+                test_start=test_start,
+                test_end=test_start,
+            ),
+            metrics={
+                "sharpe_ratio": 1.2,
+                "sortino_ratio": 1.5,
+                "max_drawdown": -3.0,
+                "test_trading_days": 15,
+                "next_close_positive_rate": next_close_positive_rate,
+                "next_high_hit_rate_at_threshold": 0.65,
+                "downside_p10": -0.018,
+            },
+        )
+
+    # Old window: poor next_close_positive_rate; recent window: high rate.
+    old_result = _make_result("2025-01-01", next_close_positive_rate=0.30)
+    new_result = _make_result("2026-04-01", next_close_positive_rate=0.90)
+
+    summary = summarize_walk_forward([old_result, new_result])
+
+    # The weighted average of next_close_positive_rate must be closer to 0.90 than 0.60
+    # (which is the simple equal-weight average of 0.30 and 0.90).
+    weighted_avg = summary.get("next_close_positive_rate")
+    simple_avg = 0.60  # (0.30 + 0.90) / 2
+    assert weighted_avg is not None
+    assert float(weighted_avg) > simple_avg, (
+        f"Recency-weighted avg {weighted_avg:.3f} should exceed simple avg {simple_avg:.3f}"
+    )
+
+
+def test_summarize_walk_forward_single_window_unaffected_by_recency() -> None:
+    """With a single window, recency weighting must produce the same result as a plain average."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={
+                "sharpe_ratio": 1.4,
+                "sortino_ratio": 1.8,
+                "max_drawdown": -2.5,
+                "test_trading_days": 18,
+                "next_close_positive_rate": 0.66,
+                "next_high_hit_rate_at_threshold": 0.68,
+                "downside_p10": -0.016,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    # Single window → weight is 1.0 → weighted avg equals plain value
+    assert summary.get("next_close_positive_rate") == pytest.approx(0.66, abs=0.001)
+
+
+def test_summarize_walk_forward_exposes_recency_half_life_days() -> None:
+    """summarize_walk_forward must expose recency_half_life_days in the summary for transparency."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={"sharpe_ratio": 1.2, "sortino_ratio": 1.4, "max_drawdown": -3.0, "test_trading_days": 12},
+        )
+    ]
+    summary = summarize_walk_forward(results)
+    assert "recency_half_life_days" in summary
+    assert summary["recency_half_life_days"] == WALK_FORWARD_RECENCY_HALF_LIFE_DAYS

@@ -3203,3 +3203,119 @@ def test_evaluator_uses_recency_half_life_days_param(monkeypatch: pytest.MonkeyP
     assert metrics_short["sample_weight"] <= metrics_long["sample_weight"], (
         f"short={metrics_short['sample_weight']} should be ≤ long={metrics_long['sample_weight']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Round 11 Task 1 — IC signal collection in replay evaluator
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_module_with_surface(surface: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Helper: register a fake btst_profile_replay_utils module that always returns ``surface``."""
+    fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+
+    def fake_analyze(input_path: Path, **_: object) -> dict[str, object]:
+        return {"surface_summaries": {"selected": dict(surface), "tradeable": dict(surface)}}
+
+    fake_module.analyze_btst_profile_replay_window = fake_analyze
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+
+def _base_replay_surface() -> dict:
+    """Minimal surface that satisfies the replay evaluator's data requirements."""
+    return {
+        "next_day_available_count": 10,
+        "closed_cycle_count": 6,
+        "next_close_positive_rate": 0.62,
+        "next_high_hit_rate_at_threshold": 0.64,
+        "next_close_expectancy": 0.018,
+        "next_close_payoff_ratio": 1.6,
+        "t_plus_2_close_positive_rate": 0.58,
+        "t_plus_2_close_return_distribution": {"median": 0.014},
+        "t_plus_3_close_positive_rate": 0.56,
+        "t_plus_3_close_expectancy": 0.011,
+        "t_plus_3_close_return_distribution": {"median": 0.012},
+        "next_close_return_distribution": {"p10": -0.018},
+        "downside_p10": -0.018,
+    }
+
+
+def test_replay_evaluator_reads_factor_ic_from_surface(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evaluator must aggregate factor ICs across windows and expose ic_positive_factor_fraction."""
+    surface = _base_replay_surface()
+    # Inject IC values: all 7 factors positive → fraction should be 1.0
+    surface["factor_ic_next_close"] = {
+        "breakout_freshness": 0.08,
+        "trend_acceleration": 0.05,
+        "volume_expansion_quality": 0.06,
+        "catalyst_freshness": 0.03,
+        "close_strength": 0.04,
+        "volatility_regime": 0.07,
+        "sector_resonance": 0.09,
+    }
+    _make_fake_module_with_surface(surface, monkeypatch)
+
+    evaluator = _build_replay_evaluator([Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")], base_profile="default")
+    metrics = evaluator({})
+
+    assert "ic_positive_factor_fraction" in metrics
+    # All 7 ICs are above IC_SIGNAL_MIN (0.02) → fraction = 1.0
+    assert metrics["ic_positive_factor_fraction"] == pytest.approx(1.0)
+
+
+def test_replay_evaluator_ic_fraction_none_when_no_ic_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When no factor_ic_next_close is present on any window surface, ic_positive_factor_fraction must be None."""
+    surface = _base_replay_surface()
+    # No IC key injected
+    _make_fake_module_with_surface(surface, monkeypatch)
+
+    evaluator = _build_replay_evaluator([Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")], base_profile="default")
+    metrics = evaluator({})
+
+    assert metrics.get("ic_positive_factor_fraction") is None
+
+
+def test_replay_evaluator_ic_fraction_partial_factors_above_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ic_positive_factor_fraction reflects only the fraction of factors with IC >= IC_SIGNAL_MIN."""
+    surface = _base_replay_surface()
+    # 4 out of 7 factors above threshold
+    surface["factor_ic_next_close"] = {
+        "breakout_freshness": 0.05,   # above
+        "trend_acceleration": 0.03,   # above
+        "volume_expansion_quality": -0.01,  # below
+        "catalyst_freshness": 0.04,   # above
+        "close_strength": 0.01,       # below (< 0.02)
+        "volatility_regime": -0.03,   # below
+        "sector_resonance": 0.06,     # above
+    }
+    _make_fake_module_with_surface(surface, monkeypatch)
+
+    evaluator = _build_replay_evaluator([Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")], base_profile="default")
+    metrics = evaluator({})
+
+    expected_fraction = 4 / 7
+    assert metrics["ic_positive_factor_fraction"] == pytest.approx(expected_fraction, abs=0.01)
+
+
+def test_replay_evaluator_returns_candidate_pool_avg_composite_score(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evaluator must aggregate candidate_pool_avg_composite_score across windows and return its mean."""
+    surface = _base_replay_surface()
+    surface["candidate_pool_avg_composite_score"] = 0.67
+    _make_fake_module_with_surface(surface, monkeypatch)
+
+    evaluator = _build_replay_evaluator([Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")], base_profile="default")
+    metrics = evaluator({})
+
+    assert "candidate_pool_avg_composite_score" in metrics
+    assert metrics["candidate_pool_avg_composite_score"] == pytest.approx(0.67, abs=0.01)
+
+
+def test_replay_evaluator_pool_quality_none_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """candidate_pool_avg_composite_score must be None when not present in the surface."""
+    surface = _base_replay_surface()
+    _make_fake_module_with_surface(surface, monkeypatch)
+
+    evaluator = _build_replay_evaluator([Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")], base_profile="default")
+    metrics = evaluator({})
+
+    assert metrics.get("candidate_pool_avg_composite_score") is None

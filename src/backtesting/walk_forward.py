@@ -41,6 +41,14 @@ RUNNER_DOWNSIDE_REGRESSION_FLOOR = -0.015
 RUNNER_COMPOSITE_SCORE_QUALITY_FLOOR = 0.50
 RUNNER_ESCAPE_RATE_MIN = 0.03
 
+# Task 4 (Round 11): temporal recency decay for walk-forward BTST quality metrics.
+# Windows with test_start closer to the reference date (most recent) receive weight ~1.0;
+# windows ``WALK_FORWARD_RECENCY_HALF_LIFE_DAYS`` before the reference receive ~0.5;
+# the floor ``WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR`` prevents oldest windows from
+# being fully discarded.  Consistent with the optimizer's recency decay (Round 9).
+WALK_FORWARD_RECENCY_HALF_LIFE_DAYS: int = 90
+WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR: float = 0.20
+
 
 @dataclass(frozen=True)
 class WalkForwardWindow:
@@ -171,6 +179,36 @@ def _resolve_test_trading_days(result: WalkForwardResult) -> int:
     return _estimate_test_trading_days(result.window.test_start, result.window.test_end)
 
 
+def _compute_walk_forward_recency_weight(
+    test_start: str,
+    reference_date: str,
+    half_life_days: int = WALK_FORWARD_RECENCY_HALF_LIFE_DAYS,
+) -> float:
+    """Return an exponential recency decay weight in [WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR, 1.0].
+
+    Windows with ``test_start`` equal to ``reference_date`` receive weight 1.0; windows that
+    are ``half_life_days`` older receive ~0.5; the floor prevents complete discarding of
+    old windows.  Mirrors the optimizer's recency decay (Task S, Round 9) for consistency.
+
+    Args:
+        test_start: ISO-format ``YYYY-MM-DD`` date of this walk-forward window's test period start.
+        reference_date: ISO-format date of the most-recent window (defines the recency anchor).
+        half_life_days: Calendar days after which the decay factor reaches approximately 0.5.
+
+    Returns:
+        Decay weight in [WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR, 1.0].
+    """
+    import math as _math
+    try:
+        start_dt = datetime.strptime(test_start, "%Y-%m-%d")
+        ref_dt = datetime.strptime(reference_date, "%Y-%m-%d")
+        days_lag = max(0, (ref_dt - start_dt).days)
+    except (ValueError, TypeError):
+        return 1.0
+    decay = _math.exp(-_math.log(2.0) * days_lag / max(1, half_life_days))
+    return max(WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR, round(decay, 6))
+
+
 def run_walk_forward(
     windows: Sequence[WalkForwardWindow],
     engine_factory: Callable[[WalkForwardWindow], object],
@@ -223,6 +261,9 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
     test_trading_days = [_resolve_test_trading_days(item) for item in results]
     btst_metric_keys = tuple(key for key in BTST_QUALITY_FLOORS if key != "window_coverage")
     btst_metric_values: dict[str, list[float]] = {key: [] for key in btst_metric_keys}
+    # Task 4 (Round 11): time-weighted BTST quality metrics — parallel weight lists for each
+    # BTST quality metric so we can compute recency-weighted averages.
+    btst_metric_weights: dict[str, list[float]] = {key: [] for key in btst_metric_keys}
     execution_metric_keys = (
         "projected_theme_exposure",
         "incremental_theme_exposure",
@@ -239,7 +280,21 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
             return None
         return sum(clean_values) / len(clean_values)
 
-    for item in results:
+    def _weighted_average(values: list[float], weights: list[float]) -> float | None:
+        if not values:
+            return None
+        total_w = sum(weights) if weights else 0.0
+        if total_w <= 0.0:
+            return None
+        return sum(v * w for v, w in zip(values, weights)) / total_w
+
+    # Task 4 (Round 11): derive per-result recency weights from test_start dates.
+    # The most recent window (largest test_start) anchors the reference date.
+    _all_test_starts = [item.window.test_start for item in results]
+    _reference_date = max(_all_test_starts) if _all_test_starts else ""
+    _recency_weights: list[float] = [_compute_walk_forward_recency_weight(item.window.test_start, _reference_date) for item in results]
+
+    for item, recency_w in zip(results, _recency_weights):
         bundle = build_canonical_btst_evaluation_bundle(item.metrics)
         window_has_complete_btst_quality = True
         for metric_key in btst_metric_keys:
@@ -248,6 +303,7 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
                 window_has_complete_btst_quality = False
                 continue
             btst_metric_values[metric_key].append(float(value))
+            btst_metric_weights[metric_key].append(recency_w)
         for metric_key in execution_metric_keys:
             value = bundle.lookup(metric_key)
             if value is not None:
@@ -297,8 +353,11 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
     composite_score_escaped_values = [item.metrics.get("avg_composite_score_escaped") for item in results if item.metrics.get("avg_composite_score_escaped") is not None]
     avg_composite_score_escaped = _average(composite_score_escaped_values) if composite_score_escaped_values else None
 
+    # Task 4 (Round 11): use recency-weighted averages for BTST quality metrics so that more
+    # recent walk-forward windows carry proportionally more weight in rollout decisions.
+    # The rollout floor checks continue to operate on these weighted averages.
     btst_quality_summary: dict[str, float | None] = {
-        metric_key: _average(btst_metric_values[metric_key]) for metric_key in btst_metric_keys
+        metric_key: _weighted_average(btst_metric_values[metric_key], btst_metric_weights[metric_key]) for metric_key in btst_metric_keys
     }
     btst_quality_summary["window_coverage"] = (
         float(btst_complete_window_count) / float(len(results)) if btst_complete_window_count > 0 else None
@@ -328,6 +387,8 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
         "total_runner_capture_count": total_runner_capture_count,
         "avg_runner_escape_rate": avg_runner_escape_rate,
         "avg_composite_score_escaped": avg_composite_score_escaped,
+        # Task 4 (Round 11): expose the recency weighting parameters for transparency.
+        "recency_half_life_days": WALK_FORWARD_RECENCY_HALF_LIFE_DAYS,
         "rollout_ready": not rollout_blockers,
         "rollout_blockers": rollout_blockers,
     }

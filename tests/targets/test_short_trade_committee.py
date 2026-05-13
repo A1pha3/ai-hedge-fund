@@ -1536,3 +1536,105 @@ def test_quiet_breakout_profile_field_wired_to_profile() -> None:
     profile = build_short_trade_target_profile("default")
     assert hasattr(profile, "runner_composite_score_quiet_breakout_weight")
     assert profile.runner_composite_score_quiet_breakout_weight == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Round 11 Task 3 — Pool quality gate in _resolve_runner_escape
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_runner_escape_blocks_when_pool_quality_below_min() -> None:
+    """When pool avg composite score is below the configured minimum, escape must be blocked."""
+    from src.targets.short_trade_target_committee_helpers import _resolve_runner_escape
+
+    class LowPoolQualityProfile:
+        runner_escape_enabled = True
+        runner_escape_pool_quality_min = 0.5
+        # Other thresholds set so they would normally allow escape
+        runner_escape_breakout_freshness_min = 0.0
+        runner_escape_trend_acceleration_min = 0.0
+        runner_escape_volume_expansion_quality_min = 0.0
+        runner_escape_composite_score_min = 0.0
+        runner_escape_gap_risk_raw_100_max = 999.0
+        runner_escape_projected_theme_exposure_max = 999.0
+        runner_escape_candidate_pool_avg_amount_share_of_cutoff_min = 0.0
+
+    snapshot = {"breakout_freshness": 0.9, "trend_acceleration": 0.8, "volume_expansion_quality": 0.7}
+    raw_metrics = {
+        "candidate_pool_avg_composite_score": 0.35,  # below pool_quality_min=0.5 → must block
+        "candidate_pool_avg_amount_share_of_cutoff": 1.5,
+        "projected_theme_exposure": 0.2,
+        "gap_risk_raw_100": 10.0,
+    }
+
+    escaped, reasons = _resolve_runner_escape(profile=LowPoolQualityProfile(), snapshot=snapshot, raw_metrics=raw_metrics)
+
+    assert escaped is False
+    assert "pool_quality_below_min" in reasons
+
+
+def test_resolve_runner_escape_allows_when_pool_quality_not_provided() -> None:
+    """When candidate_pool_avg_composite_score is absent, the gate must be silently skipped (backward compat)."""
+    from src.targets.short_trade_target_committee_helpers import _resolve_runner_escape
+
+    class PoolGateEnabledProfile:
+        runner_escape_enabled = True
+        runner_escape_pool_quality_min = 0.5
+        runner_escape_breakout_freshness_min = 0.0
+        runner_escape_trend_acceleration_min = 0.0
+        runner_escape_volume_expansion_quality_min = 0.0
+        runner_escape_composite_score_min = 0.0
+        runner_escape_gap_risk_raw_100_max = 999.0
+        runner_escape_projected_theme_exposure_max = 999.0
+        runner_escape_candidate_pool_avg_amount_share_of_cutoff_min = 0.0
+
+    snapshot = {"breakout_freshness": 0.9, "trend_acceleration": 0.8, "volume_expansion_quality": 0.7}
+    # No candidate_pool_avg_composite_score in raw_metrics → gate must not fire
+    raw_metrics = {
+        "candidate_pool_avg_amount_share_of_cutoff": 1.5,
+        "projected_theme_exposure": 0.2,
+        "gap_risk_raw_100": 10.0,
+    }
+
+    escaped, reasons = _resolve_runner_escape(profile=PoolGateEnabledProfile(), snapshot=snapshot, raw_metrics=raw_metrics)
+
+    # Gate skipped → escape depends only on other checks (all thresholds=0/999) → should pass
+    assert escaped is True
+    assert "pool_quality_below_min" not in reasons
+
+
+def test_resolve_runner_escape_not_blocked_when_pool_quality_above_min() -> None:
+    """When pool avg composite score meets or exceeds the minimum, the gate must not block."""
+    from src.targets.short_trade_target_committee_helpers import _resolve_runner_escape
+
+    class SufficientPoolQualityProfile:
+        runner_escape_enabled = True
+        runner_escape_pool_quality_min = 0.5
+        runner_escape_breakout_freshness_min = 0.0
+        runner_escape_trend_acceleration_min = 0.0
+        runner_escape_volume_expansion_quality_min = 0.0
+        runner_escape_composite_score_min = 0.0
+        runner_escape_gap_risk_raw_100_max = 999.0
+        runner_escape_projected_theme_exposure_max = 999.0
+        runner_escape_candidate_pool_avg_amount_share_of_cutoff_min = 0.0
+
+    snapshot = {"breakout_freshness": 0.9, "trend_acceleration": 0.8, "volume_expansion_quality": 0.7}
+    raw_metrics = {
+        "candidate_pool_avg_composite_score": 0.65,  # above pool_quality_min=0.5 → must pass
+        "candidate_pool_avg_amount_share_of_cutoff": 1.5,
+        "projected_theme_exposure": 0.2,
+        "gap_risk_raw_100": 10.0,
+    }
+
+    escaped, reasons = _resolve_runner_escape(profile=SufficientPoolQualityProfile(), snapshot=snapshot, raw_metrics=raw_metrics)
+
+    assert escaped is True
+    assert "pool_quality_below_min" not in reasons
+
+
+def test_runner_escape_pool_quality_min_defaults_to_zero() -> None:
+    """runner_escape_pool_quality_min must default to 0.0 on ShortTradeTargetProfile (gate disabled by default)."""
+    from src.targets.profiles import build_short_trade_target_profile
+    profile = build_short_trade_target_profile("default")
+    assert hasattr(profile, "runner_escape_pool_quality_min")
+    assert profile.runner_escape_pool_quality_min == pytest.approx(0.0)

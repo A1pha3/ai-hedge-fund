@@ -287,6 +287,10 @@ class ShortTradeTargetProfile:
     runner_escape_projected_theme_exposure_max: float = 0.0
     runner_escape_candidate_pool_avg_amount_share_of_cutoff_min: float = 0.0
     runner_escape_composite_score_min: float = 0.0
+    # Task 3 (Round 11): pool-level quality gate — if the overall candidate pool's average composite
+    # score is below this threshold, runner escape is refused ("矮子里拔将军" guard).
+    # Default 0.0 disables the check for backward compatibility.
+    runner_escape_pool_quality_min: float = 0.0
     runner_composite_score_breakout_weight: float = 0.40
     runner_composite_score_trend_weight: float = 0.30
     runner_composite_score_volume_weight: float = 0.20

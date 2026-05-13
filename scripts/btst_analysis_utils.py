@@ -393,6 +393,11 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     runner_escape_rate = round(len(escaped_rows) / len(rows), 4) if rows else None
     escaped_scores = [float(row["runner_composite_score"]) for row in escaped_rows if row.get("runner_composite_score") is not None]
     avg_composite_score_escaped = round(sum(escaped_scores) / len(escaped_scores), 4) if escaped_scores else None
+    # Task 3 (Round 11): pool-level average composite score — includes ALL candidates (not just escaped
+    # ones).  A high runner_escape_rate combined with a low candidate_pool_avg_composite_score indicates
+    # "矮子里拔将军" (best of a bad lot) — the optimizer uses this as an optional quality guardrail.
+    all_composite_scores = [float(row["runner_composite_score"]) for row in rows if row.get("runner_composite_score") is not None]
+    candidate_pool_avg_composite_score = round(sum(all_composite_scores) / len(all_composite_scores), 4) if all_composite_scores else None
 
     return {
         "total_count": len(rows),
@@ -437,6 +442,8 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "time_to_hit_20pct_median": summarize_distribution(time_to_hit_values)["median"] if time_to_hit_values else None,
         "runner_escape_rate": runner_escape_rate,
         "avg_composite_score_escaped": avg_composite_score_escaped,
+        # Task 3 (Round 11): pool-level quality
+        "candidate_pool_avg_composite_score": candidate_pool_avg_composite_score,
         # Task 1 (Round 10) — factor IC vs forward returns
         "factor_ic_next_close": compute_all_factor_ics(next_day_rows, "next_close_return"),
         "factor_ic_t_plus_2": compute_all_factor_ics(closed_rows, "t_plus_2_close_return"),

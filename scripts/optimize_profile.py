@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from scripts.btst_analysis_utils import BTST_FACTOR_NAMES
 from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
@@ -50,6 +51,12 @@ LIQUIDITY_LOW_REGIME_FLOOR: float = 40.0    # below this → severe down-weight
 LIQUIDITY_SOFT_REGIME_FLOOR: float = 50.0   # below this → mild down-weight
 LIQUIDITY_LOW_REGIME_WEIGHT_PENALTY: float = 0.80
 LIQUIDITY_SOFT_REGIME_WEIGHT_PENALTY: float = 0.90
+# Task 1 (Round 11): factor IC guardrail — factors with avg Spearman IC below this threshold
+# are considered uninformative.  ic_positive_factor_fraction < IC_FRACTION_FLOOR is used as
+# an optional guardrail so param combos that deactivate predictive factors are penalised.
+IC_SIGNAL_MIN: float = 0.02          # minimum IC for a factor to be considered active
+IC_FRACTION_FLOOR: float = 0.50      # fraction of factors that must have IC >= IC_SIGNAL_MIN
+IC_QUALITY_SAMPLE_WEIGHT_PENALTY: float = 0.90  # multiply sample_weight when IC quality is poor
 DEFAULT_BTST_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
     "next_close_positive_rate": BTST_QUALITY_FLOORS["next_close_positive_rate"],
     "next_high_hit_rate": BTST_QUALITY_FLOORS["next_high_hit_rate"],
@@ -71,6 +78,10 @@ DEFAULT_BTST_RUNNER_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
     "avg_composite_score_escaped": {"min": BTST_QUALITY_FLOORS["avg_composite_score_escaped"]},
     "t_plus_2_close_payoff_ratio": {"min": BTST_QUALITY_FLOORS["t_plus_2_close_payoff_ratio"]},
     "t_plus_3_close_payoff_ratio": {"min": BTST_QUALITY_FLOORS["t_plus_3_close_payoff_ratio"]},
+    # Task 1 (Round 11): IC quality guard — at least half the tracked factors must show positive IC.
+    # Optional: surfaces produced before Round 10 will not carry IC data, so this guardrail is
+    # only enforced when ic_positive_factor_fraction is present in the evaluated metrics.
+    "ic_positive_factor_fraction": {"min": IC_FRACTION_FLOOR},
 }
 MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS: dict[str, dict[str, list[Any]]] = {
     "coarse": {
@@ -121,6 +132,9 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "t_plus_3_close_positive_rate",
     "t_plus_3_close_expectancy",
     "t_plus_3_close_payoff_ratio",
+    # Task 1 (Round 11): IC quality fraction
+    "ic_positive_factor_fraction",
+    "candidate_pool_avg_composite_score",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -143,6 +157,9 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "t_plus_3_close_positive_rate": "T+3 Close+",
     "t_plus_3_close_expectancy": "T+3 Expectancy",
     "t_plus_3_close_payoff_ratio": "T+3 Payoff",
+    # Task 1 (Round 11)
+    "ic_positive_factor_fraction": "IC Quality Frac",
+    "candidate_pool_avg_composite_score": "Pool Avg Score",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -164,6 +181,10 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "t_plus_3_close_positive_rate",
     "t_plus_3_close_expectancy",
     "t_plus_3_close_payoff_ratio",
+    # Task 1 (Round 11): IC / pool quality metrics are optional because legacy surfaces
+    # may not expose them.  Their absence must not block rollout.
+    "ic_positive_factor_fraction",
+    "candidate_pool_avg_composite_score",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -186,6 +207,9 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "t_plus_3_close_positive_rate": 0.0,
     "t_plus_3_close_expectancy": 0.0,
     "t_plus_3_close_payoff_ratio": 0.01,
+    # Task 1 (Round 11)
+    "ic_positive_factor_fraction": 0.01,
+    "candidate_pool_avg_composite_score": 0.01,
 }
 
 
@@ -558,7 +582,11 @@ def _build_replay_evaluator(
             "time_to_hit_20pct_median": [],
             "runner_escape_rate": [],
             "avg_composite_score_escaped": [],
+            # Task 3 (Round 11): candidate pool quality
+            "candidate_pool_avg_composite_score": [],
         }
+        # Task 1 (Round 11): per-factor IC accumulator across replay windows
+        total_factor_ics: dict[str, list[float]] = {f: [] for f in BTST_FACTOR_NAMES}
 
         # For metrics that should be sample-weighted, keep a parallel list of weights
         total_metric_weights: dict[str, list[float]] = {
@@ -718,6 +746,17 @@ def _build_replay_evaluator(
                 avg_escaped_score = _safe_float(primary_surface.get("avg_composite_score_escaped"))
                 if avg_escaped_score is not None:
                     total_metrics["avg_composite_score_escaped"].append(avg_escaped_score)
+                # Task 1 (Round 11): accumulate per-factor Spearman IC from surface summary.
+                # The IC dict was written by build_surface_summary (Task 1, Round 10).
+                surface_factor_ic_next_close = dict(primary_surface.get("factor_ic_next_close") or {})
+                for _factor_name in BTST_FACTOR_NAMES:
+                    _ic_val = _safe_float(surface_factor_ic_next_close.get(_factor_name))
+                    if _ic_val is not None:
+                        total_factor_ics[_factor_name].append(_ic_val)
+                # Task 3 (Round 11): candidate pool average composite score for quality gate.
+                pool_avg_score = _safe_float(primary_surface.get("candidate_pool_avg_composite_score"))
+                if pool_avg_score is not None:
+                    total_metrics["candidate_pool_avg_composite_score"].append(pool_avg_score)
                 if primary_scope == "selected":
                     selected_surfaces.append(primary_surface)
 
@@ -793,6 +832,17 @@ def _build_replay_evaluator(
         avg_runner_escape_rate = sum(total_metrics["runner_escape_rate"]) / len(total_metrics["runner_escape_rate"]) if total_metrics["runner_escape_rate"] else None
         avg_composite_score_escaped = sum(total_metrics["avg_composite_score_escaped"]) / len(total_metrics["avg_composite_score_escaped"]) if total_metrics["avg_composite_score_escaped"] else None
 
+        # Task 1 (Round 11): aggregate IC per factor; compute ic_positive_factor_fraction.
+        avg_factor_ics: dict[str, float | None] = {
+            f: (sum(vals) / len(vals) if vals else None) for f, vals in total_factor_ics.items()
+        }
+        ic_factors_with_data = [f for f, v in avg_factor_ics.items() if v is not None]
+        ic_positive_count = sum(1 for f in ic_factors_with_data if (avg_factor_ics[f] or 0.0) >= IC_SIGNAL_MIN)
+        ic_positive_factor_fraction: float | None = (float(ic_positive_count) / float(len(ic_factors_with_data))) if ic_factors_with_data else None
+
+        # Task 3 (Round 11): aggregate candidate pool quality across windows.
+        avg_candidate_pool_composite_score = (sum(total_metrics["candidate_pool_avg_composite_score"]) / len(total_metrics["candidate_pool_avg_composite_score"])) if total_metrics["candidate_pool_avg_composite_score"] else None
+
         def _weighted_average_distribution_median(surfaces: list[dict[str, Any]], dist_key: str) -> float | None:
             """Compute sample-weighted average of distribution medians from selected surfaces."""
             medians_and_weights: list[tuple[float, float]] = []
@@ -853,6 +903,11 @@ def _build_replay_evaluator(
             "time_to_hit_20pct_median": avg_time_to_hit_20pct,
             "runner_escape_rate": avg_runner_escape_rate,
             "avg_composite_score_escaped": avg_composite_score_escaped,
+            # Task 1 (Round 11): per-factor IC and quality fraction
+            "ic_positive_factor_fraction": ic_positive_factor_fraction,
+            **{f"avg_factor_ic_{f}": avg_factor_ics.get(f) for f in BTST_FACTOR_NAMES},
+            # Task 3 (Round 11): candidate pool quality
+            "candidate_pool_avg_composite_score": avg_candidate_pool_composite_score,
         }
 
     return evaluator

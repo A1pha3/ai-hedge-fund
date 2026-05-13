@@ -244,6 +244,15 @@ def _resolve_runner_escape(*, profile: Any, snapshot: dict[str, Any], raw_metric
     projected_theme_exposure = _optional_float(raw_metrics, "projected_theme_exposure")
     gap_risk_raw_100 = _optional_float(raw_metrics, "gap_risk_raw_100")
     amount_share = _optional_float(raw_metrics, "candidate_pool_avg_amount_share_of_cutoff")
+    # Task 3 (Round 11): pool-level quality gate — refuse escape if the average composite
+    # score of the entire candidate pool is below the configured minimum.  The pool score is
+    # injected into raw_metrics from the session-level replay_context when available.
+    # Default 0.0 disables the check for backward compatibility.
+    pool_quality_min = float(getattr(profile, "runner_escape_pool_quality_min", 0.0) or 0.0)
+    if pool_quality_min > 0.0:
+        pool_avg_score = _optional_float(raw_metrics, "candidate_pool_avg_composite_score")
+        if pool_avg_score is not None and pool_avg_score < pool_quality_min:
+            return False, ["pool_quality_below_min"]
     if breakout >= getattr(profile, "runner_escape_breakout_freshness_min", 1.0):
         reasons.append("runner_escape_breakout")
     if trend >= getattr(profile, "runner_escape_trend_acceleration_min", 1.0):
