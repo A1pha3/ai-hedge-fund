@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability
+from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_optimal_hold_period, compute_score_position_tiers
 from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
@@ -165,6 +165,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     # Task 3 (Round 21, Beta): optimal execution timing signal — open vs wait strength.
     "open_entry_signal_strength",
     "execution_timing_confidence",
+    # Task 2 (Round 22, Alpha): multi-day optimal hold period metrics.
+    "t1_vs_t2_sharpe_diff",
+    "hold_period_confidence",
+    # Task 3 (Round 22, Beta): score percentile position-tier metrics.
+    "tier_win_rate_spread",
+    "tier_monotone_win_rate",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -220,6 +226,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     # Task 3 (Round 21, Beta): optimal execution timing signal
     "open_entry_signal_strength": "Open Entry Sig",
     "execution_timing_confidence": "Timing Conf",
+    # Task 2 (Round 22, Alpha): multi-day optimal hold period
+    "t1_vs_t2_sharpe_diff": "T1-T2 Sharpe Δ",
+    "hold_period_confidence": "Hold Conf",
+    # Task 3 (Round 22, Beta): score position tiers
+    "tier_win_rate_spread": "Tier WR Spread",
+    "tier_monotone_win_rate": "Tier Mono WR",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -293,6 +305,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 3 (Round 21, Beta): execution timing signal — optional; pre-Round-21 surfaces omit these.
     "open_entry_signal_strength",
     "execution_timing_confidence",
+    # Task 2 (Round 22, Alpha): multi-day hold period — optional; pre-Round-22 surfaces omit these.
+    "t1_vs_t2_sharpe_diff",
+    "hold_period_confidence",
+    # Task 3 (Round 22, Beta): score position tiers — optional; pre-Round-22 surfaces omit these.
+    "tier_win_rate_spread",
+    "tier_monotone_win_rate",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -349,6 +367,12 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     # Task 3 (Round 21, Beta): execution timing signal — 1 % tolerance each
     "open_entry_signal_strength": 0.01,
     "execution_timing_confidence": 0.01,
+    # Task 2 (Round 22, Alpha): multi-day hold period metrics — 1 % tolerance
+    "t1_vs_t2_sharpe_diff": 0.01,
+    "hold_period_confidence": 0.01,
+    # Task 3 (Round 22, Beta): score position tier metrics — 0.5 % tolerance
+    "tier_win_rate_spread": 0.005,
+    "tier_monotone_win_rate": 0.0,
 }
 
 
@@ -1077,6 +1101,9 @@ def _build_replay_evaluator(
         # Task 2 (Round 21, Alpha): factor IC stability (IR = mean_IC / std_IC) across windows.
         # Identifies consistently predictive factors vs noisy / regime-dependent ones.
         factor_ic_stability: dict[str, Any] = compute_factor_ic_stability(all_primary_surfaces)
+        # Task 1 (Round 22, Gamma): low-impact PROBE_GRID axis identification.
+        # Bridges surface correlations and IC stability to flag weak probe axes (advisory only).
+        low_impact_probe_axes: dict[str, Any] = compute_low_impact_probe_axes(surface_metric_correlations, factor_ic_stability)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1129,6 +1156,13 @@ def _build_replay_evaluator(
             "factor_ic_stability": factor_ic_stability,
             "most_stable_factor": factor_ic_stability.get("most_stable_factor"),
             "least_stable_factor": factor_ic_stability.get("least_stable_factor"),
+            # Task 1 (Round 22, Gamma): low-impact PROBE_GRID axis identification.
+            # low_impact_axes: probe-grid keys with |surface_corr| < threshold.
+            # low_ir_factors: factor names with IC IR < threshold.
+            # pruning_candidates: axes satisfying BOTH criteria (strongest pruning signal).
+            "low_impact_probe_axes": low_impact_probe_axes,
+            "pruning_candidates": low_impact_probe_axes.get("pruning_candidates"),
+            "low_ir_factors": low_impact_probe_axes.get("low_ir_factors"),
         }
 
     return evaluator
@@ -1497,6 +1531,98 @@ IC_WEIGHT_GRID_STEP: float = 0.05
 # Hard upper bound for any single factor's composite score weight to prevent a single
 # factor from dominating the composite score after repeated "increase" suggestions.
 IC_WEIGHT_GRID_MAX_UPPER_BOUND: float = 0.55
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 22, Gamma): Low-impact PROBE_GRID axis identification
+# ---------------------------------------------------------------------------
+# Bridges surface_metric_correlations and factor IC stability (both from R21)
+# to identify which PROBE_GRID weight axes correspond to weak/noisy factors.
+# Output is advisory only — no automatic axis removal.
+
+
+def compute_low_impact_probe_axes(
+    surface_metric_correlations: dict[str, float],
+    ic_stability: dict[str, float],
+    ic_corr_threshold: float = 0.05,
+    ir_threshold: float = 0.20,
+) -> dict[str, Any]:
+    """Identify low-contribution PROBE_GRID weight axes based on surface correlation and IC stability.
+
+    For each factor in :data:`BTST_FACTOR_TO_PROBE_WEIGHT_KEY` the function checks two signals:
+
+    1. **Surface metric correlation** (``|corr| < ic_corr_threshold``): whether the factor's
+       proxy metric (looked up from *surface_metric_correlations* using the factor name or
+       ``avg_factor_ic_{factor}``) has near-zero correlation with the window win-rate.
+    2. **IC Information Ratio** (``IR < ir_threshold``): whether the factor shows low
+       cross-window IC stability in *ic_stability* (``{factor}_ic_ir`` key).
+
+    A probe axis is a **pruning candidate** only when *both* conditions hold.  The output
+    is purely advisory — no axes are removed automatically.
+
+    Args:
+        surface_metric_correlations: Spearman-correlation dict from
+            :func:`~scripts.btst_analysis_utils.compute_surface_metric_correlations`.
+            Maps metric name → float correlation with ``next_close_positive_rate``.
+        ic_stability: Factor IC stability dict from
+            :func:`~scripts.btst_analysis_utils.compute_factor_ic_stability`.
+            Expected to contain ``{factor}_ic_ir`` keys for each BTST factor.
+        ic_corr_threshold: |correlation| below this value flags the factor as low-corr.
+            Defaults to 0.05.
+        ir_threshold: IC Information Ratio below this value flags the factor as low-IR.
+            Defaults to 0.20.
+
+    Returns:
+        Dict containing:
+
+        - ``low_impact_axes`` (list[str])    — probe-grid keys where ``|corr| < threshold``.
+        - ``low_ir_factors``  (list[str])    — factor names where ``IR < ir_threshold``.
+        - ``pruning_candidates`` (list[str]) — probe-grid keys satisfying *both* criteria.
+        - ``pruning_summary`` (str)          — human-readable advisory summary.
+    """
+    low_impact_axes: list[str] = []
+    low_ir_factors: list[str] = []
+    pruning_candidates: list[str] = []
+
+    for factor, probe_key in BTST_FACTOR_TO_PROBE_WEIGHT_KEY.items():
+        # Resolve surface metric correlation: try the factor name directly, then the avg_factor_ic_ prefix.
+        corr: float | None = None
+        for candidate_key in (factor, f"avg_factor_ic_{factor}"):
+            cval = surface_metric_correlations.get(candidate_key)
+            if isinstance(cval, (int, float)) and not isinstance(cval, bool):
+                corr = float(cval)
+                break
+
+        # Resolve IC Information Ratio from ic_stability dict.
+        ir: float | None = None
+        ir_raw = ic_stability.get(f"{factor}_ic_ir")
+        if isinstance(ir_raw, (int, float)) and not isinstance(ir_raw, bool):
+            ir = float(ir_raw)
+
+        is_low_corr: bool = (corr is not None) and (abs(corr) < ic_corr_threshold)
+        is_low_ir: bool = (ir is not None) and (ir < ir_threshold)
+
+        if is_low_corr:
+            low_impact_axes.append(probe_key)
+        if is_low_ir:
+            low_ir_factors.append(factor)
+        if is_low_corr and is_low_ir:
+            pruning_candidates.append(probe_key)
+
+    n_cand: int = len(pruning_candidates)
+    n_axes: int = len(low_impact_axes)
+    n_ir: int = len(low_ir_factors)
+    pruning_summary: str = (
+        f"{n_cand} probe axis(es) are pruning candidates (low surface corr AND low IC IR): {pruning_candidates}. "
+        f"{n_axes} axis(es) flagged by low surface correlation; {n_ir} factor(s) flagged by low IC IR."
+    )
+
+    return {
+        "low_impact_axes": low_impact_axes,
+        "low_ir_factors": low_ir_factors,
+        "pruning_candidates": pruning_candidates,
+        "pruning_summary": pruning_summary,
+    }
 
 
 def apply_ic_feedback_to_probe_grid(

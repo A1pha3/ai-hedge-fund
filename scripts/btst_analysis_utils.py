@@ -1508,6 +1508,189 @@ def compute_optimal_entry_signal(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"open_entry_signal_strength": open_strength, "wait_entry_signal_strength": wait_strength, "execution_timing_confidence": confidence, "recommended_execution": recommended}
 
 
+# ---------------------------------------------------------------------------
+# Round 22 — Task 2 (Alpha): Multi-day optimal hold period analysis
+# ---------------------------------------------------------------------------
+# Compares T+1 / T+2 / T+3 holding periods using a Sharpe-like ratio
+# (mean_return / std_return, no risk-free rate adjustment).
+# The optimal period is the one with the highest Sharpe-like ratio.
+# hold_period_confidence measures how decisively the winner beats the runner-up.
+
+
+def compute_optimal_hold_period(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compare T+1/T+2/T+3 hold periods by Sharpe-like ratio and output the optimal period.
+
+    For each period the Sharpe-like ratio is ``mean_return / std_return`` computed over
+    rows that have a valid return for that period.  When fewer than 5 rows are available
+    for a period its Sharpe is returned as ``None``.
+
+    Args:
+        rows: BTST candidate rows.  Relevant fields:
+
+            - ``next_close_return``        — T+1 close return.
+            - ``t_plus_2_close_return``    — T+2 close return.
+            - ``t_plus_3_close_return``    — T+3 close return.
+
+    Returns:
+        Dict with keys:
+
+        - ``t1_sharpe`` / ``t2_sharpe`` / ``t3_sharpe`` — Sharpe-like ratios (float or None).
+        - ``t1_win_rate`` / ``t2_win_rate`` / ``t3_win_rate`` — Win rates (float or None).
+        - ``t1_avg_return`` / ``t2_avg_return`` / ``t3_avg_return`` — Mean returns (float or None).
+        - ``optimal_hold_days`` — 1, 2, or 3; ``None`` when all periods lack data.
+        - ``hold_period_confidence`` — (best_sharpe − second_sharpe) / abs(best_sharpe) clipped to [0, 1]; ``None`` when fewer than two valid Sharpes.
+        - ``t1_vs_t2_sharpe_diff`` — t1_sharpe − t2_sharpe (float or None).
+        - ``t1_vs_t3_sharpe_diff`` — t1_sharpe − t3_sharpe (float or None).
+    """
+    _MIN_ROWS: int = 5
+
+    def _period_stats(return_col: str) -> tuple[float | None, float | None, float | None]:
+        """Return (sharpe, win_rate, avg_return) for a hold period.  None when < _MIN_ROWS rows."""
+        vals: list[float] = [float(row[return_col]) for row in rows if row.get(return_col) is not None]
+        if len(vals) < _MIN_ROWS:
+            return None, None, None
+        n: int = len(vals)
+        mean: float = sum(vals) / n
+        variance: float = sum((v - mean) ** 2 for v in vals) / (n - 1) if n >= 2 else 0.0
+        std: float = variance ** 0.5
+        sharpe: float | None = round(mean / std, 4) if std > 1e-9 else (round(mean, 4) if mean != 0.0 else None)
+        win_rate: float = round(sum(1 for v in vals if v > 0.0) / n, 4)
+        avg_return: float = round(mean, 4)
+        return sharpe, win_rate, avg_return
+
+    t1_sharpe, t1_win_rate, t1_avg_return = _period_stats("next_close_return")
+    t2_sharpe, t2_win_rate, t2_avg_return = _period_stats("t_plus_2_close_return")
+    t3_sharpe, t3_win_rate, t3_avg_return = _period_stats("t_plus_3_close_return")
+
+    candidates: list[tuple[int, float]] = [(days, s) for days, s in ((1, t1_sharpe), (2, t2_sharpe), (3, t3_sharpe)) if s is not None]
+    optimal_hold_days: int | None = None
+    hold_period_confidence: float | None = None
+    if candidates:
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        optimal_hold_days = candidates[0][0]
+        if len(candidates) >= 2:
+            best_s: float = candidates[0][1]
+            second_s: float = candidates[1][1]
+            if abs(best_s) > 1e-9:
+                raw_conf: float = (best_s - second_s) / abs(best_s)
+                hold_period_confidence = round(max(0.0, min(1.0, raw_conf)), 4)
+            else:
+                hold_period_confidence = 0.0
+
+    t1_vs_t2_sharpe_diff: float | None = round(t1_sharpe - t2_sharpe, 4) if t1_sharpe is not None and t2_sharpe is not None else None
+    t1_vs_t3_sharpe_diff: float | None = round(t1_sharpe - t3_sharpe, 4) if t1_sharpe is not None and t3_sharpe is not None else None
+
+    return {
+        "t1_sharpe": t1_sharpe,
+        "t2_sharpe": t2_sharpe,
+        "t3_sharpe": t3_sharpe,
+        "t1_win_rate": t1_win_rate,
+        "t2_win_rate": t2_win_rate,
+        "t3_win_rate": t3_win_rate,
+        "t1_avg_return": t1_avg_return,
+        "t2_avg_return": t2_avg_return,
+        "t3_avg_return": t3_avg_return,
+        "optimal_hold_days": optimal_hold_days,
+        "hold_period_confidence": hold_period_confidence,
+        "t1_vs_t2_sharpe_diff": t1_vs_t2_sharpe_diff,
+        "t1_vs_t3_sharpe_diff": t1_vs_t3_sharpe_diff,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 22 — Task 3 (Beta): Score percentile position-tier analysis
+# ---------------------------------------------------------------------------
+# Divides the candidate pool into three tiers by composite score terciles
+# (P33 / P67) and computes T+1 win rate and mean payoff per tier.
+# tier_monotone_win_rate=True validates that higher scores → higher win rates.
+
+
+def compute_score_position_tiers(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Stratify rows by runner_composite_score terciles and compute per-tier win rate/payoff.
+
+    Three tiers are formed by the P33 and P67 percentiles of ``runner_composite_score``:
+
+    - **high** tier: score > P67
+    - **mid**  tier: P33 ≤ score ≤ P67
+    - **low**  tier: score < P33
+
+    Win rate and average payoff (mean ``next_close_return``) are computed per tier.
+    A tier needs at least 3 valid rows; otherwise its metrics are ``None``.
+
+    Args:
+        rows: BTST candidate rows.  Fields used: ``runner_composite_score`` and
+            ``next_close_return``.  Rows missing either field are excluded.
+
+    Returns:
+        Dict with keys:
+
+        - ``score_p33`` / ``score_p67``                 — Tercile cut-points (float or None).
+        - ``tier_high_win_rate`` / ``tier_high_avg_payoff``
+        - ``tier_mid_win_rate``  / ``tier_mid_avg_payoff``
+        - ``tier_low_win_rate``  / ``tier_low_avg_payoff``
+        - ``tier_monotone_win_rate`` (bool)              — True when high > mid > low win rates.
+        - ``tier_win_rate_spread``                       — tier_high_win_rate − tier_low_win_rate (float or None).
+        - ``tier_payoff_spread``                         — tier_high_avg_payoff − tier_low_avg_payoff (float or None).
+    """
+    _MIN_TIER_ROWS: int = 3
+
+    scored_pairs: list[tuple[float, float]] = [
+        (float(row["runner_composite_score"]), float(row["next_close_return"]))
+        for row in rows
+        if row.get("runner_composite_score") is not None and row.get("next_close_return") is not None
+    ]
+
+    if not scored_pairs:
+        return {"score_p33": None, "score_p67": None, "tier_high_win_rate": None, "tier_high_avg_payoff": None, "tier_mid_win_rate": None, "tier_mid_avg_payoff": None, "tier_low_win_rate": None, "tier_low_avg_payoff": None, "tier_monotone_win_rate": False, "tier_win_rate_spread": None, "tier_payoff_spread": None}
+
+    scores_sorted: list[float] = sorted(s for s, _ in scored_pairs)
+    n: int = len(scores_sorted)
+
+    def _percentile(sorted_vals: list[float], p: float) -> float:
+        """Linear-interpolated percentile (p in [0,100])."""
+        idx: float = (p / 100.0) * (len(sorted_vals) - 1)
+        lo: int = int(idx)
+        hi: int = min(lo + 1, len(sorted_vals) - 1)
+        return sorted_vals[lo] + (idx - lo) * (sorted_vals[hi] - sorted_vals[lo])
+
+    score_p33: float = round(_percentile(scores_sorted, 33.0), 4)
+    score_p67: float = round(_percentile(scores_sorted, 67.0), 4)
+
+    high_rets: list[float] = [ret for s, ret in scored_pairs if s > score_p67]
+    mid_rets: list[float] = [ret for s, ret in scored_pairs if score_p33 <= s <= score_p67]
+    low_rets: list[float] = [ret for s, ret in scored_pairs if s < score_p33]
+
+    def _tier_stats(rets: list[float]) -> tuple[float | None, float | None]:
+        if len(rets) < _MIN_TIER_ROWS:
+            return None, None
+        win_rate: float = round(sum(1 for r in rets if r > 0.0) / len(rets), 4)
+        avg_payoff: float = round(sum(rets) / len(rets), 4)
+        return win_rate, avg_payoff
+
+    tier_high_win_rate, tier_high_avg_payoff = _tier_stats(high_rets)
+    tier_mid_win_rate, tier_mid_avg_payoff = _tier_stats(mid_rets)
+    tier_low_win_rate, tier_low_avg_payoff = _tier_stats(low_rets)
+
+    tier_monotone_win_rate: bool = (tier_high_win_rate is not None and tier_mid_win_rate is not None and tier_low_win_rate is not None and tier_high_win_rate > tier_mid_win_rate > tier_low_win_rate)
+
+    tier_win_rate_spread: float | None = round(tier_high_win_rate - tier_low_win_rate, 4) if tier_high_win_rate is not None and tier_low_win_rate is not None else None
+    tier_payoff_spread: float | None = round(tier_high_avg_payoff - tier_low_avg_payoff, 4) if tier_high_avg_payoff is not None and tier_low_avg_payoff is not None else None
+
+    return {
+        "score_p33": score_p33,
+        "score_p67": score_p67,
+        "tier_high_win_rate": tier_high_win_rate,
+        "tier_high_avg_payoff": tier_high_avg_payoff,
+        "tier_mid_win_rate": tier_mid_win_rate,
+        "tier_mid_avg_payoff": tier_mid_avg_payoff,
+        "tier_low_win_rate": tier_low_win_rate,
+        "tier_low_avg_payoff": tier_low_avg_payoff,
+        "tier_monotone_win_rate": tier_monotone_win_rate,
+        "tier_win_rate_spread": tier_win_rate_spread,
+        "tier_payoff_spread": tier_payoff_spread,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -1648,6 +1831,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # early_dominated=True → buy-at-open execution is optimal for this window.
     # late_dominated=True  → momentum persists into close; chase is viable.
     intraday_high_timing: dict[str, Any] = compute_intraday_high_timing_distribution(next_day_rows)
+
+    # -----------------------------------------------------------------------
+    # Round 22 analytics — wired into build_surface_summary.
+    # -----------------------------------------------------------------------
+    # Task 2 (Round 22, Alpha): Multi-day optimal hold period analysis.
+    # Compares T+1/T+2/T+3 Sharpe-like ratios and identifies the optimal hold period.
+    _optimal_hold_period: dict[str, Any] = compute_optimal_hold_period(rows)
+    # Task 3 (Round 22, Beta): Score percentile position-tier stratification.
+    # Divides the candidate pool into low/mid/high composite score terciles.
+    _score_position_tiers: dict[str, Any] = compute_score_position_tiers(next_day_rows)
 
     # -----------------------------------------------------------------------
     # Round 21 analytics — wired into build_surface_summary.
@@ -1973,6 +2166,41 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "wait_entry_signal_strength": _optimal_entry_signal.get("wait_entry_signal_strength"),
         "execution_timing_confidence": _optimal_entry_signal.get("execution_timing_confidence"),
         "recommended_execution": _optimal_entry_signal.get("recommended_execution"),
+        # -----------------------------------------------------------------------
+        # Round 22 analytics
+        # -----------------------------------------------------------------------
+        # Task 2 (Round 22, Alpha): multi-day optimal hold period.
+        # t1_sharpe/t2_sharpe/t3_sharpe: Sharpe-like ratio (mean/std) for each hold period.
+        # optimal_hold_days: period (1/2/3) with the highest Sharpe-like ratio.
+        # hold_period_confidence: relative advantage of winner over runner-up.
+        # t1_vs_t2_sharpe_diff / t1_vs_t3_sharpe_diff: direct Sharpe comparisons.
+        "optimal_hold_period": _optimal_hold_period,
+        "t1_sharpe": _optimal_hold_period.get("t1_sharpe"),
+        "t2_sharpe": _optimal_hold_period.get("t2_sharpe"),
+        "t3_sharpe": _optimal_hold_period.get("t3_sharpe"),
+        "optimal_hold_days": _optimal_hold_period.get("optimal_hold_days"),
+        "hold_period_confidence": _optimal_hold_period.get("hold_period_confidence"),
+        "t1_vs_t2_sharpe_diff": _optimal_hold_period.get("t1_vs_t2_sharpe_diff"),
+        "t1_vs_t3_sharpe_diff": _optimal_hold_period.get("t1_vs_t3_sharpe_diff"),
+        # Task 3 (Round 22, Beta): score percentile position-tier stratification.
+        # score_p33/score_p67: composite score tercile cut-points.
+        # tier_{high,mid,low}_win_rate: T+1 win rate per tier (None if < 3 samples).
+        # tier_{high,mid,low}_avg_payoff: mean T+1 return per tier.
+        # tier_monotone_win_rate: True when high > mid > low win rates (validates scoring).
+        # tier_win_rate_spread: tier_high_win_rate − tier_low_win_rate.
+        # tier_payoff_spread: tier_high_avg_payoff − tier_low_avg_payoff.
+        "score_position_tiers": _score_position_tiers,
+        "score_p33": _score_position_tiers.get("score_p33"),
+        "score_p67": _score_position_tiers.get("score_p67"),
+        "tier_high_win_rate": _score_position_tiers.get("tier_high_win_rate"),
+        "tier_high_avg_payoff": _score_position_tiers.get("tier_high_avg_payoff"),
+        "tier_mid_win_rate": _score_position_tiers.get("tier_mid_win_rate"),
+        "tier_mid_avg_payoff": _score_position_tiers.get("tier_mid_avg_payoff"),
+        "tier_low_win_rate": _score_position_tiers.get("tier_low_win_rate"),
+        "tier_low_avg_payoff": _score_position_tiers.get("tier_low_avg_payoff"),
+        "tier_monotone_win_rate": _score_position_tiers.get("tier_monotone_win_rate"),
+        "tier_win_rate_spread": _score_position_tiers.get("tier_win_rate_spread"),
+        "tier_payoff_spread": _score_position_tiers.get("tier_payoff_spread"),
     }
 
 

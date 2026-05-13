@@ -4043,3 +4043,232 @@ def test_r21_all_new_metrics_have_labels() -> None:
     for metric in r21_metrics:
         assert metric in COMPARISON_METRICS, f"{metric} must be in COMPARISON_METRICS"
         assert metric in COMPARISON_METRIC_LABELS, f"{metric} must be in COMPARISON_METRIC_LABELS"
+
+
+# =============================================================================
+# Round 22 — Task 1 (Gamma): compute_low_impact_probe_axes
+# =============================================================================
+
+def test_r22_compute_low_impact_probe_axes_empty_inputs_returns_empty_lists() -> None:
+    """Empty surface_metric_correlations and ic_stability → all lists empty."""
+    from scripts.optimize_profile import compute_low_impact_probe_axes
+    result = compute_low_impact_probe_axes({}, {})
+    assert result["low_impact_axes"] == []
+    assert result["low_ir_factors"] == []
+    assert result["pruning_candidates"] == []
+    assert isinstance(result["pruning_summary"], str)
+
+
+def test_r22_compute_low_impact_probe_axes_low_corr_threshold() -> None:
+    """Factor with |corr| < threshold is added to low_impact_axes."""
+    from scripts.optimize_profile import compute_low_impact_probe_axes, BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
+    probe_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor]
+    result = compute_low_impact_probe_axes({factor: 0.01}, {}, ic_corr_threshold=0.05)
+    assert probe_key in result["low_impact_axes"]
+    assert probe_key not in result["pruning_candidates"]  # IR condition not met
+
+
+def test_r22_compute_low_impact_probe_axes_low_ir_threshold() -> None:
+    """Factor with IR < threshold is added to low_ir_factors."""
+    from scripts.optimize_profile import compute_low_impact_probe_axes, BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
+    result = compute_low_impact_probe_axes({}, {f"{factor}_ic_ir": 0.10}, ir_threshold=0.20)
+    assert factor in result["low_ir_factors"]
+    assert BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor] not in result["pruning_candidates"]  # corr condition not met
+
+
+def test_r22_compute_low_impact_probe_axes_pruning_candidate_requires_both() -> None:
+    """pruning_candidates only includes axes where BOTH low-corr AND low-IR hold."""
+    from scripts.optimize_profile import compute_low_impact_probe_axes, BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
+    probe_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor]
+    result = compute_low_impact_probe_axes(
+        {factor: 0.01},
+        {f"{factor}_ic_ir": 0.10},
+        ic_corr_threshold=0.05,
+        ir_threshold=0.20,
+    )
+    assert probe_key in result["pruning_candidates"]
+    assert factor in result["low_ir_factors"]
+
+
+def test_r22_compute_low_impact_probe_axes_high_corr_not_flagged() -> None:
+    """Factor with |corr| above threshold must NOT appear in low_impact_axes."""
+    from scripts.optimize_profile import compute_low_impact_probe_axes, BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
+    probe_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor]
+    result = compute_low_impact_probe_axes({factor: 0.30}, {}, ic_corr_threshold=0.05)
+    assert probe_key not in result["low_impact_axes"]
+
+
+# =============================================================================
+# Round 22 — Task 2 (Alpha): compute_optimal_hold_period
+# =============================================================================
+
+def _make_hold_rows(t1: list[float], t2: list[float], t3: list[float]) -> list[dict]:
+    """Build synthetic rows with T+1/T+2/T+3 returns."""
+    max_len = max(len(t1), len(t2), len(t3))
+    rows = []
+    for i in range(max_len):
+        row: dict = {}
+        if i < len(t1):
+            row["next_close_return"] = t1[i]
+        if i < len(t2):
+            row["t_plus_2_close_return"] = t2[i]
+        if i < len(t3):
+            row["t_plus_3_close_return"] = t3[i]
+        rows.append(row)
+    return rows
+
+
+def test_r22_compute_optimal_hold_period_t1_optimal() -> None:
+    """When T+1 has clearly higher Sharpe, optimal_hold_days should be 1."""
+    from scripts.btst_analysis_utils import compute_optimal_hold_period
+    t1 = [0.05, 0.06, 0.04, 0.07, 0.05, 0.06]    # high mean, low std → high Sharpe
+    t2 = [0.01, -0.05, 0.03, -0.04, 0.02, -0.03]  # lower Sharpe
+    t3 = [-0.02, -0.03, 0.01, -0.04, -0.01, -0.02]  # worst
+    rows = _make_hold_rows(t1, t2, t3)
+    result = compute_optimal_hold_period(rows)
+    assert result["optimal_hold_days"] == 1
+    assert result["t1_sharpe"] is not None
+
+
+def test_r22_compute_optimal_hold_period_t2_optimal() -> None:
+    """When T+2 has clearly higher Sharpe, optimal_hold_days should be 2."""
+    from scripts.btst_analysis_utils import compute_optimal_hold_period
+    t1 = [0.01, -0.01, 0.02, -0.02, 0.01, -0.01]  # near zero Sharpe
+    t2 = [0.06, 0.07, 0.05, 0.08, 0.06, 0.07]     # high Sharpe
+    t3 = [-0.01, 0.00, -0.02, 0.01, -0.01, 0.00]
+    rows = _make_hold_rows(t1, t2, t3)
+    result = compute_optimal_hold_period(rows)
+    assert result["optimal_hold_days"] == 2
+
+
+def test_r22_compute_optimal_hold_period_insufficient_data_returns_none_sharpe() -> None:
+    """Period with < 5 rows yields None Sharpe."""
+    from scripts.btst_analysis_utils import compute_optimal_hold_period
+    # T+1: 6 rows, T+2: 3 rows (< 5), T+3: 3 rows (< 5)
+    t1 = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06]
+    t2 = [0.01, 0.02, 0.03]
+    t3 = [0.01, 0.02, 0.03]
+    rows = _make_hold_rows(t1, t2, t3)
+    result = compute_optimal_hold_period(rows)
+    assert result["t2_sharpe"] is None
+    assert result["t3_sharpe"] is None
+    assert result["t1_sharpe"] is not None
+    assert result["optimal_hold_days"] == 1
+
+
+def test_r22_compute_optimal_hold_period_all_missing_returns_none() -> None:
+    """All periods < 5 rows → optimal_hold_days is None."""
+    from scripts.btst_analysis_utils import compute_optimal_hold_period
+    rows = [{"next_close_return": 0.01}, {"next_close_return": 0.02}]
+    result = compute_optimal_hold_period(rows)
+    assert result["optimal_hold_days"] is None
+    assert result["t1_sharpe"] is None
+
+
+def test_r22_compute_optimal_hold_period_sharpe_diff_fields_present() -> None:
+    """t1_vs_t2_sharpe_diff and t1_vs_t3_sharpe_diff are computed when both periods valid."""
+    from scripts.btst_analysis_utils import compute_optimal_hold_period
+    returns = [0.02, 0.03, 0.01, 0.04, 0.02, 0.03]
+    rows = _make_hold_rows(returns, returns, returns)
+    result = compute_optimal_hold_period(rows)
+    assert result["t1_vs_t2_sharpe_diff"] is not None
+    assert result["t1_vs_t3_sharpe_diff"] is not None
+    # Same data → diff ≈ 0
+    assert abs(result["t1_vs_t2_sharpe_diff"]) < 0.01
+
+
+# =============================================================================
+# Round 22 — Task 3 (Beta): compute_score_position_tiers
+# =============================================================================
+
+def _make_tier_rows(score_return_pairs: list[tuple[float, float]]) -> list[dict]:
+    """Build rows with runner_composite_score and next_close_return."""
+    return [{"runner_composite_score": s, "next_close_return": r} for s, r in score_return_pairs]
+
+
+def test_r22_compute_score_position_tiers_monotone_when_high_scores_win_more() -> None:
+    """tier_monotone_win_rate=True when high-score tier has highest win rate."""
+    from scripts.btst_analysis_utils import compute_score_position_tiers
+    # 30 rows: high (0.9) → all positive, mid (0.5) → mixed, low (0.1) → all negative
+    pairs = [(0.9, 0.05)] * 10 + [(0.5, 0.01)] * 5 + [(0.5, -0.01)] * 5 + [(0.1, -0.03)] * 10
+    rows = _make_tier_rows(pairs)
+    result = compute_score_position_tiers(rows)
+    assert result["tier_monotone_win_rate"] is True
+
+
+def test_r22_compute_score_position_tiers_spread_is_positive_when_high_wins_more() -> None:
+    """tier_win_rate_spread > 0 when high tier wins more than low tier."""
+    from scripts.btst_analysis_utils import compute_score_position_tiers
+    pairs = [(0.9, 0.04)] * 10 + [(0.5, 0.01)] * 10 + [(0.1, -0.02)] * 10
+    rows = _make_tier_rows(pairs)
+    result = compute_score_position_tiers(rows)
+    assert result["tier_win_rate_spread"] is not None
+    assert result["tier_win_rate_spread"] >= 0.0
+
+
+def test_r22_compute_score_position_tiers_too_few_rows_returns_none_tiers() -> None:
+    """Tiers with < 3 rows yield None win_rate and payoff."""
+    from scripts.btst_analysis_utils import compute_score_position_tiers
+    # Only 4 rows total → each tier will have < 3
+    pairs = [(0.1, 0.01), (0.4, 0.02), (0.6, -0.01), (0.9, 0.03)]
+    rows = _make_tier_rows(pairs)
+    result = compute_score_position_tiers(rows)
+    # At least some tiers should be None (tiers have ≤ 1-2 rows each)
+    assert result["tier_high_win_rate"] is None or result["tier_low_win_rate"] is None
+
+
+def test_r22_compute_score_position_tiers_empty_rows_returns_none() -> None:
+    """Empty input returns all None metrics and tier_monotone_win_rate=False."""
+    from scripts.btst_analysis_utils import compute_score_position_tiers
+    result = compute_score_position_tiers([])
+    assert result["score_p33"] is None
+    assert result["score_p67"] is None
+    assert result["tier_win_rate_spread"] is None
+    assert result["tier_monotone_win_rate"] is False
+
+
+def test_r22_compute_score_position_tiers_percentile_ordering() -> None:
+    """score_p33 < score_p67 for a non-trivial distribution."""
+    from scripts.btst_analysis_utils import compute_score_position_tiers
+    pairs = [(float(i) / 20.0, 0.01 if i > 10 else -0.01) for i in range(20)]
+    rows = _make_tier_rows(pairs)
+    result = compute_score_position_tiers(rows)
+    assert result["score_p33"] is not None
+    assert result["score_p67"] is not None
+    assert result["score_p33"] < result["score_p67"]
+
+
+# =============================================================================
+# Round 22 — COMPARISON_METRICS / optimizer registry checks
+# =============================================================================
+
+def test_r22_new_metrics_in_comparison_metrics() -> None:
+    """Round 22 new metrics must all be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for m in ("t1_vs_t2_sharpe_diff", "hold_period_confidence", "tier_win_rate_spread", "tier_monotone_win_rate"):
+        assert m in COMPARISON_METRICS, f"{m} missing from COMPARISON_METRICS"
+
+
+def test_r22_new_metrics_have_labels() -> None:
+    """Round 22 new metrics must have labels in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for m in ("t1_vs_t2_sharpe_diff", "hold_period_confidence", "tier_win_rate_spread", "tier_monotone_win_rate"):
+        assert m in COMPARISON_METRIC_LABELS, f"{m} missing from COMPARISON_METRIC_LABELS"
+
+
+def test_r22_new_metrics_are_optional() -> None:
+    """Round 22 new metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for m in ("t1_vs_t2_sharpe_diff", "hold_period_confidence", "tier_win_rate_spread", "tier_monotone_win_rate"):
+        assert m in OPTIONAL_COMPARISON_METRICS, f"{m} missing from OPTIONAL_COMPARISON_METRICS"
+
+
+def test_r22_new_metrics_have_epsilon() -> None:
+    """Round 22 new metrics must have epsilon entries in COMPARISON_METRIC_EPSILON."""
+    from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+    for m in ("t1_vs_t2_sharpe_diff", "hold_period_confidence", "tier_win_rate_spread", "tier_monotone_win_rate"):
+        assert m in COMPARISON_METRIC_EPSILON, f"{m} missing from COMPARISON_METRIC_EPSILON"
