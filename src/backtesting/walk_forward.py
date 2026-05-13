@@ -32,6 +32,11 @@ ROLLOUT_MAX_NON_POSITIVE_SHARPE_STREAK = 2
 ROLLOUT_WORST_MAX_DRAWDOWN_FLOOR = -12.0
 MIN_TEST_TRADING_DAYS_FOR_ROLLOUT = 5
 
+RUNNER_TAIL_HIT_IMPROVEMENT_MIN = 0.05
+RUNNER_TAIL_HIT_ABSOLUTE_MIN = 0.12
+RUNNER_T1_WIN_RATE_REGRESSION_FLOOR = -0.04
+RUNNER_DOWNSIDE_REGRESSION_FLOOR = -0.015
+
 
 @dataclass(frozen=True)
 class WalkForwardWindow:
@@ -274,10 +279,12 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
 
     # Runner tail hit floor check (only if runner metrics are present)
     runner_tail_hit_values = [item.metrics.get("max_future_high_return_2_5d_hit_rate_at_20pct") for item in results if item.metrics.get("max_future_high_return_2_5d_hit_rate_at_20pct") is not None]
+    avg_runner_tail_hit_rate = _average(runner_tail_hit_values)
     if runner_tail_hit_values:
-        average_runner_tail_hit = _average(runner_tail_hit_values)
-        if average_runner_tail_hit is None or average_runner_tail_hit < 0.10:
+        if avg_runner_tail_hit_rate is None or avg_runner_tail_hit_rate < 0.10:
             rollout_blockers.append("btst_runner_tail_hit_floor_breach")
+    runner_capture_count_values = [item.metrics.get("runner_capture_count") for item in results if item.metrics.get("runner_capture_count") is not None]
+    total_runner_capture_count = int(sum(float(v) for v in runner_capture_count_values)) if runner_capture_count_values else None
 
     btst_quality_summary: dict[str, float | None] = {
         metric_key: _average(btst_metric_values[metric_key]) for metric_key in btst_metric_keys
@@ -306,6 +313,8 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
         "max_non_positive_sharpe_streak": max_non_positive_sharpe_streak,
         **btst_quality_summary,
         **execution_summary,
+        "avg_runner_tail_hit_rate": avg_runner_tail_hit_rate,
+        "total_runner_capture_count": total_runner_capture_count,
         "rollout_ready": not rollout_blockers,
         "rollout_blockers": rollout_blockers,
     }
@@ -313,3 +322,79 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
         **base_summary,
         **build_promotion_gate_summary(walk_forward_summary=base_summary),
     }
+
+
+def classify_runner_rollout_verdict(
+    runner_summary: dict,
+    baseline_summary: dict | None = None,
+) -> tuple[str, dict]:
+    """Classify the runner rollout verdict for a walk-forward summary.
+
+    Four possible verdict labels:
+    - ``promotable_runner_profile``: tail hit meets the absolute floor AND either
+      no baseline is provided or shows sufficient improvement without T+1 or
+      downside regression.
+    - ``tail_hit_better_but_t1_risky``: tail hit improves over baseline but the
+      T+1 win rate or downside regresses beyond the tolerance floors.
+    - ``coverage_only_not_runner_better``: coverage/T+1 quality acceptable but
+      runner tail hit rate does not improve enough over baseline.
+    - ``keep_precision_baseline``: runner tail hit is below the absolute floor,
+      regardless of baseline comparison.
+
+    Args:
+        runner_summary: Summary dict containing ``avg_runner_tail_hit_rate``,
+            ``next_close_positive_rate``, and ``downside_p10`` values.
+        baseline_summary: Optional baseline summary dict with the same keys.
+
+    Returns:
+        A tuple of (verdict_label, detail_dict).
+    """
+    tail_hit = float(runner_summary.get("avg_runner_tail_hit_rate") or 0.0)
+    t1_win_rate = float(runner_summary.get("next_close_positive_rate") or 0.0)
+    downside = float(runner_summary.get("downside_p10") or 0.0)
+
+    detail: dict = {
+        "tail_hit": tail_hit,
+        "t1_win_rate": t1_win_rate,
+        "downside": downside,
+        "baseline_tail_hit": None,
+        "tail_hit_delta": None,
+        "t1_win_rate_delta": None,
+        "downside_delta": None,
+    }
+
+    if baseline_summary is not None:
+        baseline_tail_hit = float(baseline_summary.get("avg_runner_tail_hit_rate") or 0.0)
+        baseline_t1 = float(baseline_summary.get("next_close_positive_rate") or 0.0)
+        baseline_downside = float(baseline_summary.get("downside_p10") or 0.0)
+        detail["baseline_tail_hit"] = baseline_tail_hit
+        detail["tail_hit_delta"] = tail_hit - baseline_tail_hit
+        detail["t1_win_rate_delta"] = t1_win_rate - baseline_t1
+        detail["downside_delta"] = downside - baseline_downside
+    else:
+        baseline_tail_hit = None
+
+    # Absolute floor: if tail hit below minimum, always keep precision baseline
+    if tail_hit < RUNNER_TAIL_HIT_ABSOLUTE_MIN:
+        detail["verdict_reason"] = "tail_hit_below_absolute_min"
+        return "keep_precision_baseline", detail
+
+    if baseline_tail_hit is not None:
+        improvement = tail_hit - baseline_tail_hit
+        t1_regression = (t1_win_rate - float(baseline_summary.get("next_close_positive_rate") or 0.0))  # type: ignore[arg-type]
+        downside_regression = downside - float(baseline_summary.get("downside_p10") or 0.0)  # type: ignore[arg-type]
+
+        # Check T+1 or downside regression
+        t1_risky = t1_regression < RUNNER_T1_WIN_RATE_REGRESSION_FLOOR
+        downside_risky = downside_regression < RUNNER_DOWNSIDE_REGRESSION_FLOOR
+
+        if improvement >= RUNNER_TAIL_HIT_IMPROVEMENT_MIN and (t1_risky or downside_risky):
+            detail["verdict_reason"] = "t1_or_downside_regression"
+            return "tail_hit_better_but_t1_risky", detail
+
+        if improvement < RUNNER_TAIL_HIT_IMPROVEMENT_MIN:
+            detail["verdict_reason"] = "insufficient_tail_hit_improvement"
+            return "coverage_only_not_runner_better", detail
+
+    detail["verdict_reason"] = "meets_all_runner_criteria"
+    return "promotable_runner_profile", detail

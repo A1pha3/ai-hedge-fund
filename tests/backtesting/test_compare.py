@@ -172,6 +172,59 @@ def test_format_ab_comparison_report():
     assert "MVP Avg Sortino: 1.60" in report
 
 
+def test_format_ab_comparison_report_includes_runner_section_when_present():
+    results = [
+        ABWindowMetrics(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31"),
+            baseline={"sharpe_ratio": 0.8, "sortino_ratio": 1.1, "max_drawdown": -9.0},
+            mvp={"sharpe_ratio": 1.2, "sortino_ratio": 1.6, "max_drawdown": -7.0},
+        )
+    ]
+    report = format_ab_comparison_report(
+        results,
+        {
+            "window_count": 1,
+            "baseline_avg_sharpe": 0.8,
+            "baseline_avg_sortino": 1.1,
+            "mvp_avg_sharpe": 1.2,
+            "mvp_avg_sortino": 1.6,
+            "avg_sortino_delta": 0.5,
+            "sortino_p_value_estimate": 0.04,
+            "avg_runner_tail_hit_delta": 0.07,
+            "avg_runner_tail_median_delta": 0.03,
+        },
+    )
+
+    assert "Runner Quality" in report
+    assert "Runner Tail Hit Rate Delta" in report
+    assert "+0.0700" in report
+    assert "+0.0300" in report
+
+
+def test_format_ab_comparison_report_omits_runner_section_when_absent():
+    results = [
+        ABWindowMetrics(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31"),
+            baseline={"sharpe_ratio": 0.8, "sortino_ratio": 1.1, "max_drawdown": -9.0},
+            mvp={"sharpe_ratio": 1.2, "sortino_ratio": 1.6, "max_drawdown": -7.0},
+        )
+    ]
+    report = format_ab_comparison_report(
+        results,
+        {
+            "window_count": 1,
+            "baseline_avg_sharpe": 0.8,
+            "baseline_avg_sortino": 1.1,
+            "mvp_avg_sharpe": 1.2,
+            "mvp_avg_sortino": 1.6,
+            "avg_sortino_delta": 0.5,
+            "sortino_p_value_estimate": None,
+        },
+    )
+
+    assert "Runner Quality" not in report
+
+
 def test_build_ab_comparison_payload():
     results = [
         ABWindowMetrics(

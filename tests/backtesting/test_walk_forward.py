@@ -5,6 +5,7 @@ from src.backtesting.walk_forward import (
     WalkForwardResult,
     WalkForwardWindow,
     build_walk_forward_windows,
+    classify_runner_rollout_verdict,
     run_walk_forward,
     summarize_walk_forward,
     WindowMode,
@@ -591,3 +592,71 @@ def test_summarize_walk_forward_blocks_runner_tail_floor_breach() -> None:
     summary = summarize_walk_forward(results)
 
     assert "btst_runner_tail_hit_floor_breach" in summary["rollout_blockers"]
+
+
+def test_summarize_walk_forward_stores_avg_runner_tail_hit_rate():
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={
+                "sharpe_ratio": 1.2,
+                "sortino_ratio": 1.5,
+                "max_drawdown": -3.0,
+                "test_trading_days": 15,
+                "next_close_positive_rate": 0.60,
+                "next_high_hit_rate": 0.62,
+                "downside_p10": -0.02,
+                "max_future_high_return_2_5d_hit_rate_at_20pct": 0.18,
+                "runner_capture_count": 4,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert "avg_runner_tail_hit_rate" in summary
+    assert abs(float(summary["avg_runner_tail_hit_rate"]) - 0.18) < 0.001
+    assert summary["total_runner_capture_count"] == 4
+
+
+def test_classify_runner_rollout_verdict_promotable_no_baseline():
+    verdict, detail = classify_runner_rollout_verdict(
+        {"avg_runner_tail_hit_rate": 0.18, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    )
+    assert verdict == "promotable_runner_profile"
+    assert detail["verdict_reason"] == "meets_all_runner_criteria"
+
+
+def test_classify_runner_rollout_verdict_keep_precision_baseline_below_floor():
+    verdict, detail = classify_runner_rollout_verdict(
+        {"avg_runner_tail_hit_rate": 0.08, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    )
+    assert verdict == "keep_precision_baseline"
+    assert detail["verdict_reason"] == "tail_hit_below_absolute_min"
+
+
+def test_classify_runner_rollout_verdict_tail_hit_better_but_t1_risky():
+    runner = {"avg_runner_tail_hit_rate": 0.22, "next_close_positive_rate": 0.52, "downside_p10": -0.02}
+    baseline = {"avg_runner_tail_hit_rate": 0.14, "next_close_positive_rate": 0.58, "downside_p10": -0.02}
+    verdict, detail = classify_runner_rollout_verdict(runner, baseline)
+    # tail_hit_delta = 0.08 >= 0.05, but t1 regression = 0.52-0.58 = -0.06 < -0.04
+    assert verdict == "tail_hit_better_but_t1_risky"
+    assert detail["verdict_reason"] == "t1_or_downside_regression"
+
+
+def test_classify_runner_rollout_verdict_coverage_only_not_runner_better():
+    runner = {"avg_runner_tail_hit_rate": 0.15, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    baseline = {"avg_runner_tail_hit_rate": 0.13, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    verdict, detail = classify_runner_rollout_verdict(runner, baseline)
+    # tail_hit_delta = 0.02 < 0.05
+    assert verdict == "coverage_only_not_runner_better"
+    assert detail["verdict_reason"] == "insufficient_tail_hit_improvement"
+
+
+def test_classify_runner_rollout_verdict_promotable_with_baseline():
+    runner = {"avg_runner_tail_hit_rate": 0.22, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    baseline = {"avg_runner_tail_hit_rate": 0.14, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    verdict, detail = classify_runner_rollout_verdict(runner, baseline)
+    # tail_hit_delta = 0.08 >= 0.05, no T+1 or downside regression
+    assert verdict == "promotable_runner_profile"
+    assert abs(detail["tail_hit_delta"] - 0.08) < 0.001

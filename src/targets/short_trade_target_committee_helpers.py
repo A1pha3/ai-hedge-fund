@@ -9,6 +9,7 @@ from typing import Any
 from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state_metrics
 from src.targets.short_trade_target_kill_switch_helpers import resolve_btst_kill_switch
 from src.targets.explainability import clamp_unit_interval
+from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
 
 SHADOW_ONLY_GATES = frozenset({"shadow_only", "halt"})
 COMMITTEE_PROFILE_BY_GATE = {
@@ -783,6 +784,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         fail_reasons.append("committee_shadow_profile_only")
 
     runner_escape_passed, runner_escape_reasons = _resolve_runner_escape(profile=profile, snapshot=snapshot, raw_metrics=raw_metrics)
+    runner_composite_score = compute_runner_composite_score(snapshot)
 
     selected_pass = formal_selected_allowed and not vetoes and not fail_reasons
     component_status = {
@@ -885,6 +887,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         "committee_gate_status": component_status,
         "committee_advisory_reasons": advisory_reasons,
         "runner_escape_reasons": runner_escape_reasons,
+        "runner_composite_score": round(runner_composite_score, 4),
         "committee_kill_switch": kill_switch,
         "committee_fragile_breakout_risk_details": fragile_breakout_risk_details,
     }

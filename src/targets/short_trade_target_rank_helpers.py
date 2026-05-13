@@ -522,3 +522,26 @@ def _apply_rank_based_decision_cap(
         candidate_reason_codes=candidate_reason_codes,
     )
     return adjusted
+
+
+# ---------------------------------------------------------------------------
+# Runner composite score
+# ---------------------------------------------------------------------------
+
+
+def compute_runner_composite_score(snapshot: dict[str, Any]) -> float:
+    """Runner-priority composite score combining the four key runner signals.
+
+    Weights are designed to prioritise momentum freshness and trend quality
+    while incorporating volume confirmation and catalyst recency:
+      breakout_freshness=0.40, trend_acceleration=0.30,
+      volume_expansion_quality=0.20, catalyst_freshness=0.10.
+
+    Returns a float in [0.0, 1.0] representing relative runner quality.
+    Higher scores indicate stronger multi-day runner potential.
+    """
+    breakout = float(snapshot.get("breakout_freshness") or 0.0)
+    trend = float(snapshot.get("trend_acceleration") or 0.0)
+    volume = float(snapshot.get("volume_expansion_quality") or 0.0)
+    catalyst = float(snapshot.get("catalyst_freshness") or 0.0)
+    return round(0.40 * breakout + 0.30 * trend + 0.20 * volume + 0.10 * catalyst, 4)

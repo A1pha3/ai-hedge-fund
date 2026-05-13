@@ -87,6 +87,9 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "gap_risk_raw_100",
     "projected_theme_exposure",
     "incremental_theme_exposure",
+    "max_future_high_return_2_5d_hit_rate_at_20pct",
+    "time_to_hit_20pct_median",
+    "runner_capture_count",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -99,13 +102,24 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "gap_risk_raw_100": "Gap Risk",
     "projected_theme_exposure": "Projected Exp",
     "incremental_theme_exposure": "Incremental Exp",
+    "max_future_high_return_2_5d_hit_rate_at_20pct": "Runner 20% Hit",
+    "time_to_hit_20pct_median": "Time-to-20% Med",
+    "runner_capture_count": "Runner Count",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
     "gap_risk_raw_100",
     "projected_theme_exposure",
     "incremental_theme_exposure",
+    "time_to_hit_20pct_median",
 }
+# Runner metrics are optional — surfaces computed without the runner analysis pipeline
+# will not have these fields, and their absence should not block rollout.
+OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
+    "max_future_high_return_2_5d_hit_rate_at_20pct",
+    "time_to_hit_20pct_median",
+    "runner_capture_count",
+})
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
     "next_high_hit_rate": 0.0,
@@ -117,6 +131,9 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "liquidity_capacity_raw_100": 1.0,
     "crowding_risk_raw_100": 1.0,
     "gap_risk_raw_100": 1.0,
+    "max_future_high_return_2_5d_hit_rate_at_20pct": 0.01,
+    "time_to_hit_20pct_median": 0.1,
+    "runner_capture_count": 1.0,
 }
 
 
@@ -1086,7 +1103,8 @@ def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str
         for metric in COMPARISON_METRICS:
             delta = _safe_float(entry.get(f"{metric}_delta"))
             if delta is None:
-                baseline_blockers.append(f"missing_{metric}_delta_vs_{baseline_name}")
+                if metric not in OPTIONAL_COMPARISON_METRICS:
+                    baseline_blockers.append(f"missing_{metric}_delta_vs_{baseline_name}")
                 continue
             epsilon = float(COMPARISON_METRIC_EPSILON.get(metric, 0.0) or 0.0)
             metric_regressed = delta > epsilon if metric in LOWER_IS_BETTER_COMPARISON_METRICS else delta < -epsilon

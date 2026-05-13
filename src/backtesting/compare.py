@@ -378,6 +378,16 @@ def format_ab_comparison_report(results: Sequence[ABWindowMetrics], summary: dic
     )
     if summary.get("sortino_p_value_estimate") is not None:
         lines.append(f"- One-sided p-value estimate: {float(summary['sortino_p_value_estimate']):.4f}")
+    if summary.get("avg_runner_tail_hit_delta") is not None:
+        runner_delta = float(summary["avg_runner_tail_hit_delta"])
+        runner_median_delta = float(summary.get("avg_runner_tail_median_delta") or 0.0)
+        lines.extend([
+            "",
+            "## Runner Quality",
+            "",
+            f"- Avg Runner Tail Hit Rate Delta (20%): {runner_delta:+.4f}",
+            f"- Avg Runner Tail Median Return Delta: {runner_median_delta:+.4f}",
+        ])
     lines.append("")
     lines.append("注：当前 p 值为正态近似估计，用于轻量化本地验证；若要做正式研究结论，建议后续引入精确统计检验。")
     return "\n".join(lines)

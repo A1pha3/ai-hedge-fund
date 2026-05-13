@@ -1242,3 +1242,46 @@ def test_runner_escape_rejects_gap_risky_or_illiquid_candidate() -> None:
     )
 
     assert snapshot["committee_gate_status"]["runner_escape"] == "fail"
+
+
+def test_runner_composite_score_present_in_committee_output() -> None:
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "sector_amt_share": 0.07,
+                "flow_60": 0.20,
+                "persist_120": 0.82,
+                "close_support_30": 0.18,
+                "retention_proxy": 0.86,
+                "candidate_pool_avg_amount_share_of_cutoff": 1.30,
+                "projected_theme_exposure": 0.22,
+                "gap_risk_raw_100": 36.0,
+            }
+        ),
+        profile_name="btst_runner_probe",
+    )
+    assert "runner_composite_score" in snapshot
+    score = snapshot["runner_composite_score"]
+    assert isinstance(score, float)
+    assert 0.0 <= score <= 1.0
+
+
+def test_runner_composite_score_zero_when_signals_absent() -> None:
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    assert compute_runner_composite_score({}) == 0.0
+    assert compute_runner_composite_score({"breakout_freshness": None}) == 0.0
+
+
+def test_runner_composite_score_direct_computation() -> None:
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    score = compute_runner_composite_score({
+        "breakout_freshness": 0.80,
+        "trend_acceleration": 0.70,
+        "volume_expansion_quality": 0.60,
+        "catalyst_freshness": 0.50,
+    })
+    # 0.40*0.80 + 0.30*0.70 + 0.20*0.60 + 0.10*0.50 = 0.32+0.21+0.12+0.05 = 0.70
+    assert abs(score - 0.70) < 0.001
