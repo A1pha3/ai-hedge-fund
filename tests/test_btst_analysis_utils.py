@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from scripts.btst_analysis_utils import build_surface_summary, compare_reports, summarize_distribution
+import pandas as pd
+
+from scripts.btst_analysis_utils import build_surface_summary, compare_reports, summarize_distribution, extract_btst_price_outcome
 
 
 def test_summarize_distribution_includes_profit_aware_percentiles() -> None:
@@ -102,3 +104,57 @@ def test_build_surface_summary_includes_payoff_and_expectancy_metrics() -> None:
     assert summary["next_close_payoff_ratio"] == 1.25
     assert summary["next_close_profit_factor"] == 2.5
     assert summary["next_close_expectancy"] == 0.01
+
+
+def test_extract_btst_price_outcome_includes_t_plus_5_and_runner_fields(monkeypatch):
+    frame = pd.DataFrame(
+        [
+            {"date": "2026-05-12", "open": 10.0, "high": 10.4, "close": 10.0},
+            {"date": "2026-05-13", "open": 10.1, "high": 10.8, "close": 10.5},
+            {"date": "2026-05-14", "open": 10.6, "high": 11.4, "close": 11.0},
+            {"date": "2026-05-15", "open": 11.0, "high": 12.4, "close": 12.1},
+            {"date": "2026-05-18", "open": 12.2, "high": 12.3, "close": 11.9},
+            {"date": "2026-05-19", "open": 11.8, "high": 12.5, "close": 12.4},
+        ]
+    ).assign(date=lambda df: pd.to_datetime(df["date"])).set_index("date")
+    monkeypatch.setattr("scripts.btst_analysis_utils.fetch_price_frame", lambda ticker, trade_date, cache: frame)
+
+    payload = extract_btst_price_outcome("000001", "2026-05-12", {})
+
+    assert payload["t_plus_5_trade_date"] == "2026-05-19"
+    assert payload["t_plus_5_close_return"] == 0.24
+    assert payload["max_future_high_return_2_5d"] == 0.25
+    assert payload["max_future_high_trade_date_2_5d"] == "2026-05-19"
+    assert payload["time_to_hit_20pct"] == 3
+    assert payload["future_high_hit_20pct_2_5d"] is True
+
+
+def test_time_to_hit_20pct_cross_year(monkeypatch) -> None:
+    frame = pd.DataFrame(
+        [
+            {"date": "2025-12-30", "open": 10.0, "high": 10.0, "close": 10.0},
+            {"date": "2025-12-31", "open": 10.1, "high": 11.0, "close": 10.5},
+            {"date": "2026-01-01", "open": 10.6, "high": 11.5, "close": 11.0},
+            {"date": "2026-01-02", "open": 11.0, "high": 12.4, "close": 12.1},
+        ]
+    ).assign(date=lambda df: pd.to_datetime(df["date"])).set_index("date")
+    monkeypatch.setattr("scripts.btst_analysis_utils.fetch_price_frame", lambda ticker, trade_date, cache: frame)
+
+    payload = extract_btst_price_outcome("000001", "2025-12-30", {})
+
+    assert payload["future_high_hit_20pct_2_5d"] is True
+    assert payload["time_to_hit_20pct"] == 3
+
+
+def test_build_surface_summary_includes_runner_metrics() -> None:
+    rows = [
+        {"next_close_return": 0.03, "next_high_return": 0.05, "next_open_return": 0.01, "next_open_to_close_return": 0.02, "t_plus_2_close_return": 0.08, "t_plus_3_close_return": 0.12, "t_plus_5_close_return": 0.16, "max_future_high_return_2_5d": 0.23, "future_high_hit_20pct_2_5d": True, "time_to_hit_20pct": 2},
+        {"next_close_return": -0.01, "next_high_return": 0.02, "next_open_return": 0.0, "next_open_to_close_return": -0.01, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.00, "t_plus_5_close_return": 0.04, "max_future_high_return_2_5d": 0.08, "future_high_hit_20pct_2_5d": False, "time_to_hit_20pct": None},
+    ]
+
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.02)
+
+    assert summary["runner_capture_count"] == 1
+    assert summary["max_future_high_return_2_5d_hit_rate_at_20pct"] == 0.5
+    assert summary["max_future_high_return_2_5d_distribution"]["max"] == 0.23
+    assert summary["time_to_hit_20pct_median"] == 2.0

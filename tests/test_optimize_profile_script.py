@@ -617,6 +617,39 @@ def test_resolve_grid_params_uses_coarse_stage_preset_for_momentum_profile() -> 
     assert "overhead_penalty_block_threshold" not in grid
 
 
+def test_resolve_guardrails_uses_runner_replay_defaults_for_runner_objective() -> None:
+    """Runner replay guardrails should be applied when objective is btst_runner."""
+    guardrails = resolve_guardrails(
+        profile_name="momentum_optimized",
+        objective="btst_runner",
+        replay_mode=True,
+        raw_guardrails=[],
+    )
+
+    # Should use DEFAULT_BTST_RUNNER_REPLAY_GUARDRAILS
+    assert guardrails["max_future_high_return_2_5d_hit_rate_at_20pct"] == {"min": pytest.approx(0.10)}
+    assert guardrails["next_close_positive_rate"] == pytest.approx(0.54)
+    assert guardrails["downside_p10"] == pytest.approx(-0.06)
+    assert guardrails["window_coverage"] == pytest.approx(0.60)
+    assert guardrails["gap_risk_raw_100"] == {"max": pytest.approx(60.0)}
+
+
+def test_resolve_guardrails_prefers_explicit_values_over_runner_defaults() -> None:
+    """Explicit guardrails should override runner replay defaults."""
+    guardrails = resolve_guardrails(
+        profile_name="momentum_optimized",
+        objective="btst_runner",
+        replay_mode=True,
+        raw_guardrails=["max_future_high_return_2_5d_hit_rate_at_20pct>=0.15", "window_coverage=0.75"],
+    )
+
+    # Explicit values should override defaults
+    assert guardrails["max_future_high_return_2_5d_hit_rate_at_20pct"] == {"min": pytest.approx(0.15)}
+    assert guardrails["window_coverage"] == pytest.approx(0.75)
+    # Other defaults should still be present
+    assert guardrails["next_close_positive_rate"] == pytest.approx(0.54)
+
+
 def test_main_integrates_event_catalyst_params_with_preset_grid(monkeypatch: pytest.MonkeyPatch) -> None:
     import scripts.optimize_profile as opt_module
 
@@ -2853,3 +2886,44 @@ def test_publish_btst_optimized_profile_manifest_skips_hold_without_overwriting_
         "manifest_path": str(manifest_path.resolve()),
     }
     assert json.loads(manifest_path.read_text(encoding="utf-8")) == existing_payload
+
+
+# ---------------------------------------------------------------------------
+# Tests for BTST runner objective and rollout metrics (Task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_replay_evaluator_emits_runner_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+
+    def fake_analyze_btst_profile_replay_window(input_path: Path, **_: object) -> dict[str, object]:
+        surface = {
+            "next_day_available_count": 8,
+            "closed_cycle_count": 6,
+            "next_close_positive_rate": 0.60,
+            "next_high_hit_rate_at_threshold": 0.58,
+            "next_close_expectancy": 0.012,
+            "next_close_payoff_ratio": 1.5,
+            "t_plus_2_close_positive_rate": 0.58,
+            "t_plus_2_close_return_distribution": {"median": 0.015},
+            "t_plus_3_close_positive_rate": 0.56,
+            "t_plus_3_close_expectancy": 0.011,
+            "t_plus_3_close_return_distribution": {"median": 0.013},
+            "next_close_return_distribution": {"p10": -0.02},
+            "downside_p10": -0.02,
+            "max_future_high_return_2_5d_hit_rate_at_20pct": 0.25,
+            "runner_capture_count": 3,
+            "max_future_high_return_2_5d_distribution": {"median": 0.19},
+            "time_to_hit_20pct_median": 3.0,
+        }
+        return {"surface_summaries": {"selected": surface, "tradeable": surface}}
+
+    fake_module.analyze_btst_profile_replay_window = fake_analyze_btst_profile_replay_window
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    evaluator = _build_replay_evaluator([Path("runner_window.json")], base_profile="default")
+    metrics = evaluator({})
+
+    assert metrics["max_future_high_return_2_5d_hit_rate_at_20pct"] == pytest.approx(0.25)
+    assert metrics["runner_capture_count"] == 3
+    assert metrics["time_to_hit_20pct_median"] == pytest.approx(3.0)

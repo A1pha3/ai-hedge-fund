@@ -144,6 +144,10 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
     t_plus_2_trade_date = None
     t_plus_3_close = None
     t_plus_3_trade_date = None
+    t_plus_4_close = None
+    t_plus_4_trade_date = None
+    t_plus_5_close = None
+    t_plus_5_trade_date = None
     if not later_rows.empty:
         second_row = later_rows.iloc[0]
         t_plus_2_close = safe_float(second_row.get("close"))
@@ -152,6 +156,26 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         third_row = later_rows.iloc[1]
         t_plus_3_close = safe_float(third_row.get("close"))
         t_plus_3_trade_date = later_rows.index[1].strftime("%Y-%m-%d")
+    if len(later_rows) >= 3:
+        fourth_row = later_rows.iloc[2]
+        t_plus_4_close = safe_float(fourth_row.get("close"))
+        t_plus_4_trade_date = later_rows.index[2].strftime("%Y-%m-%d")
+    if len(later_rows) >= 4:
+        fifth_row = later_rows.iloc[3]
+        t_plus_5_close = safe_float(fifth_row.get("close"))
+        t_plus_5_trade_date = later_rows.index[3].strftime("%Y-%m-%d")
+
+    future_horizon_rows = future_days.iloc[:5]
+    future_highs = future_horizon_rows["high"].dropna().astype(float) if not future_horizon_rows.empty else pd.Series(dtype=float)
+    max_future_high = None if future_highs.empty else float(future_highs.max())
+    max_future_high_trade_date_2_5d = None
+    if max_future_high is not None:
+        max_idx = future_horizon_rows[future_horizon_rows["high"].astype(float) == max_future_high].index[0]
+        max_future_high_trade_date_2_5d = max_idx.strftime("%Y-%m-%d")
+    max_future_high_return_2_5d = None if max_future_high is None else round((max_future_high / trade_close) - 1.0, 4)
+    hit_rows = future_horizon_rows.loc[(future_horizon_rows["high"].astype(float) / trade_close) - 1.0 >= 0.20]
+    time_to_hit_20pct = None if hit_rows.empty else int((hit_rows.index[0].normalize() - future_horizon_rows.index[0].normalize()).days + 1)
+    future_high_hit_20pct_2_5d = False if hit_rows.empty else True
 
     data_status = "ok" if t_plus_2_close is not None else "missing_t_plus_2_bar"
     cycle_status = "closed_cycle" if t_plus_2_close is not None else "t1_only"
@@ -176,6 +200,16 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         "t_plus_3_trade_date": t_plus_3_trade_date,
         "t_plus_3_close": round_or_none(t_plus_3_close),
         "t_plus_3_close_return": None if t_plus_3_close is None else round((t_plus_3_close / trade_close) - 1.0, 4),
+        "t_plus_4_trade_date": t_plus_4_trade_date,
+        "t_plus_4_close": round_or_none(t_plus_4_close),
+        "t_plus_4_close_return": None if t_plus_4_close is None else round((t_plus_4_close / trade_close) - 1.0, 4),
+        "t_plus_5_trade_date": t_plus_5_trade_date,
+        "t_plus_5_close": round_or_none(t_plus_5_close),
+        "t_plus_5_close_return": None if t_plus_5_close is None else round((t_plus_5_close / trade_close) - 1.0, 4),
+        "max_future_high_return_2_5d": max_future_high_return_2_5d,
+        "max_future_high_trade_date_2_5d": max_future_high_trade_date_2_5d,
+        "time_to_hit_20pct": time_to_hit_20pct,
+        "future_high_hit_20pct_2_5d": future_high_hit_20pct_2_5d,
     }
 
 
@@ -273,6 +307,11 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     t_plus_2_edge = _build_return_edge_metrics(t_plus_2_close_returns)
     t_plus_3_edge = _build_return_edge_metrics(t_plus_3_close_returns)
 
+    runner_rows = [row for row in rows if row.get("max_future_high_return_2_5d") is not None]
+    runner_capture_count = sum(1 for row in runner_rows if bool(row.get("future_high_hit_20pct_2_5d")))
+    runner_hit_rate = None if not runner_rows else round(runner_capture_count / len(runner_rows), 4)
+    time_to_hit_values = [float(row["time_to_hit_20pct"]) for row in runner_rows if row.get("time_to_hit_20pct") is not None]
+
     return {
         "total_count": len(rows),
         "next_day_available_count": len(next_day_rows),
@@ -309,6 +348,10 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "t_plus_3_close_payoff_ratio": t_plus_3_edge["payoff_ratio"],
         "t_plus_3_close_profit_factor": t_plus_3_edge["profit_factor"],
         "t_plus_3_close_expectancy": t_plus_3_edge["expectancy"],
+        "runner_capture_count": runner_capture_count,
+        "max_future_high_return_2_5d_hit_rate_at_20pct": runner_hit_rate,
+        "max_future_high_return_2_5d_distribution": summarize_distribution([float(row["max_future_high_return_2_5d"]) for row in runner_rows]),
+        "time_to_hit_20pct_median": summarize_distribution(time_to_hit_values)["median"] if time_to_hit_values else None,
     }
 
 
@@ -487,6 +530,18 @@ def compare_reports(
             "t_plus_2_close_expectancy": _delta(
                 baseline_tradeable.get("t_plus_2_close_expectancy"),
                 variant_tradeable.get("t_plus_2_close_expectancy"),
+            ),
+            "runner_capture_count": _delta(
+                baseline_tradeable.get("runner_capture_count"),
+                variant_tradeable.get("runner_capture_count"),
+            ),
+            "max_future_high_return_2_5d_hit_rate_at_20pct": _delta(
+                baseline_tradeable.get("max_future_high_return_2_5d_hit_rate_at_20pct"),
+                variant_tradeable.get("max_future_high_return_2_5d_hit_rate_at_20pct"),
+            ),
+            "max_future_high_return_2_5d_return_mean": _delta(
+                dict(baseline_tradeable.get("max_future_high_return_2_5d_distribution") or {}).get("mean"),
+                dict(variant_tradeable.get("max_future_high_return_2_5d_distribution") or {}).get("mean"),
             ),
         },
         "false_negative_proxy_delta": {

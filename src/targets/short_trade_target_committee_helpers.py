@@ -10,7 +10,6 @@ from src.screening.market_state_helpers import classify_btst_regime_gate_from_ma
 from src.targets.short_trade_target_kill_switch_helpers import resolve_btst_kill_switch
 from src.targets.explainability import clamp_unit_interval
 
-
 SHADOW_ONLY_GATES = frozenset({"shadow_only", "halt"})
 COMMITTEE_PROFILE_BY_GATE = {
     "aggressive_trade": "ignition_breakout",
@@ -234,6 +233,26 @@ def _is_committee_advisory_continuation_lane(*, input_data: Any, snapshot: dict[
     return bool(advisory_reasons), advisory_reasons
 
 
+def _resolve_runner_escape(*, profile: Any, snapshot: dict[str, Any], raw_metrics: dict[str, Any]) -> tuple[bool, list[str]]:
+    if not bool(getattr(profile, "runner_escape_enabled", False)):
+        return False, []
+    reasons: list[str] = []
+    breakout = _as_float(snapshot, "breakout_freshness", 0.0)
+    trend = _as_float(snapshot, "trend_acceleration", 0.0)
+    volume = _as_float(snapshot, "volume_expansion_quality", 0.0)
+    projected_theme_exposure = _optional_float(raw_metrics, "projected_theme_exposure")
+    gap_risk_raw_100 = _optional_float(raw_metrics, "gap_risk_raw_100")
+    amount_share = _optional_float(raw_metrics, "candidate_pool_avg_amount_share_of_cutoff")
+    if breakout >= getattr(profile, "runner_escape_breakout_freshness_min", 1.0):
+        reasons.append("runner_escape_breakout")
+    if trend >= getattr(profile, "runner_escape_trend_acceleration_min", 1.0):
+        reasons.append("runner_escape_trend")
+    if volume >= getattr(profile, "runner_escape_volume_expansion_quality_min", 1.0):
+        reasons.append("runner_escape_volume")
+    escaped = len(reasons) == 3 and (gap_risk_raw_100 or 999.0) <= getattr(profile, "runner_escape_gap_risk_raw_100_max", 0.0) and (projected_theme_exposure or 999.0) <= getattr(profile, "runner_escape_projected_theme_exposure_max", 0.0) and (amount_share or 0.0) >= getattr(profile, "runner_escape_candidate_pool_avg_amount_share_of_cutoff_min", 999.0)
+    return escaped, reasons
+
+
 def _merge_raw_candidate_metrics(input_data: Any) -> dict[str, Any]:
     replay_context = dict(getattr(input_data, "replay_context", {}) or {})
     raw_candidate_metrics = dict(replay_context.get("raw_candidate_metrics") or {})
@@ -376,13 +395,7 @@ def _retention_raw_score(snapshot: dict[str, Any], raw_metrics: dict[str, Any]) 
         return round(weighted_score, 4), "raw:retention_metrics"
     historical_continuation_prior_score = dict(snapshot.get("historical_continuation_prior_score") or {})
     prior_retention_score = float(historical_continuation_prior_score.get("score", 0.0) or 0.0)
-    prior_retention_score = clamp_unit_interval(
-        0.5
-        + (
-            (prior_retention_score - 0.5)
-            * (0.70 + (0.30 * clamp_unit_interval(float(historical_continuation_prior_score.get("evidence_weight", 0.0) or 0.0))))
-        )
-    )
+    prior_retention_score = clamp_unit_interval(0.5 + ((prior_retention_score - 0.5) * (0.70 + (0.30 * clamp_unit_interval(float(historical_continuation_prior_score.get("evidence_weight", 0.0) or 0.0))))))
     prior_retention_support_100 = _apply_prior_payoff_asymmetry_to_support_score(_support_score_100(prior_retention_score), snapshot)
     prior_retention_score = clamp_unit_interval((prior_retention_support_100 - 20.0) / 80.0)
     proxy = (0.60 * float(snapshot.get("close_retention_score", 0.0) or 0.0)) + (0.40 * prior_retention_score)
@@ -531,12 +544,16 @@ def _fragile_breakout_risk_scores(profile: Any, *, activation_raw_100: float, fr
     effective_interaction_ratio = clamp_unit_interval((interaction_ratio - neutral_band) / max(0.01, 0.18 - neutral_band))
     fragile_breakout_risk_raw_100 = round(float(getattr(profile, "committee_fragile_breakout_risk_cap", 85.0) or 85.0) * effective_interaction_ratio, 4)
     fragile_breakout_quality_raw_100 = round(100.0 - fragile_breakout_risk_raw_100, 4)
-    return fragile_breakout_risk_raw_100, fragile_breakout_quality_raw_100, {
-        "activation_excess_ratio": round(activation_excess_ratio, 4),
-        "fragility_excess_ratio": round(fragility_excess_ratio, 4),
-        "interaction_ratio": round(interaction_ratio, 4),
-        "effective_interaction_ratio": round(effective_interaction_ratio, 4),
-    }
+    return (
+        fragile_breakout_risk_raw_100,
+        fragile_breakout_quality_raw_100,
+        {
+            "activation_excess_ratio": round(activation_excess_ratio, 4),
+            "fragility_excess_ratio": round(fragility_excess_ratio, 4),
+            "interaction_ratio": round(interaction_ratio, 4),
+            "effective_interaction_ratio": round(effective_interaction_ratio, 4),
+        },
+    )
 
 
 def _theme_concentration_risk_raw_score(raw_metrics: dict[str, Any], input_data: Any) -> tuple[float | None, str]:
@@ -702,21 +719,9 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
     )
 
     vetoes: list[str] = []
-    if (
-        bool(getattr(profile, "committee_isolated_attention_veto_enabled", True))
-        and attention_raw_100 >= float(getattr(profile, "committee_isolated_attention_min", 80.0) or 80.0)
-        and sector_raw_100 <= float(getattr(profile, "committee_isolated_attention_sector_max", 60.0) or 60.0)
-        and flow_60_raw_100 is not None
-        and flow_60_raw_100 <= float(getattr(profile, "committee_isolated_attention_flow_max", 60.0) or 60.0)
-    ):
+    if bool(getattr(profile, "committee_isolated_attention_veto_enabled", True)) and attention_raw_100 >= float(getattr(profile, "committee_isolated_attention_min", 80.0) or 80.0) and sector_raw_100 <= float(getattr(profile, "committee_isolated_attention_sector_max", 60.0) or 60.0) and flow_60_raw_100 is not None and flow_60_raw_100 <= float(getattr(profile, "committee_isolated_attention_flow_max", 60.0) or 60.0):
         vetoes.append("committee_isolated_attention_veto")
-    if (
-        bool(getattr(profile, "committee_weak_close_veto_enabled", True))
-        and flow_60_raw_100 is not None
-        and flow_60_raw_100 >= float(getattr(profile, "committee_weak_close_flow_min", 75.0) or 75.0)
-        and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0)
-        and close_support_raw_100 <= float(getattr(profile, "committee_weak_close_close_support_max", 60.0) or 60.0)
-    ):
+    if bool(getattr(profile, "committee_weak_close_veto_enabled", True)) and flow_60_raw_100 is not None and flow_60_raw_100 >= float(getattr(profile, "committee_weak_close_flow_min", 75.0) or 75.0) and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0) and close_support_raw_100 <= float(getattr(profile, "committee_weak_close_close_support_max", 60.0) or 60.0):
         vetoes.append("committee_weak_close_execution_veto")
     gap_to_limit = raw_metrics.get("gap_to_limit")
     if bool(getattr(profile, "committee_gap_to_limit_veto_enabled", True)) and gap_to_limit is not None and float(gap_to_limit or 0.0) <= float(getattr(profile, "committee_gap_to_limit_max", 0.01) or 0.01):
@@ -764,16 +769,9 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             fail_reasons.append("committee_theme_exposure_cap_exceeded")
         if incremental_theme_exposure > float(getattr(profile, "committee_incremental_theme_exposure_cap", 0.18) or 0.18):
             fail_reasons.append("committee_incremental_theme_exposure_cap_exceeded")
-        if (
-            bool(getattr(profile, "committee_isolated_theme_direction_enabled", True))
-            and theme_direction_peer_count > 0.0
-            and theme_direction_peer_count < float(getattr(profile, "committee_isolated_theme_peer_count_min", 2.0) or 2.0)
-        ):
+        if bool(getattr(profile, "committee_isolated_theme_direction_enabled", True)) and theme_direction_peer_count > 0.0 and theme_direction_peer_count < float(getattr(profile, "committee_isolated_theme_peer_count_min", 2.0) or 2.0):
             fail_reasons.append("committee_isolated_theme_direction_block")
-        if (
-            bool(getattr(profile, "committee_theme_direction_rank_enabled", True))
-            and theme_direction_rank > float(getattr(profile, "committee_theme_direction_rank_max", 5.0) or 5.0)
-        ):
+        if bool(getattr(profile, "committee_theme_direction_rank_enabled", True)) and theme_direction_rank > float(getattr(profile, "committee_theme_direction_rank_max", 5.0) or 5.0):
             fail_reasons.append("committee_theme_direction_rank_exceeded")
 
     if bool(kill_switch["active"]) and effective_gate in SHADOW_ONLY_GATES:
@@ -784,6 +782,8 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         formal_selected_allowed = False
         fail_reasons.append("committee_shadow_profile_only")
 
+    runner_escape_passed, runner_escape_reasons = _resolve_runner_escape(profile=profile, snapshot=snapshot, raw_metrics=raw_metrics)
+
     selected_pass = formal_selected_allowed and not vetoes and not fail_reasons
     component_status = {
         "alpha": "pass" if alpha_edge_score >= float(thresholds["alpha_min"]) else "advisory" if not bool(thresholds["selected_enforced"]) else "fail",
@@ -792,7 +792,10 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         "committee": "pass" if committee_score >= float(thresholds["committee_min"]) else "advisory" if not bool(thresholds["selected_enforced"]) else "fail",
         "veto": "fail" if vetoes else "pass",
         "formal_selected": "pass" if selected_pass else "shadow_only" if effective_gate in SHADOW_ONLY_GATES and bool(getattr(profile, "committee_shadow_only_blocks_selected", True)) else "fail" if bool(thresholds["selected_enforced"]) or vetoes or fail_reasons else "advisory",
+        "runner_escape": "pass" if runner_escape_passed else "fail",
     }
+    if runner_escape_passed and component_status.get("formal_selected") == "fail":
+        component_status["formal_selected"] = "advisory"
 
     return {
         "committee_enabled": bool(getattr(profile, "committee_enabled", False)),
@@ -881,6 +884,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         "committee_selected_pass": selected_pass,
         "committee_gate_status": component_status,
         "committee_advisory_reasons": advisory_reasons,
+        "runner_escape_reasons": runner_escape_reasons,
         "committee_kill_switch": kill_switch,
         "committee_fragile_breakout_risk_details": fragile_breakout_risk_details,
     }

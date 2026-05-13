@@ -272,6 +272,13 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
     if test_trading_days and min(test_trading_days) < MIN_TEST_TRADING_DAYS_FOR_ROLLOUT:
         rollout_blockers.append("test_window_too_short")
 
+    # Runner tail hit floor check (only if runner metrics are present)
+    runner_tail_hit_values = [item.metrics.get("max_future_high_return_2_5d_hit_rate_at_20pct") for item in results if item.metrics.get("max_future_high_return_2_5d_hit_rate_at_20pct") is not None]
+    if runner_tail_hit_values:
+        average_runner_tail_hit = _average(runner_tail_hit_values)
+        if average_runner_tail_hit is None or average_runner_tail_hit < 0.10:
+            rollout_blockers.append("btst_runner_tail_hit_floor_breach")
+
     btst_quality_summary: dict[str, float | None] = {
         metric_key: _average(btst_metric_values[metric_key]) for metric_key in btst_metric_keys
     }

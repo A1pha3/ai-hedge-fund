@@ -1253,3 +1253,24 @@ SHORT_TRADE_TARGET_PROFILES["shadow_research"] = replace(
     committee_score_min_normal_trade=100.0,
     committee_shadow_only_blocks_selected=True,
 )
+
+SHORT_TRADE_TARGET_PROFILES["btst_runner_probe"] = ShortTradeTargetProfile(
+    name="btst_runner_probe",
+    select_threshold=0.38,
+    near_miss_threshold=0.26,
+    committee_enabled=True,
+    breakout_freshness_weight=0.20,
+    trend_acceleration_weight=0.18,
+    volume_expansion_quality_weight=0.18,
+    catalyst_freshness_weight=0.16,
+    close_strength_weight=0.10,
+    sector_resonance_weight=0.10,
+    t_plus_2_continuation_enabled=True,
+    runner_escape_enabled=True,
+    runner_escape_breakout_freshness_min=0.35,
+    runner_escape_trend_acceleration_min=0.55,
+    runner_escape_volume_expansion_quality_min=0.35,
+    runner_escape_gap_risk_raw_100_max=45.0,
+    runner_escape_projected_theme_exposure_max=0.28,
+    runner_escape_candidate_pool_avg_amount_share_of_cutoff_min=1.0,
+)

@@ -563,3 +563,31 @@ def test_all_presets_have_required_month_keys():
             **{k: v for k, v in preset.items() if k != "max_test_trading_days"},
         )
         assert len(windows) >= 1, f"Preset {name!r} produced no windows"
+
+
+# ---------------------------------------------------------------------------
+# Tests for BTST runner rollout blocker (Task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_walk_forward_blocks_runner_tail_floor_breach() -> None:
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={
+                "sharpe_ratio": 0.8,
+                "sortino_ratio": 1.0,
+                "max_drawdown": -4.0,
+                "test_trading_days": 12,
+                "next_close_positive_rate": 0.58,
+                "next_high_hit_rate": 0.60,
+                "downside_p10": -0.02,
+                "max_future_high_return_2_5d_hit_rate_at_20pct": 0.05,
+                "runner_capture_count": 1,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert "btst_runner_tail_hit_floor_breach" in summary["rollout_blockers"]
