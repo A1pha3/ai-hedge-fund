@@ -185,16 +185,19 @@ def test_build_surface_summary_includes_runner_metrics() -> None:
 
 
 def test_btst_factor_names_contains_seven_factors() -> None:
-    """BTST_FACTOR_NAMES must contain the seven original scoring factors plus the Round-16 and Round-17 additions."""
+    """BTST_FACTOR_NAMES must contain the seven original scoring factors plus the Round-16, Round-17, and Round-26 additions."""
     # Round 16 adds t0_estimated_net_inflow_ratio and volume_price_divergence_score (→ 9).
     # Round 17 adds t0_tail_strength (→ 10 total).
-    assert len(BTST_FACTOR_NAMES) == 10
+    # Round 26 adds momentum_confirmation_score and volume_momentum_score (→ 12 total).
+    assert len(BTST_FACTOR_NAMES) == 12
     expected_original = {"breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength", "volatility_regime", "sector_resonance"}
     expected_r16 = {"t0_estimated_net_inflow_ratio", "volume_price_divergence_score"}
     expected_r17 = {"t0_tail_strength"}
+    expected_r26 = {"momentum_confirmation_score", "volume_momentum_score"}
     assert expected_original.issubset(set(BTST_FACTOR_NAMES))
     assert expected_r16.issubset(set(BTST_FACTOR_NAMES))
     assert expected_r17.issubset(set(BTST_FACTOR_NAMES))
+    assert expected_r26.issubset(set(BTST_FACTOR_NAMES))
 
 
 def test_compute_factor_ic_perfect_positive_correlation() -> None:
@@ -2657,3 +2660,201 @@ def test_r25_churn_cost_drag_formula() -> None:
     assert vol is not None and drag is not None
     assert drag == pytest.approx(vol * 60.0, rel=1e-4)
 
+
+
+# ---------------------------------------------------------------------------
+# Round 26 — T1 (Alpha): Cross-factor F11/F12 momentum_confirmation_score / volume_momentum_score
+# ---------------------------------------------------------------------------
+
+def test_r26_cross_factors_in_btst_factor_names() -> None:
+    """momentum_confirmation_score and volume_momentum_score must appear in BTST_FACTOR_NAMES (Round 26)."""
+    assert "momentum_confirmation_score" in BTST_FACTOR_NAMES
+    assert "volume_momentum_score" in BTST_FACTOR_NAMES
+
+
+def test_r26_compute_all_factor_ics_includes_cross_factors() -> None:
+    """compute_all_factor_ics must return keys for both new cross-factors (Round 26)."""
+    result = compute_all_factor_ics([])
+    assert "momentum_confirmation_score" in result
+    assert "volume_momentum_score" in result
+
+
+def test_r26_cross_factor_ic_non_none_with_data() -> None:
+    """compute_all_factor_ics returns float IC for cross-factors when primary factor data present."""
+    import random
+    random.seed(7)
+    rows = [
+        {
+            "breakout_freshness": random.random(),
+            "close_strength": random.random(),
+            "volume_expansion_quality": random.random(),
+            "t0_tail_strength": random.uniform(0.5, 1.0),
+            "next_close_return": random.uniform(-0.05, 0.1),
+        }
+        for _ in range(20)
+    ]
+    ics = compute_all_factor_ics(rows)
+    assert isinstance(ics["momentum_confirmation_score"], float)
+    assert isinstance(ics["volume_momentum_score"], float)
+    assert -1.0 <= ics["momentum_confirmation_score"] <= 1.0
+    assert -1.0 <= ics["volume_momentum_score"] <= 1.0
+
+
+def test_r26_cross_factor_neutral_when_primary_missing() -> None:
+    """When primary factors are absent, cross-factors default to 0.5×0.5=0.25 (neutral)."""
+    rows = [{"next_close_return": float(i) * 0.01} for i in range(10)]
+    # Before calling, rows have no primary factor fields → neutral 0.5 substitution
+    compute_all_factor_ics(rows)
+    for row in rows:
+        assert row["momentum_confirmation_score"] == pytest.approx(0.25, abs=1e-6)
+        assert row["volume_momentum_score"] == pytest.approx(0.25, abs=1e-6)
+
+
+def test_r26_runner_composite_score_supports_new_weights() -> None:
+    """compute_runner_composite_score must accept momentum_confirmation and volume_momentum weights."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    snapshot = {
+        "breakout_freshness": 0.8,
+        "close_strength": 0.9,
+        "trend_acceleration": 0.6,
+        "volume_expansion_quality": 0.7,
+        "t0_tail_strength": 0.85,
+        "catalyst_freshness": 0.5,
+    }
+
+    class FakeProfile:
+        runner_composite_score_breakout_weight = 0.30
+        runner_composite_score_trend_weight = 0.25
+        runner_composite_score_volume_weight = 0.20
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.05
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.0
+        runner_composite_score_volume_price_divergence_weight = 0.0
+        runner_composite_score_t0_tail_weight = 0.0
+        runner_composite_score_momentum_alignment_weight = 0.0
+        runner_composite_score_momentum_confirmation_weight = 0.05
+        runner_composite_score_volume_momentum_weight = 0.05
+
+    score_with = compute_runner_composite_score(snapshot, FakeProfile())
+    assert isinstance(score_with, float)
+    assert 0.0 <= score_with <= 1.0
+
+
+def test_r26_runner_composite_score_zero_new_weights_matches_baseline() -> None:
+    """When new F11/F12 weights are 0.0, score must match the weight-normalized baseline."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    snapshot = {"breakout_freshness": 0.7, "trend_acceleration": 0.5, "volume_expansion_quality": 0.6, "catalyst_freshness": 0.4, "close_strength": 0.8}
+
+    class ProfileWithNew:
+        runner_composite_score_breakout_weight = 0.40
+        runner_composite_score_trend_weight = 0.30
+        runner_composite_score_volume_weight = 0.20
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+        runner_composite_score_net_inflow_weight = 0.0
+        runner_composite_score_volume_price_divergence_weight = 0.0
+        runner_composite_score_t0_tail_weight = 0.0
+        runner_composite_score_momentum_alignment_weight = 0.0
+        runner_composite_score_momentum_confirmation_weight = 0.0
+        runner_composite_score_volume_momentum_weight = 0.0
+
+    score = compute_runner_composite_score(snapshot, ProfileWithNew())
+    # Should produce a valid normalized score
+    assert 0.0 <= score <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Round 26 — T2 (Gamma): compute_benchmark_adjusted_alpha
+# ---------------------------------------------------------------------------
+
+def test_r26_alpha_positive_when_btst_beats_benchmark() -> None:
+    """alpha_avg_return must be positive when BTST consistently beats HS300."""
+    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha
+    rows = [{"next_close_return": 0.03 + i * 0.001, "hs300_daily_return": 0.01} for i in range(10)]
+    result = compute_benchmark_adjusted_alpha(rows)
+    assert result["alpha_avg_return"] is not None
+    assert result["alpha_avg_return"] > 0.0
+
+
+def test_r26_alpha_win_rate_one_when_all_btst_beats_benchmark() -> None:
+    """alpha_win_rate must be 1.0 when every BTST return exceeds the benchmark."""
+    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha
+    rows = [{"next_close_return": 0.05, "hs300_daily_return": 0.01} for _ in range(10)]
+    result = compute_benchmark_adjusted_alpha(rows)
+    assert result["alpha_win_rate"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_r26_alpha_degrades_when_no_hs300_field() -> None:
+    """When hs300_daily_return is absent from all rows, most fields must be None."""
+    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha
+    rows = [{"next_close_return": 0.03} for _ in range(10)]
+    result = compute_benchmark_adjusted_alpha(rows)
+    assert result["alpha_avg_return"] is None
+    assert result["benchmark_mean_return"] is None
+    assert result["information_ratio"] is None
+
+
+def test_r26_beta_exposure_near_one_for_identical_returns() -> None:
+    """Beta exposure must be near 1.0 when BTST returns are identical to benchmark."""
+    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha
+    rows = [{"next_close_return": float(i) * 0.01, "hs300_daily_return": float(i) * 0.01} for i in range(1, 11)]
+    result = compute_benchmark_adjusted_alpha(rows)
+    assert result["beta_exposure"] is not None
+    assert result["beta_exposure"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_r26_information_ratio_positive_when_alpha_positive() -> None:
+    """information_ratio must be positive when alpha_avg_return > 0."""
+    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha
+    rows = [{"next_close_return": 0.04 + i * 0.005, "hs300_daily_return": 0.01} for i in range(15)]
+    result = compute_benchmark_adjusted_alpha(rows)
+    assert result["information_ratio"] is not None
+    assert result["information_ratio"] > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Round 26 — T3 (Beta): compute_dynamic_stop_loss_suggestion
+# ---------------------------------------------------------------------------
+
+def test_r26_stop_loss_tight_when_low_trigger_rate() -> None:
+    """Low 2% trigger rate must suggest a 2% stop-loss with high confidence."""
+    from scripts.btst_analysis_utils import compute_dynamic_stop_loss_suggestion
+    surface = {"stop_loss_trigger_rate_2pct": 0.05, "stop_loss_trigger_rate_3pct": 0.12, "stop_loss_trigger_rate_5pct": 0.18}
+    result = compute_dynamic_stop_loss_suggestion(surface)
+    assert result["suggested_stop_loss_pct"] == pytest.approx(0.02, abs=1e-6)
+    assert result["stop_loss_confidence"] == "high"
+    assert result["tight_stop_viable"] is True
+
+
+def test_r26_stop_loss_moderate_when_medium_trigger_rate() -> None:
+    """Moderate trigger rates must suggest a 3% stop-loss."""
+    from scripts.btst_analysis_utils import compute_dynamic_stop_loss_suggestion
+    surface = {"stop_loss_trigger_rate_2pct": 0.15, "stop_loss_trigger_rate_3pct": 0.18, "stop_loss_trigger_rate_5pct": 0.25}
+    result = compute_dynamic_stop_loss_suggestion(surface)
+    assert result["suggested_stop_loss_pct"] == pytest.approx(0.03, abs=1e-6)
+    assert result["tight_stop_viable"] is False
+
+
+def test_r26_stop_loss_warns_loose_when_high_5pct_rate() -> None:
+    """loose_stop_warned must be True when stop_loss_trigger_rate_5pct > 35%."""
+    from scripts.btst_analysis_utils import compute_dynamic_stop_loss_suggestion
+    surface = {"stop_loss_trigger_rate_2pct": 0.20, "stop_loss_trigger_rate_3pct": 0.25, "stop_loss_trigger_rate_5pct": 0.40}
+    result = compute_dynamic_stop_loss_suggestion(surface)
+    assert result["loose_stop_warned"] is True
+
+
+def test_r26_stop_loss_default_when_no_data() -> None:
+    """Missing stop-loss fields must produce default 3% suggestion with low confidence."""
+    from scripts.btst_analysis_utils import compute_dynamic_stop_loss_suggestion
+    result = compute_dynamic_stop_loss_suggestion({})
+    assert result["suggested_stop_loss_pct"] == pytest.approx(0.03, abs=1e-6)
+    assert result["stop_loss_confidence"] == "low"
+    assert result["tight_stop_viable"] is False
+    assert result["loose_stop_warned"] is False
+    assert result["optimal_stop_trigger_rate"] is None

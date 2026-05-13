@@ -190,6 +190,11 @@ COMPARISON_METRICS: tuple[str, ...] = (
     # Task 2 (Round 25, Beta): selection churn / window stability metrics.
     "win_rate_window_volatility",
     "win_rate_window_trend",
+    # Task 2 (Round 26, Gamma): benchmark-adjusted Alpha vs HS300.
+    "alpha_avg_return",
+    "information_ratio",
+    # Task 3 (Round 26, Beta): dynamic stop-loss suggestion.
+    "suggested_stop_loss_pct",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -270,6 +275,11 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     # Task 2 (Round 25, Beta): selection churn / window stability
     "win_rate_window_volatility": "WR Window Vol",
     "win_rate_window_trend": "WR Window Trend",
+    # Task 2 (Round 26, Gamma): benchmark-adjusted Alpha vs HS300
+    "alpha_avg_return": "Alpha vs HS300",
+    "information_ratio": "Info Ratio",
+    # Task 3 (Round 26, Beta): dynamic stop-loss suggestion
+    "suggested_stop_loss_pct": "Suggested SL%",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -372,6 +382,11 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 2 (Round 25, Beta): selection churn metrics — optional; pre-Round-25 outputs omit these.
     "win_rate_window_volatility",
     "win_rate_window_trend",
+    # Task 2 (Round 26, Gamma): benchmark-adjusted Alpha — optional; requires hs300_daily_return field.
+    "alpha_avg_return",
+    "information_ratio",
+    # Task 3 (Round 26, Beta): dynamic stop-loss suggestion — optional; pre-Round-26 outputs omit it.
+    "suggested_stop_loss_pct",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1661,6 +1676,9 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "runner_composite_score_t0_tail_weight": [0.0, 0.05, 0.10, 0.15],
     # Task 2 (Round 19): multi-period momentum alignment weight — T+1/T+2/T+3 continuation score.
     "runner_composite_score_momentum_alignment_weight": [0.0, 0.05, 0.10, 0.15],
+    # Task 1 (Round 26, Alpha): cross-factor F11/F12 weights — momentum confirmation and volume momentum.
+    "runner_composite_score_momentum_confirmation_weight": [0.0, 0.05, 0.10],
+    "runner_composite_score_volume_momentum_weight": [0.0, 0.05, 0.10],
     "runner_escape_gap_risk_raw_100_max": [40.0, 45.0, 52.0],
     "runner_escape_projected_theme_exposure_max": [0.24, 0.28, 0.32],
     "runner_escape_candidate_pool_avg_amount_share_of_cutoff_min": [0.85, 1.0, 1.15],
@@ -1739,6 +1757,9 @@ BTST_FACTOR_TO_PROBE_WEIGHT_KEY: dict[str, str] = {
     "t0_estimated_net_inflow_ratio": "runner_composite_score_net_inflow_weight",
     "volume_price_divergence_score": "runner_composite_score_volume_price_divergence_weight",
     "t0_tail_strength": "runner_composite_score_t0_tail_weight",
+    # Task 1 (Round 26, Alpha): cross-factor F11/F12 mappings.
+    "momentum_confirmation_score": "runner_composite_score_momentum_confirmation_weight",
+    "volume_momentum_score": "runner_composite_score_volume_momentum_weight",
 }
 
 # Standard step size for weight candidates in BTST_RUNNER_PROBE_GRID.

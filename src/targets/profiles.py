@@ -317,6 +317,14 @@ class ShortTradeTargetProfile:
     # High alignment = genuine multi-day momentum continuation (三日连涨倾向).
     # Default 0.0 (disabled) for backward compatibility; non-zero values activate the factor.
     runner_composite_score_momentum_alignment_weight: float = 0.0
+    # Task 1 (Round 26, Alpha): cross-factor F11 — momentum confirmation weight.
+    # momentum_confirmation_score = breakout_freshness × close_strength.
+    # Default 0.0 (disabled); non-zero activates the dual-confirmation signal in composite score.
+    runner_composite_score_momentum_confirmation_weight: float = 0.0
+    # Task 1 (Round 26, Alpha): cross-factor F12 — volume momentum weight.
+    # volume_momentum_score = volume_expansion_quality × t0_tail_strength.
+    # Default 0.0 (disabled); non-zero activates the volume-price continuation signal.
+    runner_composite_score_volume_momentum_weight: float = 0.0
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:

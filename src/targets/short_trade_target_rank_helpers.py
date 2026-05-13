@@ -583,7 +583,8 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     runner_composite_score_volatility_regime_weight, runner_composite_score_sector_resonance_weight,
     runner_composite_score_quiet_breakout_weight, runner_composite_score_net_inflow_weight,
     runner_composite_score_volume_price_divergence_weight, runner_composite_score_t0_tail_weight,
-    runner_composite_score_momentum_alignment_weight).
+    runner_composite_score_momentum_alignment_weight,
+    runner_composite_score_momentum_confirmation_weight, runner_composite_score_volume_momentum_weight).
     Falls back to defaults when profile is absent:
       breakout_freshness=0.40, trend_acceleration=0.30,
       volume_expansion_quality=0.20, catalyst_freshness=0.10, close_strength=0.10,
@@ -647,6 +648,9 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     w_ts = float(getattr(profile, "runner_composite_score_t0_tail_weight", 0.0) or 0.0)
     # Task 2 (Round 19): multi-period momentum alignment weight.
     w_ma = float(getattr(profile, "runner_composite_score_momentum_alignment_weight", 0.0) or 0.0)
+    # Task 1 (Round 26, Alpha): cross-factor F11/F12 weights.
+    w_mc = float(getattr(profile, "runner_composite_score_momentum_confirmation_weight", 0.0) or 0.0)
+    w_vm = float(getattr(profile, "runner_composite_score_volume_momentum_weight", 0.0) or 0.0)
     # net_inflow_ratio is in [-1, +1]; map to [0, 1]: buying pressure score = (val + 1) / 2.
     # Absent / None → neutral 0.5 (no information, doesn't penalise).
     raw_ni = snapshot.get("t0_estimated_net_inflow_ratio")
@@ -666,9 +670,21 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     raw_ma = snapshot.get("multi_period_alignment_score")
     momentum_alignment_score: float = float(raw_ma) if raw_ma is not None else 0.5
     momentum_alignment_score = round(max(0.0, min(1.0, momentum_alignment_score)), 4)
-    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr + w_qb + w_ni + w_vp + w_ts + w_ma
+    # Task 1 (Round 26, Alpha): cross-factor F11 — momentum_confirmation_score.
+    # breakout_freshness × close_strength; neutral 0.25 (=0.5×0.5) when primary factors absent.
+    raw_bf = snapshot.get("breakout_freshness")
+    raw_cs_raw = snapshot.get("close_strength")
+    momentum_confirmation_score: float = (float(raw_bf) if raw_bf is not None else 0.5) * (float(raw_cs_raw) if raw_cs_raw is not None else 0.5)
+    momentum_confirmation_score = round(max(0.0, min(1.0, momentum_confirmation_score)), 4)
+    # Task 1 (Round 26, Alpha): cross-factor F12 — volume_momentum_score.
+    # volume_expansion_quality × t0_tail_strength; neutral 0.25 when primary factors absent.
+    raw_veq = snapshot.get("volume_expansion_quality")
+    raw_ts2 = snapshot.get("t0_tail_strength")
+    volume_momentum_score: float = (float(raw_veq) if raw_veq is not None else 0.5) * (float(raw_ts2) if raw_ts2 is not None else 0.5)
+    volume_momentum_score = round(max(0.0, min(1.0, volume_momentum_score)), 4)
+    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr + w_qb + w_ni + w_vp + w_ts + w_ma + w_mc + w_vm
     if total_weight <= 0.0:
         return 0.0
-    raw = (w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score + w_ni * net_inflow_score + w_vp * vp_quality_score + w_ts * t0_tail_score + w_ma * momentum_alignment_score)
+    raw = (w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score + w_ni * net_inflow_score + w_vp * vp_quality_score + w_ts * t0_tail_score + w_ma * momentum_alignment_score + w_mc * momentum_confirmation_score + w_vm * volume_momentum_score)
     return round(raw / total_weight, 4)
 

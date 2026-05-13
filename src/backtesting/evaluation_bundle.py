@@ -91,6 +91,11 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # A positive edge must survive the drawdown severity penalty; floor 0.01 ensures
     # the strategy retains at least 1 % recommended position size after adjustment.
     "kelly_fraction_drawdown_adjusted": 0.01,
+    # Task 2 (Round 26, Gamma): benchmark-adjusted Alpha floor.
+    # alpha_avg_return = mean(next_close_return − hs300_daily_return); floor ≥ 0.0 enforces
+    # that the strategy produces genuine skill-based return above the HS300 benchmark on average.
+    # Strategies with negative alpha are merely riding market Beta and provide no edge.
+    "alpha_avg_return": 0.0,
 }
 
 # ---------------------------------------------------------------------------

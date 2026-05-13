@@ -928,6 +928,9 @@ def test_resolve_grid_params_uses_btst_runner_probe_preset() -> None:
     assert grid["runner_composite_score_sector_resonance_weight"] == BTST_RUNNER_PROBE_GRID["runner_composite_score_sector_resonance_weight"]
     assert grid["runner_escape_gap_risk_raw_100_max"] == BTST_RUNNER_PROBE_GRID["runner_escape_gap_risk_raw_100_max"]
     assert grid["runner_escape_composite_score_min"] == BTST_RUNNER_PROBE_GRID["runner_escape_composite_score_min"]
+    # Task 1 (Round 26, Alpha): new cross-factor axes must be present in the preset grid.
+    assert grid["runner_composite_score_momentum_confirmation_weight"] == BTST_RUNNER_PROBE_GRID["runner_composite_score_momentum_confirmation_weight"]
+    assert grid["runner_composite_score_volume_momentum_weight"] == BTST_RUNNER_PROBE_GRID["runner_composite_score_volume_momentum_weight"]
     assert "committee_alpha_min_aggressive_trade" not in grid  # not the committee grid
 
 

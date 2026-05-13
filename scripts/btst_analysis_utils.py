@@ -28,6 +28,14 @@ BTST_FACTOR_NAMES: tuple[str, ...] = (
     # Values near 1.0 indicate price held near the day high at close (late-session buying strength).
     # Values near 0 indicate heavy late-session selling (price closed well below the day high).
     "t0_tail_strength",
+    # Task 1 (Round 26, Alpha): cross-factor F11 — momentum confirmation score.
+    # breakout_freshness × close_strength: fresh breakout AND strong close = dual confirmation signal.
+    # Neutral 0.25 (=0.5×0.5) when both primary factors are at mid-point; both missing → 0.25.
+    "momentum_confirmation_score",
+    # Task 1 (Round 26, Alpha): cross-factor F12 — volume momentum score.
+    # volume_expansion_quality × t0_tail_strength: expanding volume AND late-session bid persistence.
+    # Signals sustained institutional accumulation rather than ephemeral intraday spike.
+    "volume_momentum_score",
 )
 
 
@@ -118,7 +126,15 @@ def compute_all_factor_ics(rows: list[dict[str, Any]], return_col: str = "next_c
     """Compute Spearman IC for all :data:`BTST_FACTOR_NAMES` against *return_col*.
 
     Returns a dict mapping factor name → IC value (or ``None`` if insufficient data).
+
+    Task 1 (Round 26, Alpha): cross-factor terms ``momentum_confirmation_score`` (F11) and
+    ``volume_momentum_score`` (F12) are injected into each row before IC computation.  Missing
+    primary factors are replaced with neutral 0.5 so the cross-product is always computable.
     """
+    # Inject cross-factor values so compute_factor_ic can find them by key.
+    for row in rows:
+        row["momentum_confirmation_score"] = row.get("breakout_freshness", 0.5) * row.get("close_strength", 0.5)
+        row["volume_momentum_score"] = row.get("volume_expansion_quality", 0.5) * row.get("t0_tail_strength", 0.5)
     return {factor: compute_factor_ic(rows, factor, return_col) for factor in BTST_FACTOR_NAMES}
 
 
@@ -1956,6 +1972,204 @@ def compute_drawdown_adjusted_kelly(
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 2 (Round 26, Gamma): Benchmark-adjusted Alpha vs HS300
+# ---------------------------------------------------------------------------
+# Computes BTST strategy Alpha relative to the HS300 (沪深300) index benchmark.
+# Raw win rate and return can be inflated during broad market rallies (pure Beta).
+# This function decomposes the excess return into alpha (skill) vs beta (market).
+
+
+def compute_benchmark_adjusted_alpha(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute Alpha, beta exposure, and information ratio relative to HS300 benchmark.
+
+    Uses ``next_close_return`` as the BTST daily return and ``hs300_daily_return`` as the
+    benchmark.  When ``hs300_daily_return`` is absent from all rows the function returns a
+    degraded dict with most fields set to ``None``.
+
+    Args:
+        rows: List of row dicts, each optionally containing ``next_close_return`` and
+            ``hs300_daily_return`` fields.
+
+    Returns:
+        Dict with keys:
+        - ``benchmark_mean_return``: mean HS300 daily return (float or None).
+        - ``alpha_avg_return``: mean(next_close_return − hs300_daily_return).
+        - ``alpha_win_rate``: fraction of rows where BTST > HS300.
+        - ``alpha_sharpe``: alpha_avg / std(alpha_series) — risk-adjusted excess return.
+        - ``beta_exposure``: cov(btst, hs300) / var(hs300) — market sensitivity proxy.
+        - ``information_ratio``: alpha_avg / tracking_error (tracking_error = std(alpha)).
+        - ``outperform_bull_rate``: BTST > HS300 fraction on bull days (hs300 > 0.3 %).
+        - ``outperform_bear_rate``: BTST > HS300 fraction on bear days (hs300 < −0.3 %).
+    """
+    _BULL_THRESHOLD: float = 0.003
+    _BEAR_THRESHOLD: float = -0.003
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        btst_ret = row.get("next_close_return")
+        bm_ret = row.get("hs300_daily_return")
+        if btst_ret is not None and bm_ret is not None:
+            try:
+                paired.append((float(btst_ret), float(bm_ret)))
+            except (TypeError, ValueError):
+                continue
+
+    if not paired:
+        return {
+            "benchmark_mean_return": None,
+            "alpha_avg_return": None,
+            "alpha_win_rate": None,
+            "alpha_sharpe": None,
+            "beta_exposure": None,
+            "information_ratio": None,
+            "outperform_bull_rate": None,
+            "outperform_bear_rate": None,
+        }
+
+    btst_rets: list[float] = [p[0] for p in paired]
+    bm_rets: list[float] = [p[1] for p in paired]
+    n: int = len(paired)
+    alpha_series: list[float] = [b - m for b, m in paired]
+
+    benchmark_mean: float = round(sum(bm_rets) / n, 6)
+    alpha_avg: float = round(sum(alpha_series) / n, 6)
+    alpha_win_rate: float = round(sum(1 for a in alpha_series if a > 0.0) / n, 4)
+
+    # Tracking error and alpha Sharpe/IR
+    if n >= 2:
+        alpha_mean = sum(alpha_series) / n
+        alpha_var = sum((a - alpha_mean) ** 2 for a in alpha_series) / (n - 1)
+        tracking_error: float = alpha_var ** 0.5
+        alpha_sharpe: float | None = round(alpha_avg / tracking_error, 4) if tracking_error > 1e-9 else None
+        information_ratio: float | None = alpha_sharpe  # same formula (alpha / TE)
+    else:
+        tracking_error = 0.0
+        alpha_sharpe = None
+        information_ratio = None
+
+    # Beta exposure: cov(btst, bm) / var(bm)
+    if n >= 2:
+        btst_mean = sum(btst_rets) / n
+        bm_mean = sum(bm_rets) / n
+        cov = sum((btst_rets[i] - btst_mean) * (bm_rets[i] - bm_mean) for i in range(n)) / (n - 1)
+        bm_var = sum((v - bm_mean) ** 2 for v in bm_rets) / (n - 1)
+        beta_exposure: float | None = round(cov / bm_var, 4) if bm_var > 1e-12 else 1.0
+    else:
+        beta_exposure = None
+
+    # Conditional outperformance rates
+    bull_days: list[float] = [alpha_series[i] for i, bm in enumerate(bm_rets) if bm > _BULL_THRESHOLD]
+    bear_days: list[float] = [alpha_series[i] for i, bm in enumerate(bm_rets) if bm < _BEAR_THRESHOLD]
+    outperform_bull_rate: float | None = round(sum(1 for a in bull_days if a > 0.0) / len(bull_days), 4) if bull_days else None
+    outperform_bear_rate: float | None = round(sum(1 for a in bear_days if a > 0.0) / len(bear_days), 4) if bear_days else None
+
+    return {
+        "benchmark_mean_return": benchmark_mean,
+        "alpha_avg_return": alpha_avg,
+        "alpha_win_rate": alpha_win_rate,
+        "alpha_sharpe": alpha_sharpe,
+        "beta_exposure": beta_exposure,
+        "information_ratio": information_ratio,
+        "outperform_bull_rate": outperform_bull_rate,
+        "outperform_bear_rate": outperform_bear_rate,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 26, Beta): Dynamic stop-loss threshold suggestion
+# ---------------------------------------------------------------------------
+# Uses the already-computed stop_loss_trigger_rate_2/3/5pct metrics from Round 15
+# to recommend the optimal stop-loss level that balances protection vs. premature exit.
+
+
+def compute_dynamic_stop_loss_suggestion(surface_summary: dict[str, Any]) -> dict[str, Any]:
+    """Suggest an optimal stop-loss percentage based on observed trigger-rate data.
+
+    Reads ``stop_loss_trigger_rate_2pct``, ``stop_loss_trigger_rate_3pct``, and
+    ``stop_loss_trigger_rate_5pct`` from *surface_summary*.  When these fields are absent the
+    function returns a safe default (3 % stop, confidence="low").
+
+    Decision rules (applied in order):
+    1. ``stop_loss_trigger_rate_2pct < 0.10``  → 2 % stop is viable (rare hit, high protection).
+    2. ``stop_loss_trigger_rate_3pct < 0.20``  → 3 % stop is acceptable (moderate hit rate).
+    3. ``stop_loss_trigger_rate_5pct > 0.35``  → 5 % stop triggers too often; tighten to 3 %.
+    4. Default fallback: 3 % stop with low confidence.
+
+    Args:
+        surface_summary: Surface summary dict as returned by ``build_surface_summary``.
+
+    Returns:
+        Dict with keys:
+        - ``suggested_stop_loss_pct``: float — recommended stop-loss (0.02 / 0.03 / 0.05).
+        - ``stop_loss_confidence``: str — "high" | "medium" | "low".
+        - ``stop_loss_rationale``: str — human-readable reason.
+        - ``tight_stop_viable``: bool — 2 % stop viable (trigger_rate_2pct < 10 %).
+        - ``loose_stop_warned``: bool — 5 % stop triggers too often (trigger_rate_5pct > 35 %).
+        - ``optimal_stop_trigger_rate``: float | None — observed trigger rate for suggested stop.
+    """
+    r2: float | None = surface_summary.get("stop_loss_trigger_rate_2pct")
+    r3: float | None = surface_summary.get("stop_loss_trigger_rate_3pct")
+    r5: float | None = surface_summary.get("stop_loss_trigger_rate_5pct")
+
+    if r2 is None and r3 is None and r5 is None:
+        return {
+            "suggested_stop_loss_pct": 0.03,
+            "stop_loss_confidence": "low",
+            "stop_loss_rationale": "No stop-loss trigger data available; defaulting to 3% stop-loss.",
+            "tight_stop_viable": False,
+            "loose_stop_warned": False,
+            "optimal_stop_trigger_rate": None,
+        }
+
+    tight_stop_viable: bool = r2 is not None and r2 < 0.10
+    loose_stop_warned: bool = r5 is not None and r5 > 0.35
+
+    if tight_stop_viable:
+        return {
+            "suggested_stop_loss_pct": 0.02,
+            "stop_loss_confidence": "high",
+            "stop_loss_rationale": f"2% stop viable: trigger rate {r2:.1%} < 10%; tight stop preserves capital without excessive false exits.",
+            "tight_stop_viable": True,
+            "loose_stop_warned": loose_stop_warned,
+            "optimal_stop_trigger_rate": r2,
+        }
+
+    if r3 is not None and r3 < 0.20:
+        confidence = "medium" if not loose_stop_warned else "medium"
+        rationale = f"3% stop acceptable: trigger rate {r3:.1%} < 20%."
+        if loose_stop_warned:
+            rationale += f" 5% stop warned (trigger rate {r5:.1%} > 35%)."
+        return {
+            "suggested_stop_loss_pct": 0.03,
+            "stop_loss_confidence": confidence,
+            "stop_loss_rationale": rationale,
+            "tight_stop_viable": False,
+            "loose_stop_warned": loose_stop_warned,
+            "optimal_stop_trigger_rate": r3,
+        }
+
+    if loose_stop_warned:
+        return {
+            "suggested_stop_loss_pct": 0.03,
+            "stop_loss_confidence": "medium",
+            "stop_loss_rationale": f"5% stop too permissive (trigger rate {r5:.1%} > 35%); tightening to 3% stop.",
+            "tight_stop_viable": False,
+            "loose_stop_warned": True,
+            "optimal_stop_trigger_rate": r3,
+        }
+
+    # Fallback: suggest 3 % with low confidence when rates are ambiguous
+    return {
+        "suggested_stop_loss_pct": 0.03,
+        "stop_loss_confidence": "low",
+        "stop_loss_rationale": "Stop-loss trigger rates ambiguous; defaulting to 3% stop-loss.",
+        "tight_stop_viable": False,
+        "loose_stop_warned": False,
+        "optimal_stop_trigger_rate": r3,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -2019,6 +2233,10 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # based on that day's average next_close_return, then compute per-regime win rate and payoff ratio.
     # This lets the optimizer identify which market environment the strategy works best in.
     regime_conditional_stats = build_regime_conditional_stats(rows)
+    # Task 2 (Round 26, Gamma): benchmark-adjusted Alpha vs HS300.
+    # Decomposes BTST returns into Alpha (skill) and Beta (market co-movement).
+    # Requires hs300_daily_return field in rows; degrades gracefully when absent.
+    _benchmark_alpha: dict[str, Any] = compute_benchmark_adjusted_alpha(next_day_rows)
     # Task 4 (Round 15): stop-loss trigger rates at -2 %, -3 %, -5 % from T+1 open.
     # Uses next_intraday_drawdown (T+1 low/open − 1) to model stop-loss hits.
     stop_loss_trigger_rates = compute_stop_loss_trigger_rates(next_intraday_drawdown_values)
@@ -2533,7 +2751,38 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "drawdown_adjustment_factor": _drawdown_adjusted_kelly.get("drawdown_adjustment_factor"),
         "drawdown_kelly_vs_base_diff": _drawdown_adjusted_kelly.get("drawdown_kelly_vs_base_diff"),
         "drawdown_risk_level": _drawdown_adjusted_kelly.get("drawdown_risk_level"),
+        # -----------------------------------------------------------------------
+        # Round 26 analytics
+        # -----------------------------------------------------------------------
+        # Task 2 (Round 26, Gamma): benchmark-adjusted Alpha vs HS300.
+        # alpha_avg_return: mean(next_close_return − hs300_daily_return); positive = true skill.
+        # alpha_win_rate: fraction of days BTST outperforms HS300.
+        # information_ratio: alpha / tracking_error — risk-adjusted excess return signal.
+        # beta_exposure: market sensitivity proxy (cov / var).
+        # outperform_bull_rate / outperform_bear_rate: conditional outperformance.
+        "benchmark_alpha": _benchmark_alpha,
+        "benchmark_mean_return": _benchmark_alpha.get("benchmark_mean_return"),
+        "alpha_avg_return": _benchmark_alpha.get("alpha_avg_return"),
+        "alpha_win_rate": _benchmark_alpha.get("alpha_win_rate"),
+        "alpha_sharpe": _benchmark_alpha.get("alpha_sharpe"),
+        "beta_exposure": _benchmark_alpha.get("beta_exposure"),
+        "information_ratio": _benchmark_alpha.get("information_ratio"),
+        "outperform_bull_rate": _benchmark_alpha.get("outperform_bull_rate"),
+        "outperform_bear_rate": _benchmark_alpha.get("outperform_bear_rate"),
     }
+    # -----------------------------------------------------------------------
+    # Round 26, Task 3 (Beta): Dynamic stop-loss suggestion.
+    # Uses stop_loss_trigger_rate_2/3/5pct from Round 15 to recommend optimal stop level.
+    # Called here (after _surface_result is assembled) so it can read stop-loss rates.
+    # -----------------------------------------------------------------------
+    _stop_loss_suggestion: dict[str, Any] = compute_dynamic_stop_loss_suggestion(_surface_result)
+    _surface_result["stop_loss_suggestion"] = _stop_loss_suggestion
+    _surface_result["suggested_stop_loss_pct"] = _stop_loss_suggestion.get("suggested_stop_loss_pct")
+    _surface_result["stop_loss_confidence"] = _stop_loss_suggestion.get("stop_loss_confidence")
+    _surface_result["stop_loss_rationale"] = _stop_loss_suggestion.get("stop_loss_rationale")
+    _surface_result["tight_stop_viable"] = _stop_loss_suggestion.get("tight_stop_viable")
+    _surface_result["loose_stop_warned"] = _stop_loss_suggestion.get("loose_stop_warned")
+    _surface_result["optimal_stop_trigger_rate"] = _stop_loss_suggestion.get("optimal_stop_trigger_rate")
     # -----------------------------------------------------------------------
     # Round 25, Task 1 (Gamma): Profile health score — aggregate all quality
     # indicators into a single 0-100 score so strategists can compare profiles
