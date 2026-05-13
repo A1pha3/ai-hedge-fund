@@ -2256,7 +2256,7 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     else:
         _limit_up_risk_premium = None
 
-    return {
+    _surface_result: dict[str, Any] = {
         "total_count": len(rows),
         # Task 2 (Round 14): explicit candidate_pool_size (= total_count) for walk-forward pool tracking.
         "candidate_pool_size": len(rows),
@@ -2534,6 +2534,18 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "drawdown_kelly_vs_base_diff": _drawdown_adjusted_kelly.get("drawdown_kelly_vs_base_diff"),
         "drawdown_risk_level": _drawdown_adjusted_kelly.get("drawdown_risk_level"),
     }
+    # -----------------------------------------------------------------------
+    # Round 25, Task 1 (Gamma): Profile health score — aggregate all quality
+    # indicators into a single 0-100 score so strategists can compare profiles
+    # at a glance without scanning dozens of individual metrics.
+    # -----------------------------------------------------------------------
+    _health: dict[str, Any] = compute_profile_health_score(_surface_result)
+    _surface_result["profile_health_score"] = _health["profile_health_score"]
+    _surface_result["profile_health_grade"] = _health["profile_health_grade"]
+    _surface_result["health_subscores"] = _health["health_subscores"]
+    _surface_result["health_weakest_area"] = _health["health_weakest_area"]
+    _surface_result["health_strongest_area"] = _health["health_strongest_area"]
+    return _surface_result
 
 
 # ---------------------------------------------------------------------------
@@ -2854,6 +2866,252 @@ def compute_verdict_calibration(all_window_summaries: list[dict[str, Any]]) -> d
         "verdict_monotone": verdict_monotone,
         "verdict_win_rate_map": verdict_win_rate_map,
         "verdict_sample_counts": verdict_sample_counts,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 25, Task 1 (Gamma): Comprehensive profile health score
+# ---------------------------------------------------------------------------
+# Aggregates all major quality indicators into a single 0–100 score so that
+# strategists can quickly compare candidate profiles without scanning dozens of
+# individual metrics.  Each of the 10 sub-items contributes up to 10 points.
+# Missing fields receive a neutral 5-point score to avoid penalising profiles
+# built before the corresponding metric was added to the system.
+
+
+def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, Any]:
+    """综合多个质量指标，计算profile整体健康度评分 [0, 100].
+
+    共10个子项，每项满分10分:
+
+    1. win_rate_score  — next_close_positive_rate
+    2. payoff_score    — realized_payoff_ratio
+    3. kelly_score     — kelly_positive + kelly_fraction_half
+    4. regime_score    — regime_consistency_score
+    5. tier_score      — tier_monotone_win_rate + tier_win_rate_spread
+    6. ic_score        — ic_positive_factor_fraction
+    7. stability_score — regime_robustness_flag + bear_market_win_rate_deficit
+    8. drawdown_score  — t_plus_1_intraday_drawdown_p10
+    9. hold_score      — hold_period_confidence
+    10. execution_score — execution_timing_confidence
+
+    Missing fields receive a neutral 5.0 score.
+
+    Args:
+        surface_summary: A surface summary dict (output of ``build_surface_summary``
+            or an aggregated evaluator output dict).
+
+    Returns:
+        Dict with keys: profile_health_score (0-100 float), profile_health_grade
+        ("A"/"B"/"C"/"D"), health_subscores (dict[str, float]), health_weakest_area
+        (str), health_strongest_area (str).
+    """
+    _NEUTRAL = 5.0
+    subscores: dict[str, float] = {}
+
+    # 1. win_rate_score
+    wr_raw = surface_summary.get("next_close_positive_rate")
+    if wr_raw is None:
+        subscores["win_rate_score"] = _NEUTRAL
+    else:
+        wr = float(wr_raw)
+        if wr >= 0.65: subscores["win_rate_score"] = 10.0
+        elif wr >= 0.55: subscores["win_rate_score"] = 7.0
+        elif wr >= 0.45: subscores["win_rate_score"] = 4.0
+        else: subscores["win_rate_score"] = 0.0
+
+    # 2. payoff_score
+    payoff_raw = surface_summary.get("realized_payoff_ratio")
+    if payoff_raw is None:
+        subscores["payoff_score"] = _NEUTRAL
+    else:
+        payoff = float(payoff_raw)
+        if payoff >= 2.0: subscores["payoff_score"] = 10.0
+        elif payoff >= 1.5: subscores["payoff_score"] = 7.0
+        elif payoff >= 1.0: subscores["payoff_score"] = 4.0
+        else: subscores["payoff_score"] = 0.0
+
+    # 3. kelly_score
+    kelly_pos_raw = surface_summary.get("kelly_positive")
+    kelly_half_raw = surface_summary.get("kelly_fraction_half")
+    if kelly_pos_raw is None:
+        subscores["kelly_score"] = _NEUTRAL
+    elif bool(kelly_pos_raw):
+        kelly_half = float(kelly_half_raw) if kelly_half_raw is not None else None
+        if kelly_half is not None and kelly_half >= 0.05: subscores["kelly_score"] = 10.0
+        elif kelly_half is not None and kelly_half >= 0.02: subscores["kelly_score"] = 6.0
+        else: subscores["kelly_score"] = 3.0
+    else:
+        subscores["kelly_score"] = 0.0
+
+    # 4. regime_score
+    rcs_raw = surface_summary.get("regime_consistency_score")
+    if rcs_raw is None:
+        subscores["regime_score"] = _NEUTRAL
+    else:
+        rcs = float(rcs_raw)
+        if rcs >= 0.85: subscores["regime_score"] = 10.0
+        elif rcs >= 0.70: subscores["regime_score"] = 7.0
+        elif rcs >= 0.55: subscores["regime_score"] = 4.0
+        else: subscores["regime_score"] = 0.0
+
+    # 5. tier_score
+    tier_mono_raw = surface_summary.get("tier_monotone_win_rate")
+    tier_spread_raw = surface_summary.get("tier_win_rate_spread")
+    if tier_mono_raw is None:
+        subscores["tier_score"] = _NEUTRAL
+    elif bool(tier_mono_raw):
+        tier_spread = float(tier_spread_raw) if tier_spread_raw is not None else None
+        if tier_spread is not None and tier_spread >= 0.10: subscores["tier_score"] = 10.0
+        else: subscores["tier_score"] = 6.0
+    else:
+        subscores["tier_score"] = 0.0
+
+    # 6. ic_score  (ic_positive_factor_fraction from R11; neutral when absent from per-surface dict)
+    ic_frac_raw = surface_summary.get("ic_positive_factor_fraction")
+    if ic_frac_raw is None:
+        subscores["ic_score"] = _NEUTRAL
+    else:
+        ic_frac = float(ic_frac_raw)
+        if ic_frac >= 0.80: subscores["ic_score"] = 10.0
+        elif ic_frac >= 0.60: subscores["ic_score"] = 6.0
+        elif ic_frac >= 0.40: subscores["ic_score"] = 3.0
+        else: subscores["ic_score"] = 0.0
+
+    # 7. stability_score
+    rob_raw = surface_summary.get("regime_robustness_flag")
+    deficit_raw = surface_summary.get("bear_market_win_rate_deficit")
+    if rob_raw is None:
+        subscores["stability_score"] = _NEUTRAL
+    elif bool(rob_raw):
+        deficit = float(deficit_raw) if deficit_raw is not None else None
+        if deficit is not None and deficit < 0.10: subscores["stability_score"] = 10.0
+        else: subscores["stability_score"] = 7.0
+    else:
+        subscores["stability_score"] = 3.0
+
+    # 8. drawdown_score
+    dd_raw = surface_summary.get("t_plus_1_intraday_drawdown_p10")
+    if dd_raw is None:
+        subscores["drawdown_score"] = _NEUTRAL
+    else:
+        dd = float(dd_raw)
+        if dd > -0.02: subscores["drawdown_score"] = 10.0
+        elif dd > -0.05: subscores["drawdown_score"] = 7.0
+        elif dd > -0.08: subscores["drawdown_score"] = 4.0
+        else: subscores["drawdown_score"] = 0.0
+
+    # 9. hold_score
+    hold_conf_raw = surface_summary.get("hold_period_confidence")
+    if hold_conf_raw is None:
+        subscores["hold_score"] = _NEUTRAL
+    else:
+        hold_conf = float(hold_conf_raw)
+        if hold_conf >= 0.30: subscores["hold_score"] = 10.0
+        elif hold_conf >= 0.15: subscores["hold_score"] = 6.0
+        else: subscores["hold_score"] = 3.0
+
+    # 10. execution_score
+    exec_conf_raw = surface_summary.get("execution_timing_confidence")
+    if exec_conf_raw is None:
+        subscores["execution_score"] = _NEUTRAL
+    else:
+        exec_conf = float(exec_conf_raw)
+        if exec_conf >= 0.20: subscores["execution_score"] = 10.0
+        elif exec_conf >= 0.10: subscores["execution_score"] = 6.0
+        else: subscores["execution_score"] = 3.0
+
+    total_score = round(sum(subscores.values()), 2)
+    if total_score >= 80.0: grade = "A"
+    elif total_score >= 60.0: grade = "B"
+    elif total_score >= 40.0: grade = "C"
+    else: grade = "D"
+
+    weakest_area = min(subscores, key=lambda k: subscores[k])
+    strongest_area = max(subscores, key=lambda k: subscores[k])
+
+    return {
+        "profile_health_score": total_score,
+        "profile_health_grade": grade,
+        "health_subscores": subscores,
+        "health_weakest_area": weakest_area,
+        "health_strongest_area": strongest_area,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 25, Task 2 (Beta): Selection churn and trading-cost estimation
+# ---------------------------------------------------------------------------
+# Estimates cross-window stability and implied trading-cost drag from the
+# sequence of per-window surface summaries accumulated during an optimizer
+# replay run.  High churn (large swing in win-rate between adjacent windows)
+# signals strategy instability and implies higher cumulative transaction costs.
+
+
+def compute_selection_churn_metrics(all_window_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """估算连续窗口间的选股换手率和隐含交易成本.
+
+    因单个 window_summary 不含股票代码列表，使用聚合指标的跨窗口变化率作为替代估算：
+    - ``win_rate_window_volatility``: 相邻窗口 next_close_positive_rate 绝对差的均值
+    - ``win_rate_window_trend``: 对窗口序号做线性回归的斜率 × 100（百分点/窗口，正=改善）
+    - ``payoff_window_volatility``: 相邻窗口 realized_payoff_ratio 绝对差的均值
+    - ``window_count``: 可用窗口数
+    - ``stable_window_fraction``: 相邻窗口胜率变化 ≤ 5% 的比例
+    - ``estimated_cost_drag_bps``: 估算交易成本拖累 = volatility × 30 × 2 (买+卖)
+
+    Args:
+        all_window_summaries: Ordered list of per-window surface summary dicts.
+
+    Returns:
+        Dict with the six metrics listed above.  Most fields are ``None`` when
+        fewer than 2 windows are available.
+    """
+    _null: dict[str, Any] = {"win_rate_window_volatility": None, "win_rate_window_trend": None, "payoff_window_volatility": None, "window_count": len(all_window_summaries), "stable_window_fraction": None, "estimated_cost_drag_bps": None}
+    if len(all_window_summaries) < 2:
+        return _null
+
+    wr_values: list[float] = []
+    payoff_values: list[float] = []
+    for s in all_window_summaries:
+        wr_raw = s.get("next_close_positive_rate")
+        if wr_raw is not None:
+            try: wr_values.append(float(wr_raw))
+            except (TypeError, ValueError): pass
+        pr_raw = s.get("realized_payoff_ratio")
+        if pr_raw is not None:
+            try: payoff_values.append(float(pr_raw))
+            except (TypeError, ValueError): pass
+
+    if len(wr_values) < 2:
+        return {**_null, "window_count": len(all_window_summaries)}
+
+    wr_diffs: list[float] = [abs(wr_values[i + 1] - wr_values[i]) for i in range(len(wr_values) - 1)]
+    win_rate_window_volatility = round(sum(wr_diffs) / len(wr_diffs), 4)
+    stable_window_fraction = round(sum(1 for d in wr_diffs if d <= 0.05) / len(wr_diffs), 4)
+
+    # Linear regression of win-rate vs window index; slope × 100 = percentage points per window
+    n_wr = len(wr_values)
+    xs_wr = list(range(n_wr))
+    mean_x = (n_wr - 1) / 2.0
+    mean_y = sum(wr_values) / n_wr
+    ss_xy = sum((xs_wr[i] - mean_x) * (wr_values[i] - mean_y) for i in range(n_wr))
+    ss_xx = sum((xi - mean_x) ** 2 for xi in xs_wr)
+    win_rate_window_trend = round((ss_xy / ss_xx) * 100.0, 4) if ss_xx != 0.0 else 0.0
+
+    payoff_window_volatility: float | None = None
+    if len(payoff_values) >= 2:
+        payoff_diffs = [abs(payoff_values[i + 1] - payoff_values[i]) for i in range(len(payoff_values) - 1)]
+        payoff_window_volatility = round(sum(payoff_diffs) / len(payoff_diffs), 4)
+
+    estimated_cost_drag_bps = round(win_rate_window_volatility * 30.0 * 2.0, 2)
+
+    return {
+        "win_rate_window_volatility": win_rate_window_volatility,
+        "win_rate_window_trend": win_rate_window_trend,
+        "payoff_window_volatility": payoff_window_volatility,
+        "window_count": len(all_window_summaries),
+        "stable_window_fraction": stable_window_fraction,
+        "estimated_cost_drag_bps": estimated_cost_drag_bps,
     }
 
 

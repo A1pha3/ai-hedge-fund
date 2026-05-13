@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_factor_ic_temporal_trend, compute_verdict_calibration, compute_optimal_hold_period, compute_score_position_tiers
+from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_factor_ic_temporal_trend, compute_verdict_calibration, compute_optimal_hold_period, compute_score_position_tiers, compute_profile_health_score, compute_selection_churn_metrics
 from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
@@ -185,6 +185,11 @@ COMPARISON_METRICS: tuple[str, ...] = (
     # Task 3 (Round 24): walk-forward verdict calibration score and monotone flag.
     "verdict_calibration_score",
     "verdict_monotone",
+    # Task 1 (Round 25, Gamma): comprehensive profile health score.
+    "profile_health_score",
+    # Task 2 (Round 25, Beta): selection churn / window stability metrics.
+    "win_rate_window_volatility",
+    "win_rate_window_trend",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -260,6 +265,11 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     # Task 3 (Round 24): walk-forward verdict calibration
     "verdict_calibration_score": "Verdict Calib",
     "verdict_monotone": "Verdict Monotone",
+    # Task 1 (Round 25, Gamma): comprehensive profile health score
+    "profile_health_score": "Health Score",
+    # Task 2 (Round 25, Beta): selection churn / window stability
+    "win_rate_window_volatility": "WR Window Vol",
+    "win_rate_window_trend": "WR Window Trend",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -285,6 +295,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "consecutive_limit_up_rate",
     # Task 1 (Round 24): decaying factor count — more decaying factors = worse predictive signal.
     "decaying_factor_count",
+    # Task 2 (Round 25, Beta): window volatility — higher = more unstable selection = lower-is-better.
+    "win_rate_window_volatility",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -355,6 +367,11 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 3 (Round 24): verdict calibration — optional; pre-Round-24 outputs omit these.
     "verdict_calibration_score",
     "verdict_monotone",
+    # Task 1 (Round 25, Gamma): profile health score — optional; pre-Round-25 outputs omit it.
+    "profile_health_score",
+    # Task 2 (Round 25, Beta): selection churn metrics — optional; pre-Round-25 outputs omit these.
+    "win_rate_window_volatility",
+    "win_rate_window_trend",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -431,6 +448,11 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     # Task 3 (Round 24): verdict calibration score — 1 % tolerance; monotone flag is exact
     "verdict_calibration_score": 0.01,
     "verdict_monotone": 0.0,
+    # Task 1 (Round 25, Gamma): profile health score — 1.0 point tolerance
+    "profile_health_score": 1.0,
+    # Task 2 (Round 25, Beta): window volatility / trend — 0.5 % tolerance
+    "win_rate_window_volatility": 0.005,
+    "win_rate_window_trend": 0.005,
 }
 
 
@@ -1180,6 +1202,39 @@ def _build_replay_evaluator(
         # Uses window-level verdict or win-rate quartiles to verify that verdict categories
         # correspond to meaningfully different T+1 win rates.
         verdict_calibration: dict[str, Any] = compute_verdict_calibration(all_primary_surfaces)
+        # Task 2 (Round 25, Beta): selection churn / window-stability metrics.
+        # Measures how much the win-rate and payoff ratio fluctuate between adjacent replay windows.
+        selection_churn: dict[str, Any] = compute_selection_churn_metrics(all_primary_surfaces)
+        # Task 1 (Round 25, Gamma): profile health score computed from aggregated evaluator metrics.
+        # Build a lightweight proxy dict from the averaged metrics so ic_positive_factor_fraction
+        # is available (unlike the per-surface call inside build_surface_summary).
+        _health_proxy: dict[str, Any] = {
+            "next_close_positive_rate": avg_next_close_positive_rate,
+            "realized_payoff_ratio": avg_realized_payoff_ratio,
+            "kelly_positive": None,  # aggregated kelly_positive not collected per-window above
+            "kelly_fraction_half": None,
+            "regime_consistency_score": None,
+            "tier_monotone_win_rate": None,
+            "tier_win_rate_spread": None,
+            "ic_positive_factor_fraction": ic_positive_factor_fraction,
+            "regime_robustness_flag": None,
+            "bear_market_win_rate_deficit": None,
+            "t_plus_1_intraday_drawdown_p10": avg_t_plus_1_intraday_drawdown_p10,
+            "hold_period_confidence": None,
+            "execution_timing_confidence": None,
+        }
+        # Enrich proxy with per-window averages where we have them
+        for _surf_key in ("kelly_positive", "kelly_fraction_half", "regime_consistency_score", "tier_monotone_win_rate", "tier_win_rate_spread", "regime_robustness_flag", "bear_market_win_rate_deficit", "hold_period_confidence", "execution_timing_confidence"):
+            _vals = [float(s[_surf_key]) for s in all_primary_surfaces if s.get(_surf_key) is not None and isinstance(s.get(_surf_key), (int, float, bool))]
+            if _vals:
+                _health_proxy[_surf_key] = sum(_vals) / len(_vals)
+        evaluator_health: dict[str, Any] = compute_profile_health_score(_health_proxy)
+        # Task 3 (Round 25, Alpha): auto-calibrated floor suggestions across replay windows.
+        floor_suggestions_result: dict[str, Any] = compute_auto_calibrated_floor_suggestions(all_primary_surfaces)
+        floor_suggestions_summary: dict[str, list[str]] = {
+            "overly_easy_floors": floor_suggestions_result.get("overly_easy_floors", []),
+            "overly_strict_floors": floor_suggestions_result.get("overly_strict_floors", []),
+        }
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1256,6 +1311,23 @@ def _build_replay_evaluator(
             "verdict_calibration": verdict_calibration,
             "verdict_calibration_score": verdict_calibration.get("verdict_calibration_score"),
             "verdict_monotone": verdict_calibration.get("verdict_monotone"),
+            # Task 1 (Round 25, Gamma): comprehensive profile health score (0-100).
+            # profile_health_score: aggregated quality score across 10 sub-dimensions.
+            # profile_health_grade: "A"(≥80) | "B"(≥60) | "C"(≥40) | "D"(<40).
+            "profile_health_score": evaluator_health.get("profile_health_score"),
+            "profile_health_grade": evaluator_health.get("profile_health_grade"),
+            "evaluator_health_subscores": evaluator_health.get("health_subscores"),
+            # Task 2 (Round 25, Beta): selection churn / window-stability metrics.
+            # win_rate_window_volatility: mean absolute difference between consecutive window win rates.
+            # win_rate_window_trend: linear regression slope (% pts per window; positive = improving).
+            "selection_churn": selection_churn,
+            "win_rate_window_volatility": selection_churn.get("win_rate_window_volatility"),
+            "win_rate_window_trend": selection_churn.get("win_rate_window_trend"),
+            "estimated_cost_drag_bps": selection_churn.get("estimated_cost_drag_bps"),
+            # Task 3 (Round 25, Alpha): auto-calibrated quality floor suggestions.
+            # floor_suggestions_summary: compact advisory listing only the easy / strict metrics.
+            "floor_suggestions": floor_suggestions_result.get("floor_suggestions"),
+            "floor_suggestions_summary": floor_suggestions_summary,
         }
 
     return evaluator
@@ -1766,6 +1838,129 @@ def compute_low_impact_probe_axes(
         "low_ir_factors": low_ir_factors,
         "pruning_candidates": pruning_candidates,
         "pruning_summary": pruning_summary,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 25, Task 3 (Alpha): Auto-calibrated quality floor suggestions
+# ---------------------------------------------------------------------------
+# Analyses the distribution of each BTST_QUALITY_FLOORS metric across all
+# replay windows and suggests whether each floor should be tightened or
+# relaxed.  A floor that is trivially easy to pass (current value ≤ P25×0.80)
+# should be raised; one that almost no parameter set can pass (current value
+# > P75×1.20) should be lowered.  Output is advisory only — no constants are
+# modified automatically.
+
+
+def compute_auto_calibrated_floor_suggestions(all_window_metrics: list[dict[str, Any]], target_pass_rate: float = 0.50) -> dict[str, Any]:
+    """基于历史窗口分布，建议更合理的质量门槛.
+
+    遍历 BTST_QUALITY_FLOORS 的每个指标，计算其在所有窗口中的分布（P25/P50/P75）。
+    - 当前门槛 ≤ P25 × 0.80 → "too_easy"（建议提高到P25）
+    - 当前门槛 > P75 × 1.20 → "too_strict"（建议降低到P50）
+    - 否则 → "calibrated"
+
+    输出是 advisory（建议），不自动修改常量。
+
+    Args:
+        all_window_metrics: List of per-window surface summary dicts (each produced by
+            ``build_surface_summary`` or the aggregated evaluator output).
+        target_pass_rate: Target fraction of windows that should pass each floor (advisory
+            context only; not used in the threshold computation logic).
+
+    Returns:
+        Dict with keys:
+        - ``floor_suggestions``: mapping from metric key to sub-dict
+          {current, suggested, p25, p50, p75, action}.
+        - ``overly_easy_floors``: list of metric keys that are too easy to pass.
+        - ``overly_strict_floors``: list of metric keys that are too strict.
+        - ``well_calibrated_floors``: list of metric keys that are well-calibrated.
+    """
+    _null: dict[str, Any] = {"floor_suggestions": {}, "overly_easy_floors": [], "overly_strict_floors": [], "well_calibrated_floors": []}
+    if not all_window_metrics:
+        return _null
+
+    floor_suggestions: dict[str, dict[str, Any]] = {}
+    overly_easy: list[str] = []
+    overly_strict: list[str] = []
+    well_calibrated: list[str] = []
+
+    for metric_key, current_floor in BTST_QUALITY_FLOORS.items():
+        values: list[float] = []
+        for w in all_window_metrics:
+            v = w.get(metric_key)
+            if v is None:
+                continue
+            try:
+                values.append(float(v))
+            except (TypeError, ValueError):
+                continue
+
+        if not values:
+            floor_suggestions[metric_key] = {"current": current_floor, "suggested": current_floor, "p25": None, "p50": None, "p75": None, "action": "no_data"}
+            continue
+
+        values_sorted = sorted(values)
+        n = len(values_sorted)
+
+        def _pct(p: float, _vs: list[float] = values_sorted, _n: int = n) -> float:
+            idx = (_n - 1) * p
+            lo = int(idx)
+            hi = lo + 1 if lo < _n - 1 else lo
+            return _vs[lo] + (idx - lo) * (_vs[hi] - _vs[lo])
+
+        p25 = _pct(0.25)
+        p50 = _pct(0.50)
+        p75 = _pct(0.75)
+
+        # Determine calibration action using asymmetric thresholds.
+        # Note: for lower-is-better metrics (negative floors like drawdown) the direction
+        # of "easy" / "strict" is inverted.  We detect this by checking if current_floor < 0.
+        if current_floor < 0.0:
+            # Negative-floor metrics (e.g. t_plus_1_intraday_drawdown_p10 = -0.07):
+            # "too easy" means the floor is very permissive (very negative) compared to actual data.
+            # P25 is the 25th-percentile of the DISTRIBUTION (most negative end).
+            # current_floor ≤ p25 × 0.80 in the negative sense: |current| ≤ |p25| × 0.80.
+            if current_floor <= p25 * 0.80:
+                action = "too_easy"
+                suggested = p25
+                overly_easy.append(metric_key)
+            elif current_floor > p75 * 1.20:
+                action = "too_strict"
+                suggested = p50
+                overly_strict.append(metric_key)
+            else:
+                action = "calibrated"
+                suggested = current_floor
+                well_calibrated.append(metric_key)
+        else:
+            if current_floor <= p25 * 0.80:
+                action = "too_easy"
+                suggested = p25
+                overly_easy.append(metric_key)
+            elif current_floor > p75 * 1.20:
+                action = "too_strict"
+                suggested = p50
+                overly_strict.append(metric_key)
+            else:
+                action = "calibrated"
+                suggested = current_floor
+                well_calibrated.append(metric_key)
+
+        floor_suggestions[metric_key] = {
+            "current": current_floor,
+            "suggested": round(float(suggested), 6),
+            "p25": round(p25, 6),
+            "p50": round(p50, 6),
+            "p75": round(p75, 6),
+            "action": action,
+        }
+
+    return {
+        "floor_suggestions": floor_suggestions,
+        "overly_easy_floors": overly_easy,
+        "overly_strict_floors": overly_strict,
+        "well_calibrated_floors": well_calibrated,
     }
 
 

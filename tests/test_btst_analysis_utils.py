@@ -2489,3 +2489,171 @@ def test_r23_regime_surface_summary_exposes_consistency_fields() -> None:
     assert "worst_regime" in summary
     assert "bear_market_win_rate_deficit" in summary
 
+
+# ---------------------------------------------------------------------------
+# Round 25 — T1 (Gamma): compute_profile_health_score
+# ---------------------------------------------------------------------------
+
+def test_r25_health_score_perfect_all_ideal_values() -> None:
+    """All ideal inputs must produce a score of 100 and grade 'A'."""
+    from scripts.btst_analysis_utils import compute_profile_health_score
+    ideal = {
+        "next_close_positive_rate": 0.70,       # → win_rate_score = 10
+        "realized_payoff_ratio": 2.5,            # → payoff_score = 10
+        "kelly_positive": True,
+        "kelly_fraction_half": 0.10,             # → kelly_score = 10
+        "regime_consistency_score": 0.90,        # → regime_score = 10
+        "tier_monotone_win_rate": True,
+        "tier_win_rate_spread": 0.15,            # → tier_score = 10
+        "ic_positive_factor_fraction": 0.85,     # → ic_score = 10
+        "regime_robustness_flag": True,
+        "bear_market_win_rate_deficit": 0.05,    # < 0.10 → stability_score = 10
+        "t_plus_1_intraday_drawdown_p10": -0.01, # > -0.02 → drawdown_score = 10
+        "hold_period_confidence": 0.40,          # ≥ 0.30 → hold_score = 10
+        "execution_timing_confidence": 0.25,     # ≥ 0.20 → execution_score = 10
+    }
+    result = compute_profile_health_score(ideal)
+    assert result["profile_health_score"] == pytest.approx(100.0)
+    assert result["profile_health_grade"] == "A"
+
+
+def test_r25_health_score_zero_all_worst_values() -> None:
+    """All worst-case inputs must produce score=0 and grade='D'."""
+    from scripts.btst_analysis_utils import compute_profile_health_score
+    worst = {
+        "next_close_positive_rate": 0.30,       # → win_rate_score = 0
+        "realized_payoff_ratio": 0.5,            # → payoff_score = 0
+        "kelly_positive": False,                 # → kelly_score = 0
+        "kelly_fraction_half": 0.0,
+        "regime_consistency_score": 0.30,        # → regime_score = 0
+        "tier_monotone_win_rate": False,         # → tier_score = 0
+        "tier_win_rate_spread": 0.0,
+        "ic_positive_factor_fraction": 0.20,    # → ic_score = 0
+        "regime_robustness_flag": False,         # → stability_score = 3 (not 0)
+        "bear_market_win_rate_deficit": 0.30,
+        "t_plus_1_intraday_drawdown_p10": -0.10, # ≤ -0.08 → drawdown_score = 0
+        "hold_period_confidence": 0.05,          # → hold_score = 3 (not 0)
+        "execution_timing_confidence": 0.02,     # → execution_score = 3 (not 0)
+    }
+    result = compute_profile_health_score(worst)
+    # regime_robustness_flag=False → 3, hold_conf<0.15 → 3, exec<0.10 → 3 = total 9 (rest 0)
+    # score = 0+0+0+0+0+0+3+0+3+3 = 9.0
+    assert result["profile_health_score"] == pytest.approx(9.0)
+    assert result["profile_health_grade"] == "D"
+
+
+def test_r25_health_score_missing_fields_get_neutral() -> None:
+    """Missing fields must receive neutral score 5.0 each → total 50, grade 'C'."""
+    from scripts.btst_analysis_utils import compute_profile_health_score
+    result = compute_profile_health_score({})
+    # 10 subscores × 5.0 = 50.0
+    assert result["profile_health_score"] == pytest.approx(50.0)
+    assert result["profile_health_grade"] == "C"
+    for v in result["health_subscores"].values():
+        assert v == pytest.approx(5.0)
+
+
+def test_r25_health_score_grade_boundaries() -> None:
+    """Grade boundaries: A≥80, B≥60, C≥40, D<40."""
+    from scripts.btst_analysis_utils import compute_profile_health_score
+
+    def _build(score_per_bucket: float) -> dict:
+        # Craft inputs that hit exactly score_per_bucket × 10 subscores
+        # Use win_rate alone varying; rest neutral (missing)
+        pass
+
+    # A: win_rate=10 (≥0.65), payoff=10 (≥2.0), rest missing → 20 + 8×5 = 60 → grade B
+    result_b = compute_profile_health_score({"next_close_positive_rate": 0.70, "realized_payoff_ratio": 2.5})
+    assert result_b["profile_health_grade"] == "B"
+
+    # All ideal → A
+    ideal = {"next_close_positive_rate": 0.70, "realized_payoff_ratio": 2.5, "kelly_positive": True, "kelly_fraction_half": 0.10, "regime_consistency_score": 0.90, "tier_monotone_win_rate": True, "tier_win_rate_spread": 0.15, "ic_positive_factor_fraction": 0.85, "regime_robustness_flag": True, "bear_market_win_rate_deficit": 0.05, "t_plus_1_intraday_drawdown_p10": -0.01, "hold_period_confidence": 0.40, "execution_timing_confidence": 0.25}
+    result_a = compute_profile_health_score(ideal)
+    assert result_a["profile_health_grade"] == "A"
+
+    # C: only medium metrics → grade C
+    medium = {"next_close_positive_rate": 0.50, "realized_payoff_ratio": 1.2}
+    result_c = compute_profile_health_score(medium)
+    # win_rate_score=4, payoff_score=4, rest neutral 5 each → 4+4+8×5 = 48 → C
+    assert result_c["profile_health_grade"] == "C"
+
+
+def test_r25_health_score_weakest_strongest_area() -> None:
+    """health_weakest_area and health_strongest_area must point to actual min/max subscore keys."""
+    from scripts.btst_analysis_utils import compute_profile_health_score
+    surface = {
+        "next_close_positive_rate": 0.30,       # → win_rate_score = 0  (weakest)
+        "realized_payoff_ratio": 2.5,            # → payoff_score = 10  (strongest)
+        "kelly_positive": None,                  # neutral 5
+    }
+    result = compute_profile_health_score(surface)
+    assert result["health_weakest_area"] == "win_rate_score"
+    assert result["health_strongest_area"] == "payoff_score"
+
+
+def test_r25_health_score_surface_summary_exposes_health_fields() -> None:
+    """build_surface_summary must expose profile_health_score and profile_health_grade."""
+    rows = [
+        {"next_close_return": 0.04, "next_open_return": 0.01, "next_high_return": 0.06, "next_intraday_drawdown": -0.01, "next_open_to_close_return": 0.03, "runner_composite_score": 0.8, "trade_date": "20240101"},
+        {"next_close_return": -0.01, "next_open_return": -0.005, "next_high_return": 0.01, "next_intraday_drawdown": -0.02, "next_open_to_close_return": -0.005, "runner_composite_score": 0.2, "trade_date": "20240102"},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "profile_health_score" in summary
+    assert "profile_health_grade" in summary
+    assert isinstance(summary["profile_health_score"], (int, float))
+    assert summary["profile_health_grade"] in ("A", "B", "C", "D")
+
+
+# ---------------------------------------------------------------------------
+# Round 25 — T2 (Beta): compute_selection_churn_metrics
+# ---------------------------------------------------------------------------
+
+def test_r25_churn_stable_windows_low_volatility() -> None:
+    """Near-constant win-rate across windows must yield low volatility."""
+    from scripts.btst_analysis_utils import compute_selection_churn_metrics
+    windows = [{"next_close_positive_rate": 0.60 + i * 0.001} for i in range(6)]
+    result = compute_selection_churn_metrics(windows)
+    assert result["win_rate_window_volatility"] is not None
+    assert result["win_rate_window_volatility"] < 0.01
+
+
+def test_r25_churn_unstable_windows_high_volatility() -> None:
+    """Large swings between adjacent windows must yield high volatility."""
+    from scripts.btst_analysis_utils import compute_selection_churn_metrics
+    windows = [{"next_close_positive_rate": 0.40 if i % 2 == 0 else 0.80} for i in range(6)]
+    result = compute_selection_churn_metrics(windows)
+    assert result["win_rate_window_volatility"] is not None
+    assert result["win_rate_window_volatility"] > 0.30
+
+
+def test_r25_churn_trend_positive_when_improving() -> None:
+    """Consistently rising win-rate must produce a positive trend slope."""
+    from scripts.btst_analysis_utils import compute_selection_churn_metrics
+    windows = [{"next_close_positive_rate": 0.40 + i * 0.05} for i in range(6)]
+    result = compute_selection_churn_metrics(windows)
+    assert result["win_rate_window_trend"] is not None
+    assert result["win_rate_window_trend"] > 0.0
+
+
+def test_r25_churn_single_window_returns_none() -> None:
+    """With fewer than 2 windows, all rate-change fields must be None."""
+    from scripts.btst_analysis_utils import compute_selection_churn_metrics
+    result_empty = compute_selection_churn_metrics([])
+    result_one = compute_selection_churn_metrics([{"next_close_positive_rate": 0.60}])
+    for result in (result_empty, result_one):
+        assert result["win_rate_window_volatility"] is None
+        assert result["win_rate_window_trend"] is None
+        assert result["stable_window_fraction"] is None
+        assert result["estimated_cost_drag_bps"] is None
+
+
+def test_r25_churn_cost_drag_formula() -> None:
+    """estimated_cost_drag_bps must equal volatility × 60 (30 × 2)."""
+    from scripts.btst_analysis_utils import compute_selection_churn_metrics
+    windows = [{"next_close_positive_rate": 0.50 + i * 0.10} for i in range(4)]
+    result = compute_selection_churn_metrics(windows)
+    vol = result["win_rate_window_volatility"]
+    drag = result["estimated_cost_drag_bps"]
+    assert vol is not None and drag is not None
+    assert drag == pytest.approx(vol * 60.0, rel=1e-4)
+

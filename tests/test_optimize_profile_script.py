@@ -4615,3 +4615,75 @@ def test_r24_verdict_calibration_score_capped_at_one() -> None:
     assert result["verdict_calibration_score"] is not None
     assert result["verdict_calibration_score"] <= 1.0
     assert result["verdict_calibration_score"] == 1.0  # (0.90-0.40)/0.20 = 2.5 → capped to 1.0
+
+
+# ---------------------------------------------------------------------------
+# Round 25 — T3 (Alpha): compute_auto_calibrated_floor_suggestions
+# ---------------------------------------------------------------------------
+
+def test_r25_floor_suggestions_too_easy_when_floor_below_p25() -> None:
+    """A current floor at or below 80% of P25 must produce action='too_easy'."""
+    from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    # next_close_positive_rate has current floor 0.54.
+    # Feed 8 windows all with value 0.80 → P25=0.80*0.25+… ≈ 0.80.
+    # 0.54 ≤ 0.80 * 0.80 = 0.64 → too_easy.
+    windows = [{"next_close_positive_rate": 0.80} for _ in range(8)]
+    result = compute_auto_calibrated_floor_suggestions(windows)
+    suggestion = result["floor_suggestions"].get("next_close_positive_rate")
+    assert suggestion is not None
+    assert suggestion["action"] == "too_easy"
+    assert "next_close_positive_rate" in result["overly_easy_floors"]
+
+
+def test_r25_floor_suggestions_too_strict_when_floor_above_p75() -> None:
+    """A current floor above 120% of P75 must produce action='too_strict'."""
+    from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
+
+    # next_close_positive_rate floor = 0.54.
+    # Feed windows with value ≈ 0.30 so P75 < 0.45, making floor > P75*1.20.
+    windows = [{"next_close_positive_rate": 0.25 + i * 0.01} for i in range(8)]
+    result = compute_auto_calibrated_floor_suggestions(windows)
+    suggestion = result["floor_suggestions"].get("next_close_positive_rate")
+    assert suggestion is not None
+    assert suggestion["action"] == "too_strict"
+    assert "next_close_positive_rate" in result["overly_strict_floors"]
+
+
+def test_r25_floor_suggestions_calibrated() -> None:
+    """A floor that falls between P25*0.80 and P75*1.20 must produce action='calibrated'."""
+    from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
+
+    # next_close_positive_rate floor = 0.54.
+    # Feed window values centered around 0.54 so the distribution brackets it nicely.
+    import statistics
+    windows = [{"next_close_positive_rate": 0.48 + i * 0.02} for i in range(9)]  # 0.48…0.64
+    result = compute_auto_calibrated_floor_suggestions(windows)
+    suggestion = result["floor_suggestions"].get("next_close_positive_rate")
+    # P25 ≈ 0.50, P75 ≈ 0.62  → P25*0.80=0.40 < 0.54 ≤ P75*1.20=0.744 → calibrated
+    assert suggestion is not None
+    assert suggestion["action"] == "calibrated"
+    assert "next_close_positive_rate" in result["well_calibrated_floors"]
+
+
+def test_r25_floor_suggestions_empty_input() -> None:
+    """Empty window list must return empty suggestions and empty category lists."""
+    from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
+    result = compute_auto_calibrated_floor_suggestions([])
+    assert result["floor_suggestions"] == {}
+    assert result["overly_easy_floors"] == []
+    assert result["overly_strict_floors"] == []
+    assert result["well_calibrated_floors"] == []
+
+
+def test_r25_floor_suggestions_missing_metric_graceful() -> None:
+    """Windows missing a metric must yield action='no_data' for that metric."""
+    from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
+    # Windows contain no 'next_close_positive_rate' field at all
+    windows = [{"realized_payoff_ratio": 1.5} for _ in range(5)]
+    result = compute_auto_calibrated_floor_suggestions(windows)
+    suggestion = result["floor_suggestions"].get("next_close_positive_rate")
+    assert suggestion is not None
+    assert suggestion["action"] == "no_data"
+
