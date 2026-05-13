@@ -279,6 +279,13 @@ class ShortTradeTargetProfile:
     committee_failed_breakout_metric_veto_enabled: bool = True
     committee_failed_breakout_metric_min: float = 3.0
     committee_shadow_only_blocks_selected: bool = True
+    runner_escape_enabled: bool = False
+    runner_escape_breakout_freshness_min: float = 0.0
+    runner_escape_trend_acceleration_min: float = 0.0
+    runner_escape_volume_expansion_quality_min: float = 0.0
+    runner_escape_gap_risk_raw_100_max: float = 0.0
+    runner_escape_projected_theme_exposure_max: float = 0.0
+    runner_escape_candidate_pool_avg_amount_share_of_cutoff_min: float = 0.0
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:

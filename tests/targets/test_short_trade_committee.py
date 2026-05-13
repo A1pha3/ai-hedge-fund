@@ -1199,3 +1199,46 @@ def test_committee_gap_risk_cap_blocks_advisory_continuation_lane_selection() ->
     assert "catalyst_theme_continuation_lane" in governed_result.metrics_payload["committee"]["advisory_reasons"]
     assert governed_result.metrics_payload["committee"]["selected_pass"] is False
     assert governed_result.metrics_payload["committee"]["gate_status"]["formal_selected"] == "fail"
+
+
+def test_runner_escape_promotes_high_upside_candidate_without_broadly_relaxing_committee() -> None:
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "sector_amt_share": 0.07,
+                "flow_60": 0.20,
+                "persist_120": 0.82,
+                "close_support_30": 0.18,
+                "retention_proxy": 0.86,
+                "candidate_pool_avg_amount_share_of_cutoff": 1.30,
+                "projected_theme_exposure": 0.22,
+                "gap_risk_raw_100": 36.0,
+            }
+        ),
+        profile_name="btst_runner_probe",
+    )
+
+    assert snapshot["committee_gate_status"]["runner_escape"] == "pass"
+    assert snapshot["committee_gate_status"]["formal_selected"] in {"pass", "advisory"}
+
+
+def test_runner_escape_rejects_gap_risky_or_illiquid_candidate() -> None:
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "sector_amt_share": 0.07,
+                "flow_60": 0.18,
+                "persist_120": 0.80,
+                "close_support_30": 0.16,
+                "retention_proxy": 0.82,
+                "candidate_pool_avg_amount_share_of_cutoff": 0.70,
+                "projected_theme_exposure": 0.38,
+                "gap_risk_raw_100": 72.0,
+            }
+        ),
+        profile_name="btst_runner_probe",
+    )
+
+    assert snapshot["committee_gate_status"]["runner_escape"] == "fail"
