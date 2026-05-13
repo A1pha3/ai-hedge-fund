@@ -200,6 +200,14 @@ def _average_metric(metrics_list: Sequence[PerformanceMetrics], key: str) -> flo
     return float(sum(values) / len(values))
 
 
+def _average_metric_delta(metrics_list: Sequence[PerformanceMetrics], key: str) -> float | None:
+    """Compute average delta for a metric across MVP and baseline."""
+    deltas = [float(m.get(key, 0.0) or 0.0) for m in metrics_list if m.get(key) is not None]
+    if not deltas:
+        return None
+    return float(sum(deltas) / len(deltas))
+
+
 def _one_sided_normal_pvalue(deltas: Sequence[float]) -> float | None:
     if len(deltas) < 2:
         return None
@@ -322,6 +330,8 @@ def run_ab_comparison_walk_forward(
         "mvp_avg_max_drawdown": _average_metric(mvp_metrics, "max_drawdown"),
         "avg_sortino_delta": mean(sortino_deltas) if sortino_deltas else None,
         "sortino_p_value_estimate": _one_sided_normal_pvalue(sortino_deltas),
+        "avg_runner_tail_hit_delta": _average_metric_delta(mvp_metrics, "max_future_high_return_2_5d_hit_rate_at_20pct"),
+        "avg_runner_tail_median_delta": _average_metric_delta(mvp_metrics, "median_max_future_high_return_2_5d"),
     }
     _remove_if_exists(compare_checkpoint)
     return results, summary

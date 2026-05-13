@@ -45,6 +45,13 @@ DEFAULT_BTST_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
     "crowding_risk_raw_100": dict(BTST_EXECUTION_GUARDRAILS["crowding_risk_raw_100"]),
     "gap_risk_raw_100": dict(BTST_EXECUTION_GUARDRAILS["gap_risk_raw_100"]),
 }
+DEFAULT_BTST_RUNNER_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
+    "max_future_high_return_2_5d_hit_rate_at_20pct": {"min": 0.10},
+    "next_close_positive_rate": BTST_QUALITY_FLOORS["next_close_positive_rate"],
+    "downside_p10": BTST_QUALITY_FLOORS["downside_p10"],
+    "window_coverage": BTST_QUALITY_FLOORS["window_coverage"],
+    "gap_risk_raw_100": dict(BTST_EXECUTION_GUARDRAILS["gap_risk_raw_100"]),
+}
 MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS: dict[str, dict[str, list[Any]]] = {
     "coarse": {
         "select_threshold": [0.46, 0.50, 0.54],
@@ -398,6 +405,9 @@ def _build_replay_evaluator(
             "liquidity_capacity_raw_100": [],
             "crowding_risk_raw_100": [],
             "gap_risk_raw_100": [],
+            "max_future_high_return_2_5d_hit_rate_at_20pct": [],
+            "runner_capture_count": [],
+            "time_to_hit_20pct_median": [],
         }
 
         # For metrics that should be sample-weighted, keep a parallel list of weights
@@ -410,7 +420,12 @@ def _build_replay_evaluator(
             "t_plus_3_close_positive_rate": [],
             "t_plus_3_close_expectancy": [],
             "downside_p10": [],
+            "max_future_high_return_2_5d_hit_rate_at_20pct": [],
+            "time_to_hit_20pct_median": [],
         }
+
+        # Track selected surfaces for runner median distribution aggregation
+        selected_surfaces: list[dict[str, Any]] = []
 
         window_count = 0
         source_coverage_summaries: list[dict[str, Any]] = []
@@ -498,6 +513,21 @@ def _build_replay_evaluator(
                 # Still track raw sample_weight list for reporting
                 total_metrics["sample_weight"].append(sample_weight)
 
+                # Runner horizon metrics
+                runner_tail_hit_rate = _safe_float(primary_surface.get("max_future_high_return_2_5d_hit_rate_at_20pct"))
+                runner_capture_count = primary_surface.get("runner_capture_count", 0)
+                time_to_hit_20pct = _safe_float(primary_surface.get("time_to_hit_20pct_median"))
+                if runner_tail_hit_rate is not None:
+                    total_metrics["max_future_high_return_2_5d_hit_rate_at_20pct"].append(runner_tail_hit_rate)
+                    total_metric_weights["max_future_high_return_2_5d_hit_rate_at_20pct"].append(sample_weight)
+                if isinstance(runner_capture_count, (int, float)):
+                    total_metrics["runner_capture_count"].append(float(runner_capture_count))
+                if time_to_hit_20pct is not None:
+                    total_metrics["time_to_hit_20pct_median"].append(time_to_hit_20pct)
+                    total_metric_weights["time_to_hit_20pct_median"].append(sample_weight)
+                if primary_scope == "selected":
+                    selected_surfaces.append(primary_surface)
+
                 for metric_key in (
                     "projected_theme_exposure",
                     "incremental_theme_exposure",
@@ -557,6 +587,31 @@ def _build_replay_evaluator(
         avg_t_plus_3_close_expectancy = _weighted_avg(total_metrics["t_plus_3_close_expectancy"], total_metric_weights["t_plus_3_close_expectancy"])
         avg_downside_p10 = _weighted_avg(total_metrics["downside_p10"], total_metric_weights["downside_p10"])
 
+        # Runner horizon metrics
+        avg_runner_tail_hit_rate = _weighted_avg(total_metrics["max_future_high_return_2_5d_hit_rate_at_20pct"], total_metric_weights["max_future_high_return_2_5d_hit_rate_at_20pct"])
+        total_runner_capture_count = int(sum(total_metrics["runner_capture_count"])) if total_metrics["runner_capture_count"] else 0
+        avg_time_to_hit_20pct = _weighted_avg(total_metrics["time_to_hit_20pct_median"], total_metric_weights["time_to_hit_20pct_median"])
+
+        def _weighted_average_distribution_median(surfaces: list[dict[str, Any]], dist_key: str) -> float | None:
+            """Compute sample-weighted average of distribution medians from selected surfaces."""
+            medians_and_weights: list[tuple[float, float]] = []
+            for surf in surfaces:
+                dist = dict(surf.get(dist_key) or {})
+                median_val = _safe_float(dist.get("median"))
+                next_day = surf.get("next_day_available_count", 0)
+                closed = surf.get("closed_cycle_count", 0)
+                if median_val is not None and next_day > 0 and closed > 0:
+                    w = min(1.0, min(next_day / 10.0, closed / 6.0))
+                    medians_and_weights.append((median_val, w))
+            if not medians_and_weights:
+                return None
+            total_w = sum(w for _, w in medians_and_weights)
+            if total_w <= 0.0:
+                return None
+            return sum(m * w for m, w in medians_and_weights) / total_w
+
+        median_max_future_high_return_2_5d = _weighted_average_distribution_median(selected_surfaces, "max_future_high_return_2_5d_distribution")
+
         # Execution/exposure and other metrics remain simple unweighted means
         avg_sample_weight = sum(total_metrics["sample_weight"]) / len(total_metrics["sample_weight"]) if total_metrics["sample_weight"] else None
         avg_projected_theme_exposure = sum(total_metrics["projected_theme_exposure"]) / len(total_metrics["projected_theme_exposure"]) if total_metrics["projected_theme_exposure"] else None
@@ -589,6 +644,10 @@ def _build_replay_evaluator(
             "liquidity_capacity_raw_100": avg_liquidity_capacity_raw_100,
             "crowding_risk_raw_100": avg_crowding_risk_raw_100,
             "gap_risk_raw_100": avg_gap_risk_raw_100,
+            "max_future_high_return_2_5d_hit_rate_at_20pct": avg_runner_tail_hit_rate,
+            "runner_capture_count": total_runner_capture_count,
+            "median_max_future_high_return_2_5d": median_max_future_high_return_2_5d,
+            "time_to_hit_20pct_median": avg_time_to_hit_20pct,
         }
 
     return evaluator
