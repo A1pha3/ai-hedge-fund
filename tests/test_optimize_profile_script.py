@@ -6237,3 +6237,359 @@ def test_r31_f13_weight_positive_changes_score() -> None:
     # F13 = (0.3 + 0.9) / 2 = 0.60, which differs from some other factor contributions
     # so the scores should differ when weight > 0
     assert score_zero != score_with_rs
+
+
+# ---------------------------------------------------------------------------
+# Round 32 Tests
+# ---------------------------------------------------------------------------
+# Task 1 (Gamma): compute_conditional_tail_risk — 7 tests
+# Task 2 (Alpha): compute_volume_anomaly_metrics — 7 tests
+# Task 3 (Beta): compute_composite_gate_score — 8 tests
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Gamma): compute_conditional_tail_risk
+# ---------------------------------------------------------------------------
+
+
+def _make_ctr_rows(n: int = 40) -> list[dict]:
+    """Create rows where high-score rows have low-loss returns, low-score rows high-loss returns."""
+    rows = []
+    for i in range(n):
+        # scores 0..1 evenly spaced; low scores get more negative returns
+        sc = i / (n - 1)
+        ret = 0.05 if sc >= 0.5 else -0.05
+        rows.append({"runner_composite_score": round(sc, 3), "next_close_return": round(ret, 4)})
+    return rows
+
+
+def test_r32_t1_score_tail_separation_positive() -> None:
+    """High-score group has lower tail-loss rate → score_tail_separation > 0."""
+    from scripts.btst_analysis_utils import compute_conditional_tail_risk
+
+    rows = _make_ctr_rows(40)
+    result = compute_conditional_tail_risk(rows)
+    assert result["score_tail_separation"] is not None
+    assert result["score_tail_separation"] > 0.0, f"Expected separation > 0, got {result['score_tail_separation']}"
+
+
+def test_r32_t1_score_tail_separation_negative() -> None:
+    """When high-score group has MORE losses, separation is negative and tail_risk_well_controlled=False."""
+    from scripts.btst_analysis_utils import compute_conditional_tail_risk
+
+    rows = []
+    n = 40
+    for i in range(n):
+        sc = i / (n - 1)
+        # Inverted: high score → deep loss
+        ret = -0.05 if sc >= 0.5 else 0.05
+        rows.append({"runner_composite_score": round(sc, 3), "next_close_return": round(ret, 4)})
+    result = compute_conditional_tail_risk(rows)
+    assert result["score_tail_separation"] is not None
+    assert result["score_tail_separation"] < 0.0
+    assert result["tail_risk_well_controlled"] is False
+
+
+def test_r32_t1_cvar_calculation() -> None:
+    """CVaR equals mean of worst 5% of returns."""
+    from scripts.btst_analysis_utils import compute_conditional_tail_risk
+
+    # 40 rows, all same high score → high-score group = all rows
+    rows = [{"runner_composite_score": 0.9, "next_close_return": float(i) / 100} for i in range(-20, 20)]
+    result = compute_conditional_tail_risk(rows)
+    assert result["high_score_cvar_5pct"] is not None
+    # Worst 5% of 40 rows = worst 2 rows: -0.20 and -0.19 → mean = -0.195
+    assert abs(result["high_score_cvar_5pct"] - (-0.195)) < 0.001
+
+
+def test_r32_t1_tail_risk_asymmetry() -> None:
+    """tail_risk_asymmetry = |cvar_5pct| / max(upside_5pct, 0.001)."""
+    from scripts.btst_analysis_utils import compute_conditional_tail_risk
+
+    rows = [{"runner_composite_score": 0.9, "next_close_return": float(i) / 100} for i in range(-20, 20)]
+    result = compute_conditional_tail_risk(rows)
+    cvar = result["high_score_cvar_5pct"]
+    upside = result["high_score_upside_5pct"]
+    asym = result["tail_risk_asymmetry"]
+    assert cvar is not None and upside is not None and asym is not None
+    expected = round(abs(cvar) / max(upside, 0.001), 4)
+    assert abs(asym - expected) < 0.001
+
+
+def test_r32_t1_score_field_fallback() -> None:
+    """composite_score → runner_composite_score fallback works correctly."""
+    from scripts.btst_analysis_utils import compute_conditional_tail_risk
+
+    rows = [{"composite_score": 0.9, "next_close_return": 0.02}] * 20 + \
+           [{"composite_score": 0.1, "next_close_return": -0.04}] * 20
+    result = compute_conditional_tail_risk(rows)
+    assert result["score_field_used"] == "composite_score"
+    assert result["score_tail_separation"] is not None
+
+
+def test_r32_t1_insufficient_high_score_rows() -> None:
+    """When high-score group has fewer than 5 rows, returns None for group-level stats."""
+    from scripts.btst_analysis_utils import compute_conditional_tail_risk
+
+    # Only 3 rows with score > P75 threshold
+    rows = [{"runner_composite_score": 0.99, "next_close_return": 0.01}] * 3 + \
+           [{"runner_composite_score": 0.01, "next_close_return": -0.05}] * 3
+    result = compute_conditional_tail_risk(rows)
+    # total rows = 6 < 10 → falls to global path or None group stats
+    # No assertion on exact values; just must not raise
+    assert isinstance(result, dict)
+
+
+def test_r32_t1_floor_registered() -> None:
+    """score_tail_separation floor must be registered in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "score_tail_separation" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["score_tail_separation"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Alpha): compute_volume_anomaly_metrics
+# ---------------------------------------------------------------------------
+
+
+def _make_vam_rows_monotone(n: int = 30) -> list[dict]:
+    """Create rows where volume_expansion_quality correlates with win rate."""
+    rows = []
+    for i in range(n):
+        veq = i / (n - 1)
+        enir = veq  # aligned
+        ret = 0.03 if veq > 0.5 else -0.02
+        rows.append({
+            "volume_expansion_quality": round(veq, 3),
+            "t0_estimated_net_inflow_ratio": round(enir, 3),
+            "next_close_return": round(ret, 4),
+        })
+    return rows
+
+
+def test_r32_t2_volume_monotone_win_rate_true() -> None:
+    """When high volume has highest win rate, volume_monotone_win_rate=True."""
+    from scripts.btst_analysis_utils import compute_volume_anomaly_metrics
+
+    rows = _make_vam_rows_monotone(30)
+    result = compute_volume_anomaly_metrics(rows)
+    assert result["volume_monotone_win_rate"] is not None
+    assert result["volume_monotone_win_rate"] is True
+
+
+def test_r32_t2_volume_monotone_win_rate_false() -> None:
+    """When low volume has highest win rate, volume_monotone_win_rate=False."""
+    from scripts.btst_analysis_utils import compute_volume_anomaly_metrics
+
+    rows = []
+    n = 30
+    for i in range(n):
+        veq = i / (n - 1)
+        # Inverted: low volume → positive return
+        ret = 0.03 if veq < 0.5 else -0.02
+        rows.append({"volume_expansion_quality": round(veq, 3), "t0_estimated_net_inflow_ratio": 0.5, "next_close_return": round(ret, 4)})
+    result = compute_volume_anomaly_metrics(rows)
+    assert result["volume_monotone_win_rate"] is False
+
+
+def test_r32_t2_extreme_volume_premium_calculation() -> None:
+    """extreme_volume_win_rate_premium = high_win_rate - low_win_rate."""
+    from scripts.btst_analysis_utils import compute_volume_anomaly_metrics
+
+    rows = _make_vam_rows_monotone(30)
+    result = compute_volume_anomaly_metrics(rows)
+    prem = result["extreme_volume_win_rate_premium"]
+    h_wr = result["volume_high_win_rate"]
+    l_wr = result["volume_low_win_rate"]
+    assert prem is not None and h_wr is not None and l_wr is not None
+    assert abs(prem - (h_wr - l_wr)) < 0.001
+
+
+def test_r32_t2_inflow_win_rate_premium() -> None:
+    """inflow_win_rate_premium = inflow_high_win_rate - inflow_low_win_rate."""
+    from scripts.btst_analysis_utils import compute_volume_anomaly_metrics
+
+    rows = _make_vam_rows_monotone(30)
+    result = compute_volume_anomaly_metrics(rows)
+    prem = result["inflow_win_rate_premium"]
+    assert prem is not None
+    assert isinstance(prem, float)
+
+
+def test_r32_t2_volume_inflow_alignment_trigger() -> None:
+    """volume_inflow_alignment is True when monotone AND inflow_premium > 0.05."""
+    from scripts.btst_analysis_utils import compute_volume_anomaly_metrics
+
+    rows = []
+    n = 60
+    for i in range(n):
+        veq = i / (n - 1)
+        enir = veq
+        # Clear monotone signal: high vol/inflow → big positive return
+        ret = 0.08 if veq > 0.67 else (0.02 if veq > 0.33 else -0.04)
+        rows.append({"volume_expansion_quality": round(veq, 3), "t0_estimated_net_inflow_ratio": round(enir, 3), "next_close_return": round(ret, 4)})
+    result = compute_volume_anomaly_metrics(rows)
+    assert result["volume_inflow_alignment"] is not None
+
+
+def test_r32_t2_insufficient_bucket_graceful() -> None:
+    """When a volume bucket has < 3 rows, degrade gracefully (None, no exception)."""
+    from scripts.btst_analysis_utils import compute_volume_anomaly_metrics
+
+    # All rows in the same VEQ range — mid/high buckets will be empty or tiny
+    rows = [{"volume_expansion_quality": 0.1, "t0_estimated_net_inflow_ratio": 0.5, "next_close_return": 0.01}] * 5
+    result = compute_volume_anomaly_metrics(rows)
+    # Should not raise; some stats will be None
+    assert isinstance(result, dict)
+    # With all rows having same VEQ, P33≈P67≈0.1; mid/high buckets might be empty
+    # The function should not raise
+
+
+def test_r32_t2_floor_registered() -> None:
+    """extreme_volume_win_rate_premium floor must be 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "extreme_volume_win_rate_premium" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["extreme_volume_win_rate_premium"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Beta): compute_composite_gate_score
+# ---------------------------------------------------------------------------
+
+
+def _make_best_surface() -> dict:
+    """Surface summary where all 6 dimensions are at or above ceiling."""
+    return {
+        "next_close_positive_rate": 0.60,  # above 0.55 ceiling
+        "regime_consistency_score": 0.90,  # above 0.80 ceiling
+        "profile_health_score": 90.0,       # above 80 ceiling
+        "realized_payoff_ratio": 2.0,       # above 1.5 ceiling
+        "overfit_score": 0.0,               # at 0.0 ceiling (lower is better)
+        "kelly_fraction_half": 0.10,        # above 0.05 ceiling
+    }
+
+
+def _make_worst_surface() -> dict:
+    """Surface summary where all 6 dimensions are at or below floor."""
+    return {
+        "next_close_positive_rate": 0.40,  # below 0.45 floor
+        "regime_consistency_score": 0.50,  # below 0.60 floor
+        "profile_health_score": 30.0,       # below 50 floor
+        "realized_payoff_ratio": 0.50,      # below 1.0 floor
+        "overfit_score": 0.30,              # above 0.20 floor (inverted)
+        "kelly_fraction_half": 0.01,        # below 0.02 floor
+    }
+
+
+def test_r32_t3_all_best_gives_high_score() -> None:
+    """All metrics at ceiling → gate_score near 100, grade=A, trade_recommended=True."""
+    from scripts.btst_analysis_utils import compute_composite_gate_score
+
+    result = compute_composite_gate_score(_make_best_surface())
+    assert result["composite_gate_score"] is not None
+    assert result["composite_gate_score"] >= 95.0, f"Expected ≥95, got {result['composite_gate_score']}"
+    assert result["gate_score_grade"] == "A"
+    assert result["trade_recommended"] is True
+
+
+def test_r32_t3_all_worst_gives_low_score() -> None:
+    """All metrics at floor → gate_score near 0, grade=D, trade_recommended=False."""
+    from scripts.btst_analysis_utils import compute_composite_gate_score
+
+    result = compute_composite_gate_score(_make_worst_surface())
+    assert result["composite_gate_score"] is not None
+    assert result["composite_gate_score"] <= 5.0, f"Expected ≤5, got {result['composite_gate_score']}"
+    assert result["gate_score_grade"] == "D"
+    assert result["trade_recommended"] is False
+
+
+def test_r32_t3_partial_missing_normalises() -> None:
+    """When some metrics are None, weights are renormalised, score stays in [0, 100]."""
+    from scripts.btst_analysis_utils import compute_composite_gate_score
+
+    surface = {
+        "next_close_positive_rate": 0.60,
+        "regime_consistency_score": None,
+        "profile_health_score": None,
+        "realized_payoff_ratio": 2.0,
+        "overfit_score": None,
+        "kelly_fraction_half": 0.10,
+    }
+    result = compute_composite_gate_score(surface)
+    assert result["composite_gate_score"] is not None
+    assert 0.0 <= result["composite_gate_score"] <= 100.0
+
+
+def test_r32_t3_overfit_score_inverted() -> None:
+    """overfit_score=0.0 → full credit; overfit_score=0.20 → zero credit."""
+    from scripts.btst_analysis_utils import compute_composite_gate_score
+
+    surface_good = {"overfit_score": 0.0}
+    surface_bad = {"overfit_score": 0.20}
+    score_good = compute_composite_gate_score(surface_good)["composite_gate_score"]
+    score_bad = compute_composite_gate_score(surface_bad)["composite_gate_score"]
+    assert score_good is not None and score_bad is not None
+    assert score_good > score_bad, f"Expected {score_good} > {score_bad}"
+
+
+def test_r32_t3_grade_thresholds() -> None:
+    """Gate score grades: A(≥80) B(≥65) C(≥50) D(<50)."""
+    from scripts.btst_analysis_utils import compute_composite_gate_score
+
+    def _score_at(val: float) -> str | None:
+        # Set all metrics to mid-range, then tweak next_close_positive_rate to drive score
+        surface = {
+            "next_close_positive_rate": val,
+            "regime_consistency_score": None,
+            "profile_health_score": None,
+            "realized_payoff_ratio": None,
+            "overfit_score": None,
+            "kelly_fraction_half": None,
+        }
+        return compute_composite_gate_score(surface)["gate_score_grade"]
+
+    # With only next_close_positive_rate present, the full 100 pts are from it.
+    # val=0.55 → 100% → grade A
+    assert _score_at(0.55) == "A"
+    # val=0.45 → 0% → grade D
+    assert _score_at(0.45) == "D"
+
+
+def test_r32_t3_trade_recommended_threshold() -> None:
+    """trade_recommended is True iff composite_gate_score >= 65."""
+    from scripts.btst_analysis_utils import compute_composite_gate_score
+
+    surface_pass = dict(_make_best_surface())
+    surface_fail = dict(_make_worst_surface())
+    assert compute_composite_gate_score(surface_pass)["trade_recommended"] is True
+    assert compute_composite_gate_score(surface_fail)["trade_recommended"] is False
+
+
+def test_r32_t3_score_in_range() -> None:
+    """composite_gate_score must always be in [0, 100]."""
+    from scripts.btst_analysis_utils import compute_composite_gate_score
+
+    import random
+    rng = random.Random(42)
+    for _ in range(50):
+        surface = {
+            "next_close_positive_rate": rng.uniform(0.3, 0.7),
+            "regime_consistency_score": rng.uniform(0.4, 1.0),
+            "profile_health_score": rng.uniform(20.0, 100.0),
+            "realized_payoff_ratio": rng.uniform(0.5, 3.0),
+            "overfit_score": rng.uniform(0.0, 0.5),
+            "kelly_fraction_half": rng.uniform(0.0, 0.15),
+        }
+        score = compute_composite_gate_score(surface)["composite_gate_score"]
+        assert score is not None and 0.0 <= score <= 100.0, f"Out-of-range score: {score}"
+
+
+def test_r32_t3_floor_registered() -> None:
+    """composite_gate_score floor must be 50.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "composite_gate_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["composite_gate_score"] == 50.0

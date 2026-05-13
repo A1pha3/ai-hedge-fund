@@ -132,6 +132,22 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # dimension — the 12 scoring factors are essentially one signal wearing many costumes.
     # Floor ≥ 3 ensures the strategy relies on at least 3 genuinely independent signal dimensions.
     "effective_factor_rank": 3,
+    # Task 1 (Round 32, Gamma): conditional tail-risk score separation floor.
+    # score_tail_separation = P(return < −3 % | low-score) − P(return < −3 % | high-score).
+    # A positive value means the scoring function successfully pushes deep losses away from
+    # high-score candidates; a value ≤ 0 means the score has no tail-risk filtering power.
+    "score_tail_separation": 0.0,
+    # Task 2 (Round 32, Alpha): extreme volume win-rate premium floor.
+    # extreme_volume_win_rate_premium = win_rate(high-volume group) − win_rate(low-volume group).
+    # A negative premium means放量 (expansion) is associated with *worse* next-day outcomes
+    # relative to縮量 (contraction), indicating the factor is inverted or uninformative.
+    # Floor ≥ 0.0 requires volume expansion to be at least neutral for win rate.
+    "extreme_volume_win_rate_premium": 0.0,
+    # Task 3 (Round 32, Beta): composite gate score floor.
+    # composite_gate_score aggregates six quality dimensions into a 0–100 tradability index.
+    # A score < 50 (grade D) means fewer than half the quality checks pass adequately.
+    # Floor ≥ 50 ensures the profile reaches at least C-grade tradability before rollout.
+    "composite_gate_score": 50.0,
 }
 
 # ---------------------------------------------------------------------------

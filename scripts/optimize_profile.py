@@ -225,6 +225,18 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "autocorr_lag1",
     # Task 2 (Round 31, Gamma): composite score CV across windows — scoring system stability (lower = better).
     "score_cv_across_windows",
+    # Task 1 (Round 32, Gamma): tail-risk score separation — score's ability to filter deep losses.
+    "score_tail_separation",
+    # Task 1 (Round 32, Gamma): tail-risk asymmetry — |CVaR_5%| / upside_5% (lower = better).
+    "tail_risk_asymmetry",
+    # Task 1 (Round 32, Gamma): high-score group CVaR at worst 5% (lower magnitude = better).
+    "high_score_cvar_5pct",
+    # Task 2 (Round 32, Alpha): extreme volume win-rate premium —放量 effect on win rate.
+    "extreme_volume_win_rate_premium",
+    # Task 2 (Round 32, Alpha): net inflow win-rate premium — inflow effect on win rate.
+    "inflow_win_rate_premium",
+    # Task 3 (Round 32, Beta): composite gate score — overall 0–100 tradability index.
+    "composite_gate_score",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -340,6 +352,15 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "autocorr_lag1": "Return Autocorr Lag1",
     # Task 2 (Round 31, Gamma): score CV across windows
     "score_cv_across_windows": "Score CV Across Windows",
+    # Task 1 (Round 32, Gamma): conditional tail-risk metrics
+    "score_tail_separation": "Tail Separation",
+    "tail_risk_asymmetry": "Tail Risk Asymmetry",
+    "high_score_cvar_5pct": "HighScore CVaR 5%",
+    # Task 2 (Round 32, Alpha): volume anomaly metrics
+    "extreme_volume_win_rate_premium": "Volume WR Premium",
+    "inflow_win_rate_premium": "Inflow WR Premium",
+    # Task 3 (Round 32, Beta): composite gate score
+    "composite_gate_score": "Composite Gate Score",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -377,6 +398,11 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "nonlinear_factor_count",
     # Task 2 (Round 31, Gamma): score CV across windows — higher CV = less stable scoring = lower-is-better.
     "score_cv_across_windows",
+    # Task 1 (Round 32, Gamma): tail-risk asymmetry — higher = worse tail asymmetry = lower-is-better.
+    "tail_risk_asymmetry",
+    # Task 1 (Round 32, Gamma): high-score group CVaR — more negative = worse = lower-is-better (more negative).
+    # NOTE: stored as a negative number; "lower" here means more negative (worse), so NOT in this set.
+    # Instead score_tail_separation (higher = better) drives the direction.
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -487,6 +513,15 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "autocorr_lag1",
     # Task 2 (Round 31, Gamma): score CV across windows — optional; pre-Round-31 outputs omit it.
     "score_cv_across_windows",
+    # Task 1 (Round 32, Gamma): conditional tail-risk metrics — optional; pre-Round-32 outputs omit these.
+    "score_tail_separation",
+    "tail_risk_asymmetry",
+    "high_score_cvar_5pct",
+    # Task 2 (Round 32, Alpha): volume anomaly metrics — optional; pre-Round-32 outputs omit these.
+    "extreme_volume_win_rate_premium",
+    "inflow_win_rate_premium",
+    # Task 3 (Round 32, Beta): composite gate score — optional; pre-Round-32 outputs omit it.
+    "composite_gate_score",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -579,6 +614,15 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "autocorr_lag1": 0.01,
     # Task 2 (Round 31, Gamma): score CV across windows — 0.5 % tolerance
     "score_cv_across_windows": 0.005,
+    # Task 1 (Round 32, Gamma): conditional tail-risk metrics
+    "score_tail_separation": 0.005,
+    "tail_risk_asymmetry": 0.01,
+    "high_score_cvar_5pct": 0.002,
+    # Task 2 (Round 32, Alpha): volume anomaly metrics — 0.5 % tolerance
+    "extreme_volume_win_rate_premium": 0.005,
+    "inflow_win_rate_premium": 0.005,
+    # Task 3 (Round 32, Beta): composite gate score — 1.0 point tolerance
+    "composite_gate_score": 1.0,
 }
 
 

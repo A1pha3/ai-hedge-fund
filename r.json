@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_b017931fb232_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_1b4d4ee26d5f_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -121,7 +121,13 @@
       "monthly_win_rate_spread_delta": null,
       "nonlinear_factor_count_delta": null,
       "autocorr_lag1_delta": null,
-      "score_cv_across_windows_delta": null
+      "score_cv_across_windows_delta": null,
+      "score_tail_separation_delta": null,
+      "tail_risk_asymmetry_delta": null,
+      "high_score_cvar_5pct_delta": null,
+      "extreme_volume_win_rate_premium_delta": null,
+      "inflow_win_rate_premium_delta": null,
+      "composite_gate_score_delta": null
     },
     "default": {
       "candidate": {
@@ -238,7 +244,13 @@
       "monthly_win_rate_spread_delta": null,
       "nonlinear_factor_count_delta": null,
       "autocorr_lag1_delta": null,
-      "score_cv_across_windows_delta": null
+      "score_cv_across_windows_delta": null,
+      "score_tail_separation_delta": null,
+      "tail_risk_asymmetry_delta": null,
+      "high_score_cvar_5pct_delta": null,
+      "extreme_volume_win_rate_premium_delta": null,
+      "inflow_win_rate_premium_delta": null,
+      "composite_gate_score_delta": null
     }
   },
   "rollout_recommendation": "hold",

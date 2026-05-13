@@ -3790,6 +3790,48 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["health_subscores"] = _health["health_subscores"]
     _surface_result["health_weakest_area"] = _health["health_weakest_area"]
     _surface_result["health_strongest_area"] = _health["health_strongest_area"]
+
+    # -----------------------------------------------------------------------
+    # Round 32, Task 1 (Gamma): Conditional tail-risk analysis.
+    # Quantifies P(deep loss | high-score) vs P(deep loss | low-score).
+    # -----------------------------------------------------------------------
+    _ctr: dict[str, Any] = compute_conditional_tail_risk(next_day_rows)
+    _surface_result["conditional_tail_risk"] = _ctr
+    _surface_result["high_score_tail_loss_rate"] = _ctr.get("high_score_tail_loss_rate")
+    _surface_result["high_score_cvar_5pct"] = _ctr.get("high_score_cvar_5pct")
+    _surface_result["high_score_upside_5pct"] = _ctr.get("high_score_upside_5pct")
+    _surface_result["tail_risk_asymmetry"] = _ctr.get("tail_risk_asymmetry")
+    _surface_result["low_score_tail_loss_rate"] = _ctr.get("low_score_tail_loss_rate")
+    _surface_result["low_score_cvar_5pct"] = _ctr.get("low_score_cvar_5pct")
+    _surface_result["score_tail_separation"] = _ctr.get("score_tail_separation")
+    _surface_result["tail_risk_well_controlled"] = _ctr.get("tail_risk_well_controlled")
+
+    # -----------------------------------------------------------------------
+    # Round 32, Task 2 (Alpha): Volume anomaly detection.
+    # Detects whether放量/inflow correlates with higher win rates.
+    # -----------------------------------------------------------------------
+    _vam: dict[str, Any] = compute_volume_anomaly_metrics(next_day_rows)
+    _surface_result["volume_anomaly_metrics"] = _vam
+    _surface_result["volume_low_win_rate"] = _vam.get("volume_low_win_rate")
+    _surface_result["volume_mid_win_rate"] = _vam.get("volume_mid_win_rate")
+    _surface_result["volume_high_win_rate"] = _vam.get("volume_high_win_rate")
+    _surface_result["volume_monotone_win_rate"] = _vam.get("volume_monotone_win_rate")
+    _surface_result["extreme_volume_win_rate_premium"] = _vam.get("extreme_volume_win_rate_premium")
+    _surface_result["inflow_low_win_rate"] = _vam.get("inflow_low_win_rate")
+    _surface_result["inflow_high_win_rate"] = _vam.get("inflow_high_win_rate")
+    _surface_result["inflow_win_rate_premium"] = _vam.get("inflow_win_rate_premium")
+    _surface_result["volume_inflow_alignment"] = _vam.get("volume_inflow_alignment")
+
+    # -----------------------------------------------------------------------
+    # Round 32, Task 3 (Beta): Composite gate score.
+    # Must be called LAST — reads all previously computed surface metrics.
+    # -----------------------------------------------------------------------
+    _gate: dict[str, Any] = compute_composite_gate_score(_surface_result)
+    _surface_result["composite_gate_score"] = _gate.get("composite_gate_score")
+    _surface_result["gate_score_grade"] = _gate.get("gate_score_grade")
+    _surface_result["trade_recommended"] = _gate.get("trade_recommended")
+    _surface_result["gate_score_components"] = _gate.get("gate_score_components")
+
     return _surface_result
 
 
@@ -4876,4 +4918,355 @@ def compare_reports(
         },
         "guardrail_status": guardrail_status,
         "comparison_note": comparison_note,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 32, Task 1 (Gamma): Conditional tail-risk analysis
+# ---------------------------------------------------------------------------
+# Quantifies the probability of deep losses in the HIGH-score group vs the
+# LOW-score group.  A scoring function that truly has edge should push tail
+# losses away from the high-score bucket (score_tail_separation > 0).
+
+
+def compute_conditional_tail_risk(rows: list[dict]) -> dict:
+    """Compute tail-risk statistics conditioned on composite score percentile groups.
+
+    Splits ``rows`` into a high-score group (score ≥ P75) and a low-score group
+    (score < P25) then calculates CVaR / Expected-Shortfall at the 5 % tail for
+    each group as well as the deep-loss probability P(return < −3 %).
+
+    Score field priority: ``composite_score`` → ``runner_composite_score``.
+
+    Args:
+        rows: BTST candidate rows with at least ``next_close_return`` and a score field.
+
+    Returns:
+        Dict with keys:
+
+        - ``high_score_tail_loss_rate``: float | None — P(return < −0.03 | high-score group).
+        - ``high_score_cvar_5pct``: float | None — mean of worst-5 % returns in high-score group.
+        - ``high_score_upside_5pct``: float | None — mean of best-5 % returns in high-score group.
+        - ``tail_risk_asymmetry``: float | None — |cvar_5pct| / max(upside_5pct, 0.001).
+        - ``low_score_tail_loss_rate``: float | None — P(return < −0.03 | low-score group).
+        - ``low_score_cvar_5pct``: float | None — mean of worst-5 % returns in low-score group.
+        - ``score_tail_separation``: float | None — low_rate − high_rate (>0 = score filters risk).
+        - ``tail_risk_well_controlled``: bool | None — asymmetry < 1.5 AND separation > 0.
+        - ``score_field_used``: str | None — which score field was resolved.
+    """
+    _null: dict = {
+        "high_score_tail_loss_rate": None,
+        "high_score_cvar_5pct": None,
+        "high_score_upside_5pct": None,
+        "tail_risk_asymmetry": None,
+        "low_score_tail_loss_rate": None,
+        "low_score_cvar_5pct": None,
+        "score_tail_separation": None,
+        "tail_risk_well_controlled": None,
+        "score_field_used": None,
+    }
+
+    # Resolve score field.
+    score_field: str | None = None
+    for _candidate in ("composite_score", "runner_composite_score"):
+        if any(row.get(_candidate) is not None for row in rows):
+            score_field = _candidate
+            break
+
+    # Collect valid (score, return) pairs.
+    pairs: list[tuple[float, float]] = []
+    for row in rows:
+        ret = row.get("next_close_return")
+        if ret is None:
+            continue
+        if score_field is not None:
+            sc = row.get(score_field)
+            if sc is None:
+                continue
+            pairs.append((float(sc), float(ret)))
+
+    def _tail_stats(returns: list[float]) -> tuple[float | None, float | None, float | None]:
+        """Return (tail_loss_rate, cvar_5pct, upside_5pct) or (None, None, None) if <5 items."""
+        if len(returns) < 5:
+            return None, None, None
+        n = len(returns)
+        loss_rate = round(sum(1 for r in returns if r < -0.03) / n, 6)
+        sorted_asc = sorted(returns)
+        k5 = max(1, int(n * 0.05))
+        cvar = round(sum(sorted_asc[:k5]) / k5, 6)
+        upside = round(sum(sorted_asc[-k5:]) / k5, 6)
+        return loss_rate, cvar, upside
+
+    result = dict(_null)
+    result["score_field_used"] = score_field
+
+    if score_field is None or len(pairs) < 10:
+        # No score available or too few rows — compute global tail stats only.
+        all_rets = [float(row["next_close_return"]) for row in rows if row.get("next_close_return") is not None]
+        if len(all_rets) >= 5:
+            _lr, _cv, _up = _tail_stats(all_rets)
+            result["high_score_tail_loss_rate"] = _lr
+            result["high_score_cvar_5pct"] = _cv
+            result["high_score_upside_5pct"] = _up
+            if _cv is not None and _up is not None:
+                _asym = round(abs(_cv) / max(_up, 0.001), 4) if _up is not None else None
+                result["tail_risk_asymmetry"] = _asym
+        return result
+
+    scores_only = [sc for sc, _ in pairs]
+    sorted_scores = sorted(scores_only)
+    n_pairs = len(sorted_scores)
+    p75_val = sorted_scores[int(n_pairs * 0.75)]
+    p25_val = sorted_scores[int(n_pairs * 0.25)]
+
+    # Use >= / <= so that bimodal distributions where p25_val equals min(scores)
+    # still produce a non-empty low group.
+    high_rets = [ret for sc, ret in pairs if sc >= p75_val]
+    low_rets = [ret for sc, ret in pairs if sc <= p25_val]
+
+    h_lr, h_cv, h_up = _tail_stats(high_rets)
+    l_lr, l_cv, _l_up = _tail_stats(low_rets)
+
+    result["high_score_tail_loss_rate"] = h_lr
+    result["high_score_cvar_5pct"] = h_cv
+    result["high_score_upside_5pct"] = h_up
+    result["low_score_tail_loss_rate"] = l_lr
+    result["low_score_cvar_5pct"] = l_cv
+
+    if h_cv is not None and h_up is not None:
+        result["tail_risk_asymmetry"] = round(abs(h_cv) / max(h_up, 0.001), 4)
+
+    if h_lr is not None and l_lr is not None:
+        sep = round(l_lr - h_lr, 6)
+        result["score_tail_separation"] = sep
+        asym = result.get("tail_risk_asymmetry")
+        if asym is not None:
+            result["tail_risk_well_controlled"] = bool(asym < 1.5 and sep > 0.0)
+        else:
+            result["tail_risk_well_controlled"] = None
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Round 32, Task 2 (Alpha): Volume anomaly detection
+# ---------------------------------------------------------------------------
+# Detects whether extreme volume expansion (放量) or strong net inflow
+# correlates with higher win rates — a key signal for distinguishing
+# institutional accumulation from distribution.
+
+
+def compute_volume_anomaly_metrics(rows: list[dict]) -> dict:
+    """Compute win-rate stratification by volume expansion and net inflow terciles.
+
+    Splits ``rows`` into three equal-width buckets based on P33/P67 of
+    ``volume_expansion_quality`` (VEQ) and ``t0_estimated_net_inflow_ratio`` (ENIR),
+    then computes win rate and average return per bucket.
+
+    Args:
+        rows: BTST candidate rows with ``volume_expansion_quality``,
+              ``t0_estimated_net_inflow_ratio``, and ``next_close_return``.
+
+    Returns:
+        Dict with keys:
+
+        - ``volume_low_win_rate`` / ``volume_mid_win_rate`` / ``volume_high_win_rate``: float | None.
+        - ``volume_monotone_win_rate``: bool | None — True when high ≥ mid ≥ low.
+        - ``extreme_volume_win_rate_premium``: float | None — high_win_rate − low_win_rate.
+        - ``inflow_low_win_rate`` / ``inflow_high_win_rate``: float | None.
+        - ``inflow_win_rate_premium``: float | None — inflow_high − inflow_low win rate.
+        - ``volume_inflow_alignment``: bool | None — monotone_vol AND inflow_premium > 0.05.
+    """
+    _null: dict = {
+        "volume_low_win_rate": None,
+        "volume_mid_win_rate": None,
+        "volume_high_win_rate": None,
+        "volume_low_avg_return": None,
+        "volume_mid_avg_return": None,
+        "volume_high_avg_return": None,
+        "volume_monotone_win_rate": None,
+        "extreme_volume_win_rate_premium": None,
+        "inflow_low_win_rate": None,
+        "inflow_mid_win_rate": None,
+        "inflow_high_win_rate": None,
+        "inflow_win_rate_premium": None,
+        "volume_inflow_alignment": None,
+    }
+
+    def _bucket_stats(
+        pairs: list[tuple[float, float]], p33: float, p67: float
+    ) -> tuple[dict | None, dict | None, dict | None]:
+        """Return (low_stats, mid_stats, high_stats) or None buckets when bucket < 3 rows."""
+        low = [(sc, ret) for sc, ret in pairs if sc < p33]
+        mid = [(sc, ret) for sc, ret in pairs if p33 <= sc < p67]
+        high = [(sc, ret) for sc, ret in pairs if sc >= p67]
+
+        def _stats(bucket: list[tuple[float, float]]) -> dict | None:
+            if len(bucket) < 3:
+                return None
+            rets = [r for _, r in bucket]
+            wr = round(sum(1 for r in rets if r > 0) / len(rets), 6)
+            avg_r = round(sum(rets) / len(rets), 6)
+            return {"win_rate": wr, "avg_return": avg_r, "count": len(bucket)}
+
+        return _stats(low), _stats(mid), _stats(high)
+
+    result = dict(_null)
+
+    # --- Volume expansion quality analysis ---
+    veq_pairs: list[tuple[float, float]] = [
+        (float(row["volume_expansion_quality"]), float(row["next_close_return"]))
+        for row in rows
+        if row.get("volume_expansion_quality") is not None and row.get("next_close_return") is not None
+    ]
+    if len(veq_pairs) >= 9:
+        sorted_veq = sorted(v for v, _ in veq_pairs)
+        n_veq = len(sorted_veq)
+        p33_veq = sorted_veq[int(n_veq * 0.33)]
+        p67_veq = sorted_veq[int(n_veq * 0.67)]
+        low_s, mid_s, high_s = _bucket_stats(veq_pairs, p33_veq, p67_veq)
+        if low_s is not None:
+            result["volume_low_win_rate"] = low_s["win_rate"]
+            result["volume_low_avg_return"] = low_s["avg_return"]
+        if mid_s is not None:
+            result["volume_mid_win_rate"] = mid_s["win_rate"]
+            result["volume_mid_avg_return"] = mid_s["avg_return"]
+        if high_s is not None:
+            result["volume_high_win_rate"] = high_s["win_rate"]
+            result["volume_high_avg_return"] = high_s["avg_return"]
+
+        if low_s is not None and mid_s is not None and high_s is not None:
+            result["volume_monotone_win_rate"] = bool(
+                high_s["win_rate"] >= mid_s["win_rate"] >= low_s["win_rate"]
+            )
+            result["extreme_volume_win_rate_premium"] = round(
+                high_s["win_rate"] - low_s["win_rate"], 6
+            )
+        elif low_s is not None and high_s is not None:
+            result["extreme_volume_win_rate_premium"] = round(
+                high_s["win_rate"] - low_s["win_rate"], 6
+            )
+
+    # --- Net inflow ratio analysis ---
+    enir_pairs: list[tuple[float, float]] = [
+        (float(row["t0_estimated_net_inflow_ratio"]), float(row["next_close_return"]))
+        for row in rows
+        if row.get("t0_estimated_net_inflow_ratio") is not None and row.get("next_close_return") is not None
+    ]
+    if len(enir_pairs) >= 9:
+        sorted_enir = sorted(v for v, _ in enir_pairs)
+        n_enir = len(sorted_enir)
+        p33_enir = sorted_enir[int(n_enir * 0.33)]
+        p67_enir = sorted_enir[int(n_enir * 0.67)]
+        i_low, i_mid, i_high = _bucket_stats(enir_pairs, p33_enir, p67_enir)
+        if i_low is not None:
+            result["inflow_low_win_rate"] = i_low["win_rate"]
+        if i_mid is not None:
+            result["inflow_mid_win_rate"] = i_mid["win_rate"]
+        if i_high is not None:
+            result["inflow_high_win_rate"] = i_high["win_rate"]
+        if i_low is not None and i_high is not None:
+            prem = round(i_high["win_rate"] - i_low["win_rate"], 6)
+            result["inflow_win_rate_premium"] = prem
+
+    # --- Combined alignment signal ---
+    mono = result.get("volume_monotone_win_rate")
+    inflow_prem = result.get("inflow_win_rate_premium")
+    if mono is not None and inflow_prem is not None:
+        result["volume_inflow_alignment"] = bool(mono and inflow_prem > 0.05)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Round 32, Task 3 (Beta): Composite gate score
+# ---------------------------------------------------------------------------
+# Aggregates six key quality dimensions into a single 0–100 tradability score.
+# Accepts the fully-populated surface_summary dict (after all other analysis
+# functions have run) so it can read any previously computed metric.
+
+
+def compute_composite_gate_score(surface_summary: dict) -> dict:
+    """Compute a 0–100 composite gate score from six quality dimensions.
+
+    Each dimension is linearly scaled from its practical floor (0 pts) to its
+    practical ceiling (full weight).  Dimensions with ``None`` values are skipped
+    and the remaining weights are re-normalised so the maximum possible score is
+    always 100.
+
+    Args:
+        surface_summary: Fully-populated surface summary dict as returned by
+                         ``build_surface_summary`` (or equivalent).
+
+    Returns:
+        Dict with keys:
+
+        - ``composite_gate_score``: float — 0–100 composite tradability score (1 d.p.).
+        - ``gate_score_grade``: str — "A" (≥80) / "B" (≥65) / "C" (≥50) / "D" (<50).
+        - ``trade_recommended``: bool — True when composite_gate_score ≥ 65.
+        - ``gate_score_components``: dict — per-dimension (raw_value, score, weight) breakdown.
+    """
+    # (key, floor, ceiling, weight, higher_is_better)
+    _DIMS: list[tuple[str, float, float, float, bool]] = [
+        ("next_close_positive_rate", 0.45, 0.55, 20.0, True),
+        ("regime_consistency_score", 0.60, 0.80, 15.0, True),
+        ("profile_health_score", 50.0, 80.0, 15.0, True),
+        ("realized_payoff_ratio", 1.0, 1.5, 20.0, True),
+        ("overfit_score", 0.20, 0.0, 15.0, False),  # lower is better; ceiling < floor intentionally
+        ("kelly_fraction_half", 0.02, 0.05, 15.0, True),
+    ]
+
+    components: dict[str, dict] = {}
+    total_weight = 0.0
+    raw_score = 0.0
+
+    for key, floor_v, ceiling_v, weight, higher_better in _DIMS:
+        val = surface_summary.get(key)
+        if val is None:
+            components[key] = {"raw_value": None, "score": None, "weight": weight}
+            continue
+        try:
+            fval = float(val)
+        except (TypeError, ValueError):
+            components[key] = {"raw_value": val, "score": None, "weight": weight}
+            continue
+
+        if higher_better:
+            frac = (fval - floor_v) / (ceiling_v - floor_v) if ceiling_v != floor_v else 0.0
+        else:
+            # lower is better: floor_v is the BAD end, ceiling_v is the GOOD end
+            frac = (floor_v - fval) / (floor_v - ceiling_v) if floor_v != ceiling_v else 0.0
+
+        frac = max(0.0, min(1.0, frac))
+        dim_score = frac * weight
+        raw_score += dim_score
+        total_weight += weight
+        components[key] = {"raw_value": round(fval, 6), "score": round(dim_score, 4), "weight": weight}
+
+    if total_weight <= 0.0:
+        return {
+            "composite_gate_score": None,
+            "gate_score_grade": None,
+            "trade_recommended": None,
+            "gate_score_components": components,
+        }
+
+    # Normalise so maximum achievable = 100.
+    gate_score = round((raw_score / total_weight) * 100.0, 1)
+    gate_score = max(0.0, min(100.0, gate_score))
+
+    if gate_score >= 80.0:
+        grade = "A"
+    elif gate_score >= 65.0:
+        grade = "B"
+    elif gate_score >= 50.0:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {
+        "composite_gate_score": gate_score,
+        "gate_score_grade": grade,
+        "trade_recommended": bool(gate_score >= 65.0),
+        "gate_score_components": components,
     }
