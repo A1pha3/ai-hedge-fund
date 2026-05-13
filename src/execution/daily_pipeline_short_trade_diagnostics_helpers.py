@@ -309,6 +309,34 @@ def _build_qualified_short_trade_candidate_result(
     }
 
 
+def _compute_runner_escape_stats(all_entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarise runner-escape statistics across boundary-qualifying candidates.
+
+    Iterates over all boundary-qualifying candidate dicts (selected + shadow_observation
+    + released_shadow) and computes escape rate and average composite score for escaped
+    vs. non-escaped cohorts. Useful for post-hoc correlation analysis of runner gate
+    quality vs. next-day gap-up outcomes.
+    """
+    escaped_scores: list[float] = []
+    non_escaped_scores: list[float] = []
+    for entry in all_entries:
+        is_escaped = str(entry.get("runner_escape") or "") == "pass"
+        score = float(entry.get("runner_composite_score") or 0.0)
+        if is_escaped:
+            escaped_scores.append(score)
+        else:
+            non_escaped_scores.append(score)
+    total = len(escaped_scores) + len(non_escaped_scores)
+    return {
+        "escaped_count": len(escaped_scores),
+        "non_escaped_count": len(non_escaped_scores),
+        "total_boundary_qualifying": total,
+        "escape_rate": round(len(escaped_scores) / total, 4) if total > 0 else 0.0,
+        "avg_composite_score_escaped": round(sum(escaped_scores) / len(escaped_scores), 4) if escaped_scores else None,
+        "avg_composite_score_non_escaped": round(sum(non_escaped_scores) / len(non_escaped_scores), 4) if non_escaped_scores else None,
+    }
+
+
 def build_short_trade_candidate_diagnostics_payload(
     *,
     upstream_candidates: list[Any],
@@ -322,6 +350,7 @@ def build_short_trade_candidate_diagnostics_payload(
     minimum_score_b: float,
     max_candidates: int,
 ) -> dict[str, Any]:
+    all_boundary_qualifying = [*entries, *shadow_observation_entries, *released_shadow_entries]
     return {
         "upstream_candidate_count": len(upstream_candidates),
         "candidate_count": len(entries),
@@ -339,6 +368,7 @@ def build_short_trade_candidate_diagnostics_payload(
         "tickers": entries,
         "shadow_observation_entries": shadow_observation_entries,
         "released_shadow_entries": released_shadow_entries,
+        "runner_escape_stats": _compute_runner_escape_stats(all_boundary_qualifying),
     }
 
 

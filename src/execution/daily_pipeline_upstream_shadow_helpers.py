@@ -93,10 +93,25 @@ def _supports_upstream_shadow_catalyst_relief_history(historical_prior: dict[str
 
 
 def _compute_short_trade_boundary_candidate_score(snapshot: dict) -> float:
-    return round(
-        (0.30 * float(snapshot.get("breakout_freshness", 0.0) or 0.0)) + (0.25 * float(snapshot.get("trend_acceleration", 0.0) or 0.0)) + (0.20 * float(snapshot.get("volume_expansion_quality", 0.0) or 0.0)) + (0.15 * float(snapshot.get("catalyst_freshness", 0.0) or 0.0)) + (0.10 * float(snapshot.get("close_strength", 0.0) or 0.0)),
-        4,
-    )
+    """Boundary candidate ranking score combining six key signals.
+
+    Weights (0.28/0.23/0.19/0.14/0.09/0.07) sum to 1.00 exactly for the six signals:
+    breakout_freshness, trend_acceleration, volume_expansion_quality,
+    catalyst_freshness, close_strength, sector_resonance.
+
+    ``sector_resonance`` captures stock–sector alignment: a stock moving with its
+    sector theme has meaningfully higher short-term continuation probability.
+    ``close_strength`` captures intraday buying pressure (close / day-high ratio).
+    Both signals are already available in the snapshot payload.
+    """
+    breakout = float(snapshot.get("breakout_freshness", 0.0) or 0.0)
+    trend = float(snapshot.get("trend_acceleration", 0.0) or 0.0)
+    volume = float(snapshot.get("volume_expansion_quality", 0.0) or 0.0)
+    catalyst = float(snapshot.get("catalyst_freshness", 0.0) or 0.0)
+    close_str = float(snapshot.get("close_strength", 0.0) or 0.0)
+    sector_res = float(snapshot.get("sector_resonance", 0.0) or 0.0)
+    raw = (0.28 * breakout) + (0.23 * trend) + (0.19 * volume) + (0.14 * catalyst) + (0.09 * close_str) + (0.07 * sector_res)
+    return round(raw, 4)
 
 
 def _should_release_upstream_shadow_candidate(

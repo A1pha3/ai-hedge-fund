@@ -986,6 +986,7 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "runner_composite_score_trend_weight": [0.25, 0.30, 0.35],
     "runner_composite_score_volume_weight": [0.15, 0.20, 0.25],
     "runner_composite_score_catalyst_weight": [0.05, 0.10, 0.15],
+    "runner_composite_score_close_strength_weight": [0.05, 0.10, 0.15],
 }
 
 IGNITION_STAGE1_GRID: dict[str, list[Any]] = {

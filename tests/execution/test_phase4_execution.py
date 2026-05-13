@@ -1516,7 +1516,7 @@ def test_qualifies_short_trade_boundary_candidate_keeps_structural_blockers_in_m
     assert filter_reason == "structural_prefilter_fail"
     assert metrics_payload["gate_status"] == {"data": "pass", "structural": "fail", "score": "proxy_only"}
     assert metrics_payload["blockers"] == ["trend_not_constructive"]
-    assert metrics_payload["candidate_score"] == 0.0068
+    assert metrics_payload["candidate_score"] == 0.0061
 
 
 def test_build_short_trade_candidate_diagnostics_ranks_supportive_release_above_weak_shadow_observation():
@@ -5393,3 +5393,128 @@ def test_build_buy_orders_prioritizes_incremental_theme_cap_when_both_caps_excee
     assert diagnostics["reason_counts"] == {"blocked_by_incremental_theme_exposure_cap": 1}
     assert diagnostics["tickers"][0]["incremental_theme_exposure"] == 0.19
     assert diagnostics["tickers"][0]["projected_theme_exposure"] == 0.26
+
+
+# ---------------------------------------------------------------------------
+# Task B tests: sector_resonance in boundary candidate score + metrics payload
+# ---------------------------------------------------------------------------
+
+def test_boundary_candidate_score_includes_sector_resonance() -> None:
+    """sector_resonance contributes to boundary candidate score and improves ranking when high."""
+    from src.execution.daily_pipeline_upstream_shadow_helpers import _compute_short_trade_boundary_candidate_score
+
+    base_snapshot = {
+        "breakout_freshness": 0.70,
+        "trend_acceleration": 0.60,
+        "volume_expansion_quality": 0.50,
+        "catalyst_freshness": 0.40,
+        "close_strength": 0.30,
+        "sector_resonance": 0.0,
+    }
+    high_resonance_snapshot = {**base_snapshot, "sector_resonance": 1.0}
+    score_base = _compute_short_trade_boundary_candidate_score(base_snapshot)
+    score_high = _compute_short_trade_boundary_candidate_score(high_resonance_snapshot)
+    assert score_high > score_base, "High sector_resonance should increase boundary candidate score"
+    assert 0.0 <= score_base <= 1.0
+    assert 0.0 <= score_high <= 1.0
+
+
+def test_boundary_candidate_score_weights_sum_to_one() -> None:
+    """With all signals at 1.0, boundary score equals 1.0 (weights sum to 1.0)."""
+    from src.execution.daily_pipeline_upstream_shadow_helpers import _compute_short_trade_boundary_candidate_score
+
+    all_ones = {
+        "breakout_freshness": 1.0,
+        "trend_acceleration": 1.0,
+        "volume_expansion_quality": 1.0,
+        "catalyst_freshness": 1.0,
+        "close_strength": 1.0,
+        "sector_resonance": 1.0,
+    }
+    score = _compute_short_trade_boundary_candidate_score(all_ones)
+    assert abs(score - 1.0) < 0.001, f"All-ones score should be 1.0, got {score}"
+
+
+def test_build_short_trade_boundary_metrics_payload_preserves_sector_resonance() -> None:
+    """build_short_trade_boundary_metrics_payload includes sector_resonance in the output."""
+    from src.execution.daily_pipeline_candidate_helpers import build_short_trade_boundary_metrics_payload
+    from src.execution.daily_pipeline_upstream_shadow_helpers import _compute_short_trade_boundary_candidate_score
+
+    snapshot = {
+        "breakout_freshness": 0.70,
+        "trend_acceleration": 0.60,
+        "volume_expansion_quality": 0.50,
+        "catalyst_freshness": 0.40,
+        "close_strength": 0.30,
+        "sector_resonance": 0.80,
+    }
+    payload = build_short_trade_boundary_metrics_payload(
+        snapshot=snapshot,
+        compute_candidate_score_fn=_compute_short_trade_boundary_candidate_score,
+    )
+    assert "sector_resonance" in payload, "sector_resonance must be preserved in metrics payload"
+    assert abs(payload["sector_resonance"] - 0.80) < 0.001
+    # candidate_score should reflect sector_resonance contribution
+    assert payload["candidate_score"] > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Task C tests: runner_escape_stats surfaced in selection artifact
+# ---------------------------------------------------------------------------
+
+def test_runner_escape_stats_included_in_candidate_diagnostics_payload() -> None:
+    """build_short_trade_candidate_diagnostics_payload includes runner_escape_stats."""
+    from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
+        build_short_trade_candidate_diagnostics_payload,
+        _compute_runner_escape_stats,
+    )
+
+    escaped_entry = {"ticker": "000001", "runner_escape": "pass", "runner_composite_score": 0.82}
+    non_escaped_entry = {"ticker": "000002", "runner_escape": "fail", "runner_composite_score": 0.45}
+    payload = build_short_trade_candidate_diagnostics_payload(
+        upstream_candidates=[object(), object()],
+        entries=[escaped_entry, non_escaped_entry],
+        shadow_observation_entries=[],
+        released_shadow_entries=[],
+        reason_counts={"short_trade_candidate_score_ranked": 2},
+        filtered_reason_counts={},
+        prefilter_thresholds={},
+        score_buffer=0.02,
+        minimum_score_b=0.30,
+        max_candidates=5,
+    )
+    assert "runner_escape_stats" in payload, "runner_escape_stats must be present in diagnostics payload"
+    stats = payload["runner_escape_stats"]
+    assert stats["escaped_count"] == 1
+    assert stats["non_escaped_count"] == 1
+    assert stats["total_boundary_qualifying"] == 2
+    assert abs(stats["escape_rate"] - 0.5) < 0.001
+    assert abs(stats["avg_composite_score_escaped"] - 0.82) < 0.001
+    assert abs(stats["avg_composite_score_non_escaped"] - 0.45) < 0.001
+
+
+def test_runner_escape_stats_escape_rate_zero_when_no_escapes() -> None:
+    """escape_rate is 0.0 when no candidates pass runner escape."""
+    from src.execution.daily_pipeline_short_trade_diagnostics_helpers import _compute_runner_escape_stats
+
+    entries = [
+        {"ticker": "000001", "runner_escape": "fail", "runner_composite_score": 0.50},
+        {"ticker": "000002", "runner_escape": None, "runner_composite_score": 0.40},
+    ]
+    stats = _compute_runner_escape_stats(entries)
+    assert stats["escaped_count"] == 0
+    assert stats["escape_rate"] == 0.0
+    assert stats["avg_composite_score_escaped"] is None
+    assert stats["total_boundary_qualifying"] == 2
+
+
+def test_runner_escape_stats_empty_input() -> None:
+    """escape_rate is 0.0 with no candidates at all."""
+    from src.execution.daily_pipeline_short_trade_diagnostics_helpers import _compute_runner_escape_stats
+
+    stats = _compute_runner_escape_stats([])
+    assert stats["escaped_count"] == 0
+    assert stats["total_boundary_qualifying"] == 0
+    assert stats["escape_rate"] == 0.0
+    assert stats["avg_composite_score_escaped"] is None
+    assert stats["avg_composite_score_non_escaped"] is None

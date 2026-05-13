@@ -43,6 +43,7 @@ def build_short_trade_boundary_metrics_payload(
         "volume_expansion_quality": round(float(snapshot.get("volume_expansion_quality", 0.0) or 0.0), 4),
         "catalyst_freshness": round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4),
         "close_strength": round(float(snapshot.get("close_strength", 0.0) or 0.0), 4),
+        "sector_resonance": round(float(snapshot.get("sector_resonance", 0.0) or 0.0), 4),
         "candidate_score": compute_candidate_score_fn(snapshot),
         "gate_status": gate_status,
         "blockers": blockers,

@@ -1277,14 +1277,18 @@ def test_runner_composite_score_zero_when_signals_absent() -> None:
 def test_runner_composite_score_direct_computation() -> None:
     from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
 
+    # With close_strength absent (defaults to 0.0):
+    # raw = 0.40*0.80 + 0.30*0.70 + 0.20*0.60 + 0.10*0.50 + 0.10*0.0 = 0.70
+    # total_weight = 0.40+0.30+0.20+0.10+0.10 = 1.10
+    # normalized = 0.70 / 1.10 ≈ 0.6364
     score = compute_runner_composite_score({
         "breakout_freshness": 0.80,
         "trend_acceleration": 0.70,
         "volume_expansion_quality": 0.60,
         "catalyst_freshness": 0.50,
     })
-    # 0.40*0.80 + 0.30*0.70 + 0.20*0.60 + 0.10*0.50 = 0.32+0.21+0.12+0.05 = 0.70
-    assert abs(score - 0.70) < 0.001
+    expected = round(0.70 / 1.10, 4)
+    assert abs(score - expected) < 0.001
 
 
 def test_runner_composite_score_uses_profile_weights() -> None:
@@ -1296,6 +1300,7 @@ def test_runner_composite_score_uses_profile_weights() -> None:
         runner_composite_score_trend_weight = 0.25
         runner_composite_score_volume_weight = 0.15
         runner_composite_score_catalyst_weight = 0.10
+        # no close_strength_weight → fallback to 0.10
 
     snapshot = {
         "breakout_freshness": 0.80,
@@ -1303,11 +1308,61 @@ def test_runner_composite_score_uses_profile_weights() -> None:
         "volume_expansion_quality": 0.60,
         "catalyst_freshness": 0.50,
     }
-    # default weights: 0.40*0.80+0.30*0.70+0.20*0.60+0.10*0.50 = 0.70
+    # default: raw=0.70, total=1.10 → 0.6364
     default_score = compute_runner_composite_score(snapshot)
-    assert abs(default_score - 0.70) < 0.001
+    expected_default = round(0.70 / 1.10, 4)
+    assert abs(default_score - expected_default) < 0.001
 
-    # custom profile weights: 0.50*0.80+0.25*0.70+0.15*0.60+0.10*0.50 = 0.40+0.175+0.09+0.05 = 0.715
+    # fake profile: raw = 0.50*0.80+0.25*0.70+0.15*0.60+0.10*0.50+0.10*0.0 = 0.715, total=1.10
     profile_score = compute_runner_composite_score(snapshot, profile=FakeProfile())
-    assert abs(profile_score - 0.715) < 0.001
+    expected_profile = round(0.715 / 1.10, 4)
+    assert abs(profile_score - expected_profile) < 0.001
     assert abs(profile_score - default_score) > 0.001  # must differ from default
+
+
+def test_runner_composite_score_normalizes_unnormalized_weights() -> None:
+    """Weights not summing to 1.0 are automatically normalized so score stays in [0,1]."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    class HighSumProfile:
+        runner_composite_score_breakout_weight = 0.45
+        runner_composite_score_trend_weight = 0.35
+        runner_composite_score_volume_weight = 0.25
+        runner_composite_score_catalyst_weight = 0.15
+        runner_composite_score_close_strength_weight = 0.15
+        # total = 1.35 — exceeds 1.0; raw score would overshoot without normalization
+
+    class LowSumProfile:
+        runner_composite_score_breakout_weight = 0.35
+        runner_composite_score_trend_weight = 0.25
+        runner_composite_score_volume_weight = 0.15
+        runner_composite_score_catalyst_weight = 0.05
+        runner_composite_score_close_strength_weight = 0.05
+        # total = 0.85 — below 1.0; raw score would undershoot without normalization
+
+    snapshot = {signal: 1.0 for signal in ("breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength")}
+    high_score = compute_runner_composite_score(snapshot, profile=HighSumProfile())
+    low_score = compute_runner_composite_score(snapshot, profile=LowSumProfile())
+    # all signals=1.0 → normalized score must equal 1.0 regardless of weight magnitudes
+    assert abs(high_score - 1.0) < 0.001, f"Expected 1.0 for high-sum weights, got {high_score}"
+    assert abs(low_score - 1.0) < 0.001, f"Expected 1.0 for low-sum weights, got {low_score}"
+
+
+def test_runner_composite_score_includes_close_strength() -> None:
+    """close_strength contributes to runner composite score and improves it when high."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    base_snapshot = {
+        "breakout_freshness": 0.70,
+        "trend_acceleration": 0.60,
+        "volume_expansion_quality": 0.50,
+        "catalyst_freshness": 0.40,
+        "close_strength": 0.0,
+    }
+    strong_snapshot = {**base_snapshot, "close_strength": 1.0}
+    score_base = compute_runner_composite_score(base_snapshot)
+    score_strong = compute_runner_composite_score(strong_snapshot)
+    assert score_strong > score_base, "High close_strength should increase runner composite score"
+    # score must remain in [0, 1]
+    assert 0.0 <= score_strong <= 1.0
+    assert 0.0 <= score_base <= 1.0
