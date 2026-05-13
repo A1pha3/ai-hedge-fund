@@ -72,6 +72,12 @@ def test_run_ab_comparison_walk_forward(monkeypatch):
     assert summary["mvp_avg_sortino"] == 1.6
     assert summary["avg_sortino_delta"] == 0.5
 
+    # New runner tail comparison summary fields should be present and default to None when data is absent
+    assert "avg_runner_tail_hit_delta" in summary
+    assert summary["avg_runner_tail_hit_delta"] is None
+    assert "avg_runner_tail_median_delta" in summary
+    assert summary["avg_runner_tail_median_delta"] is None
+
 
 def test_run_ab_comparison_walk_forward_passes_max_test_trading_days(monkeypatch):
     captured_kwargs = {}
