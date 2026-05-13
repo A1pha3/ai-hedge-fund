@@ -321,6 +321,7 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "total_count": len(rows),
         "next_day_available_count": len(next_day_rows),
         "closed_cycle_count": len(closed_rows),
+        "t_plus_3_cycle_count": len(t_plus_3_rows),
         "next_open_return_distribution": summarize_distribution(next_open_returns),
         "next_high_return_distribution": summarize_distribution(next_high_returns),
         "next_close_return_distribution": summarize_distribution(next_close_returns),

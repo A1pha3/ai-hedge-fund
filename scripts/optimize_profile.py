@@ -94,6 +94,9 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "runner_capture_count",
     "runner_escape_rate",
     "avg_composite_score_escaped",
+    "t_plus_2_close_positive_rate",
+    "t_plus_3_close_positive_rate",
+    "t_plus_3_close_expectancy",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -111,6 +114,9 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "runner_capture_count": "Runner Count",
     "runner_escape_rate": "Runner Escape %",
     "avg_composite_score_escaped": "Avg Escaped Score",
+    "t_plus_2_close_positive_rate": "T+2 Close+",
+    "t_plus_3_close_positive_rate": "T+3 Close+",
+    "t_plus_3_close_expectancy": "T+3 Expectancy",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -127,6 +133,9 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "runner_capture_count",
     "runner_escape_rate",
     "avg_composite_score_escaped",
+    "t_plus_2_close_positive_rate",
+    "t_plus_3_close_positive_rate",
+    "t_plus_3_close_expectancy",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -144,6 +153,9 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "runner_capture_count": 1.0,
     "runner_escape_rate": 0.01,
     "avg_composite_score_escaped": 0.01,
+    "t_plus_2_close_positive_rate": 0.0,
+    "t_plus_3_close_positive_rate": 0.0,
+    "t_plus_3_close_expectancy": 0.0,
 }
 
 
@@ -518,6 +530,17 @@ def _build_replay_evaluator(
                     sample_weight *= PARTIAL_HORIZON_WEIGHT_PENALTY
                 elif not has_t_plus_3_horizon:
                     sample_weight *= PARTIAL_T3_HORIZON_WEIGHT_PENALTY
+                # t_plus_3_cycle_count is only present when build_surface_summary is new enough;
+                # fall back to sample_weight when absent to preserve backward compatibility.
+                # Must be computed AFTER penalty adjustments so t_plus_3_sample_weight reflects
+                # the penalised weight rather than the raw sample_weight.
+                t_plus_3_cycle_count_raw = primary_surface.get("t_plus_3_cycle_count")
+                if t_plus_3_cycle_count_raw is not None:
+                    t_plus_3_cycle_count = int(t_plus_3_cycle_count_raw)
+                    t_plus_3_cycle_weight = min(1.0, max(0.0, t_plus_3_cycle_count / 4.0))
+                    t_plus_3_sample_weight = min(sample_weight, t_plus_3_cycle_weight)
+                else:
+                    t_plus_3_sample_weight = sample_weight
                 sharpe_proxy = (next_close_positive_rate + next_high_hit_rate) * sample_weight
                 sortino_proxy = t_plus_2_median * sample_weight
                 total_metrics["sharpe"].append(sharpe_proxy)
@@ -536,9 +559,9 @@ def _build_replay_evaluator(
                 total_metrics["t_plus_2_close_positive_rate"].append(t_plus_2_close_positive_rate)
                 total_metric_weights["t_plus_2_close_positive_rate"].append(sample_weight)
                 total_metrics["t_plus_3_close_positive_rate"].append(t_plus_3_close_positive_rate)
-                total_metric_weights["t_plus_3_close_positive_rate"].append(sample_weight)
+                total_metric_weights["t_plus_3_close_positive_rate"].append(t_plus_3_sample_weight)
                 total_metrics["t_plus_3_close_expectancy"].append(t_plus_3_close_expectancy)
-                total_metric_weights["t_plus_3_close_expectancy"].append(sample_weight)
+                total_metric_weights["t_plus_3_close_expectancy"].append(t_plus_3_sample_weight)
                 total_metrics["downside_p10"].append(max_dd_proxy)
                 total_metric_weights["downside_p10"].append(sample_weight)
                 # Still track raw sample_weight list for reporting
@@ -1015,6 +1038,7 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "runner_escape_gap_risk_raw_100_max": [40.0, 45.0, 52.0],
     "runner_escape_projected_theme_exposure_max": [0.24, 0.28, 0.32],
     "runner_escape_candidate_pool_avg_amount_share_of_cutoff_min": [0.85, 1.0, 1.15],
+    "runner_escape_composite_score_min": [0.0, 0.40, 0.45, 0.50],
 }
 
 IGNITION_STAGE1_GRID: dict[str, list[Any]] = {
