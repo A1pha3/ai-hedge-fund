@@ -291,6 +291,7 @@ class ShortTradeTargetProfile:
     runner_composite_score_volume_weight: float = 0.20
     runner_composite_score_catalyst_weight: float = 0.10
     runner_composite_score_close_strength_weight: float = 0.10
+    runner_composite_score_volatility_regime_weight: float = 0.0
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:

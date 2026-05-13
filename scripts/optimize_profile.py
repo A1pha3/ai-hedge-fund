@@ -51,6 +51,8 @@ DEFAULT_BTST_RUNNER_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
     "downside_p10": BTST_QUALITY_FLOORS["downside_p10"],
     "window_coverage": BTST_QUALITY_FLOORS["window_coverage"],
     "gap_risk_raw_100": dict(BTST_EXECUTION_GUARDRAILS["gap_risk_raw_100"]),
+    "runner_escape_rate": {"min": 0.03, "max": 0.60},
+    "avg_composite_score_escaped": {"min": BTST_QUALITY_FLOORS["avg_composite_score_escaped"]},
 }
 MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS: dict[str, dict[str, list[Any]]] = {
     "coarse": {
@@ -1008,6 +1010,7 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "runner_composite_score_catalyst_weight": [0.05, 0.10, 0.15],
     "runner_composite_score_close_strength_weight": [0.05, 0.10, 0.15],
     "historical_continuation_score_weight": [0.0, 0.05, 0.10],
+    "runner_composite_score_volatility_regime_weight": [0.0, 0.05, 0.10],
 }
 
 IGNITION_STAGE1_GRID: dict[str, list[Any]] = {

@@ -24,6 +24,7 @@ _GUARDRAIL_KEYS = (
     "downside_p10",
     "window_coverage",
     "incremental_theme_exposure",
+    "avg_composite_score_escaped",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -42,6 +43,7 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     "downside_p10": -0.06,
     "sample_weight": 0.60,
     "window_coverage": 0.60,
+    "avg_composite_score_escaped": 0.45,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},
