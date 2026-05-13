@@ -53,6 +53,35 @@ def _rank_list(values: list[float]) -> list[float]:
     return ranks
 
 
+def _spearman_corr(xs: list[float], ys: list[float]) -> float | None:
+    """Compute Spearman rank correlation between two equal-length numeric lists.
+
+    Returns ``None`` when fewer than 5 observations are provided or when either
+    rank vector has zero variance (constant list).  Result is rounded to 4 decimal
+    places.
+
+    Args:
+        xs: First numeric list.
+        ys: Second numeric list (must be same length as *xs*).
+
+    Returns:
+        Spearman correlation coefficient in [-1, 1], or ``None`` if insufficient data.
+    """
+    n: int = len(xs)
+    if n < 5 or n != len(ys):
+        return None
+    rx = _rank_list(xs)
+    ry = _rank_list(ys)
+    mean_rx: float = sum(rx) / n
+    mean_ry: float = sum(ry) / n
+    numerator: float = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(n))
+    denom_x: float = sum((v - mean_rx) ** 2 for v in rx) ** 0.5
+    denom_y: float = sum((v - mean_ry) ** 2 for v in ry) ** 0.5
+    if denom_x == 0.0 or denom_y == 0.0:
+        return None
+    return round(numerator / (denom_x * denom_y), 4)
+
+
 def compute_factor_ic(rows: list[dict[str, Any]], factor_col: str, return_col: str = "next_close_return") -> float | None:
     """Compute Spearman rank IC between *factor_col* values and *return_col* forward returns.
 
@@ -1421,6 +1450,64 @@ def compute_intraday_high_timing_distribution(rows: list[dict[str, Any]], *, thr
     return {"early_fraction": ef, "mid_fraction": mf, "late_fraction": lf, "early_count": early_count, "mid_count": mid_count, "late_count": late_count, "sample_count": total, "early_dominated": ef > 0.50, "late_dominated": lf > 0.50, "threshold_used": round(threshold, 4)}
 
 
+# ---------------------------------------------------------------------------
+# Task 3 (Round 21, Beta): Optimal execution timing signal (最优执行时机信号)
+# ---------------------------------------------------------------------------
+# Combines T+1 intraday high-timing distribution (R19) with T0 tail-session strength (R17)
+# to produce an actionable execution recommendation for each replay window.
+#
+# open_entry_signal_strength   = early_fraction × median(t0_tail_strength)
+# wait_entry_signal_strength   = late_fraction  × (1 − median(t0_tail_strength))
+# execution_timing_confidence  = max(early_fraction, late_fraction) − 0.33
+# recommended_execution        = "immediate" | "wait" | "uncertain"
+#   "immediate" when open_strength − wait_strength > 0.15
+#   "wait"      when wait_strength − open_strength > 0.15
+#   "uncertain" otherwise
+
+
+def compute_optimal_entry_signal(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Combine T+1 high-point timing and T0 tail-session strength into an execution signal.
+
+    Synthesises two Round 19/17 analytics into a single per-window recommendation:
+
+    - **open_entry_signal_strength** (float [0,1]): early_fraction × median(t0_tail_strength).
+      High values suggest buying at the T+1 open captures most of the daily move.
+    - **wait_entry_signal_strength** (float [0,1]): late_fraction × (1 − median(t0_tail_strength)).
+      High values suggest waiting for a mid/late-session confirmation is optimal.
+    - **execution_timing_confidence** (float): max(early_fraction, late_fraction) − 0.33.
+      Positive when one session bucket clearly dominates random (>33 %).
+    - **recommended_execution** (str): ``"immediate"`` | ``"wait"`` | ``"uncertain"``.
+      Assigned when the dominant signal exceeds the other by more than 0.15.
+
+    Args:
+        rows: BTST candidate rows.  Must contain ``next_open``, ``next_high``, ``next_close``
+            (for intraday timing) and ``t0_tail_strength`` (for T0 session strength).
+            Rows missing these fields are gracefully skipped.
+
+    Returns:
+        Dict with keys ``open_entry_signal_strength``, ``wait_entry_signal_strength``,
+        ``execution_timing_confidence``, ``recommended_execution``.  All numeric fields
+        are ``None`` when insufficient data is available; ``recommended_execution``
+        defaults to ``"uncertain"`` in that case.
+    """
+    _null_result: dict[str, Any] = {"open_entry_signal_strength": None, "wait_entry_signal_strength": None, "execution_timing_confidence": None, "recommended_execution": "uncertain"}
+    timing: dict[str, Any] = compute_intraday_high_timing_distribution(rows)
+    early_fraction: float | None = timing.get("early_fraction")
+    late_fraction: float | None = timing.get("late_fraction")
+    t0_vals: list[float] = [float(row["t0_tail_strength"]) for row in rows if row.get("t0_tail_strength") is not None]
+    if early_fraction is None or late_fraction is None or not t0_vals:
+        return _null_result
+    sorted_t0 = sorted(t0_vals)
+    n: int = len(sorted_t0)
+    t0_median: float = (sorted_t0[n // 2 - 1] + sorted_t0[n // 2]) / 2.0 if n % 2 == 0 else sorted_t0[n // 2]
+    open_strength: float = round(early_fraction * t0_median, 4)
+    wait_strength: float = round(late_fraction * (1.0 - t0_median), 4)
+    confidence: float = round(max(early_fraction, late_fraction) - 0.33, 4)
+    diff: float = open_strength - wait_strength
+    recommended: str = "immediate" if diff > 0.15 else ("wait" if diff < -0.15 else "uncertain")
+    return {"open_entry_signal_strength": open_strength, "wait_entry_signal_strength": wait_strength, "execution_timing_confidence": confidence, "recommended_execution": recommended}
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -1561,6 +1648,18 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # early_dominated=True → buy-at-open execution is optimal for this window.
     # late_dominated=True  → momentum persists into close; chase is viable.
     intraday_high_timing: dict[str, Any] = compute_intraday_high_timing_distribution(next_day_rows)
+
+    # -----------------------------------------------------------------------
+    # Round 21 analytics — wired into build_surface_summary.
+    # -----------------------------------------------------------------------
+    # Task 3 (Round 21, Beta): Optimal execution timing signal.
+    # Combines intraday high-timing (R19) and T0 tail-session strength (R17) into
+    # a per-window actionable execution recommendation.
+    # open_entry_signal_strength: early_fraction × median(t0_tail_strength).
+    # wait_entry_signal_strength: late_fraction × (1 − median(t0_tail_strength)).
+    # execution_timing_confidence: max(early_fraction, late_fraction) − 0.33.
+    # recommended_execution: "immediate" | "wait" | "uncertain".
+    _optimal_entry_signal: dict[str, Any] = compute_optimal_entry_signal(next_day_rows)
 
     # -----------------------------------------------------------------------
     # Round 20 analytics — wired into build_surface_summary.
@@ -1861,7 +1960,154 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "limit_up_avg_payoff": _limit_up_avg_payoff,
         "non_limit_up_win_rate": _non_limit_up_win_rate,
         "limit_up_risk_premium": _limit_up_risk_premium,
+        # -----------------------------------------------------------------------
+        # Round 21 analytics
+        # -----------------------------------------------------------------------
+        # Task 3 (Round 21, Beta): Optimal execution timing signal.
+        # open_entry_signal_strength: early_fraction × median(t0_tail_strength).
+        # wait_entry_signal_strength: late_fraction × (1 − median(t0_tail_strength)).
+        # execution_timing_confidence: max(early_fraction, late_fraction) − 0.33.
+        # recommended_execution: "immediate" | "wait" | "uncertain".
+        "optimal_entry_signal": _optimal_entry_signal,
+        "open_entry_signal_strength": _optimal_entry_signal.get("open_entry_signal_strength"),
+        "wait_entry_signal_strength": _optimal_entry_signal.get("wait_entry_signal_strength"),
+        "execution_timing_confidence": _optimal_entry_signal.get("execution_timing_confidence"),
+        "recommended_execution": _optimal_entry_signal.get("recommended_execution"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 21, Gamma): Surface metric win-rate correlation analysis
+# ---------------------------------------------------------------------------
+# Computes Spearman rank correlation between every numeric scalar surface metric
+# and the per-window next_close_positive_rate (T+1 win rate) across all replay
+# windows collected during an optimizer trial.  Surfaces with fewer than 5 windows
+# produce an empty dict.  Results help identify which factors/metrics most reliably
+# predict future window-level win rate, guiding PROBE_GRID pruning.
+
+
+def compute_surface_metric_correlations(all_window_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute Spearman correlation of each numeric surface metric with next_close_positive_rate.
+
+    Iterates all numeric scalar keys found across *all_window_summaries* (excluding the
+    target itself) and computes their Spearman rank correlation with
+    ``next_close_positive_rate`` over the cross-window sample.  Metrics with fewer
+    than 5 paired observations are excluded.
+
+    Args:
+        all_window_summaries: List of per-window surface summary dicts, as returned by
+            ``build_surface_summary``.  Typically one dict per replay window.
+
+    Returns:
+        Dict containing:
+
+        - One entry per metric: ``{metric_name: spearman_corr}`` in [-1, 1].
+        - ``top_5_correlated_metrics``: list of up to 5 metric names with highest |corr|.
+        - ``bottom_5_correlated_metrics``: list of up to 5 metric names with lowest |corr|.
+
+        Returns an empty dict when fewer than 5 summaries are provided.
+    """
+    if len(all_window_summaries) < 5:
+        return {}
+    target_key: str = "next_close_positive_rate"
+    # Discover candidate metric keys — only scalar numerics (int/float, excluding bool)
+    candidate_keys: set[str] = set()
+    for summary in all_window_summaries:
+        for k, v in summary.items():
+            if k == target_key:
+                continue
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                candidate_keys.add(k)
+    correlations: dict[str, float] = {}
+    for metric_key in sorted(candidate_keys):
+        pairs: list[tuple[float, float]] = []
+        for summary in all_window_summaries:
+            target_val = summary.get(target_key)
+            metric_val = summary.get(metric_key)
+            if target_val is None or metric_val is None:
+                continue
+            try:
+                pairs.append((float(metric_val), float(target_val)))
+            except (TypeError, ValueError):
+                continue
+        if len(pairs) < 5:
+            continue
+        corr = _spearman_corr([p[0] for p in pairs], [p[1] for p in pairs])
+        if corr is not None:
+            correlations[metric_key] = corr
+    if not correlations:
+        return {}
+    sorted_by_abs: list[str] = sorted(correlations.keys(), key=lambda k: abs(correlations[k]), reverse=True)
+    result: dict[str, Any] = dict(correlations)
+    result["top_5_correlated_metrics"] = sorted_by_abs[:5]
+    result["bottom_5_correlated_metrics"] = sorted_by_abs[-5:]
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 21, Alpha): Factor IC stability — Information Ratio per factor
+# ---------------------------------------------------------------------------
+# Measures cross-window IC stability for each BTST factor.  A factor that
+# consistently shows IC = 0.05 across all windows is far more reliable than one
+# that alternates between 0.15 and −0.05, even if both average the same.
+# IR = mean_IC / std_IC — the higher the better (analogous to a Sharpe ratio
+# for factor predictability).
+
+
+def compute_factor_ic_stability(all_window_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute per-factor IC stability (IR = mean_IC / std_IC) across replay windows.
+
+    For each factor in :data:`BTST_FACTOR_NAMES`, extracts the ``factor_ic_next_close``
+    value from every window summary, then computes:
+
+    - ``{factor}_ic_mean``: average Spearman IC across windows.
+    - ``{factor}_ic_std``: sample standard deviation of IC across windows.
+    - ``{factor}_ic_ir``: Information Ratio = mean_IC / std_IC.  When std_IC ≈ 0,
+      IR falls back to mean_IC to avoid division by zero.
+    - ``{factor}_ic_positive_fraction``: fraction of windows where IC > 0.
+    - ``most_stable_factor``: name of factor with the highest IR.
+    - ``least_stable_factor``: name of factor with the lowest IR.
+
+    Factors with no IC observations across any window are omitted from the output.
+
+    Args:
+        all_window_summaries: List of per-window surface summary dicts.
+
+    Returns:
+        Dict of stability metrics for each observed factor, plus summary keys
+        ``most_stable_factor`` and ``least_stable_factor``.  Returns an empty
+        dict when no factor IC data is present in any summary.
+    """
+    factor_ics: dict[str, list[float]] = {f: [] for f in BTST_FACTOR_NAMES}
+    for summary in all_window_summaries:
+        ic_dict: dict[str, Any] = dict(summary.get("factor_ic_next_close") or {})
+        for factor in BTST_FACTOR_NAMES:
+            ic_raw = ic_dict.get(factor)
+            if ic_raw is None:
+                continue
+            try:
+                factor_ics[factor].append(float(ic_raw))
+            except (TypeError, ValueError):
+                continue
+    result: dict[str, Any] = {}
+    for factor in BTST_FACTOR_NAMES:
+        vals: list[float] = factor_ics[factor]
+        if not vals:
+            continue
+        n: int = len(vals)
+        mean_ic: float = sum(vals) / n
+        std_ic: float = (sum((v - mean_ic) ** 2 for v in vals) / (n - 1)) ** 0.5 if n >= 2 else 0.0
+        ir: float = (mean_ic / std_ic) if std_ic > 1e-6 else mean_ic
+        pos_fraction: float = sum(1 for v in vals if v > 0.0) / n
+        result[f"{factor}_ic_mean"] = round(mean_ic, 4)
+        result[f"{factor}_ic_std"] = round(std_ic, 4)
+        result[f"{factor}_ic_ir"] = round(ir, 4)
+        result[f"{factor}_ic_positive_fraction"] = round(pos_fraction, 4)
+    ir_by_factor: dict[str, float] = {f: result[f"{f}_ic_ir"] for f in BTST_FACTOR_NAMES if f"{f}_ic_ir" in result}
+    if ir_by_factor:
+        result["most_stable_factor"] = max(ir_by_factor, key=lambda f: ir_by_factor[f])
+        result["least_stable_factor"] = min(ir_by_factor, key=lambda f: ir_by_factor[f])
+    return result
 
 
 def _row_sort_key(row: dict[str, Any]) -> tuple[float, float, float, str, str]:

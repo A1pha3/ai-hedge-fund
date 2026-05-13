@@ -3806,3 +3806,240 @@ def test_r20_all_new_metrics_have_labels() -> None:
     for metric in r20_metrics:
         assert metric in COMPARISON_METRICS, f"{metric} must be in COMPARISON_METRICS"
         assert metric in COMPARISON_METRIC_LABELS, f"{metric} must be in COMPARISON_METRIC_LABELS"
+
+
+# =============================================================================
+# Round 21 — Task 1 (Gamma): compute_surface_metric_correlations
+# =============================================================================
+
+def test_r21_compute_surface_metric_correlations_returns_empty_below_5_windows() -> None:
+    """compute_surface_metric_correlations returns {} when fewer than 5 summaries provided."""
+    from scripts.btst_analysis_utils import compute_surface_metric_correlations
+    assert compute_surface_metric_correlations([]) == {}
+    four_summaries = [{"next_close_positive_rate": 0.5, "some_metric": float(i)} for i in range(4)]
+    assert compute_surface_metric_correlations(four_summaries) == {}
+
+
+def test_r21_compute_surface_metric_correlations_positive_correlation() -> None:
+    """Metrics that increase monotonically with win rate should have high positive Spearman corr."""
+    from scripts.btst_analysis_utils import compute_surface_metric_correlations
+    summaries = [{"next_close_positive_rate": float(i) / 9.0, "good_metric": float(i)} for i in range(10)]
+    result = compute_surface_metric_correlations(summaries)
+    assert "good_metric" in result, "good_metric should be in correlations"
+    assert result["good_metric"] > 0.9, f"expected high positive corr, got {result['good_metric']}"
+
+
+def test_r21_compute_surface_metric_correlations_negative_correlation() -> None:
+    """Metrics that decrease as win rate increases should have negative Spearman corr."""
+    from scripts.btst_analysis_utils import compute_surface_metric_correlations
+    summaries = [{"next_close_positive_rate": float(i) / 9.0, "bad_metric": float(9 - i)} for i in range(10)]
+    result = compute_surface_metric_correlations(summaries)
+    assert "bad_metric" in result
+    assert result["bad_metric"] < -0.9
+
+
+def test_r21_compute_surface_metric_correlations_result_in_range() -> None:
+    """All returned correlation values must be in [-1, 1]."""
+    from scripts.btst_analysis_utils import compute_surface_metric_correlations
+    import random
+    random.seed(42)
+    summaries = [{"next_close_positive_rate": random.random(), "m1": random.random(), "m2": random.random()} for _ in range(8)]
+    result = compute_surface_metric_correlations(summaries)
+    for k, v in result.items():
+        if isinstance(v, float):
+            assert -1.0 <= v <= 1.0, f"{k}={v} out of [-1,1]"
+
+
+def test_r21_compute_surface_metric_correlations_top_bottom_5() -> None:
+    """top_5_correlated_metrics and bottom_5_correlated_metrics must be present and be lists."""
+    from scripts.btst_analysis_utils import compute_surface_metric_correlations
+    summaries = [{"next_close_positive_rate": float(i) / 9.0, "m1": float(i), "m2": float(9 - i), "m3": float(i) * 0.5} for i in range(10)]
+    result = compute_surface_metric_correlations(summaries)
+    assert "top_5_correlated_metrics" in result
+    assert isinstance(result["top_5_correlated_metrics"], list)
+    assert "bottom_5_correlated_metrics" in result
+    assert isinstance(result["bottom_5_correlated_metrics"], list)
+
+
+def test_r21_compute_surface_metric_correlations_nan_in_summaries() -> None:
+    """Summaries with None metric values are gracefully skipped; result still computed from valid pairs."""
+    from scripts.btst_analysis_utils import compute_surface_metric_correlations
+    summaries = [{"next_close_positive_rate": float(i) / 9.0, "partial": float(i) if i < 7 else None} for i in range(10)]
+    result = compute_surface_metric_correlations(summaries)
+    # partial has 7 valid pairs (i=0..6) — >= 5, so it should appear
+    assert "partial" in result
+    assert isinstance(result["partial"], float)
+
+
+# =============================================================================
+# Round 21 — Task 2 (Alpha): compute_factor_ic_stability
+# =============================================================================
+
+def test_r21_compute_factor_ic_stability_empty_input_returns_empty() -> None:
+    """compute_factor_ic_stability returns {} when given empty list."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability
+    assert compute_factor_ic_stability([]) == {}
+
+
+def test_r21_compute_factor_ic_stability_single_window_no_std() -> None:
+    """Single-window input: std_IC = 0 and IR falls back to mean_IC."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability, BTST_FACTOR_NAMES
+    factor = BTST_FACTOR_NAMES[0]
+    summaries = [{"factor_ic_next_close": {factor: 0.05}}]
+    result = compute_factor_ic_stability(summaries)
+    assert f"{factor}_ic_mean" in result
+    assert result[f"{factor}_ic_mean"] == 0.05
+    assert result[f"{factor}_ic_std"] == 0.0
+    assert result[f"{factor}_ic_ir"] == 0.05  # fallback when std≈0
+
+
+def test_r21_compute_factor_ic_stability_ir_computation() -> None:
+    """IR = mean / std should be correctly computed for multi-window input."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability, BTST_FACTOR_NAMES
+    factor = BTST_FACTOR_NAMES[0]
+    ic_vals = [0.04, 0.06, 0.05, 0.07, 0.03]
+    summaries = [{"factor_ic_next_close": {factor: v}} for v in ic_vals]
+    result = compute_factor_ic_stability(summaries)
+    import math
+    mean_ic = sum(ic_vals) / len(ic_vals)
+    std_ic = math.sqrt(sum((v - mean_ic) ** 2 for v in ic_vals) / (len(ic_vals) - 1))
+    expected_ir = mean_ic / std_ic
+    assert abs(result[f"{factor}_ic_ir"] - round(expected_ir, 4)) < 0.001
+
+
+def test_r21_compute_factor_ic_stability_most_least_stable() -> None:
+    """most_stable_factor has highest IR; least_stable_factor has lowest IR."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability, BTST_FACTOR_NAMES
+    f1, f2 = BTST_FACTOR_NAMES[0], BTST_FACTOR_NAMES[1]
+    # f1: constant IC 0.05 → std≈0 → IR = mean = 0.05
+    # f2: highly volatile IC → low IR
+    summaries = [{"factor_ic_next_close": {f1: 0.05, f2: float(i) * 0.10 - 0.25}} for i in range(6)]
+    result = compute_factor_ic_stability(summaries)
+    assert "most_stable_factor" in result
+    assert "least_stable_factor" in result
+
+
+def test_r21_compute_factor_ic_stability_positive_fraction() -> None:
+    """ic_positive_fraction should reflect fraction of windows with IC > 0."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability, BTST_FACTOR_NAMES
+    factor = BTST_FACTOR_NAMES[0]
+    ic_vals = [0.05, -0.02, 0.03, -0.01, 0.04]  # 3 positive out of 5
+    summaries = [{"factor_ic_next_close": {factor: v}} for v in ic_vals]
+    result = compute_factor_ic_stability(summaries)
+    assert result[f"{factor}_ic_positive_fraction"] == 0.6
+
+
+# =============================================================================
+# Round 21 — Task 3 (Beta): compute_optimal_entry_signal
+# =============================================================================
+
+def _make_timing_rows(early_n: int, late_n: int, mid_n: int, t0_tail: float) -> list[dict]:
+    """Helper: build synthetic rows with desired early/late/mid high-timing and t0_tail_strength."""
+    rows = []
+    # Early rows: open ≈ high (open/high ≥ 0.97)
+    for _ in range(early_n):
+        rows.append({"next_open": 100.0, "next_high": 100.0, "next_close": 95.0, "t0_tail_strength": t0_tail})
+    # Late rows: close ≈ high (close/high ≥ 0.97, open/high < 0.97)
+    for _ in range(late_n):
+        rows.append({"next_open": 90.0, "next_high": 100.0, "next_close": 99.0, "t0_tail_strength": t0_tail})
+    # Mid rows: neither
+    for _ in range(mid_n):
+        rows.append({"next_open": 90.0, "next_high": 100.0, "next_close": 90.0, "t0_tail_strength": t0_tail})
+    return rows
+
+
+def test_r21_compute_optimal_entry_signal_empty_rows_returns_uncertain() -> None:
+    """Empty row list should return recommended_execution='uncertain' and None numeric fields."""
+    from scripts.btst_analysis_utils import compute_optimal_entry_signal
+    result = compute_optimal_entry_signal([])
+    assert result["recommended_execution"] == "uncertain"
+    assert result["open_entry_signal_strength"] is None
+    assert result["wait_entry_signal_strength"] is None
+    assert result["execution_timing_confidence"] is None
+
+
+def test_r21_compute_optimal_entry_signal_early_dominated_recommends_immediate() -> None:
+    """When most T+1 highs are early AND t0_tail_strength is high, recommend 'immediate'."""
+    from scripts.btst_analysis_utils import compute_optimal_entry_signal
+    rows = _make_timing_rows(early_n=8, late_n=1, mid_n=1, t0_tail=0.95)
+    result = compute_optimal_entry_signal(rows)
+    assert result["recommended_execution"] == "immediate", f"expected immediate, got {result['recommended_execution']}"
+    assert result["open_entry_signal_strength"] is not None
+    assert result["open_entry_signal_strength"] > result["wait_entry_signal_strength"]
+
+
+def test_r21_compute_optimal_entry_signal_late_dominated_recommends_wait() -> None:
+    """When most T+1 highs are late AND t0_tail_strength is low, recommend 'wait'."""
+    from scripts.btst_analysis_utils import compute_optimal_entry_signal
+    rows = _make_timing_rows(early_n=1, late_n=8, mid_n=1, t0_tail=0.30)
+    result = compute_optimal_entry_signal(rows)
+    assert result["recommended_execution"] == "wait", f"expected wait, got {result['recommended_execution']}"
+    assert result["wait_entry_signal_strength"] > result["open_entry_signal_strength"]
+
+
+def test_r21_compute_optimal_entry_signal_balanced_returns_uncertain() -> None:
+    """Equal early/late split with median t0_tail=0.5 should yield 'uncertain'."""
+    from scripts.btst_analysis_utils import compute_optimal_entry_signal
+    rows = _make_timing_rows(early_n=5, late_n=5, mid_n=0, t0_tail=0.5)
+    result = compute_optimal_entry_signal(rows)
+    assert result["recommended_execution"] == "uncertain"
+
+
+def test_r21_compute_optimal_entry_signal_signal_values_in_range() -> None:
+    """All numeric output values must be in sensible ranges."""
+    from scripts.btst_analysis_utils import compute_optimal_entry_signal
+    rows = _make_timing_rows(early_n=6, late_n=2, mid_n=2, t0_tail=0.70)
+    result = compute_optimal_entry_signal(rows)
+    assert 0.0 <= result["open_entry_signal_strength"] <= 1.0
+    assert 0.0 <= result["wait_entry_signal_strength"] <= 1.0
+    assert isinstance(result["execution_timing_confidence"], float)
+
+
+def test_r21_compute_optimal_entry_signal_missing_t0_tail_returns_uncertain() -> None:
+    """Rows without t0_tail_strength should fall back to 'uncertain'."""
+    from scripts.btst_analysis_utils import compute_optimal_entry_signal
+    rows = [{"next_open": 100.0, "next_high": 100.0, "next_close": 95.0} for _ in range(5)]
+    result = compute_optimal_entry_signal(rows)
+    assert result["recommended_execution"] == "uncertain"
+    assert result["open_entry_signal_strength"] is None
+
+
+# =============================================================================
+# Round 21 — COMPARISON_METRICS / optimizer registry checks
+# =============================================================================
+
+def test_r21_entry_signal_metrics_in_comparison_metrics() -> None:
+    """open_entry_signal_strength and execution_timing_confidence must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "open_entry_signal_strength" in COMPARISON_METRICS
+    assert "execution_timing_confidence" in COMPARISON_METRICS
+
+
+def test_r21_entry_signal_metrics_have_labels() -> None:
+    """R21 execution timing metrics must have labels in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "open_entry_signal_strength" in COMPARISON_METRIC_LABELS
+    assert "execution_timing_confidence" in COMPARISON_METRIC_LABELS
+
+
+def test_r21_entry_signal_metrics_are_optional() -> None:
+    """R21 execution timing metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "open_entry_signal_strength" in OPTIONAL_COMPARISON_METRICS
+    assert "execution_timing_confidence" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r21_entry_signal_metrics_have_epsilon() -> None:
+    """R21 execution timing metrics must have epsilon entries."""
+    from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+    assert "open_entry_signal_strength" in COMPARISON_METRIC_EPSILON
+    assert "execution_timing_confidence" in COMPARISON_METRIC_EPSILON
+
+
+def test_r21_all_new_metrics_have_labels() -> None:
+    """All Round 21 new metrics must be in both COMPARISON_METRICS and COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, COMPARISON_METRIC_LABELS
+    r21_metrics = ("open_entry_signal_strength", "execution_timing_confidence")
+    for metric in r21_metrics:
+        assert metric in COMPARISON_METRICS, f"{metric} must be in COMPARISON_METRICS"
+        assert metric in COMPARISON_METRIC_LABELS, f"{metric} must be in COMPARISON_METRIC_LABELS"

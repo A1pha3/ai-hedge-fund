@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.btst_analysis_utils import BTST_FACTOR_NAMES
+from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability
 from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
@@ -162,6 +162,9 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "consecutive_limit_up_rate",
     "limit_up_win_rate",
     "non_limit_up_win_rate",
+    # Task 3 (Round 21, Beta): optimal execution timing signal — open vs wait strength.
+    "open_entry_signal_strength",
+    "execution_timing_confidence",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -214,6 +217,9 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "consecutive_limit_up_rate": "Consec LU%",
     "limit_up_win_rate": "LU WinRate",
     "non_limit_up_win_rate": "Non-LU WR",
+    # Task 3 (Round 21, Beta): optimal execution timing signal
+    "open_entry_signal_strength": "Open Entry Sig",
+    "execution_timing_confidence": "Timing Conf",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -284,6 +290,9 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "consecutive_limit_up_rate",
     "limit_up_win_rate",
     "non_limit_up_win_rate",
+    # Task 3 (Round 21, Beta): execution timing signal — optional; pre-Round-21 surfaces omit these.
+    "open_entry_signal_strength",
+    "execution_timing_confidence",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -337,6 +346,9 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "consecutive_limit_up_rate": 0.01,
     "limit_up_win_rate": 0.01,
     "non_limit_up_win_rate": 0.01,
+    # Task 3 (Round 21, Beta): execution timing signal — 1 % tolerance each
+    "open_entry_signal_strength": 0.01,
+    "execution_timing_confidence": 0.01,
 }
 
 
@@ -743,6 +755,9 @@ def _build_replay_evaluator(
 
         # Track selected surfaces for runner median distribution aggregation
         selected_surfaces: list[dict[str, Any]] = []
+        # Task 1 & 2 (Round 21): collect ALL primary surfaces (regardless of scope) for
+        # cross-window correlation and IC stability analysis.
+        all_primary_surfaces: list[dict[str, Any]] = []
 
         window_count = 0
         source_coverage_summaries: list[dict[str, Any]] = []
@@ -912,6 +927,8 @@ def _build_replay_evaluator(
                     total_metric_weights["realized_payoff_ratio"].append(sample_weight)
                 if primary_scope == "selected":
                     selected_surfaces.append(primary_surface)
+                # Task 1 & 2 (Round 21): collect every primary surface for cross-window analytics.
+                all_primary_surfaces.append(primary_surface)
 
                 for metric_key in (
                     "projected_theme_exposure",
@@ -1053,6 +1070,14 @@ def _build_replay_evaluator(
         effective_sample_weight = max(0.0, min(1.0, avg_sample_weight * window_coverage)) if avg_sample_weight is not None else None
         source_coverage_pass_ratio = _compute_source_coverage_pass_ratio(source_coverage_summaries)
 
+        # Task 1 (Round 21, Gamma): cross-window surface metric win-rate correlations.
+        # Computes Spearman correlation between each numeric surface metric and the
+        # per-window next_close_positive_rate.  Requires ≥ 5 windows; returns {} otherwise.
+        surface_metric_correlations: dict[str, Any] = compute_surface_metric_correlations(all_primary_surfaces)
+        # Task 2 (Round 21, Alpha): factor IC stability (IR = mean_IC / std_IC) across windows.
+        # Identifies consistently predictive factors vs noisy / regime-dependent ones.
+        factor_ic_stability: dict[str, Any] = compute_factor_ic_stability(all_primary_surfaces)
+
         return {
             "sharpe_ratio": avg_sharpe,
             "sortino_ratio": avg_sortino,
@@ -1093,6 +1118,17 @@ def _build_replay_evaluator(
             "ic_weight_suggestions": aggregated_ic_weight_suggestions,
             # Task 1 (Round 20, Beta): realized payoff ratio — win/loss asymmetry quality guardrail.
             "realized_payoff_ratio": avg_realized_payoff_ratio,
+            # Task 1 (Round 21, Gamma): surface metric / win-rate Spearman correlations.
+            # surface_metric_correlations: {metric_name: corr} for all numeric scalar surface metrics.
+            # top_5_correlated_metrics / bottom_5_correlated_metrics embedded inside the dict.
+            "surface_metric_correlations": surface_metric_correlations,
+            "top_5_surface_correlated_metrics": surface_metric_correlations.get("top_5_correlated_metrics"),
+            "bottom_5_surface_correlated_metrics": surface_metric_correlations.get("bottom_5_correlated_metrics"),
+            # Task 2 (Round 21, Alpha): factor IC stability across replay windows.
+            # factor_ic_stability: per-factor mean_IC, std_IC, IR, positive_fraction + summary keys.
+            "factor_ic_stability": factor_ic_stability,
+            "most_stable_factor": factor_ic_stability.get("most_stable_factor"),
+            "least_stable_factor": factor_ic_stability.get("least_stable_factor"),
         }
 
     return evaluator
