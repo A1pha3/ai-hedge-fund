@@ -32,6 +32,20 @@ ROLLOUT_MAX_NON_POSITIVE_SHARPE_STREAK = 2
 ROLLOUT_WORST_MAX_DRAWDOWN_FLOOR = -12.0
 MIN_TEST_TRADING_DAYS_FOR_ROLLOUT = 5
 
+# ---------------------------------------------------------------------------
+# Task 1 (Round 14): consecutive-window profile stability constants.
+# A profile that is non-promotable in too many or too many consecutive windows
+# is flagged as "unstable_profile" and receives a stability-penalty blocker in rollout.
+# ---------------------------------------------------------------------------
+PROFILE_STABILITY_NON_PROMOTABLE_STREAK_THRESHOLD: int = 2  # max consecutive non-promotable windows before "unstable"
+PROFILE_STABILITY_NON_PROMOTABLE_FRACTION_THRESHOLD: float = 0.5  # ≥50 % non-promotable windows → unstable
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 14): candidate pool size thresholds for market-regime classification.
+# ---------------------------------------------------------------------------
+CANDIDATE_POOL_SCARCE_THRESHOLD: int = 20  # pools below this are "scarce market" windows
+CANDIDATE_POOL_ABUNDANT_THRESHOLD: int = 100  # pools above this are "abundant market" windows
+
 RUNNER_TAIL_HIT_IMPROVEMENT_MIN = 0.05
 RUNNER_TAIL_HIT_ABSOLUTE_MIN = 0.12
 RUNNER_T1_WIN_RATE_REGRESSION_FLOOR = -0.04
@@ -228,6 +242,67 @@ def run_walk_forward(
     return results
 
 
+def assess_profile_stability(verdicts: list[tuple[str, dict]]) -> dict[str, Any]:
+    """Assess verdict consistency across consecutive walk-forward windows (Task 1, Round 14).
+
+    A profile that flips between promotable and non-promotable verdicts in consecutive windows
+    provides a weaker rollout signal than one that is consistently promotable.  This function
+    computes a stability score and flags profiles with too many or too many consecutive
+    non-promotable verdicts as ``"unstable_profile"``.
+
+    Non-promotable verdict labels (all labels except ``"promotable_runner_profile"``) are:
+    - ``"keep_precision_baseline"``
+    - ``"coverage_only_not_runner_better"``
+    - ``"tail_hit_better_but_t1_risky"``
+
+    A profile is considered **unstable** when either:
+    - the maximum consecutive non-promotable streak ≥ :data:`PROFILE_STABILITY_NON_PROMOTABLE_STREAK_THRESHOLD`
+    - OR the fraction of non-promotable windows ≥ :data:`PROFILE_STABILITY_NON_PROMOTABLE_FRACTION_THRESHOLD`
+
+    Args:
+        verdicts: Ordered list of ``(verdict_label, detail_dict)`` tuples from consecutive
+            walk-forward windows.  Must be in chronological order (oldest first).
+
+    Returns:
+        A dict with the following keys:
+
+        - ``stability_score`` (float | None): fraction of promotable windows in ``[0.0, 1.0]``.
+          ``None`` when *verdicts* is empty.
+        - ``max_consecutive_non_promotable`` (int): longest run of consecutive non-promotable
+          verdicts.
+        - ``non_promotable_count`` (int): total number of non-promotable windows.
+        - ``total_window_count`` (int): total number of windows evaluated.
+        - ``stability_verdict`` (str): ``"stable_profile"``, ``"unstable_profile"``, or
+          ``"insufficient_data"`` (empty input).
+    """
+    if not verdicts:
+        return {"stability_score": None, "max_consecutive_non_promotable": 0, "non_promotable_count": 0, "total_window_count": 0, "stability_verdict": "insufficient_data"}
+
+    _non_promotable_labels: frozenset[str] = frozenset({"keep_precision_baseline", "coverage_only_not_runner_better", "tail_hit_better_but_t1_risky"})
+    total = len(verdicts)
+    max_streak = 0
+    current_streak = 0
+    non_promotable_count = 0
+    for verdict_label, _detail in verdicts:
+        if verdict_label in _non_promotable_labels:
+            non_promotable_count += 1
+            current_streak += 1
+            max_streak = max(max_streak, current_streak)
+        else:
+            current_streak = 0
+
+    stability_score = round(1.0 - (non_promotable_count / total), 4)
+    is_unstable = (max_streak >= PROFILE_STABILITY_NON_PROMOTABLE_STREAK_THRESHOLD) or (non_promotable_count / total >= PROFILE_STABILITY_NON_PROMOTABLE_FRACTION_THRESHOLD)
+    stability_verdict = "unstable_profile" if is_unstable else "stable_profile"
+    return {
+        "stability_score": stability_score,
+        "max_consecutive_non_promotable": max_streak,
+        "non_promotable_count": non_promotable_count,
+        "total_window_count": total,
+        "stability_verdict": stability_verdict,
+    }
+
+
 def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, Any]:
     if not results:
         base_summary: dict[str, Any] = {
@@ -243,6 +318,15 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
             "worst_sharpe": None,
             "worst_max_drawdown": None,
             "max_non_positive_sharpe_streak": 0,
+            # Task 1 (Round 14): profile stability — no windows means insufficient_data.
+            "profile_stability_score": None,
+            "profile_stability_max_consecutive_non_promotable": 0,
+            "profile_stability_verdict": "insufficient_data",
+            # Task 2 (Round 14): candidate pool size — no data when empty.
+            "avg_candidate_pool_size": None,
+            "scarce_market_window_count": 0,
+            "abundant_market_window_count": 0,
+            "market_size_classification": "unknown",
             "rollout_ready": False,
             "rollout_blockers": ["no_walk_forward_windows"],
         }
@@ -362,6 +446,25 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
     composite_score_escaped_values = [item.metrics.get("avg_composite_score_escaped") for item in results if item.metrics.get("avg_composite_score_escaped") is not None]
     avg_composite_score_escaped = _average(composite_score_escaped_values) if composite_score_escaped_values else None
 
+    # Task 2 (Round 14): candidate pool size adaptive awareness — track per-window pool sizes to
+    # identify "scarce market" (pool < CANDIDATE_POOL_SCARCE_THRESHOLD) and "abundant market"
+    # (pool > CANDIDATE_POOL_ABUNDANT_THRESHOLD) windows and compute aggregate pool statistics.
+    candidate_pool_size_values: list[int] = [int(float(v)) for item in results for v in [item.metrics.get("candidate_pool_size")] if v is not None]
+    avg_candidate_pool_size: float | None = (sum(candidate_pool_size_values) / len(candidate_pool_size_values)) if candidate_pool_size_values else None
+    scarce_market_window_count = sum(1 for size in candidate_pool_size_values if size < CANDIDATE_POOL_SCARCE_THRESHOLD)
+    abundant_market_window_count = sum(1 for size in candidate_pool_size_values if size > CANDIDATE_POOL_ABUNDANT_THRESHOLD)
+    # Derive market size classification: a majority of tracked windows determines the label.
+    if candidate_pool_size_values:
+        _tracked = len(candidate_pool_size_values)
+        if scarce_market_window_count / _tracked > 0.5:
+            market_size_classification = "scarce_dominated"
+        elif abundant_market_window_count / _tracked > 0.5:
+            market_size_classification = "abundant_dominated"
+        else:
+            market_size_classification = "mixed"
+    else:
+        market_size_classification = "unknown"
+
     # Task 4 (Round 11): use recency-weighted averages for BTST quality metrics so that more
     # recent walk-forward windows carry proportionally more weight in rollout decisions.
     # The rollout floor checks continue to operate on these weighted averages.
@@ -381,6 +484,22 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
     if any(value is not None for value in btst_quality_summary.values()):
         rollout_blockers.extend(build_btst_quality_floor_blockers(btst_quality_summary))
         rollout_blockers.extend(build_btst_quality_cap_blockers(btst_quality_summary))
+
+    # Task 1 (Round 14): compute profile stability from the per-window runner verdicts.
+    # Only include windows that have explicit runner metric data (max_future_high_return_2_5d_hit_rate_at_20pct
+    # must be present); windows without runner data are not informative for stability assessment.
+    # The stability assessment then checks for consecutive non-promotable runs and high non-promotable fractions.
+    _per_window_verdicts: list[tuple[str, dict]] = []
+    for _item in results:
+        if _item.metrics.get("max_future_high_return_2_5d_hit_rate_at_20pct") is None:
+            continue  # skip windows without runner data — they cannot produce meaningful stability verdicts
+        _window_summary: dict[str, Any] = {**_item.metrics}
+        _wv_label, _wv_detail = classify_runner_rollout_verdict(runner_summary=_window_summary)
+        _per_window_verdicts.append((_wv_label, _wv_detail))
+    profile_stability = assess_profile_stability(_per_window_verdicts)
+    # If the profile is unstable, add a rollout blocker so the optimizer can reject or penalise it.
+    if profile_stability["stability_verdict"] == "unstable_profile":
+        rollout_blockers.append("profile_stability_unstable")
 
     base_summary: dict[str, Any] = {
         "window_count": len(results),
@@ -403,6 +522,15 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
         "avg_composite_score_escaped": avg_composite_score_escaped,
         # Task 4 (Round 11): expose the recency weighting parameters for transparency.
         "recency_half_life_days": WALK_FORWARD_RECENCY_HALF_LIFE_DAYS,
+        # Task 1 (Round 14): profile stability across consecutive windows.
+        "profile_stability_score": profile_stability["stability_score"],
+        "profile_stability_max_consecutive_non_promotable": profile_stability["max_consecutive_non_promotable"],
+        "profile_stability_verdict": profile_stability["stability_verdict"],
+        # Task 2 (Round 14): candidate pool size adaptive awareness.
+        "avg_candidate_pool_size": avg_candidate_pool_size,
+        "scarce_market_window_count": scarce_market_window_count,
+        "abundant_market_window_count": abundant_market_window_count,
+        "market_size_classification": market_size_classification,
         "rollout_ready": not rollout_blockers,
         "rollout_blockers": rollout_blockers,
     }

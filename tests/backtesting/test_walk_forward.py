@@ -1147,3 +1147,231 @@ def test_summarize_walk_forward_kurtosis_multi_window_plain_average() -> None:
     )
     # 4.0 ≤ 5.0 cap → no blocker expected
     assert "btst_quality_next_close_return_kurtosis_cap_breach" not in summary.get("rollout_blockers", [])
+
+
+# ---------------------------------------------------------------------------
+# Round 14 — Task 1: Consecutive Window Consistency (assess_profile_stability)
+# ---------------------------------------------------------------------------
+
+from src.backtesting.walk_forward import assess_profile_stability, PROFILE_STABILITY_NON_PROMOTABLE_STREAK_THRESHOLD, PROFILE_STABILITY_NON_PROMOTABLE_FRACTION_THRESHOLD
+
+
+def test_assess_profile_stability_empty_returns_insufficient_data() -> None:
+    """Empty verdict list must return stability_verdict='insufficient_data' (Task 1, Round 14)."""
+    result = assess_profile_stability([])
+    assert result["stability_verdict"] == "insufficient_data"
+    assert result["stability_score"] is None
+    assert result["max_consecutive_non_promotable"] == 0
+    assert result["non_promotable_count"] == 0
+    assert result["total_window_count"] == 0
+
+
+def test_assess_profile_stability_all_promotable_is_stable() -> None:
+    """All-promotable windows → stable_profile with stability_score=1.0 (Task 1, Round 14)."""
+    verdicts: list[tuple[str, dict]] = [("promotable_runner_profile", {}) for _ in range(4)]
+    result = assess_profile_stability(verdicts)
+    assert result["stability_verdict"] == "stable_profile"
+    assert result["stability_score"] == pytest.approx(1.0, abs=1e-4)
+    assert result["non_promotable_count"] == 0
+    assert result["max_consecutive_non_promotable"] == 0
+
+
+def test_assess_profile_stability_consecutive_streak_triggers_unstable() -> None:
+    """Two or more consecutive non-promotable verdicts must produce unstable_profile (Task 1, Round 14).
+
+    PROFILE_STABILITY_NON_PROMOTABLE_STREAK_THRESHOLD = 2.
+    """
+    verdicts: list[tuple[str, dict]] = [
+        ("promotable_runner_profile", {}),
+        ("keep_precision_baseline", {}),
+        ("keep_precision_baseline", {}),
+        ("promotable_runner_profile", {}),
+    ]
+    result = assess_profile_stability(verdicts)
+    assert result["stability_verdict"] == "unstable_profile", f"Expected unstable due to streak=2 but got: {result}"
+    assert result["max_consecutive_non_promotable"] == 2
+    assert result["non_promotable_count"] == 2
+
+
+def test_assess_profile_stability_single_non_promotable_no_streak_stable() -> None:
+    """A single isolated non-promotable window with < 50% non-promotable fraction → stable (Task 1, Round 14)."""
+    verdicts: list[tuple[str, dict]] = [
+        ("promotable_runner_profile", {}),
+        ("keep_precision_baseline", {}),
+        ("promotable_runner_profile", {}),
+        ("promotable_runner_profile", {}),
+    ]
+    result = assess_profile_stability(verdicts)
+    # streak=1 < threshold=2; fraction=1/4=0.25 < 0.5 → stable
+    assert result["stability_verdict"] == "stable_profile"
+    assert result["max_consecutive_non_promotable"] == 1
+    assert result["non_promotable_count"] == 1
+
+
+def test_assess_profile_stability_majority_non_promotable_triggers_unstable() -> None:
+    """≥50 % non-promotable windows must trigger unstable_profile even without consecutive streak (Task 1, Round 14)."""
+    verdicts: list[tuple[str, dict]] = [
+        ("promotable_runner_profile", {}),
+        ("coverage_only_not_runner_better", {}),
+        ("tail_hit_better_but_t1_risky", {}),
+        ("promotable_runner_profile", {}),
+    ]
+    # Non-promotable: 2/4 = 50 % → triggers fraction threshold
+    result = assess_profile_stability(verdicts)
+    assert result["stability_verdict"] == "unstable_profile", f"Expected unstable due to 50% fraction but got: {result}"
+    assert result["non_promotable_count"] == 2
+
+
+def test_assess_profile_stability_score_calculation() -> None:
+    """stability_score = 1 - (non_promotable_count / total) (Task 1, Round 14)."""
+    verdicts: list[tuple[str, dict]] = [
+        ("promotable_runner_profile", {}),
+        ("promotable_runner_profile", {}),
+        ("keep_precision_baseline", {}),
+        ("promotable_runner_profile", {}),
+    ]
+    result = assess_profile_stability(verdicts)
+    expected_score = 1.0 - (1.0 / 4.0)  # = 0.75
+    assert result["stability_score"] == pytest.approx(expected_score, abs=1e-4)
+
+
+def test_summarize_walk_forward_includes_profile_stability_fields() -> None:
+    """summarize_walk_forward must include profile_stability_* fields in its output (Task 1, Round 14)."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={"sharpe_ratio": 1.2, "sortino_ratio": 1.5, "max_drawdown": -3.0, "test_trading_days": 15},
+        ),
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-02-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31"),
+            metrics={"sharpe_ratio": 1.4, "sortino_ratio": 1.8, "max_drawdown": -2.5, "test_trading_days": 20},
+        ),
+    ]
+    summary = summarize_walk_forward(results)
+    assert "profile_stability_score" in summary
+    assert "profile_stability_max_consecutive_non_promotable" in summary
+    assert "profile_stability_verdict" in summary
+
+
+def test_summarize_walk_forward_unstable_profile_adds_blocker() -> None:
+    """An unstable profile must add 'profile_stability_unstable' to rollout_blockers (Task 1, Round 14).
+
+    Force instability: populate two consecutive windows where avg_runner_tail_hit_rate is below
+    the absolute floor (< 0.12), which forces verdict='keep_precision_baseline'.
+    """
+    def _non_promotable_window(test_start: str) -> WalkForwardResult:
+        return WalkForwardResult(
+            window=WalkForwardWindow(train_start="2025-12-01", train_end="2025-12-31", test_start=test_start, test_end=test_start),
+            metrics={
+                "sharpe_ratio": 1.0,
+                "sortino_ratio": 1.2,
+                "max_drawdown": -4.0,
+                "test_trading_days": 10,
+                # Tail hit below absolute floor → keep_precision_baseline
+                "max_future_high_return_2_5d_hit_rate_at_20pct": 0.05,
+            },
+        )
+
+    results = [
+        _non_promotable_window("2026-01-01"),
+        _non_promotable_window("2026-02-01"),
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-02-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31"),
+            metrics={"sharpe_ratio": 1.5, "sortino_ratio": 2.0, "max_drawdown": -2.0, "test_trading_days": 20, "max_future_high_return_2_5d_hit_rate_at_20pct": 0.05},
+        ),
+    ]
+    summary = summarize_walk_forward(results)
+    assert "profile_stability_unstable" in summary.get("rollout_blockers", []), (
+        f"Expected profile_stability_unstable blocker but got: {summary.get('rollout_blockers')}"
+    )
+    assert summary.get("profile_stability_verdict") == "unstable_profile"
+
+
+def test_summarize_walk_forward_stable_profile_no_stability_blocker() -> None:
+    """A consistently promotable (or single-window) profile must not add a stability blocker (Task 1, Round 14)."""
+    result = WalkForwardResult(
+        window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+        metrics={"sharpe_ratio": 1.5, "sortino_ratio": 2.0, "max_drawdown": -2.5, "test_trading_days": 20},
+    )
+    summary = summarize_walk_forward([result])
+    assert "profile_stability_unstable" not in summary.get("rollout_blockers", []), (
+        f"Unexpected stability blocker: {summary.get('rollout_blockers')}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 14 — Task 2: Candidate Pool Size Adaptive Awareness
+# ---------------------------------------------------------------------------
+
+from src.backtesting.walk_forward import CANDIDATE_POOL_SCARCE_THRESHOLD, CANDIDATE_POOL_ABUNDANT_THRESHOLD
+
+
+def test_summarize_walk_forward_includes_pool_size_fields() -> None:
+    """summarize_walk_forward must expose avg_candidate_pool_size and related fields (Task 2, Round 14)."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={"sharpe_ratio": 1.2, "sortino_ratio": 1.5, "max_drawdown": -3.0, "test_trading_days": 15, "candidate_pool_size": 35},
+        ),
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-02-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31"),
+            metrics={"sharpe_ratio": 1.4, "sortino_ratio": 1.8, "max_drawdown": -2.5, "test_trading_days": 20, "candidate_pool_size": 65},
+        ),
+    ]
+    summary = summarize_walk_forward(results)
+    assert "avg_candidate_pool_size" in summary
+    assert "scarce_market_window_count" in summary
+    assert "abundant_market_window_count" in summary
+    assert "market_size_classification" in summary
+    assert summary["avg_candidate_pool_size"] == pytest.approx(50.0, abs=1e-4)
+    assert summary["scarce_market_window_count"] == 0
+    assert summary["abundant_market_window_count"] == 0
+    assert summary["market_size_classification"] == "mixed"
+
+
+def test_summarize_walk_forward_detects_scarce_dominated_market() -> None:
+    """More than 50% of windows with pool size < 20 → scarce_dominated classification (Task 2, Round 14)."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={"sharpe_ratio": 1.0, "sortino_ratio": 1.2, "max_drawdown": -5.0, "test_trading_days": 10, "candidate_pool_size": 8},
+        ),
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-02-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31"),
+            metrics={"sharpe_ratio": 1.1, "sortino_ratio": 1.3, "max_drawdown": -4.5, "test_trading_days": 12, "candidate_pool_size": 12},
+        ),
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-03-01", train_end="2026-03-31", test_start="2026-04-01", test_end="2026-04-30"),
+            metrics={"sharpe_ratio": 1.2, "sortino_ratio": 1.4, "max_drawdown": -3.5, "test_trading_days": 15, "candidate_pool_size": 50},
+        ),
+    ]
+    summary = summarize_walk_forward(results)
+    # 2/3 windows have pool size < CANDIDATE_POOL_SCARCE_THRESHOLD (20) → scarce_dominated
+    assert summary["scarce_market_window_count"] == 2
+    assert summary["market_size_classification"] == "scarce_dominated"
+
+
+def test_summarize_walk_forward_detects_abundant_dominated_market() -> None:
+    """More than 50% of windows with pool size > 100 → abundant_dominated classification (Task 2, Round 14)."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={"sharpe_ratio": 1.5, "sortino_ratio": 1.9, "max_drawdown": -2.0, "test_trading_days": 18, "candidate_pool_size": 150},
+        ),
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-02-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31"),
+            metrics={"sharpe_ratio": 1.6, "sortino_ratio": 2.1, "max_drawdown": -1.8, "test_trading_days": 20, "candidate_pool_size": 120},
+        ),
+    ]
+    summary = summarize_walk_forward(results)
+    assert summary["abundant_market_window_count"] == 2
+    assert summary["market_size_classification"] == "abundant_dominated"
+
+
+def test_summarize_walk_forward_empty_results_pool_fields_unknown() -> None:
+    """Empty results must return market_size_classification='unknown' (Task 2, Round 14)."""
+    summary = summarize_walk_forward([])
+    assert summary["market_size_classification"] == "unknown"
+    assert summary["avg_candidate_pool_size"] is None
+    assert summary["scarce_market_window_count"] == 0
+    assert summary["abundant_market_window_count"] == 0

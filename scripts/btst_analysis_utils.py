@@ -441,6 +441,122 @@ def _build_return_edge_metrics(returns: list[float]) -> dict[str, float | int | 
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Task 5 (Round 14): Regime-conditional backtesting constants and helpers.
+# ---------------------------------------------------------------------------
+# A "bull day" is defined as a trading day where the average next_close_return
+# across all rows for that date exceeds REGIME_BULL_DAY_RETURN_THRESHOLD.
+# Symmetrically, a "bear day" is below REGIME_BEAR_DAY_RETURN_THRESHOLD.
+# All other days are classified as "sideways".
+# This self-contained proxy requires no external market-index data.
+REGIME_BULL_DAY_RETURN_THRESHOLD: float = 0.003   # avg daily return > +0.3 % → bull
+REGIME_BEAR_DAY_RETURN_THRESHOLD: float = -0.003  # avg daily return < −0.3 % → bear
+
+
+def build_regime_conditional_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute win-rate and payoff statistics grouped by market regime (Task 5, Round 14).
+
+    Each row's trading date is assigned to one of three regimes — ``"bull"``, ``"bear"``, or
+    ``"sideways"`` — by computing the average ``next_close_return`` across all rows that share
+    the same ``trade_date``.  Dates where the average return exceeds
+    :data:`REGIME_BULL_DAY_RETURN_THRESHOLD` (+0.3 %) are labelled "bull"; dates below
+    :data:`REGIME_BEAR_DAY_RETURN_THRESHOLD` (−0.3 %) are labelled "bear"; the rest are
+    "sideways".  This proxy is self-contained and requires no external market-index data.
+
+    Args:
+        rows: List of BTST candidate rows.  Each row must contain a ``trade_date`` string and
+            may contain a numeric ``next_close_return`` field used for regime classification
+            and statistics computation.
+
+    Returns:
+        A dict with three sub-dicts (``"bull"``, ``"bear"``, ``"sideways"``) each containing:
+
+        - ``count`` (int): number of rows assigned to this regime.
+        - ``next_close_positive_rate`` (float | None): win rate for rows in this regime.
+        - ``next_close_payoff_ratio`` (float | None): average win / average loss magnitude.
+        - ``next_close_average_win`` (float | None): average positive return.
+        - ``next_close_average_loss_abs`` (float | None): average absolute negative return.
+        - ``day_count`` (int): number of distinct trading dates assigned to this regime.
+
+        Also includes:
+
+        - ``regime_best_win_rate`` (str | None): name of the regime with the highest win rate
+          (or ``None`` when no regime has sufficient data).
+        - ``regime_best_payoff_ratio`` (str | None): name of the regime with the highest payoff
+          ratio.
+    """
+    if not rows:
+        _empty_regime: dict[str, Any] = {"count": 0, "next_close_positive_rate": None, "next_close_payoff_ratio": None, "next_close_average_win": None, "next_close_average_loss_abs": None, "day_count": 0}
+        return {"bull": _empty_regime, "bear": _empty_regime, "sideways": _empty_regime, "regime_best_win_rate": None, "regime_best_payoff_ratio": None}
+
+    # Step 1: compute per-date average next_close_return (using only rows where the field is present).
+    from collections import defaultdict as _defaultdict
+    date_returns: dict[str, list[float]] = _defaultdict(list)
+    for row in rows:
+        td = str(row.get("trade_date") or "")
+        ncr = row.get("next_close_return")
+        if td and ncr is not None:
+            try:
+                date_returns[td].append(float(ncr))
+            except (TypeError, ValueError):
+                pass
+
+    # Step 2: classify each date.
+    date_regime: dict[str, str] = {}
+    for td, ret_list in date_returns.items():
+        avg_ret = sum(ret_list) / len(ret_list)
+        if avg_ret >= REGIME_BULL_DAY_RETURN_THRESHOLD:
+            date_regime[td] = "bull"
+        elif avg_ret <= REGIME_BEAR_DAY_RETURN_THRESHOLD:
+            date_regime[td] = "bear"
+        else:
+            date_regime[td] = "sideways"
+
+    # Step 3: assign each row to a regime and collect next_close_return for stats.
+    regime_rows: dict[str, list[float]] = {"bull": [], "bear": [], "sideways": []}
+    regime_day_counts: dict[str, set[str]] = {"bull": set(), "bear": set(), "sideways": set()}
+    unclassified_rows: list[float] = []  # rows with trade_date not in date_regime
+    for row in rows:
+        td = str(row.get("trade_date") or "")
+        ncr = row.get("next_close_return")
+        if ncr is None:
+            continue
+        try:
+            ret_val = float(ncr)
+        except (TypeError, ValueError):
+            continue
+        regime = date_regime.get(td)
+        if regime is not None:
+            regime_rows[regime].append(ret_val)
+            regime_day_counts[regime].add(td)
+        else:
+            unclassified_rows.append(ret_val)
+
+    # Step 4: compute per-regime stats.
+    def _regime_stats(returns: list[float], days: set[str]) -> dict[str, Any]:
+        count = len(returns)
+        if count == 0:
+            return {"count": 0, "next_close_positive_rate": None, "next_close_payoff_ratio": None, "next_close_average_win": None, "next_close_average_loss_abs": None, "day_count": len(days)}
+        wins = [r for r in returns if r > 0.0]
+        losses = [r for r in returns if r < 0.0]
+        win_rate = round(len(wins) / count, 4)
+        avg_win = round(sum(wins) / len(wins), 4) if wins else None
+        avg_loss_abs = round(abs(sum(losses) / len(losses)), 4) if losses else None
+        payoff = round(avg_win / avg_loss_abs, 4) if avg_win is not None and avg_loss_abs and avg_loss_abs > 0.0 else None
+        return {"count": count, "next_close_positive_rate": win_rate, "next_close_payoff_ratio": payoff, "next_close_average_win": avg_win, "next_close_average_loss_abs": avg_loss_abs, "day_count": len(days)}
+
+    stats: dict[str, Any] = {label: _regime_stats(regime_rows[label], regime_day_counts[label]) for label in ("bull", "bear", "sideways")}
+
+    # Step 5: identify best regime by win rate and payoff ratio.
+    _win_rate_map = {label: stats[label]["next_close_positive_rate"] for label in ("bull", "bear", "sideways") if stats[label]["next_close_positive_rate"] is not None}
+    regime_best_win_rate: str | None = max(_win_rate_map, key=_win_rate_map.__getitem__) if _win_rate_map else None
+    _payoff_map = {label: stats[label]["next_close_payoff_ratio"] for label in ("bull", "bear", "sideways") if stats[label]["next_close_payoff_ratio"] is not None}
+    regime_best_payoff_ratio: str | None = max(_payoff_map, key=_payoff_map.__getitem__) if _payoff_map else None
+
+    return {**stats, "regime_best_win_rate": regime_best_win_rate, "regime_best_payoff_ratio": regime_best_payoff_ratio}
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -500,9 +616,15 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # Task 3 (Round 12): IC weight suggestions — use T+1 ICs as primary signal since that
     # is the most data-rich horizon; written to the surface so the optimizer can surface them.
     ic_weight_suggestions = compute_ic_weight_suggestions(factor_ic_next_close)
+    # Task 5 (Round 14): regime-conditional backtesting — classify each trading day as bull/bear/sideways
+    # based on that day's average next_close_return, then compute per-regime win rate and payoff ratio.
+    # This lets the optimizer identify which market environment the strategy works best in.
+    regime_conditional_stats = build_regime_conditional_stats(rows)
 
     return {
         "total_count": len(rows),
+        # Task 2 (Round 14): explicit candidate_pool_size (= total_count) for walk-forward pool tracking.
+        "candidate_pool_size": len(rows),
         "next_day_available_count": len(next_day_rows),
         "closed_cycle_count": len(closed_rows),
         "t_plus_3_cycle_count": len(t_plus_3_rows),
@@ -560,6 +682,8 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "factor_ic_t_plus_3": factor_ic_t_plus_3,
         # Task 3 (Round 12): per-factor IC weight adjustment suggestions
         "ic_weight_suggestions": ic_weight_suggestions,
+        # Task 5 (Round 14): regime-conditional stats — per-regime win rate, payoff ratio, and day count.
+        "regime_conditional_stats": regime_conditional_stats,
     }
 
 

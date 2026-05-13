@@ -444,3 +444,168 @@ def test_build_surface_summary_includes_ic_weight_suggestions() -> None:
     for factor in BTST_FACTOR_NAMES:
         assert factor in suggestions
         assert suggestions[factor] in ("reduce", "maintain", "increase")
+
+
+# ---------------------------------------------------------------------------
+# Round 14 — Task 2: candidate_pool_size in build_surface_summary
+# ---------------------------------------------------------------------------
+
+
+def test_build_surface_summary_includes_candidate_pool_size() -> None:
+    """build_surface_summary must expose 'candidate_pool_size' equal to total_count (Task 2, Round 14)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.07, "next_open_to_close_return": 0.03, "t_plus_2_close_return": 0.04, "t_plus_3_close_return": 0.03},
+        {"next_close_return": -0.03, "next_open_return": -0.01, "next_high_return": 0.01, "next_open_to_close_return": -0.02, "t_plus_2_close_return": -0.02, "t_plus_3_close_return": -0.01},
+        {"next_close_return": 0.08, "next_open_return": 0.03, "next_high_return": 0.09, "next_open_to_close_return": 0.05, "t_plus_2_close_return": 0.06, "t_plus_3_close_return": 0.05},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "candidate_pool_size" in summary, "candidate_pool_size must be present in surface summary"
+    assert summary["candidate_pool_size"] == 3
+    assert summary["candidate_pool_size"] == summary["total_count"]
+
+
+def test_build_surface_summary_candidate_pool_size_empty() -> None:
+    """build_surface_summary on empty rows must return candidate_pool_size=0 (Task 2, Round 14)."""
+    summary = build_surface_summary([], next_high_hit_threshold=0.05)
+    assert summary["candidate_pool_size"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Round 14 — Task 5: Regime-conditional backtesting
+# ---------------------------------------------------------------------------
+
+from scripts.btst_analysis_utils import build_regime_conditional_stats, REGIME_BULL_DAY_RETURN_THRESHOLD, REGIME_BEAR_DAY_RETURN_THRESHOLD
+
+
+def test_build_regime_conditional_stats_empty_rows() -> None:
+    """Empty rows must return zero-count regimes with no best regime (Task 5, Round 14)."""
+    result = build_regime_conditional_stats([])
+    for regime in ("bull", "bear", "sideways"):
+        assert result[regime]["count"] == 0
+        assert result[regime]["next_close_positive_rate"] is None
+    assert result["regime_best_win_rate"] is None
+    assert result["regime_best_payoff_ratio"] is None
+
+
+def test_build_regime_conditional_stats_classifies_bull_days() -> None:
+    """Days where avg next_close_return > REGIME_BULL_DAY_RETURN_THRESHOLD are classified as bull (Task 5, Round 14)."""
+    rows = [
+        {"trade_date": "2026-03-10", "next_close_return": 0.02},
+        {"trade_date": "2026-03-10", "next_close_return": 0.01},
+        {"trade_date": "2026-03-10", "next_close_return": 0.03},
+    ]
+    result = build_regime_conditional_stats(rows)
+    # avg = (0.02+0.01+0.03)/3 = 0.02 > 0.003 → bull day
+    assert result["bull"]["count"] == 3
+    assert result["bear"]["count"] == 0
+    assert result["sideways"]["count"] == 0
+
+
+def test_build_regime_conditional_stats_classifies_bear_days() -> None:
+    """Days where avg next_close_return < REGIME_BEAR_DAY_RETURN_THRESHOLD are classified as bear (Task 5, Round 14)."""
+    rows = [
+        {"trade_date": "2026-03-11", "next_close_return": -0.02},
+        {"trade_date": "2026-03-11", "next_close_return": -0.01},
+        {"trade_date": "2026-03-11", "next_close_return": -0.05},
+    ]
+    result = build_regime_conditional_stats(rows)
+    # avg = -0.0267 < -0.003 → bear day
+    assert result["bear"]["count"] == 3
+    assert result["bull"]["count"] == 0
+    assert result["sideways"]["count"] == 0
+
+
+def test_build_regime_conditional_stats_classifies_sideways_days() -> None:
+    """Days with small average return near zero are classified as sideways (Task 5, Round 14)."""
+    rows = [
+        {"trade_date": "2026-03-12", "next_close_return": 0.001},
+        {"trade_date": "2026-03-12", "next_close_return": -0.001},
+    ]
+    result = build_regime_conditional_stats(rows)
+    # avg = 0.0 → sideways
+    assert result["sideways"]["count"] == 2
+    assert result["bull"]["count"] == 0
+    assert result["bear"]["count"] == 0
+
+
+def test_build_regime_conditional_stats_mixed_days() -> None:
+    """Mixed bull/bear/sideways days are correctly separated into different regime buckets (Task 5, Round 14)."""
+    rows = [
+        # Bull day: avg = 0.02
+        {"trade_date": "2026-03-10", "next_close_return": 0.02},
+        {"trade_date": "2026-03-10", "next_close_return": 0.02},
+        # Bear day: avg = -0.02
+        {"trade_date": "2026-03-11", "next_close_return": -0.02},
+        {"trade_date": "2026-03-11", "next_close_return": -0.02},
+        # Sideways day: avg = 0.001
+        {"trade_date": "2026-03-12", "next_close_return": 0.001},
+        {"trade_date": "2026-03-12", "next_close_return": 0.001},
+    ]
+    result = build_regime_conditional_stats(rows)
+    assert result["bull"]["count"] == 2
+    assert result["bear"]["count"] == 2
+    assert result["sideways"]["count"] == 2
+
+
+def test_build_regime_conditional_stats_win_rate_and_payoff() -> None:
+    """Win rate and payoff ratio are correctly computed per regime (Task 5, Round 14)."""
+    rows = [
+        # Bull day: 2 winners (+5%, +10%), 1 loser (-2%)
+        {"trade_date": "2026-03-10", "next_close_return": 0.05},
+        {"trade_date": "2026-03-10", "next_close_return": 0.10},
+        {"trade_date": "2026-03-10", "next_close_return": -0.02},
+    ]
+    result = build_regime_conditional_stats(rows)
+    bull_stats = result["bull"]
+    assert bull_stats["count"] == 3
+    assert bull_stats["next_close_positive_rate"] == pytest.approx(2 / 3, abs=1e-4)
+    # average_win = (0.05 + 0.10) / 2 = 0.075
+    assert bull_stats["next_close_average_win"] == pytest.approx(0.075, abs=1e-4)
+    # average_loss_abs = 0.02
+    assert bull_stats["next_close_average_loss_abs"] == pytest.approx(0.02, abs=1e-4)
+    # payoff_ratio = 0.075 / 0.02 = 3.75
+    assert bull_stats["next_close_payoff_ratio"] == pytest.approx(3.75, abs=1e-3)
+
+
+def test_build_regime_conditional_stats_best_win_rate_identified() -> None:
+    """regime_best_win_rate correctly identifies the regime with highest win rate (Task 5, Round 14)."""
+    rows = [
+        # Bull day: win rate = 1.0 (all positive)
+        {"trade_date": "2026-03-10", "next_close_return": 0.05},
+        {"trade_date": "2026-03-10", "next_close_return": 0.08},
+        # Bear day: win rate = 0.0 (all negative)
+        {"trade_date": "2026-03-11", "next_close_return": -0.03},
+        {"trade_date": "2026-03-11", "next_close_return": -0.02},
+        # Sideways day: win rate = 0.5
+        {"trade_date": "2026-03-12", "next_close_return": 0.001},
+        {"trade_date": "2026-03-12", "next_close_return": -0.001},
+    ]
+    result = build_regime_conditional_stats(rows)
+    assert result["regime_best_win_rate"] == "bull"
+
+
+def test_build_surface_summary_includes_regime_conditional_stats() -> None:
+    """build_surface_summary must include regime_conditional_stats dict (Task 5, Round 14)."""
+    rows = [
+        {"trade_date": "2026-03-10", "next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.07, "next_open_to_close_return": 0.03, "t_plus_2_close_return": 0.04, "t_plus_3_close_return": 0.03},
+        {"trade_date": "2026-03-11", "next_close_return": -0.03, "next_open_return": -0.01, "next_high_return": 0.01, "next_open_to_close_return": -0.02, "t_plus_2_close_return": -0.02, "t_plus_3_close_return": -0.01},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "regime_conditional_stats" in summary
+    rcs = summary["regime_conditional_stats"]
+    assert isinstance(rcs, dict)
+    for key in ("bull", "bear", "sideways", "regime_best_win_rate", "regime_best_payoff_ratio"):
+        assert key in rcs, f"Expected key '{key}' in regime_conditional_stats but got: {list(rcs.keys())}"
+
+
+def test_build_regime_conditional_stats_rows_without_trade_date_skipped() -> None:
+    """Rows missing trade_date or next_close_return do not crash the function (Task 5, Round 14)."""
+    rows = [
+        {"next_close_return": 0.05},  # no trade_date → unclassifiable, excluded from stats
+        {"trade_date": "2026-03-10"},  # no next_close_return → excluded from date_returns
+        {"trade_date": "2026-03-10", "next_close_return": None},
+    ]
+    result = build_regime_conditional_stats(rows)
+    # All rows are either unclassifiable or lack return data → no crashes, all counts zero
+    total = result["bull"]["count"] + result["bear"]["count"] + result["sideways"]["count"]
+    assert total == 0
