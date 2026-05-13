@@ -114,6 +114,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # optimizer is making near-random selections.  Floor ≥ 0.10 requires the score to
     # meaningfully stratify candidates before a profile is considered rollout-ready.
     "score_spread_p95_p5": 0.10,
+    # Task 2 (Round 28, Gamma): bear-market domain alpha floor.
+    # bear_alpha_avg = mean alpha (BTST − HS300) on days where HS300 < −0.3 %.
+    # Allowing a slight negative bear alpha (floor −0.005) tolerates minor underperformance
+    # on extreme down-days while rejecting strategies that massively bleed on bear days.
+    # Strategies below −0.005 bear alpha lack regime robustness and carry hidden Beta risk.
+    "bear_alpha_avg": -0.005,
 }
 
 # ---------------------------------------------------------------------------

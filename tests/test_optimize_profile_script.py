@@ -4921,3 +4921,296 @@ def test_r27_score_spread_floor_blocker_fires_when_too_narrow() -> None:
     metrics = {"score_spread_p95_p5": 0.05, "next_close_positive_rate": 0.60, "kelly_fraction_half": 0.05, "realized_payoff_ratio": 1.2, "alpha_avg_return": 0.001, "regime_consistency_score": 0.80, "kelly_fraction_drawdown_adjusted": 0.02, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.70, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.04, "avg_escape_gap_cost": -0.01, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_payoff_ratio": 1.05, "t_plus_3_close_expectancy": 0.001, "t_plus_3_close_positive_rate": 0.51, "t_plus_2_close_positive_rate": 0.53, "next_high_hit_rate": 0.57}
     blockers = build_btst_quality_floor_blockers(metrics)
     assert any("score_spread_p95_p5" in b for b in blockers)
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 28, Alpha): compute_factor_cross_correlation
+# ---------------------------------------------------------------------------
+
+
+def test_r28_factor_cross_corr_perfectly_positively_correlated() -> None:
+    """Two factors with identical values should yield Spearman corr = 1.0."""
+    from scripts.btst_analysis_utils import compute_factor_cross_correlation
+    rows = [{"breakout_freshness": float(i) / 9, "close_strength": float(i) / 9} for i in range(10)]
+    result = compute_factor_cross_correlation(rows)
+    assert result["factor_max_correlation"] is not None
+    assert abs(result["factor_max_correlation"] - 1.0) < 0.0001
+    assert ("breakout_freshness", "close_strength") == result["factor_max_correlation_pair"] or ("close_strength", "breakout_freshness") == result["factor_max_correlation_pair"]
+
+
+def test_r28_factor_cross_corr_perfectly_negatively_correlated() -> None:
+    """Monotone-inverse factor pair should yield Spearman corr = -1.0."""
+    from scripts.btst_analysis_utils import compute_factor_cross_correlation
+    rows = [{"breakout_freshness": float(i) / 9, "trend_acceleration": 1.0 - float(i) / 9} for i in range(10)]
+    result = compute_factor_cross_correlation(rows)
+    assert result["factor_max_correlation"] is not None
+    assert abs(abs(result["factor_max_correlation"]) - 1.0) < 0.0001
+
+
+def test_r28_factor_cross_corr_orthogonal_pair_near_zero() -> None:
+    """Alternating-sign factor should have near-zero Spearman corr with monotone factor."""
+    from scripts.btst_analysis_utils import compute_factor_cross_correlation
+    import math
+    rows = [{"breakout_freshness": float(i), "close_strength": math.sin(i * math.pi)} for i in range(10)]
+    result = compute_factor_cross_correlation(rows)
+    assert result["factor_min_correlation"] is not None
+    assert abs(result["factor_min_correlation"]) < 0.5
+
+
+def test_r28_factor_cross_corr_high_correlation_pairs_filtered() -> None:
+    """|corr| > 0.70 threshold should correctly classify high-correlation pairs."""
+    from scripts.btst_analysis_utils import compute_factor_cross_correlation
+    # Create a case where breakout_freshness and close_strength are almost perfectly correlated
+    rows = [{"breakout_freshness": float(i), "close_strength": float(i) + 0.01 * (i % 3), "trend_acceleration": float(9 - i)} for i in range(10)]
+    result = compute_factor_cross_correlation(rows)
+    high_pairs = result["high_correlation_pairs"]
+    # breakout_freshness vs close_strength should be very high correlation
+    assert any(("breakout_freshness" in p[0] or "breakout_freshness" in p[1]) and ("close_strength" in p[0] or "close_strength" in p[1]) for p in high_pairs)
+
+
+def test_r28_factor_cross_corr_redundancy_warning_flag_threshold() -> None:
+    """redundancy_warning_flag fires only when high_correlation_pair_count > 3."""
+    from scripts.btst_analysis_utils import compute_factor_cross_correlation
+    from scripts.btst_analysis_utils import BTST_FACTOR_NAMES
+    # Create 4+ factors all perfectly correlated
+    base = [float(i) for i in range(10)]
+    rows = [{f: base[i] + (0.001 * j) for j, f in enumerate(BTST_FACTOR_NAMES)} for i in range(10)]
+    result = compute_factor_cross_correlation(rows)
+    assert result["redundancy_warning_flag"] is True
+    assert result["high_correlation_pair_count"] > 3
+
+
+def test_r28_factor_cross_corr_redundancy_warning_false_when_few_high_pairs() -> None:
+    """redundancy_warning_flag is False when only 1-3 high-correlation pairs."""
+    from scripts.btst_analysis_utils import compute_factor_cross_correlation
+    # Only two factors present — at most 1 pair
+    rows = [{"breakout_freshness": float(i), "close_strength": float(i)} for i in range(10)]
+    result = compute_factor_cross_correlation(rows)
+    # At most 1 high-corr pair so flag must be False
+    assert result["high_correlation_pair_count"] <= 1
+    assert result["redundancy_warning_flag"] is False
+
+
+def test_r28_factor_cross_corr_absent_factor_gracefully_skipped() -> None:
+    """Factors with no data in rows (like F11/F12 cross-factors absent) are silently excluded."""
+    from scripts.btst_analysis_utils import compute_factor_cross_correlation
+    # Only provide two factors; all others are absent.
+    rows = [{"breakout_freshness": float(i), "trend_acceleration": float(i) * 0.5} for i in range(10)]
+    result = compute_factor_cross_correlation(rows)
+    assert result["factor_max_correlation"] is not None
+    assert result["high_correlation_pair_count"] is not None
+
+
+def test_r28_factor_cross_corr_empty_rows_returns_nulls() -> None:
+    """Empty rows should return all-null result without raising."""
+    from scripts.btst_analysis_utils import compute_factor_cross_correlation
+    result = compute_factor_cross_correlation([])
+    assert result["factor_max_correlation"] is None
+    assert result["avg_pairwise_correlation"] is None
+    assert result["redundancy_warning_flag"] is False
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 28, Gamma): compute_regime_alpha_consistency
+# ---------------------------------------------------------------------------
+
+
+def test_r28_regime_alpha_all_positive() -> None:
+    """When all domain alphas > 0, all_regimes_positive_alpha must be True."""
+    from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+    # bull days (hs300 > 0.003), bear days (hs300 < -0.003), sideways
+    rows = (
+        [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]
+        + [{"hs300_daily_return": -0.01, "next_close_return": 0.0} for _ in range(6)]
+        + [{"hs300_daily_return": 0.001, "next_close_return": 0.005} for _ in range(6)]
+    )
+    result = compute_regime_alpha_consistency(rows)
+    assert result["all_regimes_positive_alpha"] is True
+    assert result["bull_alpha_avg"] is not None and result["bull_alpha_avg"] > 0
+    assert result["bear_alpha_avg"] is not None and result["bear_alpha_avg"] > 0
+    assert result["sideways_alpha_avg"] is not None and result["sideways_alpha_avg"] > 0
+
+
+def test_r28_regime_alpha_bear_negative() -> None:
+    """When bear alpha < 0, all_regimes_positive_alpha must be False."""
+    from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+    rows = (
+        [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]
+        + [{"hs300_daily_return": -0.01, "next_close_return": -0.02} for _ in range(6)]
+        + [{"hs300_daily_return": 0.001, "next_close_return": 0.005} for _ in range(6)]
+    )
+    result = compute_regime_alpha_consistency(rows)
+    assert result["all_regimes_positive_alpha"] is False
+    assert result["bear_alpha_avg"] is not None and result["bear_alpha_avg"] < 0
+    assert result["worst_regime"] == "bear"
+
+
+def test_r28_regime_alpha_consistency_score_correct() -> None:
+    """alpha_consistency_score = min_alpha / max(|domain_alphas|)."""
+    from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+    # bull alpha = 0.01, bear alpha = 0.005, sideways alpha = 0.008  → min=0.005, max_abs=0.01
+    rows = (
+        [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]   # alpha 0.01
+        + [{"hs300_daily_return": -0.01, "next_close_return": -0.005} for _ in range(6)]  # alpha 0.005
+        + [{"hs300_daily_return": 0.001, "next_close_return": 0.009} for _ in range(6)]  # alpha 0.008
+    )
+    result = compute_regime_alpha_consistency(rows)
+    score = result["alpha_consistency_score"]
+    assert score is not None
+    # min(0.01, 0.005, 0.008) / max_abs(0.01) = 0.005 / 0.01 = 0.5
+    assert abs(score - 0.5) < 0.01
+
+
+def test_r28_regime_alpha_missing_hs300_returns_all_none() -> None:
+    """When hs300_daily_return is absent, all fields should degrade to None."""
+    from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+    rows = [{"next_close_return": 0.01} for _ in range(10)]
+    result = compute_regime_alpha_consistency(rows)
+    assert result["bull_alpha_avg"] is None
+    assert result["alpha_consistency_score"] is None
+    assert result["all_regimes_positive_alpha"] is False
+
+
+def test_r28_regime_alpha_insufficient_domain_samples() -> None:
+    """Domain with < 5 samples returns None for that domain's alpha."""
+    from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+    # Only 3 bear days — bear_alpha_avg should be None
+    rows = (
+        [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]
+        + [{"hs300_daily_return": -0.01, "next_close_return": -0.005} for _ in range(3)]
+        + [{"hs300_daily_return": 0.001, "next_close_return": 0.009} for _ in range(6)]
+    )
+    result = compute_regime_alpha_consistency(rows)
+    assert result["bear_alpha_avg"] is None
+
+
+def test_r28_regime_alpha_spread_calculation() -> None:
+    """alpha_regime_spread should equal max_alpha - min_alpha across valid domains."""
+    from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+    rows = (
+        [{"hs300_daily_return": 0.01, "next_close_return": 0.03} for _ in range(6)]   # alpha 0.02
+        + [{"hs300_daily_return": -0.01, "next_close_return": -0.008} for _ in range(6)]  # alpha 0.002
+        + [{"hs300_daily_return": 0.001, "next_close_return": 0.006} for _ in range(6)]  # alpha 0.005
+    )
+    result = compute_regime_alpha_consistency(rows)
+    spread = result["alpha_regime_spread"]
+    assert spread is not None
+    # max=0.02, min=0.002 → spread≈0.018
+    assert abs(spread - 0.018) < 0.002
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 28, Beta): compute_post_loss_recovery_analysis
+# ---------------------------------------------------------------------------
+
+
+def test_r28_post_loss_mean_reversion_signal() -> None:
+    """T+2 positive rate > 0.55 triggers mean_reversion_signal."""
+    from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+    # 7 out of 8 loss rows have T+2 > 0 → positive rate = 0.875
+    rows = (
+        [{"next_close_return": -0.02, "t_plus_2_close_return": 0.01} for _ in range(7)]
+        + [{"next_close_return": -0.02, "t_plus_2_close_return": -0.01}]
+        + [{"next_close_return": 0.01}]  # win row — excluded
+    )
+    result = compute_post_loss_recovery_analysis(rows)
+    assert result["mean_reversion_signal"] is True
+    assert result["momentum_continuation_signal"] is False
+    assert result["post_loss_t2_positive_rate"] > 0.55
+
+
+def test_r28_post_loss_momentum_continuation_signal() -> None:
+    """T+2 positive rate < 0.45 triggers momentum_continuation_signal."""
+    from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+    rows = (
+        [{"next_close_return": -0.02, "t_plus_2_close_return": -0.01} for _ in range(7)]
+        + [{"next_close_return": -0.02, "t_plus_2_close_return": 0.01}]
+        + [{"next_close_return": 0.01}]
+    )
+    result = compute_post_loss_recovery_analysis(rows)
+    assert result["momentum_continuation_signal"] is True
+    assert result["mean_reversion_signal"] is False
+
+
+def test_r28_post_loss_hold_through_loss_beneficial_true() -> None:
+    """hold_through_loss_beneficial is True when T+2 avg > |T1 loss avg| × 0.30."""
+    from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+    # T1 loss avg = -0.04; need T+2 avg > 0.04 × 0.30 = 0.012
+    rows = [{"next_close_return": -0.04, "t_plus_2_close_return": 0.02} for _ in range(6)]
+    result = compute_post_loss_recovery_analysis(rows)
+    assert result["hold_through_loss_beneficial"] is True
+
+
+def test_r28_post_loss_hold_through_loss_beneficial_false() -> None:
+    """hold_through_loss_beneficial is False when T+2 avg ≤ |T1 loss avg| × 0.30."""
+    from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+    # T1 loss avg = -0.04; T+2 avg = 0.005 < 0.012 threshold
+    rows = [{"next_close_return": -0.04, "t_plus_2_close_return": 0.005} for _ in range(6)]
+    result = compute_post_loss_recovery_analysis(rows)
+    assert result["hold_through_loss_beneficial"] is False
+
+
+def test_r28_post_loss_insufficient_samples_degradation() -> None:
+    """Fewer than 5 loss rows should degrade most fields to None."""
+    from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+    rows = [{"next_close_return": -0.02, "t_plus_2_close_return": 0.01} for _ in range(3)]
+    result = compute_post_loss_recovery_analysis(rows)
+    assert result["loss_sample_count"] == 3
+    assert result["post_loss_t2_positive_rate"] is None
+    assert result["mean_reversion_signal"] is False
+
+
+def test_r28_post_loss_recovery_expected_value() -> None:
+    """recovery_expected_value = t1_loss_avg × (1 + t2_avg_return)."""
+    from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+    # T1 loss = -0.04, T+2 return = 0.02 → EV = -0.04 × 1.02 = -0.0408
+    rows = [{"next_close_return": -0.04, "t_plus_2_close_return": 0.02} for _ in range(6)]
+    result = compute_post_loss_recovery_analysis(rows)
+    ev = result["recovery_expected_value"]
+    assert ev is not None
+    assert abs(ev - (-0.04 * 1.02)) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# Round 28 registry tests — metrics in COMPARISON_METRICS / OPTIONAL / labels / floors
+# ---------------------------------------------------------------------------
+
+
+def test_r28_new_metrics_in_comparison_metrics() -> None:
+    """All R28 COMPARISON_METRICS entries must be present."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "high_correlation_pair_count" in COMPARISON_METRICS
+    assert "alpha_consistency_score" in COMPARISON_METRICS
+    assert "all_regimes_positive_alpha" in COMPARISON_METRICS
+    assert "post_loss_t2_positive_rate" in COMPARISON_METRICS
+
+
+def test_r28_new_metrics_in_optional_comparison_metrics() -> None:
+    """All R28 metrics must be optional (pre-R28 surfaces omit them)."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "high_correlation_pair_count" in OPTIONAL_COMPARISON_METRICS
+    assert "alpha_consistency_score" in OPTIONAL_COMPARISON_METRICS
+    assert "all_regimes_positive_alpha" in OPTIONAL_COMPARISON_METRICS
+    assert "post_loss_t2_positive_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r28_new_metrics_have_labels() -> None:
+    """All R28 metrics must have human-readable labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "high_correlation_pair_count" in COMPARISON_METRIC_LABELS
+    assert "alpha_consistency_score" in COMPARISON_METRIC_LABELS
+    assert "all_regimes_positive_alpha" in COMPARISON_METRIC_LABELS
+    assert "post_loss_t2_positive_rate" in COMPARISON_METRIC_LABELS
+
+
+def test_r28_high_correlation_pair_count_lower_is_better() -> None:
+    """high_correlation_pair_count must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "high_correlation_pair_count" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r28_bear_alpha_floor_in_btst_quality_floors() -> None:
+    """bear_alpha_avg floor must be registered at -0.005."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "bear_alpha_avg" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["bear_alpha_avg"] == -0.005

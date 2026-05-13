@@ -202,6 +202,13 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "score_discrimination_index",
     # Task 3 (Round 27, Beta): liquidity-aware position guidance.
     "recommended_max_positions",
+    # Task 1 (Round 28, Alpha): factor cross-correlation — redundant-pair count.
+    "high_correlation_pair_count",
+    # Task 2 (Round 28, Gamma): regime-domain alpha consistency.
+    "alpha_consistency_score",
+    "all_regimes_positive_alpha",
+    # Task 3 (Round 28, Beta): post-loss recovery T+2 positive rate.
+    "post_loss_t2_positive_rate",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -294,6 +301,13 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "score_discrimination_index": "Score Discrim Index",
     # Task 3 (Round 27, Beta): liquidity position guidance
     "recommended_max_positions": "Max Positions",
+    # Task 1 (Round 28, Alpha): factor cross-correlation
+    "high_correlation_pair_count": "Factor Redund Pairs",
+    # Task 2 (Round 28, Gamma): regime alpha consistency
+    "alpha_consistency_score": "Alpha Regime Consist",
+    "all_regimes_positive_alpha": "All Regimes Pos Alpha",
+    # Task 3 (Round 28, Beta): post-loss recovery
+    "post_loss_t2_positive_rate": "Post-Loss T2 Pos%",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -321,6 +335,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "decaying_factor_count",
     # Task 2 (Round 25, Beta): window volatility — higher = more unstable selection = lower-is-better.
     "win_rate_window_volatility",
+    # Task 1 (Round 28, Alpha): high correlation pair count — more redundant pairs = worse = lower-is-better.
+    "high_correlation_pair_count",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -408,6 +424,13 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "score_discrimination_index",
     # Task 3 (Round 27, Beta): liquidity position guidance — optional; pre-Round-27 outputs omit it.
     "recommended_max_positions",
+    # Task 1 (Round 28, Alpha): factor cross-correlation — optional; pre-Round-28 outputs omit it.
+    "high_correlation_pair_count",
+    # Task 2 (Round 28, Gamma): regime alpha consistency — optional; requires hs300_daily_return field.
+    "alpha_consistency_score",
+    "all_regimes_positive_alpha",
+    # Task 3 (Round 28, Beta): post-loss recovery — optional; pre-Round-28 outputs omit it.
+    "post_loss_t2_positive_rate",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,

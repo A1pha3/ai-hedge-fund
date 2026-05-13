@@ -86,7 +86,15 @@
       "win_rate_window_trend_delta": null,
       "alpha_avg_return_delta": null,
       "information_ratio_delta": null,
-      "suggested_stop_loss_pct_delta": null
+      "suggested_stop_loss_pct_delta": null,
+      "next_close_return_skewness_delta": null,
+      "win_loss_std_ratio_delta": null,
+      "score_discrimination_index_delta": null,
+      "recommended_max_positions_delta": null,
+      "high_correlation_pair_count_delta": null,
+      "alpha_consistency_score_delta": null,
+      "all_regimes_positive_alpha_delta": null,
+      "post_loss_t2_positive_rate_delta": null
     },
     "default": {
       "candidate": {
@@ -163,7 +171,15 @@
       "win_rate_window_trend_delta": null,
       "alpha_avg_return_delta": null,
       "information_ratio_delta": null,
-      "suggested_stop_loss_pct_delta": null
+      "suggested_stop_loss_pct_delta": null,
+      "next_close_return_skewness_delta": null,
+      "win_loss_std_ratio_delta": null,
+      "score_discrimination_index_delta": null,
+      "recommended_max_positions_delta": null,
+      "high_correlation_pair_count_delta": null,
+      "alpha_consistency_score_delta": null,
+      "all_regimes_positive_alpha_delta": null,
+      "post_loss_t2_positive_rate_delta": null
     }
   },
   "rollout_recommendation": "hold",

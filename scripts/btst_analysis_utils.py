@@ -2406,6 +2406,236 @@ def compute_liquidity_position_guidance(surface_summary: dict[str, Any]) -> dict
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 1 (Round 28, Alpha): Factor cross-correlation matrix analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_factor_cross_correlation(rows: list[dict]) -> dict:
+    """计算12个BTST因子的两两Spearman相关系数，识别冗余因子对。
+
+    For each factor pair (i, j), uses only rows where **both** factors carry non-missing data.
+    Pairs with fewer than 5 common observations are skipped.  Missing factor values are treated
+    as absent (not filled), so F11/F12 cross-factors that may not be pre-computed in rows are
+    gracefully excluded.
+
+    Args:
+        rows: BTST candidate rows.  Factor values are looked up directly by name from
+            :data:`BTST_FACTOR_NAMES`.
+
+    Returns:
+        Dict with keys:
+
+        - ``factor_max_correlation_pair``: tuple[str, str] | None — factor pair with highest |corr|.
+        - ``factor_max_correlation``: float | None — corresponding Spearman correlation.
+        - ``factor_min_correlation_pair``: tuple[str, str] | None — most orthogonal factor pair.
+        - ``factor_min_correlation``: float | None — corresponding Spearman correlation (lowest |corr|).
+        - ``high_correlation_pairs``: list[tuple[str, str, float]] — all pairs with |corr| > 0.70.
+        - ``high_correlation_pair_count``: int — count of high-correlation pairs.
+        - ``avg_pairwise_correlation``: float | None — mean |corr| across all computed pairs.
+        - ``redundancy_warning_flag``: bool — True when high_correlation_pair_count > 3.
+    """
+    _null: dict = {"factor_max_correlation_pair": None, "factor_max_correlation": None, "factor_min_correlation_pair": None, "factor_min_correlation": None, "high_correlation_pairs": [], "high_correlation_pair_count": 0, "avg_pairwise_correlation": None, "redundancy_warning_flag": False}
+    if not rows:
+        return _null
+
+    # Identify factors that appear in at least one row (graceful skip for absent cross-factors).
+    available_factors: list[str] = [f for f in BTST_FACTOR_NAMES if any(row.get(f) is not None for row in rows)]
+    n_factors = len(available_factors)
+    if n_factors < 2:
+        return _null
+
+    # Compute C(n,2) pairwise Spearman correlations using only common non-missing observations.
+    computed_pairs: list[tuple[str, str, float]] = []
+    for i in range(n_factors):
+        for j in range(i + 1, n_factors):
+            fi = available_factors[i]
+            fj = available_factors[j]
+            xs: list[float] = []
+            ys: list[float] = []
+            for row in rows:
+                vi = row.get(fi)
+                vj = row.get(fj)
+                if vi is not None and vj is not None:
+                    xs.append(float(vi))
+                    ys.append(float(vj))
+            corr = _spearman_corr(xs, ys)
+            if corr is not None:
+                computed_pairs.append((fi, fj, corr))
+
+    if not computed_pairs:
+        return _null
+
+    max_pair = max(computed_pairs, key=lambda t: abs(t[2]))
+    min_pair = min(computed_pairs, key=lambda t: abs(t[2]))
+    high_corr_pairs: list[tuple[str, str, float]] = [(fi, fj, corr) for fi, fj, corr in computed_pairs if abs(corr) > 0.70]
+    avg_pairwise: float = round(sum(abs(t[2]) for t in computed_pairs) / len(computed_pairs), 4)
+
+    return {
+        "factor_max_correlation_pair": (max_pair[0], max_pair[1]),
+        "factor_max_correlation": round(max_pair[2], 4),
+        "factor_min_correlation_pair": (min_pair[0], min_pair[1]),
+        "factor_min_correlation": round(min_pair[2], 4),
+        "high_correlation_pairs": high_corr_pairs,
+        "high_correlation_pair_count": len(high_corr_pairs),
+        "avg_pairwise_correlation": avg_pairwise,
+        "redundancy_warning_flag": len(high_corr_pairs) > 3,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 28, Gamma): Regime-domain Alpha consistency analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_regime_alpha_consistency(rows: list[dict]) -> dict:
+    """分别计算bull/bear/sideways三个市场环境下的Alpha表现。
+
+    Uses ``hs300_daily_return`` as both the benchmark return and the regime classifier:
+    bull day > +0.3 %, bear day < −0.3 %, sideways otherwise.
+    Alpha per row = ``next_close_return`` − ``hs300_daily_return``.
+
+    When ``hs300_daily_return`` is absent from all rows all fields return None.
+    Domains with fewer than 5 samples return None for their alpha (and are excluded from
+    consistency scoring).  When fewer than 2 domains have valid alpha, ``alpha_consistency_score``
+    returns None.
+
+    Args:
+        rows: BTST candidate rows.  Fields used: ``next_close_return`` and ``hs300_daily_return``.
+
+    Returns:
+        Dict with keys:
+
+        - ``bull_alpha_avg``: float | None — mean alpha on bull-market days (hs300 > +0.3 %).
+        - ``bear_alpha_avg``: float | None — mean alpha on bear-market days (hs300 < −0.3 %).
+        - ``sideways_alpha_avg``: float | None — mean alpha on sideways days.
+        - ``alpha_consistency_score``: float | None — min_domain_alpha / max(|domain_alphas|); ∈ (−∞, 1].
+        - ``all_regimes_positive_alpha``: bool — all valid-domain alphas > 0.
+        - ``worst_regime_alpha``: float | None — lowest domain alpha among valid domains.
+        - ``worst_regime``: str | None — "bull" | "bear" | "sideways".
+        - ``alpha_regime_spread``: float | None — max_alpha − min_alpha across valid domains.
+    """
+    _null: dict = {"bull_alpha_avg": None, "bear_alpha_avg": None, "sideways_alpha_avg": None, "alpha_consistency_score": None, "all_regimes_positive_alpha": False, "worst_regime_alpha": None, "worst_regime": None, "alpha_regime_spread": None}
+    if not any(row.get("hs300_daily_return") is not None for row in rows):
+        return _null
+
+    bull_alphas: list[float] = []
+    bear_alphas: list[float] = []
+    sideways_alphas: list[float] = []
+    for row in rows:
+        bm = row.get("hs300_daily_return")
+        btst = row.get("next_close_return")
+        if bm is None or btst is None:
+            continue
+        bm_f = float(bm)
+        alpha = float(btst) - bm_f
+        if bm_f > 0.003:
+            bull_alphas.append(alpha)
+        elif bm_f < -0.003:
+            bear_alphas.append(alpha)
+        else:
+            sideways_alphas.append(alpha)
+
+    bull_alpha_avg: float | None = round(sum(bull_alphas) / len(bull_alphas), 4) if len(bull_alphas) >= 5 else None
+    bear_alpha_avg: float | None = round(sum(bear_alphas) / len(bear_alphas), 4) if len(bear_alphas) >= 5 else None
+    sideways_alpha_avg: float | None = round(sum(sideways_alphas) / len(sideways_alphas), 4) if len(sideways_alphas) >= 5 else None
+
+    valid: dict[str, float] = {k: v for k, v in {"bull": bull_alpha_avg, "bear": bear_alpha_avg, "sideways": sideways_alpha_avg}.items() if v is not None}
+
+    worst_regime: str | None = min(valid, key=lambda k: valid[k]) if valid else None
+    worst_regime_alpha: float | None = valid[worst_regime] if worst_regime is not None else None
+
+    if len(valid) < 2:
+        return {"bull_alpha_avg": bull_alpha_avg, "bear_alpha_avg": bear_alpha_avg, "sideways_alpha_avg": sideways_alpha_avg, "alpha_consistency_score": None, "all_regimes_positive_alpha": False, "worst_regime_alpha": worst_regime_alpha, "worst_regime": worst_regime, "alpha_regime_spread": None}
+
+    vals = list(valid.values())
+    min_alpha = min(vals)
+    max_alpha = max(vals)
+    max_abs = max(abs(a) for a in vals)
+    alpha_consistency_score: float | None = round(min_alpha / max_abs, 4) if max_abs > 0.0 else None
+    all_regimes_positive_alpha: bool = all(a > 0.0 for a in vals)
+    alpha_regime_spread: float = round(max_alpha - min_alpha, 4)
+
+    return {
+        "bull_alpha_avg": bull_alpha_avg,
+        "bear_alpha_avg": bear_alpha_avg,
+        "sideways_alpha_avg": sideways_alpha_avg,
+        "alpha_consistency_score": alpha_consistency_score,
+        "all_regimes_positive_alpha": all_regimes_positive_alpha,
+        "worst_regime_alpha": worst_regime_alpha,
+        "worst_regime": worst_regime,
+        "alpha_regime_spread": alpha_regime_spread,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 28, Beta): Post-loss recovery rate analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_post_loss_recovery_analysis(rows: list[dict]) -> dict:
+    """分析T+1亏损后T+2/T+3的恢复模式。
+
+    Only analyses the loss subset where ``next_close_return < 0``.  When the loss
+    subset has fewer than 5 rows, most outputs return None.
+
+    Args:
+        rows: BTST candidate rows.  Fields used: ``next_close_return`` (T+1),
+            ``t_plus_2_close_return`` (T+2), ``t_plus_3_close_return`` (T+3).
+
+    Returns:
+        Dict with keys:
+
+        - ``loss_sample_count``: int — number of T+1 loss rows.
+        - ``post_loss_t2_positive_rate``: float | None — fraction of loss rows where T+2 > 0.
+        - ``post_loss_t2_avg_return``: float | None — mean T+2 return for loss rows.
+        - ``post_loss_t3_avg_return``: float | None — mean T+3 return for loss rows.
+        - ``mean_reversion_signal``: bool — post_loss_t2_positive_rate > 0.55.
+        - ``momentum_continuation_signal``: bool — post_loss_t2_positive_rate < 0.45.
+        - ``recovery_expected_value``: float | None — t1_loss_avg × (1 + post_loss_t2_avg_return).
+        - ``hold_through_loss_beneficial``: bool — post_loss_t2_avg_return > |t1_loss_avg| × 0.30.
+    """
+    _null: dict = {"loss_sample_count": 0, "post_loss_t2_positive_rate": None, "post_loss_t2_avg_return": None, "post_loss_t3_avg_return": None, "mean_reversion_signal": False, "momentum_continuation_signal": False, "recovery_expected_value": None, "hold_through_loss_beneficial": False}
+    loss_rows: list[dict] = [row for row in rows if row.get("next_close_return") is not None and float(row["next_close_return"]) < 0.0]
+    n_loss: int = len(loss_rows)
+    if n_loss < 5:
+        return {**_null, "loss_sample_count": n_loss}
+
+    t1_losses: list[float] = [float(row["next_close_return"]) for row in loss_rows]
+    t1_loss_avg: float = sum(t1_losses) / len(t1_losses)
+
+    # T+2 metrics — use only loss rows that also carry a T+2 close return.
+    t2_eligible: list[dict] = [row for row in loss_rows if row.get("t_plus_2_close_return") is not None]
+    if t2_eligible:
+        t2_rets: list[float] = [float(row["t_plus_2_close_return"]) for row in t2_eligible]
+        post_loss_t2_positive_rate: float | None = round(sum(1 for r in t2_rets if r > 0.0) / len(t2_rets), 4)
+        post_loss_t2_avg_return: float | None = round(sum(t2_rets) / len(t2_rets), 4)
+    else:
+        post_loss_t2_positive_rate = None
+        post_loss_t2_avg_return = None
+
+    # T+3 metrics — use only loss rows that also carry a T+3 close return.
+    t3_eligible: list[dict] = [row for row in loss_rows if row.get("t_plus_3_close_return") is not None]
+    post_loss_t3_avg_return: float | None = round(sum(float(row["t_plus_3_close_return"]) for row in t3_eligible) / len(t3_eligible), 4) if t3_eligible else None
+
+    mean_reversion_signal: bool = post_loss_t2_positive_rate is not None and post_loss_t2_positive_rate > 0.55
+    momentum_continuation_signal: bool = post_loss_t2_positive_rate is not None and post_loss_t2_positive_rate < 0.45
+
+    recovery_expected_value: float | None = round(t1_loss_avg * (1.0 + post_loss_t2_avg_return), 4) if post_loss_t2_avg_return is not None else None
+    hold_through_loss_beneficial: bool = post_loss_t2_avg_return is not None and post_loss_t2_avg_return > abs(t1_loss_avg) * 0.30
+
+    return {
+        "loss_sample_count": n_loss,
+        "post_loss_t2_positive_rate": post_loss_t2_positive_rate,
+        "post_loss_t2_avg_return": post_loss_t2_avg_return,
+        "post_loss_t3_avg_return": post_loss_t3_avg_return,
+        "mean_reversion_signal": mean_reversion_signal,
+        "momentum_continuation_signal": momentum_continuation_signal,
+        "recovery_expected_value": recovery_expected_value,
+        "hold_through_loss_beneficial": hold_through_loss_beneficial,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -3060,6 +3290,42 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["concentration_risk_level"] = _liquidity_guidance.get("concentration_risk_level")
     _surface_result["diversification_feasible"] = _liquidity_guidance.get("diversification_feasible")
     _surface_result["pool_size_stability"] = _liquidity_guidance.get("pool_size_stability")
+    # -----------------------------------------------------------------------
+    # Round 28, Task 1 (Alpha): Factor cross-correlation matrix.
+    # Computes C(12,2)=66 pairwise Spearman correlations across BTST_FACTOR_NAMES.
+    # Uses all rows (not just next_day_rows) to maximise sample coverage.
+    # -----------------------------------------------------------------------
+    _factor_cross_corr: dict[str, Any] = compute_factor_cross_correlation(rows)
+    _surface_result["factor_cross_correlation"] = _factor_cross_corr
+    _surface_result["factor_max_correlation"] = _factor_cross_corr.get("factor_max_correlation")
+    _surface_result["high_correlation_pair_count"] = _factor_cross_corr.get("high_correlation_pair_count")
+    _surface_result["avg_pairwise_correlation"] = _factor_cross_corr.get("avg_pairwise_correlation")
+    _surface_result["redundancy_warning_flag"] = _factor_cross_corr.get("redundancy_warning_flag")
+    # -----------------------------------------------------------------------
+    # Round 28, Task 2 (Gamma): Regime-domain Alpha consistency.
+    # Splits next_day_rows into bull/bear/sideways by hs300_daily_return and
+    # measures whether the strategy alpha is positive in all three domains.
+    # -----------------------------------------------------------------------
+    _regime_alpha_consistency: dict[str, Any] = compute_regime_alpha_consistency(next_day_rows)
+    _surface_result["regime_alpha_consistency"] = _regime_alpha_consistency
+    _surface_result["bull_alpha_avg"] = _regime_alpha_consistency.get("bull_alpha_avg")
+    _surface_result["bear_alpha_avg"] = _regime_alpha_consistency.get("bear_alpha_avg")
+    _surface_result["sideways_alpha_avg"] = _regime_alpha_consistency.get("sideways_alpha_avg")
+    _surface_result["alpha_consistency_score"] = _regime_alpha_consistency.get("alpha_consistency_score")
+    _surface_result["all_regimes_positive_alpha"] = _regime_alpha_consistency.get("all_regimes_positive_alpha")
+    _surface_result["worst_regime_alpha"] = _regime_alpha_consistency.get("worst_regime_alpha")
+    _surface_result["alpha_regime_spread"] = _regime_alpha_consistency.get("alpha_regime_spread")
+    # -----------------------------------------------------------------------
+    # Round 28, Task 3 (Beta): Post-loss recovery rate analysis.
+    # Identifies whether T+1 losses are followed by T+2 mean-reversion or
+    # momentum continuation — directly informing multi-day hold decisions.
+    # -----------------------------------------------------------------------
+    _post_loss_recovery: dict[str, Any] = compute_post_loss_recovery_analysis(rows)
+    _surface_result["post_loss_recovery"] = _post_loss_recovery
+    _surface_result["post_loss_t2_positive_rate"] = _post_loss_recovery.get("post_loss_t2_positive_rate")
+    _surface_result["post_loss_t2_avg_return"] = _post_loss_recovery.get("post_loss_t2_avg_return")
+    _surface_result["mean_reversion_signal"] = _post_loss_recovery.get("mean_reversion_signal")
+    _surface_result["hold_through_loss_beneficial"] = _post_loss_recovery.get("hold_through_loss_beneficial")
     # -----------------------------------------------------------------------
     # Round 25, Task 1 (Gamma): Profile health score — aggregate all quality
     # indicators into a single 0-100 score so strategists can compare profiles
