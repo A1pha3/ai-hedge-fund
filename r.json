@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_dcf32a7e73c1_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_a6650edb1347_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -152,5 +152,10 @@
         ]
       }
     }
+  },
+  "optimized_profile_manifest_publication": {
+    "status": "skipped",
+    "reason": "non_btst_objective",
+    "manifest_path": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/btst_latest_optimized_profile.json"
   }
 }

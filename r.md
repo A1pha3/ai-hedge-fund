@@ -3,7 +3,7 @@
 ## Search Metadata
 
 Search Stage: **full**
-Checkpoint: `data/reports/param_search_ignition_breakout_dcf32a7e73c1_checkpoint.json`
+Checkpoint: `data/reports/param_search_ignition_breakout_a6650edb1347_checkpoint.json`
 
 ## Baseline Comparison
 
@@ -33,3 +33,7 @@ Rollout Blockers:
 - `missing_gap_risk_raw_100_delta_vs_default`
 - `missing_projected_theme_exposure_delta_vs_default`
 - `missing_incremental_theme_exposure_delta_vs_default`
+
+Optimized Profile Manifest Publication: **skipped**
+- manifest_path: `/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/btst_latest_optimized_profile.json`
+- reason: `non_btst_objective`

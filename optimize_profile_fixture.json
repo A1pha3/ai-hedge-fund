@@ -4,5 +4,110 @@
     "guardrails": {},
     "focus_source": null,
     "checkpoint_path": "data/reports/param_search_ignition_breakout_f835564c98ef_checkpoint.json"
+  },
+  "optimized_profile_manifest_publication": {
+    "status": "skipped",
+    "reason": "non_btst_objective",
+    "manifest_path": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/btst_latest_optimized_profile.json"
+  },
+  "comparison_summary": {
+    "ignition_breakout": {
+      "candidate": {
+        "window_count": 1,
+        "window_coverage": 1.0,
+        "sample_weight": 0.5,
+        "next_close_positive_rate": 0.6,
+        "next_close_expectancy": 0.01
+      },
+      "baseline": {
+        "window_count": 1,
+        "window_coverage": 1.0,
+        "sample_weight": 0.5,
+        "next_close_positive_rate": 0.6,
+        "next_close_expectancy": 0.01
+      },
+      "next_close_positive_rate_delta": 0.0,
+      "next_high_hit_rate_delta": null,
+      "next_close_expectancy_delta": 0.0,
+      "downside_p10_delta": null,
+      "window_coverage_delta": 0.0,
+      "liquidity_capacity_raw_100_delta": null,
+      "crowding_risk_raw_100_delta": null,
+      "gap_risk_raw_100_delta": null,
+      "projected_theme_exposure_delta": null,
+      "incremental_theme_exposure_delta": null
+    },
+    "default": {
+      "candidate": {
+        "window_count": 1,
+        "window_coverage": 1.0,
+        "sample_weight": 0.5,
+        "next_close_positive_rate": 0.6,
+        "next_close_expectancy": 0.01
+      },
+      "baseline": {
+        "window_count": 1,
+        "window_coverage": 1.0,
+        "sample_weight": 0.5,
+        "next_close_positive_rate": 0.6,
+        "next_close_expectancy": 0.01
+      },
+      "next_close_positive_rate_delta": 0.0,
+      "next_high_hit_rate_delta": null,
+      "next_close_expectancy_delta": 0.0,
+      "downside_p10_delta": null,
+      "window_coverage_delta": 0.0,
+      "liquidity_capacity_raw_100_delta": null,
+      "crowding_risk_raw_100_delta": null,
+      "gap_risk_raw_100_delta": null,
+      "projected_theme_exposure_delta": null,
+      "incremental_theme_exposure_delta": null
+    }
+  },
+  "rollout_recommendation": "hold",
+  "rollout_recommendation_details": {
+    "action": "hold",
+    "blockers": [
+      "missing_next_high_hit_rate_delta_vs_ignition_breakout",
+      "missing_downside_p10_delta_vs_ignition_breakout",
+      "missing_liquidity_capacity_raw_100_delta_vs_ignition_breakout",
+      "missing_crowding_risk_raw_100_delta_vs_ignition_breakout",
+      "missing_gap_risk_raw_100_delta_vs_ignition_breakout",
+      "missing_projected_theme_exposure_delta_vs_ignition_breakout",
+      "missing_incremental_theme_exposure_delta_vs_ignition_breakout",
+      "missing_next_high_hit_rate_delta_vs_default",
+      "missing_downside_p10_delta_vs_default",
+      "missing_liquidity_capacity_raw_100_delta_vs_default",
+      "missing_crowding_risk_raw_100_delta_vs_default",
+      "missing_gap_risk_raw_100_delta_vs_default",
+      "missing_projected_theme_exposure_delta_vs_default",
+      "missing_incremental_theme_exposure_delta_vs_default"
+    ],
+    "baseline_verdicts": {
+      "ignition_breakout": {
+        "status": "blocked",
+        "blockers": [
+          "missing_next_high_hit_rate_delta_vs_ignition_breakout",
+          "missing_downside_p10_delta_vs_ignition_breakout",
+          "missing_liquidity_capacity_raw_100_delta_vs_ignition_breakout",
+          "missing_crowding_risk_raw_100_delta_vs_ignition_breakout",
+          "missing_gap_risk_raw_100_delta_vs_ignition_breakout",
+          "missing_projected_theme_exposure_delta_vs_ignition_breakout",
+          "missing_incremental_theme_exposure_delta_vs_ignition_breakout"
+        ]
+      },
+      "default": {
+        "status": "blocked",
+        "blockers": [
+          "missing_next_high_hit_rate_delta_vs_default",
+          "missing_downside_p10_delta_vs_default",
+          "missing_liquidity_capacity_raw_100_delta_vs_default",
+          "missing_crowding_risk_raw_100_delta_vs_default",
+          "missing_gap_risk_raw_100_delta_vs_default",
+          "missing_projected_theme_exposure_delta_vs_default",
+          "missing_incremental_theme_exposure_delta_vs_default"
+        ]
+      }
+    }
   }
 }
