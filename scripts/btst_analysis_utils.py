@@ -174,7 +174,7 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         max_future_high_trade_date_2_5d = max_idx.strftime("%Y-%m-%d")
     max_future_high_return_2_5d = None if max_future_high is None else round((max_future_high / trade_close) - 1.0, 4)
     hit_rows = future_horizon_rows.loc[(future_horizon_rows["high"].astype(float) / trade_close) - 1.0 >= 0.20]
-    time_to_hit_20pct = None if hit_rows.empty else int(hit_rows.index[0].normalize().dayofyear - future_horizon_rows.index[0].normalize().dayofyear + 1)
+    time_to_hit_20pct = None if hit_rows.empty else int((hit_rows.index[0].normalize() - future_horizon_rows.index[0].normalize()).days + 1)
     future_high_hit_20pct_2_5d = False if hit_rows.empty else True
 
     data_status = "ok" if t_plus_2_close is not None else "missing_t_plus_2_bar"
