@@ -290,3 +290,91 @@ def test_run_ab_comparison_walk_forward_unknown_preset_raises(monkeypatch):
             agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
             walk_forward_preset="nonexistent_preset",
         )
+
+
+def test_runner_delta_fields_compute_actual_deltas_when_both_present(monkeypatch):
+    """Runner delta summary fields should compute true deltas (MVP - baseline) when both metrics present."""
+    windows = [WalkForwardWindow(train_start="2026-01-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31")]
+    monkeypatch.setattr("src.backtesting.compare.build_walk_forward_windows", lambda *args, **kwargs: windows)
+
+    class StubEngine:
+        def __init__(self, **kwargs):
+            pass
+
+        def run_backtest(self):
+            return {
+                "sharpe_ratio": 1.2,
+                "sortino_ratio": 1.5,
+                "max_future_high_return_2_5d_hit_rate_at_20pct": 0.45,
+                "median_max_future_high_return_2_5d": 0.12,
+            }
+
+    monkeypatch.setattr("src.backtesting.compare.BacktestEngine", StubEngine)
+
+    results, summary = run_ab_comparison_walk_forward(
+        tickers=["000001"],
+        start_date="2026-01-01",
+        end_date="2026-03-31",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+    )
+
+    # When both MVP and baseline runner metrics are present, deltas should be (MVP - baseline)
+    # Baseline returns 0.45, MVP returns 0.45, so delta should be 0.0
+    # Actually, StubEngine returns same values for both, so delta should be 0.0
+    assert summary["avg_runner_tail_hit_delta"] == 0.0
+    assert summary["avg_runner_tail_median_delta"] == 0.0
+
+
+def test_runner_delta_fields_return_none_when_baseline_absent(monkeypatch):
+    """Runner delta summary fields should return None when baseline metrics are absent."""
+    windows = [WalkForwardWindow(train_start="2026-01-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31")]
+    monkeypatch.setattr("src.backtesting.compare.build_walk_forward_windows", lambda *args, **kwargs: windows)
+
+    baseline_called = [False]
+    mvp_called = [False]
+
+    class StubEngine:
+        def __init__(self, **kwargs):
+            self.pipeline = kwargs.get("pipeline")
+
+        def run_backtest(self):
+            is_baseline = isinstance(self.pipeline, BaselineDailyGainersPipeline)
+            if is_baseline:
+                baseline_called[0] = True
+                # Baseline does not include runner metrics
+                return {
+                    "sharpe_ratio": 1.0,
+                    "sortino_ratio": 1.2,
+                }
+            else:
+                mvp_called[0] = True
+                # MVP includes runner metrics
+                return {
+                    "sharpe_ratio": 1.2,
+                    "sortino_ratio": 1.5,
+                    "max_future_high_return_2_5d_hit_rate_at_20pct": 0.45,
+                    "median_max_future_high_return_2_5d": 0.12,
+                }
+
+    monkeypatch.setattr("src.backtesting.compare.BacktestEngine", StubEngine)
+
+    results, summary = run_ab_comparison_walk_forward(
+        tickers=["000001"],
+        start_date="2026-01-01",
+        end_date="2026-03-31",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+    )
+
+    # When baseline runner metrics are absent, delta should be None (cannot compute delta)
+    assert summary["avg_runner_tail_hit_delta"] is None
+    assert summary["avg_runner_tail_median_delta"] is None

@@ -275,6 +275,8 @@ def resolve_guardrails(
     resolved: dict[str, GuardrailSpec] = {}
     if replay_mode and profile_name == "momentum_optimized" and objective == SearchObjective.BTST.value:
         resolved.update(DEFAULT_BTST_REPLAY_GUARDRAILS)
+    if replay_mode and profile_name == "momentum_optimized" and objective == SearchObjective.BTST_RUNNER.value:
+        resolved.update(DEFAULT_BTST_RUNNER_REPLAY_GUARDRAILS)
     resolved.update(_parse_guardrails(raw_guardrails))
     return resolved
 

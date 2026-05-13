@@ -617,6 +617,39 @@ def test_resolve_grid_params_uses_coarse_stage_preset_for_momentum_profile() -> 
     assert "overhead_penalty_block_threshold" not in grid
 
 
+def test_resolve_guardrails_uses_runner_replay_defaults_for_runner_objective() -> None:
+    """Runner replay guardrails should be applied when objective is btst_runner."""
+    guardrails = resolve_guardrails(
+        profile_name="momentum_optimized",
+        objective="btst_runner",
+        replay_mode=True,
+        raw_guardrails=[],
+    )
+
+    # Should use DEFAULT_BTST_RUNNER_REPLAY_GUARDRAILS
+    assert guardrails["max_future_high_return_2_5d_hit_rate_at_20pct"] == {"min": pytest.approx(0.10)}
+    assert guardrails["next_close_positive_rate"] == pytest.approx(0.54)
+    assert guardrails["downside_p10"] == pytest.approx(-0.06)
+    assert guardrails["window_coverage"] == pytest.approx(0.60)
+    assert guardrails["gap_risk_raw_100"] == {"max": pytest.approx(60.0)}
+
+
+def test_resolve_guardrails_prefers_explicit_values_over_runner_defaults() -> None:
+    """Explicit guardrails should override runner replay defaults."""
+    guardrails = resolve_guardrails(
+        profile_name="momentum_optimized",
+        objective="btst_runner",
+        replay_mode=True,
+        raw_guardrails=["max_future_high_return_2_5d_hit_rate_at_20pct>=0.15", "window_coverage=0.75"],
+    )
+
+    # Explicit values should override defaults
+    assert guardrails["max_future_high_return_2_5d_hit_rate_at_20pct"] == {"min": pytest.approx(0.15)}
+    assert guardrails["window_coverage"] == pytest.approx(0.75)
+    # Other defaults should still be present
+    assert guardrails["next_close_positive_rate"] == pytest.approx(0.54)
+
+
 def test_main_integrates_event_catalyst_params_with_preset_grid(monkeypatch: pytest.MonkeyPatch) -> None:
     import scripts.optimize_profile as opt_module
 
