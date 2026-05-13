@@ -5,10 +5,15 @@ import pytest
 
 from scripts.btst_analysis_utils import (
     BTST_FACTOR_NAMES,
+    BREAKOUT_FRESHNESS_SIGNAL_THRESHOLD,
+    OPEN_VS_HIGH_SIGNIFICANT_DISCOUNT_THRESHOLD,
     build_surface_summary,
     compare_reports,
     compute_all_factor_ics,
+    compute_breakout_conditional_win_rate,
     compute_factor_ic,
+    compute_sell_timing_analysis,
+    compute_t0_bar_metrics,
     summarize_distribution,
     extract_btst_price_outcome,
 )
@@ -175,13 +180,16 @@ def test_build_surface_summary_includes_runner_metrics() -> None:
 
 
 def test_btst_factor_names_contains_seven_factors() -> None:
-    """BTST_FACTOR_NAMES must contain the seven original scoring factors plus the Round-16 additions."""
-    # Round 16 adds t0_estimated_net_inflow_ratio and volume_price_divergence_score → 9 total.
-    assert len(BTST_FACTOR_NAMES) == 9
+    """BTST_FACTOR_NAMES must contain the seven original scoring factors plus the Round-16 and Round-17 additions."""
+    # Round 16 adds t0_estimated_net_inflow_ratio and volume_price_divergence_score (→ 9).
+    # Round 17 adds t0_tail_strength (→ 10 total).
+    assert len(BTST_FACTOR_NAMES) == 10
     expected_original = {"breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength", "volatility_regime", "sector_resonance"}
     expected_r16 = {"t0_estimated_net_inflow_ratio", "volume_price_divergence_score"}
+    expected_r17 = {"t0_tail_strength"}
     assert expected_original.issubset(set(BTST_FACTOR_NAMES))
     assert expected_r16.issubset(set(BTST_FACTOR_NAMES))
+    assert expected_r17.issubset(set(BTST_FACTOR_NAMES))
 
 
 def test_compute_factor_ic_perfect_positive_correlation() -> None:
@@ -248,12 +256,14 @@ def test_compute_all_factor_ics_nonzero_for_sufficient_data() -> None:
             # Round 16 factors: must also be present for IC to be non-None
             "t0_estimated_net_inflow_ratio": random.uniform(-1.0, 1.0),
             "volume_price_divergence_score": random.random(),
+            # Round 17 factor: t0_tail_strength (close/high ratio, ∈ (0,1])
+            "t0_tail_strength": random.uniform(0.5, 1.0),
             "next_close_return": random.uniform(-0.05, 0.1),
         }
         for _ in range(20)
     ]
     ics = compute_all_factor_ics(rows)
-    # All 9 factors have data → all ICs should be float, not None
+    # All 10 factors have data → all ICs should be float, not None
     assert all(isinstance(v, float) for v in ics.values()), f"Some ICs were None: {ics}"
     assert all(-1.0 <= v <= 1.0 for v in ics.values())
 
@@ -287,11 +297,11 @@ def test_build_surface_summary_includes_ic_sub_dicts() -> None:
     ic_nc = summary["factor_ic_next_close"]
     assert isinstance(ic_nc, dict)
     assert set(ic_nc.keys()) == set(BTST_FACTOR_NAMES)
-    # Original 7 factors are perfectly correlated with next_close_return; R16 factors are absent → None.
+    # Original 7 factors are perfectly correlated with next_close_return; R16/R17 factors are absent → None.
     original_factors = {"breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength", "volatility_regime", "sector_resonance"}
-    r16_factors = {"t0_estimated_net_inflow_ratio", "volume_price_divergence_score"}
+    r16_r17_factors = {"t0_estimated_net_inflow_ratio", "volume_price_divergence_score", "t0_tail_strength"}
     assert all(ic_nc[f] == pytest.approx(1.0, abs=1e-4) for f in original_factors), f"Expected IC≈1.0: {ic_nc}"
-    assert all(ic_nc[f] is None for f in r16_factors), f"R16 factors should be None (no data): {ic_nc}"
+    assert all(ic_nc[f] is None for f in r16_r17_factors), f"R16/R17 factors should be None (no data): {ic_nc}"
 
 
 # ---------------------------------------------------------------------------
@@ -1082,3 +1092,284 @@ def test_compute_t0_bar_metrics_flag_price_change_boundary() -> None:
     # price_change_pct = (10.019 - 10.0) / 10.0 = 0.0019 < 0.02 → no flag despite large upper shadow
     result = compute_t0_bar_metrics(10.0, 11.0, 10.0, 10.019)
     assert result["volume_price_divergence_flag"] is False
+
+
+# ===========================================================================
+# Round 17 — Task 2: t0_tail_strength in compute_t0_bar_metrics
+# ===========================================================================
+
+def test_compute_t0_bar_metrics_includes_t0_tail_strength() -> None:
+    """compute_t0_bar_metrics must include 't0_tail_strength' = close/high (Task 2, Round 17)."""
+    result = compute_t0_bar_metrics(10.0, 12.0, 9.0, 11.4)
+    assert "t0_tail_strength" in result
+    # 11.4 / 12.0 = 0.95
+    assert result["t0_tail_strength"] == pytest.approx(11.4 / 12.0, abs=1e-3)
+    assert 0.0 < result["t0_tail_strength"] <= 1.0
+
+
+def test_compute_t0_bar_metrics_tail_strength_at_high() -> None:
+    """t0_tail_strength must be 1.0 when close == high (尾盘在最高价收盘)."""
+    result = compute_t0_bar_metrics(10.0, 12.0, 9.0, 12.0)
+    assert result["t0_tail_strength"] == pytest.approx(1.0, abs=1e-4)
+
+
+def test_compute_t0_bar_metrics_tail_strength_below_one() -> None:
+    """t0_tail_strength must be < 1.0 when close < high (late-session selling)."""
+    result = compute_t0_bar_metrics(10.0, 12.0, 9.0, 10.0)
+    assert result["t0_tail_strength"] < 1.0
+    assert result["t0_tail_strength"] == pytest.approx(10.0 / 12.0, abs=1e-3)
+
+
+def test_btst_factor_names_includes_t0_tail_strength() -> None:
+    """t0_tail_strength must appear in BTST_FACTOR_NAMES (Round 17)."""
+    assert "t0_tail_strength" in BTST_FACTOR_NAMES
+
+
+def test_compute_all_factor_ics_includes_t0_tail_strength() -> None:
+    """compute_all_factor_ics must return a key for 't0_tail_strength' (Round 17)."""
+    result = compute_all_factor_ics([])
+    assert "t0_tail_strength" in result
+    # Empty rows → None IC
+    assert result["t0_tail_strength"] is None
+
+
+def test_compute_all_factor_ics_t0_tail_strength_non_none_with_data() -> None:
+    """compute_all_factor_ics must return a float IC for 't0_tail_strength' when rows contain the field."""
+    import random
+    random.seed(0)
+    rows = [
+        {"t0_tail_strength": random.uniform(0.7, 1.0), "next_close_return": random.uniform(-0.05, 0.1)}
+        for _ in range(15)
+    ]
+    ics = compute_all_factor_ics(rows)
+    assert isinstance(ics["t0_tail_strength"], float)
+    assert -1.0 <= ics["t0_tail_strength"] <= 1.0
+
+
+def test_build_surface_summary_includes_t0_tail_strength_distribution() -> None:
+    """build_surface_summary must expose 't0_tail_strength_distribution' when T0 bar data is present (Task 2, R17)."""
+    rows = [
+        {
+            "next_close_return": 0.05,
+            "next_open_return": 0.02,
+            "next_high_return": 0.07,
+            "next_open_to_close_return": 0.03,
+            "t_plus_2_close_return": 0.04,
+            "t_plus_3_close_return": 0.03,
+            "t0_tail_strength": 0.95,
+        },
+        {
+            "next_close_return": -0.02,
+            "next_open_return": 0.01,
+            "next_high_return": 0.03,
+            "next_open_to_close_return": 0.01,
+            "t_plus_2_close_return": -0.01,
+            "t_plus_3_close_return": -0.02,
+            "t0_tail_strength": 0.80,
+        },
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "t0_tail_strength_distribution" in summary
+    dist = summary["t0_tail_strength_distribution"]
+    assert isinstance(dist, dict)
+    assert dist["count"] == 2
+    assert dist["mean"] == pytest.approx((0.95 + 0.80) / 2, abs=1e-3)
+
+
+def test_build_surface_summary_t0_tail_strength_none_when_no_data() -> None:
+    """t0_tail_strength_distribution count must be 0 when rows lack t0_tail_strength."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.07, "next_open_to_close_return": 0.03},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    dist = summary["t0_tail_strength_distribution"]
+    assert isinstance(dist, dict)
+    assert dist["count"] == 0
+    assert dist["mean"] is None
+
+
+# ===========================================================================
+# Round 17 — Task 1: compute_breakout_conditional_win_rate
+# ===========================================================================
+
+def test_compute_breakout_conditional_win_rate_basic() -> None:
+    """Positive lift when breakout rows win more often than non-breakout rows (Task 1, Round 17)."""
+    rows = [
+        {"breakout_freshness": 0.8, "next_close_return": 0.05},
+        {"breakout_freshness": 0.7, "next_close_return": 0.03},
+        {"breakout_freshness": 0.6, "next_close_return": -0.02},
+        {"breakout_freshness": 0.3, "next_close_return": -0.03},
+        {"breakout_freshness": 0.2, "next_close_return": -0.04},
+        {"breakout_freshness": 0.1, "next_close_return": -0.05},
+    ]
+    result = compute_breakout_conditional_win_rate(rows)
+    assert result["breakout_sample_count"] == 3
+    assert result["non_breakout_sample_count"] == 3
+    assert result["win_rate_breakout"] == pytest.approx(2 / 3, abs=1e-4)
+    assert result["win_rate_non_breakout"] == pytest.approx(0.0, abs=1e-4)
+    assert result["lift"] == pytest.approx(2 / 3, abs=1e-4)
+    assert result["breakout_threshold_used"] == pytest.approx(BREAKOUT_FRESHNESS_SIGNAL_THRESHOLD, abs=1e-4)
+
+
+def test_compute_breakout_conditional_win_rate_empty_rows() -> None:
+    """compute_breakout_conditional_win_rate returns None rates when rows is empty."""
+    result = compute_breakout_conditional_win_rate([])
+    assert result["win_rate_breakout"] is None
+    assert result["win_rate_non_breakout"] is None
+    assert result["lift"] is None
+    assert result["breakout_sample_count"] == 0
+    assert result["non_breakout_sample_count"] == 0
+
+
+def test_compute_breakout_conditional_win_rate_no_returns_field() -> None:
+    """Rows without next_close_return are skipped; lift remains None when one group is empty."""
+    rows = [
+        {"breakout_freshness": 0.8},  # no next_close_return → skipped
+        {"breakout_freshness": 0.3, "next_close_return": 0.02},
+    ]
+    result = compute_breakout_conditional_win_rate(rows)
+    assert result["win_rate_breakout"] is None
+    assert result["win_rate_non_breakout"] is not None
+    assert result["lift"] is None  # can't compute lift without both groups
+
+
+def test_compute_breakout_conditional_win_rate_custom_threshold() -> None:
+    """Custom breakout_threshold parameter is respected and reflected in output."""
+    rows = [
+        {"breakout_freshness": 0.9, "next_close_return": 0.05},
+        {"breakout_freshness": 0.6, "next_close_return": 0.02},
+        {"breakout_freshness": 0.4, "next_close_return": -0.01},
+    ]
+    result = compute_breakout_conditional_win_rate(rows, breakout_threshold=0.70)
+    # Only 0.9 qualifies at threshold=0.70
+    assert result["breakout_sample_count"] == 1
+    assert result["non_breakout_sample_count"] == 2
+    assert result["breakout_threshold_used"] == pytest.approx(0.70, abs=1e-4)
+
+
+def test_build_surface_summary_includes_breakout_conditional_win_rate() -> None:
+    """build_surface_summary must expose 'breakout_conditional_win_rate' sub-dict (Task 1, Round 17)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.07, "next_open_to_close_return": 0.03, "breakout_freshness": 0.8},
+        {"next_close_return": 0.03, "next_open_return": 0.01, "next_high_return": 0.04, "next_open_to_close_return": 0.02, "breakout_freshness": 0.7},
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.01, "next_open_to_close_return": -0.01, "breakout_freshness": 0.3},
+        {"next_close_return": -0.03, "next_open_return": -0.02, "next_high_return": 0.00, "next_open_to_close_return": -0.01, "breakout_freshness": 0.2},
+        {"next_close_return": 0.04, "next_open_return": 0.02, "next_high_return": 0.06, "next_open_to_close_return": 0.02, "breakout_freshness": 0.9},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "breakout_conditional_win_rate" in summary
+    bwr = summary["breakout_conditional_win_rate"]
+    assert isinstance(bwr, dict)
+    assert "win_rate_breakout" in bwr
+    assert "win_rate_non_breakout" in bwr
+    assert "lift" in bwr
+    # 3 rows with freshness ≥ 0.5 (0.8, 0.7, 0.9) — all positive → win_rate_breakout = 1.0
+    assert bwr["win_rate_breakout"] == pytest.approx(1.0, abs=1e-4)
+    # 2 rows with freshness < 0.5 (0.3, 0.2) — both negative → win_rate_non_breakout = 0.0
+    assert bwr["win_rate_non_breakout"] == pytest.approx(0.0, abs=1e-4)
+    assert bwr["lift"] == pytest.approx(1.0, abs=1e-4)
+
+
+def test_build_surface_summary_breakout_conditional_win_rate_none_when_no_freshness() -> None:
+    """breakout_conditional_win_rate.lift must be None when rows have no breakout_freshness field."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.07, "next_open_to_close_return": 0.03},
+        {"next_close_return": -0.02, "next_open_return": -0.01, "next_high_return": 0.00, "next_open_to_close_return": -0.01},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    bwr = summary["breakout_conditional_win_rate"]
+    assert bwr["lift"] is None
+    assert bwr["breakout_sample_count"] == 0
+    assert bwr["non_breakout_sample_count"] == 0
+
+
+# ===========================================================================
+# Round 17 — Task 3: compute_sell_timing_analysis
+# ===========================================================================
+
+def test_compute_sell_timing_analysis_basic() -> None:
+    """compute_sell_timing_analysis returns expected ratios and optimal_exit_window (Task 3, Round 17)."""
+    rows = [
+        # open is well below high → open_vs_high < 1, late exit may be better
+        {"next_open": 10.1, "next_high": 11.0, "next_close": 10.8, "trade_close": 10.0, "next_open_return": 0.01, "next_close_return": 0.08, "next_open_to_close_return": 0.069},
+        {"next_open": 10.2, "next_high": 11.2, "next_close": 10.9, "trade_close": 10.0, "next_open_return": 0.02, "next_close_return": 0.09, "next_open_to_close_return": 0.069},
+        {"next_open": 10.3, "next_high": 11.5, "next_close": 11.0, "trade_close": 10.0, "next_open_return": 0.03, "next_close_return": 0.10, "next_open_to_close_return": 0.068},
+        {"next_open": 10.2, "next_high": 11.3, "next_close": 10.7, "trade_close": 10.0, "next_open_return": 0.02, "next_close_return": 0.07, "next_open_to_close_return": 0.049},
+        {"next_open": 10.1, "next_high": 11.1, "next_close": 10.6, "trade_close": 10.0, "next_open_return": 0.01, "next_close_return": 0.06, "next_open_to_close_return": 0.049},
+    ]
+    result = compute_sell_timing_analysis(rows)
+    assert result["sell_timing_sample_count"] == 5
+    assert result["open_vs_high_ratio_mean"] is not None
+    assert result["open_vs_high_ratio_mean"] < 1.0   # open < high in all rows
+    assert result["optimal_exit_window"] in {"early", "mid", "late"}
+    # In these rows, mid = (high+close)/2 / trade_close − 1 is high → likely mid or late wins
+    assert result["exit_mid_median_return"] is not None
+    assert result["open_significantly_below_high"] is not None
+
+
+def test_compute_sell_timing_analysis_empty_rows() -> None:
+    """compute_sell_timing_analysis returns None fields when rows is empty (Task 3, Round 17)."""
+    result = compute_sell_timing_analysis([])
+    assert result["sell_timing_sample_count"] == 0
+    assert result["optimal_exit_window"] is None
+    assert result["open_vs_high_ratio_mean"] is None
+    assert result["open_significantly_below_high"] is None
+
+
+def test_compute_sell_timing_analysis_open_at_high() -> None:
+    """open_significantly_below_high must be False when open equals high (no discount)."""
+    rows = [
+        {"next_open": 10.0, "next_high": 10.0, "next_close": 9.5, "trade_close": 9.8, "next_open_return": 0.02, "next_close_return": -0.03, "next_open_to_close_return": -0.05},
+        {"next_open": 11.0, "next_high": 11.0, "next_close": 10.8, "trade_close": 10.9, "next_open_return": 0.009, "next_close_return": -0.009, "next_open_to_close_return": -0.018},
+    ]
+    result = compute_sell_timing_analysis(rows)
+    # open / high = 1.0 → open_vs_high_ratio_mean = 1.0 → NOT significantly below
+    assert result["open_vs_high_ratio_mean"] == pytest.approx(1.0, abs=1e-3)
+    assert result["open_significantly_below_high"] is False
+
+
+def test_compute_sell_timing_analysis_open_significantly_below_high() -> None:
+    """open_significantly_below_high must be True when open is < 80 % of high on average (Task 3, Round 17)."""
+    rows = [
+        # open ≈ 70 % of high
+        {"next_open": 7.0, "next_high": 10.0, "next_close": 9.0, "trade_close": 7.5, "next_open_return": -0.067, "next_close_return": 0.20, "next_open_to_close_return": 0.286},
+        {"next_open": 7.5, "next_high": 11.0, "next_close": 10.0, "trade_close": 8.0, "next_open_return": -0.0625, "next_close_return": 0.25, "next_open_to_close_return": 0.333},
+    ]
+    result = compute_sell_timing_analysis(rows)
+    assert result["open_vs_high_ratio_mean"] < OPEN_VS_HIGH_SIGNIFICANT_DISCOUNT_THRESHOLD
+    assert result["open_significantly_below_high"] is True
+
+
+def test_build_surface_summary_includes_sell_timing_analysis() -> None:
+    """build_surface_summary must expose 'sell_timing_analysis' sub-dict and top-level keys (Task 3, Round 17)."""
+
+    def _row(nor: float, ncr: float, noc: float, n_open: float = 10.2, n_high: float = 11.0, n_close: float = 10.8, tc: float = 10.0) -> dict:
+        return {"next_open_return": nor, "next_close_return": ncr, "next_open_to_close_return": noc, "next_high_return": n_high / tc - 1.0, "next_open": n_open, "next_high": n_high, "next_close": n_close, "trade_close": tc}
+
+    rows = [_row(0.02, 0.08, 0.06) for _ in range(6)]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+
+    assert "sell_timing_analysis" in summary
+    sta = summary["sell_timing_analysis"]
+    assert isinstance(sta, dict)
+    assert "optimal_exit_window" in sta
+    # Top-level convenience keys
+    assert "optimal_exit_window" in summary
+    assert "open_vs_high_ratio_mean" in summary
+    assert "open_significantly_below_high" in summary
+    # Values match nested dict
+    assert summary["optimal_exit_window"] == sta.get("optimal_exit_window")
+    assert summary["open_vs_high_ratio_mean"] == sta.get("open_vs_high_ratio_mean")
+
+
+def test_build_surface_summary_sell_timing_none_when_no_ohlc() -> None:
+    """sell_timing_analysis.optimal_exit_window must be None when rows lack T+1 OHLC fields (Task 3, Round 17)."""
+    rows = [
+        {"next_close_return": 0.05, "next_open_return": 0.02, "next_high_return": 0.07, "next_open_to_close_return": 0.03},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    sta = summary["sell_timing_analysis"]
+    assert sta["optimal_exit_window"] is None
+    assert sta["sell_timing_sample_count"] == 0
+    assert summary["optimal_exit_window"] is None
+

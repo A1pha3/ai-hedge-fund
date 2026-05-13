@@ -24,6 +24,10 @@ BTST_FACTOR_NAMES: tuple[str, ...] = (
     # Task 2 (Round 16): bar-structure divergence score — upper-shadow ratio on up-bars signals
     # distribution risk; high values predict T+1 reversal.
     "volume_price_divergence_score",
+    # Task 2 (Round 17): T0 tail-session strength proxy — close/high ratio on the trade day.
+    # Values near 1.0 indicate price held near the day high at close (late-session buying strength).
+    # Values near 0 indicate heavy late-session selling (price closed well below the day high).
+    "t0_tail_strength",
 )
 
 
@@ -738,7 +742,7 @@ HIGH_VOL_STOP_LOSS_RATE_THRESHOLD: float = 0.25  # stop_loss_3pct > 25 % jointly
 
 
 def compute_t0_bar_metrics(trade_open: float, trade_high: float, trade_low: float, trade_close: float) -> dict[str, Any]:
-    """Compute single-bar T0 metrics for R16 Tasks 1, 2, and 3.
+    """Compute single-bar T0 metrics for R16 Tasks 1, 2, 3 and R17 Task 2.
 
     All inputs are expected to be positive floats representing a single daily OHLCV bar on the
     trade day.  Returns a dict with the following keys:
@@ -747,6 +751,7 @@ def compute_t0_bar_metrics(trade_open: float, trade_high: float, trade_low: floa
     - ``volume_price_divergence_score`` (float): bar-structure distribution risk in [0, 1]; 0 = no risk.
     - ``volume_price_divergence_flag`` (bool): True when bar is a confirmed false-breakout pattern.
     - ``t0_predicted_range_pct`` (float): T0 bar range as fraction of open (e.g. 0.05 = 5 % range).
+    - ``t0_tail_strength`` (float): close / high ratio in (0, 1]; 1.0 = closed at day high (尾盘强势).
     """
     epsilon: float = 1e-6
     safe_range: float = max(trade_high - trade_low, epsilon)
@@ -776,11 +781,18 @@ def compute_t0_bar_metrics(trade_open: float, trade_high: float, trade_low: floa
     # Task 3 — T0 bar range as fraction of open (volatility proxy)
     t0_predicted_range_pct: float = round((trade_high - trade_low) / safe_open, 4)
 
+    # Task 2 (Round 17) — tail-session strength proxy: close / high ratio.
+    # A ratio near 1.0 means price closed at/near the day high (尾盘强势); near 0 means heavy
+    # late-session distribution (价格远低于最高价).  ε-guard prevents div-by-zero on flat bars.
+    t0_tail_strength: float = round(trade_close / max(trade_high, epsilon), 4)
+
     return {
         "t0_estimated_net_inflow_ratio": t0_estimated_net_inflow_ratio,
         "volume_price_divergence_score": volume_price_divergence_score,
         "volume_price_divergence_flag": volume_price_divergence_flag,
         "t0_predicted_range_pct": t0_predicted_range_pct,
+        # Task 2 (Round 17): tail-session strength proxy
+        "t0_tail_strength": t0_tail_strength,
     }
 
 
@@ -814,6 +826,210 @@ def compute_predicted_range_stop_loss_linkage(predicted_range_pcts: list[float],
         "high_volatility_warning_rate": high_volatility_warning_rate,
         "predicted_range_pct_p75": predicted_range_pct_p75,
         "predicted_range_stop_loss_warning": predicted_range_stop_loss_warning,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 17): Breakout conditional win rate (均线突破有效性验证)
+# ---------------------------------------------------------------------------
+# Computes T+1 next-close win rate conditioned on whether breakout_freshness
+# exceeds a threshold (≥ BREAKOUT_FRESHNESS_SIGNAL_THRESHOLD).  A positive
+# *lift* (= win_rate_breakout − win_rate_non_breakout) confirms that the
+# breakout_freshness factor has incremental predictive power beyond the base
+# win rate.  Used in build_surface_summary to surface this per-window.
+BREAKOUT_FRESHNESS_SIGNAL_THRESHOLD: float = 0.50  # freshness ≥ 0.5 → recent breakout
+
+
+def compute_breakout_conditional_win_rate(rows: list[dict[str, Any]], *, breakout_threshold: float = BREAKOUT_FRESHNESS_SIGNAL_THRESHOLD) -> dict[str, Any]:
+    """Compute T+1 win rate conditioned on breakout_freshness signal (Task 1, Round 17).
+
+    Rows are split into two groups:
+
+    - **breakout group** (``breakout_freshness >= breakout_threshold``): stocks with a
+      recent high-freshness breakout signal.
+    - **non-breakout group** (all other rows with valid ``breakout_freshness``).
+
+    For each group, the *win rate* is the fraction of rows where
+    ``next_close_return > 0``.  The *lift* is the difference
+    ``win_rate_breakout − win_rate_non_breakout``.  A positive lift confirms that
+    the breakout signal has additive predictive power over the base population.
+
+    Args:
+        rows: BTST candidate rows.  Must contain ``breakout_freshness`` (float) and
+            ``next_close_return`` (float) for a row to be included.
+        breakout_threshold: Minimum ``breakout_freshness`` score to qualify as a
+            recent breakout (default :data:`BREAKOUT_FRESHNESS_SIGNAL_THRESHOLD` = 0.50).
+
+    Returns:
+        Dict with keys:
+
+        - ``win_rate_breakout`` (float | None): win rate for fresh-breakout rows.
+        - ``win_rate_non_breakout`` (float | None): win rate for non-fresh rows.
+        - ``lift`` (float | None): ``win_rate_breakout − win_rate_non_breakout``.
+        - ``breakout_sample_count`` (int): rows in the breakout group.
+        - ``non_breakout_sample_count`` (int): rows in the non-breakout group.
+        - ``breakout_threshold_used`` (float): the threshold applied.
+    """
+    breakout_wins: int = 0
+    breakout_total: int = 0
+    non_breakout_wins: int = 0
+    non_breakout_total: int = 0
+
+    for row in rows:
+        bf = row.get("breakout_freshness")
+        ncr = row.get("next_close_return")
+        if bf is None or ncr is None:
+            continue
+        try:
+            bf_f = float(bf)
+            ncr_f = float(ncr)
+        except (TypeError, ValueError):
+            continue
+        if bf_f >= breakout_threshold:
+            breakout_total += 1
+            if ncr_f > 0.0:
+                breakout_wins += 1
+        else:
+            non_breakout_total += 1
+            if ncr_f > 0.0:
+                non_breakout_wins += 1
+
+    win_rate_breakout: float | None = round(breakout_wins / breakout_total, 4) if breakout_total > 0 else None
+    win_rate_non_breakout: float | None = round(non_breakout_wins / non_breakout_total, 4) if non_breakout_total > 0 else None
+    lift: float | None = None
+    if win_rate_breakout is not None and win_rate_non_breakout is not None:
+        lift = round(win_rate_breakout - win_rate_non_breakout, 4)
+
+    return {
+        "win_rate_breakout": win_rate_breakout,
+        "win_rate_non_breakout": win_rate_non_breakout,
+        "lift": lift,
+        "breakout_sample_count": breakout_total,
+        "non_breakout_sample_count": non_breakout_total,
+        "breakout_threshold_used": round(breakout_threshold, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 17): Sell-timing optimization analysis (卖出时机优化分析)
+# ---------------------------------------------------------------------------
+# Uses T+1 OHLC data (already in price-outcome rows) to characterise when the
+# best intraday exit opportunity occurs.  Key ratios:
+#
+#   open_vs_high_ratio  = next_open / next_high    (how close open is to day high)
+#   open_vs_close_ratio = next_open / next_close   (open vs final price)
+#
+# Three exit windows are compared by median return:
+#   "early"  — next_open_return            (sell at T+1 open)
+#   "mid"    — (next_high + next_close) / 2 / trade_close − 1  (mid-day average proxy)
+#   "late"   — next_close_return           (hold to T+1 close)
+#
+# optimal_exit_window = whichever of early/mid/late has the highest median return.
+# When open_vs_high_ratio_mean < 0.80 on average, the open is at least 20 % below
+# the day high — suggesting that limit orders above the open (intraday high-chase)
+# systematically capture materially more return.
+OPEN_VS_HIGH_SIGNIFICANT_DISCOUNT_THRESHOLD: float = 0.80  # open < 80 % of high → meaningful gap
+
+
+def compute_sell_timing_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Analyse T+1 OHLC data to identify the optimal intraday exit window (Task 3, Round 17).
+
+    Args:
+        rows: BTST candidate rows containing ``next_open``, ``next_high``, ``next_close``,
+            ``trade_close``, ``next_open_return``, ``next_close_return``, and
+            ``next_open_to_close_return``.
+
+    Returns:
+        Dict with keys:
+
+        - ``open_vs_high_ratio_mean`` (float | None): mean(next_open / next_high).
+        - ``open_vs_close_ratio_mean`` (float | None): mean(next_open / next_close).
+        - ``exit_early_median_return`` (float | None): median T+1 open return (early exit proxy).
+        - ``exit_late_median_return`` (float | None): median T+1 close return (hold-to-close proxy).
+        - ``exit_mid_median_return`` (float | None): median mid-day proxy return ((high+close)/2 / trade_close − 1).
+        - ``optimal_exit_window`` (str | None): ``"early"`` | ``"mid"`` | ``"late"`` — whichever
+          has the highest median return; ``None`` when insufficient data.
+        - ``open_significantly_below_high`` (bool | None): True when
+          ``open_vs_high_ratio_mean < OPEN_VS_HIGH_SIGNIFICANT_DISCOUNT_THRESHOLD``
+          (open is ≥ 20 % below the day high on average — intraday high-chase has material value).
+        - ``sell_timing_sample_count`` (int): number of rows with complete T+1 OHLC data.
+    """
+    open_vs_high_ratios: list[float] = []
+    open_vs_close_ratios: list[float] = []
+    early_returns: list[float] = []
+    late_returns: list[float] = []
+    mid_returns: list[float] = []
+
+    for row in rows:
+        next_open = row.get("next_open")
+        next_high = row.get("next_high")
+        next_close = row.get("next_close")
+        trade_close = row.get("trade_close")
+        nor = row.get("next_open_return")
+        ncr = row.get("next_close_return")
+        if any(v is None for v in (next_open, next_high, next_close, trade_close, nor, ncr)):
+            continue
+        try:
+            f_open = float(next_open)   # type: ignore[arg-type]
+            f_high = float(next_high)   # type: ignore[arg-type]
+            f_close = float(next_close) # type: ignore[arg-type]
+            f_tc = float(trade_close)   # type: ignore[arg-type]
+            f_nor = float(nor)          # type: ignore[arg-type]
+            f_ncr = float(ncr)          # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        if f_high <= 0 or f_close == 0 or f_tc <= 0:
+            continue
+        open_vs_high_ratios.append(round(f_open / f_high, 4))
+        open_vs_close_ratios.append(round(f_open / f_close, 4))
+        early_returns.append(f_nor)
+        late_returns.append(f_ncr)
+        mid_ret = round((f_high + f_close) / 2.0 / f_tc - 1.0, 4)
+        mid_returns.append(mid_ret)
+
+    n = len(early_returns)
+    if n == 0:
+        return {
+            "open_vs_high_ratio_mean": None,
+            "open_vs_close_ratio_mean": None,
+            "exit_early_median_return": None,
+            "exit_late_median_return": None,
+            "exit_mid_median_return": None,
+            "optimal_exit_window": None,
+            "open_significantly_below_high": None,
+            "sell_timing_sample_count": 0,
+        }
+
+    open_vs_high_mean: float = round(sum(open_vs_high_ratios) / n, 4)
+    open_vs_close_mean: float = round(sum(open_vs_close_ratios) / n, 4)
+    early_dist = summarize_distribution(early_returns)
+    late_dist = summarize_distribution(late_returns)
+    mid_dist = summarize_distribution(mid_returns)
+    exit_early_median: float | None = early_dist.get("median")
+    exit_late_median: float | None = late_dist.get("median")
+    exit_mid_median: float | None = mid_dist.get("median")
+
+    # Identify the exit window with the highest median return.
+    candidates: dict[str, float] = {}
+    if exit_early_median is not None:
+        candidates["early"] = exit_early_median
+    if exit_mid_median is not None:
+        candidates["mid"] = exit_mid_median
+    if exit_late_median is not None:
+        candidates["late"] = exit_late_median
+    optimal_exit_window: str | None = max(candidates, key=candidates.__getitem__) if candidates else None
+
+    open_significantly_below_high: bool | None = bool(open_vs_high_mean < OPEN_VS_HIGH_SIGNIFICANT_DISCOUNT_THRESHOLD)
+
+    return {
+        "open_vs_high_ratio_mean": open_vs_high_mean,
+        "open_vs_close_ratio_mean": open_vs_close_mean,
+        "exit_early_median_return": exit_early_median,
+        "exit_late_median_return": exit_late_median,
+        "exit_mid_median_return": exit_mid_median,
+        "optimal_exit_window": optimal_exit_window,
+        "open_significantly_below_high": open_significantly_below_high,
+        "sell_timing_sample_count": n,
     }
 
 
@@ -915,6 +1131,22 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     t0_predicted_range_distribution: dict[str, Any] = summarize_distribution(_t0_range_pcts)
     _range_stop_linkage: dict[str, Any] = compute_predicted_range_stop_loss_linkage(_t0_range_pcts, stop_loss_trigger_rates.get("stop_loss_3pct"))
 
+    # -----------------------------------------------------------------------
+    # Round 17 analytics — wired into build_surface_summary.
+    # -----------------------------------------------------------------------
+    # Task 1 (Round 17): breakout freshness conditional win rate.
+    # Computes T+1 win rate for rows where breakout_freshness ≥ 0.5 vs < 0.5.
+    # A positive lift confirms that the breakout signal has incremental predictive
+    # power beyond the base win rate.
+    breakout_conditional_win_rate: dict[str, Any] = compute_breakout_conditional_win_rate(next_day_rows)
+    # Task 2 (Round 17): T0 tail-session strength distribution.
+    # t0_tail_strength = close/high on trade day; IC auto-computed via compute_all_factor_ics
+    # since "t0_tail_strength" is in BTST_FACTOR_NAMES from Round 17.
+    _t0_tail_strength_values: list[float] = [float(row["t0_tail_strength"]) for row in next_day_rows if row.get("t0_tail_strength") is not None]
+    # Task 3 (Round 17): sell-timing optimisation.
+    # Uses T+1 OHLC to identify whether early/mid/late exit maximises median return.
+    sell_timing_analysis: dict[str, Any] = compute_sell_timing_analysis(next_day_rows)
+
     return {
         "total_count": len(rows),
         # Task 2 (Round 14): explicit candidate_pool_size (= total_count) for walk-forward pool tracking.
@@ -1011,6 +1243,27 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "high_volatility_warning_rate": _range_stop_linkage.get("high_volatility_warning_rate"),
         "predicted_range_pct_p75": _range_stop_linkage.get("predicted_range_pct_p75"),
         "predicted_range_stop_loss_warning": _range_stop_linkage.get("predicted_range_stop_loss_warning"),
+        # -----------------------------------------------------------------------
+        # Round 17 analytics
+        # -----------------------------------------------------------------------
+        # Task 1 (Round 17): breakout freshness conditional win rate.
+        # breakout_conditional_win_rate: sub-dict with win_rate_breakout, win_rate_non_breakout, lift,
+        # breakout_sample_count, non_breakout_sample_count, breakout_threshold_used.
+        # A positive lift confirms that breakout_freshness has incremental signal quality beyond
+        # the base win rate for this window.
+        "breakout_conditional_win_rate": breakout_conditional_win_rate,
+        # Task 2 (Round 17): T0 tail-session strength distribution.
+        # t0_tail_strength = trade_close / trade_high for each candidate row.
+        # Values near 1.0 indicate strong late-session buying (尾盘接近最高价收盘).
+        # IC is tracked in factor_ic_next_close["t0_tail_strength"].
+        "t0_tail_strength_distribution": summarize_distribution(_t0_tail_strength_values),
+        # Task 3 (Round 17): sell-timing optimisation analysis.
+        # optimal_exit_window ("early"/"mid"/"late") and supporting ratios computed from T+1 OHLC.
+        # open_significantly_below_high=True implies limit orders above the open capture material alpha.
+        "sell_timing_analysis": sell_timing_analysis,
+        "optimal_exit_window": sell_timing_analysis.get("optimal_exit_window"),
+        "open_vs_high_ratio_mean": sell_timing_analysis.get("open_vs_high_ratio_mean"),
+        "open_significantly_below_high": sell_timing_analysis.get("open_significantly_below_high"),
     }
 
 
