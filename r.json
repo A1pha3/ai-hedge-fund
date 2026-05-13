@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_628eef2e02a7_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_d2756824c06c_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -16,8 +16,10 @@
         "next_close_expectancy": null,
         "next_high_hit_rate": null,
         "t_plus_2_close_positive_rate": null,
+        "t_plus_2_close_payoff_ratio": null,
         "t_plus_3_close_positive_rate": null,
         "t_plus_3_close_expectancy": null,
+        "t_plus_3_close_payoff_ratio": null,
         "downside_p10": null,
         "sample_weight": null,
         "window_coverage": 0.0,
@@ -33,8 +35,10 @@
         "next_close_expectancy": null,
         "next_high_hit_rate": null,
         "t_plus_2_close_positive_rate": null,
+        "t_plus_2_close_payoff_ratio": null,
         "t_plus_3_close_positive_rate": null,
         "t_plus_3_close_expectancy": null,
+        "t_plus_3_close_payoff_ratio": null,
         "downside_p10": null,
         "sample_weight": null,
         "window_coverage": 0.0,
@@ -53,7 +57,14 @@
       "incremental_theme_exposure_delta": null,
       "max_future_high_return_2_5d_hit_rate_at_20pct_delta": null,
       "time_to_hit_20pct_median_delta": null,
-      "runner_capture_count_delta": null
+      "runner_capture_count_delta": null,
+      "runner_escape_rate_delta": null,
+      "avg_composite_score_escaped_delta": null,
+      "t_plus_2_close_positive_rate_delta": null,
+      "t_plus_2_close_payoff_ratio_delta": null,
+      "t_plus_3_close_positive_rate_delta": null,
+      "t_plus_3_close_expectancy_delta": null,
+      "t_plus_3_close_payoff_ratio_delta": null
     },
     "default": {
       "candidate": {
@@ -65,8 +76,10 @@
         "next_close_expectancy": null,
         "next_high_hit_rate": null,
         "t_plus_2_close_positive_rate": null,
+        "t_plus_2_close_payoff_ratio": null,
         "t_plus_3_close_positive_rate": null,
         "t_plus_3_close_expectancy": null,
+        "t_plus_3_close_payoff_ratio": null,
         "downside_p10": null,
         "sample_weight": null,
         "window_coverage": 0.0,
@@ -82,8 +95,10 @@
         "next_close_expectancy": null,
         "next_high_hit_rate": null,
         "t_plus_2_close_positive_rate": null,
+        "t_plus_2_close_payoff_ratio": null,
         "t_plus_3_close_positive_rate": null,
         "t_plus_3_close_expectancy": null,
+        "t_plus_3_close_payoff_ratio": null,
         "downside_p10": null,
         "sample_weight": null,
         "window_coverage": 0.0,
@@ -102,7 +117,14 @@
       "incremental_theme_exposure_delta": null,
       "max_future_high_return_2_5d_hit_rate_at_20pct_delta": null,
       "time_to_hit_20pct_median_delta": null,
-      "runner_capture_count_delta": null
+      "runner_capture_count_delta": null,
+      "runner_escape_rate_delta": null,
+      "avg_composite_score_escaped_delta": null,
+      "t_plus_2_close_positive_rate_delta": null,
+      "t_plus_2_close_payoff_ratio_delta": null,
+      "t_plus_3_close_positive_rate_delta": null,
+      "t_plus_3_close_expectancy_delta": null,
+      "t_plus_3_close_payoff_ratio_delta": null
     }
   },
   "rollout_recommendation": "hold",

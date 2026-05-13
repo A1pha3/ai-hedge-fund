@@ -9,7 +9,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -34,6 +36,16 @@ logger = get_logger(__name__)
 REPORTS_DIR = Path("data/reports")
 PARTIAL_HORIZON_WEIGHT_PENALTY = 0.85
 PARTIAL_T3_HORIZON_WEIGHT_PENALTY = 0.92
+# Task S (Round 9): Temporal recency decay — windows older than RECENCY_HALF_LIFE_DAYS receive
+# exponentially decayed sample_weight so that recent data has proportionally more influence.
+RECENCY_HALF_LIFE_DAYS: int = 90
+RECENCY_DECAY_MIN_FACTOR: float = 0.20  # floor: oldest windows keep at least 20 % weight
+# Task U (Round 9): Dynamic liquidity regime — low-liquidity windows are down-weighted so that
+# optimization results are not polluted by illiquid market periods.
+LIQUIDITY_LOW_REGIME_FLOOR: float = 40.0    # below this → severe down-weight
+LIQUIDITY_SOFT_REGIME_FLOOR: float = 50.0   # below this → mild down-weight
+LIQUIDITY_LOW_REGIME_WEIGHT_PENALTY: float = 0.80
+LIQUIDITY_SOFT_REGIME_WEIGHT_PENALTY: float = 0.90
 DEFAULT_BTST_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
     "next_close_positive_rate": BTST_QUALITY_FLOORS["next_close_positive_rate"],
     "next_high_hit_rate": BTST_QUALITY_FLOORS["next_high_hit_rate"],
@@ -303,6 +315,57 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _compute_recency_decay(window_date_str: str, reference_date_str: str, half_life_days: int = RECENCY_HALF_LIFE_DAYS) -> float:
+    """Return an exponential recency decay factor in [RECENCY_DECAY_MIN_FACTOR, 1.0].
+
+    Windows dated close to ``reference_date_str`` receive a factor near 1.0; windows
+    dated ``half_life_days`` before the reference receive ~0.5; older windows are
+    floored at ``RECENCY_DECAY_MIN_FACTOR`` so they are never fully discarded.
+
+    Args:
+        window_date_str: ISO-format date string for this window (YYYY-MM-DD).
+        reference_date_str: ISO-format date string for the most-recent window.
+        half_life_days: Number of calendar days that halves the decay factor.
+
+    Returns:
+        Decay factor in [RECENCY_DECAY_MIN_FACTOR, 1.0].
+    """
+    try:
+        window_dt = datetime.strptime(window_date_str, "%Y-%m-%d")
+        reference_dt = datetime.strptime(reference_date_str, "%Y-%m-%d")
+        days_lag = max(0, (reference_dt - window_dt).days)
+    except (ValueError, TypeError):
+        return 1.0
+    decay = math.exp(-math.log(2.0) * days_lag / max(1, half_life_days))
+    return max(RECENCY_DECAY_MIN_FACTOR, round(decay, 6))
+
+
+def _build_recency_decay_map(input_paths: list[Path]) -> dict[str, float]:
+    """Pre-scan ``input_paths`` to derive per-window recency decay factors.
+
+    The date is extracted from ``path.parent.name`` which follows the naming
+    convention ``…/selection_artifacts/YYYY-MM-DD/selection_target_replay_input.json``.
+    Paths whose parent name cannot be parsed as a date receive factor 1.0.
+
+    Returns:
+        Dict mapping ``str(input_path)`` to the recency decay factor in
+        [RECENCY_DECAY_MIN_FACTOR, 1.0].
+    """
+    date_by_path: dict[str, str] = {}
+    for p in input_paths:
+        candidate = p.parent.name  # expected "YYYY-MM-DD"
+        try:
+            datetime.strptime(candidate, "%Y-%m-%d")
+            date_by_path[str(p)] = candidate
+        except ValueError:
+            date_by_path[str(p)] = ""
+    valid_dates = [d for d in date_by_path.values() if d]
+    if not valid_dates:
+        return {str(p): 1.0 for p in input_paths}
+    reference_date = max(valid_dates)
+    return {str(p): (_compute_recency_decay(date_by_path[str(p)], reference_date) if date_by_path[str(p)] else 1.0) for p in input_paths}
+
+
 def _format_guardrail_spec(spec: GuardrailSpec) -> str:
     if isinstance(spec, dict):
         parts: list[str] = []
@@ -412,6 +475,10 @@ def _build_replay_evaluator(
     next_high_hit_threshold: float = 0.02,
 ) -> Callable:
     from scripts.btst_profile_replay_utils import analyze_btst_profile_replay_window
+
+    # Task S (Round 9): pre-compute temporal recency decay map so that older windows
+    # receive proportionally less weight, preventing stale regime data from dominating.
+    recency_decay_map: dict[str, float] = _build_recency_decay_map(input_paths)
 
     def evaluator(params: dict[str, Any]) -> dict[str, float | None]:
         from src.targets.profiles import build_short_trade_target_profile
@@ -552,10 +619,21 @@ def _build_replay_evaluator(
                     sample_weight *= PARTIAL_HORIZON_WEIGHT_PENALTY
                 elif not has_t_plus_3_horizon:
                     sample_weight *= PARTIAL_T3_HORIZON_WEIGHT_PENALTY
+                # Task S (Round 9): apply temporal recency decay so that older windows contribute
+                # proportionally less.  The decay map is pre-computed outside the evaluator loop.
+                sample_weight *= recency_decay_map.get(str(input_path), 1.0)
+                # Task U (Round 9): dynamic liquidity regime — extract per-window average liquidity
+                # and down-weight windows that fall in a low-volume market regime.
+                window_liquidity = _average_scope_metric(scoped_rows, "liquidity_capacity_raw_100")
+                if window_liquidity is not None:
+                    if window_liquidity < LIQUIDITY_LOW_REGIME_FLOOR:
+                        sample_weight *= LIQUIDITY_LOW_REGIME_WEIGHT_PENALTY
+                    elif window_liquidity < LIQUIDITY_SOFT_REGIME_FLOOR:
+                        sample_weight *= LIQUIDITY_SOFT_REGIME_WEIGHT_PENALTY
                 # t_plus_3_cycle_count is only present when build_surface_summary is new enough;
                 # fall back to sample_weight when absent to preserve backward compatibility.
-                # Must be computed AFTER penalty adjustments so t_plus_3_sample_weight reflects
-                # the penalised weight rather than the raw sample_weight.
+                # Must be computed AFTER all penalty adjustments so t_plus_3_sample_weight reflects
+                # the fully-adjusted weight (recency + liquidity + horizon penalties).
                 t_plus_3_cycle_count_raw = primary_surface.get("t_plus_3_cycle_count")
                 if t_plus_3_cycle_count_raw is not None:
                     t_plus_3_cycle_count = int(t_plus_3_cycle_count_raw)
@@ -619,13 +697,15 @@ def _build_replay_evaluator(
                 for metric_key in (
                     "projected_theme_exposure",
                     "incremental_theme_exposure",
-                    "liquidity_capacity_raw_100",
                     "crowding_risk_raw_100",
                     "gap_risk_raw_100",
                 ):
                     metric_value = _average_scope_metric(scoped_rows, metric_key)
                     if metric_value is not None:
                         total_metrics[metric_key].append(metric_value)
+                # Task U (Round 9): reuse already-computed window_liquidity to avoid a second scan.
+                if window_liquidity is not None:
+                    total_metrics["liquidity_capacity_raw_100"].append(window_liquidity)
                 window_count += 1
                 coverage_summary = dict(result.get("source_coverage_summary") or {})
                 if coverage_summary:

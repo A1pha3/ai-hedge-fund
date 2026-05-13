@@ -1366,3 +1366,72 @@ def test_runner_composite_score_includes_close_strength() -> None:
     # score must remain in [0, 1]
     assert 0.0 <= score_strong <= 1.0
     assert 0.0 <= score_base <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Round 9 Task T — Sector resonance phase amplification (主升浪 detection)
+# ---------------------------------------------------------------------------
+
+
+def test_sector_resonance_phase_score_neutral_when_zero() -> None:
+    """Raw sector_resonance=0 (absent) → default 0.5 in runner composite, phase function clamps."""
+    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    score = compute_sector_resonance_phase_score(0.0)
+    assert score == pytest.approx(0.0)  # phase fn returns 0 for 0 input (neutral handled by caller)
+
+
+def test_sector_resonance_phase_score_strong_alignment_exceeds_linear() -> None:
+    """Phase-amplified score for strong sector alignment (>0.65) should exceed the raw linear value."""
+    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    raw = 0.80
+    linear_score = raw  # what the old code would return
+    phase_score = compute_sector_resonance_phase_score(raw)
+    assert phase_score > linear_score, f"Phase score {phase_score} should exceed linear {linear_score} for raw={raw}"
+    assert 0.0 <= phase_score <= 1.0
+
+
+def test_sector_resonance_phase_score_weak_alignment_below_linear() -> None:
+    """Phase-amplified score for weak sector alignment (<0.35) should be below the raw linear value."""
+    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    raw = 0.20
+    linear_score = raw
+    phase_score = compute_sector_resonance_phase_score(raw)
+    assert phase_score < linear_score, f"Phase score {phase_score} should be below linear {linear_score} for raw={raw}"
+    assert phase_score >= 0.0
+
+
+def test_sector_resonance_phase_score_mid_range_unchanged() -> None:
+    """Mid-range sector resonance (0.35–0.65) is passed through linearly without amplification."""
+    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    for raw in (0.40, 0.50, 0.60):
+        assert compute_sector_resonance_phase_score(raw) == pytest.approx(raw, abs=1e-4), f"Mid-range raw={raw} should be linear"
+
+
+def test_sector_resonance_phase_score_clamped_to_unit_interval() -> None:
+    """Phase score must always be in [0.0, 1.0] regardless of input."""
+    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    for raw in (-0.5, 0.0, 0.5, 1.0, 1.5):
+        score = compute_sector_resonance_phase_score(raw)
+        assert 0.0 <= score <= 1.0, f"Score {score} out of range for raw={raw}"
+
+
+def test_runner_composite_score_phase_amplifies_strong_sector() -> None:
+    """Strong sector resonance (0.85) should yield higher composite than mid resonance (0.50) when sr_weight > 0."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    class SectorWeightedProfile:
+        runner_composite_score_breakout_weight = 0.30
+        runner_composite_score_trend_weight = 0.20
+        runner_composite_score_volume_weight = 0.15
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.15
+
+    base = {"breakout_freshness": 0.70, "trend_acceleration": 0.60, "volume_expansion_quality": 0.55, "catalyst_freshness": 0.40, "close_strength": 0.50}
+    snapshot_mid_sector = {**base, "sector_resonance": 0.50}
+    snapshot_strong_sector = {**base, "sector_resonance": 0.85}
+    score_mid = compute_runner_composite_score(snapshot_mid_sector, profile=SectorWeightedProfile())
+    score_strong = compute_runner_composite_score(snapshot_strong_sector, profile=SectorWeightedProfile())
+    assert score_strong > score_mid, f"Strong sector {score_strong} should beat mid sector {score_mid}"
+    assert 0.0 <= score_strong <= 1.0

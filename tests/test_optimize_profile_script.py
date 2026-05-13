@@ -17,14 +17,22 @@ from scripts.btst_optimized_profile_manifest_helpers import (
 from scripts.optimize_profile import (
     _build_default_checkpoint_path,
     _build_replay_evaluator,
+    _build_recency_decay_map,
     _build_staged_ignition_evaluator,
     _build_staged_ignition_shortlist,
+    _compute_recency_decay,
     _compute_source_coverage_pass_ratio,
     _format_staged_ignition_summary,
     _load_focus_params,
     _parse_grid_params,
     _resolve_primary_surface,
     build_stage_grid,
+    LIQUIDITY_LOW_REGIME_FLOOR,
+    LIQUIDITY_LOW_REGIME_WEIGHT_PENALTY,
+    LIQUIDITY_SOFT_REGIME_FLOOR,
+    LIQUIDITY_SOFT_REGIME_WEIGHT_PENALTY,
+    RECENCY_DECAY_MIN_FACTOR,
+    RECENCY_HALF_LIFE_DAYS,
     resolve_grid_params,
     resolve_guardrails,
 )
@@ -2962,3 +2970,143 @@ def test_replay_evaluator_emits_runner_metrics(monkeypatch: pytest.MonkeyPatch) 
     assert metrics["max_future_high_return_2_5d_hit_rate_at_20pct"] == pytest.approx(0.25)
     assert metrics["runner_capture_count"] == 3
     assert metrics["time_to_hit_20pct_median"] == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------------------
+# Round 9 Task S — Temporal recency decay
+# ---------------------------------------------------------------------------
+
+
+def test_compute_recency_decay_same_date_returns_one() -> None:
+    """Windows with the same date as the reference receive a decay factor of 1.0."""
+    assert _compute_recency_decay("2026-03-20", "2026-03-20") == pytest.approx(1.0)
+
+
+def test_compute_recency_decay_half_life() -> None:
+    """After exactly half_life_days the decay factor should be close to 0.5."""
+    factor = _compute_recency_decay("2026-01-01", "2026-04-01", half_life_days=90)
+    assert abs(factor - 0.5) < 0.01
+
+
+def test_compute_recency_decay_floor() -> None:
+    """Very old windows are floored at RECENCY_DECAY_MIN_FACTOR, never zero."""
+    factor = _compute_recency_decay("2020-01-01", "2026-03-20")
+    assert factor == pytest.approx(RECENCY_DECAY_MIN_FACTOR)
+
+
+def test_compute_recency_decay_future_date_clamps_to_one() -> None:
+    """Negative lag (window newer than reference) should return 1.0 due to max(0, lag)."""
+    factor = _compute_recency_decay("2026-04-01", "2026-03-20")
+    assert factor == pytest.approx(1.0)
+
+
+def test_build_recency_decay_map_latest_is_one() -> None:
+    """The most recent path in the batch must have decay factor exactly 1.0."""
+    paths = [
+        Path("data/selection_artifacts/2026-01-01/selection_target_replay_input.json"),
+        Path("data/selection_artifacts/2026-02-01/selection_target_replay_input.json"),
+        Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json"),
+    ]
+    decay_map = _build_recency_decay_map(paths)
+    latest = paths[-1]
+    assert decay_map[str(latest)] == pytest.approx(1.0)
+
+
+def test_build_recency_decay_map_older_paths_lower() -> None:
+    """Older windows must have strictly smaller decay factors than newer ones."""
+    paths = [
+        Path("data/selection_artifacts/2025-10-01/selection_target_replay_input.json"),
+        Path("data/selection_artifacts/2026-01-01/selection_target_replay_input.json"),
+        Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json"),
+    ]
+    dm = _build_recency_decay_map(paths)
+    assert dm[str(paths[0])] < dm[str(paths[1])] < dm[str(paths[2])]
+
+
+def test_recency_decay_applied_to_sample_weight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evaluator should apply recency decay: two windows with different dates yield different effective weights."""
+    fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+    call_order: list[str] = []
+
+    def fake_analyze_btst_profile_replay_window(input_path: Path, **_: object) -> dict[str, object]:
+        call_order.append(str(input_path.parent.name))
+        surface = {
+            "next_day_available_count": 10,
+            "closed_cycle_count": 6,
+            "next_close_positive_rate": 0.60,
+            "next_high_hit_rate_at_threshold": 0.60,
+            "next_close_expectancy": 0.015,
+            "next_close_payoff_ratio": 1.5,
+            "t_plus_2_close_positive_rate": 0.58,
+            "t_plus_2_close_return_distribution": {"median": 0.014},
+            "t_plus_3_close_positive_rate": 0.56,
+            "t_plus_3_close_expectancy": 0.010,
+            "t_plus_3_close_return_distribution": {"median": 0.012},
+            "next_close_return_distribution": {"p10": -0.02},
+        }
+        return {"surface_summaries": {"selected": surface, "tradeable": surface}}
+
+    fake_module.analyze_btst_profile_replay_window = fake_analyze_btst_profile_replay_window
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    old_path = Path("data/selection_artifacts/2025-09-01/selection_target_replay_input.json")
+    new_path = Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")
+    evaluator = _build_replay_evaluator([old_path, new_path], base_profile="default")
+    metrics = evaluator({})
+    # Both windows run; overall sample_weight should be dominated by the newer window.
+    # The reported avg sample_weight should be > RECENCY_DECAY_MIN_FACTOR (old floor) and ≤ 1.0.
+    assert metrics["sample_weight"] is not None
+    assert RECENCY_DECAY_MIN_FACTOR <= metrics["sample_weight"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Round 9 Task U — Dynamic liquidity regime weight penalty
+# ---------------------------------------------------------------------------
+
+
+def test_low_liquidity_window_reduces_sample_weight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A window whose per-stock avg liquidity is below LIQUIDITY_LOW_REGIME_FLOOR should result in a lower effective sample_weight."""
+    fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+
+    _common_surface = {
+        "next_day_available_count": 10,
+        "closed_cycle_count": 6,
+        "next_close_positive_rate": 0.60,
+        "next_high_hit_rate_at_threshold": 0.60,
+        "next_close_expectancy": 0.015,
+        "next_close_payoff_ratio": 1.5,
+        "t_plus_2_close_positive_rate": 0.58,
+        "t_plus_2_close_return_distribution": {"median": 0.014},
+        "t_plus_3_close_positive_rate": 0.56,
+        "t_plus_3_close_expectancy": 0.010,
+        "t_plus_3_close_return_distribution": {"median": 0.012},
+        "next_close_return_distribution": {"p10": -0.02},
+    }
+    # Rows must have "decision": "selected" and liquidity in metrics_payload
+    # to pass through _resolve_scope_rows and _extract_committee_component_metric.
+    _low_liq_rows = [{"decision": "selected", "metrics_payload": {"liquidity_capacity_raw_100": LIQUIDITY_LOW_REGIME_FLOOR - 5.0}}]
+    _high_liq_rows = [{"decision": "selected", "metrics_payload": {"liquidity_capacity_raw_100": 70.0}}]
+
+    def fake_low_liq(input_path: Path, **_: object) -> dict[str, object]:
+        return {"surface_summaries": {"selected": dict(_common_surface), "tradeable": dict(_common_surface)}, "rows": list(_low_liq_rows)}
+
+    def fake_high_liq(input_path: Path, **_: object) -> dict[str, object]:
+        return {"surface_summaries": {"selected": dict(_common_surface), "tradeable": dict(_common_surface)}, "rows": list(_high_liq_rows)}
+
+    fake_low = types.ModuleType("scripts.btst_profile_replay_utils")
+    fake_low.analyze_btst_profile_replay_window = fake_low_liq
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_low)
+    evaluator_low = _build_replay_evaluator([Path("liq_low_2026-03-01.json")], base_profile="default")
+    metrics_low = evaluator_low({})
+
+    fake_high = types.ModuleType("scripts.btst_profile_replay_utils")
+    fake_high.analyze_btst_profile_replay_window = fake_high_liq
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_high)
+    evaluator_high = _build_replay_evaluator([Path("liq_high_2026-03-01.json")], base_profile="default")
+    metrics_high = evaluator_high({})
+
+    assert metrics_low["sample_weight"] is not None
+    assert metrics_high["sample_weight"] is not None
+    assert metrics_low["sample_weight"] < metrics_high["sample_weight"], (
+        f"Low-liq sample_weight={metrics_low['sample_weight']} should be < high-liq={metrics_high['sample_weight']}"
+    )

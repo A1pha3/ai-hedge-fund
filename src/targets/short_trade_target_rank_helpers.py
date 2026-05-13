@@ -528,6 +528,51 @@ def _apply_rank_based_decision_cap(
 # Runner composite score
 # ---------------------------------------------------------------------------
 
+# Task T (Round 9): Sector resonance phase constants for non-linear "主升浪" amplification.
+# Stocks with strong sector alignment (> PHASE_BOOST_THRESHOLD) receive a convex bonus that
+# rewards "主升浪" participants; stocks below PHASE_PENALTY_THRESHOLD are penalised more
+# aggressively than the neutral 0.5 default to avoid contra-sector stale moves.
+_SECTOR_PHASE_BOOST_THRESHOLD: float = 0.65   # convex amplification begins above this
+_SECTOR_PHASE_PENALTY_THRESHOLD: float = 0.35  # progressive penalty below this
+_SECTOR_PHASE_BOOST_GAIN: float = 0.40         # additional gain at sector_resonance == 1.0
+_SECTOR_PHASE_PENALTY_FACTOR: float = 0.60     # multiplier applied in the penalty zone
+
+
+def compute_sector_resonance_phase_score(raw_sector: float) -> float:
+    """Return a phase-amplified sector resonance score in [0.0, 1.0].
+
+    Unlike the raw linear mapping used previously, this function applies a non-linear
+    transform that reflects the qualitative difference between a stock in a confirmed
+    "主升浪" (strong rally phase) versus one with weak or ambiguous sector alignment:
+
+    * ``raw_sector > _SECTOR_PHASE_BOOST_THRESHOLD``: convex amplification — each
+      additional point of sector resonance yields a larger contribution, rewarding
+      stocks deep inside a sector rally.
+    * ``raw_sector < _SECTOR_PHASE_PENALTY_THRESHOLD``: progressive penalty — scores
+      are compressed further toward 0.0 to avoid contra-sector noise entering the
+      composite.
+    * Otherwise: linear pass-through identical to the legacy behaviour.
+
+    Args:
+        raw_sector: Raw sector resonance value from the snapshot in [0.0, 1.0].
+
+    Returns:
+        Phase-amplified score in [0.0, 1.0].
+    """
+    s = min(max(raw_sector, 0.0), 1.0)
+    if s > _SECTOR_PHASE_BOOST_THRESHOLD:
+        # Convex boost: linear base + quadratic amplification above threshold.
+        above = s - _SECTOR_PHASE_BOOST_THRESHOLD
+        span = 1.0 - _SECTOR_PHASE_BOOST_THRESHOLD
+        boost = _SECTOR_PHASE_BOOST_GAIN * (above / span) ** 2
+        phase_score = min(s + boost, 1.0)
+    elif s < _SECTOR_PHASE_PENALTY_THRESHOLD:
+        # Progressive penalty: scale down toward 0 as resonance weakens.
+        phase_score = s * _SECTOR_PHASE_PENALTY_FACTOR
+    else:
+        phase_score = s
+    return round(phase_score, 4)
+
 
 def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None) -> float:
     """Runner-priority composite score combining seven key runner signals.
@@ -552,9 +597,10 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     ``volatility_regime_score`` penalizes high-volatility environments: score=1.0 at normal
     regime (volatility_regime ≤ 1.0, atr_ratio ≤ 0.065), decaying to 0.0 at crisis thresholds
     (volatility_regime ≥ 1.35, atr_ratio ≥ 0.11).  Neutral 0.5 when no volatility data present.
-    ``sector_resonance_score`` rewards sector-aligned runners — stocks whose price action
-    aligns with the broader sector trend have higher gap-up persistence and lower whipsaw risk.
-    Already in [0.0, 1.0]; neutral 0.5 when no sector data present.
+    ``sector_resonance_score`` rewards sector-aligned runners via phase-amplified scoring
+    (Task T, Round 9): stocks in a confirmed 主升浪 phase (sector_resonance > 0.65) receive a
+    convex bonus; stocks in a contra-sector phase (<0.35) are penalised more aggressively.
+    Neutral 0.5 when no sector data present.
     """
     breakout = float(snapshot.get("breakout_freshness") or 0.0)
     trend = float(snapshot.get("trend_acceleration") or 0.0)
@@ -570,7 +616,8 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
         atr_risk = max((atr_ratio - 0.065) / 0.045, 0.0) if atr_ratio > 0 else 0.0
         volatility_regime_score = round(1.0 - min(max(vr_risk, atr_risk), 1.0), 4)
     raw_sector = float(snapshot.get("sector_resonance") or 0.0)
-    sector_resonance_score = round(min(max(raw_sector, 0.0), 1.0), 4) if raw_sector > 0.0 else 0.5
+    # Task T (Round 9): use phase-amplified score instead of raw linear mapping.
+    sector_resonance_score = compute_sector_resonance_phase_score(raw_sector) if raw_sector > 0.0 else 0.5
     w_b = float(getattr(profile, "runner_composite_score_breakout_weight", 0.40) or 0.40)
     w_t = float(getattr(profile, "runner_composite_score_trend_weight", 0.30) or 0.30)
     w_v = float(getattr(profile, "runner_composite_score_volume_weight", 0.20) or 0.20)
@@ -583,3 +630,4 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
         return 0.0
     raw = w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score
     return round(raw / total_weight, 4)
+

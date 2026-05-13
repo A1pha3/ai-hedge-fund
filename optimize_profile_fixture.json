@@ -38,7 +38,14 @@
       "incremental_theme_exposure_delta": null,
       "max_future_high_return_2_5d_hit_rate_at_20pct_delta": null,
       "time_to_hit_20pct_median_delta": null,
-      "runner_capture_count_delta": null
+      "runner_capture_count_delta": null,
+      "runner_escape_rate_delta": null,
+      "avg_composite_score_escaped_delta": null,
+      "t_plus_2_close_positive_rate_delta": null,
+      "t_plus_2_close_payoff_ratio_delta": null,
+      "t_plus_3_close_positive_rate_delta": null,
+      "t_plus_3_close_expectancy_delta": null,
+      "t_plus_3_close_payoff_ratio_delta": null
     },
     "default": {
       "candidate": {
@@ -67,7 +74,14 @@
       "incremental_theme_exposure_delta": null,
       "max_future_high_return_2_5d_hit_rate_at_20pct_delta": null,
       "time_to_hit_20pct_median_delta": null,
-      "runner_capture_count_delta": null
+      "runner_capture_count_delta": null,
+      "runner_escape_rate_delta": null,
+      "avg_composite_score_escaped_delta": null,
+      "t_plus_2_close_positive_rate_delta": null,
+      "t_plus_2_close_payoff_ratio_delta": null,
+      "t_plus_3_close_positive_rate_delta": null,
+      "t_plus_3_close_expectancy_delta": null,
+      "t_plus_3_close_payoff_ratio_delta": null
     }
   },
   "rollout_recommendation": "hold",

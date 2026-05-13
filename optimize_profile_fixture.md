@@ -7,10 +7,10 @@ Checkpoint: `data/reports/param_search_ignition_breakout_f835564c98ef_checkpoint
 
 ## Baseline Comparison
 
-| Baseline | Close+ Δ | High-hit Δ | Expectancy Δ | Downside P10 Δ | Coverage Δ | Liquidity Δ | Crowding Δ | Gap Risk Δ | Projected Exp Δ | Incremental Exp Δ | Runner 20% Hit Δ | Time-to-20% Med Δ | Runner Count Δ |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ignition_breakout | 0.0000 | N/A | 0.0000 | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| default | 0.0000 | N/A | 0.0000 | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| Baseline | Close+ Δ | High-hit Δ | Expectancy Δ | Downside P10 Δ | Coverage Δ | Liquidity Δ | Crowding Δ | Gap Risk Δ | Projected Exp Δ | Incremental Exp Δ | Runner 20% Hit Δ | Time-to-20% Med Δ | Runner Count Δ | Runner Escape % Δ | Avg Escaped Score Δ | T+2 Close+ Δ | T+2 Payoff Δ | T+3 Close+ Δ | T+3 Expectancy Δ | T+3 Payoff Δ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ignition_breakout | 0.0000 | N/A | 0.0000 | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| default | 0.0000 | N/A | 0.0000 | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 
 Rollout Recommendation: **hold**
 
