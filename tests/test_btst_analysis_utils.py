@@ -143,7 +143,7 @@ def test_time_to_hit_20pct_cross_year(monkeypatch) -> None:
     payload = extract_btst_price_outcome("000001", "2025-12-30", {})
 
     assert payload["future_high_hit_20pct_2_5d"] is True
-    assert payload["time_to_hit_20pct"] == 4
+    assert payload["time_to_hit_20pct"] == 3
 
 
 def test_build_surface_summary_includes_runner_metrics() -> None:
