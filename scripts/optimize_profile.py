@@ -137,6 +137,15 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "candidate_pool_avg_composite_score",
     # Task 1 (Round 12): T+1 intraday drawdown tail-risk metric
     "t_plus_1_intraday_drawdown_p10",
+    # Task 4 (Round 15): stop-loss trigger rates — fraction of T+1 bars hitting each stop level.
+    "stop_loss_trigger_rate_2pct",
+    "stop_loss_trigger_rate_3pct",
+    "stop_loss_trigger_rate_5pct",
+    # Task 5 (Round 15): cross-day Spearman autocorrelation T+1↔T+2 and T+2↔T+3.
+    "cross_day_autocorr_t1_vs_t2",
+    "cross_day_autocorr_t2_vs_t3",
+    # Task 2 (Round 15): opening-gap continuation rate.
+    "gap_continuation_rate",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -164,6 +173,15 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "candidate_pool_avg_composite_score": "Pool Avg Score",
     # Task 1 (Round 12)
     "t_plus_1_intraday_drawdown_p10": "Intraday DD P10",
+    # Task 4 (Round 15): stop-loss trigger rates
+    "stop_loss_trigger_rate_2pct": "SL-2% Rate",
+    "stop_loss_trigger_rate_3pct": "SL-3% Rate",
+    "stop_loss_trigger_rate_5pct": "SL-5% Rate",
+    # Task 5 (Round 15): cross-day autocorrelation
+    "cross_day_autocorr_t1_vs_t2": "T1→T2 Autocorr",
+    "cross_day_autocorr_t2_vs_t3": "T2→T3 Autocorr",
+    # Task 2 (Round 15): gap continuation rate
+    "gap_continuation_rate": "Gap-Up Cont.",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -174,6 +192,11 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     # Task 1 (Round 12): intraday drawdown — more negative is worse (lower is worse, but we
     # want higher/less-negative values to be preferred, so this metric is NOT in lower-is-better).
     # A floor guardrail enforces the minimum via BTST_QUALITY_FLOORS.
+    # Task 4 (Round 15): stop-loss trigger rates — a *higher* rate means more bars hit the stop,
+    # which is worse.  All three levels are lower-is-better.
+    "stop_loss_trigger_rate_2pct",
+    "stop_loss_trigger_rate_3pct",
+    "stop_loss_trigger_rate_5pct",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -195,6 +218,16 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 1 (Round 12): intraday drawdown is optional — surfaces produced before Round 12
     # will not carry this field; its absence must not block rollout.
     "t_plus_1_intraday_drawdown_p10",
+    # Task 4 (Round 15): stop-loss trigger rates — optional since surfaces before Round 15
+    # will not carry these fields; their absence must not block rollout.
+    "stop_loss_trigger_rate_2pct",
+    "stop_loss_trigger_rate_3pct",
+    "stop_loss_trigger_rate_5pct",
+    # Task 5 (Round 15): cross-day autocorrelation — optional; pre-Round-15 surfaces omit it.
+    "cross_day_autocorr_t1_vs_t2",
+    "cross_day_autocorr_t2_vs_t3",
+    # Task 2 (Round 15): gap continuation rate — optional; pre-Round-15 surfaces omit it.
+    "gap_continuation_rate",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -222,6 +255,15 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "candidate_pool_avg_composite_score": 0.01,
     # Task 1 (Round 12)
     "t_plus_1_intraday_drawdown_p10": 0.002,
+    # Task 4 (Round 15): stop-loss trigger rates — 0.5 % tolerance
+    "stop_loss_trigger_rate_2pct": 0.005,
+    "stop_loss_trigger_rate_3pct": 0.005,
+    "stop_loss_trigger_rate_5pct": 0.005,
+    # Task 5 (Round 15): cross-day autocorrelation — 1 % tolerance
+    "cross_day_autocorr_t1_vs_t2": 0.01,
+    "cross_day_autocorr_t2_vs_t3": 0.01,
+    # Task 2 (Round 15): gap continuation rate — 1 % tolerance
+    "gap_continuation_rate": 0.01,
 }
 
 

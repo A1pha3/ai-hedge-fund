@@ -557,6 +557,140 @@ def build_regime_conditional_stats(rows: list[dict[str, Any]]) -> dict[str, Any]
     return {**stats, "regime_best_win_rate": regime_best_win_rate, "regime_best_payoff_ratio": regime_best_payoff_ratio}
 
 
+# ---------------------------------------------------------------------------
+# Task 4 (Round 15): Stop-loss trigger rate analysis
+# ---------------------------------------------------------------------------
+# Computes the fraction of T+1 bars where the intraday low would have triggered
+# each stop-loss level.  ``next_intraday_drawdown`` = (T+1 low / T+1 open) − 1
+# is already present in price-outcome rows; a stop is triggered when that value
+# is ≤ the threshold (e.g. ≤ −0.02 for a −2 % stop).
+# Helps quantify the trade-off between "hold to close" and "stop-loss execution".
+STOP_LOSS_THRESHOLDS: tuple[float, ...] = (-0.02, -0.03, -0.05)
+
+
+def compute_stop_loss_trigger_rates(intraday_drawdown_values: list[float], thresholds: tuple[float, ...] = STOP_LOSS_THRESHOLDS) -> dict[str, float | None]:
+    """Return the fraction of T+1 bars where each stop-loss threshold would be hit.
+
+    A stop at level *t* (e.g. −0.02) is triggered when the intraday drawdown
+    (= T+1 low / T+1 open − 1) is ≤ *t*.
+
+    Args:
+        intraday_drawdown_values: List of T+1 open-to-low returns (negative = adverse move).
+        thresholds: Stop-loss levels to evaluate (each should be ≤ 0).
+
+    Returns:
+        Dict mapping ``"stop_loss_{pct}pct"`` keys to trigger-rate floats (0–1), or ``None``
+        when no drawdown data are available.  Label examples: ``"stop_loss_2pct"``,
+        ``"stop_loss_3pct"``, ``"stop_loss_5pct"``.
+    """
+    if not intraday_drawdown_values:
+        return {f"stop_loss_{abs(round(t * 100))}pct": None for t in thresholds}
+    n = len(intraday_drawdown_values)
+    return {f"stop_loss_{abs(round(t * 100))}pct": round(sum(1 for v in intraday_drawdown_values if v <= t) / n, 4) for t in thresholds}
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (Round 15): Cross-day momentum autocorrelation
+# ---------------------------------------------------------------------------
+# Computes the Spearman rank correlation between consecutive-day return pairs
+# to detect momentum continuation vs. mean-reversion dynamics.
+# A significantly negative T+1→T+2 autocorrelation signals mean-reversion risk
+# and should be flagged in walk-forward summaries.
+CROSS_DAY_AUTOCORR_MEAN_REVERSION_THRESHOLD: float = -0.10  # autocorr ≤ this → mean-reversion flag
+
+
+def compute_cross_day_autocorrelation(t1_returns: list[float], t2_returns: list[float], t3_returns: list[float]) -> dict[str, float | None]:
+    """Compute Spearman lag-1 autocorrelation across consecutive BTST holding-period returns.
+
+    Two correlation pairs are computed for rows that share the same index position
+    (i.e. the same candidate row):
+
+    * ``t1_vs_t2``: Spearman(T+1 return, T+2 return) — primary momentum signal.
+      A negative value indicates that stocks rising on T+1 tend to fall on T+2
+      (mean reversion), which is a key risk for multi-day holds.
+    * ``t2_vs_t3``: Spearman(T+2 return, T+3 return) — secondary continuation signal.
+
+    Also computes ``t1_vs_t2_mean_reversion_flag`` (bool) when the T+1→T+2
+    autocorrelation is ≤ :data:`CROSS_DAY_AUTOCORR_MEAN_REVERSION_THRESHOLD`.
+
+    Args:
+        t1_returns: Per-row T+1 close returns (``next_close_return``).
+        t2_returns: Per-row T+2 close returns (same index, ``None``-free).
+        t3_returns: Per-row T+3 close returns (same index, ``None``-free).
+
+    Returns:
+        Dict with keys ``t1_vs_t2``, ``t2_vs_t3``, ``t1_vs_t2_mean_reversion_flag``,
+        ``t1_sample_count``, ``t2_sample_count``.
+    """
+    # Build paired vectors (both returns must be present).
+    t1_t2_pairs: list[tuple[float, float]] = [(a, b) for a, b in zip(t1_returns, t2_returns)]
+    t2_t3_pairs: list[tuple[float, float]] = [(a, b) for a, b in zip(t2_returns, t3_returns) if len(t2_returns) == len(t3_returns)]
+
+    def _spearman(pairs: list[tuple[float, float]]) -> float | None:
+        if len(pairs) < 5:
+            return None
+        xs = [p[0] for p in pairs]
+        ys = [p[1] for p in pairs]
+        rx = _rank_list(xs)
+        ry = _rank_list(ys)
+        n = len(rx)
+        mx = sum(rx) / n
+        my = sum(ry) / n
+        num = sum((rx[i] - mx) * (ry[i] - my) for i in range(n))
+        dx = sum((x - mx) ** 2 for x in rx) ** 0.5
+        dy = sum((y - my) ** 2 for y in ry) ** 0.5
+        if dx == 0.0 or dy == 0.0:
+            return None
+        return round(num / (dx * dy), 4)
+
+    t1_vs_t2 = _spearman(t1_t2_pairs)
+    t2_vs_t3 = _spearman(t2_t3_pairs)
+    mean_reversion_flag = (t1_vs_t2 is not None) and (t1_vs_t2 <= CROSS_DAY_AUTOCORR_MEAN_REVERSION_THRESHOLD)
+    return {
+        "t1_vs_t2": t1_vs_t2,
+        "t2_vs_t3": t2_vs_t3,
+        "t1_vs_t2_mean_reversion_flag": mean_reversion_flag,
+        "t1_sample_count": len(t1_returns),
+        "t2_sample_count": len(t2_returns),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 15): Opening-gap continuation rate
+# ---------------------------------------------------------------------------
+# Measures the rate at which stocks that gap up strongly at the T+1 open
+# (next_open_return > GAP_CONTINUATION_OPEN_THRESHOLD) also continue to rise
+# during the T+1 session (next_open_to_close_return > 0).
+# A high gap_continuation_rate (≥ 0.50) favours "buy at open" execution;
+# a low rate suggests waiting for intraday confirmation before entry.
+GAP_CONTINUATION_OPEN_THRESHOLD: float = 0.02   # ≥ 2 % open gap triggers the computation
+
+
+def compute_gap_continuation_rate(rows: list[dict[str, Any]], open_gap_threshold: float = GAP_CONTINUATION_OPEN_THRESHOLD) -> dict[str, float | int | None]:
+    """Compute the intraday-continuation rate for stocks that gap up significantly at the T+1 open.
+
+    A "gap-up bar" is one where ``next_open_return`` ≥ *open_gap_threshold*.  Among those
+    bars, the *continuation rate* is the fraction where ``next_open_to_close_return`` > 0
+    (price continued to rise from open to close).
+
+    Args:
+        rows: BTST candidate rows with ``next_open_return`` and ``next_open_to_close_return``.
+        open_gap_threshold: Minimum open-gap return to qualify (default 2 %).
+
+    Returns:
+        Dict with keys:
+
+        - ``gap_continuation_rate`` (float | None): continuation rate among gap-up bars.
+        - ``gap_up_bar_count`` (int): number of bars qualifying as gap-up.
+        - ``gap_open_threshold_used`` (float): the threshold applied.
+    """
+    gap_rows = [row for row in rows if row.get("next_open_return") is not None and float(row["next_open_return"]) >= open_gap_threshold and row.get("next_open_to_close_return") is not None]
+    if not gap_rows:
+        return {"gap_continuation_rate": None, "gap_up_bar_count": 0, "gap_open_threshold_used": round(open_gap_threshold, 4)}
+    continued = sum(1 for row in gap_rows if float(row["next_open_to_close_return"]) > 0.0)
+    return {"gap_continuation_rate": round(continued / len(gap_rows), 4), "gap_up_bar_count": len(gap_rows), "gap_open_threshold_used": round(open_gap_threshold, 4)}
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -620,6 +754,18 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # based on that day's average next_close_return, then compute per-regime win rate and payoff ratio.
     # This lets the optimizer identify which market environment the strategy works best in.
     regime_conditional_stats = build_regime_conditional_stats(rows)
+    # Task 4 (Round 15): stop-loss trigger rates at -2 %, -3 %, -5 % from T+1 open.
+    # Uses next_intraday_drawdown (T+1 low/open − 1) to model stop-loss hits.
+    stop_loss_trigger_rates = compute_stop_loss_trigger_rates(next_intraday_drawdown_values)
+    # Task 5 (Round 15): cross-day momentum autocorrelation (Spearman lag-1).
+    # Negative T+1→T+2 correlation flags mean-reversion risk for multi-day holds.
+    _t1_rets = [float(row["next_close_return"]) for row in closed_rows if row.get("next_close_return") is not None]
+    _t2_rets = [float(row["t_plus_2_close_return"]) for row in closed_rows if row.get("t_plus_2_close_return") is not None]
+    _t3_rets = [float(row["t_plus_3_close_return"]) for row in t_plus_3_rows if row.get("t_plus_3_close_return") is not None]
+    cross_day_autocorrelation = compute_cross_day_autocorrelation(_t1_rets, _t2_rets, _t3_rets)
+    # Task 2 (Round 15): opening-gap continuation rate — how often stocks that gap up ≥ 2 %
+    # at T+1 open continue to rise intraday (next_open_to_close_return > 0).
+    gap_continuation_stats = compute_gap_continuation_rate(next_day_rows)
 
     return {
         "total_count": len(rows),
@@ -684,6 +830,22 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "ic_weight_suggestions": ic_weight_suggestions,
         # Task 5 (Round 14): regime-conditional stats — per-regime win rate, payoff ratio, and day count.
         "regime_conditional_stats": regime_conditional_stats,
+        # Task 4 (Round 15): stop-loss trigger rates at −2 %, −3 %, −5 % from T+1 open.
+        # stop_loss_2pct/3pct/5pct = fraction of bars where T+1 intraday low breached that level.
+        "stop_loss_trigger_rates": stop_loss_trigger_rates,
+        "stop_loss_trigger_rate_2pct": stop_loss_trigger_rates.get("stop_loss_2pct"),
+        "stop_loss_trigger_rate_3pct": stop_loss_trigger_rates.get("stop_loss_3pct"),
+        "stop_loss_trigger_rate_5pct": stop_loss_trigger_rates.get("stop_loss_5pct"),
+        # Task 5 (Round 15): cross-day return autocorrelation — Spearman lag-1 between T+1↔T+2 and T+2↔T+3.
+        # t1_vs_t2 < 0 signals mean-reversion risk; t1_vs_t2_mean_reversion_flag=True activates the warning.
+        "cross_day_autocorrelation": cross_day_autocorrelation,
+        "cross_day_autocorr_t1_vs_t2": cross_day_autocorrelation.get("t1_vs_t2"),
+        "cross_day_autocorr_t2_vs_t3": cross_day_autocorrelation.get("t2_vs_t3"),
+        "cross_day_t1_mean_reversion_flag": cross_day_autocorrelation.get("t1_vs_t2_mean_reversion_flag"),
+        # Task 2 (Round 15): gap-up continuation rate — fraction of ≥2 % open-gap bars that continue intraday.
+        # A high rate (≥ 0.50) supports "buy at open" execution; a low rate suggests waiting for confirmation.
+        "gap_continuation_stats": gap_continuation_stats,
+        "gap_continuation_rate": gap_continuation_stats.get("gap_continuation_rate"),
     }
 
 

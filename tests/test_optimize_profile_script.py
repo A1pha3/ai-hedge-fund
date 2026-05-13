@@ -3592,3 +3592,90 @@ def test_resolve_grid_params_non_btst_runner_probe_ignores_ic_feedback() -> None
     assert grid_with == grid_without, (
         "IC suggestions should have no effect on non-btst_runner_probe profiles"
     )
+
+
+# ---------------------------------------------------------------------------
+# Round 15 — Task 4 / 5 / 2 : new metrics wired into optimize_profile.py
+# ---------------------------------------------------------------------------
+
+from scripts.optimize_profile import (
+    COMPARISON_METRICS,
+    COMPARISON_METRIC_LABELS,
+    COMPARISON_METRIC_EPSILON,
+    LOWER_IS_BETTER_COMPARISON_METRICS,
+    OPTIONAL_COMPARISON_METRICS,
+)
+
+
+def test_r15_stop_loss_metrics_in_comparison_metrics() -> None:
+    """stop_loss_trigger_rate_2pct/3pct/5pct must be in COMPARISON_METRICS (Task 4, Round 15)."""
+    for key in ("stop_loss_trigger_rate_2pct", "stop_loss_trigger_rate_3pct", "stop_loss_trigger_rate_5pct"):
+        assert key in COMPARISON_METRICS, f"{key} missing from COMPARISON_METRICS"
+
+
+def test_r15_stop_loss_metrics_have_labels() -> None:
+    """stop_loss trigger rate metrics must have human-readable labels (Task 4, Round 15)."""
+    for key in ("stop_loss_trigger_rate_2pct", "stop_loss_trigger_rate_3pct", "stop_loss_trigger_rate_5pct"):
+        assert key in COMPARISON_METRIC_LABELS, f"{key} missing from COMPARISON_METRIC_LABELS"
+
+
+def test_r15_stop_loss_metrics_are_optional() -> None:
+    """stop_loss trigger rate metrics must be optional (pre-Round-15 surfaces lack them) (Task 4, Round 15)."""
+    for key in ("stop_loss_trigger_rate_2pct", "stop_loss_trigger_rate_3pct", "stop_loss_trigger_rate_5pct"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
+
+
+def test_r15_stop_loss_metrics_are_lower_is_better() -> None:
+    """stop_loss trigger rates must be lower-is-better (higher rate = more stops hit = worse) (Task 4, Round 15)."""
+    for key in ("stop_loss_trigger_rate_2pct", "stop_loss_trigger_rate_3pct", "stop_loss_trigger_rate_5pct"):
+        assert key in LOWER_IS_BETTER_COMPARISON_METRICS, f"{key} missing from LOWER_IS_BETTER_COMPARISON_METRICS"
+
+
+def test_r15_stop_loss_metrics_have_epsilon() -> None:
+    """stop_loss trigger rate metrics must have epsilon values in COMPARISON_METRIC_EPSILON (Task 4, Round 15)."""
+    for key in ("stop_loss_trigger_rate_2pct", "stop_loss_trigger_rate_3pct", "stop_loss_trigger_rate_5pct"):
+        assert key in COMPARISON_METRIC_EPSILON, f"{key} missing from COMPARISON_METRIC_EPSILON"
+
+
+def test_r15_cross_day_autocorr_metrics_in_comparison_metrics() -> None:
+    """cross_day_autocorr_t1_vs_t2 and t2_vs_t3 must be in COMPARISON_METRICS (Task 5, Round 15)."""
+    assert "cross_day_autocorr_t1_vs_t2" in COMPARISON_METRICS
+    assert "cross_day_autocorr_t2_vs_t3" in COMPARISON_METRICS
+
+
+def test_r15_cross_day_autocorr_metrics_are_optional() -> None:
+    """cross_day autocorr metrics must be optional (pre-Round-15 surfaces lack them) (Task 5, Round 15)."""
+    assert "cross_day_autocorr_t1_vs_t2" in OPTIONAL_COMPARISON_METRICS
+    assert "cross_day_autocorr_t2_vs_t3" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r15_cross_day_autocorr_metrics_have_labels() -> None:
+    """cross_day autocorr metrics must have human-readable labels (Task 5, Round 15)."""
+    assert "cross_day_autocorr_t1_vs_t2" in COMPARISON_METRIC_LABELS
+    assert "cross_day_autocorr_t2_vs_t3" in COMPARISON_METRIC_LABELS
+
+
+def test_r15_gap_continuation_rate_in_comparison_metrics() -> None:
+    """gap_continuation_rate must be in COMPARISON_METRICS (Task 2, Round 15)."""
+    assert "gap_continuation_rate" in COMPARISON_METRICS
+
+
+def test_r15_gap_continuation_rate_is_optional() -> None:
+    """gap_continuation_rate must be optional (pre-Round-15 surfaces lack it) (Task 2, Round 15)."""
+    assert "gap_continuation_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r15_gap_continuation_rate_has_label() -> None:
+    """gap_continuation_rate must have a human-readable label (Task 2, Round 15)."""
+    assert "gap_continuation_rate" in COMPARISON_METRIC_LABELS
+
+
+def test_r15_gap_continuation_rate_has_epsilon() -> None:
+    """gap_continuation_rate must have an epsilon value for regression detection (Task 2, Round 15)."""
+    assert "gap_continuation_rate" in COMPARISON_METRIC_EPSILON
+
+
+def test_r15_all_comparison_metrics_have_labels() -> None:
+    """Every metric in COMPARISON_METRICS must have a corresponding label (invariant check)."""
+    for metric in COMPARISON_METRICS:
+        assert metric in COMPARISON_METRIC_LABELS, f"COMPARISON_METRICS entry '{metric}' has no label in COMPARISON_METRIC_LABELS"

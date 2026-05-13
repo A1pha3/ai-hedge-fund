@@ -609,3 +609,266 @@ def test_build_regime_conditional_stats_rows_without_trade_date_skipped() -> Non
     # All rows are either unclassifiable or lack return data → no crashes, all counts zero
     total = result["bull"]["count"] + result["bear"]["count"] + result["sideways"]["count"]
     assert total == 0
+
+
+# ---------------------------------------------------------------------------
+# Round 15 — Task 4: Stop-loss trigger rate analysis
+# ---------------------------------------------------------------------------
+
+from scripts.btst_analysis_utils import compute_stop_loss_trigger_rates, STOP_LOSS_THRESHOLDS
+
+
+def test_compute_stop_loss_trigger_rates_empty_returns_none_for_each_threshold() -> None:
+    """Empty drawdown list must return None for every threshold (Task 4, Round 15)."""
+    result = compute_stop_loss_trigger_rates([])
+    assert result == {"stop_loss_2pct": None, "stop_loss_3pct": None, "stop_loss_5pct": None}
+
+
+def test_compute_stop_loss_trigger_rates_no_stops_hit() -> None:
+    """When all intraday drawdowns are shallow, trigger rates must be 0 (Task 4, Round 15)."""
+    # Drawdowns all better than −1 % — none should trigger −2 %, −3 %, −5 % stops
+    result = compute_stop_loss_trigger_rates([-0.005, -0.01, 0.0, 0.02])
+    assert result["stop_loss_2pct"] == 0.0
+    assert result["stop_loss_3pct"] == 0.0
+    assert result["stop_loss_5pct"] == 0.0
+
+
+def test_compute_stop_loss_trigger_rates_partial_hit() -> None:
+    """Trigger rate equals fraction of bars breaching the threshold (Task 4, Round 15)."""
+    # 2 of 4 drawdowns ≤ -0.02 → 50 %; 1 of 4 ≤ -0.03 → 25 %; 0 ≤ -0.05 → 0 %
+    result = compute_stop_loss_trigger_rates([-0.01, -0.02, -0.025, -0.01])
+    assert result["stop_loss_2pct"] == pytest.approx(0.5)
+    assert result["stop_loss_3pct"] == 0.0
+    assert result["stop_loss_5pct"] == 0.0
+
+
+def test_compute_stop_loss_trigger_rates_all_hit_hardest_stop() -> None:
+    """When all bars breach even the −5 % stop, all rates must be 1.0 (Task 4, Round 15)."""
+    result = compute_stop_loss_trigger_rates([-0.06, -0.07, -0.08])
+    assert result["stop_loss_2pct"] == 1.0
+    assert result["stop_loss_3pct"] == 1.0
+    assert result["stop_loss_5pct"] == 1.0
+
+
+def test_compute_stop_loss_trigger_rates_monotone_constraint() -> None:
+    """stop_loss_2pct >= stop_loss_3pct >= stop_loss_5pct for any input (Task 4, Round 15)."""
+    values = [-0.01, -0.025, -0.04, 0.0, -0.055, -0.03]
+    result = compute_stop_loss_trigger_rates(values)
+    r2 = result["stop_loss_2pct"]
+    r3 = result["stop_loss_3pct"]
+    r5 = result["stop_loss_5pct"]
+    # Looser stop catches more bars (monotone non-decreasing as threshold relaxes)
+    assert r2 is not None and r3 is not None and r5 is not None
+    assert r2 >= r3 >= r5
+
+
+def test_build_surface_summary_includes_stop_loss_trigger_rates() -> None:
+    """build_surface_summary must expose stop_loss_trigger_rate_2pct/3pct/5pct (Task 4, Round 15)."""
+    rows = [
+        {"next_close_return": 0.03, "next_intraday_drawdown": -0.01},
+        {"next_close_return": 0.01, "next_intraday_drawdown": -0.025},
+        {"next_close_return": -0.02, "next_intraday_drawdown": -0.04},
+        {"next_close_return": 0.05, "next_intraday_drawdown": 0.0},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "stop_loss_trigger_rates" in summary
+    assert "stop_loss_trigger_rate_2pct" in summary
+    assert "stop_loss_trigger_rate_3pct" in summary
+    assert "stop_loss_trigger_rate_5pct" in summary
+    # 2 of 4 bars hit ≤ −2 % (-0.025 and -0.04) → 0.50
+    assert summary["stop_loss_trigger_rate_2pct"] == pytest.approx(0.5)
+    # 1 of 4 bars hits ≤ −3 % (only -0.04) → 0.25
+    assert summary["stop_loss_trigger_rate_3pct"] == pytest.approx(0.25)
+    # 0 bars hit ≤ −5 % → 0.0
+    assert summary["stop_loss_trigger_rate_5pct"] == 0.0
+
+
+def test_build_surface_summary_stop_loss_rates_none_when_no_drawdown_data() -> None:
+    """stop_loss trigger rates must be None when no intraday drawdown data are available (Task 4, Round 15)."""
+    rows = [{"next_close_return": 0.03}, {"next_close_return": 0.01}]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert summary["stop_loss_trigger_rate_2pct"] is None
+    assert summary["stop_loss_trigger_rate_3pct"] is None
+    assert summary["stop_loss_trigger_rate_5pct"] is None
+
+
+# ---------------------------------------------------------------------------
+# Round 15 — Task 5: Cross-day momentum autocorrelation
+# ---------------------------------------------------------------------------
+
+from scripts.btst_analysis_utils import compute_cross_day_autocorrelation, CROSS_DAY_AUTOCORR_MEAN_REVERSION_THRESHOLD
+
+
+def test_compute_cross_day_autocorrelation_returns_none_when_too_few_rows() -> None:
+    """Fewer than 5 paired rows must return None for autocorrelation (Task 5, Round 15)."""
+    result = compute_cross_day_autocorrelation([0.01, 0.02], [0.01, -0.01], [])
+    assert result["t1_vs_t2"] is None
+    assert result["t2_vs_t3"] is None
+    assert result["t1_vs_t2_mean_reversion_flag"] is False
+
+
+def test_compute_cross_day_autocorrelation_perfect_positive_continuation() -> None:
+    """Perfectly aligned T+1/T+2 returns must yield t1_vs_t2 = +1 (Task 5, Round 15)."""
+    vals = [0.01, 0.02, 0.03, 0.04, 0.05]
+    result = compute_cross_day_autocorrelation(vals, vals, vals)
+    assert result["t1_vs_t2"] == pytest.approx(1.0)
+    assert result["t1_vs_t2_mean_reversion_flag"] is False
+
+
+def test_compute_cross_day_autocorrelation_perfect_negative_mean_reversion() -> None:
+    """Perfectly reversed T+1/T+2 returns must yield t1_vs_t2 = -1 and flag mean reversion (Task 5, Round 15)."""
+    t1 = [0.01, 0.02, 0.03, 0.04, 0.05]
+    t2 = [0.05, 0.04, 0.03, 0.02, 0.01]  # perfect reversal
+    result = compute_cross_day_autocorrelation(t1, t2, t2)
+    assert result["t1_vs_t2"] == pytest.approx(-1.0)
+    assert result["t1_vs_t2_mean_reversion_flag"] is True
+
+
+def test_compute_cross_day_autocorrelation_sample_counts_correct() -> None:
+    """t1_sample_count and t2_sample_count must match the input list lengths (Task 5, Round 15)."""
+    t1 = [0.01, 0.02, 0.03, 0.04, 0.05]
+    t2 = [0.01, -0.01, 0.02, -0.02, 0.03]
+    t3 = [0.01, 0.01, 0.01, 0.01, 0.01]
+    result = compute_cross_day_autocorrelation(t1, t2, t3)
+    assert result["t1_sample_count"] == 5
+    assert result["t2_sample_count"] == 5
+
+
+def test_compute_cross_day_autocorrelation_mean_reversion_threshold() -> None:
+    """t1_vs_t2_mean_reversion_flag triggers exactly at CROSS_DAY_AUTOCORR_MEAN_REVERSION_THRESHOLD (Task 5, Round 15)."""
+    # Build returns where t1_vs_t2 will be just below the threshold (strongly negative rank correlation)
+    t1 = [0.05, 0.04, 0.03, 0.02, 0.01, 0.00]
+    t2 = [0.00, 0.01, 0.02, 0.03, 0.04, 0.05]  # rank reversal → t1_vs_t2 ≈ -1.0
+    result = compute_cross_day_autocorrelation(t1, t2, t2)
+    assert result["t1_vs_t2"] is not None
+    # A strongly negative autocorrelation must trigger the flag
+    if result["t1_vs_t2"] <= CROSS_DAY_AUTOCORR_MEAN_REVERSION_THRESHOLD:
+        assert result["t1_vs_t2_mean_reversion_flag"] is True
+    else:
+        assert result["t1_vs_t2_mean_reversion_flag"] is False
+
+
+def test_build_surface_summary_includes_cross_day_autocorrelation() -> None:
+    """build_surface_summary must expose cross_day_autocorrelation fields (Task 5, Round 15)."""
+    rows = [
+        {"next_close_return": r1, "t_plus_2_close_return": r2, "t_plus_3_close_return": r3}
+        for r1, r2, r3 in [
+            (0.01, 0.02, 0.01),
+            (0.03, 0.04, 0.02),
+            (0.05, 0.06, 0.03),
+            (-0.01, -0.02, -0.01),
+            (-0.03, -0.04, -0.02),
+        ]
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "cross_day_autocorrelation" in summary
+    assert "cross_day_autocorr_t1_vs_t2" in summary
+    assert "cross_day_autocorr_t2_vs_t3" in summary
+    assert "cross_day_t1_mean_reversion_flag" in summary
+    # With perfectly positive ranks, autocorrelation should be near +1
+    assert summary["cross_day_autocorr_t1_vs_t2"] is not None
+    assert summary["cross_day_autocorr_t1_vs_t2"] > 0.5
+
+
+def test_build_surface_summary_cross_day_autocorr_none_when_no_t2_data() -> None:
+    """cross_day_autocorr_t1_vs_t2 must be None when no T+2 return data exist (Task 5, Round 15)."""
+    rows = [{"next_close_return": 0.03}, {"next_close_return": -0.01}]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert summary["cross_day_autocorr_t1_vs_t2"] is None
+    assert summary["cross_day_autocorr_t2_vs_t3"] is None
+    assert summary["cross_day_t1_mean_reversion_flag"] is False
+
+
+# ---------------------------------------------------------------------------
+# Round 15 — Task 2: Opening-gap continuation rate
+# ---------------------------------------------------------------------------
+
+from scripts.btst_analysis_utils import compute_gap_continuation_rate, GAP_CONTINUATION_OPEN_THRESHOLD
+
+
+def test_compute_gap_continuation_rate_empty_rows_returns_none() -> None:
+    """Empty rows must return gap_continuation_rate=None and gap_up_bar_count=0 (Task 2, Round 15)."""
+    result = compute_gap_continuation_rate([])
+    assert result["gap_continuation_rate"] is None
+    assert result["gap_up_bar_count"] == 0
+
+
+def test_compute_gap_continuation_rate_no_qualifying_bars() -> None:
+    """Rows with open gap below threshold must not contribute to continuation rate (Task 2, Round 15)."""
+    rows = [
+        {"next_open_return": 0.01, "next_open_to_close_return": 0.02},  # gap < 2 % threshold
+        {"next_open_return": -0.01, "next_open_to_close_return": 0.01},  # negative gap
+    ]
+    result = compute_gap_continuation_rate(rows)
+    assert result["gap_continuation_rate"] is None
+    assert result["gap_up_bar_count"] == 0
+
+
+def test_compute_gap_continuation_rate_all_continued() -> None:
+    """100 % continuation rate when all gap-up bars continue intraday (Task 2, Round 15)."""
+    rows = [
+        {"next_open_return": 0.03, "next_open_to_close_return": 0.01},
+        {"next_open_return": 0.04, "next_open_to_close_return": 0.02},
+        {"next_open_return": 0.05, "next_open_to_close_return": 0.03},
+    ]
+    result = compute_gap_continuation_rate(rows)
+    assert result["gap_continuation_rate"] == pytest.approx(1.0)
+    assert result["gap_up_bar_count"] == 3
+
+
+def test_compute_gap_continuation_rate_partial_continuation() -> None:
+    """Correct fractional continuation rate when some bars reverse intraday (Task 2, Round 15)."""
+    rows = [
+        {"next_open_return": 0.03, "next_open_to_close_return": 0.02},   # continued
+        {"next_open_return": 0.04, "next_open_to_close_return": -0.01},  # reversed
+        {"next_open_return": 0.05, "next_open_to_close_return": 0.00},   # flat (not > 0)
+        {"next_open_return": 0.02, "next_open_to_close_return": 0.03},   # continued
+    ]
+    result = compute_gap_continuation_rate(rows)
+    assert result["gap_up_bar_count"] == 4
+    assert result["gap_continuation_rate"] == pytest.approx(0.5)  # 2 / 4
+
+
+def test_compute_gap_continuation_rate_custom_threshold() -> None:
+    """Custom open_gap_threshold overrides the default (Task 2, Round 15)."""
+    rows = [
+        {"next_open_return": 0.03, "next_open_to_close_return": 0.02},
+        {"next_open_return": 0.04, "next_open_to_close_return": -0.01},
+    ]
+    # With threshold=0.05, neither bar qualifies (both below 5 %)
+    result = compute_gap_continuation_rate(rows, open_gap_threshold=0.05)
+    assert result["gap_continuation_rate"] is None
+    assert result["gap_up_bar_count"] == 0
+    assert result["gap_open_threshold_used"] == pytest.approx(0.05)
+
+
+def test_compute_gap_continuation_rate_threshold_field_written() -> None:
+    """gap_open_threshold_used must always be written to the result dict (Task 2, Round 15)."""
+    result = compute_gap_continuation_rate([])
+    assert "gap_open_threshold_used" in result
+    assert result["gap_open_threshold_used"] == pytest.approx(GAP_CONTINUATION_OPEN_THRESHOLD)
+
+
+def test_build_surface_summary_includes_gap_continuation_rate() -> None:
+    """build_surface_summary must expose gap_continuation_rate and gap_continuation_stats (Task 2, Round 15)."""
+    rows = [
+        {"next_close_return": 0.03, "next_open_return": 0.04, "next_open_to_close_return": 0.01},
+        {"next_close_return": 0.01, "next_open_return": 0.03, "next_open_to_close_return": -0.02},
+        {"next_close_return": -0.01, "next_open_return": 0.05, "next_open_to_close_return": 0.02},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert "gap_continuation_stats" in summary
+    assert "gap_continuation_rate" in summary
+    # 2 of 3 bars gapped ≥ 2 % and both are in the stats; 2 bars qualify (0.04, 0.03=boundary, 0.05)
+    # 0.03 >= 0.02 threshold so all 3 qualify; 2 of 3 continued (0.01 and 0.02 > 0); reversed is -0.02
+    assert summary["gap_continuation_rate"] is not None
+
+
+def test_build_surface_summary_gap_continuation_rate_none_when_no_open_gap_data() -> None:
+    """gap_continuation_rate must be None when no bars meet the gap-up threshold (Task 2, Round 15)."""
+    rows = [
+        {"next_close_return": 0.02, "next_open_return": 0.01, "next_open_to_close_return": 0.01},
+        {"next_close_return": -0.01, "next_open_return": 0.00, "next_open_to_close_return": -0.01},
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+    assert summary["gap_continuation_rate"] is None
