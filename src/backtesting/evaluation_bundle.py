@@ -43,6 +43,12 @@ _GUARDRAIL_KEYS = (
     # Task 1 (Round 20, Beta): realized payoff ratio — win_avg_return / abs(loss_avg_return).
     # Floor ≥ 1.0: per-trade average win must exceed per-trade average loss (basic edge requirement).
     "realized_payoff_ratio",
+    # Task 1 (Round 27, Alpha): T+1 return distribution skewness cap guardrail.
+    # Skewness more negative than −2.0 indicates extreme left-tail risk; acts as a cap.
+    "next_close_return_skewness",
+    # Task 2 (Round 27, Gamma): composite score spread floor guardrail.
+    # score_spread_p95_p5 < 0.10 means the scoring function barely differentiates candidates.
+    "score_spread_p95_p5",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -96,6 +102,18 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # that the strategy produces genuine skill-based return above the HS300 benchmark on average.
     # Strategies with negative alpha are merely riding market Beta and provide no edge.
     "alpha_avg_return": 0.0,
+    # Task 1 (Round 27, Alpha): T+1 return distribution skewness floor.
+    # Skewness < −2.0 indicates an extremely left-skewed T+1 return distribution (fat left tail).
+    # Even at 60%+ win rate, severe negative skewness implies catastrophic-loss risk in the tail.
+    # Profiles more negative than −2.0 violate this floor and should be penalised.
+    # (Note: this is a minimum bound — more negative than -2.0 is unacceptable.)
+    "next_close_return_skewness": -2.0,
+    # Task 2 (Round 27, Gamma): composite score spread floor.
+    # score_spread_p95_p5 = P95 − P5 of runner_composite_score across all candidates.
+    # A spread < 0.10 means the scoring function barely differentiates candidates — the
+    # optimizer is making near-random selections.  Floor ≥ 0.10 requires the score to
+    # meaningfully stratify candidates before a profile is considered rollout-ready.
+    "score_spread_p95_p5": 0.10,
 }
 
 # ---------------------------------------------------------------------------

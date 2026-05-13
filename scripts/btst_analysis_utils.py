@@ -2170,6 +2170,242 @@ def compute_dynamic_stop_loss_suggestion(surface_summary: dict[str, Any]) -> dic
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 1 (Round 27, Alpha): Return distribution shape — skewness and tail asymmetry
+# ---------------------------------------------------------------------------
+
+
+def compute_return_distribution_shape(rows: list[dict]) -> dict:
+    """计算T+1收益分布的高阶统计特征（偏度与尾部非对称性）。
+
+    Requires at least 5 rows with a valid ``next_close_return`` field.  When fewer observations
+    are available all numeric outputs are ``None`` and the flag is ``False``.
+
+    Args:
+        rows: BTST candidate rows.  Field used: ``next_close_return``.
+
+    Returns:
+        Dict with keys:
+        - ``next_close_return_skewness``: float — sample skewness (negative = left-skewed / fat left tail).
+        - ``next_close_return_downside_std``: float — std of negative returns only.
+        - ``next_close_return_upside_std``: float — std of positive returns only.
+        - ``win_loss_std_ratio``: float | None — upside_std / downside_std (>1 = favourable asymmetry).
+        - ``return_p5``: float — 5th-percentile return (proxy for extreme loss).
+        - ``return_p95``: float — 95th-percentile return (proxy for extreme gain).
+        - ``return_iqr``: float — P75 − P25 (dispersion of middle 50 %).
+        - ``heavy_left_tail_flag``: bool — True when skewness < −1.0 AND return_p5 < −0.05.
+    """
+    rets: list[float] = [float(row["next_close_return"]) for row in rows if row.get("next_close_return") is not None]
+    n: int = len(rets)
+    _null: dict = {"next_close_return_skewness": None, "next_close_return_downside_std": None, "next_close_return_upside_std": None, "win_loss_std_ratio": None, "return_p5": None, "return_p95": None, "return_iqr": None, "heavy_left_tail_flag": False}
+    if n < 5:
+        return _null
+
+    # Sample mean and std.
+    mean_r: float = sum(rets) / n
+    variance: float = sum((x - mean_r) ** 2 for x in rets) / (n - 1)  # sample variance
+    std_r: float = variance ** 0.5
+    if std_r == 0.0:
+        return _null
+
+    # Sample skewness: Fisher-Pearson bias-corrected formula n/((n-1)(n-2)) * Σ((x-mean)/std)^3.
+    if n < 3:
+        skewness = 0.0
+    else:
+        skewness: float = round((n / ((n - 1) * (n - 2))) * sum(((x - mean_r) / std_r) ** 3 for x in rets), 4)
+
+    # Downside / upside std (over raw values to preserve distributional meaning).
+    neg_rets: list[float] = [x for x in rets if x < 0]
+    pos_rets: list[float] = [x for x in rets if x > 0]
+    downside_std: float | None = None
+    upside_std: float | None = None
+    if len(neg_rets) >= 2:
+        neg_mean = sum(neg_rets) / len(neg_rets)
+        downside_std = round((sum((x - neg_mean) ** 2 for x in neg_rets) / (len(neg_rets) - 1)) ** 0.5, 6)
+    if len(pos_rets) >= 2:
+        pos_mean = sum(pos_rets) / len(pos_rets)
+        upside_std = round((sum((x - pos_mean) ** 2 for x in pos_rets) / (len(pos_rets) - 1)) ** 0.5, 6)
+
+    win_loss_std_ratio: float | None = round(upside_std / downside_std, 4) if (upside_std is not None and downside_std is not None and downside_std > 0.0) else None
+
+    # Percentile helpers (linear interpolation).
+    sorted_r = sorted(rets)
+
+    def _percentile(data: list[float], pct: float) -> float:
+        """Return the pct-th percentile (0–100) via linear interpolation."""
+        if len(data) == 1:
+            return data[0]
+        idx = pct / 100.0 * (len(data) - 1)
+        lo = int(idx)
+        hi = lo + 1
+        if hi >= len(data):
+            return data[-1]
+        return data[lo] + (idx - lo) * (data[hi] - data[lo])
+
+    return_p5: float = round(_percentile(sorted_r, 5), 6)
+    return_p95: float = round(_percentile(sorted_r, 95), 6)
+    return_p25: float = _percentile(sorted_r, 25)
+    return_p75: float = _percentile(sorted_r, 75)
+    return_iqr: float = round(return_p75 - return_p25, 6)
+    heavy_left_tail_flag: bool = (skewness < -1.0) and (return_p5 < -0.05)
+
+    return {
+        "next_close_return_skewness": skewness,
+        "next_close_return_downside_std": downside_std,
+        "next_close_return_upside_std": upside_std,
+        "win_loss_std_ratio": win_loss_std_ratio,
+        "return_p5": return_p5,
+        "return_p95": return_p95,
+        "return_iqr": return_iqr,
+        "heavy_left_tail_flag": heavy_left_tail_flag,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 27, Gamma): Composite score discrimination power analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_score_discrimination_power(rows: list[dict]) -> dict:
+    """量化composite score对T+1收益的区分力（spread宽度 × Spearman相关）。
+
+    Requires at least 5 rows with a valid ``runner_composite_score`` field.  When the field
+    is absent or fewer observations are available, all numeric outputs are ``None``.
+
+    Args:
+        rows: BTST candidate rows.  Fields used: ``runner_composite_score`` and optionally
+            ``next_close_return`` for the Spearman correlation.
+
+    Returns:
+        Dict with keys:
+        - ``score_spread_p95_p5``: float — P95 − P5 of composite scores (distribution width).
+        - ``score_iqr``: float — P75 − P25 (middle-50 % dispersion).
+        - ``score_above_60_fraction``: float — fraction of scores > 0.60.
+        - ``score_above_70_fraction``: float — fraction of scores > 0.70.
+        - ``score_return_spearman``: float | None — Spearman rank correlation between score and T+1 return.
+        - ``score_discrimination_index``: float — score_spread_p95_p5 × |score_return_spearman|.
+        - ``low_discrimination_flag``: bool — spread < 0.20 OR |spearman| < 0.05.
+    """
+    _null: dict = {"score_spread_p95_p5": None, "score_iqr": None, "score_above_60_fraction": None, "score_above_70_fraction": None, "score_return_spearman": None, "score_discrimination_index": None, "low_discrimination_flag": True}
+    # Check that field exists in at least one row.
+    if not any(row.get("runner_composite_score") is not None for row in rows):
+        return _null
+
+    scored_rows = [row for row in rows if row.get("runner_composite_score") is not None]
+    n: int = len(scored_rows)
+    if n < 5:
+        return _null
+
+    scores: list[float] = [float(row["runner_composite_score"]) for row in scored_rows]
+
+    def _pct(data: list[float], p: float) -> float:
+        sd = sorted(data)
+        idx = p / 100.0 * (len(sd) - 1)
+        lo = int(idx)
+        hi = lo + 1
+        if hi >= len(sd):
+            return sd[-1]
+        return sd[lo] + (idx - lo) * (sd[hi] - sd[lo])
+
+    score_p5: float = _pct(scores, 5)
+    score_p25: float = _pct(scores, 25)
+    score_p75: float = _pct(scores, 75)
+    score_p95: float = _pct(scores, 95)
+    score_spread_p95_p5: float = round(score_p95 - score_p5, 4)
+    score_iqr: float = round(score_p75 - score_p25, 4)
+    score_above_60_fraction: float = round(sum(1 for s in scores if s > 0.60) / n, 4)
+    score_above_70_fraction: float = round(sum(1 for s in scores if s > 0.70) / n, 4)
+
+    # Spearman correlation with T+1 return (requires next_close_return co-availability).
+    paired_scores: list[float] = []
+    paired_returns: list[float] = []
+    for row in scored_rows:
+        if row.get("next_close_return") is not None:
+            paired_scores.append(float(row["runner_composite_score"]))
+            paired_returns.append(float(row["next_close_return"]))
+
+    score_return_spearman: float | None = _spearman_corr(paired_scores, paired_returns)
+
+    score_discrimination_index: float = round(score_spread_p95_p5 * abs(score_return_spearman), 4) if score_return_spearman is not None else round(score_spread_p95_p5 * 0.0, 4)
+
+    abs_spearman: float = abs(score_return_spearman) if score_return_spearman is not None else 0.0
+    low_discrimination_flag: bool = (score_spread_p95_p5 < 0.20) or (abs_spearman < 0.05)
+
+    return {
+        "score_spread_p95_p5": score_spread_p95_p5,
+        "score_iqr": score_iqr,
+        "score_above_60_fraction": score_above_60_fraction,
+        "score_above_70_fraction": score_above_70_fraction,
+        "score_return_spearman": score_return_spearman,
+        "score_discrimination_index": score_discrimination_index,
+        "low_discrimination_flag": low_discrimination_flag,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 27, Beta): Liquidity-aware position guidance
+# ---------------------------------------------------------------------------
+
+
+def compute_liquidity_position_guidance(surface_summary: dict[str, Any]) -> dict[str, Any]:
+    """基于流动性（候选池大小）给出仓位分散化建议。
+
+    Reads ``avg_candidate_pool_size``, ``scarce_market_window_count``, and
+    ``market_size_classification`` from *surface_summary*.  Falls back to a pool size of 50
+    (medium) when ``avg_candidate_pool_size`` is absent.
+
+    Args:
+        surface_summary: Surface summary dict (output of ``build_surface_summary`` or
+            walk-forward aggregate).  May include the R14 candidate-pool fields.
+
+    Returns:
+        Dict with keys:
+        - ``recommended_max_positions``: int — max(1, min(10, floor(avg_pool / 10))).
+        - ``recommended_position_size_pct``: float — min(0.20, 1.0 / recommended_max_positions).
+        - ``concentration_risk_level``: str — "low" | "medium" | "high" | "extreme".
+        - ``diversification_feasible``: bool — recommended_max_positions >= 3.
+        - ``pool_size_stability``: str — "stable" | "variable" | "scarce".
+    """
+    import math
+    avg_pool: float = float(surface_summary["avg_candidate_pool_size"]) if surface_summary.get("avg_candidate_pool_size") is not None else 50.0
+    scarce_count: int = int(surface_summary.get("scarce_market_window_count") or 0)
+    market_class: str = str(surface_summary.get("market_size_classification") or "unknown")
+
+    recommended_max_positions: int = max(1, min(10, math.floor(avg_pool / 10)))
+    recommended_position_size_pct: float = round(min(0.20, 1.0 / recommended_max_positions), 4)
+
+    if avg_pool > 100:
+        concentration_risk_level = "low"
+    elif avg_pool >= 50:
+        concentration_risk_level = "medium"
+    elif avg_pool >= 20:
+        concentration_risk_level = "high"
+    else:
+        concentration_risk_level = "extreme"
+
+    diversification_feasible: bool = recommended_max_positions >= 3
+
+    # pool_size_stability: derive from scarce_market_window_count / total tracked windows.
+    # market_size_classification from R14: "scarce_dominated" / "abundant_dominated" / "mixed" / "unknown".
+    if market_class == "scarce_dominated":
+        pool_size_stability = "scarce"
+    elif market_class == "abundant_dominated":
+        pool_size_stability = "stable"
+    elif market_class == "mixed":
+        pool_size_stability = "variable"
+    else:
+        # Fallback: use scarce_count as a heuristic — if it's non-zero, variable; else stable.
+        pool_size_stability = "variable" if scarce_count > 0 else "stable"
+
+    return {
+        "recommended_max_positions": recommended_max_positions,
+        "recommended_position_size_pct": recommended_position_size_pct,
+        "concentration_risk_level": concentration_risk_level,
+        "diversification_feasible": diversification_feasible,
+        "pool_size_stability": pool_size_stability,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -2783,6 +3019,47 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["tight_stop_viable"] = _stop_loss_suggestion.get("tight_stop_viable")
     _surface_result["loose_stop_warned"] = _stop_loss_suggestion.get("loose_stop_warned")
     _surface_result["optimal_stop_trigger_rate"] = _stop_loss_suggestion.get("optimal_stop_trigger_rate")
+    # -----------------------------------------------------------------------
+    # Round 27, Task 1 (Alpha): Return distribution shape — skewness & tail asymmetry.
+    # Calls compute_return_distribution_shape on next_day_rows so all shape metrics
+    # are computed against the same T+1 forward-return sample used everywhere else.
+    # -----------------------------------------------------------------------
+    _return_dist_shape: dict[str, Any] = compute_return_distribution_shape(next_day_rows)
+    _surface_result["return_distribution_shape"] = _return_dist_shape
+    _surface_result["next_close_return_skewness"] = _return_dist_shape.get("next_close_return_skewness")
+    _surface_result["next_close_return_downside_std"] = _return_dist_shape.get("next_close_return_downside_std")
+    _surface_result["next_close_return_upside_std"] = _return_dist_shape.get("next_close_return_upside_std")
+    _surface_result["win_loss_std_ratio"] = _return_dist_shape.get("win_loss_std_ratio")
+    _surface_result["return_p5"] = _return_dist_shape.get("return_p5")
+    _surface_result["return_p95"] = _return_dist_shape.get("return_p95")
+    _surface_result["return_iqr"] = _return_dist_shape.get("return_iqr")
+    _surface_result["heavy_left_tail_flag"] = _return_dist_shape.get("heavy_left_tail_flag")
+    # -----------------------------------------------------------------------
+    # Round 27, Task 2 (Gamma): Composite score discrimination power.
+    # Uses all rows (not just next_day_rows) to leverage the full composite score sample.
+    # -----------------------------------------------------------------------
+    _score_discrimination: dict[str, Any] = compute_score_discrimination_power(rows)
+    _surface_result["score_discrimination_power"] = _score_discrimination
+    _surface_result["score_spread_p95_p5"] = _score_discrimination.get("score_spread_p95_p5")
+    _surface_result["score_iqr"] = _score_discrimination.get("score_iqr")
+    _surface_result["score_above_60_fraction"] = _score_discrimination.get("score_above_60_fraction")
+    _surface_result["score_above_70_fraction"] = _score_discrimination.get("score_above_70_fraction")
+    _surface_result["score_return_spearman"] = _score_discrimination.get("score_return_spearman")
+    _surface_result["score_discrimination_index"] = _score_discrimination.get("score_discrimination_index")
+    _surface_result["low_discrimination_flag"] = _score_discrimination.get("low_discrimination_flag")
+    # -----------------------------------------------------------------------
+    # Round 27, Task 3 (Beta): Liquidity-aware position guidance.
+    # Reads avg_candidate_pool_size/scarce_market_window_count/market_size_classification
+    # from _surface_result (populated above via the R14 walk-forward aggregate fields).
+    # Called before health score so health can eventually incorporate it.
+    # -----------------------------------------------------------------------
+    _liquidity_guidance: dict[str, Any] = compute_liquidity_position_guidance(_surface_result)
+    _surface_result["liquidity_position_guidance"] = _liquidity_guidance
+    _surface_result["recommended_max_positions"] = _liquidity_guidance.get("recommended_max_positions")
+    _surface_result["recommended_position_size_pct"] = _liquidity_guidance.get("recommended_position_size_pct")
+    _surface_result["concentration_risk_level"] = _liquidity_guidance.get("concentration_risk_level")
+    _surface_result["diversification_feasible"] = _liquidity_guidance.get("diversification_feasible")
+    _surface_result["pool_size_stability"] = _liquidity_guidance.get("pool_size_stability")
     # -----------------------------------------------------------------------
     # Round 25, Task 1 (Gamma): Profile health score — aggregate all quality
     # indicators into a single 0-100 score so strategists can compare profiles

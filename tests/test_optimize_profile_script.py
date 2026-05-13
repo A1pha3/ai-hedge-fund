@@ -4690,3 +4690,234 @@ def test_r25_floor_suggestions_missing_metric_graceful() -> None:
     assert suggestion is not None
     assert suggestion["action"] == "no_data"
 
+
+# ===========================================================================
+# Round 27 tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 27, Alpha): compute_return_distribution_shape
+# ---------------------------------------------------------------------------
+
+def test_r27_return_distribution_symmetric_skewness_near_zero() -> None:
+    """Symmetric distribution should have skewness close to 0."""
+    from scripts.btst_analysis_utils import compute_return_distribution_shape
+    rows = [{"next_close_return": v} for v in [-0.03, -0.01, 0.0, 0.01, 0.03]]
+    result = compute_return_distribution_shape(rows)
+    assert result["next_close_return_skewness"] is not None
+    assert abs(result["next_close_return_skewness"]) < 0.5  # near zero for symmetric
+
+
+def test_r27_return_distribution_left_skewed() -> None:
+    """Distribution with large losses should be left-skewed (negative skewness)."""
+    from scripts.btst_analysis_utils import compute_return_distribution_shape
+    # Big loss outlier makes distribution left-skewed
+    rows = [{"next_close_return": v} for v in [0.01, 0.02, 0.01, 0.01, 0.01, -0.20]]
+    result = compute_return_distribution_shape(rows)
+    assert result["next_close_return_skewness"] is not None
+    assert result["next_close_return_skewness"] < 0.0  # left-skewed
+
+
+def test_r27_return_distribution_win_loss_std_ratio_favourable() -> None:
+    """Win/loss std ratio > 1 when upside volatility exceeds downside volatility."""
+    from scripts.btst_analysis_utils import compute_return_distribution_shape
+    # Varied losses (small) and varied large wins → upside_std > downside_std
+    rows = [{"next_close_return": v} for v in [-0.01, -0.02, -0.015, -0.005, 0.05, 0.10, 0.15, 0.20]]
+    result = compute_return_distribution_shape(rows)
+    ratio = result.get("win_loss_std_ratio")
+    assert ratio is not None
+    assert ratio > 1.0
+
+
+def test_r27_return_distribution_heavy_left_tail_flag() -> None:
+    """heavy_left_tail_flag triggers when skewness < -1.0 AND p5 < -0.05."""
+    from scripts.btst_analysis_utils import compute_return_distribution_shape
+    # Extreme loss outliers to force heavy left tail
+    rows = [{"next_close_return": v} for v in [0.01, 0.01, 0.01, 0.01, -0.15, -0.20, -0.30, 0.01, 0.01, 0.01]]
+    result = compute_return_distribution_shape(rows)
+    # p5 should be very negative; skewness should be < -1.0
+    assert result["heavy_left_tail_flag"] is True
+    assert result["return_p5"] < -0.05
+
+
+def test_r27_return_distribution_insufficient_data() -> None:
+    """Fewer than 5 rows should return all None values."""
+    from scripts.btst_analysis_utils import compute_return_distribution_shape
+    rows = [{"next_close_return": 0.01}, {"next_close_return": 0.02}, {"next_close_return": -0.01}]
+    result = compute_return_distribution_shape(rows)
+    assert result["next_close_return_skewness"] is None
+    assert result["win_loss_std_ratio"] is None
+    assert result["heavy_left_tail_flag"] is False
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 27, Gamma): compute_score_discrimination_power
+# ---------------------------------------------------------------------------
+
+def test_r27_score_discrimination_high_spread() -> None:
+    """Wide score distribution should yield large spread and no low_discrimination_flag."""
+    from scripts.btst_analysis_utils import compute_score_discrimination_power
+    scores = [0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
+    rows = [{"runner_composite_score": s, "next_close_return": (s - 0.5) * 0.1} for s in scores]
+    result = compute_score_discrimination_power(rows)
+    assert result["score_spread_p95_p5"] is not None
+    assert result["score_spread_p95_p5"] >= 0.20  # 0.9 - 0.2 = 0.70 spread
+    assert result["low_discrimination_flag"] is False
+
+
+def test_r27_score_discrimination_low_spread_flag() -> None:
+    """Scores clustered around 0.5 trigger low_discrimination_flag."""
+    from scripts.btst_analysis_utils import compute_score_discrimination_power
+    scores = [0.48, 0.49, 0.50, 0.51, 0.52, 0.49, 0.50, 0.51]
+    rows = [{"runner_composite_score": s, "next_close_return": 0.01} for s in scores]
+    result = compute_score_discrimination_power(rows)
+    assert result["score_spread_p95_p5"] is not None
+    assert result["score_spread_p95_p5"] < 0.20
+    assert result["low_discrimination_flag"] is True
+
+
+def test_r27_score_discrimination_spearman_positive_correlation() -> None:
+    """Perfect rank correlation between score and return should give spearman ≈ 1.0."""
+    from scripts.btst_analysis_utils import compute_score_discrimination_power
+    pairs = [(0.2, -0.04), (0.4, -0.02), (0.5, 0.0), (0.6, 0.02), (0.8, 0.04), (0.9, 0.06)]
+    rows = [{"runner_composite_score": s, "next_close_return": r} for s, r in pairs]
+    result = compute_score_discrimination_power(rows)
+    spearman = result["score_return_spearman"]
+    assert spearman is not None
+    assert spearman > 0.9  # near-perfect positive rank correlation
+
+
+def test_r27_score_discrimination_index_equals_spread_times_abs_spearman() -> None:
+    """discrimination_index should equal spread_p95_p5 × |spearman|."""
+    from scripts.btst_analysis_utils import compute_score_discrimination_power
+    scores = [0.2, 0.4, 0.5, 0.6, 0.8, 0.9]
+    returns = [-0.04, -0.02, 0.0, 0.02, 0.04, 0.06]
+    rows = [{"runner_composite_score": s, "next_close_return": r} for s, r in zip(scores, returns)]
+    result = compute_score_discrimination_power(rows)
+    expected = round((result["score_spread_p95_p5"] or 0.0) * abs(result["score_return_spearman"] or 0.0), 4)
+    assert abs((result["score_discrimination_index"] or 0.0) - expected) < 1e-6
+
+
+def test_r27_score_discrimination_missing_field_returns_null() -> None:
+    """Rows without runner_composite_score should return all-None result."""
+    from scripts.btst_analysis_utils import compute_score_discrimination_power
+    rows = [{"next_close_return": 0.01} for _ in range(6)]
+    result = compute_score_discrimination_power(rows)
+    assert result["score_spread_p95_p5"] is None
+    assert result["score_discrimination_index"] is None
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 27, Beta): compute_liquidity_position_guidance
+# ---------------------------------------------------------------------------
+
+def test_r27_liquidity_large_pool_low_risk() -> None:
+    """Pool > 100 should give max positions = 10 and concentration_risk_level = 'low'."""
+    from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+    result = compute_liquidity_position_guidance({"avg_candidate_pool_size": 120.0, "scarce_market_window_count": 0, "market_size_classification": "abundant_dominated"})
+    assert result["recommended_max_positions"] == 10
+    assert result["concentration_risk_level"] == "low"
+    assert result["diversification_feasible"] is True
+
+
+def test_r27_liquidity_small_pool_extreme_risk() -> None:
+    """Pool < 10 should give max positions = 1 and concentration_risk_level = 'extreme'."""
+    from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+    result = compute_liquidity_position_guidance({"avg_candidate_pool_size": 8.0, "scarce_market_window_count": 3, "market_size_classification": "scarce_dominated"})
+    assert result["recommended_max_positions"] == 1
+    assert result["concentration_risk_level"] == "extreme"
+    assert result["diversification_feasible"] is False
+
+
+def test_r27_liquidity_pool_stability_classification() -> None:
+    """market_size_classification drives pool_size_stability correctly."""
+    from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+    assert compute_liquidity_position_guidance({"avg_candidate_pool_size": 50.0, "scarce_market_window_count": 0, "market_size_classification": "abundant_dominated"})["pool_size_stability"] == "stable"
+    assert compute_liquidity_position_guidance({"avg_candidate_pool_size": 50.0, "scarce_market_window_count": 2, "market_size_classification": "mixed"})["pool_size_stability"] == "variable"
+    assert compute_liquidity_position_guidance({"avg_candidate_pool_size": 15.0, "scarce_market_window_count": 5, "market_size_classification": "scarce_dominated"})["pool_size_stability"] == "scarce"
+
+
+def test_r27_liquidity_missing_pool_size_uses_default() -> None:
+    """Missing avg_candidate_pool_size should fall back to 50 (medium pool)."""
+    from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+    result = compute_liquidity_position_guidance({})
+    # Default pool=50 → floor(50/10)=5 positions → medium risk
+    assert result["recommended_max_positions"] == 5
+    assert result["concentration_risk_level"] == "medium"
+
+
+def test_r27_liquidity_position_size_pct_capped_at_20pct() -> None:
+    """Minimum 1 position → max position size = 1.0 (100% but capped at 20%)."""
+    from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+    result = compute_liquidity_position_guidance({"avg_candidate_pool_size": 5.0})
+    # 1 position → min(0.20, 1.0/1) = 0.20
+    assert result["recommended_position_size_pct"] == 0.20
+
+
+# ---------------------------------------------------------------------------
+# Task 1/2/3 (Round 27): registry checks — new metrics in comparison/quality dicts
+# ---------------------------------------------------------------------------
+
+def test_r27_new_metrics_in_comparison_metrics() -> None:
+    """All four R27 COMPARISON_METRICS entries must be present."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "next_close_return_skewness" in COMPARISON_METRICS
+    assert "win_loss_std_ratio" in COMPARISON_METRICS
+    assert "score_discrimination_index" in COMPARISON_METRICS
+    assert "recommended_max_positions" in COMPARISON_METRICS
+
+
+def test_r27_new_metrics_in_optional_comparison_metrics() -> None:
+    """All four R27 metrics must be optional (pre-R27 surfaces omit them)."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "next_close_return_skewness" in OPTIONAL_COMPARISON_METRICS
+    assert "win_loss_std_ratio" in OPTIONAL_COMPARISON_METRICS
+    assert "score_discrimination_index" in OPTIONAL_COMPARISON_METRICS
+    assert "recommended_max_positions" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r27_new_metrics_have_labels() -> None:
+    """All R27 metrics must have human-readable labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "next_close_return_skewness" in COMPARISON_METRIC_LABELS
+    assert "win_loss_std_ratio" in COMPARISON_METRIC_LABELS
+    assert "score_discrimination_index" in COMPARISON_METRIC_LABELS
+    assert "recommended_max_positions" in COMPARISON_METRIC_LABELS
+
+
+def test_r27_skewness_cap_in_btst_quality_caps() -> None:
+    """next_close_return_skewness floor must be registered at -2.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "next_close_return_skewness" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["next_close_return_skewness"] == -2.0
+
+
+def test_r27_score_spread_floor_in_btst_quality_floors() -> None:
+    """score_spread_p95_p5 floor must be registered at 0.10."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "score_spread_p95_p5" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["score_spread_p95_p5"] == 0.10
+
+
+def test_r27_skewness_cap_blocker_fires_when_too_negative() -> None:
+    """build_btst_quality_floor_blockers must fire when skewness < -2.0."""
+    from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+    metrics = {"next_close_return_skewness": -3.5, "score_spread_p95_p5": 0.50, "next_close_positive_rate": 0.60, "kelly_fraction_half": 0.05, "realized_payoff_ratio": 1.2, "alpha_avg_return": 0.001, "regime_consistency_score": 0.80, "kelly_fraction_drawdown_adjusted": 0.02, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.70, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.04, "avg_escape_gap_cost": -0.01, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_payoff_ratio": 1.05, "t_plus_3_close_expectancy": 0.001, "t_plus_3_close_positive_rate": 0.51, "t_plus_2_close_positive_rate": 0.53, "next_high_hit_rate": 0.57}
+    blockers = build_btst_quality_floor_blockers(metrics)
+    assert any("next_close_return_skewness" in b for b in blockers)
+
+
+def test_r27_skewness_cap_blocker_silent_when_acceptable() -> None:
+    """No blocker when skewness >= -2.0."""
+    from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+    metrics = {"next_close_return_skewness": -1.5, "score_spread_p95_p5": 0.50, "next_close_positive_rate": 0.60, "kelly_fraction_half": 0.05, "realized_payoff_ratio": 1.2, "alpha_avg_return": 0.001, "regime_consistency_score": 0.80, "kelly_fraction_drawdown_adjusted": 0.02, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.70, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.04, "avg_escape_gap_cost": -0.01, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_payoff_ratio": 1.05, "t_plus_3_close_expectancy": 0.001, "t_plus_3_close_positive_rate": 0.51, "t_plus_2_close_positive_rate": 0.53, "next_high_hit_rate": 0.57}
+    blockers = build_btst_quality_floor_blockers(metrics)
+    assert not any("next_close_return_skewness" in b for b in blockers)
+
+
+def test_r27_score_spread_floor_blocker_fires_when_too_narrow() -> None:
+    """build_btst_quality_floor_blockers must fire when score_spread_p95_p5 < 0.10."""
+    from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+    metrics = {"score_spread_p95_p5": 0.05, "next_close_positive_rate": 0.60, "kelly_fraction_half": 0.05, "realized_payoff_ratio": 1.2, "alpha_avg_return": 0.001, "regime_consistency_score": 0.80, "kelly_fraction_drawdown_adjusted": 0.02, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.70, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.04, "avg_escape_gap_cost": -0.01, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_payoff_ratio": 1.05, "t_plus_3_close_expectancy": 0.001, "t_plus_3_close_positive_rate": 0.51, "t_plus_2_close_positive_rate": 0.53, "next_high_hit_rate": 0.57}
+    blockers = build_btst_quality_floor_blockers(metrics)
+    assert any("score_spread_p95_p5" in b for b in blockers)

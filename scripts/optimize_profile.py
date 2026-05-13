@@ -195,6 +195,13 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "information_ratio",
     # Task 3 (Round 26, Beta): dynamic stop-loss suggestion.
     "suggested_stop_loss_pct",
+    # Task 1 (Round 27, Alpha): return distribution skewness & win/loss std ratio.
+    "next_close_return_skewness",
+    "win_loss_std_ratio",
+    # Task 2 (Round 27, Gamma): composite score discrimination power index.
+    "score_discrimination_index",
+    # Task 3 (Round 27, Beta): liquidity-aware position guidance.
+    "recommended_max_positions",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -280,6 +287,13 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "information_ratio": "Info Ratio",
     # Task 3 (Round 26, Beta): dynamic stop-loss suggestion
     "suggested_stop_loss_pct": "Suggested SL%",
+    # Task 1 (Round 27, Alpha): return distribution shape
+    "next_close_return_skewness": "Return Skewness",
+    "win_loss_std_ratio": "Win/Loss Std Ratio",
+    # Task 2 (Round 27, Gamma): score discrimination power
+    "score_discrimination_index": "Score Discrim Index",
+    # Task 3 (Round 27, Beta): liquidity position guidance
+    "recommended_max_positions": "Max Positions",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -387,6 +401,13 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "information_ratio",
     # Task 3 (Round 26, Beta): dynamic stop-loss suggestion — optional; pre-Round-26 outputs omit it.
     "suggested_stop_loss_pct",
+    # Task 1 (Round 27, Alpha): return distribution shape — optional; pre-Round-27 outputs omit these.
+    "next_close_return_skewness",
+    "win_loss_std_ratio",
+    # Task 2 (Round 27, Gamma): score discrimination power — optional; pre-Round-27 outputs omit it.
+    "score_discrimination_index",
+    # Task 3 (Round 27, Beta): liquidity position guidance — optional; pre-Round-27 outputs omit it.
+    "recommended_max_positions",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -468,6 +489,13 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     # Task 2 (Round 25, Beta): window volatility / trend — 0.5 % tolerance
     "win_rate_window_volatility": 0.005,
     "win_rate_window_trend": 0.005,
+    # Task 1 (Round 27, Alpha): return distribution shape — 1 % tolerance for skewness, 0.5 % for ratio
+    "next_close_return_skewness": 0.01,
+    "win_loss_std_ratio": 0.005,
+    # Task 2 (Round 27, Gamma): score discrimination index — 0.5 % tolerance
+    "score_discrimination_index": 0.005,
+    # Task 3 (Round 27, Beta): max positions — exact integer comparison; 0 tolerance
+    "recommended_max_positions": 0.0,
 }
 
 
@@ -848,6 +876,8 @@ def _build_replay_evaluator(
             "realized_payoff_ratio": [],
             # Task 2 (Round 24): drawdown-adjusted Kelly fraction — sample-weighted across windows.
             "kelly_fraction_drawdown_adjusted": [],
+            # Task 3 (Round 27, Beta): recommended_max_positions from liquidity position guidance.
+            "recommended_max_positions": [],
         }
         # Task 1 (Round 11): per-factor IC accumulator across replay windows
         total_factor_ics: dict[str, list[float]] = {f: [] for f in BTST_FACTOR_NAMES}
@@ -1053,6 +1083,10 @@ def _build_replay_evaluator(
                 if kelly_dd_adjusted_val is not None:
                     total_metrics["kelly_fraction_drawdown_adjusted"].append(kelly_dd_adjusted_val)
                     total_metric_weights["kelly_fraction_drawdown_adjusted"].append(sample_weight)
+                # Task 3 (Round 27, Beta): recommended_max_positions from liquidity guidance.
+                rec_max_pos = _safe_float(primary_surface.get("recommended_max_positions"))
+                if rec_max_pos is not None:
+                    total_metrics["recommended_max_positions"].append(rec_max_pos)
                 if primary_scope == "selected":
                     selected_surfaces.append(primary_surface)
                 # Task 1 & 2 (Round 21): collect every primary surface for cross-window analytics.
@@ -1168,6 +1202,20 @@ def _build_replay_evaluator(
         avg_realized_payoff_ratio = _weighted_avg(total_metrics["realized_payoff_ratio"], total_metric_weights["realized_payoff_ratio"])
         # Task 2 (Round 24): sample-weighted average drawdown-adjusted Kelly fraction.
         avg_kelly_fraction_drawdown_adjusted = _weighted_avg(total_metrics["kelly_fraction_drawdown_adjusted"], total_metric_weights["kelly_fraction_drawdown_adjusted"])
+        # Task 3 (Round 27, Beta): average recommended max positions across replay windows.
+        _rec_max_pos_vals = total_metrics["recommended_max_positions"]
+        avg_recommended_max_positions: int | None = round(sum(_rec_max_pos_vals) / len(_rec_max_pos_vals)) if _rec_max_pos_vals else None
+        # Derive concentration_risk_level from avg pool size proxy via avg_recommended_max_positions.
+        if avg_recommended_max_positions is None:
+            _concentration_risk_level: str | None = None
+        elif avg_recommended_max_positions >= 10:
+            _concentration_risk_level = "low"
+        elif avg_recommended_max_positions >= 5:
+            _concentration_risk_level = "medium"
+        elif avg_recommended_max_positions >= 2:
+            _concentration_risk_level = "high"
+        else:
+            _concentration_risk_level = "extreme"
 
         def _weighted_average_distribution_median(surfaces: list[dict[str, Any]], dist_key: str) -> float | None:
             """Compute sample-weighted average of distribution medians from selected surfaces."""
@@ -1343,6 +1391,11 @@ def _build_replay_evaluator(
             # floor_suggestions_summary: compact advisory listing only the easy / strict metrics.
             "floor_suggestions": floor_suggestions_result.get("floor_suggestions"),
             "floor_suggestions_summary": floor_suggestions_summary,
+            # Task 3 (Round 27, Beta): liquidity-aware position guidance aggregated across windows.
+            # recommended_max_positions: integer average of per-window position sizing recommendations.
+            # concentration_risk_level: derived from avg pool → avg recommended_max_positions.
+            "recommended_max_positions": avg_recommended_max_positions,
+            "concentration_risk_level": _concentration_risk_level,
         }
 
     return evaluator
