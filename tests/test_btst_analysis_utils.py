@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
-from scripts.btst_analysis_utils import build_surface_summary, compare_reports, summarize_distribution, extract_btst_price_outcome
+from scripts.btst_analysis_utils import (
+    BTST_FACTOR_NAMES,
+    build_surface_summary,
+    compare_reports,
+    compute_all_factor_ics,
+    compute_factor_ic,
+    summarize_distribution,
+    extract_btst_price_outcome,
+)
 
 
 def test_summarize_distribution_includes_profit_aware_percentiles() -> None:
@@ -158,3 +167,119 @@ def test_build_surface_summary_includes_runner_metrics() -> None:
     assert summary["max_future_high_return_2_5d_hit_rate_at_20pct"] == 0.5
     assert summary["max_future_high_return_2_5d_distribution"]["max"] == 0.23
     assert summary["time_to_hit_20pct_median"] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Round 10 Task 1 — Factor IC validation
+# ---------------------------------------------------------------------------
+
+
+def test_btst_factor_names_contains_seven_factors() -> None:
+    """BTST_FACTOR_NAMES must list exactly the seven primary scoring factors."""
+    assert len(BTST_FACTOR_NAMES) == 7
+    expected = {"breakout_freshness", "trend_acceleration", "volume_expansion_quality", "catalyst_freshness", "close_strength", "volatility_regime", "sector_resonance"}
+    assert set(BTST_FACTOR_NAMES) == expected
+
+
+def test_compute_factor_ic_perfect_positive_correlation() -> None:
+    """Perfectly correlated factor and return should give IC = 1.0."""
+    rows = [{"breakout_freshness": float(i) / 10, "next_close_return": float(i) / 10} for i in range(10)]
+    ic = compute_factor_ic(rows, "breakout_freshness", "next_close_return")
+    assert ic is not None
+    assert ic == pytest.approx(1.0, abs=1e-4)
+
+
+def test_compute_factor_ic_perfect_negative_correlation() -> None:
+    """Perfectly anti-correlated factor and return should give IC = -1.0."""
+    rows = [{"breakout_freshness": float(i), "next_close_return": float(-i)} for i in range(10)]
+    ic = compute_factor_ic(rows, "breakout_freshness", "next_close_return")
+    assert ic is not None
+    assert ic == pytest.approx(-1.0, abs=1e-4)
+
+
+def test_compute_factor_ic_returns_none_when_too_few_rows() -> None:
+    """IC must return None when fewer than 5 paired observations are available."""
+    rows = [{"breakout_freshness": 0.5, "next_close_return": 0.02}] * 4
+    ic = compute_factor_ic(rows, "breakout_freshness", "next_close_return")
+    assert ic is None
+
+
+def test_compute_factor_ic_skips_missing_values() -> None:
+    """Rows missing either factor or return should be silently excluded."""
+    rows = [
+        {"breakout_freshness": 0.1, "next_close_return": 0.01},
+        {"breakout_freshness": 0.2, "next_close_return": 0.02},
+        {"breakout_freshness": 0.3},                                 # missing return
+        {"next_close_return": 0.03},                                 # missing factor
+        {"breakout_freshness": 0.4, "next_close_return": 0.04},
+        {"breakout_freshness": 0.5, "next_close_return": 0.05},
+        {"breakout_freshness": 0.6, "next_close_return": 0.06},
+    ]
+    ic = compute_factor_ic(rows, "breakout_freshness", "next_close_return")
+    assert ic is not None
+    assert ic == pytest.approx(1.0, abs=1e-4)  # remaining 5 rows are perfectly correlated
+
+
+def test_compute_all_factor_ics_returns_dict_with_all_factors() -> None:
+    """compute_all_factor_ics should return a dict keyed by all BTST_FACTOR_NAMES."""
+    rows: list[dict] = []
+    result = compute_all_factor_ics(rows)
+    assert set(result.keys()) == set(BTST_FACTOR_NAMES)
+    # All None because no rows
+    assert all(v is None for v in result.values())
+
+
+def test_compute_all_factor_ics_nonzero_for_sufficient_data() -> None:
+    """compute_all_factor_ics returns numeric ICs when all factors have sufficient data."""
+    import random
+    random.seed(42)
+    rows = [
+        {
+            "breakout_freshness": random.random(),
+            "trend_acceleration": random.random(),
+            "volume_expansion_quality": random.random(),
+            "catalyst_freshness": random.random(),
+            "close_strength": random.random(),
+            "volatility_regime": random.random(),
+            "sector_resonance": random.random(),
+            "next_close_return": random.uniform(-0.05, 0.1),
+        }
+        for _ in range(20)
+    ]
+    ics = compute_all_factor_ics(rows)
+    # All 7 factors have data → all ICs should be float, not None
+    assert all(isinstance(v, float) for v in ics.values()), f"Some ICs were None: {ics}"
+    assert all(-1.0 <= v <= 1.0 for v in ics.values())
+
+
+def test_build_surface_summary_includes_ic_sub_dicts() -> None:
+    """build_surface_summary should include factor_ic_next_close, factor_ic_t_plus_2, factor_ic_t_plus_3."""
+    rows = [
+        {
+            "next_close_return": float(i) / 10,
+            "next_open_return": float(i) / 12,
+            "next_high_return": float(i) / 8,
+            "next_open_to_close_return": float(i) / 11,
+            "t_plus_2_close_return": float(i) / 9,
+            "t_plus_3_close_return": float(i) / 8,
+            "breakout_freshness": float(i) / 10,
+            "trend_acceleration": float(i) / 10,
+            "volume_expansion_quality": float(i) / 10,
+            "catalyst_freshness": float(i) / 10,
+            "close_strength": float(i) / 10,
+            "volatility_regime": float(i) / 10,
+            "sector_resonance": float(i) / 10,
+        }
+        for i in range(1, 11)  # 10 rows
+    ]
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.05)
+
+    assert "factor_ic_next_close" in summary
+    assert "factor_ic_t_plus_2" in summary
+    assert "factor_ic_t_plus_3" in summary
+
+    ic_nc = summary["factor_ic_next_close"]
+    assert isinstance(ic_nc, dict)
+    assert set(ic_nc.keys()) == set(BTST_FACTOR_NAMES)
+    # All factors are perfectly correlated with next_close_return in this synthetic data
+    assert all(v == pytest.approx(1.0, abs=1e-4) for v in ic_nc.values()), f"Expected IC≈1.0: {ic_nc}"

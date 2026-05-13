@@ -575,16 +575,18 @@ def compute_sector_resonance_phase_score(raw_sector: float) -> float:
 
 
 def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None) -> float:
-    """Runner-priority composite score combining seven key runner signals.
+    """Runner-priority composite score combining eight key runner signals.
 
     Weights are read from the profile when provided (fields: runner_composite_score_breakout_weight,
     runner_composite_score_trend_weight, runner_composite_score_volume_weight,
     runner_composite_score_catalyst_weight, runner_composite_score_close_strength_weight,
-    runner_composite_score_volatility_regime_weight, runner_composite_score_sector_resonance_weight).
+    runner_composite_score_volatility_regime_weight, runner_composite_score_sector_resonance_weight,
+    runner_composite_score_quiet_breakout_weight).
     Falls back to defaults when profile is absent:
       breakout_freshness=0.40, trend_acceleration=0.30,
       volume_expansion_quality=0.20, catalyst_freshness=0.10, close_strength=0.10,
-      volatility_regime=0.0 (disabled by default), sector_resonance=0.0 (disabled by default).
+      volatility_regime=0.0 (disabled by default), sector_resonance=0.0 (disabled by default),
+      quiet_breakout=0.0 (disabled by default).
 
     Weights are automatically normalized by their sum so the score is always in [0.0, 1.0]
     regardless of whether the provided weights happen to sum to 1.0.  This makes grid-search
@@ -601,6 +603,10 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     (Task T, Round 9): stocks in a confirmed 主升浪 phase (sector_resonance > 0.65) receive a
     convex bonus; stocks in a contra-sector phase (<0.35) are penalised more aggressively.
     Neutral 0.5 when no sector data present.
+    ``quiet_breakout_score`` (Task 5, Round 10): cross-product of breakout freshness and calm
+    volatility — breakout_freshness × (1 − volatility_risk_factor).  High-momentum + low-volatility
+    "安静突破" setups that empirically show the highest BTST success rates.  Degrades to raw
+    breakout_freshness when volatility data is absent so it never penalises the composite score.
     """
     breakout = float(snapshot.get("breakout_freshness") or 0.0)
     trend = float(snapshot.get("trend_acceleration") or 0.0)
@@ -611,10 +617,17 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     atr_ratio = float(snapshot.get("atr_ratio") or 0.0)
     if volatility_regime <= 0.0 and atr_ratio <= 0.0:
         volatility_regime_score = 0.5
+        volatility_risk_factor = 0.0  # neutral — no data; cross-term defaults to raw breakout
     else:
         vr_risk = max((volatility_regime - 1.0) / 0.35, 0.0) if volatility_regime > 0 else 0.0
         atr_risk = max((atr_ratio - 0.065) / 0.045, 0.0) if atr_ratio > 0 else 0.0
-        volatility_regime_score = round(1.0 - min(max(vr_risk, atr_risk), 1.0), 4)
+        volatility_risk_factor = min(max(vr_risk, atr_risk), 1.0)
+        volatility_regime_score = round(1.0 - volatility_risk_factor, 4)
+    # Task 5 (Round 10): "quiet breakout" cross-factor — breakout freshness amplified by low
+    # volatility.  Formula: breakout × (1 − volatility_risk_factor), clipped to [0, 1].
+    # When volatility data is absent (risk_factor=0) the score degrades to raw breakout_freshness,
+    # so it is always a non-negative contribution and never penalises the composite score.
+    quiet_breakout_score = round(breakout * (1.0 - volatility_risk_factor), 4)
     raw_sector = float(snapshot.get("sector_resonance") or 0.0)
     # Task T (Round 9): use phase-amplified score instead of raw linear mapping.
     sector_resonance_score = compute_sector_resonance_phase_score(raw_sector) if raw_sector > 0.0 else 0.5
@@ -625,9 +638,10 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     w_cs = float(getattr(profile, "runner_composite_score_close_strength_weight", 0.10) or 0.10)
     w_vr = float(getattr(profile, "runner_composite_score_volatility_regime_weight", 0.0) or 0.0)
     w_sr = float(getattr(profile, "runner_composite_score_sector_resonance_weight", 0.0) or 0.0)
-    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr
+    w_qb = float(getattr(profile, "runner_composite_score_quiet_breakout_weight", 0.0) or 0.0)
+    total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr + w_qb
     if total_weight <= 0.0:
         return 0.0
-    raw = w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score
+    raw = w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score
     return round(raw / total_weight, 4)
 

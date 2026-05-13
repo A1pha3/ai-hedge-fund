@@ -1435,3 +1435,104 @@ def test_runner_composite_score_phase_amplifies_strong_sector() -> None:
     score_strong = compute_runner_composite_score(snapshot_strong_sector, profile=SectorWeightedProfile())
     assert score_strong > score_mid, f"Strong sector {score_strong} should beat mid sector {score_mid}"
     assert 0.0 <= score_strong <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Round 10 Task 5 — Quiet breakout cross-factor
+# ---------------------------------------------------------------------------
+
+
+def test_quiet_breakout_score_disabled_by_default() -> None:
+    """When quiet_breakout_weight=0 (default), the composite score is identical to the non-cross case."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    snapshot = {"breakout_freshness": 0.80, "trend_acceleration": 0.65, "volume_expansion_quality": 0.60, "volatility_regime": 0.9, "atr_ratio": 0.04}
+    # No profile → default weights used (quiet_breakout_weight defaults to 0.0).
+    score_no_profile = compute_runner_composite_score(snapshot)
+    # Explicit profile with zero quiet_breakout weight.
+    class ZeroQbProfile:
+        runner_composite_score_breakout_weight = 0.40
+        runner_composite_score_trend_weight = 0.30
+        runner_composite_score_volume_weight = 0.20
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+
+    score_zero_qb = compute_runner_composite_score(snapshot, profile=ZeroQbProfile())
+    assert score_no_profile == pytest.approx(score_zero_qb, abs=1e-4)
+
+
+def test_quiet_breakout_score_penalises_high_volatility() -> None:
+    """A stock with high volatility should score lower on quiet_breakout than an identical low-volatility stock."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    class QbEnabledProfile:
+        runner_composite_score_breakout_weight = 0.30
+        runner_composite_score_trend_weight = 0.20
+        runner_composite_score_volume_weight = 0.15
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.15
+
+    base_signals = {"breakout_freshness": 0.80, "trend_acceleration": 0.65, "volume_expansion_quality": 0.60, "catalyst_freshness": 0.40, "close_strength": 0.50}
+    # Low volatility: atr_ratio=0.04 (below 0.065 threshold) → risk_factor≈0 → quiet_breakout≈breakout.
+    low_vol = {**base_signals, "volatility_regime": 0.9, "atr_ratio": 0.04}
+    # High volatility: atr_ratio=0.12 (above 0.11 threshold) → risk_factor=1 → quiet_breakout=0.
+    high_vol = {**base_signals, "volatility_regime": 1.4, "atr_ratio": 0.12}
+    profile = QbEnabledProfile()
+    score_low_vol = compute_runner_composite_score(low_vol, profile=profile)
+    score_high_vol = compute_runner_composite_score(high_vol, profile=profile)
+    assert score_low_vol > score_high_vol, f"Low-vol score {score_low_vol} should beat high-vol {score_high_vol}"
+    assert 0.0 <= score_low_vol <= 1.0
+    assert 0.0 <= score_high_vol <= 1.0
+
+
+def test_quiet_breakout_score_absent_volatility_defaults_to_breakout() -> None:
+    """When no volatility data is present, volatility_risk_factor=0 so quiet_breakout_score equals breakout_freshness.
+    Verified by showing that splitting breakout weight between breakout and quiet_breakout yields the same composite
+    score as concentrating all weight on breakout — only valid when quiet_breakout == breakout (no vol data)."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    snapshot = {"breakout_freshness": 0.75, "trend_acceleration": 0.50}
+
+    class ProfileABreakoutHeavy:
+        # All breakout contribution on the standard breakout signal (w_b=0.80, w_qb=0.0).
+        runner_composite_score_breakout_weight = 0.80
+        runner_composite_score_trend_weight = 0.20
+        runner_composite_score_volume_weight = 0.20
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.0
+
+    class ProfileBBreakoutSplit:
+        # Same total breakout contribution split across breakout and quiet_breakout (w_b=0.40, w_qb=0.40).
+        # When vol data is absent (risk_factor=0), quiet_breakout_score == breakout_freshness,
+        # so the two profiles are mathematically identical.
+        runner_composite_score_breakout_weight = 0.40
+        runner_composite_score_trend_weight = 0.20
+        runner_composite_score_volume_weight = 0.20
+        runner_composite_score_catalyst_weight = 0.10
+        runner_composite_score_close_strength_weight = 0.10
+        runner_composite_score_volatility_regime_weight = 0.0
+        runner_composite_score_sector_resonance_weight = 0.0
+        runner_composite_score_quiet_breakout_weight = 0.40
+
+    score_a = compute_runner_composite_score(snapshot, profile=ProfileABreakoutHeavy())
+    score_b = compute_runner_composite_score(snapshot, profile=ProfileBBreakoutSplit())
+    assert score_a == pytest.approx(score_b, abs=1e-4), (
+        f"With no vol data quiet_breakout_score must equal breakout_freshness: {score_a=} vs {score_b=}"
+    )
+
+
+def test_quiet_breakout_profile_field_wired_to_profile() -> None:
+    """runner_composite_score_quiet_breakout_weight must be a proper field on ShortTradeTargetProfile with default 0.0."""
+    from src.targets.profiles import build_short_trade_target_profile
+    profile = build_short_trade_target_profile("default")
+    assert hasattr(profile, "runner_composite_score_quiet_breakout_weight")
+    assert profile.runner_composite_score_quiet_breakout_weight == 0.0

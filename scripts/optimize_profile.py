@@ -40,8 +40,12 @@ PARTIAL_T3_HORIZON_WEIGHT_PENALTY = 0.92
 # exponentially decayed sample_weight so that recent data has proportionally more influence.
 RECENCY_HALF_LIFE_DAYS: int = 90
 RECENCY_DECAY_MIN_FACTOR: float = 0.20  # floor: oldest windows keep at least 20 % weight
-# Task U (Round 9): Dynamic liquidity regime — low-liquidity windows are down-weighted so that
-# optimization results are not polluted by illiquid market periods.
+# Task 4 (Round 10): candidate half-life values for grid search — optimizer selects the
+# best value automatically; pre-computed maps avoid re-scanning paths on every trial.
+RECENCY_HALF_LIFE_CANDIDATES: tuple[int, ...] = (60, 90, 120, 180)
+# Task 4 (Round 10): params that are consumed by the optimizer framework itself and must NOT
+# be forwarded to build_short_trade_target_profile as profile overrides.
+_OPTIMIZER_ONLY_PARAMS: frozenset[str] = frozenset({"recency_half_life_days"})
 LIQUIDITY_LOW_REGIME_FLOOR: float = 40.0    # below this → severe down-weight
 LIQUIDITY_SOFT_REGIME_FLOOR: float = 50.0   # below this → mild down-weight
 LIQUIDITY_LOW_REGIME_WEIGHT_PENALTY: float = 0.80
@@ -79,6 +83,8 @@ MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS: dict[str, dict[str, list[Any]]] = {
         "catalyst_freshness_weight": [0.10, 0.14],
         "momentum_strength_weight": [0.00, 0.06],
         "short_term_reversal_weight": [0.00, 0.04],
+        # Task 4 (Round 10): coarse sweep includes the two extreme half-life candidates.
+        "recency_half_life_days": [60, 180],
     },
     "focused": {
         "select_threshold": [0.46, 0.50, 0.54],
@@ -90,6 +96,8 @@ MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS: dict[str, dict[str, list[Any]]] = {
         "catalyst_freshness_weight": [0.10, 0.14],
         "momentum_strength_weight": [0.00, 0.06],
         "short_term_reversal_weight": [0.00, 0.04],
+        # Task 4 (Round 10): focused sweep uses all four candidates.
+        "recency_half_life_days": list(RECENCY_HALF_LIFE_CANDIDATES),
     },
 }
 COMPARISON_METRICS: tuple[str, ...] = (
@@ -340,12 +348,19 @@ def _compute_recency_decay(window_date_str: str, reference_date_str: str, half_l
     return max(RECENCY_DECAY_MIN_FACTOR, round(decay, 6))
 
 
-def _build_recency_decay_map(input_paths: list[Path]) -> dict[str, float]:
+def _build_recency_decay_map(input_paths: list[Path], half_life_days: int = RECENCY_HALF_LIFE_DAYS) -> dict[str, float]:
     """Pre-scan ``input_paths`` to derive per-window recency decay factors.
 
     The date is extracted from ``path.parent.name`` which follows the naming
     convention ``…/selection_artifacts/YYYY-MM-DD/selection_target_replay_input.json``.
     Paths whose parent name cannot be parsed as a date receive factor 1.0.
+
+    Args:
+        input_paths: List of replay input file paths.
+        half_life_days: Number of calendar days after which the decay factor reaches ~0.5.
+            Defaults to ``RECENCY_HALF_LIFE_DAYS``.  Exposed as a parameter so the optimizer
+            can pre-compute maps for all ``RECENCY_HALF_LIFE_CANDIDATES`` simultaneously
+            (Task 4, Round 10).
 
     Returns:
         Dict mapping ``str(input_path)`` to the recency decay factor in
@@ -363,7 +378,7 @@ def _build_recency_decay_map(input_paths: list[Path]) -> dict[str, float]:
     if not valid_dates:
         return {str(p): 1.0 for p in input_paths}
     reference_date = max(valid_dates)
-    return {str(p): (_compute_recency_decay(date_by_path[str(p)], reference_date) if date_by_path[str(p)] else 1.0) for p in input_paths}
+    return {str(p): (_compute_recency_decay(date_by_path[str(p)], reference_date, half_life_days=half_life_days) if date_by_path[str(p)] else 1.0) for p in input_paths}
 
 
 def _format_guardrail_spec(spec: GuardrailSpec) -> str:
@@ -478,13 +493,24 @@ def _build_replay_evaluator(
 
     # Task S (Round 9): pre-compute temporal recency decay map so that older windows
     # receive proportionally less weight, preventing stale regime data from dominating.
-    recency_decay_map: dict[str, float] = _build_recency_decay_map(input_paths)
+    # Task 4 (Round 10): pre-compute one decay map per candidate half-life so the inner
+    # evaluator can select the correct map based on the trial's recency_half_life_days param
+    # without re-scanning input_paths on every trial.
+    recency_decay_maps: dict[int, dict[str, float]] = {hl: _build_recency_decay_map(input_paths, half_life_days=hl) for hl in RECENCY_HALF_LIFE_CANDIDATES}
+    recency_decay_map: dict[str, float] = recency_decay_maps[RECENCY_HALF_LIFE_DAYS]
 
     def evaluator(params: dict[str, Any]) -> dict[str, float | None]:
         from src.targets.profiles import build_short_trade_target_profile
 
+        # Task 4 (Round 10): select per-trial decay map based on the recency_half_life_days
+        # search parameter; fall back to the default map when the param is absent.
+        trial_half_life = int(params.get("recency_half_life_days") or RECENCY_HALF_LIFE_DAYS)
+        active_recency_decay_map = recency_decay_maps.get(trial_half_life, recency_decay_map)
+        # Strip optimizer-only params before forwarding to the profile builder.
+        profile_params = {k: v for k, v in params.items() if k not in _OPTIMIZER_ONLY_PARAMS}
+
         try:
-            build_short_trade_target_profile(base_profile, overrides=params)
+            build_short_trade_target_profile(base_profile, overrides=profile_params)
         except Exception as e:
             logger.warning("Invalid params %s: %s", params, e)
             return {
@@ -563,7 +589,7 @@ def _build_replay_evaluator(
                     profile_name=base_profile,
                     label=f"trial_{json.dumps(params, sort_keys=True, default=str)}",
                     next_high_hit_threshold=next_high_hit_threshold,
-                    profile_overrides=params,
+                    profile_overrides=profile_params,
                 )
                 surfaces = dict(result.get("surface_summaries", {}) or {})
                 selected_surface = dict(surfaces.get("selected") or {})
@@ -620,8 +646,9 @@ def _build_replay_evaluator(
                 elif not has_t_plus_3_horizon:
                     sample_weight *= PARTIAL_T3_HORIZON_WEIGHT_PENALTY
                 # Task S (Round 9): apply temporal recency decay so that older windows contribute
-                # proportionally less.  The decay map is pre-computed outside the evaluator loop.
-                sample_weight *= recency_decay_map.get(str(input_path), 1.0)
+                # proportionally less.  Task 4 (Round 10): use the trial-specific decay map so
+                # different half_life candidates receive correctly scaled weights.
+                sample_weight *= active_recency_decay_map.get(str(input_path), 1.0)
                 # Task U (Round 9): dynamic liquidity regime — extract per-window average liquidity
                 # and down-weight windows that fall in a low-volume market regime.
                 window_liquidity = _average_scope_metric(scoped_rows, "liquidity_capacity_raw_100")
@@ -1103,6 +1130,8 @@ MOMENTUM_OPTIMIZED_GRID: dict[str, list[Any]] = {
     "stale_penalty_block_threshold": [0.78, 0.82],
     "overhead_penalty_block_threshold": [0.74, 0.78],
     "extension_penalty_block_threshold": [0.80, 0.84],
+    # Task 4 (Round 10): recency half-life grid — optimizer selects the best decay speed.
+    "recency_half_life_days": list(RECENCY_HALF_LIFE_CANDIDATES),
 }
 
 EVENT_CATALYST_GRID: dict[str, list[Any]] = {
@@ -1149,10 +1178,14 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "historical_continuation_score_weight": [0.0, 0.05, 0.10],
     "runner_composite_score_volatility_regime_weight": [0.0, 0.05, 0.10],
     "runner_composite_score_sector_resonance_weight": [0.0, 0.05, 0.10],
+    # Task 5 (Round 10): quiet breakout cross-factor weight.
+    "runner_composite_score_quiet_breakout_weight": [0.0, 0.05, 0.10, 0.15],
     "runner_escape_gap_risk_raw_100_max": [40.0, 45.0, 52.0],
     "runner_escape_projected_theme_exposure_max": [0.24, 0.28, 0.32],
     "runner_escape_candidate_pool_avg_amount_share_of_cutoff_min": [0.85, 1.0, 1.15],
     "runner_escape_composite_score_min": [0.0, 0.40, 0.45, 0.50],
+    # Task 4 (Round 10): recency half-life grid.
+    "recency_half_life_days": list(RECENCY_HALF_LIFE_CANDIDATES),
 }
 
 IGNITION_STAGE1_GRID: dict[str, list[Any]] = {

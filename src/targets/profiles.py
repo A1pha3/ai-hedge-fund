@@ -294,6 +294,9 @@ class ShortTradeTargetProfile:
     runner_composite_score_close_strength_weight: float = 0.10
     runner_composite_score_volatility_regime_weight: float = 0.0
     runner_composite_score_sector_resonance_weight: float = 0.0
+    # Task 5 (Round 10): quiet breakout cross-factor — high momentum × low volatility synergy.
+    # Captures "安静突破" setups where breakout freshness is amplified by a calm volatility regime.
+    runner_composite_score_quiet_breakout_weight: float = 0.0
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:

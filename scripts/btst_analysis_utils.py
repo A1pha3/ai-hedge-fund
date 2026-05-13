@@ -6,6 +6,83 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# Task 1 (Round 10) — Factor IC validation
+# ---------------------------------------------------------------------------
+# The seven primary BTST scoring factors whose Information Coefficient (IC) we
+# track.  IC = Spearman rank correlation between factor value and forward return.
+BTST_FACTOR_NAMES: tuple[str, ...] = (
+    "breakout_freshness",
+    "trend_acceleration",
+    "volume_expansion_quality",
+    "catalyst_freshness",
+    "close_strength",
+    "volatility_regime",
+    "sector_resonance",
+)
+
+
+def _rank_list(values: list[float]) -> list[float]:
+    """Return average rank vector for *values* (1-based, ties resolved by average).
+
+    Pure-stdlib implementation — no scipy dependency.
+    """
+    n = len(values)
+    if n == 0:
+        return []
+    sorted_indices = sorted(range(n), key=lambda i: values[i])
+    ranks: list[float] = [0.0] * n
+    i = 0
+    while i < n:
+        j = i
+        while j < n and values[sorted_indices[j]] == values[sorted_indices[i]]:
+            j += 1
+        avg_rank = (i + j + 1) / 2.0  # 1-based average rank for this tie group
+        for k in range(i, j):
+            ranks[sorted_indices[k]] = avg_rank
+        i = j
+    return ranks
+
+
+def compute_factor_ic(rows: list[dict[str, Any]], factor_col: str, return_col: str = "next_close_return") -> float | None:
+    """Compute Spearman rank IC between *factor_col* values and *return_col* forward returns.
+
+    Returns ``None`` when fewer than 5 paired observations are available (insufficient data
+    to produce a meaningful correlation estimate).  The result is rounded to 4 decimal places.
+    """
+    pairs: list[tuple[float, float]] = []
+    for row in rows:
+        f_val = row.get(factor_col)
+        r_val = row.get(return_col)
+        if f_val is not None and r_val is not None:
+            try:
+                pairs.append((float(f_val), float(r_val)))
+            except (TypeError, ValueError):
+                continue
+    if len(pairs) < 5:
+        return None
+    factors = [p[0] for p in pairs]
+    returns = [p[1] for p in pairs]
+    rf = _rank_list(factors)
+    rr = _rank_list(returns)
+    n = len(rf)
+    mean_rf = sum(rf) / n
+    mean_rr = sum(rr) / n
+    numerator = sum((rf[i] - mean_rf) * (rr[i] - mean_rr) for i in range(n))
+    denom_f = sum((x - mean_rf) ** 2 for x in rf) ** 0.5
+    denom_r = sum((x - mean_rr) ** 2 for x in rr) ** 0.5
+    if denom_f == 0.0 or denom_r == 0.0:
+        return None
+    return round(numerator / (denom_f * denom_r), 4)
+
+
+def compute_all_factor_ics(rows: list[dict[str, Any]], return_col: str = "next_close_return") -> dict[str, float | None]:
+    """Compute Spearman IC for all :data:`BTST_FACTOR_NAMES` against *return_col*.
+
+    Returns a dict mapping factor name → IC value (or ``None`` if insufficient data).
+    """
+    return {factor: compute_factor_ic(rows, factor, return_col) for factor in BTST_FACTOR_NAMES}
+
 import pandas as pd
 
 from scripts.btst_data_utils import (
@@ -360,6 +437,10 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "time_to_hit_20pct_median": summarize_distribution(time_to_hit_values)["median"] if time_to_hit_values else None,
         "runner_escape_rate": runner_escape_rate,
         "avg_composite_score_escaped": avg_composite_score_escaped,
+        # Task 1 (Round 10) — factor IC vs forward returns
+        "factor_ic_next_close": compute_all_factor_ics(next_day_rows, "next_close_return"),
+        "factor_ic_t_plus_2": compute_all_factor_ics(closed_rows, "t_plus_2_close_return"),
+        "factor_ic_t_plus_3": compute_all_factor_ics(t_plus_3_rows, "t_plus_3_close_return"),
     }
 
 

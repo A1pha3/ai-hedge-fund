@@ -32,6 +32,7 @@ from scripts.optimize_profile import (
     LIQUIDITY_SOFT_REGIME_FLOOR,
     LIQUIDITY_SOFT_REGIME_WEIGHT_PENALTY,
     RECENCY_DECAY_MIN_FACTOR,
+    RECENCY_HALF_LIFE_CANDIDATES,
     RECENCY_HALF_LIFE_DAYS,
     resolve_grid_params,
     resolve_guardrails,
@@ -931,10 +932,16 @@ def test_resolve_grid_params_uses_btst_runner_probe_preset() -> None:
 
 
 def test_btst_runner_probe_grid_params_build_valid_profile() -> None:
-    """Each combination of runner probe grid values must build a valid btst_runner_probe profile."""
-    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+    """Each combination of runner probe grid values must build a valid btst_runner_probe profile.
+
+    Optimizer-only params (e.g. ``recency_half_life_days``) are excluded from the profile
+    build check since they are consumed by the optimizer framework, not the profile constructor.
+    """
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID, _OPTIMIZER_ONLY_PARAMS
 
     for param_name, values in BTST_RUNNER_PROBE_GRID.items():
+        if param_name in _OPTIMIZER_ONLY_PARAMS:
+            continue  # consumed by optimizer framework, not forwarded to profile
         for value in values:
             profile = build_short_trade_target_profile("btst_runner_probe", overrides={param_name: value})
             assert profile is not None
@@ -3109,4 +3116,90 @@ def test_low_liquidity_window_reduces_sample_weight(monkeypatch: pytest.MonkeyPa
     assert metrics_high["sample_weight"] is not None
     assert metrics_low["sample_weight"] < metrics_high["sample_weight"], (
         f"Low-liq sample_weight={metrics_low['sample_weight']} should be < high-liq={metrics_high['sample_weight']}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 10 Task 4 — Recency half-life grid search
+# ---------------------------------------------------------------------------
+
+
+def test_recency_half_life_candidates_are_all_positive() -> None:
+    """Every candidate half-life value must be a positive integer."""
+    for hl in RECENCY_HALF_LIFE_CANDIDATES:
+        assert isinstance(hl, int) and hl > 0, f"Invalid half-life candidate: {hl}"
+
+
+def test_recency_half_life_candidates_include_default() -> None:
+    """The default RECENCY_HALF_LIFE_DAYS must be present in RECENCY_HALF_LIFE_CANDIDATES."""
+    assert RECENCY_HALF_LIFE_DAYS in RECENCY_HALF_LIFE_CANDIDATES
+
+
+def test_build_recency_decay_map_respects_half_life_param() -> None:
+    """A shorter half-life should produce steeper decay (lower factor) for old windows.
+
+    The old window is chosen to be ~120 calendar days before the reference so that it
+    falls above the RECENCY_DECAY_MIN_FACTOR floor under both candidate half-lives yet
+    produces meaningfully different factors (0.25 vs ~0.63 for 60- vs 180-day half-life).
+    """
+    paths = [
+        # ~120 days before the reference date below.
+        Path("data/selection_artifacts/2025-11-20/selection_target_replay_input.json"),
+        Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json"),
+    ]
+    old_path_key = str(paths[0])
+    dm_short = _build_recency_decay_map(paths, half_life_days=60)
+    dm_long = _build_recency_decay_map(paths, half_life_days=180)
+    # The oldest window must decay more steeply with the shorter half-life.
+    assert dm_short[old_path_key] < dm_long[old_path_key], (
+        f"short half-life={dm_short[old_path_key]} should be < long half-life={dm_long[old_path_key]}"
+    )
+    # The newest window always has factor 1.0 regardless of half-life.
+    assert dm_short[str(paths[1])] == pytest.approx(1.0)
+    assert dm_long[str(paths[1])] == pytest.approx(1.0)
+
+
+def test_evaluator_uses_recency_half_life_days_param(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evaluator trials with shorter half-life should weight old windows less than trials with longer half-life.
+
+    Windows are chosen to be ~100 calendar days apart so both half-life candidates (60 and 180 days)
+    keep the old window above the RECENCY_DECAY_MIN_FACTOR floor, producing different effective weights.
+    """
+    _surface = {
+        "next_day_available_count": 10,
+        "closed_cycle_count": 6,
+        "next_close_positive_rate": 0.60,
+        "next_high_hit_rate_at_threshold": 0.60,
+        "next_close_expectancy": 0.015,
+        "next_close_payoff_ratio": 1.5,
+        "t_plus_2_close_positive_rate": 0.58,
+        "t_plus_2_close_return_distribution": {"median": 0.014},
+        "t_plus_3_close_positive_rate": 0.56,
+        "t_plus_3_close_expectancy": 0.010,
+        "t_plus_3_close_return_distribution": {"median": 0.012},
+        "next_close_return_distribution": {"p10": -0.02},
+    }
+
+    def fake_analyze(input_path: Path, **_: object) -> dict[str, object]:
+        return {"surface_summaries": {"selected": dict(_surface), "tradeable": dict(_surface)}}
+
+    fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+    fake_module.analyze_btst_profile_replay_window = fake_analyze
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    # Two windows: ~100 days apart — old window stays above floor for both half-life candidates.
+    old_path = Path("data/selection_artifacts/2025-12-10/selection_target_replay_input.json")
+    new_path = Path("data/selection_artifacts/2026-03-20/selection_target_replay_input.json")
+    evaluator = _build_replay_evaluator([old_path, new_path], base_profile="default")
+
+    # Short half-life: old window heavily discounted → lower composite sample_weight.
+    metrics_short = evaluator({"recency_half_life_days": 60})
+    # Long half-life: old window receives more weight → higher composite sample_weight.
+    metrics_long = evaluator({"recency_half_life_days": 180})
+
+    assert metrics_short["sample_weight"] is not None
+    assert metrics_long["sample_weight"] is not None
+    # With two windows (one old, one new), longer half-life must yield equal or higher weight.
+    assert metrics_short["sample_weight"] <= metrics_long["sample_weight"], (
+        f"short={metrics_short['sample_weight']} should be ≤ long={metrics_long['sample_weight']}"
     )
