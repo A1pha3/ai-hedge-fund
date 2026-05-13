@@ -3408,3 +3408,187 @@ def test_replay_evaluator_ic_weight_suggestions_empty_when_no_surface_key(monkey
     # key must exist but be an empty dict (no votes accumulated)
     assert "ic_weight_suggestions" in metrics
     assert metrics["ic_weight_suggestions"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Round 13 — Task 3: IC Weight Feedback Loop (apply_ic_feedback_to_probe_grid)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_ic_feedback_reduce_drops_top_candidate() -> None:
+    """'reduce' suggestion must remove the highest candidate value from the grid (Task 3, Round 13)."""
+    from scripts.optimize_profile import apply_ic_feedback_to_probe_grid, BTST_RUNNER_PROBE_GRID
+
+    suggestions = {"breakout_freshness": "reduce"}
+    result = apply_ic_feedback_to_probe_grid(suggestions, BTST_RUNNER_PROBE_GRID)
+
+    original = sorted(float(v) for v in BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"])
+    modified = sorted(float(v) for v in result["runner_composite_score_breakout_weight"])
+
+    assert max(modified) < max(original), (
+        f"'reduce' should drop the top candidate: original={original}, modified={modified}"
+    )
+    assert len(modified) == len(original) - 1
+
+
+def test_apply_ic_feedback_increase_adds_one_step_above_max() -> None:
+    """'increase' suggestion must add a candidate one IC_WEIGHT_GRID_STEP above the current max (Task 3, Round 13)."""
+    from scripts.optimize_profile import (
+        apply_ic_feedback_to_probe_grid,
+        BTST_RUNNER_PROBE_GRID,
+        IC_WEIGHT_GRID_STEP,
+        IC_WEIGHT_GRID_MAX_UPPER_BOUND,
+    )
+
+    suggestions = {"trend_acceleration": "increase"}
+    result = apply_ic_feedback_to_probe_grid(suggestions, BTST_RUNNER_PROBE_GRID)
+
+    original_max = max(float(v) for v in BTST_RUNNER_PROBE_GRID["runner_composite_score_trend_weight"])
+    expected_new_max = round(original_max + IC_WEIGHT_GRID_STEP, 4)
+
+    modified = sorted(float(v) for v in result["runner_composite_score_trend_weight"])
+
+    if expected_new_max <= IC_WEIGHT_GRID_MAX_UPPER_BOUND:
+        assert max(modified) == pytest.approx(expected_new_max, abs=1e-6), (
+            f"'increase' should add {expected_new_max} but got max={max(modified)}"
+        )
+        assert len(modified) == len(BTST_RUNNER_PROBE_GRID["runner_composite_score_trend_weight"]) + 1
+
+
+def test_apply_ic_feedback_maintain_leaves_candidates_unchanged() -> None:
+    """'maintain' suggestion must not alter the candidate list (Task 3, Round 13)."""
+    from scripts.optimize_profile import apply_ic_feedback_to_probe_grid, BTST_RUNNER_PROBE_GRID
+
+    suggestions = {"volume_expansion_quality": "maintain"}
+    result = apply_ic_feedback_to_probe_grid(suggestions, BTST_RUNNER_PROBE_GRID)
+
+    original = sorted(float(v) for v in BTST_RUNNER_PROBE_GRID["runner_composite_score_volume_weight"])
+    modified = sorted(float(v) for v in result["runner_composite_score_volume_weight"])
+
+    assert original == pytest.approx(modified, abs=1e-6), (
+        f"'maintain' should not change candidates: original={original}, modified={modified}"
+    )
+
+
+def test_apply_ic_feedback_unknown_factor_is_ignored() -> None:
+    """Suggestions for factors not in BTST_FACTOR_TO_PROBE_WEIGHT_KEY must be silently ignored (Task 3, Round 13)."""
+    from scripts.optimize_profile import apply_ic_feedback_to_probe_grid, BTST_RUNNER_PROBE_GRID
+
+    suggestions = {"nonexistent_factor": "reduce", "breakout_freshness": "maintain"}
+    # Should not raise; should return grid unchanged for the nonexistent factor
+    result = apply_ic_feedback_to_probe_grid(suggestions, BTST_RUNNER_PROBE_GRID)
+    assert isinstance(result, dict)
+    assert "runner_composite_score_breakout_weight" in result
+
+
+def test_apply_ic_feedback_reduce_never_empties_candidate_list() -> None:
+    """'reduce' must never reduce a single-candidate list to empty (Task 3, Round 13)."""
+    from scripts.optimize_profile import apply_ic_feedback_to_probe_grid
+
+    # Construct a minimal grid with only one candidate for the target weight key
+    minimal_grid: dict = {"runner_composite_score_breakout_weight": [0.40]}
+    suggestions = {"breakout_freshness": "reduce"}
+
+    result = apply_ic_feedback_to_probe_grid(suggestions, minimal_grid)
+
+    modified = result["runner_composite_score_breakout_weight"]
+    assert len(modified) >= 1, "reduce must never empty the candidate list"
+
+
+def test_apply_ic_feedback_increase_respects_max_upper_bound() -> None:
+    """'increase' must not add a candidate that exceeds IC_WEIGHT_GRID_MAX_UPPER_BOUND (Task 3, Round 13)."""
+    from scripts.optimize_profile import (
+        apply_ic_feedback_to_probe_grid,
+        IC_WEIGHT_GRID_MAX_UPPER_BOUND,
+        IC_WEIGHT_GRID_STEP,
+    )
+
+    # Place the max exactly at the bound
+    at_ceiling_grid: dict = {"runner_composite_score_breakout_weight": [IC_WEIGHT_GRID_MAX_UPPER_BOUND]}
+    suggestions = {"breakout_freshness": "increase"}
+
+    result = apply_ic_feedback_to_probe_grid(suggestions, at_ceiling_grid)
+
+    modified = sorted(float(v) for v in result["runner_composite_score_breakout_weight"])
+    assert max(modified) <= IC_WEIGHT_GRID_MAX_UPPER_BOUND, (
+        f"'increase' exceeded IC_WEIGHT_GRID_MAX_UPPER_BOUND {IC_WEIGHT_GRID_MAX_UPPER_BOUND}: max={max(modified)}"
+    )
+
+
+def test_apply_ic_feedback_does_not_mutate_base_grid() -> None:
+    """apply_ic_feedback_to_probe_grid must return a new dict and not modify the input (Task 3, Round 13)."""
+    from scripts.optimize_profile import apply_ic_feedback_to_probe_grid, BTST_RUNNER_PROBE_GRID
+
+    original_breakout = list(BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"])
+    suggestions = {"breakout_freshness": "reduce"}
+
+    _ = apply_ic_feedback_to_probe_grid(suggestions, BTST_RUNNER_PROBE_GRID)
+
+    # Original grid must be unchanged
+    assert list(BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"]) == original_breakout, (
+        "apply_ic_feedback_to_probe_grid must not mutate the input grid"
+    )
+
+
+def test_resolve_grid_params_btst_runner_probe_applies_ic_feedback() -> None:
+    """resolve_grid_params must apply IC feedback when ic_weight_suggestions is provided (Task 3, Round 13)."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+
+    # 'reduce' for breakout_freshness should drop the top candidate
+    suggestions = {"breakout_freshness": "reduce"}
+
+    grid = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="btst_runner_probe",
+        ic_weight_suggestions=suggestions,
+    )
+
+    original_breakout = sorted(float(v) for v in BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"])
+    result_breakout = sorted(float(v) for v in grid["runner_composite_score_breakout_weight"])
+
+    assert max(result_breakout) < max(original_breakout), (
+        f"IC feedback 'reduce' should drop top breakout weight: original={original_breakout}, result={result_breakout}"
+    )
+
+
+def test_resolve_grid_params_btst_runner_probe_no_ic_feedback_unchanged() -> None:
+    """resolve_grid_params must return the base BTST_RUNNER_PROBE_GRID when ic_weight_suggestions=None (Task 3, Round 13)."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+
+    grid = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="btst_runner_probe",
+        ic_weight_suggestions=None,
+    )
+
+    assert sorted(grid["runner_composite_score_breakout_weight"]) == sorted(
+        BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"]
+    ), "Without IC feedback, breakout weight candidates must match the base grid"
+    assert sorted(grid["runner_composite_score_trend_weight"]) == sorted(
+        BTST_RUNNER_PROBE_GRID["runner_composite_score_trend_weight"]
+    ), "Without IC feedback, trend weight candidates must match the base grid"
+
+
+def test_resolve_grid_params_non_btst_runner_probe_ignores_ic_feedback() -> None:
+    """IC feedback must have no effect when profile_name != 'btst_runner_probe' (Task 3, Round 13)."""
+    suggestions = {"breakout_freshness": "reduce"}
+
+    # Use the default momentum profile; IC feedback should be silently ignored
+    grid_with = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="default",
+        ic_weight_suggestions=suggestions,
+    )
+    grid_without = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="default",
+        ic_weight_suggestions=None,
+    )
+
+    assert grid_with == grid_without, (
+        "IC suggestions should have no effect on non-btst_runner_probe profiles"
+    )

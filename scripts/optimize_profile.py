@@ -1300,6 +1300,79 @@ BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
     "recency_half_life_days": list(RECENCY_HALF_LIFE_CANDIDATES),
 }
 
+# ---------------------------------------------------------------------------
+# Task 3 (Round 13) — IC weight feedback loop: factor → probe grid weight key mapping
+# ---------------------------------------------------------------------------
+# Maps each BTST factor name (as returned by compute_ic_weight_suggestions) to its
+# corresponding composite score weight key in BTST_RUNNER_PROBE_GRID.  Used by
+# apply_ic_feedback_to_probe_grid to automatically tighten or relax the grid search
+# bounds based on IC feedback from previous evaluation rounds.
+BTST_FACTOR_TO_PROBE_WEIGHT_KEY: dict[str, str] = {
+    "breakout_freshness": "runner_composite_score_breakout_weight",
+    "trend_acceleration": "runner_composite_score_trend_weight",
+    "volume_expansion_quality": "runner_composite_score_volume_weight",
+    "catalyst_freshness": "runner_composite_score_catalyst_weight",
+    "close_strength": "runner_composite_score_close_strength_weight",
+    "volatility_regime": "runner_composite_score_volatility_regime_weight",
+    "sector_resonance": "runner_composite_score_sector_resonance_weight",
+}
+
+# Standard step size for weight candidates in BTST_RUNNER_PROBE_GRID.
+# Used when computing expanded upper bounds for "increase" suggestions.
+IC_WEIGHT_GRID_STEP: float = 0.05
+# Hard upper bound for any single factor's composite score weight to prevent a single
+# factor from dominating the composite score after repeated "increase" suggestions.
+IC_WEIGHT_GRID_MAX_UPPER_BOUND: float = 0.55
+
+
+def apply_ic_feedback_to_probe_grid(
+    ic_weight_suggestions: dict[str, str],
+    base_grid: dict[str, list[Any]],
+) -> dict[str, list[Any]]:
+    """Return a copy of *base_grid* with weight candidates pruned / expanded based on IC feedback.
+
+    This implements the IC weight feedback loop (Task 3, Round 13).  For each BTST factor that
+    has an IC weight suggestion from :func:`~scripts.btst_analysis_utils.compute_ic_weight_suggestions`,
+    the corresponding probe-grid candidate list in :data:`BTST_RUNNER_PROBE_GRID` is modified:
+
+    - ``"reduce"``: the highest candidate value is dropped (upper bound tightened) to prevent
+      the search from promoting high weights for a weakly predictive factor.
+    - ``"increase"``: a candidate one step above the current maximum is added (bounded by
+      :data:`IC_WEIGHT_GRID_MAX_UPPER_BOUND`) so strong predictors can reach higher weights.
+    - ``"maintain"``: no change.
+
+    At least one candidate is always retained even for repeated ``reduce`` suggestions —
+    the pruning never empties a candidate list.
+
+    Args:
+        ic_weight_suggestions: Mapping of factor name → suggestion string (``"reduce"``,
+            ``"increase"``, or ``"maintain"``).  Factors with no mapping are unmodified.
+        base_grid: Base probe grid dict (typically :data:`BTST_RUNNER_PROBE_GRID`).
+
+    Returns:
+        New grid dict with modified candidate lists (same key set as *base_grid*).
+    """
+    result: dict[str, list[Any]] = {k: list(v) for k, v in base_grid.items()}
+    for factor, suggestion in ic_weight_suggestions.items():
+        grid_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY.get(factor)
+        if grid_key is None or grid_key not in result:
+            continue
+        candidates: list[Any] = result[grid_key]
+        if not candidates:
+            continue
+        sorted_candidates = sorted(float(c) for c in candidates)
+        if suggestion == "reduce":
+            # Drop the top candidate if more than one remains to avoid emptying the list.
+            if len(sorted_candidates) > 1:
+                sorted_candidates = sorted_candidates[:-1]
+        elif suggestion == "increase":
+            # Add one step above the current maximum, bounded by IC_WEIGHT_GRID_MAX_UPPER_BOUND.
+            new_max = round(sorted_candidates[-1] + IC_WEIGHT_GRID_STEP, 4)
+            if new_max <= IC_WEIGHT_GRID_MAX_UPPER_BOUND and new_max not in sorted_candidates:
+                sorted_candidates = sorted_candidates + [new_max]
+        result[grid_key] = sorted_candidates
+    return result
+
 IGNITION_STAGE1_GRID: dict[str, list[Any]] = {
     "committee_alpha_min_aggressive_trade": [66.0, 68.0],
     "committee_beta_min_aggressive_trade": [56.0, 58.0],
@@ -1322,6 +1395,7 @@ def resolve_grid_params(
     profile_name: str,
     search_stage: str = "full",
     staged_mode: str | None = None,
+    ic_weight_suggestions: dict[str, str] | None = None,
 ) -> dict[str, list[Any]]:
     """Resolve grid parameters with optional preset and profile-specific extensions.
 
@@ -1331,6 +1405,11 @@ def resolve_grid_params(
         profile_name: Profile name for profile-specific grid extensions
         search_stage: Optional stage-aware preset variant
         staged_mode: Optional staged calibration mode (e.g. "ignition_stage1")
+        ic_weight_suggestions: Optional IC-based weight suggestions dict (from
+            :func:`~scripts.btst_analysis_utils.compute_ic_weight_suggestions`).
+            When provided and the profile is ``btst_runner_probe``, the probe grid
+            search bounds are automatically tightened / expanded via
+            :func:`apply_ic_feedback_to_probe_grid` (Task 3, Round 13).
 
     Returns:
         Merged grid dictionary with parsed params taking precedence
@@ -1348,7 +1427,9 @@ def resolve_grid_params(
     if preset_grid and profile_name in ROUTED_BTST_COMMITTEE_PROFILES:
         return {**ROUTED_BTST_COMMITTEE_GRID, **resolved}
     if preset_grid and profile_name == "btst_runner_probe":
-        return {**BTST_RUNNER_PROBE_GRID, **resolved}
+        # Task 3 (Round 13): apply IC feedback to prune / expand weight candidates before search.
+        base_runner_grid = apply_ic_feedback_to_probe_grid(ic_weight_suggestions, BTST_RUNNER_PROBE_GRID) if ic_weight_suggestions else dict(BTST_RUNNER_PROBE_GRID)
+        return {**base_runner_grid, **resolved}
     if preset_grid:
         return {**base_momentum_grid, **resolved}
     return resolved

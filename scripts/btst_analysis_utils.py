@@ -372,6 +372,32 @@ def summarize_distribution(values: list[float]) -> dict[str, float | int | None]
     }
 
 
+def compute_excess_kurtosis(values: list[float]) -> float | None:
+    """Return the excess kurtosis (Fisher definition: kurtosis − 3) of *values*.
+
+    Uses the standard population formula (no bias correction) which is appropriate for
+    the sample sizes encountered in BTST windows (typically 20–200 data points).
+
+    Returns ``None`` when fewer than 4 values are available — kurtosis is undefined for
+    n < 4 and unstable for very small samples.
+
+    Args:
+        values: List of numeric values (e.g. daily next-close returns).
+
+    Returns:
+        Excess kurtosis rounded to 4 decimal places, or ``None`` when insufficient data.
+    """
+    n = len(values)
+    if n < 4:
+        return None
+    m = sum(values) / n
+    variance = sum((x - m) ** 2 for x in values) / n
+    if variance <= 0.0:
+        return None
+    fourth_moment = sum((x - m) ** 4 for x in values) / n
+    return round(fourth_moment / (variance ** 2) - 3.0, 4)
+
+
 def _build_return_edge_metrics(returns: list[float]) -> dict[str, float | int | None]:
     if not returns:
         return {
@@ -432,6 +458,10 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # P10 represents the worst-10th-percentile intraday dip and acts as a tail-risk floor.
     next_intraday_drawdown_values = [float(row["next_intraday_drawdown"]) for row in next_day_rows if row.get("next_intraday_drawdown") is not None]
     t_plus_1_intraday_drawdown_p10 = summarize_distribution(next_intraday_drawdown_values).get("p10") if next_intraday_drawdown_values else None
+    # Task 2 (Round 13): T+1 next-close return excess kurtosis — measures fat-tailedness of the
+    # return distribution.  High excess kurtosis (> 5) signals that extreme wins/losses drive most
+    # of the apparent edge, severely over-stating strategy robustness.  Guardrail cap: kurtosis ≤ 5.
+    next_close_return_kurtosis = compute_excess_kurtosis(next_close_returns)
 
     next_high_hits = sum(1 for value in next_high_returns if value >= next_high_hit_threshold)
     next_close_positive = sum(1 for value in next_close_returns if value > 0)
@@ -450,6 +480,13 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     runner_escape_rate = round(len(escaped_rows) / len(rows), 4) if rows else None
     escaped_scores = [float(row["runner_composite_score"]) for row in escaped_rows if row.get("runner_composite_score") is not None]
     avg_composite_score_escaped = round(sum(escaped_scores) / len(escaped_scores), 4) if escaped_scores else None
+    # Task 1 (Round 13): escape gap cost — average T+1 open return for escaped runner rows.
+    # Measures the execution premium (or discount) experienced when entering escaped runners at the T+1 open.
+    # A very negative value indicates the strategy is selecting runners that gap DOWN on T+1 open (limit-up
+    # reversal risk).  Guardrail floor: avg_escape_gap_cost >= -0.03 prevents promoting strategies where
+    # escaped runners systematically open more than 3 % below the prior-day close.
+    escaped_open_returns = [float(row["next_open_return"]) for row in escaped_rows if row.get("next_open_return") is not None]
+    avg_escape_gap_cost = round(sum(escaped_open_returns) / len(escaped_open_returns), 4) if escaped_open_returns else None
     # Task 3 (Round 11): pool-level average composite score — includes ALL candidates (not just escaped
     # ones).  A high runner_escape_rate combined with a low candidate_pool_avg_composite_score indicates
     # "矮子里拔将军" (best of a bad lot) — the optimizer uses this as an optional quality guardrail.
@@ -507,11 +544,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "time_to_hit_20pct_median": summarize_distribution(time_to_hit_values)["median"] if time_to_hit_values else None,
         "runner_escape_rate": runner_escape_rate,
         "avg_composite_score_escaped": avg_composite_score_escaped,
+        # Task 1 (Round 13): escape gap cost — avg T+1 open return for escaped runner rows.
+        # A negative value indicates runners systematically gap down on the next open (limit-up reversal risk).
+        "avg_escape_gap_cost": avg_escape_gap_cost,
         # Task 3 (Round 11): pool-level quality
         "candidate_pool_avg_composite_score": candidate_pool_avg_composite_score,
         # Task 1 (Round 12): T+1 intraday drawdown (open-to-low) tail-risk metric
         "t_plus_1_intraday_drawdown_p10": t_plus_1_intraday_drawdown_p10,
         "next_intraday_drawdown_distribution": summarize_distribution(next_intraday_drawdown_values),
+        # Task 2 (Round 13): T+1 next-close return excess kurtosis — fat-tail distributional guardrail.
+        "next_close_return_kurtosis": next_close_return_kurtosis,
         # Task 1 (Round 10) — factor IC vs forward returns
         "factor_ic_next_close": factor_ic_next_close,
         "factor_ic_t_plus_2": factor_ic_t_plus_2,

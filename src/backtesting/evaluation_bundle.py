@@ -31,6 +31,12 @@ _GUARDRAIL_KEYS = (
     # A very negative P10 indicates the strategy routinely suffers large intraday adverse
     # excursions from the open even when the day closes higher — hurting real P&L.
     "t_plus_1_intraday_drawdown_p10",
+    # Task 1 (Round 13): escape gap cost floor — average T+1 open return for escaped runners.
+    # Very negative values indicate runners that systematically gap down on T+1 open (limit-up reversal).
+    "avg_escape_gap_cost",
+    # Task 2 (Round 13): excess kurtosis of T+1 next-close returns — fat-tail distributional cap guardrail.
+    # Extremely fat-tailed returns inflate apparent win rate and payoff metrics; this key acts as a cap.
+    "next_close_return_kurtosis",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -57,6 +63,24 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Positions that routinely suffer >7% intraday draws blow real-money P&L
     # even when the daily close return is positive.
     "t_plus_1_intraday_drawdown_p10": -0.07,
+    # Task 1 (Round 13): escape gap cost floor.
+    # Escaped runners must not average a T+1 open gap of worse than -3 % (vs T close).
+    # Strategies where selected runners routinely gap down on T+1 open (e.g. limit-up reversal)
+    # destroy real-money P&L even if the T+1 close is positive.
+    "avg_escape_gap_cost": -0.03,
+}
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 13) — Quality cap guardrails (max-bounded, complementary to floors)
+# ---------------------------------------------------------------------------
+# Some metrics are harmful when TOO HIGH rather than too low.  ``BTST_QUALITY_CAPS``
+# maps metric keys to their maximum acceptable values; exceeding any cap triggers a
+# blocker via :func:`build_btst_quality_cap_blockers`.
+BTST_QUALITY_CAPS: dict[str, float] = {
+    # Excess kurtosis of T+1 next-close returns.  A fat-tailed distribution (kurtosis > 5)
+    # means extreme outlier returns dominate the apparent win rate / payoff ratio, severely
+    # over-stating strategy robustness.  Profiles above this cap should be penalised.
+    "next_close_return_kurtosis": 5.0,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},
@@ -121,6 +145,30 @@ def build_btst_quality_floor_blockers(metrics: dict[str, Any] | None, *, prefix:
             continue
         if float(value) < float(floor):
             blockers.append(f"{prefix}_{metric_key}_floor_breach")
+    return blockers
+
+
+def build_btst_quality_cap_blockers(metrics: dict[str, Any] | None, *, prefix: str = "btst_quality") -> list[str]:
+    """Return blocker labels for metrics that exceed their maximum cap in :data:`BTST_QUALITY_CAPS`.
+
+    Complements :func:`build_btst_quality_floor_blockers` for metrics where high values are
+    harmful (e.g. excess kurtosis — a fat-tailed return distribution inflates apparent performance).
+
+    Args:
+        metrics: Evaluated metrics dict from the evaluator or walk-forward summary.
+        prefix: Prefix for blocker label strings.
+
+    Returns:
+        List of cap-breach blocker labels (empty when all metrics are within bounds).
+    """
+    bundle = build_canonical_btst_evaluation_bundle(metrics)
+    blockers: list[str] = []
+    for metric_key, cap in BTST_QUALITY_CAPS.items():
+        value = bundle.lookup(metric_key)
+        if value is None:
+            continue
+        if float(value) > float(cap):
+            blockers.append(f"{prefix}_{metric_key}_cap_breach")
     return blockers
 
 

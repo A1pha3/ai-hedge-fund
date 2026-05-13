@@ -927,3 +927,223 @@ def test_select_best_promotable_candidate_uses_baseline_for_all_candidates() -> 
     label, verdict, _detail = select_best_promotable_candidate(candidates, baseline_summary=baseline)
     assert label == "runner"
     assert verdict == "promotable_runner_profile"
+
+
+# ---------------------------------------------------------------------------
+# Round 13 — Task 1: Escape Cost Model (avg_escape_gap_cost floor guardrail)
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_walk_forward_blocks_avg_escape_gap_cost_floor_breach() -> None:
+    """avg_escape_gap_cost below -0.03 must trigger a rollout blocker (Task 1, Round 13).
+
+    When the average open-return for escaped runner rows is worse than -3 % across walk-forward
+    windows, the aggregated summary must contain a blocker key to prevent promotion.
+    """
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-28",
+            ),
+            metrics={
+                "sharpe_ratio": 1.2,
+                "sortino_ratio": 1.5,
+                "max_drawdown": -3.0,
+                "test_trading_days": 15,
+                "next_close_positive_rate": 0.62,
+                "next_high_hit_rate_at_threshold": 0.65,
+                "downside_p10": -0.018,
+                # avg_escape_gap_cost below floor of -0.03
+                "avg_escape_gap_cost": -0.05,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert "btst_quality_avg_escape_gap_cost_floor_breach" in summary.get("rollout_blockers", []), (
+        "Expected floor-breach blocker for avg_escape_gap_cost but got: "
+        f"{summary.get('rollout_blockers')}"
+    )
+
+
+def test_summarize_walk_forward_no_blocker_when_avg_escape_gap_cost_acceptable() -> None:
+    """avg_escape_gap_cost at or above -0.03 must NOT trigger a floor-breach blocker (Task 1, Round 13)."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-28",
+            ),
+            metrics={
+                "sharpe_ratio": 1.4,
+                "sortino_ratio": 1.8,
+                "max_drawdown": -2.5,
+                "test_trading_days": 18,
+                "next_close_positive_rate": 0.66,
+                "next_high_hit_rate_at_threshold": 0.68,
+                "downside_p10": -0.016,
+                # avg_escape_gap_cost just above the floor
+                "avg_escape_gap_cost": -0.02,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert "btst_quality_avg_escape_gap_cost_floor_breach" not in summary.get("rollout_blockers", []), (
+        "Unexpected floor-breach blocker when avg_escape_gap_cost is acceptable: "
+        f"{summary.get('rollout_blockers')}"
+    )
+
+
+def test_summarize_walk_forward_avg_escape_gap_cost_missing_does_not_raise() -> None:
+    """When avg_escape_gap_cost is absent from all windows, the summary must not raise and must
+    omit the metric key entirely (Task 1, Round 13).
+    """
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-28",
+            ),
+            metrics={
+                "sharpe_ratio": 1.2,
+                "sortino_ratio": 1.5,
+                "max_drawdown": -3.0,
+                "test_trading_days": 15,
+                "next_close_positive_rate": 0.62,
+                "next_high_hit_rate_at_threshold": 0.65,
+                "downside_p10": -0.018,
+                # avg_escape_gap_cost intentionally absent
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    # Must not raise; blocker should NOT fire when data is absent
+    assert "btst_quality_avg_escape_gap_cost_floor_breach" not in summary.get("rollout_blockers", [])
+
+
+# ---------------------------------------------------------------------------
+# Round 13 — Task 2: T+1 Return Kurtosis Detection (next_close_return_kurtosis cap guardrail)
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_walk_forward_blocks_next_close_return_kurtosis_cap_breach() -> None:
+    """next_close_return_kurtosis above 5.0 must trigger a cap-breach blocker (Task 2, Round 13).
+
+    Fat-tailed return distributions inflate apparent performance metrics.  When the average
+    excess kurtosis across walk-forward windows exceeds 5.0 the aggregated summary must block
+    rollout promotion.
+    """
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-28",
+            ),
+            metrics={
+                "sharpe_ratio": 1.2,
+                "sortino_ratio": 1.5,
+                "max_drawdown": -3.0,
+                "test_trading_days": 15,
+                "next_close_positive_rate": 0.62,
+                "next_high_hit_rate_at_threshold": 0.65,
+                "downside_p10": -0.018,
+                # kurtosis above cap of 5.0
+                "next_close_return_kurtosis": 7.2,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert "btst_quality_next_close_return_kurtosis_cap_breach" in summary.get("rollout_blockers", []), (
+        "Expected cap-breach blocker for next_close_return_kurtosis but got: "
+        f"{summary.get('rollout_blockers')}"
+    )
+
+
+def test_summarize_walk_forward_no_blocker_when_kurtosis_below_cap() -> None:
+    """next_close_return_kurtosis at or below 5.0 must NOT trigger a cap-breach blocker (Task 2, Round 13)."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2026-01-01",
+                train_end="2026-01-31",
+                test_start="2026-02-01",
+                test_end="2026-02-28",
+            ),
+            metrics={
+                "sharpe_ratio": 1.4,
+                "sortino_ratio": 1.8,
+                "max_drawdown": -2.5,
+                "test_trading_days": 18,
+                "next_close_positive_rate": 0.66,
+                "next_high_hit_rate_at_threshold": 0.68,
+                "downside_p10": -0.016,
+                # kurtosis within acceptable range
+                "next_close_return_kurtosis": 3.1,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert "btst_quality_next_close_return_kurtosis_cap_breach" not in summary.get("rollout_blockers", []), (
+        "Unexpected cap-breach blocker when kurtosis is acceptable: "
+        f"{summary.get('rollout_blockers')}"
+    )
+
+
+def test_summarize_walk_forward_kurtosis_multi_window_plain_average() -> None:
+    """Cap metrics use plain (unweighted) average across windows, not recency-weighted (Task 2, Round 13).
+
+    Two windows with very different kurtosis values and very different test_start dates must produce
+    a plain arithmetic average, not a recency-biased average.
+    """
+    def _make_result(test_start: str, kurtosis: float) -> WalkForwardResult:
+        return WalkForwardResult(
+            window=WalkForwardWindow(
+                train_start="2025-01-01",
+                train_end="2025-01-31",
+                test_start=test_start,
+                test_end=test_start,
+            ),
+            metrics={
+                "sharpe_ratio": 1.2,
+                "sortino_ratio": 1.5,
+                "max_drawdown": -3.0,
+                "test_trading_days": 15,
+                "next_close_positive_rate": 0.62,
+                "next_high_hit_rate_at_threshold": 0.65,
+                "downside_p10": -0.018,
+                "next_close_return_kurtosis": kurtosis,
+            },
+        )
+
+    # Old window: kurtosis = 2.0; recent window: kurtosis = 6.0 → plain avg = 4.0
+    old_result = _make_result("2025-01-01", kurtosis=2.0)
+    new_result = _make_result("2026-04-01", kurtosis=6.0)
+
+    summary = summarize_walk_forward([old_result, new_result])
+
+    # Plain average is 4.0 (no cap breach).  Recency-weighted would be >> 4.0 (would breach cap).
+    kurtosis_avg = summary.get("next_close_return_kurtosis")
+    assert kurtosis_avg is not None
+    assert float(kurtosis_avg) == pytest.approx(4.0, abs=0.05), (
+        f"Expected plain average ~4.0 but got {kurtosis_avg}"
+    )
+    # 4.0 ≤ 5.0 cap → no blocker expected
+    assert "btst_quality_next_close_return_kurtosis_cap_breach" not in summary.get("rollout_blockers", [])

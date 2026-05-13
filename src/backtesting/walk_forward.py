@@ -9,7 +9,7 @@ from dateutil.relativedelta import relativedelta
 
 from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
-from .evaluation_bundle import BTST_QUALITY_FLOORS, build_btst_quality_floor_blockers, build_canonical_btst_evaluation_bundle
+from .evaluation_bundle import BTST_QUALITY_FLOORS, BTST_QUALITY_CAPS, build_btst_quality_floor_blockers, build_btst_quality_cap_blockers, build_canonical_btst_evaluation_bundle
 from .promotion_gate import build_promotion_gate_summary
 from .types import PerformanceMetrics
 
@@ -264,6 +264,10 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
     # Task 4 (Round 11): time-weighted BTST quality metrics — parallel weight lists for each
     # BTST quality metric so we can compute recency-weighted averages.
     btst_metric_weights: dict[str, list[float]] = {key: [] for key in btst_metric_keys}
+    # Task 2 (Round 13): cap-guarded metrics (e.g. excess kurtosis) are tracked separately with
+    # plain (unweighted) averages — recency-weighting adds noise for distributional shape metrics.
+    btst_cap_metric_keys = tuple(BTST_QUALITY_CAPS.keys())
+    btst_cap_metric_values: dict[str, list[float]] = {key: [] for key in btst_cap_metric_keys}
     execution_metric_keys = (
         "projected_theme_exposure",
         "incremental_theme_exposure",
@@ -308,6 +312,11 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
             value = bundle.lookup(metric_key)
             if value is not None:
                 execution_metric_values[metric_key].append(float(value))
+        # Task 2 (Round 13): collect cap-guarded metrics (e.g. kurtosis) using plain (unweighted) accumulation.
+        for metric_key in btst_cap_metric_keys:
+            value = bundle.lookup(metric_key)
+            if value is not None:
+                btst_cap_metric_values[metric_key].append(float(value))
         if window_has_complete_btst_quality:
             btst_complete_window_count += 1
 
@@ -362,11 +371,16 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
     btst_quality_summary["window_coverage"] = (
         float(btst_complete_window_count) / float(len(results)) if btst_complete_window_count > 0 else None
     )
+    # Task 2 (Round 13): merge plain-average cap metrics into the quality summary so that
+    # build_btst_quality_cap_blockers can inspect them alongside the floor-guarded metrics.
+    btst_cap_summary: dict[str, float | None] = {metric_key: _average(btst_cap_metric_values[metric_key]) for metric_key in btst_cap_metric_keys}
+    btst_quality_summary.update(btst_cap_summary)
     execution_summary: dict[str, float | None] = {
         metric_key: _average(execution_metric_values[metric_key]) for metric_key in execution_metric_keys
     }
     if any(value is not None for value in btst_quality_summary.values()):
         rollout_blockers.extend(build_btst_quality_floor_blockers(btst_quality_summary))
+        rollout_blockers.extend(build_btst_quality_cap_blockers(btst_quality_summary))
 
     base_summary: dict[str, Any] = {
         "window_count": len(results),
