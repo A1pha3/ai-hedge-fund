@@ -53,6 +53,8 @@ DEFAULT_BTST_RUNNER_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
     "gap_risk_raw_100": dict(BTST_EXECUTION_GUARDRAILS["gap_risk_raw_100"]),
     "runner_escape_rate": {"min": 0.03, "max": 0.60},
     "avg_composite_score_escaped": {"min": BTST_QUALITY_FLOORS["avg_composite_score_escaped"]},
+    "t_plus_2_close_payoff_ratio": {"min": BTST_QUALITY_FLOORS["t_plus_2_close_payoff_ratio"]},
+    "t_plus_3_close_payoff_ratio": {"min": BTST_QUALITY_FLOORS["t_plus_3_close_payoff_ratio"]},
 }
 MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS: dict[str, dict[str, list[Any]]] = {
     "coarse": {
@@ -95,8 +97,10 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "runner_escape_rate",
     "avg_composite_score_escaped",
     "t_plus_2_close_positive_rate",
+    "t_plus_2_close_payoff_ratio",
     "t_plus_3_close_positive_rate",
     "t_plus_3_close_expectancy",
+    "t_plus_3_close_payoff_ratio",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -115,8 +119,10 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "runner_escape_rate": "Runner Escape %",
     "avg_composite_score_escaped": "Avg Escaped Score",
     "t_plus_2_close_positive_rate": "T+2 Close+",
+    "t_plus_2_close_payoff_ratio": "T+2 Payoff",
     "t_plus_3_close_positive_rate": "T+3 Close+",
     "t_plus_3_close_expectancy": "T+3 Expectancy",
+    "t_plus_3_close_payoff_ratio": "T+3 Payoff",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -134,8 +140,10 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "runner_escape_rate",
     "avg_composite_score_escaped",
     "t_plus_2_close_positive_rate",
+    "t_plus_2_close_payoff_ratio",
     "t_plus_3_close_positive_rate",
     "t_plus_3_close_expectancy",
+    "t_plus_3_close_payoff_ratio",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -154,8 +162,10 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "runner_escape_rate": 0.01,
     "avg_composite_score_escaped": 0.01,
     "t_plus_2_close_positive_rate": 0.0,
+    "t_plus_2_close_payoff_ratio": 0.01,
     "t_plus_3_close_positive_rate": 0.0,
     "t_plus_3_close_expectancy": 0.0,
+    "t_plus_3_close_payoff_ratio": 0.01,
 }
 
 
@@ -419,8 +429,10 @@ def _build_replay_evaluator(
                 "next_close_expectancy": None,
                 "next_high_hit_rate": None,
                 "t_plus_2_close_positive_rate": None,
+                "t_plus_2_close_payoff_ratio": None,
                 "t_plus_3_close_positive_rate": None,
                 "t_plus_3_close_expectancy": None,
+                "t_plus_3_close_payoff_ratio": None,
                 "downside_p10": None,
                 "sample_weight": None,
                 "window_coverage": 0.0,
@@ -437,8 +449,10 @@ def _build_replay_evaluator(
             "next_close_expectancy": [],
             "next_high_hit_rate": [],
             "t_plus_2_close_positive_rate": [],
+            "t_plus_2_close_payoff_ratio": [],
             "t_plus_3_close_positive_rate": [],
             "t_plus_3_close_expectancy": [],
+            "t_plus_3_close_payoff_ratio": [],
             "downside_p10": [],
             "sample_weight": [],
             "projected_theme_exposure": [],
@@ -460,8 +474,10 @@ def _build_replay_evaluator(
             "next_close_expectancy": [],
             "next_high_hit_rate": [],
             "t_plus_2_close_positive_rate": [],
+            "t_plus_2_close_payoff_ratio": [],
             "t_plus_3_close_positive_rate": [],
             "t_plus_3_close_expectancy": [],
+            "t_plus_3_close_payoff_ratio": [],
             "downside_p10": [],
             "max_future_high_return_2_5d_hit_rate_at_20pct": [],
             "time_to_hit_20pct_median": [],
@@ -498,8 +514,10 @@ def _build_replay_evaluator(
                 next_close_payoff_ratio = _safe_float(primary_surface.get("next_close_payoff_ratio"))
                 next_close_expectancy = _safe_float(primary_surface.get("next_close_expectancy"))
                 t_plus_2_close_positive_rate = _safe_float(primary_surface.get("t_plus_2_close_positive_rate"))
+                t_plus_2_close_payoff_ratio = _safe_float(primary_surface.get("t_plus_2_close_payoff_ratio"))
                 t_plus_3_close_positive_rate = _safe_float(primary_surface.get("t_plus_3_close_positive_rate"))
                 t_plus_3_close_expectancy = _safe_float(primary_surface.get("t_plus_3_close_expectancy"))
+                t_plus_3_close_payoff_ratio = _safe_float(primary_surface.get("t_plus_3_close_payoff_ratio"))
                 has_t_plus_2_horizon = t_plus_2_median is not None and t_plus_2_close_positive_rate is not None
                 has_t_plus_3_horizon = t_plus_3_median is not None and t_plus_3_close_positive_rate is not None and t_plus_3_close_expectancy is not None
 
@@ -507,6 +525,8 @@ def _build_replay_evaluator(
                     t_plus_2_median = _resolve_distribution_stat(primary_surface, "next_close_return_distribution", "median")
                 if t_plus_2_close_positive_rate is None:
                     t_plus_2_close_positive_rate = next_close_positive_rate
+                if t_plus_2_close_payoff_ratio is None:
+                    t_plus_2_close_payoff_ratio = next_close_payoff_ratio
                 if t_plus_3_median is None:
                     t_plus_3_median = t_plus_2_median
                 if t_plus_3_close_positive_rate is None:
@@ -515,6 +535,8 @@ def _build_replay_evaluator(
                     t_plus_3_close_expectancy = _safe_float(primary_surface.get("t_plus_2_close_expectancy"))
                 if t_plus_3_close_expectancy is None:
                     t_plus_3_close_expectancy = next_close_expectancy
+                if t_plus_3_close_payoff_ratio is None:
+                    t_plus_3_close_payoff_ratio = t_plus_2_close_payoff_ratio
 
                 if next_close_positive_rate is None or next_high_hit_rate is None or t_plus_2_median is None or t_plus_3_median is None or max_dd_proxy is None or next_close_expectancy is None or t_plus_2_close_positive_rate is None or t_plus_3_close_positive_rate is None or t_plus_3_close_expectancy is None:
                     logger.warning("Trial skipped due missing metrics for %s scope=%s", input_path, primary_scope)
@@ -558,10 +580,16 @@ def _build_replay_evaluator(
                 total_metric_weights["next_high_hit_rate"].append(sample_weight)
                 total_metrics["t_plus_2_close_positive_rate"].append(t_plus_2_close_positive_rate)
                 total_metric_weights["t_plus_2_close_positive_rate"].append(sample_weight)
+                if t_plus_2_close_payoff_ratio is not None:
+                    total_metrics["t_plus_2_close_payoff_ratio"].append(t_plus_2_close_payoff_ratio)
+                    total_metric_weights["t_plus_2_close_payoff_ratio"].append(sample_weight)
                 total_metrics["t_plus_3_close_positive_rate"].append(t_plus_3_close_positive_rate)
                 total_metric_weights["t_plus_3_close_positive_rate"].append(t_plus_3_sample_weight)
                 total_metrics["t_plus_3_close_expectancy"].append(t_plus_3_close_expectancy)
                 total_metric_weights["t_plus_3_close_expectancy"].append(t_plus_3_sample_weight)
+                if t_plus_3_close_payoff_ratio is not None:
+                    total_metrics["t_plus_3_close_payoff_ratio"].append(t_plus_3_close_payoff_ratio)
+                    total_metric_weights["t_plus_3_close_payoff_ratio"].append(t_plus_3_sample_weight)
                 total_metrics["downside_p10"].append(max_dd_proxy)
                 total_metric_weights["downside_p10"].append(sample_weight)
                 # Still track raw sample_weight list for reporting
@@ -616,8 +644,10 @@ def _build_replay_evaluator(
                 "next_close_expectancy": None,
                 "next_high_hit_rate": None,
                 "t_plus_2_close_positive_rate": None,
+                "t_plus_2_close_payoff_ratio": None,
                 "t_plus_3_close_positive_rate": None,
                 "t_plus_3_close_expectancy": None,
+                "t_plus_3_close_payoff_ratio": None,
                 "downside_p10": None,
                 "sample_weight": None,
                 "window_coverage": 0.0,
@@ -643,8 +673,10 @@ def _build_replay_evaluator(
         avg_next_close_expectancy = _weighted_avg(total_metrics["next_close_expectancy"], total_metric_weights["next_close_expectancy"])
         avg_next_high_hit_rate = _weighted_avg(total_metrics["next_high_hit_rate"], total_metric_weights["next_high_hit_rate"])
         avg_t_plus_2_close_positive_rate = _weighted_avg(total_metrics["t_plus_2_close_positive_rate"], total_metric_weights["t_plus_2_close_positive_rate"])
+        avg_t_plus_2_close_payoff_ratio = _weighted_avg(total_metrics["t_plus_2_close_payoff_ratio"], total_metric_weights["t_plus_2_close_payoff_ratio"])
         avg_t_plus_3_close_positive_rate = _weighted_avg(total_metrics["t_plus_3_close_positive_rate"], total_metric_weights["t_plus_3_close_positive_rate"])
         avg_t_plus_3_close_expectancy = _weighted_avg(total_metrics["t_plus_3_close_expectancy"], total_metric_weights["t_plus_3_close_expectancy"])
+        avg_t_plus_3_close_payoff_ratio = _weighted_avg(total_metrics["t_plus_3_close_payoff_ratio"], total_metric_weights["t_plus_3_close_payoff_ratio"])
         avg_downside_p10 = _weighted_avg(total_metrics["downside_p10"], total_metric_weights["downside_p10"])
 
         # Runner horizon metrics
@@ -694,8 +726,10 @@ def _build_replay_evaluator(
             "next_close_expectancy": avg_next_close_expectancy,
             "next_high_hit_rate": avg_next_high_hit_rate,
             "t_plus_2_close_positive_rate": avg_t_plus_2_close_positive_rate,
+            "t_plus_2_close_payoff_ratio": avg_t_plus_2_close_payoff_ratio,
             "t_plus_3_close_positive_rate": avg_t_plus_3_close_positive_rate,
             "t_plus_3_close_expectancy": avg_t_plus_3_close_expectancy,
+            "t_plus_3_close_payoff_ratio": avg_t_plus_3_close_payoff_ratio,
             "downside_p10": avg_downside_p10,
             "sample_weight": effective_sample_weight,
             "window_coverage": window_coverage,

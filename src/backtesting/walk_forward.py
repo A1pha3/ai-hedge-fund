@@ -35,6 +35,8 @@ MIN_TEST_TRADING_DAYS_FOR_ROLLOUT = 5
 RUNNER_TAIL_HIT_IMPROVEMENT_MIN = 0.05
 RUNNER_TAIL_HIT_ABSOLUTE_MIN = 0.12
 RUNNER_T1_WIN_RATE_REGRESSION_FLOOR = -0.04
+RUNNER_T2_WIN_RATE_REGRESSION_FLOOR = -0.02
+RUNNER_T3_WIN_RATE_REGRESSION_FLOOR = -0.02
 RUNNER_DOWNSIDE_REGRESSION_FLOOR = -0.015
 RUNNER_COMPOSITE_SCORE_QUALITY_FLOOR = 0.50
 RUNNER_ESCAPE_RATE_MIN = 0.03
@@ -406,12 +408,18 @@ def classify_runner_rollout_verdict(
         improvement = tail_hit - baseline_tail_hit
         t1_regression = (t1_win_rate - float(baseline_summary.get("next_close_positive_rate") or 0.0))  # type: ignore[arg-type]
         downside_regression = downside - float(baseline_summary.get("downside_p10") or 0.0)  # type: ignore[arg-type]
+        t2_win_rate = float(runner_summary.get("t_plus_2_close_positive_rate") or 0.0)
+        t3_win_rate = float(runner_summary.get("t_plus_3_close_positive_rate") or 0.0)
+        t2_regression = t2_win_rate - float(baseline_summary.get("t_plus_2_close_positive_rate") or 0.0)
+        t3_regression = t3_win_rate - float(baseline_summary.get("t_plus_3_close_positive_rate") or 0.0)
 
-        # Check T+1 or downside regression
+        # Check T+1, T+2, T+3, or downside regression
         t1_risky = t1_regression < RUNNER_T1_WIN_RATE_REGRESSION_FLOOR
+        t2_risky = t2_win_rate > 0.0 and t2_regression < RUNNER_T2_WIN_RATE_REGRESSION_FLOOR
+        t3_risky = t3_win_rate > 0.0 and t3_regression < RUNNER_T3_WIN_RATE_REGRESSION_FLOOR
         downside_risky = downside_regression < RUNNER_DOWNSIDE_REGRESSION_FLOOR
 
-        if improvement >= RUNNER_TAIL_HIT_IMPROVEMENT_MIN and (t1_risky or downside_risky):
+        if improvement >= RUNNER_TAIL_HIT_IMPROVEMENT_MIN and (t1_risky or t2_risky or t3_risky or downside_risky):
             detail["verdict_reason"] = "t1_or_downside_regression"
             return "tail_hit_better_but_t1_risky", detail
 
