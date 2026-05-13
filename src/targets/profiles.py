@@ -286,6 +286,10 @@ class ShortTradeTargetProfile:
     runner_escape_gap_risk_raw_100_max: float = 0.0
     runner_escape_projected_theme_exposure_max: float = 0.0
     runner_escape_candidate_pool_avg_amount_share_of_cutoff_min: float = 0.0
+    runner_composite_score_breakout_weight: float = 0.40
+    runner_composite_score_trend_weight: float = 0.30
+    runner_composite_score_volume_weight: float = 0.20
+    runner_composite_score_catalyst_weight: float = 0.10
 
     @property
     def strong_bearish_conflicts(self) -> frozenset[str]:

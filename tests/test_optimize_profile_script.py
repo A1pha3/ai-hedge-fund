@@ -899,6 +899,35 @@ def test_routed_committee_grid_overrides_can_build_profile() -> None:
     assert profile.committee_fragile_breakout_risk_cap == 75.0
 
 
+def test_resolve_grid_params_uses_btst_runner_probe_preset() -> None:
+    """btst_runner_probe profile uses BTST_RUNNER_PROBE_GRID when --preset-grid is set."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+
+    grid = resolve_grid_params(
+        grid_params=[],
+        preset_grid=True,
+        profile_name="btst_runner_probe",
+    )
+
+    assert grid["runner_escape_breakout_freshness_min"] == BTST_RUNNER_PROBE_GRID["runner_escape_breakout_freshness_min"]
+    assert grid["runner_escape_trend_acceleration_min"] == BTST_RUNNER_PROBE_GRID["runner_escape_trend_acceleration_min"]
+    assert grid["runner_composite_score_breakout_weight"] == BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"]
+    assert grid["runner_composite_score_trend_weight"] == BTST_RUNNER_PROBE_GRID["runner_composite_score_trend_weight"]
+    assert "committee_alpha_min_aggressive_trade" not in grid  # not the committee grid
+
+
+def test_btst_runner_probe_grid_params_build_valid_profile() -> None:
+    """Each combination of runner probe grid values must build a valid btst_runner_probe profile."""
+    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+
+    for param_name, values in BTST_RUNNER_PROBE_GRID.items():
+        for value in values:
+            profile = build_short_trade_target_profile("btst_runner_probe", overrides={param_name: value})
+            assert profile is not None
+            actual = getattr(profile, param_name, None)
+            assert actual == value, f"Expected {param_name}={value}, got {actual}"
+
+
 def test_resolve_replay_inputs_from_weekly_validation_selection(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     report_dir = reports_root / "paper_trading_20260413_20260413_live_short_trade_only_20260414"

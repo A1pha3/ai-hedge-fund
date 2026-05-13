@@ -1285,3 +1285,29 @@ def test_runner_composite_score_direct_computation() -> None:
     })
     # 0.40*0.80 + 0.30*0.70 + 0.20*0.60 + 0.10*0.50 = 0.32+0.21+0.12+0.05 = 0.70
     assert abs(score - 0.70) < 0.001
+
+
+def test_runner_composite_score_uses_profile_weights() -> None:
+    """compute_runner_composite_score reads weight fields from profile when provided."""
+    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+    class FakeProfile:
+        runner_composite_score_breakout_weight = 0.50
+        runner_composite_score_trend_weight = 0.25
+        runner_composite_score_volume_weight = 0.15
+        runner_composite_score_catalyst_weight = 0.10
+
+    snapshot = {
+        "breakout_freshness": 0.80,
+        "trend_acceleration": 0.70,
+        "volume_expansion_quality": 0.60,
+        "catalyst_freshness": 0.50,
+    }
+    # default weights: 0.40*0.80+0.30*0.70+0.20*0.60+0.10*0.50 = 0.70
+    default_score = compute_runner_composite_score(snapshot)
+    assert abs(default_score - 0.70) < 0.001
+
+    # custom profile weights: 0.50*0.80+0.25*0.70+0.15*0.60+0.10*0.50 = 0.40+0.175+0.09+0.05 = 0.715
+    profile_score = compute_runner_composite_score(snapshot, profile=FakeProfile())
+    assert abs(profile_score - 0.715) < 0.001
+    assert abs(profile_score - default_score) > 0.001  # must differ from default

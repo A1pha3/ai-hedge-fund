@@ -186,9 +186,9 @@ def run_walk_forward(
     return results
 
 
-def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, float | int | bool | list[str] | None]:
+def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, Any]:
     if not results:
-        base_summary: dict[str, float | int | bool | list[str] | None] = {
+        base_summary: dict[str, Any] = {
             "window_count": 0,
             "avg_sharpe": None,
             "avg_sortino": None,
@@ -204,9 +204,12 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
             "rollout_ready": False,
             "rollout_blockers": ["no_walk_forward_windows"],
         }
+        runner_verdict, runner_verdict_detail = classify_runner_rollout_verdict(runner_summary=base_summary)
         return {
             **base_summary,
             **build_promotion_gate_summary(walk_forward_summary=base_summary),
+            "runner_rollout_verdict": runner_verdict,
+            "runner_rollout_verdict_detail": runner_verdict_detail,
         }
 
     sharpe_sequence = [item.metrics.get("sharpe_ratio") for item in results]
@@ -298,7 +301,7 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
     if any(value is not None for value in btst_quality_summary.values()):
         rollout_blockers.extend(build_btst_quality_floor_blockers(btst_quality_summary))
 
-    base_summary: dict[str, float | int | bool | list[str] | None] = {
+    base_summary: dict[str, Any] = {
         "window_count": len(results),
         "avg_sharpe": _average(sharpe_values),
         "avg_sortino": _average(sortino_values),
@@ -318,9 +321,12 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, fl
         "rollout_ready": not rollout_blockers,
         "rollout_blockers": rollout_blockers,
     }
+    runner_verdict, runner_verdict_detail = classify_runner_rollout_verdict(runner_summary=base_summary)
     return {
         **base_summary,
         **build_promotion_gate_summary(walk_forward_summary=base_summary),
+        "runner_rollout_verdict": runner_verdict,
+        "runner_rollout_verdict_detail": runner_verdict_detail,
     }
 
 

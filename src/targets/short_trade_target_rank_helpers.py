@@ -529,11 +529,12 @@ def _apply_rank_based_decision_cap(
 # ---------------------------------------------------------------------------
 
 
-def compute_runner_composite_score(snapshot: dict[str, Any]) -> float:
+def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None) -> float:
     """Runner-priority composite score combining the four key runner signals.
 
-    Weights are designed to prioritise momentum freshness and trend quality
-    while incorporating volume confirmation and catalyst recency:
+    Weights are read from the profile when provided (fields: runner_composite_score_breakout_weight,
+    runner_composite_score_trend_weight, runner_composite_score_volume_weight,
+    runner_composite_score_catalyst_weight). Falls back to defaults when profile is absent:
       breakout_freshness=0.40, trend_acceleration=0.30,
       volume_expansion_quality=0.20, catalyst_freshness=0.10.
 
@@ -544,4 +545,8 @@ def compute_runner_composite_score(snapshot: dict[str, Any]) -> float:
     trend = float(snapshot.get("trend_acceleration") or 0.0)
     volume = float(snapshot.get("volume_expansion_quality") or 0.0)
     catalyst = float(snapshot.get("catalyst_freshness") or 0.0)
-    return round(0.40 * breakout + 0.30 * trend + 0.20 * volume + 0.10 * catalyst, 4)
+    w_b = float(getattr(profile, "runner_composite_score_breakout_weight", 0.40) or 0.40)
+    w_t = float(getattr(profile, "runner_composite_score_trend_weight", 0.30) or 0.30)
+    w_v = float(getattr(profile, "runner_composite_score_volume_weight", 0.20) or 0.20)
+    w_c = float(getattr(profile, "runner_composite_score_catalyst_weight", 0.10) or 0.10)
+    return round(w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst, 4)

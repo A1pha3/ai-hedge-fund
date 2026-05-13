@@ -210,8 +210,11 @@ def process_short_trade_candidate_diagnostic(
     )
     historical_support = summarize_shadow_release_historical_support_fn(historical_prior)
     candidate_score = float(metrics_payload.get("candidate_score", 0.0) or 0.0)
+    is_runner_escaped = str(candidate_entry.get("runner_escape") or "") == "pass"
+    runner_escape_rank_boost = float(candidate_entry.get("runner_composite_score") or 0.0) if is_runner_escaped else 0.0
     base_rank = (
         float(historical_support.get("support_score", 0.0) or 0.0),
+        runner_escape_rank_boost,
         candidate_score,
         float(item.score_b),
     )
@@ -287,7 +290,7 @@ def _build_short_trade_boundary_entry_kwargs(
 
 def _build_qualified_short_trade_candidate_result(
     *,
-    base_rank: tuple[float, float, float],
+    base_rank: tuple[float, ...],
     filter_reason: str,
     candidate_entry: dict[str, Any],
     metrics_payload: dict[str, Any],

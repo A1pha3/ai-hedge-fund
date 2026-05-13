@@ -975,6 +975,19 @@ ROUTED_BTST_COMMITTEE_PROFILES = {
     "shadow_research",
 }
 
+# Runner escape threshold and composite weight calibration grid for btst_runner_probe.
+# Run with --preset-grid --profile btst_runner_probe --objective btst_runner to search over
+# escape gate tightness and composite score weight emphasis simultaneously.
+BTST_RUNNER_PROBE_GRID: dict[str, list[Any]] = {
+    "runner_escape_breakout_freshness_min": [0.25, 0.30, 0.35, 0.40],
+    "runner_escape_trend_acceleration_min": [0.45, 0.50, 0.55, 0.60],
+    "runner_escape_volume_expansion_quality_min": [0.30, 0.35, 0.40],
+    "runner_composite_score_breakout_weight": [0.35, 0.40, 0.45],
+    "runner_composite_score_trend_weight": [0.25, 0.30, 0.35],
+    "runner_composite_score_volume_weight": [0.15, 0.20, 0.25],
+    "runner_composite_score_catalyst_weight": [0.05, 0.10, 0.15],
+}
+
 IGNITION_STAGE1_GRID: dict[str, list[Any]] = {
     "committee_alpha_min_aggressive_trade": [66.0, 68.0],
     "committee_beta_min_aggressive_trade": [56.0, 58.0],
@@ -1022,6 +1035,8 @@ def resolve_grid_params(
         return {**base_momentum_grid, **EVENT_CATALYST_GRID, **resolved}
     if preset_grid and profile_name in ROUTED_BTST_COMMITTEE_PROFILES:
         return {**ROUTED_BTST_COMMITTEE_GRID, **resolved}
+    if preset_grid and profile_name == "btst_runner_probe":
+        return {**BTST_RUNNER_PROBE_GRID, **resolved}
     if preset_grid:
         return {**base_momentum_grid, **resolved}
     return resolved

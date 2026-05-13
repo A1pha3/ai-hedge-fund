@@ -784,7 +784,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
         fail_reasons.append("committee_shadow_profile_only")
 
     runner_escape_passed, runner_escape_reasons = _resolve_runner_escape(profile=profile, snapshot=snapshot, raw_metrics=raw_metrics)
-    runner_composite_score = compute_runner_composite_score(snapshot)
+    runner_composite_score = compute_runner_composite_score(snapshot, profile=profile)
 
     selected_pass = formal_selected_allowed and not vetoes and not fail_reasons
     component_status = {

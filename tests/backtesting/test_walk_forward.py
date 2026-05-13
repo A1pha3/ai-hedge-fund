@@ -619,6 +619,65 @@ def test_summarize_walk_forward_stores_avg_runner_tail_hit_rate():
     assert summary["total_runner_capture_count"] == 4
 
 
+def test_summarize_walk_forward_includes_runner_rollout_verdict():
+    """summarize_walk_forward must include runner_rollout_verdict and runner_rollout_verdict_detail in output."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={
+                "sharpe_ratio": 1.5,
+                "sortino_ratio": 1.8,
+                "max_drawdown": -2.0,
+                "test_trading_days": 15,
+                "next_close_positive_rate": 0.62,
+                "next_high_hit_rate": 0.64,
+                "downside_p10": -0.015,
+                "max_future_high_return_2_5d_hit_rate_at_20pct": 0.20,
+                "runner_capture_count": 5,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+
+    assert "runner_rollout_verdict" in summary
+    assert "runner_rollout_verdict_detail" in summary
+    assert isinstance(summary["runner_rollout_verdict"], str)
+    assert isinstance(summary["runner_rollout_verdict_detail"], dict)
+    # tail_hit=0.20 >= RUNNER_TAIL_HIT_ABSOLUTE_MIN=0.12, no baseline → promotable
+    assert summary["runner_rollout_verdict"] == "promotable_runner_profile"
+
+
+def test_summarize_walk_forward_verdict_keep_when_empty():
+    """Empty results should return runner_rollout_verdict=keep_precision_baseline."""
+    summary = summarize_walk_forward([])
+    assert "runner_rollout_verdict" in summary
+    assert summary["runner_rollout_verdict"] == "keep_precision_baseline"
+
+
+def test_summarize_walk_forward_verdict_keep_when_low_tail_hit():
+    """Low avg_runner_tail_hit_rate should result in keep_precision_baseline verdict."""
+    results = [
+        WalkForwardResult(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-01-31", test_start="2026-02-01", test_end="2026-02-28"),
+            metrics={
+                "sharpe_ratio": 1.5,
+                "sortino_ratio": 1.8,
+                "max_drawdown": -2.0,
+                "test_trading_days": 15,
+                "next_close_positive_rate": 0.60,
+                "next_high_hit_rate": 0.60,
+                "downside_p10": -0.02,
+                "max_future_high_return_2_5d_hit_rate_at_20pct": 0.05,
+                "runner_capture_count": 2,
+            },
+        )
+    ]
+
+    summary = summarize_walk_forward(results)
+    assert summary["runner_rollout_verdict"] == "keep_precision_baseline"
+
+
 def test_classify_runner_rollout_verdict_promotable_no_baseline():
     verdict, detail = classify_runner_rollout_verdict(
         {"avg_runner_tail_hit_rate": 0.18, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
