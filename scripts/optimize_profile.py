@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_optimal_hold_period, compute_score_position_tiers
+from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_factor_ic_temporal_trend, compute_verdict_calibration, compute_optimal_hold_period, compute_score_position_tiers
 from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
@@ -177,6 +177,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     # Task 3 (Round 23, Beta): regime win-rate consistency — stability across bull/bear/sideways.
     "regime_consistency_score",
     "regime_robustness_flag",
+    # Task 1 (Round 24): IC temporal trend — decaying factor count across replay windows.
+    "decaying_factor_count",
+    # Task 2 (Round 24): drawdown-adjusted Kelly fraction and adjustment factor.
+    "kelly_fraction_drawdown_adjusted",
+    "drawdown_adjustment_factor",
+    # Task 3 (Round 24): walk-forward verdict calibration score and monotone flag.
+    "verdict_calibration_score",
+    "verdict_monotone",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -244,6 +252,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     # Task 3 (Round 23, Beta): regime win-rate consistency
     "regime_consistency_score": "Regime Consistency",
     "regime_robustness_flag": "Regime Robust",
+    # Task 1 (Round 24): IC temporal trend
+    "decaying_factor_count": "IC Decaying Factors",
+    # Task 2 (Round 24): drawdown-adjusted Kelly fraction
+    "kelly_fraction_drawdown_adjusted": "DD-Adj Kelly",
+    "drawdown_adjustment_factor": "DD Adj Factor",
+    # Task 3 (Round 24): walk-forward verdict calibration
+    "verdict_calibration_score": "Verdict Calib",
+    "verdict_monotone": "Verdict Monotone",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -267,6 +283,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "high_volatility_warning_rate",
     # Task 3 (Round 20, Gamma): consecutive limit-up rate — higher = more limit-up risk in pool = lower-is-better.
     "consecutive_limit_up_rate",
+    # Task 1 (Round 24): decaying factor count — more decaying factors = worse predictive signal.
+    "decaying_factor_count",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -329,6 +347,14 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 3 (Round 23, Beta): regime consistency — optional; pre-Round-23 surfaces omit these.
     "regime_consistency_score",
     "regime_robustness_flag",
+    # Task 1 (Round 24): IC temporal trend — optional; pre-Round-24 outputs omit these.
+    "decaying_factor_count",
+    # Task 2 (Round 24): drawdown-adjusted Kelly — optional; pre-Round-24 surfaces omit these.
+    "kelly_fraction_drawdown_adjusted",
+    "drawdown_adjustment_factor",
+    # Task 3 (Round 24): verdict calibration — optional; pre-Round-24 outputs omit these.
+    "verdict_calibration_score",
+    "verdict_monotone",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -397,6 +423,14 @@ COMPARISON_METRIC_EPSILON: dict[str, float] = {
     # Task 3 (Round 23, Beta): regime consistency — 0.5 % tolerance
     "regime_consistency_score": 0.005,
     "regime_robustness_flag": 0.0,
+    # Task 1 (Round 24): IC temporal trend — tolerance of 1 decaying factor
+    "decaying_factor_count": 1.0,
+    # Task 2 (Round 24): drawdown-adjusted Kelly — 0.5 % tolerance
+    "kelly_fraction_drawdown_adjusted": 0.005,
+    "drawdown_adjustment_factor": 0.005,
+    # Task 3 (Round 24): verdict calibration score — 1 % tolerance; monotone flag is exact
+    "verdict_calibration_score": 0.01,
+    "verdict_monotone": 0.0,
 }
 
 
@@ -775,6 +809,8 @@ def _build_replay_evaluator(
             "t_plus_1_intraday_drawdown_p10": [],
             # Task 1 (Round 20, Beta): realized payoff ratio — sample-weighted quality guardrail.
             "realized_payoff_ratio": [],
+            # Task 2 (Round 24): drawdown-adjusted Kelly fraction — sample-weighted across windows.
+            "kelly_fraction_drawdown_adjusted": [],
         }
         # Task 1 (Round 11): per-factor IC accumulator across replay windows
         total_factor_ics: dict[str, list[float]] = {f: [] for f in BTST_FACTOR_NAMES}
@@ -799,6 +835,8 @@ def _build_replay_evaluator(
             "t_plus_1_intraday_drawdown_p10": [],
             # Task 1 (Round 20, Beta): realized payoff ratio is also sample-weighted
             "realized_payoff_ratio": [],
+            # Task 2 (Round 24): drawdown-adjusted Kelly is also sample-weighted
+            "kelly_fraction_drawdown_adjusted": [],
         }
 
         # Track selected surfaces for runner median distribution aggregation
@@ -973,6 +1011,11 @@ def _build_replay_evaluator(
                 if realized_payoff_ratio_val is not None:
                     total_metrics["realized_payoff_ratio"].append(realized_payoff_ratio_val)
                     total_metric_weights["realized_payoff_ratio"].append(sample_weight)
+                # Task 2 (Round 24): drawdown-adjusted Kelly fraction — sample-weighted across windows.
+                kelly_dd_adjusted_val = _safe_float(primary_surface.get("kelly_fraction_drawdown_adjusted"))
+                if kelly_dd_adjusted_val is not None:
+                    total_metrics["kelly_fraction_drawdown_adjusted"].append(kelly_dd_adjusted_val)
+                    total_metric_weights["kelly_fraction_drawdown_adjusted"].append(sample_weight)
                 if primary_scope == "selected":
                     selected_surfaces.append(primary_surface)
                 # Task 1 & 2 (Round 21): collect every primary surface for cross-window analytics.
@@ -1086,6 +1129,8 @@ def _build_replay_evaluator(
         avg_t_plus_1_intraday_drawdown_p10 = _weighted_avg(total_metrics["t_plus_1_intraday_drawdown_p10"], total_metric_weights["t_plus_1_intraday_drawdown_p10"])
         # Task 1 (Round 20, Beta): sample-weighted average realized payoff ratio.
         avg_realized_payoff_ratio = _weighted_avg(total_metrics["realized_payoff_ratio"], total_metric_weights["realized_payoff_ratio"])
+        # Task 2 (Round 24): sample-weighted average drawdown-adjusted Kelly fraction.
+        avg_kelly_fraction_drawdown_adjusted = _weighted_avg(total_metrics["kelly_fraction_drawdown_adjusted"], total_metric_weights["kelly_fraction_drawdown_adjusted"])
 
         def _weighted_average_distribution_median(surfaces: list[dict[str, Any]], dist_key: str) -> float | None:
             """Compute sample-weighted average of distribution medians from selected surfaces."""
@@ -1128,6 +1173,13 @@ def _build_replay_evaluator(
         # Task 1 (Round 22, Gamma): low-impact PROBE_GRID axis identification.
         # Bridges surface correlations and IC stability to flag weak probe axes (advisory only).
         low_impact_probe_axes: dict[str, Any] = compute_low_impact_probe_axes(surface_metric_correlations, factor_ic_stability)
+        # Task 1 (Round 24): IC temporal trend — detect IC decay across replay windows.
+        # Splits windows into early vs late halves and flags factors whose IC is declining.
+        factor_ic_temporal_trend: dict[str, Any] = compute_factor_ic_temporal_trend(all_primary_surfaces)
+        # Task 3 (Round 24): walk-forward verdict calibration — check verdict ↔ win-rate alignment.
+        # Uses window-level verdict or win-rate quartiles to verify that verdict categories
+        # correspond to meaningfully different T+1 win rates.
+        verdict_calibration: dict[str, Any] = compute_verdict_calibration(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1187,6 +1239,23 @@ def _build_replay_evaluator(
             "low_impact_probe_axes": low_impact_probe_axes,
             "pruning_candidates": low_impact_probe_axes.get("pruning_candidates"),
             "low_ir_factors": low_impact_probe_axes.get("low_ir_factors"),
+            # Task 1 (Round 24): IC temporal trend across replay windows.
+            # decaying_factor_count: number of factors whose IC declined significantly (trend < −0.02).
+            # most_decaying_factor / most_improving_factor: summary extremes for advisory display.
+            "factor_ic_temporal_trend": factor_ic_temporal_trend,
+            "decaying_factor_count": factor_ic_temporal_trend.get("decaying_factor_count"),
+            "decaying_factors": factor_ic_temporal_trend.get("decaying_factors"),
+            "most_decaying_factor": factor_ic_temporal_trend.get("most_decaying_factor"),
+            "most_improving_factor": factor_ic_temporal_trend.get("most_improving_factor"),
+            # Task 2 (Round 24): sample-weighted average drawdown-adjusted Kelly fraction.
+            # kelly_fraction_drawdown_adjusted: half-Kelly reduced by T+1 intraday drawdown risk.
+            "kelly_fraction_drawdown_adjusted": avg_kelly_fraction_drawdown_adjusted,
+            # Task 3 (Round 24): walk-forward verdict calibration.
+            # verdict_calibration_score: normalised spread between promotable and probation win rates.
+            # verdict_monotone: True when promotable_wr > watch_wr > probation_wr.
+            "verdict_calibration": verdict_calibration,
+            "verdict_calibration_score": verdict_calibration.get("verdict_calibration_score"),
+            "verdict_monotone": verdict_calibration.get("verdict_monotone"),
         }
 
     return evaluator

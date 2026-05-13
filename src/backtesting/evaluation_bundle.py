@@ -87,6 +87,10 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # three-regime win-rate spread does not exceed 30 %.  Strategies with a lower score
     # exhibit severe bull-market dependency and carry high out-of-sample regime risk.
     "regime_consistency_score": 0.70,
+    # Task 2 (Round 24): drawdown-adjusted Kelly fraction floor.
+    # A positive edge must survive the drawdown severity penalty; floor 0.01 ensures
+    # the strategy retains at least 1 % recommended position size after adjustment.
+    "kelly_fraction_drawdown_adjusted": 0.01,
 }
 
 # ---------------------------------------------------------------------------

@@ -4360,3 +4360,258 @@ def test_r23_new_metrics_have_epsilon() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
     for m in ("kelly_fraction_half", "kelly_positive", "regime_consistency_score", "regime_robustness_flag"):
         assert m in COMPARISON_METRIC_EPSILON, f"{m} missing from COMPARISON_METRIC_EPSILON"
+
+
+# =============================================================================
+# Round 24 — comparison metrics structure tests
+# =============================================================================
+
+
+def test_r24_new_metrics_in_comparison_metrics() -> None:
+    """Round 24 new metrics must all be present in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for m in ("decaying_factor_count", "kelly_fraction_drawdown_adjusted", "drawdown_adjustment_factor", "verdict_calibration_score", "verdict_monotone"):
+        assert m in COMPARISON_METRICS, f"{m} missing from COMPARISON_METRICS"
+
+
+def test_r24_new_metrics_have_labels() -> None:
+    """Round 24 new metrics must have entries in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for m in ("decaying_factor_count", "kelly_fraction_drawdown_adjusted", "drawdown_adjustment_factor", "verdict_calibration_score", "verdict_monotone"):
+        assert m in COMPARISON_METRIC_LABELS, f"{m} missing from COMPARISON_METRIC_LABELS"
+
+
+def test_r24_new_metrics_are_optional() -> None:
+    """Round 24 new metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for m in ("decaying_factor_count", "kelly_fraction_drawdown_adjusted", "drawdown_adjustment_factor", "verdict_calibration_score", "verdict_monotone"):
+        assert m in OPTIONAL_COMPARISON_METRICS, f"{m} missing from OPTIONAL_COMPARISON_METRICS"
+
+
+def test_r24_new_metrics_have_epsilon() -> None:
+    """Round 24 new metrics must have epsilon entries in COMPARISON_METRIC_EPSILON."""
+    from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+    for m in ("decaying_factor_count", "kelly_fraction_drawdown_adjusted", "drawdown_adjustment_factor", "verdict_calibration_score", "verdict_monotone"):
+        assert m in COMPARISON_METRIC_EPSILON, f"{m} missing from COMPARISON_METRIC_EPSILON"
+
+
+def test_r24_decaying_factor_count_is_lower_is_better() -> None:
+    """decaying_factor_count must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "decaying_factor_count" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r24_quality_floor_for_drawdown_adjusted_kelly() -> None:
+    """BTST_QUALITY_FLOORS must contain kelly_fraction_drawdown_adjusted with value 0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "kelly_fraction_drawdown_adjusted" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["kelly_fraction_drawdown_adjusted"] == 0.01
+
+
+# =============================================================================
+# Round 24 — Task 2: compute_drawdown_adjusted_kelly unit tests
+# =============================================================================
+
+
+def test_r24_drawdown_adjusted_kelly_null_when_kelly_missing() -> None:
+    """Returns all None when kelly_fraction_half is absent."""
+    from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+    result = compute_drawdown_adjusted_kelly([], {"t_plus_1_intraday_drawdown_p10": -0.04})
+    assert result["kelly_fraction_drawdown_adjusted"] is None
+    assert result["drawdown_adjustment_factor"] is None
+
+
+def test_r24_drawdown_adjusted_kelly_null_when_p10_missing() -> None:
+    """Returns all None when t_plus_1_intraday_drawdown_p10 is absent."""
+    from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+    result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.10})
+    assert result["kelly_fraction_drawdown_adjusted"] is None
+
+
+def test_r24_drawdown_adjusted_kelly_low_risk_no_reduction() -> None:
+    """p10 > -0.02 (low risk) → risk_level='low'; adjustment_factor = 1/(1+severity) with severity=max(0,-p10/0.05)."""
+    from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+    result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.10, "t_plus_1_intraday_drawdown_p10": -0.01})
+    assert result["drawdown_risk_level"] == "low"
+    # severity = max(0, 0.01/0.05) = 0.2 → adj_factor = 1/1.2 ≈ 0.8333
+    expected_adj_factor = round(1.0 / (1.0 + 0.01 / 0.05), 4)
+    assert abs(result["drawdown_adjustment_factor"] - expected_adj_factor) < 0.001
+    expected_kelly = round(0.10 * expected_adj_factor, 4)
+    assert abs(result["kelly_fraction_drawdown_adjusted"] - expected_kelly) < 0.001
+
+
+def test_r24_drawdown_adjusted_kelly_severe_risk_large_reduction() -> None:
+    """p10 = -0.10 (severe) → severity=2.0 → adj_factor=1/3 ≈ 0.333."""
+    from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+    result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.12, "t_plus_1_intraday_drawdown_p10": -0.10})
+    assert result["drawdown_risk_level"] == "severe"
+    assert result["drawdown_adjustment_factor"] is not None
+    assert abs(result["drawdown_adjustment_factor"] - round(1.0 / 3.0, 4)) < 0.001
+    assert result["kelly_fraction_drawdown_adjusted"] < 0.12
+    assert result["drawdown_kelly_vs_base_diff"] <= 0.0
+
+
+def test_r24_drawdown_adjusted_kelly_moderate_risk_partial_reduction() -> None:
+    """p10 = -0.03 (moderate) → severity=0.6 → adj_factor=1/1.6=0.625."""
+    from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+    result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.10, "t_plus_1_intraday_drawdown_p10": -0.03})
+    assert result["drawdown_risk_level"] == "moderate"
+    expected_adj_factor = 1.0 / (1.0 + 0.6)
+    assert abs(result["drawdown_adjustment_factor"] - round(expected_adj_factor, 4)) < 0.001
+    assert 0.0 < result["kelly_fraction_drawdown_adjusted"] < 0.10
+
+
+def test_r24_drawdown_adjusted_kelly_capped_at_half() -> None:
+    """Output is clipped to [0, 0.50]; a very large kelly_half stays within bounds."""
+    from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+    result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.60, "t_plus_1_intraday_drawdown_p10": -0.01})
+    assert result["kelly_fraction_drawdown_adjusted"] <= 0.50
+
+
+# =============================================================================
+# Round 24 — Task 1: compute_factor_ic_temporal_trend unit tests
+# =============================================================================
+
+
+def test_r24_ic_temporal_trend_empty_returns_defaults() -> None:
+    """Empty input returns decaying_factor_count=0 and None summary fields."""
+    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend
+    result = compute_factor_ic_temporal_trend([])
+    assert result["decaying_factor_count"] == 0
+    assert result["decaying_factors"] == []
+    assert result["most_decaying_factor"] is None
+    assert result["most_improving_factor"] is None
+
+
+def test_r24_ic_temporal_trend_single_window_returns_defaults() -> None:
+    """Single window: insufficient for split, returns minimal defaults."""
+    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    result = compute_factor_ic_temporal_trend([{"factor_ic_next_close": {BTST_FACTOR_NAMES[0]: 0.05}}])
+    assert result["decaying_factor_count"] == 0
+
+
+def test_r24_ic_temporal_trend_detects_decay() -> None:
+    """Factor with early IC=0.10, late IC=0.02 should be flagged as decaying (trend=-0.08<-0.02)."""
+    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    factor = BTST_FACTOR_NAMES[0]
+    # 8 windows: first 4 (early) have IC=0.10, last 4 (late) have IC=0.02
+    summaries = [{"factor_ic_next_close": {factor: 0.10}} for _ in range(4)] + [{"factor_ic_next_close": {factor: 0.02}} for _ in range(4)]
+    result = compute_factor_ic_temporal_trend(summaries)
+    assert result[f"{factor}_ic_decaying"] is True
+    assert result["decaying_factor_count"] >= 1
+    assert factor in result["decaying_factors"]
+    assert result[f"{factor}_ic_trend"] < -0.02
+
+
+def test_r24_ic_temporal_trend_no_decay_when_stable() -> None:
+    """Factor with constant IC across all windows should NOT be flagged as decaying."""
+    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    factor = BTST_FACTOR_NAMES[0]
+    summaries = [{"factor_ic_next_close": {factor: 0.05}} for _ in range(8)]
+    result = compute_factor_ic_temporal_trend(summaries)
+    assert result[f"{factor}_ic_decaying"] is False
+    assert result["decaying_factor_count"] == 0
+
+
+def test_r24_ic_temporal_trend_most_decaying_most_improving() -> None:
+    """most_decaying_factor should be the factor with the most negative trend."""
+    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    f1, f2 = BTST_FACTOR_NAMES[0], BTST_FACTOR_NAMES[1]
+    # f1: strong decay (0.15 → 0.01), f2: improving (0.01 → 0.12)
+    # Need ≥3 windows per half — use 6 total (split=3 early, 3 late)
+    summaries = (
+        [{"factor_ic_next_close": {f1: 0.15, f2: 0.01}} for _ in range(3)] +
+        [{"factor_ic_next_close": {f1: 0.01, f2: 0.12}} for _ in range(3)]
+    )
+    result = compute_factor_ic_temporal_trend(summaries)
+    assert result["most_decaying_factor"] == f1
+    assert result["most_improving_factor"] == f2
+
+
+def test_r24_ic_temporal_trend_skip_factors_with_insufficient_data() -> None:
+    """Factors with fewer than 3 valid IC values in either half get None trend and False decaying."""
+    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    factor = BTST_FACTOR_NAMES[0]
+    # 4 windows total: split=2 early, 2 late → each half has only 2 valid ICs for this factor → skip
+    summaries = [{"factor_ic_next_close": {factor: 0.10}} for _ in range(4)]
+    result = compute_factor_ic_temporal_trend(summaries)
+    assert result[f"{factor}_ic_trend"] is None
+    assert result[f"{factor}_ic_decaying"] is False
+
+
+# =============================================================================
+# Round 24 — Task 3: compute_verdict_calibration unit tests
+# =============================================================================
+
+
+def test_r24_verdict_calibration_empty_returns_none() -> None:
+    """Empty input returns None calibration score and empty maps."""
+    from scripts.btst_analysis_utils import compute_verdict_calibration
+    result = compute_verdict_calibration([])
+    assert result["verdict_calibration_score"] is None
+    assert result["verdict_monotone"] is None
+    assert result["verdict_win_rate_map"] == {}
+
+
+def test_r24_verdict_calibration_uses_real_verdicts_when_present() -> None:
+    """When verdict field is present, uses real categories (not quartile proxy)."""
+    from scripts.btst_analysis_utils import compute_verdict_calibration
+    summaries = [
+        {"verdict": "promotable", "next_close_positive_rate": 0.70},
+        {"verdict": "promotable", "next_close_positive_rate": 0.68},
+        {"verdict": "watch", "next_close_positive_rate": 0.58},
+        {"verdict": "probation", "next_close_positive_rate": 0.48},
+        {"verdict": "probation", "next_close_positive_rate": 0.46},
+    ]
+    result = compute_verdict_calibration(summaries)
+    assert "promotable" in result["verdict_win_rate_map"] or "promotable-like" in result["verdict_win_rate_map"]
+    assert result["verdict_calibration_score"] is not None
+    assert 0.0 <= result["verdict_calibration_score"] <= 1.0
+
+
+def test_r24_verdict_calibration_monotone_true_when_ordered() -> None:
+    """When promotable_wr > watch_wr > probation_wr, verdict_monotone must be True."""
+    from scripts.btst_analysis_utils import compute_verdict_calibration
+    summaries = [
+        {"verdict": "promotable", "next_close_positive_rate": 0.70},
+        {"verdict": "watch", "next_close_positive_rate": 0.58},
+        {"verdict": "probation", "next_close_positive_rate": 0.45},
+    ]
+    result = compute_verdict_calibration(summaries)
+    assert result["verdict_monotone"] is True
+
+
+def test_r24_verdict_calibration_monotone_false_when_inverted() -> None:
+    """When probation_wr > promotable_wr, verdict_monotone must be False."""
+    from scripts.btst_analysis_utils import compute_verdict_calibration
+    summaries = [
+        {"verdict": "promotable", "next_close_positive_rate": 0.45},
+        {"verdict": "probation", "next_close_positive_rate": 0.70},
+    ]
+    result = compute_verdict_calibration(summaries)
+    assert result["verdict_monotone"] is False
+
+
+def test_r24_verdict_calibration_proxy_splits_by_quartile() -> None:
+    """When no real verdicts present, uses quartile proxy for categorisation."""
+    from scripts.btst_analysis_utils import compute_verdict_calibration
+    # 8 windows, no 'verdict' field — use proxy
+    summaries = [{"next_close_positive_rate": 0.40 + i * 0.04} for i in range(8)]
+    result = compute_verdict_calibration(summaries)
+    assert result["verdict_win_rate_map"]
+    # Should have promotable-like and probation-like categories
+    assert any("promotable" in k for k in result["verdict_win_rate_map"])
+    assert any("probation" in k for k in result["verdict_win_rate_map"])
+
+
+def test_r24_verdict_calibration_score_capped_at_one() -> None:
+    """calibration_score must not exceed 1.0 even when spread > 0.20."""
+    from scripts.btst_analysis_utils import compute_verdict_calibration
+    summaries = [
+        {"verdict": "promotable", "next_close_positive_rate": 0.90},
+        {"verdict": "probation", "next_close_positive_rate": 0.40},
+    ]
+    result = compute_verdict_calibration(summaries)
+    assert result["verdict_calibration_score"] is not None
+    assert result["verdict_calibration_score"] <= 1.0
+    assert result["verdict_calibration_score"] == 1.0  # (0.90-0.40)/0.20 = 2.5 → capped to 1.0

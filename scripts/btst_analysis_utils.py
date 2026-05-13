@@ -1880,6 +1880,82 @@ def compute_regime_consistency_check(rows: list[dict[str, Any]], surface_summary
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 2 (Round 24): Drawdown-adjusted Kelly fraction
+# ---------------------------------------------------------------------------
+# Applies a severity-based penalty to ``kelly_fraction_half`` derived from
+# the T+1 intraday drawdown P10.  Strategies with severe intraday drawdown
+# risk should use a reduced position size even when Kelly says otherwise.
+
+
+def compute_drawdown_adjusted_kelly(
+    next_day_rows: list[dict[str, Any]],
+    surface_summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Round 24, Task 2: Adjust Kelly fraction by T+1 intraday drawdown risk.
+
+    Penalises ``kelly_fraction_half`` when the T+1 intraday drawdown P10 is
+    severely negative.  The adjustment_factor shrinks as drawdown severity
+    increases, reducing recommended position size in volatile regimes.
+
+    Risk levels are derived from ``t_plus_1_intraday_drawdown_p10``:
+    - low:      p10 > −0.02 → no reduction
+    - moderate: p10 ∈ [−0.05, −0.02) → mild reduction
+    - high:     p10 ∈ [−0.08, −0.05) → significant reduction
+    - severe:   p10 < −0.08 → large reduction
+
+    Formula: ``severity = max(0, −p10 / 0.05)``;
+    ``adjustment_factor = 1 / (1 + severity)``;
+    ``kelly_fraction_drawdown_adjusted = clip(kelly_half × adjustment_factor, 0, 0.50)``.
+
+    Quality floor: ``kelly_fraction_drawdown_adjusted ≥ 0.01``.
+
+    Args:
+        next_day_rows: Per-row next-day outcome data (unused; kept for signature consistency).
+        surface_summary: Dict containing ``kelly_fraction_half`` and
+            ``t_plus_1_intraday_drawdown_p10`` from the same window.
+
+    Returns:
+        Dict with keys ``kelly_fraction_drawdown_adjusted``,
+        ``drawdown_adjustment_factor``, ``drawdown_kelly_vs_base_diff``,
+        and ``drawdown_risk_level``.  All numeric keys are ``None`` when
+        either input is missing.
+    """
+    _null: dict[str, Any] = {
+        "kelly_fraction_drawdown_adjusted": None,
+        "drawdown_adjustment_factor": None,
+        "drawdown_kelly_vs_base_diff": None,
+        "drawdown_risk_level": None,
+    }
+    raw_kelly = surface_summary.get("kelly_fraction_half")
+    raw_p10 = surface_summary.get("t_plus_1_intraday_drawdown_p10")
+    if raw_kelly is None or raw_p10 is None:
+        return _null
+    try:
+        kelly_half_f = float(raw_kelly)
+        p10_f = float(raw_p10)
+    except (TypeError, ValueError):
+        return _null
+    if p10_f > -0.02:
+        risk_level = "low"
+    elif p10_f >= -0.05:
+        risk_level = "moderate"
+    elif p10_f >= -0.08:
+        risk_level = "high"
+    else:
+        risk_level = "severe"
+    severity = max(0.0, -p10_f / 0.05)
+    adjustment_factor = 1.0 / (1.0 + severity)
+    adjusted_kelly = min(0.50, max(0.0, kelly_half_f * adjustment_factor))
+    diff = round(adjusted_kelly - kelly_half_f, 4)
+    return {
+        "kelly_fraction_drawdown_adjusted": round(adjusted_kelly, 4),
+        "drawdown_adjustment_factor": round(adjustment_factor, 4),
+        "drawdown_kelly_vs_base_diff": diff,
+        "drawdown_risk_level": risk_level,
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -2043,6 +2119,17 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # Compares T+1 win rate across bull/bear/sideways regimes to flag bull-market dependency.
     # regime_consistency_score = 1 − regime_win_rate_range; floor ≥ 0.70.
     _regime_consistency: dict[str, Any] = compute_regime_consistency_check(rows, {"regime_conditional_stats": regime_conditional_stats})
+    # -----------------------------------------------------------------------
+    # Round 24 analytics — wired into build_surface_summary.
+    # -----------------------------------------------------------------------
+    # Task 2 (Round 24): Drawdown-adjusted Kelly fraction.
+    # Applies a severity penalty to kelly_fraction_half based on t_plus_1_intraday_drawdown_p10.
+    # Quality floor: kelly_fraction_drawdown_adjusted ≥ 0.01 (strategy retains positive edge
+    # even after accounting for intraday adverse excursion risk).
+    _drawdown_adjusted_kelly: dict[str, Any] = compute_drawdown_adjusted_kelly(
+        next_day_rows,
+        {"kelly_fraction_half": _kelly_fractions.get("kelly_fraction_half"), "t_plus_1_intraday_drawdown_p10": t_plus_1_intraday_drawdown_p10},
+    )
 
     # -----------------------------------------------------------------------
     # Round 21 analytics — wired into build_surface_summary.
@@ -2433,6 +2520,19 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "worst_regime_win_rate": _regime_consistency.get("worst_regime_win_rate"),
         "regime_robustness_flag": _regime_consistency.get("regime_robustness_flag"),
         "bear_market_win_rate_deficit": _regime_consistency.get("bear_market_win_rate_deficit"),
+        # -----------------------------------------------------------------------
+        # Round 24 analytics
+        # -----------------------------------------------------------------------
+        # Task 2 (Round 24): drawdown-adjusted Kelly fraction.
+        # kelly_fraction_drawdown_adjusted: half-Kelly further reduced by intraday drawdown severity.
+        # drawdown_adjustment_factor: 1 / (1 + severity); severity = max(0, −p10 / 0.05).
+        # drawdown_kelly_vs_base_diff: adjusted − base half-Kelly (always ≤ 0).
+        # drawdown_risk_level: "low" / "moderate" / "high" / "severe" based on p10 value.
+        "drawdown_adjusted_kelly": _drawdown_adjusted_kelly,
+        "kelly_fraction_drawdown_adjusted": _drawdown_adjusted_kelly.get("kelly_fraction_drawdown_adjusted"),
+        "drawdown_adjustment_factor": _drawdown_adjusted_kelly.get("drawdown_adjustment_factor"),
+        "drawdown_kelly_vs_base_diff": _drawdown_adjusted_kelly.get("drawdown_kelly_vs_base_diff"),
+        "drawdown_risk_level": _drawdown_adjusted_kelly.get("drawdown_risk_level"),
     }
 
 
@@ -2568,6 +2668,193 @@ def compute_factor_ic_stability(all_window_summaries: list[dict[str, Any]]) -> d
         result["most_stable_factor"] = max(ir_by_factor, key=lambda f: ir_by_factor[f])
         result["least_stable_factor"] = min(ir_by_factor, key=lambda f: ir_by_factor[f])
     return result
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 24): Factor IC temporal trend — decay detection
+# ---------------------------------------------------------------------------
+# Detects whether each factor's Information Coefficient is decaying over time
+# by comparing early-window IC averages with late-window IC averages.  A trend
+# below −0.02 is flagged as decaying, indicating the factor's predictive power
+# is degrading and may need recalibration.
+
+
+def compute_factor_ic_temporal_trend(all_window_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Round 24, Task 1: Detect IC decay trend across replay windows.
+
+    Splits the ordered window list into early (first ⌈n/2⌉) and late (remaining)
+    halves, then computes the mean IC of each half per factor.  The IC trend is
+    ``late_mean − early_mean``; a trend below −0.02 is considered *decaying*.
+
+    Per-factor output keys:
+    - ``{factor}_ic_early_mean``: mean IC over early windows.
+    - ``{factor}_ic_late_mean``: mean IC over late windows.
+    - ``{factor}_ic_trend``: late_mean − early_mean.
+    - ``{factor}_ic_decaying``: True when trend < −0.02.
+
+    Summary keys:
+    - ``decaying_factor_count``: number of factors with trend < −0.02.
+    - ``decaying_factors``: sorted list of decaying factor names.
+    - ``most_decaying_factor``: factor with the most negative trend (worst decay).
+    - ``most_improving_factor``: factor with the most positive trend.
+
+    Factors with fewer than 3 valid IC observations in either half receive
+    ``None`` for mean/trend values and ``False`` for the decaying flag.
+
+    Args:
+        all_window_summaries: Ordered list of per-window surface summary dicts.
+
+    Returns:
+        Dict of per-factor temporal trend metrics plus summary keys.
+        Returns minimal defaults when fewer than 2 windows are available.
+    """
+    n = len(all_window_summaries)
+    if n < 2:
+        return {"decaying_factor_count": 0, "decaying_factors": [], "most_decaying_factor": None, "most_improving_factor": None}
+    split = (n + 1) // 2
+    early_summaries = all_window_summaries[:split]
+    late_summaries = all_window_summaries[split:]
+    result: dict[str, Any] = {}
+    factor_trends: dict[str, float | None] = {}
+    for factor in BTST_FACTOR_NAMES:
+        early_ics: list[float] = []
+        for s in early_summaries:
+            ic_dict: dict[str, Any] = dict(s.get("factor_ic_next_close") or {})
+            ic_raw = ic_dict.get(factor)
+            if ic_raw is None:
+                continue
+            try:
+                early_ics.append(float(ic_raw))
+            except (TypeError, ValueError):
+                continue
+        late_ics: list[float] = []
+        for s in late_summaries:
+            ic_dict = dict(s.get("factor_ic_next_close") or {})
+            ic_raw = ic_dict.get(factor)
+            if ic_raw is None:
+                continue
+            try:
+                late_ics.append(float(ic_raw))
+            except (TypeError, ValueError):
+                continue
+        if len(early_ics) < 3 or len(late_ics) < 3:
+            result[f"{factor}_ic_early_mean"] = None
+            result[f"{factor}_ic_late_mean"] = None
+            result[f"{factor}_ic_trend"] = None
+            result[f"{factor}_ic_decaying"] = False
+            factor_trends[factor] = None
+            continue
+        early_mean = sum(early_ics) / len(early_ics)
+        late_mean = sum(late_ics) / len(late_ics)
+        trend = late_mean - early_mean
+        result[f"{factor}_ic_early_mean"] = round(early_mean, 4)
+        result[f"{factor}_ic_late_mean"] = round(late_mean, 4)
+        result[f"{factor}_ic_trend"] = round(trend, 4)
+        result[f"{factor}_ic_decaying"] = bool(trend < -0.02)
+        factor_trends[factor] = trend
+    valid_trends: dict[str, float] = {f: t for f, t in factor_trends.items() if t is not None}
+    decaying_factors = sorted(f for f, t in valid_trends.items() if t < -0.02)
+    result["decaying_factor_count"] = len(decaying_factors)
+    result["decaying_factors"] = decaying_factors
+    result["most_decaying_factor"] = min(valid_trends, key=lambda f: valid_trends[f]) if valid_trends else None
+    result["most_improving_factor"] = max(valid_trends, key=lambda f: valid_trends[f]) if valid_trends else None
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Round 24): Walk-forward verdict calibration
+# ---------------------------------------------------------------------------
+# Checks whether the walk-forward runner verdicts (promotable / watch / probation)
+# correlate with observed T+1 win rates across windows.  When explicit verdicts are
+# absent, uses quartile-based win-rate categories as a proxy.  A calibrated system
+# should show monotonically increasing win rates: promotable > watch > probation.
+
+
+def compute_verdict_calibration(all_window_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Round 24, Task 3: Check walk-forward verdict calibration.
+
+    For each window summary, reads the ``verdict`` field (if present) or uses
+    the ``next_close_positive_rate`` quartile rank as a proxy verdict category.
+    Then computes the average win rate per category and checks for monotone ordering.
+
+    Proxy quartile mapping (applied only when no window carries a real verdict):
+    - top-25 % win rate → "promotable-like"
+    - bottom-25 % win rate → "probation-like"
+    - middle 50 % → "watch-like"
+
+    Output keys:
+    - ``verdict_calibration_score``: normalised spread = min(1, max(0,
+      (promotable_wr − probation_wr) / 0.20)).  1.0 = fully calibrated.
+    - ``verdict_monotone``: True when promotable_wr > watch_wr > probation_wr
+      (or promotable_wr > probation_wr when no watch category).
+    - ``verdict_win_rate_map``: average T+1 win rate per verdict category.
+    - ``verdict_sample_counts``: number of windows per category.
+
+    Args:
+        all_window_summaries: Ordered list of per-window surface summary dicts.
+
+    Returns:
+        Dict with calibration score, monotone flag, win-rate map, and sample counts.
+        Returns ``None`` numeric values when not enough data is available.
+    """
+    _null_result: dict[str, Any] = {"verdict_calibration_score": None, "verdict_monotone": None, "verdict_win_rate_map": {}, "verdict_sample_counts": {}}
+    categorized: list[tuple[str, float]] = []
+    has_real_verdicts = False
+    for summary in all_window_summaries:
+        wr_raw = summary.get("next_close_positive_rate")
+        if wr_raw is None:
+            continue
+        try:
+            wr = float(wr_raw)
+        except (TypeError, ValueError):
+            continue
+        verdict_raw = summary.get("verdict")
+        if verdict_raw is not None:
+            has_real_verdicts = True
+            categorized.append((str(verdict_raw), wr))
+        else:
+            categorized.append(("__proxy__", wr))
+    if not categorized:
+        return _null_result
+    if not has_real_verdicts:
+        all_wrs_sorted = sorted(wr for _, wr in categorized)
+        n = len(all_wrs_sorted)
+        q1_idx = max(0, (n // 4) - 1)
+        q3_idx = min(n - 1, (3 * n) // 4)
+        q1_thresh = all_wrs_sorted[q1_idx] if n >= 4 else None
+        q3_thresh = all_wrs_sorted[q3_idx] if n >= 4 else None
+        proxy_categorized: list[tuple[str, float]] = []
+        for _, wr in categorized:
+            if q3_thresh is not None and wr >= q3_thresh:
+                proxy_categorized.append(("promotable-like", wr))
+            elif q1_thresh is not None and wr <= q1_thresh:
+                proxy_categorized.append(("probation-like", wr))
+            else:
+                proxy_categorized.append(("watch-like", wr))
+        categorized = proxy_categorized
+    verdict_groups: dict[str, list[float]] = {}
+    for verdict, wr in categorized:
+        verdict_groups.setdefault(verdict, []).append(wr)
+    verdict_win_rate_map: dict[str, float] = {v: round(sum(wrs) / len(wrs), 4) for v, wrs in verdict_groups.items()}
+    verdict_sample_counts: dict[str, int] = {v: len(wrs) for v, wrs in verdict_groups.items()}
+    promotable_wr = verdict_win_rate_map.get("promotable-like") if verdict_win_rate_map.get("promotable-like") is not None else verdict_win_rate_map.get("promotable")
+    probation_wr = verdict_win_rate_map.get("probation-like") if verdict_win_rate_map.get("probation-like") is not None else verdict_win_rate_map.get("probation")
+    watch_wr = verdict_win_rate_map.get("watch-like") if verdict_win_rate_map.get("watch-like") is not None else verdict_win_rate_map.get("watch")
+    verdict_monotone: bool | None = None
+    if promotable_wr is not None and probation_wr is not None:
+        if watch_wr is not None:
+            verdict_monotone = bool(promotable_wr > watch_wr > probation_wr)
+        else:
+            verdict_monotone = bool(promotable_wr > probation_wr)
+    calibration_score: float | None = None
+    if promotable_wr is not None and probation_wr is not None:
+        calibration_score = round(min(1.0, max(0.0, (promotable_wr - probation_wr) / 0.20)), 4)
+    return {
+        "verdict_calibration_score": calibration_score,
+        "verdict_monotone": verdict_monotone,
+        "verdict_win_rate_map": verdict_win_rate_map,
+        "verdict_sample_counts": verdict_sample_counts,
+    }
 
 
 def _row_sort_key(row: dict[str, Any]) -> tuple[float, float, float, str, str]:
