@@ -4767,6 +4767,20 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         _surface_result["liq_liquidity_bias"] = liq_result["liquidity_bias"]
         _surface_result["liq_high_liquidity_win_rate"] = liq_result["high_liquidity_win_rate"]
 
+    # Round 86, Task 1 (Alpha): Factor rank-correlation IC consistency snapshot.
+    frc_result: dict = compute_factor_rank_correlation_stability(rows)
+    if frc_result["valid"]:
+        _surface_result["frc_positive_ic_count"] = frc_result["positive_ic_count"]
+        _surface_result["frc_mean_factor_ic"] = frc_result["mean_factor_ic"]
+        _surface_result["frc_factor_ic_consistency_ratio"] = frc_result["factor_ic_consistency_ratio"]
+
+    # Round 86, Task 2 (Beta): Breakout quality single-factor P75 premium.
+    bq_result: dict = compute_breakout_quality_premium(rows)
+    if bq_result["valid"]:
+        _surface_result["bq_high_breakout_win_rate"] = bq_result["high_breakout_win_rate"]
+        _surface_result["bq_breakout_premium_edge"] = bq_result["breakout_premium_edge"]
+        _surface_result["bq_high_breakout_avg_return"] = bq_result["high_breakout_avg_return"]
+
     return _surface_result
 
 
@@ -14679,3 +14693,93 @@ def compute_liquidity_weighted_return_analysis(rows: list[dict]) -> dict:
     high_liq_rows: list[dict] = [r for r in valid_rows if r["turnover_rate"] >= p75]
     high_liquidity_win_rate: "float | None" = round(sum(1 for r in high_liq_rows if r["actual_return"] > 0) / len(high_liq_rows), 8) if len(high_liq_rows) >= 3 else None
     return {"valid": True, "lw_win_rate": lw_win_rate, "ew_win_rate": ew_win_rate, "liquidity_bias": liquidity_bias, "high_liquidity_win_rate": high_liquidity_win_rate}
+
+
+# ---------------------------------------------------------------------------
+# Round 86, Task 1 (Alpha): Factor rank-correlation IC consistency snapshot
+# ---------------------------------------------------------------------------
+
+
+def compute_factor_rank_correlation_stability(rows: list[dict]) -> dict:
+    """7核心因子与actual_return的Spearman IC一致性快照：positive_ic_count / 7。"""
+    _SEVEN_FACTORS: tuple[str, ...] = ("close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d")
+    EMPTY: dict = {"valid": False, "positive_ic_count": None, "mean_factor_ic": None, "factor_ic_consistency_ratio": None}
+    if len(rows) < 15:
+        return EMPTY
+
+    def _spearman_ic(factor_name: str) -> "float | None":
+        pairs: list[tuple] = []
+        for r in rows:
+            f_val = r.get(factor_name)
+            ret_val = r.get("actual_return")
+            if f_val is None or ret_val is None:
+                continue
+            try:
+                pairs.append((float(f_val), float(ret_val)))
+            except (TypeError, ValueError):
+                continue
+        if len(pairs) < 10:
+            return None
+        np: int = len(pairs)
+        sorted_f_idx: list[int] = sorted(range(np), key=lambda i: pairs[i][0])
+        f_ranks: list[float] = [0.0] * np
+        for rk, idx in enumerate(sorted_f_idx):
+            f_ranks[idx] = float(rk + 1)
+        sorted_r_idx: list[int] = sorted(range(np), key=lambda i: pairs[i][1])
+        r_ranks: list[float] = [0.0] * np
+        for rk, idx in enumerate(sorted_r_idx):
+            r_ranks[idx] = float(rk + 1)
+        mean_f: float = sum(f_ranks) / np
+        mean_r: float = sum(r_ranks) / np
+        num: float = sum((f_ranks[i] - mean_f) * (r_ranks[i] - mean_r) for i in range(np))
+        den_f: float = sum((f_ranks[i] - mean_f) ** 2 for i in range(np))
+        den_r: float = sum((r_ranks[i] - mean_r) ** 2 for i in range(np))
+        denom: float = (den_f * den_r) ** 0.5
+        if denom == 0:
+            return None
+        return round(num / denom, 8)
+
+    ics: list[float] = []
+    for factor in _SEVEN_FACTORS:
+        ic = _spearman_ic(factor)
+        if ic is not None:
+            ics.append(ic)
+    if not ics:
+        return EMPTY
+    positive_ic_count: int = sum(1 for ic in ics if ic > 0)
+    mean_factor_ic: float = round(sum(ics) / len(ics), 8)
+    factor_ic_consistency_ratio: float = round(positive_ic_count / len(ics), 8)
+    return {"valid": True, "positive_ic_count": positive_ic_count, "mean_factor_ic": mean_factor_ic, "factor_ic_consistency_ratio": factor_ic_consistency_ratio}
+
+
+# ---------------------------------------------------------------------------
+# Round 86, Task 2 (Beta): Breakout quality single-factor P75 premium
+# ---------------------------------------------------------------------------
+
+
+def compute_breakout_quality_premium(rows: list[dict]) -> dict:
+    """单因子breakout_quality_score P75门槛胜率溢价：高分组 vs 全体基准。"""
+    EMPTY: dict = {"valid": False, "high_breakout_win_rate": None, "breakout_premium_edge": None, "high_breakout_avg_return": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        bq_val = r.get("breakout_quality_score")
+        ret_val = r.get("actual_return")
+        if bq_val is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"bq": float(bq_val), "ret": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return EMPTY
+    n: int = len(valid_rows)
+    all_wr: float = sum(1 for r in valid_rows if r["ret"] > 0) / n
+    sorted_bq: list[float] = sorted(r["bq"] for r in valid_rows)
+    p75: float = sorted_bq[int(n * 0.75)]
+    high_rows: list[dict] = [r for r in valid_rows if r["bq"] >= p75]
+    if len(high_rows) < 5:
+        return EMPTY
+    high_breakout_win_rate: float = round(sum(1 for r in high_rows if r["ret"] > 0) / len(high_rows), 8)
+    breakout_premium_edge: float = round(high_breakout_win_rate - all_wr, 8)
+    high_breakout_avg_return: float = round(sum(r["ret"] for r in high_rows) / len(high_rows), 8)
+    return {"valid": True, "high_breakout_win_rate": high_breakout_win_rate, "breakout_premium_edge": breakout_premium_edge, "high_breakout_avg_return": high_breakout_avg_return}

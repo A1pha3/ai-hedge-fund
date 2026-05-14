@@ -710,6 +710,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 85, Gamma): momentum reversal trend slope floor.
     # momentum_reversal_trend_slope < -0.02 means the momentum breadth effect is rapidly deteriorating.
     "momentum_reversal_trend_slope": -0.02,
+    # Task 1 (Round 86, Alpha): factor IC consistency ratio floor.
+    # frc_factor_ic_consistency_ratio < 0.5 means fewer than half of the 7 core factors have positive IC.
+    "frc_factor_ic_consistency_ratio": 0.5,
+    # Task 2 (Round 86, Beta): breakout quality premium edge floor.
+    # bq_breakout_premium_edge < 0.0 means high-breakout stocks don't outperform the baseline win rate.
+    "bq_breakout_premium_edge": 0.0,
+    # Task 3 (Round 86, Gamma): batch consistency trend slope floor.
+    # batch_consistency_trend_slope < -0.01 means time-ordered batch consistency is deteriorating across windows.
+    "batch_consistency_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

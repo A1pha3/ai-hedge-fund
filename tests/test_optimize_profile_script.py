@@ -25952,3 +25952,381 @@ def test_r85_t3_floor_registered() -> None:
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "momentum_reversal_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["momentum_reversal_trend_slope"] == pytest.approx(-0.02)
+
+
+# =============================================================================
+# Round 86
+# T1 (Alpha): compute_factor_rank_correlation_stability
+# T2 (Beta):  compute_breakout_quality_premium
+# T3 (Gamma): compute_cross_window_batch_consistency_trend
+# =============================================================================
+
+
+def _make_r86_frc_rows(factor_vals: list[float], returns: list[float]) -> list[dict]:
+    """Build rows with close_strength (as the IC-tested factor proxy) and actual_return."""
+    assert len(factor_vals) == len(returns)
+    return [{"close_strength": fv, "volume_expansion_quality": fv, "sector_resonance": fv, "rs_sector_rank": fv, "t0_estimated_net_inflow_ratio": fv, "breakout_quality_score": fv, "momentum_slope_20d": fv, "actual_return": r} for fv, r in zip(factor_vals, returns)]
+
+
+def _make_r86_bq_rows(bq_vals: list[float], returns: list[float]) -> list[dict]:
+    """Build rows with breakout_quality_score and actual_return."""
+    assert len(bq_vals) == len(returns)
+    return [{"breakout_quality_score": bq, "actual_return": r} for bq, r in zip(bq_vals, returns)]
+
+
+# ---------------------------------------------------------------------------
+# T1: compute_factor_rank_correlation_stability
+# ---------------------------------------------------------------------------
+
+
+def test_r86_t1_basic_valid() -> None:
+    """15 rows with all 7 factors → valid=True."""
+    from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+    rows = _make_r86_frc_rows(list(range(1, 16)), [r * 0.01 for r in range(1, 16)])
+    result = compute_factor_rank_correlation_stability(rows)
+    assert result["valid"] is True
+
+
+def test_r86_t1_too_few_rows_invalid() -> None:
+    """Fewer than 15 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+    rows = _make_r86_frc_rows(list(range(1, 14)), [r * 0.01 for r in range(1, 14)])
+    result = compute_factor_rank_correlation_stability(rows)
+    assert result["valid"] is False
+    assert result["positive_ic_count"] is None
+
+
+def test_r86_t1_all_factors_positive_ic() -> None:
+    """Perfectly correlated factors and returns → all ICs > 0, consistency_ratio=1.0."""
+    from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+    # monotone increasing: all factors rank-correlated with return
+    rows = _make_r86_frc_rows(list(range(1, 21)), [r * 0.005 for r in range(1, 21)])
+    result = compute_factor_rank_correlation_stability(rows)
+    assert result["valid"] is True
+    assert result["positive_ic_count"] == 7
+    assert result["factor_ic_consistency_ratio"] == pytest.approx(1.0)
+
+
+def test_r86_t1_all_factors_negative_ic() -> None:
+    """Perfectly anti-correlated factors and returns → all ICs < 0, consistency_ratio=0.0."""
+    from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+    n = 20
+    rows = _make_r86_frc_rows(list(range(1, n + 1)), [r * (-0.005) for r in range(1, n + 1)])
+    result = compute_factor_rank_correlation_stability(rows)
+    assert result["valid"] is True
+    assert result["positive_ic_count"] == 0
+    assert result["factor_ic_consistency_ratio"] == pytest.approx(0.0)
+
+
+def test_r86_t1_consistency_ratio_formula() -> None:
+    """consistency_ratio = positive_ic_count / total_factors_evaluated."""
+    from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+    rows = _make_r86_frc_rows(list(range(1, 21)), [r * 0.005 for r in range(1, 21)])
+    result = compute_factor_rank_correlation_stability(rows)
+    assert result["valid"] is True
+    # positive_ic_count / 7 (all factors present)
+    assert result["factor_ic_consistency_ratio"] == pytest.approx(result["positive_ic_count"] / 7.0, abs=1e-6)
+
+
+def test_r86_t1_mean_ic_positive_when_all_positive() -> None:
+    """mean_factor_ic > 0 when all factors have positive IC."""
+    from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+    rows = _make_r86_frc_rows(list(range(1, 21)), [r * 0.005 for r in range(1, 21)])
+    result = compute_factor_rank_correlation_stability(rows)
+    assert result["valid"] is True
+    assert result["mean_factor_ic"] > 0
+
+
+def test_r86_t1_missing_factor_skipped() -> None:
+    """Rows missing a factor are excluded from that factor's IC computation gracefully."""
+    from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+    # 20 rows, but only close_strength present (others None)
+    rows = [{"close_strength": float(i), "actual_return": float(i) * 0.01} for i in range(1, 21)]
+    result = compute_factor_rank_correlation_stability(rows)
+    # At least close_strength IC is computable → valid
+    assert result["valid"] is True
+    assert result["factor_ic_consistency_ratio"] is not None
+
+
+def test_r86_t1_no_actual_return_invalid() -> None:
+    """Rows with no actual_return → valid=False."""
+    from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+    rows = [{"close_strength": float(i)} for i in range(1, 21)]
+    result = compute_factor_rank_correlation_stability(rows)
+    assert result["valid"] is False
+
+
+def test_r86_t1_empty_rows_invalid() -> None:
+    """Empty rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+    result = compute_factor_rank_correlation_stability([])
+    assert result["valid"] is False
+
+
+def test_r86_t1_in_comparison_metrics() -> None:
+    """frc_factor_ic_consistency_ratio must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "frc_factor_ic_consistency_ratio" in COMPARISON_METRICS
+
+
+def test_r86_t1_in_optional_metrics() -> None:
+    """frc metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "frc_factor_ic_consistency_ratio" in OPTIONAL_COMPARISON_METRICS
+    assert "frc_positive_ic_count" in OPTIONAL_COMPARISON_METRICS
+    assert "frc_mean_factor_ic" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r86_t1_labels_registered() -> None:
+    """frc_factor_ic_consistency_ratio label must be registered."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("frc_factor_ic_consistency_ratio") == "7核心因子IC一致性比率"
+
+
+def test_r86_t1_floor_registered() -> None:
+    """frc_factor_ic_consistency_ratio floor must be 0.5."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "frc_factor_ic_consistency_ratio" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["frc_factor_ic_consistency_ratio"] == pytest.approx(0.5)
+
+
+def test_r86_t1_surface_wired() -> None:
+    """build_surface_summary wires frc_ keys when valid."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"runner_composite_score": float(i), "actual_return": float(i) * 0.01, "close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i)} for i in range(1, 21)]
+    surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "frc_factor_ic_consistency_ratio" in surface
+    assert surface["frc_factor_ic_consistency_ratio"] is not None
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_breakout_quality_premium
+# ---------------------------------------------------------------------------
+
+
+def test_r86_t2_basic_valid() -> None:
+    """20 rows with breakout_quality_score → valid=True."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_premium
+    rows = _make_r86_bq_rows(list(range(1, 21)), [0.01] * 14 + [-0.01] * 6)
+    result = compute_breakout_quality_premium(rows)
+    assert result["valid"] is True
+
+
+def test_r86_t2_too_few_rows_invalid() -> None:
+    """Fewer than 15 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_premium
+    rows = _make_r86_bq_rows(list(range(1, 14)), [0.01] * 13)
+    result = compute_breakout_quality_premium(rows)
+    assert result["valid"] is False
+
+
+def test_r86_t2_no_breakout_score_invalid() -> None:
+    """Rows missing breakout_quality_score → valid=False."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_premium
+    rows = [{"actual_return": 0.01} for _ in range(20)]
+    result = compute_breakout_quality_premium(rows)
+    assert result["valid"] is False
+
+
+def test_r86_t2_high_breakout_win_rate_formula() -> None:
+    """high_breakout_win_rate = wins among rows with bq >= P75."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_premium
+    # 20 rows, bq=[1..20]; P75=index 15 → bq>=16; top 5 rows all win
+    bq_vals = list(range(1, 21))
+    returns = [-0.01] * 15 + [0.02] * 5  # top 5 (bq>=16) all win
+    rows = _make_r86_bq_rows(bq_vals, returns)
+    result = compute_breakout_quality_premium(rows)
+    assert result["valid"] is True
+    assert result["high_breakout_win_rate"] == pytest.approx(1.0)
+
+
+def test_r86_t2_premium_edge_positive_when_high_outperforms() -> None:
+    """premium_edge > 0 when high-bq group win_rate exceeds baseline."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_premium
+    # high bq rows mostly win, low bq rows mostly lose
+    bq_vals = list(range(1, 21))
+    returns = [-0.01] * 14 + [0.02] * 6
+    rows = _make_r86_bq_rows(bq_vals, returns)
+    result = compute_breakout_quality_premium(rows)
+    assert result["valid"] is True
+    assert result["breakout_premium_edge"] > 0
+
+
+def test_r86_t2_premium_edge_negative_when_high_underperforms() -> None:
+    """premium_edge < 0 when high-bq group win_rate is below baseline."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_premium
+    # top 5 (high bq) all lose, bottom 15 all win
+    bq_vals = list(range(1, 21))
+    returns = [0.02] * 15 + [-0.01] * 5
+    rows = _make_r86_bq_rows(bq_vals, returns)
+    result = compute_breakout_quality_premium(rows)
+    assert result["valid"] is True
+    assert result["breakout_premium_edge"] < 0
+
+
+def test_r86_t2_avg_return_high_group() -> None:
+    """high_breakout_avg_return is mean return of P75+ rows."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_premium
+    bq_vals = list(range(1, 21))
+    returns = [0.0] * 15 + [0.1, 0.2, 0.3, 0.4, 0.5]
+    rows = _make_r86_bq_rows(bq_vals, returns)
+    result = compute_breakout_quality_premium(rows)
+    assert result["valid"] is True
+    assert result["high_breakout_avg_return"] == pytest.approx((0.1 + 0.2 + 0.3 + 0.4 + 0.5) / 5, abs=1e-6)
+
+
+def test_r86_t2_edge_value_exact() -> None:
+    """Verify edge = high_win_rate - all_win_rate numerically."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_premium
+    bq_vals = list(range(1, 21))
+    returns = [-0.01] * 15 + [0.02] * 5
+    rows = _make_r86_bq_rows(bq_vals, returns)
+    result = compute_breakout_quality_premium(rows)
+    all_wr = 5 / 20
+    assert result["breakout_premium_edge"] == pytest.approx(result["high_breakout_win_rate"] - all_wr, abs=1e-6)
+
+
+def test_r86_t2_in_comparison_metrics() -> None:
+    """bq_breakout_premium_edge must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "bq_breakout_premium_edge" in COMPARISON_METRICS
+
+
+def test_r86_t2_in_optional_metrics() -> None:
+    """bq metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "bq_breakout_premium_edge" in OPTIONAL_COMPARISON_METRICS
+    assert "bq_high_breakout_win_rate" in OPTIONAL_COMPARISON_METRICS
+    assert "bq_high_breakout_avg_return" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r86_t2_label_registered() -> None:
+    """bq_breakout_premium_edge label must be registered."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("bq_breakout_premium_edge") == "突破质量P75胜率溢价"
+
+
+def test_r86_t2_floor_registered() -> None:
+    """bq_breakout_premium_edge floor must be 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "bq_breakout_premium_edge" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["bq_breakout_premium_edge"] == pytest.approx(0.0)
+
+
+def test_r86_t2_surface_wired() -> None:
+    """build_surface_summary wires bq_ keys when valid."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"runner_composite_score": float(i), "actual_return": float(i) * 0.01, "breakout_quality_score": float(i)} for i in range(1, 21)]
+    surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "bq_breakout_premium_edge" in surface
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_batch_consistency_trend
+# ---------------------------------------------------------------------------
+
+
+def test_r86_t3_rising_trend_grade_a() -> None:
+    """Strongly rising batch_consistency → grade=A."""
+    from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+    windows = [{"batch_batch_consistency_score": 0.5 + i * 0.1} for i in range(6)]
+    result = compute_cross_window_batch_consistency_trend(windows)
+    assert result["valid"] is True
+    assert result["batch_consistency_trend_grade"] == "A"
+
+
+def test_r86_t3_mild_rising_grade_b() -> None:
+    """Mildly rising consistency → grade=B."""
+    from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+    windows = [{"batch_batch_consistency_score": 0.6 + i * 0.001} for i in range(5)]
+    result = compute_cross_window_batch_consistency_trend(windows)
+    assert result["valid"] is True
+    assert result["batch_consistency_trend_grade"] == "B"
+
+
+def test_r86_t3_flat_trend_grade_c() -> None:
+    """Mildly declining consistency → grade=C."""
+    from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+    windows = [{"batch_batch_consistency_score": 0.7 - i * 0.005} for i in range(5)]
+    result = compute_cross_window_batch_consistency_trend(windows)
+    assert result["valid"] is True
+    assert result["batch_consistency_trend_grade"] == "C"
+
+
+def test_r86_t3_strongly_falling_grade_d() -> None:
+    """Sharply declining consistency → grade=D."""
+    from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+    windows = [{"batch_batch_consistency_score": 0.9 - i * 0.05} for i in range(6)]
+    result = compute_cross_window_batch_consistency_trend(windows)
+    assert result["valid"] is True
+    assert result["batch_consistency_trend_grade"] == "D"
+
+
+def test_r86_t3_too_few_windows() -> None:
+    """Fewer than 3 windows → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+    windows = [{"batch_batch_consistency_score": 0.7}, {"batch_batch_consistency_score": 0.8}]
+    result = compute_cross_window_batch_consistency_trend(windows)
+    assert result["valid"] is False
+    assert result["batch_consistency_trend_slope"] is None
+
+
+def test_r86_t3_exactly_3_windows() -> None:
+    """Exactly 3 windows → valid=True."""
+    from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+    windows = [{"batch_batch_consistency_score": v} for v in [0.5, 0.6, 0.7]]
+    result = compute_cross_window_batch_consistency_trend(windows)
+    assert result["valid"] is True
+    assert result["batch_consistency_trend_window_count"] == 3
+
+
+def test_r86_t3_ols_slope_numerical() -> None:
+    """OLS slope matches manual calculation."""
+    from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+    vals = [0.5, 0.6, 0.7, 0.8, 0.9]
+    windows = [{"batch_batch_consistency_score": v} for v in vals]
+    result = compute_cross_window_batch_consistency_trend(windows)
+    assert result["valid"] is True
+    n = 5
+    xs = list(range(n))
+    sum_x = sum(xs)
+    sum_y = sum(vals)
+    sum_xy = sum(xs[i] * vals[i] for i in range(n))
+    sum_xx = sum(x * x for x in xs)
+    denom = n * sum_xx - sum_x * sum_x
+    expected_slope = (n * sum_xy - sum_x * sum_y) / denom
+    assert result["batch_consistency_trend_slope"] == pytest.approx(expected_slope, abs=1e-6)
+
+
+def test_r86_t3_missing_key_skipped() -> None:
+    """Windows without batch_batch_consistency_score are skipped."""
+    from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+    windows = [{"other_metric": 0.5}, {"batch_batch_consistency_score": 0.6}, {"batch_batch_consistency_score": 0.7}, {"batch_batch_consistency_score": 0.8}]
+    result = compute_cross_window_batch_consistency_trend(windows)
+    assert result["valid"] is True
+    assert result["batch_consistency_trend_window_count"] == 3
+
+
+def test_r86_t3_in_comparison_metrics() -> None:
+    """batch_consistency_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "batch_consistency_trend_slope" in COMPARISON_METRICS
+
+
+def test_r86_t3_in_optional_metrics() -> None:
+    """batch_consistency_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "batch_consistency_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r86_t3_label_registered() -> None:
+    """batch_consistency_trend_slope label must be registered."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("batch_consistency_trend_slope") == "批次一致性跨窗趋势斜率"
+
+
+def test_r86_t3_floor_registered() -> None:
+    """batch_consistency_trend_slope floor must be -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "batch_consistency_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["batch_consistency_trend_slope"] == pytest.approx(-0.01)

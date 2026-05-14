@@ -576,6 +576,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "liq_liquidity_bias",
     # Task 3 (Round 85, Gamma): cross-window momentum reversal trend slope.
     "momentum_reversal_trend_slope",
+    # Task 1 (Round 86, Alpha): factor IC consistency ratio across 7 core factors.
+    "frc_factor_ic_consistency_ratio",
+    # Task 2 (Round 86, Beta): breakout quality P75 premium edge.
+    "bq_breakout_premium_edge",
+    # Task 3 (Round 86, Gamma): cross-window batch consistency OLS trend slope.
+    "batch_consistency_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -1040,6 +1046,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "liq_liquidity_bias": "流动性执行偏差",
     # Task 3 (Round 85, Gamma): momentum reversal trend label.
     "momentum_reversal_trend_slope": "动量广度效应跨窗趋势",
+    # Task 1 (Round 86, Alpha): factor IC consistency ratio label.
+    "frc_factor_ic_consistency_ratio": "7核心因子IC一致性比率",
+    # Task 2 (Round 86, Beta): breakout quality premium edge label.
+    "bq_breakout_premium_edge": "突破质量P75胜率溢价",
+    # Task 3 (Round 86, Gamma): batch consistency trend slope label.
+    "batch_consistency_trend_slope": "批次一致性跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1578,6 +1590,16 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "liq_liquidity_bias",
     # Task 3 (Round 85, Gamma): momentum reversal trend slope — optional; pre-Round-85 outputs omit it.
     "momentum_reversal_trend_slope",
+    # Task 1 (Round 86, Alpha): factor IC consistency metrics — optional; pre-Round-86 surfaces omit these.
+    "frc_positive_ic_count",
+    "frc_mean_factor_ic",
+    "frc_factor_ic_consistency_ratio",
+    # Task 2 (Round 86, Beta): breakout quality premium metrics — optional; pre-Round-86 surfaces omit these.
+    "bq_high_breakout_win_rate",
+    "bq_breakout_premium_edge",
+    "bq_high_breakout_avg_return",
+    # Task 3 (Round 86, Gamma): batch consistency trend slope — optional; pre-Round-86 outputs omit it.
+    "batch_consistency_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3431,6 +3453,38 @@ def compute_cross_window_momentum_reversal_trend(all_windows_summaries: list[dic
     grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
     return {"valid": True, "momentum_reversal_trend_slope": round(slope, 8), "momentum_reversal_trend_grade": grade, "momentum_reversal_window_count": n}
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Round 86, Task 3 (Gamma): Cross-window batch consistency trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_batch_consistency_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口批次一致性趋势：batch_batch_consistency_score 的 OLS 时序斜率。"""
+    EMPTY: dict = {"valid": False, "batch_consistency_trend_slope": None, "batch_consistency_trend_grade": None, "batch_consistency_trend_window_count": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("batch_batch_consistency_score")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    n: int = len(vals)
+    if n < 3:
+        return EMPTY
+    xs: list[float] = list(range(n))
+    sum_x: float = sum(xs)
+    sum_y: float = sum(vals)
+    sum_xy: float = sum(xs[i] * vals[i] for i in range(n))
+    sum_xx: float = sum(x * x for x in xs)
+    denom: float = n * sum_xx - sum_x * sum_x
+    if denom == 0:
+        return EMPTY
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom
+    grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
+    return {"valid": True, "batch_consistency_trend_slope": round(slope, 8), "batch_consistency_trend_grade": grade, "batch_consistency_trend_window_count": n}
+
 
 # ---------------------------------------------------------------------------
 # Round 52, Task 3 (Gamma): Cross-window Kelly Fraction Trend (跨窗Kelly趋势)
@@ -5304,6 +5358,8 @@ def _build_replay_evaluator(
         _uat84: dict[str, Any] = compute_cross_window_upside_asymmetry_trend(all_primary_surfaces)
         # Task 3 (Round 85, Gamma): cross-window momentum reversal OLS trend.
         _mrt85: dict[str, Any] = compute_cross_window_momentum_reversal_trend(all_primary_surfaces)
+        # Task 3 (Round 86, Gamma): cross-window batch consistency OLS trend.
+        _bct86: dict[str, Any] = compute_cross_window_batch_consistency_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -6052,6 +6108,10 @@ def _build_replay_evaluator(
                 "momentum_reversal_trend_slope": _mrt85.get("momentum_reversal_trend_slope"),
                 "momentum_reversal_trend_grade": _mrt85.get("momentum_reversal_trend_grade"),
                 "momentum_reversal_trend_window_count": _mrt85.get("momentum_reversal_window_count"),
+                # Task 3 (Round 86, Gamma): cross-window batch consistency OLS trend slope.
+                "batch_consistency_trend_slope": _bct86.get("batch_consistency_trend_slope"),
+                "batch_consistency_trend_grade": _bct86.get("batch_consistency_trend_grade"),
+                "batch_consistency_trend_window_count": _bct86.get("batch_consistency_trend_window_count"),
         }
 
     return evaluator
