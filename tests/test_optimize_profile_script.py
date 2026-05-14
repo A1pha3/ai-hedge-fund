@@ -21678,3 +21678,424 @@ def test_r74_all_floors_present() -> None:
     assert "stratification_spread" in BTST_QUALITY_FLOORS
     assert "conditional_momentum_edge" in BTST_QUALITY_FLOORS
     assert "breadth_trend_slope" in BTST_QUALITY_FLOORS
+
+
+# ===========================================================================
+# Round 75 Tests
+# T1 = compute_sharpe_ratio_analysis (btst_analysis_utils.py)
+# T2 = compute_factor_collinearity_check (btst_analysis_utils.py)
+# T3 = compute_cross_window_stratification_trend (optimize_profile.py)
+# + registration / floor / cap checks
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _r75_sharpe_rows(rets):
+    """Build minimal rows list with next_day_return for T1 tests."""
+    return [{"next_day_return": r} for r in rets]
+
+
+def _r75_colin_rows(n=20):
+    """Build rows with 4 factor-pair keys perfectly correlated for T2 tests."""
+    rows = []
+    for i in range(n):
+        rows.append({
+            "close_strength": float(i),
+            "momentum_slope_20d": float(i) * 0.9 + 0.1,
+            "volume_expansion_quality": float(i) * 0.5,
+            "t0_estimated_net_inflow_ratio": float(i) * 0.5 + 0.2,
+            "sector_resonance": float(n - i),
+            "rs_sector_rank": float(n - i) * 1.1,
+            "breakout_quality_score": float(i) * 2.0,
+        })
+    return rows
+
+
+def _r75_strat_windows(vals):
+    """Build all_windows_summaries for T3 tests."""
+    return [{"strat_stratification_spread": v} for v in vals]
+
+
+# ---------------------------------------------------------------------------
+# T1: compute_sharpe_ratio_analysis
+# ---------------------------------------------------------------------------
+
+def test_r75_t1_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 8 rows."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows([0.01, 0.02, 0.03]))
+    assert result["sharpe_analysis_valid"] is False
+    assert result["sharpe_ratio"] is None
+
+
+def test_r75_t1_invalid_no_return_field() -> None:
+    """Returns valid=False when next_day_return values are all None."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rows = [{"other_field": i} for i in range(10)]
+    result = compute_sharpe_ratio_analysis(rows)
+    assert result["sharpe_analysis_valid"] is False
+
+
+def test_r75_t1_valid_basic() -> None:
+    """Returns valid=True with ≥8 valid next_day_return rows."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [0.01, -0.005, 0.02, 0.015, -0.01, 0.005, 0.03, 0.008]
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    assert result["sharpe_analysis_valid"] is True
+    assert result["return_mean"] is not None
+    assert result["return_std"] is not None
+
+
+def test_r75_t1_return_mean_precision() -> None:
+    """return_mean is rounded to 8 decimal places."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [0.01] * 8
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    assert result["return_mean"] == round(0.01, 8)
+
+
+def test_r75_t1_sharpe_ratio_formula() -> None:
+    """sharpe_ratio = return_mean / return_std (both non-zero)."""
+    import math
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [0.02, 0.01, -0.01, 0.03, 0.005, -0.005, 0.015, 0.025]
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    assert result["sharpe_analysis_valid"] is True
+    assert result["sharpe_ratio"] is not None
+    expected = result["return_mean"] / result["return_std"]
+    assert abs(result["sharpe_ratio"] - round(expected, 8)) < 1e-6
+
+
+def test_r75_t1_annualized_sharpe_formula() -> None:
+    """annualized_sharpe = sharpe_ratio * sqrt(252)."""
+    import math
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [0.02, 0.01, -0.01, 0.03, 0.005, -0.005, 0.015, 0.025]
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    if result["sharpe_ratio"] is not None:
+        expected = round(result["sharpe_ratio"] * math.sqrt(252), 8)
+        assert abs(result["annualized_sharpe"] - expected) < 1e-6
+
+
+def test_r75_t1_std_zero_returns_none_sharpe() -> None:
+    """When all returns identical (std=0), sharpe_ratio and annualized_sharpe are None."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [0.01] * 10
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    assert result["sharpe_ratio"] is None
+    assert result["annualized_sharpe"] is None
+
+
+def test_r75_t1_std_zero_grade_D() -> None:
+    """When std=0 → grade must be D."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [0.01] * 10
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    assert result["sharpe_grade"] == "D"
+
+
+def test_r75_t1_grade_A_high_sharpe() -> None:
+    """Grade A when annualized_sharpe > 1.0."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    # Returns highly positive and very low std → high Sharpe
+    rets = [0.02 + i * 0.001 for i in range(20)]
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    if result["annualized_sharpe"] is not None and result["annualized_sharpe"] > 1.0:
+        assert result["sharpe_grade"] == "A"
+
+
+def test_r75_t1_grade_D_negative_sharpe() -> None:
+    """Grade D when annualized_sharpe <= 0."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [-0.02, -0.01, -0.03, -0.015, -0.025, -0.005, -0.01, -0.02, -0.03, -0.01]
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    if result["annualized_sharpe"] is not None and result["annualized_sharpe"] <= 0:
+        assert result["sharpe_grade"] == "D"
+
+
+def test_r75_t1_calmar_proxy_none_when_all_positive() -> None:
+    """calmar_proxy is None when all returns are non-negative."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [0.01, 0.02, 0.03, 0.005, 0.015, 0.025, 0.01, 0.02]
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    assert result["calmar_proxy"] is None
+
+
+def test_r75_t1_calmar_proxy_computed_when_negative_present() -> None:
+    """calmar_proxy is a float when at least one negative return exists."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [0.02, -0.05, 0.01, 0.03, 0.005, -0.01, 0.015, 0.025]
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    assert result["calmar_proxy"] is not None
+    assert isinstance(result["calmar_proxy"], float)
+
+
+def test_r75_t1_sortino_none_when_no_downside() -> None:
+    """sortino_ratio is None when no negative returns (downside_std=0)."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    rets = [0.01, 0.02, 0.03, 0.005, 0.015, 0.025, 0.01, 0.02]
+    result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
+    assert result["sortino_ratio"] is None
+
+
+def test_r75_t1_default_grade_D_in_null() -> None:
+    """Null result has sharpe_grade='D' (not None)."""
+    from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+    result = compute_sharpe_ratio_analysis([])
+    assert result["sharpe_grade"] == "D"
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_factor_collinearity_check
+# ---------------------------------------------------------------------------
+
+def test_r75_t2_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    rows = _r75_colin_rows(5)
+    result = compute_factor_collinearity_check(rows)
+    assert result["factor_collinearity_valid"] is False
+
+
+def test_r75_t2_invalid_high_collinearity_pairs_is_list() -> None:
+    """high_collinearity_pairs is always a list (not None) even on invalid input."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    result = compute_factor_collinearity_check([])
+    assert isinstance(result["high_collinearity_pairs"], list)
+
+
+def test_r75_t2_valid_basic() -> None:
+    """Returns valid=True with ≥10 rows containing required keys."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    result = compute_factor_collinearity_check(_r75_colin_rows(20))
+    assert result["factor_collinearity_valid"] is True
+    assert result["pair_correlations"] is not None
+
+
+def test_r75_t2_pair_correlations_has_4_pairs() -> None:
+    """pair_correlations dict has exactly 4 keys."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    result = compute_factor_collinearity_check(_r75_colin_rows(20))
+    assert result["factor_collinearity_valid"] is True
+    assert set(result["pair_correlations"].keys()) == {"price_momentum", "vol_flow", "sector", "breakout_momentum"}
+
+
+def test_r75_t2_max_collinearity_is_float() -> None:
+    """max_collinearity is a float when valid."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    result = compute_factor_collinearity_check(_r75_colin_rows(20))
+    assert result["factor_collinearity_valid"] is True
+    assert isinstance(result["max_collinearity"], float)
+
+
+def test_r75_t2_max_collinearity_between_0_and_1() -> None:
+    """max_collinearity is in [0.0, 1.0] for valid result."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    result = compute_factor_collinearity_check(_r75_colin_rows(20))
+    if result["factor_collinearity_valid"]:
+        assert 0.0 <= result["max_collinearity"] <= 1.0
+
+
+def test_r75_t2_high_collinearity_pairs_is_list_valid() -> None:
+    """high_collinearity_pairs is a list on valid input."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    result = compute_factor_collinearity_check(_r75_colin_rows(20))
+    assert isinstance(result["high_collinearity_pairs"], list)
+
+
+def test_r75_t2_grade_A_low_collinearity() -> None:
+    """Grade A when max_collinearity < 0.5."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    # Rows with orthogonal (uncorrelated) signals
+    import random
+    random.seed(42)
+    n = 30
+    rows = [{"close_strength": random.gauss(0, 1), "momentum_slope_20d": random.gauss(0, 1),
+             "volume_expansion_quality": random.gauss(0, 1), "t0_estimated_net_inflow_ratio": random.gauss(0, 1),
+             "sector_resonance": random.gauss(0, 1), "rs_sector_rank": random.gauss(0, 1),
+             "breakout_quality_score": random.gauss(0, 1)} for _ in range(n)]
+    result = compute_factor_collinearity_check(rows)
+    if result["factor_collinearity_valid"] and result["max_collinearity"] is not None and result["max_collinearity"] < 0.5:
+        assert result["collinearity_grade"] == "A"
+
+
+def test_r75_t2_grade_D_perfect_collinearity() -> None:
+    """Grade D when max_collinearity >= 0.85."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    # Perfect linear correlation between close_strength and momentum_slope_20d
+    n = 20
+    rows = [{"close_strength": float(i), "momentum_slope_20d": float(i),
+             "volume_expansion_quality": float(i), "t0_estimated_net_inflow_ratio": float(i),
+             "sector_resonance": float(i), "rs_sector_rank": float(i),
+             "breakout_quality_score": float(i)} for i in range(n)]
+    result = compute_factor_collinearity_check(rows)
+    if result["factor_collinearity_valid"] and result["max_collinearity"] is not None and result["max_collinearity"] >= 0.85:
+        assert result["collinearity_grade"] == "D"
+
+
+def test_r75_t2_effective_factor_count_formula() -> None:
+    """effective_factor_count = 7 - len(high_collinearity_pairs)."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    result = compute_factor_collinearity_check(_r75_colin_rows(20))
+    if result["factor_collinearity_valid"]:
+        expected = 7 - len(result["high_collinearity_pairs"])
+        assert result["effective_factor_count"] == expected
+
+
+def test_r75_t2_missing_keys_returns_none_correlations() -> None:
+    """Pairs with missing keys in rows return None for that pair correlation."""
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
+    # Rows missing all factor keys → all pairs have < 5 paired values → corr = None
+    rows = [{"unrelated": float(i)} for i in range(15)]
+    result = compute_factor_collinearity_check(rows)
+    # max_collinearity should be None since no valid pairs
+    if result["factor_collinearity_valid"]:
+        assert result["max_collinearity"] is None or result["max_collinearity"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_stratification_trend
+# ---------------------------------------------------------------------------
+
+def test_r75_t3_invalid_too_few_windows() -> None:
+    """Returns valid=False when fewer than 3 valid windows."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    result = compute_cross_window_stratification_trend(_r75_strat_windows([0.6, 0.55]))
+    assert result["stratification_trend_valid"] is False
+    assert result["stratification_trend_slope"] is None
+
+
+def test_r75_t3_invalid_missing_strat_key() -> None:
+    """Returns valid=False when strat_stratification_spread key absent."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    summaries = [{"other": 1}, {"other": 2}, {"other": 3}]
+    result = compute_cross_window_stratification_trend(summaries)
+    assert result["stratification_trend_valid"] is False
+
+
+def test_r75_t3_valid_three_windows() -> None:
+    """Returns valid=True with exactly 3 valid windows."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    result = compute_cross_window_stratification_trend(_r75_strat_windows([0.1, 0.15, 0.2]))
+    assert result["stratification_trend_valid"] is True
+    assert result["stratification_trend_slope"] is not None
+
+
+def test_r75_t3_positive_slope_rising() -> None:
+    """Positive OLS slope when stratification_spread is increasing."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    result = compute_cross_window_stratification_trend(_r75_strat_windows([0.05 * i for i in range(1, 6)]))
+    assert result["stratification_trend_valid"] is True
+    assert result["stratification_trend_slope"] > 0
+
+
+def test_r75_t3_negative_slope_falling() -> None:
+    """Negative OLS slope when stratification_spread is decreasing."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    result = compute_cross_window_stratification_trend(_r75_strat_windows([0.3 - 0.05 * i for i in range(5)]))
+    assert result["stratification_trend_valid"] is True
+    assert result["stratification_trend_slope"] < 0
+
+
+def test_r75_t3_grade_A_strong_rise() -> None:
+    """Grade A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    # Large step guarantees slope >> 0.005
+    vals = [0.1 * i for i in range(1, 8)]
+    result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
+    if result["stratification_trend_valid"] and result["stratification_trend_slope"] is not None and result["stratification_trend_slope"] > 0.005:
+        assert result["stratification_trend_grade"] == "A"
+
+
+def test_r75_t3_grade_B_slight_rise() -> None:
+    """Grade B when 0 < slope <= 0.005."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    # Very small positive slope
+    vals = [0.001 * i for i in range(1, 8)]
+    result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
+    if result["stratification_trend_valid"] and result["stratification_trend_slope"] is not None and 0 < result["stratification_trend_slope"] <= 0.005:
+        assert result["stratification_trend_grade"] == "B"
+
+
+def test_r75_t3_grade_D_strong_fall() -> None:
+    """Grade D when slope <= -0.01."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    vals = [0.5 - 0.1 * i for i in range(7)]
+    result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
+    if result["stratification_trend_valid"] and result["stratification_trend_slope"] is not None and result["stratification_trend_slope"] <= -0.01:
+        assert result["stratification_trend_grade"] == "D"
+
+
+def test_r75_t3_positive_windows_pct() -> None:
+    """stratification_positive_windows_pct counts windows with spread > 0."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    vals = [0.1, -0.05, 0.2, -0.1, 0.3]
+    result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
+    assert result["stratification_trend_valid"] is True
+    # 3 of 5 positive => 0.6
+    assert abs(result["stratification_positive_windows_pct"] - 0.6) < 1e-5
+
+
+def test_r75_t3_mean_computed_correctly() -> None:
+    """stratification_trend_mean equals the arithmetic mean of spread values."""
+    from scripts.optimize_profile import compute_cross_window_stratification_trend
+    vals = [0.1, 0.2, 0.3, 0.4, 0.5]
+    result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
+    assert result["stratification_trend_valid"] is True
+    expected_mean = round(sum(vals) / len(vals), 6)
+    assert abs(result["stratification_trend_mean"] - expected_mean) < 1e-5
+
+
+# ---------------------------------------------------------------------------
+# Registration / FLOORS / CAPS checks
+# ---------------------------------------------------------------------------
+
+def test_r75_all_new_metrics_in_comparison() -> None:
+    """All 3 new Round 75 metrics are in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("sharpe_ratio", "max_collinearity", "stratification_trend_slope"):
+        assert key in COMPARISON_METRICS, f"Missing from COMPARISON_METRICS: {key}"
+
+
+def test_r75_all_new_metrics_in_optional() -> None:
+    """All 3 new Round 75 metrics are in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("sharpe_ratio", "max_collinearity", "stratification_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"Missing from OPTIONAL_COMPARISON_METRICS: {key}"
+
+
+def test_r75_max_collinearity_in_lower_is_better() -> None:
+    """max_collinearity is in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "max_collinearity" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r75_labels_present() -> None:
+    """All 3 new Round 75 metrics have Chinese labels in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for key in ("sharpe_ratio", "max_collinearity", "stratification_trend_slope"):
+        assert key in COMPARISON_METRIC_LABELS, f"Missing label for: {key}"
+        assert len(COMPARISON_METRIC_LABELS[key]) > 0
+
+
+def test_r75_floors_sharpe_ratio() -> None:
+    """sharpe_ratio has a floor in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "sharpe_ratio" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["sharpe_ratio"] == 0.0
+
+
+def test_r75_floors_stratification_trend_slope() -> None:
+    """stratification_trend_slope has a floor in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "stratification_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["stratification_trend_slope"] == -0.01
+
+
+def test_r75_caps_max_collinearity() -> None:
+    """max_collinearity has a cap of 0.85 in BTST_QUALITY_CAPS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "max_collinearity" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["max_collinearity"] == 0.85

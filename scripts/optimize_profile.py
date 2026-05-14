@@ -496,6 +496,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "conditional_momentum_edge",
     # Task 3 (Round 74, Gamma): market breadth win-rate cross-window OLS trend slope.
     "breadth_trend_slope",
+    # Task 1 (Round 75, Alpha): simplified per-window Sharpe ratio (return_mean / return_std).
+    "sharpe_ratio",
+    # Task 2 (Round 75, Beta): maximum absolute pairwise factor correlation (lower = more independent factors).
+    "max_collinearity",
+    # Task 3 (Round 75, Gamma): cross-window stratification spread OLS trend slope.
+    "stratification_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -880,6 +886,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "conditional_momentum_edge": "条件动量协同优势",
     # Task 3 (Round 74, Gamma): 市场宽度跨窗趋势
     "breadth_trend_slope": "市场宽度跨窗趋势",
+    # Task 1 (Round 75, Alpha): 风险调整收益Sharpe
+    "sharpe_ratio": "风险调整收益Sharpe",
+    # Task 2 (Round 75, Beta): 最大因子共线性
+    "max_collinearity": "最大因子共线性",
+    # Task 3 (Round 75, Gamma): 分层区分度跨窗趋势
+    "stratification_trend_slope": "分层区分度跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -960,6 +972,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "sector_hhi",
     # Task 3 (Round 69, Gamma): concentration HHI trend slope — positive = HHI rising = concentration worsening = lower-is-better.
     "concentration_hhi_slope",
+    # Task 2 (Round 75, Beta): max factor collinearity — higher = more redundant factors = lower-is-better.
+    "max_collinearity",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -1336,6 +1350,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "conditional_momentum_edge",
     # Task 3 (Round 74, Gamma): market breadth win-rate cross-window trend slope — optional; pre-Round-74 outputs omit it.
     "breadth_trend_slope",
+    # Task 1 (Round 75, Alpha): simplified Sharpe ratio — optional; pre-Round-75 outputs omit it.
+    "sharpe_ratio",
+    # Task 2 (Round 75, Beta): max factor collinearity — optional; pre-Round-75 outputs omit it.
+    "max_collinearity",
+    # Task 3 (Round 75, Gamma): stratification spread cross-window trend slope — optional; pre-Round-75 outputs omit it.
+    "stratification_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -4044,6 +4064,54 @@ def compute_cross_window_breadth_trend(all_windows_summaries: list[dict]) -> dic
     return {"breadth_trend_valid": True, "breadth_trend_slope": round(slope, 8), "breadth_trend_mean": round(mean_v, 6), "breadth_above_threshold_pct": breadth_above_threshold_pct, "breadth_trend_grade": grade}
 
 
+# ---------------------------------------------------------------------------
+# Round 75, Task 3 (Gamma): cross-window stratification spread trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_stratification_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪信号强度分层胜率差（stratification_spread）趋势。
+
+    从各窗口 summary 收集 ``strat_stratification_spread``（Round 74 T1 的输出），需≥3个有效值（非None）。
+
+    Returns:
+        - ``stratification_trend_slope``: OLS 斜率
+        - ``stratification_trend_mean``: 均值
+        - ``stratification_trend_valid``: bool
+        - ``stratification_positive_windows_pct``: stratification_spread > 0 的窗口占比
+        - ``stratification_trend_grade``: A(slope>0.005)/B(slope>0)/C(slope>-0.01)/D(slope≤-0.01)
+    """
+    _null: dict = {"stratification_trend_valid": False, "stratification_trend_slope": None, "stratification_trend_mean": None, "stratification_positive_windows_pct": None, "stratification_trend_grade": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("strat_stratification_spread")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    stratification_positive_windows_pct = round(sum(1 for v in vals if v > 0) / n, 6)
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"stratification_trend_valid": True, "stratification_trend_slope": round(slope, 8), "stratification_trend_mean": round(mean_v, 6), "stratification_positive_windows_pct": stratification_positive_windows_pct, "stratification_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4824,9 +4892,17 @@ def _build_replay_evaluator(
         # Task 2 (Round 74, Beta): average cond_mom_conditional_momentum_edge across replay windows.
         _cme_vals = [float(s["cond_mom_conditional_momentum_edge"]) for s in all_primary_surfaces if s.get("cond_mom_conditional_momentum_edge") is not None]
         avg_conditional_momentum_edge: "float | None" = round(sum(_cme_vals) / len(_cme_vals), 6) if _cme_vals else None
+        # Task 1 (Round 75, Alpha): average sharpe_sharpe_ratio across replay windows.
+        _sharpe_r75_vals = [float(s["sharpe_sharpe_ratio"]) for s in all_primary_surfaces if s.get("sharpe_sharpe_ratio") is not None]
+        avg_sharpe_r75: "float | None" = round(sum(_sharpe_r75_vals) / len(_sharpe_r75_vals), 6) if _sharpe_r75_vals else None
+        # Task 2 (Round 75, Beta): average colin_max_collinearity across replay windows.
+        _colin_mc_vals = [float(s["colin_max_collinearity"]) for s in all_primary_surfaces if s.get("colin_max_collinearity") is not None]
+        avg_max_collinearity: "float | None" = round(sum(_colin_mc_vals) / len(_colin_mc_vals), 6) if _colin_mc_vals else None
+        # Task 3 (Round 75, Gamma): cross-window stratification spread trend.
+        _cwsst: dict[str, Any] = compute_cross_window_stratification_trend(all_primary_surfaces)
 
         return {
-            "sharpe_ratio": avg_sharpe,
+            "sharpe_ratio": avg_sharpe_r75 if avg_sharpe_r75 is not None else avg_sharpe,
             "sortino_ratio": avg_sortino_r35 if avg_sortino_r35 is not None else avg_sortino,
             "max_drawdown": avg_max_dd,
             "next_close_positive_rate": avg_next_close_positive_rate,
@@ -5325,6 +5401,14 @@ def _build_replay_evaluator(
                 "breadth_above_threshold_pct": _cwbt.get("breadth_above_threshold_pct"),
                 "breadth_trend_grade": _cwbt.get("breadth_trend_grade"),
                 "breadth_trend_valid": _cwbt.get("breadth_trend_valid"),
+                # Task 1 (Round 75, Alpha): simplified Sharpe ratio averaged across windows.
+                "max_collinearity": avg_max_collinearity,
+                # Task 3 (Round 75, Gamma): cross-window stratification spread trend.
+                "stratification_trend_slope": _cwsst.get("stratification_trend_slope"),
+                "stratification_trend_mean": _cwsst.get("stratification_trend_mean"),
+                "stratification_positive_windows_pct": _cwsst.get("stratification_positive_windows_pct"),
+                "stratification_trend_grade": _cwsst.get("stratification_trend_grade"),
+                "stratification_trend_valid": _cwsst.get("stratification_trend_valid"),
         }
 
     return evaluator

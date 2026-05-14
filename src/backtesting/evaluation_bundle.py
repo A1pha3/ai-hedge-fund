@@ -617,6 +617,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 74, Gamma): market breadth win-rate cross-window trend slope floor.
     # breadth_trend_slope < -0.01 means market breadth quality is declining across walk-forward windows.
     "breadth_trend_slope": -0.01,
+    # Task 1 (Round 75, Alpha): simplified Sharpe ratio floor.
+    # sharpe_ratio < 0.0 means mean return is negative — strategy loses money on average.
+    "sharpe_ratio": 0.0,
+    # Task 3 (Round 75, Gamma): stratification spread cross-window trend slope floor.
+    # stratification_trend_slope < -0.01 means signal stratification discriminatory power is declining.
+    "stratification_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------
@@ -714,6 +720,9 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # Task 3 (Round 69, Gamma): concentration HHI trend slope cap.
     # concentration_hhi_slope > 0.02 means HHI rising faster than 0.02/window — concentration worsening too fast.
     "concentration_hhi_slope": 0.02,
+    # Task 2 (Round 75, Beta): maximum factor collinearity cap.
+    # max_collinearity > 0.85 means at least one factor pair is highly collinear — effective factor count severely reduced.
+    "max_collinearity": 0.85,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

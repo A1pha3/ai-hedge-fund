@@ -4611,6 +4611,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _cmf.items():
         _surface_result[f"cond_mom_{_k}"] = _v
 
+    # Round 75, Task 1 (Alpha): Sharpe risk-adjusted return analysis.
+    _sra: dict = compute_sharpe_ratio_analysis(rows)
+    for _k, _v in _sra.items():
+        _surface_result[f"sharpe_{_k}"] = _v
+
+    # Round 75, Task 2 (Beta): Factor collinearity check.
+    _fcc: dict = compute_factor_collinearity_check(rows)
+    for _k, _v in _fcc.items():
+        _surface_result[f"colin_{_k}"] = _v
+
     return _surface_result
 
 
@@ -13413,3 +13423,135 @@ def _safe_float(v):
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# Round 75, Task 1 (Alpha): Sharpe ratio risk-adjusted return analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_sharpe_ratio_analysis(rows: list[dict]) -> dict:
+    """计算BTST候选股票池的风险调整收益（类Sharpe比率），评估收益质量。
+
+    Args:
+        rows: BTST candidate rows, each containing ``next_day_return``.
+
+    Returns:
+        Dict containing: ``sharpe_analysis_valid``, ``return_mean``, ``return_std``,
+        ``sharpe_ratio``, ``annualized_sharpe``, ``sortino_ratio``, ``calmar_proxy``,
+        ``sharpe_grade``.
+    """
+    import math as _math
+    _null: dict = {"sharpe_analysis_valid": False, "return_mean": None, "return_std": None, "sharpe_ratio": None, "annualized_sharpe": None, "sortino_ratio": None, "calmar_proxy": None, "sharpe_grade": "D"}
+    if len(rows) < 8:
+        return _null
+    rets = [_safe_float(r.get("next_day_return")) for r in rows]
+    rets = [v for v in rets if v is not None]
+    if len(rets) < 8:
+        return _null
+    n = len(rets)
+    return_mean = sum(rets) / n
+    if n > 1:
+        variance = sum((r - return_mean) ** 2 for r in rets) / (n - 1)
+        return_std = _math.sqrt(variance)
+    else:
+        return_std = 0.0
+    if return_std == 0.0:
+        sharpe_ratio = None
+        annualized_sharpe = None
+    else:
+        sharpe_ratio = round(return_mean / return_std, 8)
+        annualized_sharpe = round(sharpe_ratio * _math.sqrt(252), 8)
+    downside_sq = [min(r, 0.0) ** 2 for r in rets]
+    downside_mean_sq = sum(downside_sq) / n
+    downside_std = _math.sqrt(downside_mean_sq)
+    if downside_std == 0.0:
+        sortino_ratio = None
+    else:
+        sortino_ratio = round(return_mean / downside_std, 8)
+    min_ret = min(rets)
+    if min_ret >= 0:
+        calmar_proxy = None
+    else:
+        calmar_proxy = round(return_mean / (abs(min_ret) + 0.001), 8)
+    if annualized_sharpe is None:
+        sharpe_grade = "D"
+    elif annualized_sharpe > 1.0:
+        sharpe_grade = "A"
+    elif annualized_sharpe > 0.5:
+        sharpe_grade = "B"
+    elif annualized_sharpe > 0:
+        sharpe_grade = "C"
+    else:
+        sharpe_grade = "D"
+    return {"sharpe_analysis_valid": True, "return_mean": round(return_mean, 8), "return_std": round(return_std, 8), "sharpe_ratio": sharpe_ratio, "annualized_sharpe": annualized_sharpe, "sortino_ratio": sortino_ratio, "calmar_proxy": calmar_proxy, "sharpe_grade": sharpe_grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 75, Task 2 (Beta): Factor collinearity check
+# ---------------------------------------------------------------------------
+
+
+def compute_factor_collinearity_check(rows: list[dict]) -> dict:
+    """检测核心因子间的共线性（相关性），识别冗余因子对。
+
+    检测4对核心因子的Pearson相关性：
+    pair1 (price_momentum): ``close_strength`` vs ``momentum_slope_20d``
+    pair2 (vol_flow): ``volume_expansion_quality`` vs ``t0_estimated_net_inflow_ratio``
+    pair3 (sector): ``sector_resonance`` vs ``rs_sector_rank``
+    pair4 (breakout_momentum): ``breakout_quality_score`` vs ``momentum_slope_20d``
+
+    Args:
+        rows: BTST candidate rows.
+
+    Returns:
+        Dict containing: ``factor_collinearity_valid``, ``pair_correlations``,
+        ``max_collinearity``, ``high_collinearity_pairs``, ``effective_factor_count``,
+        ``collinearity_grade``.
+    """
+    import math as _math
+    _null: dict = {"factor_collinearity_valid": False, "pair_correlations": None, "max_collinearity": None, "high_collinearity_pairs": [], "effective_factor_count": None, "collinearity_grade": "D"}
+    if len(rows) < 10:
+        return _null
+    _PAIRS = [("price_momentum", "close_strength", "momentum_slope_20d"), ("vol_flow", "volume_expansion_quality", "t0_estimated_net_inflow_ratio"), ("sector", "sector_resonance", "rs_sector_rank"), ("breakout_momentum", "breakout_quality_score", "momentum_slope_20d")]
+
+    def _pearson(xs, ys):
+        n = len(xs)
+        if n < 5:
+            return None
+        mx = sum(xs) / n
+        my = sum(ys) / n
+        num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+        denom_x = sum((xs[i] - mx) ** 2 for i in range(n))
+        denom_y = sum((ys[i] - my) ** 2 for i in range(n))
+        denom = _math.sqrt(denom_x * denom_y)
+        if denom == 0.0:
+            return None
+        return num / denom
+
+    pair_correlations: dict = {}
+    for name, key_a, key_b in _PAIRS:
+        paired_a, paired_b = [], []
+        for r in rows:
+            va = _safe_float(r.get(key_a))
+            vb = _safe_float(r.get(key_b))
+            if va is not None and vb is not None:
+                paired_a.append(va)
+                paired_b.append(vb)
+        corr = _pearson(paired_a, paired_b)
+        pair_correlations[name] = round(corr, 8) if corr is not None else None
+    valid_abs = [abs(v) for v in pair_correlations.values() if v is not None]
+    max_collinearity = round(max(valid_abs), 8) if valid_abs else None
+    high_collinearity_pairs: list = [name for name, v in pair_correlations.items() if v is not None and abs(v) > 0.7]
+    effective_factor_count = 7 - len(high_collinearity_pairs)
+    if max_collinearity is None:
+        collinearity_grade = "D"
+    elif max_collinearity < 0.5:
+        collinearity_grade = "A"
+    elif max_collinearity < 0.7:
+        collinearity_grade = "B"
+    elif max_collinearity < 0.85:
+        collinearity_grade = "C"
+    else:
+        collinearity_grade = "D"
+    return {"factor_collinearity_valid": True, "pair_correlations": pair_correlations, "max_collinearity": max_collinearity, "high_collinearity_pairs": high_collinearity_pairs, "effective_factor_count": effective_factor_count, "collinearity_grade": collinearity_grade}
