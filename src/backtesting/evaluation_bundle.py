@@ -91,6 +91,9 @@ _GUARDRAIL_KEYS = (
     # composite_quality_score aggregates win_rate, profit_factor, IR, and optional dimensions.
     # Floor ≥ 40.0 (grade C) ensures the strategy passes a minimum multi-dimensional quality bar.
     "composite_quality_score",
+    # Task 1 (Round 60, Alpha): multi-signal consistency win-rate lift floor guardrail.
+    # signal_consistency_lift < 0.0 means high-consistency rows don't outperform low-consistency rows.
+    "signal_consistency_lift",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -472,6 +475,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 59, Gamma): cross-window threshold win-rate trend slope floor.
     # threshold_win_rate_trend_slope < -0.02 signals consistent deterioration of optimal win-rate across windows.
     "threshold_win_rate_trend_slope": -0.02,
+    # Task 1 (Round 60, Alpha): multi-signal consistency lift floor.
+    # signal_consistency_lift < 0.0 means high-consistency rows underperform low-consistency rows.
+    "signal_consistency_lift": 0.0,
+    # Task 3 (Round 60, Gamma): cross-window quality score trend slope floor.
+    # quality_score_trend_slope < -1.0 signals severe consistent deterioration of quality score.
+    "quality_score_trend_slope": -1.0,
 }
 
 # ---------------------------------------------------------------------------

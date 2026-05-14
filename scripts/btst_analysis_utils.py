@@ -4455,6 +4455,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _cqs.items():
         _surface_result[f"compq_{_k}"] = _v
 
+    # Round 60, Task 1 (Alpha): Multi-signal consistency check.
+    _scc: dict[str, Any] = compute_signal_consistency_check(rows)
+    for _k, _v in _scc.items():
+        _surface_result[f"sig_consist_{_k}"] = _v
+
+    # Round 60, Task 2 (Beta): Holding period optimization.
+    _hpo: dict[str, Any] = compute_holding_period_optimization(rows)
+    for _k, _v in _hpo.items():
+        _surface_result[f"hold_{_k}"] = _v
+
     return _surface_result
 
 
@@ -11394,3 +11404,112 @@ def compute_composite_quality_score(rows: list[dict]) -> dict:
     else:
         quality_grade = "D"
     return {"composite_quality_valid": True, "composite_quality_score": composite, "active_dimensions": active_dims, "quality_grade": quality_grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 60, Task 1 (Alpha): Multi-signal consistency check
+# ---------------------------------------------------------------------------
+
+def compute_signal_consistency_check(rows: list[dict]) -> dict:
+    """检验多信号系统的一致性（各信号是否互相确认还是互相矛盾）"""
+    invalid = {"signal_consistency_valid": False, "high_consistency_win_rate": None, "low_consistency_win_rate": None, "mixed_signal_win_rate": None, "signal_consistency_lift": None, "high_consistency_pct": None, "high_consistency_rows": None, "low_consistency_rows": None, "mixed_signal_rows": None}
+    if not rows or len(rows) < 8:
+        return invalid
+    factor_keys = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    # compute global median for each factor
+    factor_medians: dict[str, float] = {}
+    for fk in factor_keys:
+        vals = [float(r[fk]) for r in rows if r.get(fk) is not None]
+        if vals:
+            sv = sorted(vals)
+            n = len(sv)
+            factor_medians[fk] = sv[n // 2] if n % 2 == 1 else (sv[n // 2 - 1] + sv[n // 2]) / 2
+    high_rows: list[dict] = []
+    low_rows: list[dict] = []
+    mixed_rows: list[dict] = []
+    for row in rows:
+        valid_factors = [fk for fk in factor_keys if row.get(fk) is not None and fk in factor_medians]
+        if not valid_factors:
+            mixed_rows.append(row)
+            continue
+        bullish_count = sum(1 for fk in valid_factors if float(row[fk]) > factor_medians[fk])
+        bullish_ratio = bullish_count / len(valid_factors)
+        if bullish_ratio >= 0.7:
+            high_rows.append(row)
+        elif bullish_ratio <= 0.3:
+            low_rows.append(row)
+        else:
+            mixed_rows.append(row)
+    def _wr(group: list[dict]) -> "float | None":
+        if len(group) < 3:
+            return None
+        rets = [r.get("next_day_return") for r in group if r.get("next_day_return") is not None]
+        if not rets:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+    high_wr = _wr(high_rows)
+    low_wr = _wr(low_rows)
+    mixed_wr = _wr(mixed_rows)
+    lift = round(high_wr - low_wr, 6) if (high_wr is not None and low_wr is not None) else None
+    high_pct = round(len(high_rows) / len(rows), 6)
+    return {"signal_consistency_valid": True, "high_consistency_win_rate": high_wr, "low_consistency_win_rate": low_wr, "mixed_signal_win_rate": mixed_wr, "signal_consistency_lift": lift, "high_consistency_pct": high_pct, "high_consistency_rows": len(high_rows), "low_consistency_rows": len(low_rows), "mixed_signal_rows": len(mixed_rows)}
+
+
+# ---------------------------------------------------------------------------
+# Round 60, Task 2 (Beta): Holding period optimization analysis
+# ---------------------------------------------------------------------------
+
+def compute_holding_period_optimization(rows: list[dict]) -> dict:
+    """比较T+1/T+2/T+3持仓期的收益特征，找出最优持仓期"""
+    invalid = {"holding_period_valid": False, "t1_win_rate": None, "t2_win_rate": None, "t3_win_rate": None, "t1_mean_return": None, "t2_mean_return": None, "t3_mean_return": None, "t1_sharpe": None, "optimal_holding_period": None, "holding_period_consistency": None}
+    if not rows or len(rows) < 8:
+        return invalid
+    def _get_returns(field_primary: str, field_backup: str) -> list[float]:
+        vals = [float(r[field_primary]) for r in rows if r.get(field_primary) is not None]
+        if not vals:
+            vals = [float(r[field_backup]) for r in rows if r.get(field_backup) is not None]
+        return vals
+    t1_rets = _get_returns("next_day_return", "t1_return")
+    t2_rets = _get_returns("day2_return", "t2_return")
+    t3_rets = _get_returns("day3_return", "t3_return")
+    def _stats(rets: list[float]) -> "tuple[float|None, float|None, float|None]":
+        if len(rets) < 8:
+            return None, None, None
+        wr = round(sum(1 for r in rets if r > 0) / len(rets), 6)
+        mean_r = round(sum(rets) / len(rets), 6)
+        n = len(rets)
+        var = sum((r - mean_r) ** 2 for r in rets) / (n - 1)
+        std = var ** 0.5
+        sharpe = round(mean_r / std * (252 ** 0.5), 6) if std > 0 else None
+        return wr, mean_r, sharpe
+    t1_wr, t1_mean, t1_sharpe = _stats(t1_rets)
+    t2_wr, t2_mean, _t2_sharpe = _stats(t2_rets)
+    t3_wr, t3_mean, _t3_sharpe = _stats(t3_rets)
+    # determine optimal holding period by win rate
+    candidates: dict[str, float] = {}
+    if t1_wr is not None:
+        candidates["t1"] = t1_wr
+    if t2_wr is not None:
+        candidates["t2"] = t2_wr
+    if t3_wr is not None:
+        candidates["t3"] = t3_wr
+    optimal = max(candidates, key=lambda k: candidates[k]) if candidates else "t1"
+    # holding_period_consistency
+    active_wrs = [v for v in [t1_wr, t2_wr, t3_wr] if v is not None]
+    if len(active_wrs) == 1:
+        consistency = 1.0 if active_wrs[0] > 0.5 else 0.0
+    elif len(active_wrs) >= 3:
+        if all(v > 0.5 for v in active_wrs):
+            consistency = 1.0
+        elif all(v <= 0.5 for v in active_wrs):
+            consistency = 0.0
+        else:
+            consistency = 0.5
+    else:
+        if all(v > 0.5 for v in active_wrs):
+            consistency = 1.0
+        elif all(v <= 0.5 for v in active_wrs):
+            consistency = 0.0
+        else:
+            consistency = 0.5
+    return {"holding_period_valid": True, "t1_win_rate": t1_wr, "t2_win_rate": t2_wr, "t3_win_rate": t3_wr, "t1_mean_return": t1_mean, "t2_mean_return": t2_mean, "t3_mean_return": t3_mean, "t1_sharpe": t1_sharpe, "optimal_holding_period": optimal, "holding_period_consistency": consistency}

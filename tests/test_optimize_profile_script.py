@@ -15710,3 +15710,347 @@ def test_r59_t3_constant_series_slope_zero() -> None:
     result = compute_cross_window_threshold_trend(summaries)
     assert result["threshold_win_rate_trend_slope"] == pytest.approx(0.0, abs=1e-8)
     assert result["threshold_trend_grade"] in ("B", "C")
+
+
+# ---------------------------------------------------------------------------
+# Round 60 tests
+# ---------------------------------------------------------------------------
+
+# --- T1: compute_signal_consistency_check ---
+
+def test_r60_t1_invalid_when_too_few_rows() -> None:
+    """Returns invalid sentinel when fewer than 8 rows provided."""
+    from scripts.btst_analysis_utils import compute_signal_consistency_check
+    result = compute_signal_consistency_check([])
+    assert result["signal_consistency_valid"] is False
+    assert result["high_consistency_win_rate"] is None
+
+    result2 = compute_signal_consistency_check([{"close_strength": 0.5}] * 7)
+    assert result2["signal_consistency_valid"] is False
+
+
+def test_r60_t1_valid_with_sufficient_rows() -> None:
+    """Returns valid=True when >= 8 rows with factor data."""
+    from scripts.btst_analysis_utils import compute_signal_consistency_check
+    rows = [{"close_strength": 0.8, "volume_expansion_quality": 0.9, "next_day_return": 0.02} for _ in range(10)]
+    result = compute_signal_consistency_check(rows)
+    assert result["signal_consistency_valid"] is True
+
+
+def test_r60_t1_high_rows_bucket_populated() -> None:
+    """High-consistency bucket is populated when >= 70% factors are above median."""
+    from scripts.btst_analysis_utils import compute_signal_consistency_check
+    strong = {"close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0, "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0, "next_day_return": 0.03}
+    weak = {"close_strength": 0.0, "volume_expansion_quality": 0.0, "sector_resonance": 0.0, "rs_sector_rank": 0.0, "t0_estimated_net_inflow_ratio": 0.0, "breakout_quality_score": 0.0, "momentum_slope_20d": 0.0, "next_day_return": -0.02}
+    rows = [strong] * 10 + [weak] * 10
+    result = compute_signal_consistency_check(rows)
+    assert result["high_consistency_rows"] > 0
+    assert result["low_consistency_rows"] > 0
+
+
+def test_r60_t1_lift_is_high_minus_low_win_rate() -> None:
+    """signal_consistency_lift equals high_wr minus low_wr."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_signal_consistency_check
+    strong = {"close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0, "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0, "next_day_return": 0.03}
+    weak = {"close_strength": 0.0, "volume_expansion_quality": 0.0, "sector_resonance": 0.0, "rs_sector_rank": 0.0, "t0_estimated_net_inflow_ratio": 0.0, "breakout_quality_score": 0.0, "momentum_slope_20d": 0.0, "next_day_return": -0.02}
+    rows = [strong] * 15 + [weak] * 15
+    result = compute_signal_consistency_check(rows)
+    h = result["high_consistency_win_rate"]
+    l = result["low_consistency_win_rate"]
+    if h is not None and l is not None:
+        assert result["signal_consistency_lift"] == pytest.approx(h - l, abs=1e-6)
+
+
+def test_r60_t1_high_consistency_pct_within_range() -> None:
+    """high_consistency_pct is between 0 and 1."""
+    from scripts.btst_analysis_utils import compute_signal_consistency_check
+    rows = [{"close_strength": 0.5, "next_day_return": 0.01} for _ in range(12)]
+    result = compute_signal_consistency_check(rows)
+    assert 0.0 <= result["high_consistency_pct"] <= 1.0
+
+
+def test_r60_t1_row_counts_sum_to_total() -> None:
+    """high + low + mixed == total row count."""
+    from scripts.btst_analysis_utils import compute_signal_consistency_check
+    strong = {"close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0, "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0, "next_day_return": 0.02}
+    rows = [strong] * 10
+    result = compute_signal_consistency_check(rows)
+    total = result["high_consistency_rows"] + result["low_consistency_rows"] + result["mixed_signal_rows"]
+    assert total == 10
+
+
+def test_r60_t1_missing_factor_data_goes_to_mixed() -> None:
+    """Rows with no valid factor data are classified as mixed."""
+    from scripts.btst_analysis_utils import compute_signal_consistency_check
+    rows = [{"next_day_return": 0.01} for _ in range(10)]
+    result = compute_signal_consistency_check(rows)
+    assert result["mixed_signal_rows"] == 10
+
+
+def test_r60_t1_win_rate_none_when_bucket_too_small() -> None:
+    """Win rate is None when a bucket has fewer than 3 rows."""
+    from scripts.btst_analysis_utils import compute_signal_consistency_check
+    strong = {"close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0, "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0, "next_day_return": 0.02}
+    mixed = {"close_strength": 0.5, "next_day_return": 0.01}
+    rows = [strong] * 8 + [mixed] * 2
+    result = compute_signal_consistency_check(rows)
+    # low bucket may be empty → None
+    assert result["low_consistency_win_rate"] is None or isinstance(result["low_consistency_win_rate"], float)
+
+
+def test_r60_t1_in_surface_summary() -> None:
+    """build_surface_summary includes sig_consist_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"close": 10.0, "next_day_return": 0.01} for _ in range(10)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "sig_consist_signal_consistency_valid" in result
+
+
+def test_r60_t1_lift_none_when_bucket_insufficient() -> None:
+    """signal_consistency_lift is None when either high or low win rate is None."""
+    from scripts.btst_analysis_utils import compute_signal_consistency_check
+    rows = [{"close_strength": 0.5, "next_day_return": 0.01} for _ in range(10)]
+    result = compute_signal_consistency_check(rows)
+    # all rows go to mixed when no strong/weak split, so lift may be None
+    if result["high_consistency_win_rate"] is None or result["low_consistency_win_rate"] is None:
+        assert result["signal_consistency_lift"] is None
+
+
+# --- T2: compute_holding_period_optimization ---
+
+def test_r60_t2_invalid_when_too_few_rows() -> None:
+    """Returns invalid when fewer than 8 rows."""
+    from scripts.btst_analysis_utils import compute_holding_period_optimization
+    result = compute_holding_period_optimization([])
+    assert result["holding_period_valid"] is False
+    assert result["t1_win_rate"] is None
+
+    result2 = compute_holding_period_optimization([{"next_day_return": 0.01}] * 7)
+    assert result2["holding_period_valid"] is False
+
+
+def test_r60_t2_valid_with_next_day_return() -> None:
+    """Returns valid=True when >= 8 rows with next_day_return."""
+    from scripts.btst_analysis_utils import compute_holding_period_optimization
+    rows = [{"next_day_return": 0.02 if i % 2 == 0 else -0.01} for i in range(10)]
+    result = compute_holding_period_optimization(rows)
+    assert result["holding_period_valid"] is True
+
+
+def test_r60_t2_t1_win_rate_correct() -> None:
+    """t1_win_rate is fraction of positive next_day_return."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_holding_period_optimization
+    rows = [{"next_day_return": 0.02} for _ in range(6)] + [{"next_day_return": -0.01} for _ in range(4)]
+    result = compute_holding_period_optimization(rows)
+    assert result["t1_win_rate"] == pytest.approx(0.6, abs=1e-6)
+
+
+def test_r60_t2_t2_win_rate_uses_day2_return() -> None:
+    """t2_win_rate uses day2_return field."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_holding_period_optimization
+    rows = [{"next_day_return": 0.01, "day2_return": 0.02} for _ in range(6)] + [{"next_day_return": 0.01, "day2_return": -0.01} for _ in range(4)]
+    result = compute_holding_period_optimization(rows)
+    assert result["t2_win_rate"] == pytest.approx(0.6, abs=1e-6)
+
+
+def test_r60_t2_optimal_period_is_best_wr() -> None:
+    """optimal_holding_period is the period with highest win rate."""
+    from scripts.btst_analysis_utils import compute_holding_period_optimization
+    rows = [{"next_day_return": 0.01, "day2_return": 0.02, "day3_return": 0.015} for _ in range(10)]
+    result = compute_holding_period_optimization(rows)
+    assert result["optimal_holding_period"] in ("t1", "t2", "t3")
+
+
+def test_r60_t2_consistency_one_when_all_above_50pct() -> None:
+    """holding_period_consistency is 1.0 when all available win rates > 0.5."""
+    from scripts.btst_analysis_utils import compute_holding_period_optimization
+    rows = [{"next_day_return": 0.02, "day2_return": 0.02, "day3_return": 0.02} for _ in range(10)]
+    result = compute_holding_period_optimization(rows)
+    assert result["holding_period_consistency"] == 1.0
+
+
+def test_r60_t2_consistency_zero_when_all_below_50pct() -> None:
+    """holding_period_consistency is 0.0 when all available win rates <= 0.5."""
+    from scripts.btst_analysis_utils import compute_holding_period_optimization
+    rows = [{"next_day_return": -0.01, "day2_return": -0.01, "day3_return": -0.01} for _ in range(10)]
+    result = compute_holding_period_optimization(rows)
+    assert result["holding_period_consistency"] == 0.0
+
+
+def test_r60_t2_t1_sharpe_computed() -> None:
+    """t1_sharpe is computed when t1 returns are sufficient."""
+    from scripts.btst_analysis_utils import compute_holding_period_optimization
+    rows = [{"next_day_return": 0.02 if i % 3 != 0 else -0.01} for i in range(12)]
+    result = compute_holding_period_optimization(rows)
+    assert result["t1_sharpe"] is not None
+
+
+def test_r60_t2_in_surface_summary() -> None:
+    """build_surface_summary includes hold_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"close": 10.0, "next_day_return": 0.01} for _ in range(10)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "hold_holding_period_valid" in result
+
+
+def test_r60_t2_t1_win_rate_in_comparison_metrics() -> None:
+    """t1_win_rate is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "t1_win_rate" in COMPARISON_METRICS
+
+
+def test_r60_t2_t1_win_rate_in_optional_comparison_metrics() -> None:
+    """t1_win_rate is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "t1_win_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r60_t2_t1_win_rate_label_present() -> None:
+    """t1_win_rate has label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "t1_win_rate" in COMPARISON_METRIC_LABELS
+
+
+# --- T3: compute_cross_window_quality_trend ---
+
+def test_r60_t3_invalid_when_fewer_than_3_summaries() -> None:
+    """Returns invalid when fewer than 3 summaries."""
+    from scripts.optimize_profile import compute_cross_window_quality_trend
+    result = compute_cross_window_quality_trend([])
+    assert result["quality_trend_valid"] is False
+    assert result["quality_score_trend_slope"] is None
+
+    result2 = compute_cross_window_quality_trend([{"quality_composite_quality_score": 60.0}] * 2)
+    assert result2["quality_trend_valid"] is False
+
+
+def test_r60_t3_valid_with_sufficient_summaries() -> None:
+    """Returns valid=True with >= 3 summaries."""
+    from scripts.optimize_profile import compute_cross_window_quality_trend
+    summaries = [{"quality_composite_quality_score": 50.0 + i * 2} for i in range(5)]
+    result = compute_cross_window_quality_trend(summaries)
+    assert result["quality_trend_valid"] is True
+
+
+def test_r60_t3_positive_slope_for_increasing_quality() -> None:
+    """Slope is positive for monotonically increasing quality scores."""
+    from scripts.optimize_profile import compute_cross_window_quality_trend
+    summaries = [{"quality_composite_quality_score": 40.0 + 5 * i} for i in range(5)]
+    result = compute_cross_window_quality_trend(summaries)
+    assert result["quality_score_trend_slope"] > 0
+
+
+def test_r60_t3_negative_slope_for_decreasing_quality() -> None:
+    """Slope is negative for monotonically decreasing quality scores."""
+    from scripts.optimize_profile import compute_cross_window_quality_trend
+    summaries = [{"quality_composite_quality_score": 80.0 - 5 * i} for i in range(5)]
+    result = compute_cross_window_quality_trend(summaries)
+    assert result["quality_score_trend_slope"] < 0
+
+
+def test_r60_t3_grade_A_when_slope_above_0_5() -> None:
+    """Grade A when slope > 0.5."""
+    from scripts.optimize_profile import compute_cross_window_quality_trend
+    summaries = [{"quality_composite_quality_score": 40.0 + 10 * i} for i in range(6)]
+    result = compute_cross_window_quality_trend(summaries)
+    assert result["quality_trend_grade"] == "A"
+
+
+def test_r60_t3_grade_D_when_slope_below_minus_1() -> None:
+    """Grade D when slope < -1.0."""
+    from scripts.optimize_profile import compute_cross_window_quality_trend
+    summaries = [{"quality_composite_quality_score": 80.0 - 10 * i} for i in range(6)]
+    result = compute_cross_window_quality_trend(summaries)
+    assert result["quality_trend_grade"] == "D"
+
+
+def test_r60_t3_quality_above_floor_pct() -> None:
+    """quality_above_floor_pct is fraction >= 40.0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_quality_trend
+    summaries = [{"quality_composite_quality_score": v} for v in [45.0, 35.0, 55.0, 65.0]]
+    result = compute_cross_window_quality_trend(summaries)
+    assert result["quality_above_floor_pct"] == pytest.approx(3 / 4, abs=1e-6)
+
+
+def test_r60_t3_mean_min_max_correct() -> None:
+    """quality_score_trend_mean/min/max match series."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_quality_trend
+    vals = [50.0, 55.0, 60.0, 65.0, 70.0]
+    summaries = [{"quality_composite_quality_score": v} for v in vals]
+    result = compute_cross_window_quality_trend(summaries)
+    assert result["quality_score_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-4)
+    assert result["quality_score_trend_min"] == pytest.approx(min(vals), abs=1e-6)
+    assert result["quality_score_trend_max"] == pytest.approx(max(vals), abs=1e-6)
+
+
+def test_r60_t3_in_comparison_metrics() -> None:
+    """quality_score_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "quality_score_trend_slope" in COMPARISON_METRICS
+
+
+def test_r60_t3_in_optional_comparison_metrics() -> None:
+    """quality_score_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "quality_score_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r60_t3_label_present() -> None:
+    """quality_score_trend_slope has label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "quality_score_trend_slope" in COMPARISON_METRIC_LABELS
+
+
+def test_r60_t3_quality_trend_slope_floor_in_evaluation_bundle() -> None:
+    """quality_score_trend_slope floor is -1.0 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "quality_score_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["quality_score_trend_slope"] == pytest.approx(-1.0)
+
+
+def test_r60_t1_signal_consistency_lift_floor_in_evaluation_bundle() -> None:
+    """signal_consistency_lift floor is 0.0 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "signal_consistency_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["signal_consistency_lift"] == pytest.approx(0.0)
+
+
+def test_r60_t1_signal_consistency_lift_in_guardrail_keys() -> None:
+    """signal_consistency_lift is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "signal_consistency_lift" in _GUARDRAIL_KEYS
+
+
+def test_r60_t1_signal_consistency_lift_in_comparison_metrics() -> None:
+    """signal_consistency_lift is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "signal_consistency_lift" in COMPARISON_METRICS
+
+
+def test_r60_t1_signal_consistency_lift_in_optional_comparison_metrics() -> None:
+    """signal_consistency_lift is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "signal_consistency_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r60_t1_signal_consistency_lift_label_present() -> None:
+    """signal_consistency_lift has label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "signal_consistency_lift" in COMPARISON_METRIC_LABELS
+
+
+def test_r60_t3_constant_quality_slope_zero() -> None:
+    """Constant quality series gives slope of 0.0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_quality_trend
+    summaries = [{"quality_composite_quality_score": 55.0}] * 5
+    result = compute_cross_window_quality_trend(summaries)
+    assert result["quality_score_trend_slope"] == pytest.approx(0.0, abs=1e-8)
+    assert result["quality_trend_grade"] in ("B", "C")

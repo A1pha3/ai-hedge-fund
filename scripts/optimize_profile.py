@@ -406,6 +406,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "composite_quality_score",
     # Task 3 (Round 59, Gamma): cross-window optimal-threshold win-rate OLS trend slope.
     "threshold_win_rate_trend_slope",
+    # Task 1 (Round 60, Alpha): multi-signal consistency win-rate lift.
+    "signal_consistency_lift",
+    # Task 2 (Round 60, Beta): optimal holding period win rate.
+    "t1_win_rate",
+    # Task 3 (Round 60, Gamma): cross-window composite quality score trend slope.
+    "quality_score_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -700,6 +706,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "composite_quality_score": "综合质量评分",
     # Task 3 (Round 59, Gamma): cross-window threshold win-rate trend slope
     "threshold_win_rate_trend_slope": "阈值胜率跨窗趋势",
+    # Task 1 (Round 60, Alpha): multi-signal high-consistency win-rate lift
+    "signal_consistency_lift": "多信号高一致性胜率提升",
+    # Task 2 (Round 60, Beta): T+1 win rate from holding period optimization
+    "t1_win_rate": "最优持仓期胜率",
+    # Task 3 (Round 60, Gamma): composite quality score cross-window trend slope
+    "quality_score_trend_slope": "综合质量评分跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1052,6 +1064,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "composite_quality_score",
     # Task 3 (Round 59, Gamma): cross-window threshold win-rate trend slope — optional; pre-Round-59 outputs omit it.
     "threshold_win_rate_trend_slope",
+    # Task 1 (Round 60, Alpha): multi-signal consistency lift — optional; pre-Round-60 outputs omit it.
+    "signal_consistency_lift",
+    # Task 2 (Round 60, Beta): T+1 holding period win rate — optional; pre-Round-60 outputs omit it.
+    "t1_win_rate",
+    # Task 3 (Round 60, Gamma): composite quality score cross-window trend slope — optional; pre-Round-60 outputs omit it.
+    "quality_score_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3071,6 +3089,36 @@ def compute_cross_window_threshold_trend(all_windows_summaries: list[dict]) -> d
 
 
 # ---------------------------------------------------------------------------
+# Round 60, Task 3 (Gamma): Cross-window composite quality score trend
+# ---------------------------------------------------------------------------
+
+def compute_cross_window_quality_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪综合质量评分（composite_quality_score）趋势"""
+    invalid = {"quality_trend_valid": False, "quality_score_trend_slope": None, "quality_score_trend_mean": None, "quality_score_trend_min": None, "quality_score_trend_max": None, "quality_above_floor_pct": None, "quality_trend_grade": None}
+    values = [float(s["quality_composite_quality_score"]) for s in all_windows_summaries if s.get("quality_composite_quality_score") is not None]
+    if len(values) < 3:
+        return invalid
+    n = len(values)
+    xs = list(range(n))
+    mean_x = sum(xs) / n
+    mean_y = sum(values) / n
+    ss_xx = sum((x - mean_x) ** 2 for x in xs)
+    ss_xy = sum((xs[i] - mean_x) * (values[i] - mean_y) for i in range(n))
+    slope = round(ss_xy / ss_xx, 6) if ss_xx > 0 else 0.0
+    quality_floor = 40.0
+    above_floor = round(sum(1 for v in values if v >= quality_floor) / n, 6)
+    if slope > 0.5:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -1.0:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"quality_trend_valid": True, "quality_score_trend_slope": slope, "quality_score_trend_mean": round(mean_y, 6), "quality_score_trend_min": min(values), "quality_score_trend_max": max(values), "quality_above_floor_pct": above_floor, "quality_trend_grade": grade}
+
+
+# ---------------------------------------------------------------------------
 
 
 def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
@@ -3833,6 +3881,8 @@ def _build_replay_evaluator(
         avg_composite_quality_score: "float | None" = round(sum(_cqs_vals) / len(_cqs_vals), 6) if _cqs_vals else None
         # Task 3 (Round 59, Gamma): cross-window optimal-threshold win-rate trend.
         _ttt: dict[str, Any] = compute_cross_window_threshold_trend(all_primary_surfaces)
+        # Task 3 (Round 60, Gamma): cross-window composite quality score trend.
+        _cqt: dict[str, Any] = compute_cross_window_quality_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4186,6 +4236,14 @@ def _build_replay_evaluator(
             "threshold_above_floor_pct": _ttt.get("threshold_above_floor_pct"),
             "threshold_trend_grade": _ttt.get("threshold_trend_grade"),
             "threshold_trend_valid": _ttt.get("threshold_trend_valid"),
+            # Task 3 (Round 60, Gamma): cross-window composite quality score trend.
+            "quality_score_trend_slope": _cqt.get("quality_score_trend_slope"),
+            "quality_score_trend_mean": _cqt.get("quality_score_trend_mean"),
+            "quality_score_trend_min": _cqt.get("quality_score_trend_min"),
+            "quality_score_trend_max": _cqt.get("quality_score_trend_max"),
+            "quality_above_floor_pct": _cqt.get("quality_above_floor_pct"),
+            "quality_trend_grade": _cqt.get("quality_trend_grade"),
+            "quality_trend_valid": _cqt.get("quality_trend_valid"),
         }
 
     return evaluator
