@@ -27,6 +27,21 @@ from src.targets.router import build_selection_targets
 DEFAULT_GUARDRAIL_NEXT_HIGH_HIT_RATE = 0.5217
 DEFAULT_GUARDRAIL_NEXT_CLOSE_POSITIVE_RATE = 0.5652
 
+# Factor scores stored inside ``metrics_payload`` that must be hoisted to top-level row keys so
+# that ``compute_factor_ic`` (which does a flat ``row.get(factor_name)`` lookup) can find them.
+# Composite factors (momentum_confirmation_score, volume_momentum_score, rs_sector_rank) are
+# injected by ``compute_all_factor_ics``; T0 bar factors (t0_tail_strength, etc.) come from
+# ``extract_btst_price_outcome`` / ``_t0_bar_metrics`` via ``**price_outcome``.
+_METRICS_PAYLOAD_FACTOR_NAMES: tuple[str, ...] = (
+    "breakout_freshness",
+    "trend_acceleration",
+    "volume_expansion_quality",
+    "catalyst_freshness",
+    "close_strength",
+    "volatility_regime",
+    "sector_resonance",
+)
+
 
 def _resolve_frontier_source_family(*, row: dict[str, Any] | None = None, entry: dict[str, Any] | None = None) -> str | None:
     row = dict(row or {})
@@ -422,6 +437,10 @@ def _build_replayed_rows(
         for field_name in ("flow_60_source", "persist_120_source", "close_support_30_source"):
             if field_name in source_entry_metrics:
                 metric_source_fields[field_name] = source_entry_metrics[field_name]
+        replayed_metrics_payload = dict(replayed_snapshot.get("metrics_payload") or {})
+        # Hoist scoring factors from metrics_payload to top-level so compute_factor_ic can access
+        # them with a flat row.get(factor_name) lookup (see _METRICS_PAYLOAD_FACTOR_NAMES).
+        factor_fields = {k: replayed_metrics_payload.get(k) for k in _METRICS_PAYLOAD_FACTOR_NAMES}
         rows.append(
             {
                 "report_label": label or profile_name,
@@ -436,7 +455,7 @@ def _build_replayed_rows(
                 "delta_classification": stored_evaluation.get("delta_classification"),
                 "blockers": list(replayed_snapshot.get("blockers") or []),
                 "gate_status": dict(replayed_snapshot.get("gate_status") or {}),
-                "metrics_payload": dict(replayed_snapshot.get("metrics_payload") or {}),
+                "metrics_payload": replayed_metrics_payload,
                 "explainability_payload": replayed_explainability_payload,
                 "frontier_expansion_source_family": _resolve_frontier_source_family(
                     row={
@@ -448,6 +467,7 @@ def _build_replayed_rows(
                 "target_mode": target_mode,
                 "replay_input_path": str(replay_input_path),
                 **price_outcome,
+                **factor_fields,
                 **metric_source_fields,
                 "runner_escape": source_entry.get("runner_escape"),
                 "runner_composite_score": source_entry.get("runner_composite_score"),

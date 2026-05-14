@@ -14861,8 +14861,8 @@ def test_r57_t3_empty_summaries() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_scored_rows(n: int, score_start: float = 0.1, score_step: float = 0.05, ret_positive: bool = True) -> list[dict]:
-    """Helper: build N rows with runner_composite_score and next_day_return."""
+def _make_r58_scored_rows(n: int, score_start: float = 0.1, score_step: float = 0.05, ret_positive: bool = True) -> list[dict]:
+    """Helper: build N rows with runner_composite_score and next_day_return for r58 tests."""
     rows = []
     for i in range(n):
         rows.append({"runner_composite_score": round(score_start + i * score_step, 6), "next_day_return": 0.02 if ret_positive else -0.01})
@@ -14872,7 +14872,7 @@ def _make_scored_rows(n: int, score_start: float = 0.1, score_step: float = 0.05
 def test_r58_t1_too_few_rows() -> None:
     """Returns valid=False with fewer than 15 rows."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
-    rows = _make_scored_rows(14)
+    rows = _make_r58_scored_rows(14)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["dynamic_threshold_valid"] is False
     assert result["optimal_win_rate"] is None
@@ -14889,7 +14889,7 @@ def test_r58_t1_too_few_valid_pairs() -> None:
 def test_r58_t1_valid_result_structure() -> None:
     """Valid input returns all expected keys."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
-    rows = _make_scored_rows(30)
+    rows = _make_r58_scored_rows(30)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["dynamic_threshold_valid"] is True
     for key in ("threshold_win_rates", "optimal_threshold", "optimal_win_rate", "threshold_monotonicity"):
@@ -14899,7 +14899,7 @@ def test_r58_t1_valid_result_structure() -> None:
 def test_r58_t1_threshold_win_rates_has_five_keys() -> None:
     """threshold_win_rates dict contains exactly p40, p50, p60, p70, p80."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
-    rows = _make_scored_rows(30)
+    rows = _make_r58_scored_rows(30)
     result = compute_dynamic_threshold_analysis(rows)
     twr = result["threshold_win_rates"]
     assert set(twr.keys()) == {"p40", "p50", "p60", "p70", "p80"}
@@ -14908,7 +14908,7 @@ def test_r58_t1_threshold_win_rates_has_five_keys() -> None:
 def test_r58_t1_optimal_threshold_is_valid_pname() -> None:
     """optimal_threshold is one of p40, p50, p60, p70, p80."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
-    rows = _make_scored_rows(30)
+    rows = _make_r58_scored_rows(30)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["optimal_threshold"] in {"p40", "p50", "p60", "p70", "p80"}
 
@@ -14917,7 +14917,7 @@ def test_r58_t1_all_positive_returns_win_rate_one() -> None:
     """All positive returns → all threshold win rates equal 1.0."""
     import pytest
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
-    rows = _make_scored_rows(30, ret_positive=True)
+    rows = _make_r58_scored_rows(30, ret_positive=True)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["optimal_win_rate"] == pytest.approx(1.0, abs=1e-6)
 
@@ -14926,7 +14926,7 @@ def test_r58_t1_all_negative_returns_win_rate_zero() -> None:
     """All negative returns → all threshold win rates equal 0.0, optimal still set."""
     import pytest
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
-    rows = _make_scored_rows(30, ret_positive=False)
+    rows = _make_r58_scored_rows(30, ret_positive=False)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["optimal_win_rate"] == pytest.approx(0.0, abs=1e-6)
 
@@ -14961,7 +14961,7 @@ def test_r58_t1_threshold_monotonicity_computed() -> None:
     """threshold_monotonicity is p80_win_rate - p40_win_rate."""
     import pytest
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
-    rows = _make_scored_rows(30)
+    rows = _make_r58_scored_rows(30)
     result = compute_dynamic_threshold_analysis(rows)
     twr = result["threshold_win_rates"]
     if twr.get("p40") is not None and twr.get("p80") is not None:

@@ -237,3 +237,33 @@ def test_btst_profile_replay_window_preserves_structural_preset_thresholds(tmp_p
     assert analysis["profile_overrides"]["select_threshold"] == 0.40
     assert analysis["profile_overrides"]["near_miss_threshold"] == 0.40
     assert analysis["profile_config"]["watchlist_zero_catalyst_penalty"] == 0.12
+
+
+def test_btst_profile_replay_window_hoists_metrics_payload_factors_to_top_level(tmp_path, monkeypatch):
+    """Scoring factors from metrics_payload must appear as top-level row keys for IC computation."""
+    from scripts.btst_profile_replay_utils import _METRICS_PAYLOAD_FACTOR_NAMES
+
+    replay_input_path = _write_score_frontier_replay_input(tmp_path)
+
+    def fake_get_price_data(ticker: str, start_date: str, end_date: str):
+        return pd.DataFrame(
+            [
+                {"date": "2026-03-22", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.0},
+                {"date": "2026-03-23", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
+                {"date": "2026-03-24", "open": 10.2, "high": 10.5, "low": 10.1, "close": 10.3},
+            ]
+        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
+
+    analysis = analyze_btst_profile_replay_window(
+        replay_input_path, profile_name="default", label="factor-hoist-probe"
+    )
+
+    rows = analysis.get("rows", [])
+    assert rows, "Expected at least one row in the replay analysis"
+    row = rows[0]
+    # All factors from _METRICS_PAYLOAD_FACTOR_NAMES must appear as top-level keys in each row.
+    # Values may be None when metrics_payload does not carry the factor, but the key must be present.
+    for factor_name in _METRICS_PAYLOAD_FACTOR_NAMES:
+        assert factor_name in row, f"Factor '{factor_name}' missing from top-level row keys"
