@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_a8f5234affc5_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_d0d029ff7492_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -189,7 +189,9 @@
       "win_loss_magnitude_ratio_delta": null,
       "kelly_fraction_delta": null,
       "outlier_dependency_ratio_delta": null,
-      "pf_trend_slope_delta": null
+      "pf_trend_slope_delta": null,
+      "score_concentration_index_delta": null,
+      "kelly_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -374,7 +376,9 @@
       "win_loss_magnitude_ratio_delta": null,
       "kelly_fraction_delta": null,
       "outlier_dependency_ratio_delta": null,
-      "pf_trend_slope_delta": null
+      "pf_trend_slope_delta": null,
+      "score_concentration_index_delta": null,
+      "kelly_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

@@ -170,7 +170,9 @@
       "win_loss_magnitude_ratio_delta": null,
       "kelly_fraction_delta": null,
       "outlier_dependency_ratio_delta": null,
-      "pf_trend_slope_delta": null
+      "pf_trend_slope_delta": null,
+      "score_concentration_index_delta": null,
+      "kelly_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -331,7 +333,9 @@
       "win_loss_magnitude_ratio_delta": null,
       "kelly_fraction_delta": null,
       "outlier_dependency_ratio_delta": null,
-      "pf_trend_slope_delta": null
+      "pf_trend_slope_delta": null,
+      "score_concentration_index_delta": null,
+      "kelly_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

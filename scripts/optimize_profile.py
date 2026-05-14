@@ -360,6 +360,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "outlier_dependency_ratio",
     # Task 3 (Round 51, Gamma): cross-window profit-factor OLS trend slope.
     "pf_trend_slope",
+    # Task 1 (Round 52, Alpha): annualised Information Ratio (IR = mean/std * sqrt(252)).
+    "information_ratio",
+    # Task 2 (Round 52, Beta): score concentration index (high_pct − low_pct).
+    "score_concentration_index",
+    # Task 3 (Round 52, Gamma): cross-window Kelly fraction OLS trend slope.
+    "kelly_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -608,6 +614,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "outlier_dependency_ratio": "离群收益依赖度",
     # Task 3 (Round 51, Gamma): cross-window profit-factor trend slope
     "pf_trend_slope": "盈利因子跨窗趋势",
+    # Task 1 (Round 52, Alpha): annualised Information Ratio
+    "information_ratio": "年化信息比率",
+    # Task 2 (Round 52, Beta): score concentration index
+    "score_concentration_index": "高分候选集中度",
+    # Task 3 (Round 52, Gamma): cross-window Kelly fraction trend slope
+    "kelly_trend_slope": "Kelly分数跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -910,6 +922,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "outlier_dependency_ratio",
     # Task 3 (Round 51, Gamma): profit-factor trend slope — optional; pre-Round-51 outputs omit it.
     "pf_trend_slope",
+    # Task 1 (Round 52, Alpha): Information Ratio — optional; pre-Round-52 outputs omit it.
+    "information_ratio",
+    # Task 2 (Round 52, Beta): score concentration index — optional; pre-Round-52 outputs omit it.
+    "score_concentration_index",
+    # Task 3 (Round 52, Gamma): Kelly trend slope — optional; pre-Round-52 outputs omit it.
+    "kelly_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2457,6 +2475,91 @@ def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict
 # Round 51, Task 3 (Gamma): Cross-window Profit Factor Trend
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Round 52, Task 3 (Gamma): Cross-window Kelly Fraction Trend (跨窗Kelly趋势)
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_kelly_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track OLS trend of ``kelly_fraction`` across replay windows.
+
+    A positive slope means the strategy's Kelly fraction (positive-edge bet size)
+    is improving over time; a negative slope signals deterioration.  A stable
+    positive Kelly means the strategy maintains positive expected value consistently.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (one per
+            replay window, ordered chronologically).  Each dict should carry a
+            ``kelly_fraction`` value produced by ``compute_win_loss_magnitude_analysis``.
+
+    Returns:
+        Dict with keys: ``kelly_trend_slope``, ``kelly_mean``, ``kelly_std``,
+        ``kelly_min``, ``kelly_max``, ``kelly_trend_grade``,
+        ``kelly_positive_windows_pct``, ``kelly_trend_valid``.
+    """
+    _null: dict = {
+        "kelly_trend_slope": None,
+        "kelly_mean": None,
+        "kelly_std": None,
+        "kelly_min": None,
+        "kelly_max": None,
+        "kelly_trend_grade": None,
+        "kelly_positive_windows_pct": None,
+        "kelly_trend_valid": False,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    kelly_series: list[float] = []
+    for surf in all_windows_summaries:
+        v = surf.get("kelly_fraction")
+        if v is not None:
+            try:
+                kelly_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(kelly_series) < 3:
+        return _null
+
+    n = len(kelly_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(kelly_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, kelly_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+
+    mean_val = sum_y / n
+    variance = sum((v - mean_val) ** 2 for v in kelly_series) / (n - 1) if n > 1 else 0.0
+    std_val = variance ** 0.5
+
+    if slope > 0.01:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.05:
+        grade = "C"
+    else:
+        grade = "D"
+
+    kelly_positive_pct = round(sum(1 for v in kelly_series if v > 0) / n, 6)
+
+    return {
+        "kelly_trend_slope": round(slope, 8),
+        "kelly_mean": round(mean_val, 6),
+        "kelly_std": round(std_val, 6),
+        "kelly_min": round(min(kelly_series), 6),
+        "kelly_max": round(max(kelly_series), 6),
+        "kelly_trend_grade": grade,
+        "kelly_positive_windows_pct": kelly_positive_pct,
+        "kelly_trend_valid": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+
 
 def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
     """Track OLS trend of ``profit_factor`` across replay windows.
@@ -3182,6 +3285,9 @@ def _build_replay_evaluator(
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
+        # Task 3 (Round 52, Gamma): cross-window Kelly fraction trend.
+        _kelly_trend: dict[str, Any] = compute_cross_window_kelly_trend(all_primary_surfaces)
+
         return {
             "sharpe_ratio": avg_sharpe,
             "sortino_ratio": avg_sortino_r35 if avg_sortino_r35 is not None else avg_sortino,
@@ -3455,6 +3561,15 @@ def _build_replay_evaluator(
             "pf_trend_grade": _pf_trend.get("pf_trend_grade"),
             "pf_above_one_pct": _pf_trend.get("pf_above_one_pct"),
             "pf_trend_valid": _pf_trend.get("pf_trend_valid"),
+            # Task 3 (Round 52, Gamma): cross-window Kelly fraction trend.
+            "kelly_trend_slope": _kelly_trend.get("kelly_trend_slope"),
+            "kelly_mean": _kelly_trend.get("kelly_mean"),
+            "kelly_std": _kelly_trend.get("kelly_std"),
+            "kelly_min": _kelly_trend.get("kelly_min"),
+            "kelly_max": _kelly_trend.get("kelly_max"),
+            "kelly_trend_grade": _kelly_trend.get("kelly_trend_grade"),
+            "kelly_positive_windows_pct": _kelly_trend.get("kelly_positive_windows_pct"),
+            "kelly_trend_valid": _kelly_trend.get("kelly_trend_valid"),
         }
 
     return evaluator

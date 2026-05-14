@@ -12661,3 +12661,272 @@ def test_r51_pf_trend_skips_missing_profit_factor() -> None:
     result = compute_cross_window_profit_factor_trend(summaries)
     assert result["pf_trend_valid"] is True
     assert result["pf_trend_slope"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Round 52, Task 1 (Alpha): Information Ratio Analysis tests
+# ---------------------------------------------------------------------------
+
+
+def test_r52_information_ratio_empty_input() -> None:
+    """Empty input → graceful degradation (IR=None)."""
+    from scripts.btst_analysis_utils import compute_information_ratio_analysis
+    result = compute_information_ratio_analysis([])
+    assert result["information_ratio"] is None
+    assert result["ir_grade"] is None
+
+
+def test_r52_information_ratio_fewer_than_5_rows() -> None:
+    """Fewer than 5 rows → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_information_ratio_analysis
+    rows = [{"next_day_return": 0.01 * i} for i in range(4)]
+    result = compute_information_ratio_analysis(rows)
+    assert result["information_ratio"] is None
+    assert result["ir_grade"] is None
+
+
+def test_r52_information_ratio_all_positive_returns() -> None:
+    """All positive returns → IR > 0, grade A or B, downside_capture_ratio=0.0."""
+    from scripts.btst_analysis_utils import compute_information_ratio_analysis
+    rows = [{"next_day_return": 0.02 + 0.001 * i} for i in range(10)]
+    result = compute_information_ratio_analysis(rows)
+    assert result["information_ratio"] is not None
+    assert result["information_ratio"] > 0
+    assert result["ir_grade"] in ("A", "B")
+    assert result["downside_capture_ratio"] == 0.0
+
+
+def test_r52_information_ratio_all_negative_returns() -> None:
+    """All negative returns → IR < 0, grade D."""
+    from scripts.btst_analysis_utils import compute_information_ratio_analysis
+    rows = [{"next_day_return": -0.02 - 0.001 * i} for i in range(10)]
+    result = compute_information_ratio_analysis(rows)
+    assert result["information_ratio"] is not None
+    assert result["information_ratio"] < 0
+    assert result["ir_grade"] == "D"
+
+
+def test_r52_information_ratio_mixed_clamped_range() -> None:
+    """Mixed returns → IR clamped to [-10, 10]."""
+    from scripts.btst_analysis_utils import compute_information_ratio_analysis
+    rows = [{"next_day_return": 0.01 * (i % 3 - 1)} for i in range(15)]
+    result = compute_information_ratio_analysis(rows)
+    if result["information_ratio"] is not None:
+        assert -10.0 <= result["information_ratio"] <= 10.0
+
+
+def test_r52_information_ratio_upside_capture_nonneg() -> None:
+    """upside_capture_ratio is non-negative when positive returns exist."""
+    from scripts.btst_analysis_utils import compute_information_ratio_analysis
+    rows = [{"next_day_return": 0.01 * i - 0.03} for i in range(10)]
+    result = compute_information_ratio_analysis(rows)
+    if result["upside_capture_ratio"] is not None:
+        assert result["upside_capture_ratio"] >= 0.0
+
+
+def test_r52_information_ratio_floor_registered() -> None:
+    """information_ratio: 0.0 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "information_ratio" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["information_ratio"] == pytest.approx(0.0)
+
+
+def test_r52_information_ratio_optional_registered() -> None:
+    """information_ratio must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "information_ratio" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r52_information_ratio_in_comparison_metrics() -> None:
+    """information_ratio must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "information_ratio" in COMPARISON_METRICS
+
+
+def test_r52_information_ratio_label_registered() -> None:
+    """information_ratio must have label '年化信息比率'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("information_ratio") == "年化信息比率"
+
+
+# ---------------------------------------------------------------------------
+# Round 52, Task 2 (Beta): Score Concentration Analysis tests
+# ---------------------------------------------------------------------------
+
+
+def test_r52_score_concentration_empty_input() -> None:
+    """Empty input → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_score_concentration_analysis
+    result = compute_score_concentration_analysis([])
+    assert result["score_concentration_index"] is None
+    assert result["dominant_tier"] is None
+
+
+def test_r52_score_concentration_fewer_than_6_rows() -> None:
+    """Fewer than 6 rows → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_score_concentration_analysis
+    rows = [{"score": 0.5 * i} for i in range(5)]
+    result = compute_score_concentration_analysis(rows)
+    assert result["score_concentration_index"] is None
+
+
+def test_r52_score_concentration_uniform_sci_near_zero() -> None:
+    """Uniform score distribution → score_concentration_index ≈ 0 (three tiers ≈ equal)."""
+    from scripts.btst_analysis_utils import compute_score_concentration_analysis
+    import pytest
+    rows = [{"score": float(i)} for i in range(1, 10)]
+    result = compute_score_concentration_analysis(rows)
+    assert result["score_concentration_index"] is not None
+    assert abs(result["score_concentration_index"]) < 0.1
+
+
+def test_r52_score_concentration_all_same_high_score_pct() -> None:
+    """All scores identical → high_score_pct = 1.0 (all are >= P67 = same value)."""
+    from scripts.btst_analysis_utils import compute_score_concentration_analysis
+    import pytest
+    rows = [{"runner_composite_score": 0.9} for _ in range(9)]
+    result = compute_score_concentration_analysis(rows)
+    assert result["high_score_pct"] is not None
+    assert result["high_score_pct"] == pytest.approx(1.0)
+
+
+def test_r52_score_concentration_mostly_high_sci_approx_0_67() -> None:
+    """5 high + 1 low out of 6 → score_concentration_index ≈ 0.67."""
+    from scripts.btst_analysis_utils import compute_score_concentration_analysis
+    rows = [{"score": 0.1}] + [{"score": 0.9} for _ in range(5)]
+    result = compute_score_concentration_analysis(rows)
+    assert result["score_concentration_index"] is not None
+    assert result["score_concentration_index"] > 0.5
+
+
+def test_r52_score_concentration_dominant_tier_correct() -> None:
+    """dominant_tier matches the tier with the largest fraction."""
+    from scripts.btst_analysis_utils import compute_score_concentration_analysis
+    rows = [{"score": float(i)} for i in range(12)]
+    result = compute_score_concentration_analysis(rows)
+    assert result["dominant_tier"] in ("high", "mid", "low")
+    pcts = {
+        "high": result["high_score_pct"],
+        "mid": result["mid_score_pct"],
+        "low": result["low_score_pct"],
+    }
+    assert result["dominant_tier"] == max(pcts, key=lambda k: pcts[k] or 0)
+
+
+def test_r52_score_concentration_floor_registered() -> None:
+    """score_concentration_index: 0.0 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "score_concentration_index" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["score_concentration_index"] == pytest.approx(0.0)
+
+
+def test_r52_score_concentration_label_registered() -> None:
+    """score_concentration_index must have label '高分候选集中度'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("score_concentration_index") == "高分候选集中度"
+
+
+def test_r52_score_concentration_optional_registered() -> None:
+    """score_concentration_index must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "score_concentration_index" in OPTIONAL_COMPARISON_METRICS
+
+
+# ---------------------------------------------------------------------------
+# Round 52, Task 3 (Gamma): Cross-window Kelly Trend tests
+# ---------------------------------------------------------------------------
+
+
+def test_r52_kelly_trend_empty_list() -> None:
+    """Empty list → graceful degradation."""
+    from scripts.optimize_profile import compute_cross_window_kelly_trend
+    result = compute_cross_window_kelly_trend([])
+    assert result["kelly_trend_slope"] is None
+    assert result["kelly_trend_valid"] is False
+
+
+def test_r52_kelly_trend_fewer_than_3_windows() -> None:
+    """Fewer than 3 valid kelly_fraction values → graceful degradation."""
+    from scripts.optimize_profile import compute_cross_window_kelly_trend
+    summaries = [{"kelly_fraction": 0.1}, {"kelly_fraction": 0.2}]
+    result = compute_cross_window_kelly_trend(summaries)
+    assert result["kelly_trend_slope"] is None
+    assert result["kelly_trend_valid"] is False
+
+
+def test_r52_kelly_trend_rising_trend_positive_slope() -> None:
+    """Increasing Kelly fractions → slope > 0, grade A or B."""
+    from scripts.optimize_profile import compute_cross_window_kelly_trend
+    summaries = [{"kelly_fraction": 0.1 + 0.1 * i} for i in range(5)]
+    result = compute_cross_window_kelly_trend(summaries)
+    assert result["kelly_trend_valid"] is True
+    assert result["kelly_trend_slope"] is not None
+    assert result["kelly_trend_slope"] > 0
+    assert result["kelly_trend_grade"] in ("A", "B")
+
+
+def test_r52_kelly_trend_falling_trend_negative_slope() -> None:
+    """Decreasing Kelly fractions → slope < 0."""
+    from scripts.optimize_profile import compute_cross_window_kelly_trend
+    summaries = [{"kelly_fraction": 0.5 - 0.1 * i} for i in range(5)]
+    result = compute_cross_window_kelly_trend(summaries)
+    assert result["kelly_trend_valid"] is True
+    assert result["kelly_trend_slope"] is not None
+    assert result["kelly_trend_slope"] < 0
+
+
+def test_r52_kelly_trend_steep_decline_grade_d() -> None:
+    """slope <= -0.05 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_kelly_trend
+    summaries = [{"kelly_fraction": 0.5 - 0.15 * i} for i in range(5)]
+    result = compute_cross_window_kelly_trend(summaries)
+    assert result["kelly_trend_valid"] is True
+    if result["kelly_trend_slope"] is not None and result["kelly_trend_slope"] <= -0.05:
+        assert result["kelly_trend_grade"] == "D"
+
+
+def test_r52_kelly_trend_positive_windows_pct_correct() -> None:
+    """kelly_positive_windows_pct counts fraction of kelly_fraction > 0."""
+    from scripts.optimize_profile import compute_cross_window_kelly_trend
+    import pytest
+    summaries = [{"kelly_fraction": 0.1}, {"kelly_fraction": -0.1}, {"kelly_fraction": 0.2}]
+    result = compute_cross_window_kelly_trend(summaries)
+    assert result["kelly_trend_valid"] is True
+    assert result["kelly_positive_windows_pct"] == pytest.approx(2 / 3, rel=1e-4)
+
+
+def test_r52_kelly_trend_floor_registered() -> None:
+    """kelly_trend_slope: -0.05 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "kelly_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["kelly_trend_slope"] == pytest.approx(-0.05)
+
+
+def test_r52_kelly_trend_label_registered() -> None:
+    """kelly_trend_slope must have label 'Kelly分数跨窗趋势'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("kelly_trend_slope") == "Kelly分数跨窗趋势"
+
+
+def test_r52_kelly_trend_optional_registered() -> None:
+    """kelly_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "kelly_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r52_kelly_trend_in_comparison_metrics() -> None:
+    """kelly_trend_slope must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "kelly_trend_slope" in COMPARISON_METRICS
+
+
+def test_r52_kelly_trend_skips_missing_kelly_fraction() -> None:
+    """Windows without kelly_fraction are skipped; valid windows still compute."""
+    from scripts.optimize_profile import compute_cross_window_kelly_trend
+    summaries = [{"kelly_fraction": 0.1}, {"other_key": 0.5}, {"kelly_fraction": 0.2}, {"kelly_fraction": 0.3}]
+    result = compute_cross_window_kelly_trend(summaries)
+    assert result["kelly_trend_valid"] is True
+    assert result["kelly_trend_slope"] is not None

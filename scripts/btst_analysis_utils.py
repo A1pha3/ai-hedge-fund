@@ -4344,6 +4344,26 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["robustness_grade"] = _orc.get("robustness_grade")
     _surface_result["orc_full_win_rate"] = _orc.get("full_win_rate")
 
+    # Round 52, Task 1 (Alpha): Information Ratio Analysis.
+    # -------------------------------------------------------
+    _ira: dict[str, Any] = compute_information_ratio_analysis(next_day_rows)
+    _surface_result["information_ratio"] = _ira.get("information_ratio")
+    _surface_result["ir_mean_return"] = _ira.get("mean_return")
+    _surface_result["ir_std_return"] = _ira.get("std_return")
+    _surface_result["upside_capture_ratio"] = _ira.get("upside_capture_ratio")
+    _surface_result["downside_capture_ratio"] = _ira.get("downside_capture_ratio")
+    _surface_result["ir_grade"] = _ira.get("ir_grade")
+
+    # Round 52, Task 2 (Beta): Score Concentration Analysis.
+    # -------------------------------------------------------
+    _sca: dict[str, Any] = compute_score_concentration_analysis(next_day_rows)
+    _surface_result["score_concentration_index"] = _sca.get("score_concentration_index")
+    _surface_result["high_score_pct"] = _sca.get("high_score_pct")
+    _surface_result["mid_score_pct"] = _sca.get("mid_score_pct")
+    _surface_result["low_score_pct"] = _sca.get("low_score_pct")
+    _surface_result["score_tier_balance"] = _sca.get("score_tier_balance")
+    _surface_result["dominant_tier"] = _sca.get("dominant_tier")
+
     return _surface_result
 
 
@@ -10017,4 +10037,177 @@ def compute_outlier_robustness_check(rows: list[dict]) -> dict:
         "outlier_win_contribution": contribution,
         "outlier_dependency_ratio": dep_ratio,
         "robustness_grade": grade,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 52, Task 1 (Alpha): Information Ratio Analysis (年化信息比率)
+# ---------------------------------------------------------------------------
+
+
+def compute_information_ratio_analysis(rows: list[dict]) -> dict:
+    """Compute annualised Information Ratio and capture metrics from per-candidate rows.
+
+    IR = mean_return / std_return * sqrt(252).  With zero benchmark (simplified risk-free
+    rate), this equals the daily Sharpe annualised.
+
+    Args:
+        rows: Per-candidate dicts containing ``next_day_return``.  Requires ≥ 5 rows.
+
+    Returns:
+        Dict with keys: ``mean_return``, ``std_return``, ``information_ratio``,
+        ``upside_capture_ratio``, ``downside_capture_ratio``, ``ir_grade``.
+    """
+    import math as _math
+
+    _null: dict = {
+        "mean_return": None,
+        "std_return": None,
+        "information_ratio": None,
+        "upside_capture_ratio": None,
+        "downside_capture_ratio": None,
+        "ir_grade": None,
+    }
+    if not rows or len(rows) < 5:
+        return _null
+
+    rets: list[float] = []
+    for row in rows:
+        v = row.get("next_day_return")
+        if v is not None:
+            try:
+                rets.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(rets) < 5:
+        return _null
+
+    n = len(rets)
+    mean_ret = sum(rets) / n
+
+    std_ret: "float | None" = None
+    if n >= 2:
+        variance = sum((r - mean_ret) ** 2 for r in rets) / (n - 1)
+        std_ret = variance ** 0.5
+
+    ir: "float | None" = None
+    if std_ret is not None:
+        raw_ir = mean_ret / max(std_ret, 1e-8) * _math.sqrt(252)
+        ir = max(-10.0, min(10.0, raw_ir))
+
+    abs_rets = [abs(r) for r in rets]
+    mean_abs = sum(abs_rets) / n
+
+    pos_rets = [r for r in rets if r > 0]
+    upside: "float | None" = None
+    if pos_rets:
+        upside = round((sum(pos_rets) / len(pos_rets)) / max(mean_abs, 1e-8), 6)
+
+    neg_rets = [r for r in rets if r < 0]
+    if neg_rets:
+        downside: float = round(sum(abs(r) for r in neg_rets) / len(neg_rets) / max(mean_abs, 1e-8), 6)
+    else:
+        downside = 0.0
+
+    grade: "str | None" = None
+    if ir is not None:
+        if ir > 0.50:
+            grade = "A"
+        elif ir > 0:
+            grade = "B"
+        elif ir > -0.50:
+            grade = "C"
+        else:
+            grade = "D"
+
+    return {
+        "mean_return": round(mean_ret, 8),
+        "std_return": round(std_ret, 8) if std_ret is not None else None,
+        "information_ratio": round(ir, 6) if ir is not None else None,
+        "upside_capture_ratio": upside,
+        "downside_capture_ratio": downside,
+        "ir_grade": grade,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 52, Task 2 (Beta): Score Concentration Analysis (高分候选集中度)
+# ---------------------------------------------------------------------------
+
+
+def compute_score_concentration_analysis(rows: list[dict]) -> dict:
+    """Analyse candidate pool score distribution using P33/P67 tier boundaries.
+
+    Splits scores into three tiers using position-index percentiles (P33 = score at
+    position N//3, P67 = score at position 2*N//3 in the sorted array).  Counts each
+    tier by threshold comparison.
+
+    Args:
+        rows: Per-candidate dicts.  Score is extracted in priority order:
+              ``runner_composite_score`` → ``composite_score`` → ``score``.
+              Requires ≥ 6 rows with valid score values.
+
+    Returns:
+        Dict with keys: ``high_score_pct``, ``mid_score_pct``, ``low_score_pct``,
+        ``score_concentration_index``, ``score_tier_balance``, ``dominant_tier``.
+    """
+    _null: dict = {
+        "high_score_pct": None,
+        "mid_score_pct": None,
+        "low_score_pct": None,
+        "score_concentration_index": None,
+        "score_tier_balance": None,
+        "dominant_tier": None,
+    }
+    if not rows or len(rows) < 6:
+        return _null
+
+    scores: list[float] = []
+    for row in rows:
+        v = None
+        for key in ("runner_composite_score", "composite_score", "score"):
+            candidate = row.get(key)
+            if candidate is not None:
+                v = candidate
+                break
+        if v is not None:
+            try:
+                scores.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(scores) < 6:
+        return _null
+
+    n = len(scores)
+    sorted_s = sorted(scores)
+    p33 = sorted_s[n // 3]
+    p67 = sorted_s[2 * n // 3]
+
+    high_count = sum(1 for s in scores if s >= p67)
+    low_count = sum(1 for s in scores if s < p33)
+    mid_count = n - high_count - low_count
+
+    high_pct = round(high_count / n, 6)
+    low_pct = round(low_count / n, 6)
+    mid_pct = round(mid_count / n, 6)
+
+    sci = round(high_pct - low_pct, 6)
+    balance = round(min(high_pct, low_pct) / max(max(high_pct, low_pct), 1e-8), 6)
+
+    if high_pct >= mid_pct and high_pct >= low_pct:
+        dominant = "high"
+    elif mid_pct >= high_pct and mid_pct >= low_pct:
+        dominant = "mid"
+    else:
+        dominant = "low"
+
+    return {
+        "high_score_pct": high_pct,
+        "mid_score_pct": mid_pct,
+        "low_score_pct": low_pct,
+        "score_concentration_index": sci,
+        "score_tier_balance": balance,
+        "dominant_tier": dominant,
     }

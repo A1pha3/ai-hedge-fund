@@ -371,6 +371,18 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # pf_trend_slope = OLS slope of profit_factor across replay windows.
     # Floor ≥ -0.10 prevents strategies with rapidly deteriorating PF from passing.
     "pf_trend_slope": -0.10,
+    # Task 1 (Round 52, Alpha): annualised Information Ratio floor.
+    # information_ratio = mean_return / std_return * sqrt(252).  Floor ≥ 0.0 requires
+    # the strategy to have at least a neutral risk-adjusted return (IR ≥ 0).
+    "information_ratio": 0.0,
+    # Task 2 (Round 52, Beta): score concentration index floor.
+    # score_concentration_index = high_score_pct − low_score_pct.  Floor ≥ 0.0 requires
+    # the candidate pool to have at least as many high-score as low-score candidates.
+    "score_concentration_index": 0.0,
+    # Task 3 (Round 52, Gamma): cross-window Kelly fraction trend slope floor.
+    # kelly_trend_slope = OLS slope of kelly_fraction across replay windows.
+    # Floor ≥ -0.05 prevents strategies whose Kelly fraction is in severe decline from passing.
+    "kelly_trend_slope": -0.05,
 }
 
 # ---------------------------------------------------------------------------
