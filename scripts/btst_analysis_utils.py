@@ -4571,6 +4571,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _wlsa.items():
         _surface_result[f"streak_{_k}"] = _v
 
+    # Round 71, Task 1 (Alpha): Sector momentum ranking analysis.
+    _smr: dict = compute_sector_momentum_ranking(rows)
+    for _k, _v in _smr.items():
+        _surface_result[f"mom_rank_{_k}"] = _v
+
+    # Round 71, Task 2 (Beta): Volume structure analysis.
+    _vsa: dict = compute_volume_structure_analysis(rows)
+    for _k, _v in _vsa.items():
+        _surface_result[f"vol_struct_{_k}"] = _v
+
     return _surface_result
 
 
@@ -12786,3 +12796,130 @@ def compute_win_loss_streak_analysis(rows: list[dict]) -> dict:
     else:
         streak_momentum_signal = "mixed"
     return {"streak_analysis_valid": True, "max_win_streak": max_win_streak, "max_loss_streak": max_loss_streak, "avg_win_streak": avg_win_streak, "avg_loss_streak": avg_loss_streak, "streak_ratio": streak_ratio, "win_after_loss_rate": win_after_loss_rate, "loss_after_win_rate": loss_after_win_rate, "streak_momentum_signal": streak_momentum_signal}
+
+
+# ---------------------------------------------------------------------------
+# Round 71, Task 1 (Alpha): Sector momentum ranking analysis
+# ---------------------------------------------------------------------------
+
+def compute_sector_momentum_ranking(rows: list[dict]) -> dict:
+    """分析板块动量因子排名与次日收益的关系。
+
+    按 momentum_slope_20d 三等分，比较各组胜率差异，输出 momentum_win_spread 和
+    momentum_mean_return_spread 两个核心指标，并综合评级为 A/B/C/D。
+
+    Args:
+        rows: 行列表，每行含 ``momentum_slope_20d`` 和 ``next_day_return`` 字段。
+
+    Returns:
+        Dict containing: ``sector_momentum_ranking_valid``, ``high_momentum_win_rate``,
+        ``mid_momentum_win_rate``, ``low_momentum_win_rate``, ``momentum_win_spread``,
+        ``momentum_mean_return_spread``, ``momentum_rank_grade``.
+    """
+    _null: dict = {"sector_momentum_ranking_valid": False, "high_momentum_win_rate": None, "mid_momentum_win_rate": None, "low_momentum_win_rate": None, "momentum_win_spread": None, "momentum_mean_return_spread": None, "momentum_rank_grade": "unknown"}
+    if len(rows) < 8:
+        return _null
+    valid_rows = [r for r in rows if r.get("momentum_slope_20d") is not None]
+    if len(valid_rows) < 8:
+        return _null
+    try:
+        sorted_rows = sorted(valid_rows, key=lambda r: float(r["momentum_slope_20d"]))
+    except (TypeError, ValueError):
+        return _null
+    n = len(sorted_rows)
+    bot = sorted_rows[: n // 3]
+    mid = sorted_rows[n // 3 : 2 * n // 3]
+    top = sorted_rows[2 * n // 3 :]
+    def _win_rate(group: list[dict]) -> "float | None":
+        if len(group) < 2:
+            return None
+        wins = sum(1 for r in group if r.get("next_day_return") is not None and float(r["next_day_return"]) > 0)
+        return round(wins / len(group), 6)
+    def _mean_return(group: list[dict]) -> "float | None":
+        vals = [float(r["next_day_return"]) for r in group if r.get("next_day_return") is not None]
+        if len(vals) < 2:
+            return None
+        return round(sum(vals) / len(vals), 6)
+    high_wr = _win_rate(top)
+    mid_wr = _win_rate(mid)
+    low_wr = _win_rate(bot)
+    momentum_win_spread: "float | None" = round(high_wr - low_wr, 6) if high_wr is not None and low_wr is not None else None
+    top_ret = _mean_return(top)
+    bot_ret = _mean_return(bot)
+    momentum_mean_return_spread: "float | None" = round(top_ret - bot_ret, 6) if top_ret is not None and bot_ret is not None else None
+    if momentum_win_spread is None:
+        grade = "unknown"
+    elif momentum_win_spread > 0.12 and momentum_mean_return_spread is not None and momentum_mean_return_spread > 0:
+        grade = "A"
+    elif momentum_win_spread > 0.06:
+        grade = "B"
+    elif momentum_win_spread > 0:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"sector_momentum_ranking_valid": True, "high_momentum_win_rate": high_wr, "mid_momentum_win_rate": mid_wr, "low_momentum_win_rate": low_wr, "momentum_win_spread": momentum_win_spread, "momentum_mean_return_spread": momentum_mean_return_spread, "momentum_rank_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 71, Task 2 (Beta): Volume structure analysis
+# ---------------------------------------------------------------------------
+
+def compute_volume_structure_analysis(rows: list[dict]) -> dict:
+    """分析成交量结构（量比分布形态）对次日收益的预测意义。
+
+    按 volume_expansion_quality 三等分，比较各组胜率差异，输出 vol_structure_spread。
+    同时计算分布统计（均值/标准差/偏度/扩量占比）。
+
+    Args:
+        rows: 行列表，每行含 ``volume_expansion_quality`` 和 ``next_day_return`` 字段。
+
+    Returns:
+        Dict containing: ``volume_structure_valid``, ``vol_mean``, ``vol_std``,
+        ``vol_skewness``, ``vol_positive_pct``, ``high_vol_exp_win_rate``,
+        ``mid_vol_exp_win_rate``, ``low_vol_exp_win_rate``, ``vol_structure_spread``,
+        ``vol_structure_grade``.
+    """
+    _null: dict = {"volume_structure_valid": False, "vol_mean": None, "vol_std": None, "vol_skewness": None, "vol_positive_pct": None, "high_vol_exp_win_rate": None, "mid_vol_exp_win_rate": None, "low_vol_exp_win_rate": None, "vol_structure_spread": None, "vol_structure_grade": "unknown"}
+    if len(rows) < 8:
+        return _null
+    valid_rows = [r for r in rows if r.get("volume_expansion_quality") is not None]
+    if len(valid_rows) < 8:
+        return _null
+    try:
+        vq_vals = [float(r["volume_expansion_quality"]) for r in valid_rows]
+    except (TypeError, ValueError):
+        return _null
+    m = len(vq_vals)
+    vol_mean = sum(vq_vals) / m
+    variance = sum((x - vol_mean) ** 2 for x in vq_vals) / (m - 1) if m > 1 else 0.0
+    vol_std = variance ** 0.5
+    if vol_std == 0:
+        vol_skewness = 0.0
+    else:
+        vol_skewness = round(sum((x - vol_mean) ** 3 for x in vq_vals) / m / (vol_std ** 3), 6)
+    vol_positive_pct = round(sum(1 for x in vq_vals if x > 0) / m, 6)
+    sorted_rows = sorted(valid_rows, key=lambda r: float(r["volume_expansion_quality"]))
+    n = len(sorted_rows)
+    bot = sorted_rows[: n // 3]
+    mid = sorted_rows[n // 3 : 2 * n // 3]
+    top = sorted_rows[2 * n // 3 :]
+    def _win_rate(group: list[dict]) -> "float | None":
+        if len(group) < 2:
+            return None
+        wins = sum(1 for r in group if r.get("next_day_return") is not None and float(r["next_day_return"]) > 0)
+        return round(wins / len(group), 6)
+    high_wr = _win_rate(top)
+    mid_wr = _win_rate(mid)
+    low_wr = _win_rate(bot)
+    vol_structure_spread: "float | None" = round(high_wr - low_wr, 6) if high_wr is not None and low_wr is not None else None
+    if vol_structure_spread is None:
+        grade = "unknown"
+    elif vol_structure_spread > 0.12:
+        grade = "A"
+    elif vol_structure_spread > 0.06:
+        grade = "B"
+    elif vol_structure_spread > 0:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"volume_structure_valid": True, "vol_mean": round(vol_mean, 6), "vol_std": round(vol_std, 6), "vol_skewness": vol_skewness, "vol_positive_pct": vol_positive_pct, "high_vol_exp_win_rate": high_wr, "mid_vol_exp_win_rate": mid_wr, "low_vol_exp_win_rate": low_wr, "vol_structure_spread": vol_structure_spread, "vol_structure_grade": grade}

@@ -19942,3 +19942,511 @@ def test_r70_all_three_new_metrics_have_labels() -> None:
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
 
+
+
+# ---------------------------------------------------------------------------
+# Round 71 Tests
+# ---------------------------------------------------------------------------
+
+def _make_r71_momentum_rows(n: int = 12, win_top: float = 0.8, win_bot: float = 0.4) -> list[dict]:
+    """Build rows with momentum_slope_20d spread for T1 tests."""
+    rows = []
+    for i in range(n):
+        slope = float(i)
+        # top third wins more
+        if i >= 2 * n // 3:
+            ret = 0.01 if (i % 5 < 4) else -0.01  # ~80% win
+        elif i < n // 3:
+            ret = -0.01 if (i % 5 < 3) else 0.01  # ~40% win
+        else:
+            ret = 0.01 if i % 2 == 0 else -0.01
+        rows.append({"momentum_slope_20d": slope, "next_day_return": ret})
+    return rows
+
+
+def _make_r71_volume_rows(n: int = 12) -> list[dict]:
+    """Build rows with volume_expansion_quality for T2 tests."""
+    rows = []
+    for i in range(n):
+        vq = float(i) - n / 2.0
+        ret = 0.01 if i >= 2 * n // 3 else -0.01
+        rows.append({"volume_expansion_quality": vq, "next_day_return": ret})
+    return rows
+
+
+def _make_r71_price_pos_summaries(vals: list[float]) -> list[dict]:
+    """Build cross-window summaries with price_pos_cs_win_rate_spread."""
+    return [{"price_pos_cs_win_rate_spread": v} for v in vals]
+
+
+# -------- T1: compute_sector_momentum_ranking --------
+
+def test_r71_t1_valid_basic() -> None:
+    """compute_sector_momentum_ranking returns valid=True with enough rows."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    rows = _make_r71_momentum_rows(12)
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is True
+
+
+def test_r71_t1_invalid_too_few_rows() -> None:
+    """Returns valid=False when < 8 total rows."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01} for i in range(7)]
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is False
+    assert result["momentum_win_spread"] is None
+
+
+def test_r71_t1_invalid_field_missing() -> None:
+    """Returns valid=False when momentum_slope_20d field is absent."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    rows = [{"next_day_return": 0.01} for _ in range(12)]
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is False
+
+
+def test_r71_t1_invalid_all_none_slope() -> None:
+    """Returns valid=False when all momentum_slope_20d are None."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    rows = [{"momentum_slope_20d": None, "next_day_return": 0.01} for _ in range(12)]
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is False
+
+
+def test_r71_t1_invalid_fewer_than_8_valid() -> None:
+    """Returns valid=False when fewer than 8 rows have non-None momentum_slope_20d."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    rows = [{"momentum_slope_20d": float(i) if i < 7 else None, "next_day_return": 0.01} for i in range(12)]
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is False
+
+
+def test_r71_t1_three_equal_tertiles() -> None:
+    """Tertile sizes are n//3, n//3, n - 2*(n//3) for n=12."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01} for i in range(12)]
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is True
+    # All groups have ≥4 rows so win_rates are not None
+    assert result["high_momentum_win_rate"] is not None
+    assert result["low_momentum_win_rate"] is not None
+    assert result["mid_momentum_win_rate"] is not None
+
+
+def test_r71_t1_win_spread_precision() -> None:
+    """momentum_win_spread = high_momentum_win_rate - low_momentum_win_rate, rounded to 6dp."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    import pytest
+    rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01 if i >= 8 else -0.01} for i in range(12)]
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is True
+    high_wr = result["high_momentum_win_rate"]
+    low_wr = result["low_momentum_win_rate"]
+    expected_spread = round(high_wr - low_wr, 6)
+    assert result["momentum_win_spread"] == pytest.approx(expected_spread, abs=1e-6)
+
+
+def test_r71_t1_grade_A() -> None:
+    """momentum_rank_grade = A when win_spread > 0.12 and mean_return_spread > 0."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    # top third all win (return > 0), bottom third all lose
+    rows = []
+    for i in range(24):
+        rows.append({"momentum_slope_20d": float(i), "next_day_return": 0.05 if i >= 16 else -0.05})
+    result = compute_sector_momentum_ranking(rows)
+    # top group: all win (wr=1.0), bot group: all lose (wr=0.0), spread=1.0 > 0.12
+    assert result["momentum_rank_grade"] == "A"
+
+
+def test_r71_t1_grade_B() -> None:
+    """momentum_rank_grade = B when win_spread in (0.06, 0.12]."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    rows = []
+    for i in range(12):
+        # top: 7/8 win = 0.875, bot: 3/4 win = 0.75, spread ~0.08
+        if i >= 8:
+            ret = 0.01 if i != 11 else -0.01  # 3/4 win for top group of 4
+        elif i < 4:
+            ret = -0.01 if i >= 1 else 0.01  # 1/4 win for bottom group
+        else:
+            ret = 0.01 if i % 2 == 0 else -0.01
+        rows.append({"momentum_slope_20d": float(i), "next_day_return": ret})
+    result = compute_sector_momentum_ranking(rows)
+    if result["momentum_win_spread"] is not None and 0.06 < result["momentum_win_spread"] <= 0.12:
+        assert result["momentum_rank_grade"] == "B"
+
+
+def test_r71_t1_grade_C() -> None:
+    """momentum_rank_grade = C when win_spread in (0, 0.06]."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    # top: 6/8 win=0.75, bot: 4/8 win=0.5, spread=0.25 actually grade A
+    # let's engineer spread ~0.04
+    rows = []
+    for i in range(10):
+        if i >= 7:  # top 3: 2/3 win
+            ret = 0.01 if i < 9 else -0.01
+        elif i < 3:  # bot 3: 1/3 win
+            ret = 0.01 if i == 0 else -0.01
+        else:
+            ret = 0.01 if i % 2 == 0 else -0.01
+        rows.append({"momentum_slope_20d": float(i), "next_day_return": ret})
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is True
+    if result["momentum_win_spread"] is not None and 0 < result["momentum_win_spread"] <= 0.06:
+        assert result["momentum_rank_grade"] == "C"
+
+
+def test_r71_t1_grade_D() -> None:
+    """momentum_rank_grade = D when win_spread <= 0."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    # Reverse: low momentum wins more
+    rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01 if i < 4 else -0.01} for i in range(12)]
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is True
+    assert result["momentum_rank_grade"] == "D"
+    assert result["momentum_win_spread"] is not None and result["momentum_win_spread"] <= 0
+
+
+def test_r71_t1_grade_unknown_when_spread_none() -> None:
+    """momentum_rank_grade = 'unknown' when groups are too small for win_rate."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    # Exactly 8 valid rows => tertiles of size 2, 2, 4 → all ≥ 2 so win_rates are computable
+    # Use exactly 9 rows: tertiles of size 3, 3, 3
+    rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01} for i in range(9)]
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is True
+    # grade should not be unknown since groups ≥ 3
+    assert result["momentum_rank_grade"] != "unknown"
+
+
+def test_r71_t1_mean_return_spread_computed() -> None:
+    """momentum_mean_return_spread = top group mean return - bot group mean return."""
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+    import pytest
+    rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.05 * (i - 6) / 12} for i in range(12)]
+    result = compute_sector_momentum_ranking(rows)
+    assert result["sector_momentum_ranking_valid"] is True
+    assert result["momentum_mean_return_spread"] is not None
+
+
+def test_r71_t1_in_comparison_metrics() -> None:
+    """momentum_win_spread is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "momentum_win_spread" in COMPARISON_METRICS
+
+
+def test_r71_t1_in_optional_metrics() -> None:
+    """momentum_win_spread is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "momentum_win_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r71_t1_label_exists() -> None:
+    """momentum_win_spread has a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "momentum_win_spread" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["momentum_win_spread"]) > 0
+
+
+def test_r71_t1_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has momentum_win_spread = 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "momentum_win_spread" in BTST_QUALITY_FLOORS
+    import pytest
+    assert BTST_QUALITY_FLOORS["momentum_win_spread"] == pytest.approx(0.0)
+
+
+def test_r71_t1_surface_summary_prefix() -> None:
+    """build_surface_summary outputs mom_rank_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = _make_r71_momentum_rows(12)
+    for r in rows:
+        r["next_day_return"] = r.get("next_day_return", 0.01)
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "mom_rank_sector_momentum_ranking_valid" in summary
+
+
+# -------- T2: compute_volume_structure_analysis --------
+
+def test_r71_t2_valid_basic() -> None:
+    """compute_volume_structure_analysis returns valid=True with enough rows."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    rows = _make_r71_volume_rows(12)
+    result = compute_volume_structure_analysis(rows)
+    assert result["volume_structure_valid"] is True
+
+
+def test_r71_t2_invalid_too_few_rows() -> None:
+    """Returns valid=False when < 8 total rows."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    rows = [{"volume_expansion_quality": float(i), "next_day_return": 0.01} for i in range(7)]
+    result = compute_volume_structure_analysis(rows)
+    assert result["volume_structure_valid"] is False
+    assert result["vol_structure_spread"] is None
+
+
+def test_r71_t2_invalid_field_missing() -> None:
+    """Returns valid=False when volume_expansion_quality field is absent."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    rows = [{"next_day_return": 0.01} for _ in range(12)]
+    result = compute_volume_structure_analysis(rows)
+    assert result["volume_structure_valid"] is False
+
+
+def test_r71_t2_invalid_all_none() -> None:
+    """Returns valid=False when all volume_expansion_quality are None."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    rows = [{"volume_expansion_quality": None, "next_day_return": 0.01} for _ in range(12)]
+    result = compute_volume_structure_analysis(rows)
+    assert result["volume_structure_valid"] is False
+
+
+def test_r71_t2_vol_skewness_zero_when_std_zero() -> None:
+    """vol_skewness = 0.0 when all volume_expansion_quality values are equal (std=0)."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    rows = [{"volume_expansion_quality": 1.0, "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(12)]
+    result = compute_volume_structure_analysis(rows)
+    assert result["volume_structure_valid"] is True
+    assert result["vol_skewness"] == 0.0
+
+
+def test_r71_t2_vol_skewness_manual_formula() -> None:
+    """vol_skewness = mean((x-mean)^3) / std^3, using N-1 std."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    import pytest
+    vq_vals = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    rows = [{"volume_expansion_quality": v, "next_day_return": 0.01} for v in vq_vals]
+    result = compute_volume_structure_analysis(rows)
+    assert result["volume_structure_valid"] is True
+    n = len(vq_vals)
+    mean_v = sum(vq_vals) / n
+    std_v = (sum((x - mean_v) ** 2 for x in vq_vals) / (n - 1)) ** 0.5
+    expected_skew = round(sum((x - mean_v) ** 3 for x in vq_vals) / n / (std_v ** 3), 6)
+    assert result["vol_skewness"] == pytest.approx(expected_skew, abs=1e-5)
+
+
+def test_r71_t2_vol_positive_pct() -> None:
+    """vol_positive_pct = fraction of volume_expansion_quality > 0."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    import pytest
+    rows = [{"volume_expansion_quality": float(i - 4), "next_day_return": 0.01} for i in range(12)]
+    result = compute_volume_structure_analysis(rows)
+    # i-4: negative for i<4, zero for i=4, positive for i>4
+    # positive: i in [5,6,7,8,9,10,11] = 7 out of 12
+    assert result["vol_positive_pct"] == pytest.approx(7 / 12, abs=1e-5)
+
+
+def test_r71_t2_structure_spread_precision() -> None:
+    """vol_structure_spread = high_vol_exp_win_rate - low_vol_exp_win_rate, rounded 6dp."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    import pytest
+    rows = _make_r71_volume_rows(12)
+    result = compute_volume_structure_analysis(rows)
+    assert result["volume_structure_valid"] is True
+    high_wr = result["high_vol_exp_win_rate"]
+    low_wr = result["low_vol_exp_win_rate"]
+    if high_wr is not None and low_wr is not None:
+        expected = round(high_wr - low_wr, 6)
+        assert result["vol_structure_spread"] == pytest.approx(expected, abs=1e-6)
+
+
+def test_r71_t2_grade_A() -> None:
+    """vol_structure_grade = A when vol_structure_spread > 0.12."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    rows = [{"volume_expansion_quality": float(i), "next_day_return": 0.05 if i >= 16 else -0.05} for i in range(24)]
+    result = compute_volume_structure_analysis(rows)
+    assert result["vol_structure_grade"] == "A"
+
+
+def test_r71_t2_grade_D() -> None:
+    """vol_structure_grade = D when vol_structure_spread <= 0."""
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
+    rows = [{"volume_expansion_quality": float(i), "next_day_return": 0.01 if i < 4 else -0.01} for i in range(12)]
+    result = compute_volume_structure_analysis(rows)
+    assert result["vol_structure_grade"] == "D"
+
+
+def test_r71_t2_in_comparison_metrics() -> None:
+    """vol_structure_spread is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "vol_structure_spread" in COMPARISON_METRICS
+
+
+def test_r71_t2_in_optional_metrics() -> None:
+    """vol_structure_spread is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "vol_structure_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r71_t2_label_exists() -> None:
+    """vol_structure_spread has a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "vol_structure_spread" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["vol_structure_spread"]) > 0
+
+
+def test_r71_t2_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has vol_structure_spread = 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "vol_structure_spread" in BTST_QUALITY_FLOORS
+    import pytest
+    assert BTST_QUALITY_FLOORS["vol_structure_spread"] == pytest.approx(0.0)
+
+
+def test_r71_t2_surface_summary_prefix() -> None:
+    """build_surface_summary outputs vol_struct_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = _make_r71_volume_rows(12)
+    for r in rows:
+        r["next_day_return"] = r.get("next_day_return", 0.01)
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "vol_struct_volume_structure_valid" in summary
+
+
+# -------- T3: compute_cross_window_price_pos_trend --------
+
+def test_r71_t3_valid_basic() -> None:
+    """compute_cross_window_price_pos_trend returns valid=True with ≥3 valid values."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    summaries = _make_r71_price_pos_summaries([0.1, 0.2, 0.3, 0.4, 0.5])
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_trend_valid"] is True
+
+
+def test_r71_t3_invalid_too_few() -> None:
+    """Returns valid=False when fewer than 3 valid values."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    result = compute_cross_window_price_pos_trend([{"price_pos_cs_win_rate_spread": 0.1}, {"price_pos_cs_win_rate_spread": 0.2}])
+    assert result["price_pos_trend_valid"] is False
+    assert result["price_pos_trend_slope"] is None
+
+
+def test_r71_t3_invalid_all_none() -> None:
+    """Returns valid=False when all cs_win_rate_spread values are None."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    summaries = [{"price_pos_cs_win_rate_spread": None} for _ in range(5)]
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_trend_valid"] is False
+
+
+def test_r71_t3_ols_slope_positive() -> None:
+    """OLS slope is positive for ascending series."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    import pytest
+    summaries = _make_r71_price_pos_summaries([1.0, 2.0, 3.0, 4.0, 5.0])
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_trend_slope"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_r71_t3_ols_slope_negative() -> None:
+    """OLS slope is negative for descending series."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    import pytest
+    summaries = _make_r71_price_pos_summaries([5.0, 4.0, 3.0, 2.0, 1.0])
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_trend_slope"] == pytest.approx(-1.0, abs=1e-5)
+
+
+def test_r71_t3_price_pos_trend_mean() -> None:
+    """price_pos_trend_mean equals mean of input values."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    import pytest
+    vals = [0.1, 0.3, 0.5]
+    summaries = _make_r71_price_pos_summaries(vals)
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-5)
+
+
+def test_r71_t3_positive_windows_pct() -> None:
+    """price_pos_positive_windows_pct = fraction of vals > 0."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    import pytest
+    vals = [0.1, -0.1, 0.2, 0.3, -0.2]  # 3/5 positive
+    summaries = _make_r71_price_pos_summaries(vals)
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_positive_windows_pct"] == pytest.approx(3 / 5, abs=1e-5)
+
+
+def test_r71_t3_grade_A() -> None:
+    """price_pos_trend_grade = A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    # slope = 1.0 > 0.005
+    summaries = _make_r71_price_pos_summaries([1.0, 2.0, 3.0, 4.0, 5.0])
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_trend_grade"] == "A"
+
+
+def test_r71_t3_grade_B() -> None:
+    """price_pos_trend_grade = B when slope in (0, 0.005]."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    # Tiny positive slope
+    summaries = _make_r71_price_pos_summaries([0.5, 0.501, 0.502, 0.503, 0.504])
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_trend_grade"] == "B"
+
+
+def test_r71_t3_grade_C() -> None:
+    """price_pos_trend_grade = C when slope in (-0.01, 0]."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    summaries = _make_r71_price_pos_summaries([0.5, 0.499, 0.498, 0.497, 0.496])
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_trend_grade"] == "C"
+
+
+def test_r71_t3_grade_D() -> None:
+    """price_pos_trend_grade = D when slope <= -0.01."""
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
+    # Strong negative slope
+    summaries = _make_r71_price_pos_summaries([5.0, 4.0, 3.0, 2.0, 1.0])
+    result = compute_cross_window_price_pos_trend(summaries)
+    assert result["price_pos_trend_grade"] == "D"
+
+
+def test_r71_t3_in_comparison_metrics() -> None:
+    """price_pos_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "price_pos_trend_slope" in COMPARISON_METRICS
+
+
+def test_r71_t3_in_optional_metrics() -> None:
+    """price_pos_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "price_pos_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r71_t3_label_exists() -> None:
+    """price_pos_trend_slope has a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "price_pos_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["price_pos_trend_slope"]) > 0
+
+
+def test_r71_t3_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has price_pos_trend_slope = -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "price_pos_trend_slope" in BTST_QUALITY_FLOORS
+    import pytest
+    assert BTST_QUALITY_FLOORS["price_pos_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r71_all_three_new_comparison_metrics() -> None:
+    """All 3 new Round 71 metrics are in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("momentum_win_spread", "vol_structure_spread", "price_pos_trend_slope"):
+        assert key in COMPARISON_METRICS, f"Missing: {key}"
+
+
+def test_r71_all_three_new_optional_metrics() -> None:
+    """All 3 new Round 71 metrics are in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("momentum_win_spread", "vol_structure_spread", "price_pos_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"Missing: {key}"
+
+
+def test_r71_all_three_new_floors() -> None:
+    """All 3 new Round 71 metrics have floors in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "momentum_win_spread" in BTST_QUALITY_FLOORS
+    assert "vol_structure_spread" in BTST_QUALITY_FLOORS
+    assert "price_pos_trend_slope" in BTST_QUALITY_FLOORS

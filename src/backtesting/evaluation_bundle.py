@@ -581,6 +581,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 70, Gamma): RS rank spread cross-window trend slope floor.
     # rs_rank_trend_slope < -0.01 means RS ranking discriminatory power is declining across windows.
     "rs_rank_trend_slope": -0.01,
+    # Task 1 (Round 71, Alpha): sector momentum ranking win-rate spread floor.
+    # momentum_win_spread < 0.0 means high-momentum stocks have no win-rate advantage over low-momentum stocks.
+    "momentum_win_spread": 0.0,
+    # Task 2 (Round 71, Beta): volume structure win-rate spread floor.
+    # vol_structure_spread < 0.0 means high-volume-expansion stocks have no win-rate advantage over low-volume stocks.
+    "vol_structure_spread": 0.0,
+    # Task 3 (Round 71, Gamma): price position cross-window trend slope floor.
+    # price_pos_trend_slope < -0.01 means price position discriminatory power is declining across windows.
+    "price_pos_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

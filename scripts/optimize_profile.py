@@ -472,6 +472,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "streak_ratio",
     # Task 3 (Round 70, Gamma): cross-window RS rank spread OLS trend slope.
     "rs_rank_trend_slope",
+    # Task 1 (Round 71, Alpha): sector momentum ranking win-rate spread — top-momentum minus bottom-momentum win rate.
+    "momentum_win_spread",
+    # Task 2 (Round 71, Beta): volume structure win-rate spread — high volume expansion minus low win rate.
+    "vol_structure_spread",
+    # Task 3 (Round 71, Gamma): cross-window price position cs_win_rate_spread OLS trend slope.
+    "price_pos_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -832,6 +838,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "streak_ratio": "连胜比率",
     # Task 3 (Round 70, Gamma): RS排名区分度跨窗趋势
     "rs_rank_trend_slope": "RS排名区分度跨窗趋势",
+    # Task 1 (Round 71, Alpha): 动量强弱胜率差
+    "momentum_win_spread": "动量强弱胜率差",
+    # Task 2 (Round 71, Beta): 量能结构胜率差
+    "vol_structure_spread": "量能结构胜率差",
+    # Task 3 (Round 71, Gamma): 价格位置区分度跨窗趋势
+    "price_pos_trend_slope": "价格位置区分度跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1264,6 +1276,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "streak_ratio",
     # Task 3 (Round 70, Gamma): RS rank trend slope — optional; pre-Round-70 outputs omit it.
     "rs_rank_trend_slope",
+    # Task 1 (Round 71, Alpha): momentum win spread — optional; pre-Round-71 outputs omit it.
+    "momentum_win_spread",
+    # Task 2 (Round 71, Beta): volume structure spread — optional; pre-Round-71 outputs omit it.
+    "vol_structure_spread",
+    # Task 3 (Round 71, Gamma): price position trend slope — optional; pre-Round-71 outputs omit it.
+    "price_pos_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3786,6 +3804,49 @@ def compute_cross_window_rs_rank_trend(all_windows_summaries: list[dict]) -> dic
     return {"rs_rank_trend_valid": True, "rs_rank_trend_slope": round(slope, 8), "rs_rank_trend_mean": round(mean_v, 6), "rs_rank_positive_windows_pct": rs_rank_positive_windows_pct, "rs_rank_trend_grade": grade}
 
 
+def compute_cross_window_price_pos_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪价格位置强弱胜率差（cs_win_rate_spread）趋势。
+
+    从各窗口 summary 收集 ``price_pos_cs_win_rate_spread``（Round 70 T1 的输出），需≥3个有效值。
+
+    Returns:
+        - ``price_pos_trend_slope``: OLS 斜率（正=区分度提升=越来越好）
+        - ``price_pos_trend_mean``: 均值
+        - ``price_pos_positive_windows_pct``: cs_win_rate_spread > 0 的窗口占比
+        - ``price_pos_trend_grade``: A/B/C/D
+        - ``price_pos_trend_valid``: bool
+    """
+    _null: dict = {"price_pos_trend_valid": False, "price_pos_trend_slope": None, "price_pos_trend_mean": None, "price_pos_positive_windows_pct": None, "price_pos_trend_grade": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("price_pos_cs_win_rate_spread")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    price_pos_positive_windows_pct = round(sum(1 for v in vals if v > 0) / n, 6)
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"price_pos_trend_valid": True, "price_pos_trend_slope": round(slope, 8), "price_pos_trend_mean": round(mean_v, 6), "price_pos_positive_windows_pct": price_pos_positive_windows_pct, "price_pos_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4528,12 +4589,20 @@ def _build_replay_evaluator(
         _cwcht: dict[str, Any] = compute_cross_window_concentration_trend(all_primary_surfaces)
         # Task 3 (Round 70, Gamma): cross-window RS rank spread trend.
         _cwrrt: dict[str, Any] = compute_cross_window_rs_rank_trend(all_primary_surfaces)
+        # Task 3 (Round 71, Gamma): cross-window price position cs_win_rate_spread trend.
+        _cwppt: dict[str, Any] = compute_cross_window_price_pos_trend(all_primary_surfaces)
         # Task 1 (Round 70, Alpha): average price_pos_cs_win_rate_spread across replay windows.
         _ppa_cwr_vals = [float(s["price_pos_cs_win_rate_spread"]) for s in all_primary_surfaces if s.get("price_pos_cs_win_rate_spread") is not None]
         avg_cs_win_rate_spread: "float | None" = round(sum(_ppa_cwr_vals) / len(_ppa_cwr_vals), 6) if _ppa_cwr_vals else None
         # Task 2 (Round 70, Beta): average streak_streak_ratio across replay windows.
         _wlsa_sr_vals = [float(s["streak_streak_ratio"]) for s in all_primary_surfaces if s.get("streak_streak_ratio") is not None]
         avg_streak_ratio: "float | None" = round(sum(_wlsa_sr_vals) / len(_wlsa_sr_vals), 6) if _wlsa_sr_vals else None
+        # Task 1 (Round 71, Alpha): average mom_rank_momentum_win_spread across replay windows.
+        _smr_mws_vals = [float(s["mom_rank_momentum_win_spread"]) for s in all_primary_surfaces if s.get("mom_rank_momentum_win_spread") is not None]
+        avg_momentum_win_spread: "float | None" = round(sum(_smr_mws_vals) / len(_smr_mws_vals), 6) if _smr_mws_vals else None
+        # Task 2 (Round 71, Beta): average vol_struct_vol_structure_spread across replay windows.
+        _vsa_vss_vals = [float(s["vol_struct_vol_structure_spread"]) for s in all_primary_surfaces if s.get("vol_struct_vol_structure_spread") is not None]
+        avg_vol_structure_spread: "float | None" = round(sum(_vsa_vss_vals) / len(_vsa_vss_vals), 6) if _vsa_vss_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4995,6 +5064,16 @@ def _build_replay_evaluator(
                 "cs_win_rate_spread": avg_cs_win_rate_spread,
                 # Task 2 (Round 70, Beta): win/loss streak ratio averaged across windows.
                 "streak_ratio": avg_streak_ratio,
+                # Task 1 (Round 71, Alpha): sector momentum ranking win-rate spread averaged across windows.
+                "momentum_win_spread": avg_momentum_win_spread,
+                # Task 2 (Round 71, Beta): volume structure win-rate spread averaged across windows.
+                "vol_structure_spread": avg_vol_structure_spread,
+                # Task 3 (Round 71, Gamma): cross-window price position cs_win_rate_spread trend.
+                "price_pos_trend_slope": _cwppt.get("price_pos_trend_slope"),
+                "price_pos_trend_mean": _cwppt.get("price_pos_trend_mean"),
+                "price_pos_positive_windows_pct": _cwppt.get("price_pos_positive_windows_pct"),
+                "price_pos_trend_grade": _cwppt.get("price_pos_trend_grade"),
+                "price_pos_trend_valid": _cwppt.get("price_pos_trend_valid"),
         }
 
     return evaluator

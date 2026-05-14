@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_afd6614f59be_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_d1186284a650_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -244,7 +244,10 @@
       "concentration_hhi_slope_delta": null,
       "cs_win_rate_spread_delta": null,
       "streak_ratio_delta": null,
-      "rs_rank_trend_slope_delta": null
+      "rs_rank_trend_slope_delta": null,
+      "momentum_win_spread_delta": null,
+      "vol_structure_spread_delta": null,
+      "price_pos_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -484,7 +487,10 @@
       "concentration_hhi_slope_delta": null,
       "cs_win_rate_spread_delta": null,
       "streak_ratio_delta": null,
-      "rs_rank_trend_slope_delta": null
+      "rs_rank_trend_slope_delta": null,
+      "momentum_win_spread_delta": null,
+      "vol_structure_spread_delta": null,
+      "price_pos_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",
