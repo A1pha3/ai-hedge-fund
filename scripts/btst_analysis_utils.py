@@ -4445,6 +4445,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _fca.items():
         _surface_result[f"contrib_{_k}"] = _v
 
+    # Round 59, Task 1 (Alpha): Return distribution shape analysis.
+    _rds: dict[str, Any] = compute_return_dist_moments(rows)
+    for _k, _v in _rds.items():
+        _surface_result[f"retdist_{_k}"] = _v
+
+    # Round 59, Task 2 (Beta): Composite quality score.
+    _cqs: dict[str, Any] = compute_composite_quality_score(rows)
+    for _k, _v in _cqs.items():
+        _surface_result[f"compq_{_k}"] = _v
+
     return _surface_result
 
 
@@ -11261,3 +11271,126 @@ def compute_factor_contribution_analysis(rows: list[dict]) -> dict:
     bottom_contributor: str = min(valid_r2, key=lambda k: valid_r2[k])
     contribution_concentration: "float | None" = round(valid_r2[top_contributor] / total_explained_variance, 6) if total_explained_variance > 0 else None
     return {"factor_r2_scores": factor_r2_scores, "total_explained_variance": total_explained_variance, "top_contributor": top_contributor, "bottom_contributor": bottom_contributor, "contribution_concentration": contribution_concentration, "factor_contribution_valid": True}
+
+
+# ---------------------------------------------------------------------------
+# Round 59, Task 1 (Alpha): Return distribution shape analysis
+# ---------------------------------------------------------------------------
+# Analyses statistical properties of the next_day_return distribution:
+# skewness, excess kurtosis, Jarque-Bera normality test, and mean-median divergence.
+# ---------------------------------------------------------------------------
+
+
+def compute_return_dist_moments(rows: list[dict]) -> dict:
+    """深度分析收益分布的形态特征（正态性偏离、厚尾程度）"""
+    invalid = {"return_distribution_valid": False, "mean_return": None, "median_return": None, "std_return": None, "skewness": None, "excess_kurtosis": None, "jarque_bera_stat": None, "normality_violation": None, "mean_median_divergence": None, "distribution_grade": None}
+    if not rows or len(rows) < 10:
+        return invalid
+    returns = [r.get("next_day_return") for r in rows if r.get("next_day_return") is not None]
+    if len(returns) < 10:
+        return invalid
+    n = len(returns)
+    mean_r = sum(returns) / n
+    sorted_r = sorted(returns)
+    mid = n // 2
+    median_r = sorted_r[mid] if n % 2 == 1 else (sorted_r[mid - 1] + sorted_r[mid]) / 2
+    variance = sum((r - mean_r) ** 2 for r in returns) / (n - 1)
+    std_r = variance ** 0.5
+    if std_r == 0:
+        return invalid
+    # Use population std (n denominator) for moment calculations
+    pop_std = (sum((r - mean_r) ** 2 for r in returns) / n) ** 0.5
+    skewness = sum(((r - mean_r) / pop_std) ** 3 for r in returns) / n
+    excess_kurtosis = sum(((r - mean_r) / pop_std) ** 4 for r in returns) / n - 3
+    jarque_bera_stat = n / 6 * (skewness ** 2 + excess_kurtosis ** 2 / 4)
+    normality_violation = jarque_bera_stat > 10
+    mean_median_divergence = mean_r - median_r
+    if skewness > 0.2 and excess_kurtosis < 3:
+        distribution_grade = "A"
+    elif skewness > 0:
+        distribution_grade = "B"
+    elif skewness > -0.2:
+        distribution_grade = "C"
+    else:
+        distribution_grade = "D"
+    return {"return_distribution_valid": True, "mean_return": mean_r, "median_return": median_r, "std_return": std_r, "skewness": skewness, "excess_kurtosis": excess_kurtosis, "jarque_bera_stat": jarque_bera_stat, "normality_violation": normality_violation, "mean_median_divergence": mean_median_divergence, "distribution_grade": distribution_grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 59, Task 2 (Beta): Composite quality score
+# ---------------------------------------------------------------------------
+# Aggregates win_rate, profit_factor, information_ratio, regime_adaptability,
+# rank_ic, and diversification_score into a single 0-100 quality index.
+# Uses weight normalisation when some dimensions are unavailable.
+# ---------------------------------------------------------------------------
+
+
+def compute_composite_quality_score(rows: list[dict]) -> dict:
+    """综合各维度指标计算整体质量评分（0~100）"""
+    invalid = {"composite_quality_valid": False, "composite_quality_score": None, "active_dimensions": None, "quality_grade": None}
+    if not rows or len(rows) < 5:
+        return invalid
+    returns = [r.get("next_day_return") for r in rows if r.get("next_day_return") is not None]
+    weights = {"win_rate": 0.30, "profit_factor": 0.20, "information_ratio": 0.20, "regime_adaptability": 0.15, "rank_ic": 0.10, "diversification_score": 0.05}
+    scores: dict = {}
+    # Dimension 1: win_rate
+    if returns:
+        wins = sum(1 for r in returns if r > 0)
+        wr = wins / len(returns)
+        scores["win_rate"] = wr
+    # Dimension 2: profit_factor
+    if returns:
+        pos = sum(r for r in returns if r > 0)
+        neg = abs(sum(r for r in returns if r < 0))
+        pf = pos / neg if neg > 0 else (3.0 if pos > 0 else 0.0)
+        scores["profit_factor"] = min(pf / 3.0, 1.0)
+    # Dimension 3: information_ratio
+    if returns and len(returns) >= 2:
+        n = len(returns)
+        mean_r = sum(returns) / n
+        std_r = (sum((r - mean_r) ** 2 for r in returns) / (n - 1)) ** 0.5
+        ir = (mean_r / std_r * (252 ** 0.5)) if std_r > 0 else 0.0
+        scores["information_ratio"] = max(0.0, min(1.0, ir / 2.0 + 0.5))
+    # Dimension 4: regime_adaptability
+    ra_val = None
+    for r in rows:
+        v = r.get("regime_regime_adaptability")
+        if v is not None:
+            ra_val = v
+            break
+    if ra_val is not None:
+        scores["regime_adaptability"] = max(0.0, min(1.0, float(ra_val)))
+    # Dimension 5: rank_ic
+    ric_val = None
+    for r in rows:
+        v = r.get("rank_rank_ic")
+        if v is not None:
+            ric_val = v
+            break
+    if ric_val is not None:
+        scores["rank_ic"] = max(0.0, min(1.0, float(ric_val) + 0.5))
+    # Dimension 6: diversification_score
+    ds_val = None
+    for r in rows:
+        v = r.get("sector_div_diversification_score")
+        if v is not None:
+            ds_val = v
+            break
+    if ds_val is not None:
+        scores["diversification_score"] = max(0.0, min(1.0, float(ds_val)))
+    if not scores:
+        return invalid
+    active_dims = len(scores)
+    total_weight = sum(weights[k] for k in scores)
+    if total_weight == 0:
+        return invalid
+    composite = sum(scores[k] * weights[k] / total_weight for k in scores) * 100
+    if composite >= 70:
+        quality_grade = "A"
+    elif composite >= 55:
+        quality_grade = "B"
+    elif composite >= 40:
+        quality_grade = "C"
+    else:
+        quality_grade = "D"
+    return {"composite_quality_valid": True, "composite_quality_score": composite, "active_dimensions": active_dims, "quality_grade": quality_grade}

@@ -400,6 +400,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "total_explained_variance",
     # Task 3 (Round 58, Gamma): cross-window regime adaptability OLS trend slope.
     "regime_trend_slope",
+    # Task 1 (Round 59, Alpha): return distribution skewness — average next_day_return skewness across windows.
+    "skewness",
+    # Task 2 (Round 59, Beta): composite quality score — weighted average across active quality dimensions.
+    "composite_quality_score",
+    # Task 3 (Round 59, Gamma): cross-window optimal-threshold win-rate OLS trend slope.
+    "threshold_win_rate_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -688,6 +694,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "total_explained_variance": "因子总解释方差",
     # Task 3 (Round 58, Gamma): cross-window regime adaptability trend slope
     "regime_trend_slope": "市场适应性跨窗趋势",
+    # Task 1 (Round 59, Alpha): return distribution skewness
+    "skewness": "收益分布偏度",
+    # Task 2 (Round 59, Beta): composite quality score
+    "composite_quality_score": "综合质量评分",
+    # Task 3 (Round 59, Gamma): cross-window threshold win-rate trend slope
+    "threshold_win_rate_trend_slope": "阈值胜率跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1034,6 +1046,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "total_explained_variance",
     # Task 3 (Round 58, Gamma): cross-window regime adaptability trend slope — optional; pre-Round-58 outputs omit it.
     "regime_trend_slope",
+    # Task 1 (Round 59, Alpha): return distribution skewness — optional; pre-Round-59 outputs omit it.
+    "skewness",
+    # Task 2 (Round 59, Beta): composite quality score — optional; pre-Round-59 outputs omit it.
+    "composite_quality_score",
+    # Task 3 (Round 59, Gamma): cross-window threshold win-rate trend slope — optional; pre-Round-59 outputs omit it.
+    "threshold_win_rate_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3019,6 +3037,40 @@ def compute_cross_window_regime_trend(all_windows_summaries: list[dict]) -> dict
 
 
 # ---------------------------------------------------------------------------
+# Round 59, Task 3 (Gamma): Cross-window optimal-threshold win-rate trend
+# ---------------------------------------------------------------------------
+# Tracks OLS trend of ``dyn_thresh_optimal_win_rate`` (best per-percentile entry
+# threshold win rate) across replay windows.  A positive slope indicates the
+# strategy's entry filter is becoming more effective over time.
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_threshold_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪最优阈值胜率趋势"""
+    invalid = {"threshold_trend_valid": False, "threshold_win_rate_trend_slope": None, "threshold_win_rate_trend_mean": None, "threshold_win_rate_trend_min": None, "threshold_win_rate_trend_max": None, "threshold_above_floor_pct": None, "threshold_trend_grade": None}
+    values = [s.get("dyn_thresh_optimal_win_rate") for s in all_windows_summaries if s.get("dyn_thresh_optimal_win_rate") is not None]
+    if len(values) < 3:
+        return invalid
+    n = len(values)
+    xs = list(range(n))
+    mean_x = sum(xs) / n
+    mean_y = sum(values) / n
+    num = sum((xs[i] - mean_x) * (values[i] - mean_y) for i in range(n))
+    den = sum((xs[i] - mean_x) ** 2 for i in range(n))
+    slope = num / den if den != 0 else 0.0
+    above_floor = sum(1 for v in values if v >= 0.5) / n
+    if slope > 0.01:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.02:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"threshold_trend_valid": True, "threshold_win_rate_trend_slope": slope, "threshold_win_rate_trend_mean": mean_y, "threshold_win_rate_trend_min": min(values), "threshold_win_rate_trend_max": max(values), "threshold_above_floor_pct": above_floor, "threshold_trend_grade": grade}
+
+
+# ---------------------------------------------------------------------------
 
 
 def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
@@ -3773,6 +3825,14 @@ def _build_replay_evaluator(
         _rict: dict[str, Any] = compute_cross_window_rank_ic_trend(all_primary_surfaces)
         # Task 3 (Round 58, Gamma): cross-window regime adaptability trend.
         _rat: dict[str, Any] = compute_cross_window_regime_trend(all_primary_surfaces)
+        # Task 1 (Round 59, Alpha): average retdist_skewness across replay windows.
+        _sk_vals = [float(s["retdist_skewness"]) for s in all_primary_surfaces if s.get("retdist_skewness") is not None]
+        avg_skewness: "float | None" = round(sum(_sk_vals) / len(_sk_vals), 8) if _sk_vals else None
+        # Task 2 (Round 59, Beta): average compq_composite_quality_score across replay windows.
+        _cqs_vals = [float(s["compq_composite_quality_score"]) for s in all_primary_surfaces if s.get("compq_composite_quality_score") is not None]
+        avg_composite_quality_score: "float | None" = round(sum(_cqs_vals) / len(_cqs_vals), 6) if _cqs_vals else None
+        # Task 3 (Round 59, Gamma): cross-window optimal-threshold win-rate trend.
+        _ttt: dict[str, Any] = compute_cross_window_threshold_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4114,6 +4174,18 @@ def _build_replay_evaluator(
             "regime_above_floor_pct": _rat.get("regime_above_floor_pct"),
             "regime_trend_grade": _rat.get("regime_trend_grade"),
             "regime_trend_valid": _rat.get("regime_trend_valid"),
+            # Task 1 (Round 59, Alpha): return distribution skewness averaged across windows.
+            "skewness": avg_skewness,
+            # Task 2 (Round 59, Beta): composite quality score averaged across windows.
+            "composite_quality_score": avg_composite_quality_score,
+            # Task 3 (Round 59, Gamma): cross-window optimal-threshold win-rate trend.
+            "threshold_win_rate_trend_slope": _ttt.get("threshold_win_rate_trend_slope"),
+            "threshold_win_rate_trend_mean": _ttt.get("threshold_win_rate_trend_mean"),
+            "threshold_win_rate_trend_min": _ttt.get("threshold_win_rate_trend_min"),
+            "threshold_win_rate_trend_max": _ttt.get("threshold_win_rate_trend_max"),
+            "threshold_above_floor_pct": _ttt.get("threshold_above_floor_pct"),
+            "threshold_trend_grade": _ttt.get("threshold_trend_grade"),
+            "threshold_trend_valid": _ttt.get("threshold_trend_valid"),
         }
 
     return evaluator

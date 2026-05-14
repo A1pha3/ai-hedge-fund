@@ -83,6 +83,14 @@ _GUARDRAIL_KEYS = (
     # optimal_win_rate = best win rate achieved across P40–P80 score percentile thresholds.
     # Floor ≥ 0.5 requires the best score-filtered sub-pool to achieve at least 50% win rate.
     "optimal_win_rate",
+    # Task 1 (Round 59, Alpha): return distribution skewness floor guardrail.
+    # Skewness more negative than −2.0 indicates extreme left-tail risk in next_day_return.
+    # Acts as a cap on distributional risk; consistent with next_close_return_skewness guardrail.
+    "skewness",
+    # Task 2 (Round 59, Beta): composite quality score floor guardrail.
+    # composite_quality_score aggregates win_rate, profit_factor, IR, and optional dimensions.
+    # Floor ≥ 40.0 (grade C) ensures the strategy passes a minimum multi-dimensional quality bar.
+    "composite_quality_score",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -453,6 +461,17 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 58, Gamma): cross-window regime adaptability OLS trend slope floor.
     # regime_trend_slope < -0.02 signals consistent deterioration of regime adaptability over time.
     "regime_trend_slope": -0.02,
+    # Task 1 (Round 59, Alpha): return distribution skewness floor.
+    # skewness < 0.0 indicates a left-skewed (negatively skewed) return distribution.
+    # Positive skewness is desired — more right-tail opportunities than left-tail losses.
+    "skewness": 0.0,
+    # Task 2 (Round 59, Beta): composite quality score floor.
+    # composite_quality_score < 40.0 (grade D) means the strategy fails most multi-dimensional
+    # quality checks; floor ≥ 40.0 (grade C) ensures minimum multi-dimensional quality bar.
+    "composite_quality_score": 40.0,
+    # Task 3 (Round 59, Gamma): cross-window threshold win-rate trend slope floor.
+    # threshold_win_rate_trend_slope < -0.02 signals consistent deterioration of optimal win-rate across windows.
+    "threshold_win_rate_trend_slope": -0.02,
 }
 
 # ---------------------------------------------------------------------------

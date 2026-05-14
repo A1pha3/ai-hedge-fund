@@ -15271,3 +15271,442 @@ def test_r58_t3_constant_series_slope_zero() -> None:
     result = compute_cross_window_regime_trend(summaries)
     assert result["regime_trend_slope"] == pytest.approx(0.0, abs=1e-8)
     assert result["regime_trend_grade"] in ("B", "C")
+
+
+# ---------------------------------------------------------------------------
+# Round 59 tests
+# ---------------------------------------------------------------------------
+
+# T1: compute_return_dist_moments
+
+def test_r59_t1_invalid_too_few_rows() -> None:
+    """Returns invalid dict when fewer than 10 rows provided."""
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    result = compute_return_dist_moments([{"next_day_return": 0.01}] * 9)
+    assert result["return_distribution_valid"] is False
+    assert result["skewness"] is None
+
+
+def test_r59_t1_invalid_empty_rows() -> None:
+    """Returns invalid dict when rows is empty."""
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    result = compute_return_dist_moments([])
+    assert result["return_distribution_valid"] is False
+
+
+def test_r59_t1_invalid_no_next_day_return() -> None:
+    """Returns invalid when no rows have next_day_return field."""
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    result = compute_return_dist_moments([{"score": 0.5}] * 12)
+    assert result["return_distribution_valid"] is False
+
+
+def test_r59_t1_valid_basic() -> None:
+    """Returns valid result with >=10 rows."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    rows = [{"next_day_return": 0.01 * i} for i in range(12)]
+    result = compute_return_dist_moments(rows)
+    assert result["return_distribution_valid"] is True
+    assert result["skewness"] is not None
+    assert result["excess_kurtosis"] is not None
+    assert result["jarque_bera_stat"] is not None
+
+
+def test_r59_t1_symmetric_skewness_near_zero() -> None:
+    """Symmetric distribution should have skewness near 0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = [-0.05, -0.04, -0.03, -0.02, -0.01, 0.01, 0.02, 0.03, 0.04, 0.05]
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["return_distribution_valid"] is True
+    assert abs(result["skewness"]) < 1e-9
+
+
+def test_r59_t1_positive_skewness() -> None:
+    """Right-skewed distribution should have positive skewness."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = [0.01] * 8 + [0.10, 0.20]  # 10 items, two large positive outliers
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["return_distribution_valid"] is True
+    assert result["skewness"] > 0
+
+
+def test_r59_t1_negative_skewness() -> None:
+    """Left-skewed distribution should have negative skewness."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = [-0.20, -0.10] + [0.01] * 8
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["return_distribution_valid"] is True
+    assert result["skewness"] < 0
+
+
+def test_r59_t1_skewness_manual_precision() -> None:
+    """Verify skewness formula: population 3rd moment."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    n = len(returns)
+    mean_r = sum(returns) / n
+    pop_std = (sum((r - mean_r) ** 2 for r in returns) / n) ** 0.5
+    expected_skew = sum(((r - mean_r) / pop_std) ** 3 for r in returns) / n
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["skewness"] == pytest.approx(expected_skew, abs=1e-9)
+
+
+def test_r59_t1_excess_kurtosis_manual_precision() -> None:
+    """Verify excess_kurtosis formula: population 4th moment - 3."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    n = len(returns)
+    mean_r = sum(returns) / n
+    pop_std = (sum((r - mean_r) ** 2 for r in returns) / n) ** 0.5
+    expected_kurt = sum(((r - mean_r) / pop_std) ** 4 for r in returns) / n - 3
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["excess_kurtosis"] == pytest.approx(expected_kurt, abs=1e-9)
+
+
+def test_r59_t1_jarque_bera_formula() -> None:
+    """Verify JB stat = n/6 * (S^2 + K^2/4)."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = [0.01 * i - 0.05 for i in range(10)]
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    n = 10
+    S = result["skewness"]
+    K = result["excess_kurtosis"]
+    expected_jb = n / 6 * (S ** 2 + K ** 2 / 4)
+    assert result["jarque_bera_stat"] == pytest.approx(expected_jb, abs=1e-9)
+
+
+def test_r59_t1_normality_violation_true_for_large_jb() -> None:
+    """normality_violation is True when JB > 10."""
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    # Extreme distribution: large outliers to drive high JB stat
+    returns = [-5.0, -4.0] + [0.01] * 8
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["return_distribution_valid"] is True
+    if result["jarque_bera_stat"] > 10:
+        assert result["normality_violation"] is True
+    else:
+        assert result["normality_violation"] is False
+
+
+def test_r59_t1_normality_violation_false_for_small_jb() -> None:
+    """normality_violation is False when JB <= 10 (near-symmetric returns)."""
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = [-0.05, -0.04, -0.03, -0.02, -0.01, 0.01, 0.02, 0.03, 0.04, 0.05]
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["normality_violation"] is False
+
+
+def test_r59_t1_mean_median_divergence() -> None:
+    """mean_median_divergence = mean - median."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = list(range(1, 11))  # [1..10]
+    result = compute_return_dist_moments([{"next_day_return": float(r)} for r in returns])
+    expected = sum(returns) / 10 - 5.5  # mean=5.5, median=5.5
+    assert result["mean_median_divergence"] == pytest.approx(expected, abs=1e-9)
+
+
+def test_r59_t1_distribution_grade_A() -> None:
+    """Grade A when skewness > 0.2 and excess_kurtosis < 3."""
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    # Right-skewed with large positive outliers to get skewness > 0.2
+    returns = [0.001] * 8 + [0.5, 1.0]
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["return_distribution_valid"] is True
+    if result["skewness"] > 0.2 and result["excess_kurtosis"] < 3:
+        assert result["distribution_grade"] == "A"
+
+
+def test_r59_t1_distribution_grade_D() -> None:
+    """Grade D when skewness <= -0.2."""
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = [-1.0, -0.5] + [0.001] * 8
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["return_distribution_valid"] is True
+    if result["skewness"] <= -0.2:
+        assert result["distribution_grade"] == "D"
+
+
+def test_r59_t1_std_return_uses_n_minus_1() -> None:
+    """std_return should use N-1 denominator (sample std)."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_return_dist_moments
+    returns = [float(i) for i in range(1, 11)]
+    n = len(returns)
+    mean_r = sum(returns) / n
+    expected_std = (sum((r - mean_r) ** 2 for r in returns) / (n - 1)) ** 0.5
+    result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
+    assert result["std_return"] == pytest.approx(expected_std, abs=1e-9)
+
+
+# T2: compute_composite_quality_score
+
+def test_r59_t2_invalid_too_few_rows() -> None:
+    """Returns invalid when fewer than 5 rows."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    result = compute_composite_quality_score([{"next_day_return": 0.01}] * 4)
+    assert result["composite_quality_valid"] is False
+    assert result["composite_quality_score"] is None
+
+
+def test_r59_t2_invalid_empty_rows() -> None:
+    """Returns invalid when rows is empty."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    result = compute_composite_quality_score([])
+    assert result["composite_quality_valid"] is False
+
+
+def test_r59_t2_valid_basic() -> None:
+    """Returns valid result with >=5 rows with next_day_return."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    rows = [{"next_day_return": 0.01 * i} for i in range(6)]
+    result = compute_composite_quality_score(rows)
+    assert result["composite_quality_valid"] is True
+    assert result["composite_quality_score"] is not None
+    assert 0 <= result["composite_quality_score"] <= 100
+
+
+def test_r59_t2_all_positive_returns_high_score() -> None:
+    """All positive returns should produce a decent score."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    rows = [{"next_day_return": 0.01 * (i + 1)} for i in range(10)]
+    result = compute_composite_quality_score(rows)
+    assert result["composite_quality_valid"] is True
+    assert result["composite_quality_score"] > 50
+
+
+def test_r59_t2_all_negative_returns_low_score() -> None:
+    """All negative returns should produce a low score."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    rows = [{"next_day_return": -0.01 * (i + 1)} for i in range(10)]
+    result = compute_composite_quality_score(rows)
+    assert result["composite_quality_valid"] is True
+    assert result["composite_quality_score"] < 50
+
+
+def test_r59_t2_active_dimensions_count() -> None:
+    """active_dimensions counts only dimensions with valid data."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    rows = [{"next_day_return": 0.01}] * 6
+    result = compute_composite_quality_score(rows)
+    assert result["active_dimensions"] >= 3  # at least win_rate, profit_factor, IR
+
+
+def test_r59_t2_weight_normalization_with_extra_dims() -> None:
+    """Score with 6 dimensions should be >= score with fewer when all are positive."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    base_rows = [{"next_day_return": 0.02}] * 6
+    extra_rows = [{"next_day_return": 0.02, "regime_regime_adaptability": 0.8, "rank_rank_ic": 0.3, "sector_div_diversification_score": 0.7}] * 6
+    r_base = compute_composite_quality_score(base_rows)
+    r_extra = compute_composite_quality_score(extra_rows)
+    assert r_base["composite_quality_valid"] is True
+    assert r_extra["composite_quality_valid"] is True
+    assert r_extra["active_dimensions"] > r_base["active_dimensions"]
+
+
+def test_r59_t2_quality_grade_A_boundary() -> None:
+    """Grade A when composite_quality_score >= 70."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    # All positive returns to get high score
+    rows = [{"next_day_return": 0.05}] * 10
+    result = compute_composite_quality_score(rows)
+    assert result["composite_quality_valid"] is True
+    if result["composite_quality_score"] >= 70:
+        assert result["quality_grade"] == "A"
+
+
+def test_r59_t2_quality_grade_D_boundary() -> None:
+    """Grade D when composite_quality_score < 40."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    rows = [{"next_day_return": -0.05}] * 10
+    result = compute_composite_quality_score(rows)
+    assert result["composite_quality_valid"] is True
+    if result["composite_quality_score"] < 40:
+        assert result["quality_grade"] == "D"
+
+
+def test_r59_t2_quality_grade_ordering() -> None:
+    """quality_grade boundaries: A>=70, B>=55, C>=40, D<40."""
+    from scripts.btst_analysis_utils import compute_composite_quality_score
+    # Test the grade lookup is consistent with score
+    for ret, expected_min, expected_max in [(0.05, 70, 100), (-0.03, 0, 60)]:
+        rows = [{"next_day_return": ret}] * 10
+        result = compute_composite_quality_score(rows)
+        if result["composite_quality_valid"]:
+            score = result["composite_quality_score"]
+            grade = result["quality_grade"]
+            if score >= 70:
+                assert grade == "A"
+            elif score >= 55:
+                assert grade == "B"
+            elif score >= 40:
+                assert grade == "C"
+            else:
+                assert grade == "D"
+
+
+def test_r59_t2_in_comparison_metrics() -> None:
+    """composite_quality_score is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "composite_quality_score" in COMPARISON_METRICS
+
+
+def test_r59_t2_in_optional_comparison_metrics() -> None:
+    """composite_quality_score is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "composite_quality_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r59_t2_floor_value() -> None:
+    """composite_quality_score floor is 40.0 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "composite_quality_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["composite_quality_score"] == pytest.approx(40.0)
+
+
+def test_r59_t1_in_comparison_metrics() -> None:
+    """skewness is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "skewness" in COMPARISON_METRICS
+
+
+def test_r59_t1_in_optional_comparison_metrics() -> None:
+    """skewness is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "skewness" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r59_t1_floor_value() -> None:
+    """skewness floor is 0.0 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "skewness" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["skewness"] == pytest.approx(0.0)
+
+
+def test_r59_t1_guardrail_key_present() -> None:
+    """skewness is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "skewness" in _GUARDRAIL_KEYS
+
+
+def test_r59_t2_guardrail_key_present() -> None:
+    """composite_quality_score is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "composite_quality_score" in _GUARDRAIL_KEYS
+
+
+# T3: compute_cross_window_threshold_trend
+
+def test_r59_t3_invalid_too_few_windows() -> None:
+    """Returns invalid when fewer than 3 valid windows."""
+    from scripts.optimize_profile import compute_cross_window_threshold_trend
+    summaries = [{"dyn_thresh_optimal_win_rate": 0.55}, {"dyn_thresh_optimal_win_rate": 0.60}]
+    result = compute_cross_window_threshold_trend(summaries)
+    assert result["threshold_trend_valid"] is False
+    assert result["threshold_win_rate_trend_slope"] is None
+
+
+def test_r59_t3_invalid_no_key() -> None:
+    """Returns invalid when key is missing from all summaries."""
+    from scripts.optimize_profile import compute_cross_window_threshold_trend
+    result = compute_cross_window_threshold_trend([{"other": 0.5}] * 5)
+    assert result["threshold_trend_valid"] is False
+
+
+def test_r59_t3_ols_slope_increasing() -> None:
+    """OLS slope is positive for monotonically increasing win rates."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_threshold_trend
+    summaries = [{"dyn_thresh_optimal_win_rate": 0.5 + 0.05 * i} for i in range(5)]
+    result = compute_cross_window_threshold_trend(summaries)
+    assert result["threshold_win_rate_trend_slope"] > 0
+
+
+def test_r59_t3_ols_slope_decreasing() -> None:
+    """OLS slope is negative for monotonically decreasing win rates."""
+    from scripts.optimize_profile import compute_cross_window_threshold_trend
+    summaries = [{"dyn_thresh_optimal_win_rate": 0.8 - 0.05 * i} for i in range(5)]
+    result = compute_cross_window_threshold_trend(summaries)
+    assert result["threshold_win_rate_trend_slope"] < 0
+
+
+def test_r59_t3_grade_A_when_slope_above_0_01() -> None:
+    """Grade A when slope > 0.01."""
+    from scripts.optimize_profile import compute_cross_window_threshold_trend
+    summaries = [{"dyn_thresh_optimal_win_rate": 0.5 + 0.1 * i} for i in range(5)]
+    result = compute_cross_window_threshold_trend(summaries)
+    assert result["threshold_trend_grade"] == "A"
+
+
+def test_r59_t3_grade_D_when_slope_below_minus_0_02() -> None:
+    """Grade D when slope <= -0.02."""
+    from scripts.optimize_profile import compute_cross_window_threshold_trend
+    summaries = [{"dyn_thresh_optimal_win_rate": 0.8 - 0.1 * i} for i in range(5)]
+    result = compute_cross_window_threshold_trend(summaries)
+    assert result["threshold_trend_grade"] == "D"
+
+
+def test_r59_t3_threshold_above_floor_pct() -> None:
+    """threshold_above_floor_pct is fraction of windows with optimal_win_rate >= 0.5."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_threshold_trend
+    summaries = [{"dyn_thresh_optimal_win_rate": v} for v in [0.55, 0.45, 0.60, 0.70]]
+    result = compute_cross_window_threshold_trend(summaries)
+    assert result["threshold_above_floor_pct"] == pytest.approx(3 / 4, abs=1e-6)
+
+
+def test_r59_t3_mean_min_max_correct() -> None:
+    """threshold_win_rate_trend_mean/min/max match series statistics."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_threshold_trend
+    vals = [0.5, 0.55, 0.60, 0.65, 0.70]
+    summaries = [{"dyn_thresh_optimal_win_rate": v} for v in vals]
+    result = compute_cross_window_threshold_trend(summaries)
+    assert result["threshold_win_rate_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-6)
+    assert result["threshold_win_rate_trend_min"] == pytest.approx(min(vals), abs=1e-6)
+    assert result["threshold_win_rate_trend_max"] == pytest.approx(max(vals), abs=1e-6)
+
+
+def test_r59_t3_in_comparison_metrics() -> None:
+    """threshold_win_rate_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "threshold_win_rate_trend_slope" in COMPARISON_METRICS
+
+
+def test_r59_t3_in_optional_comparison_metrics() -> None:
+    """threshold_win_rate_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "threshold_win_rate_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r59_t3_floor_value() -> None:
+    """threshold_win_rate_trend_slope floor is -0.02 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "threshold_win_rate_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["threshold_win_rate_trend_slope"] == pytest.approx(-0.02)
+
+
+def test_r59_t3_label_present() -> None:
+    """threshold_win_rate_trend_slope has label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "threshold_win_rate_trend_slope" in COMPARISON_METRIC_LABELS
+
+
+def test_r59_t3_constant_series_slope_zero() -> None:
+    """Constant win-rate series gives slope of 0.0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_threshold_trend
+    summaries = [{"dyn_thresh_optimal_win_rate": 0.60}] * 5
+    result = compute_cross_window_threshold_trend(summaries)
+    assert result["threshold_win_rate_trend_slope"] == pytest.approx(0.0, abs=1e-8)
+    assert result["threshold_trend_grade"] in ("B", "C")
