@@ -24340,3 +24340,419 @@ def test_r81_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
     assert "near_high_trend_slope" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["near_high_trend_slope"] == "近高位股跨窗趋势斜率"
+
+
+# =============================================================================
+# Round 82 helpers
+# =============================================================================
+
+def _make_r82_score_rows(n: int = 20, *, high_win: bool = True) -> list[dict]:
+    """Generate rows with score and actual_return for T1 tests."""
+    rows = []
+    for i in range(n):
+        score = float(i)  # scores 0..n-1; median at midpoint
+        if high_win:
+            actual_return = 0.05 if i >= n // 2 else -0.02
+        else:
+            actual_return = -0.02 if i >= n // 2 else 0.05
+        rows.append({"score": score, "actual_return": actual_return})
+    return rows
+
+
+def _make_r82_score_rows_priority(n: int = 20) -> list[dict]:
+    """Rows that have runner_composite_score, composite_score, and score — priority check."""
+    rows = []
+    for i in range(n):
+        rows.append({
+            "runner_composite_score": float(i),
+            "composite_score": float(n - i),  # deliberately inverted
+            "score": float(n + i),
+            "actual_return": 0.05 if i >= n // 2 else -0.02,
+        })
+    return rows
+
+
+def _make_r82_vpd_rows(n: int = 40, *, quadrant_wins: dict | None = None) -> list[dict]:
+    """
+    Generate rows with volume_expansion_quality, close_strength, actual_return.
+    quadrant_wins: dict with keys 'fc', 'vd', 'po', 'll' controlling win rates per quadrant.
+    Rows are split evenly across 4 quadrants (n must be divisible by 4).
+    """
+    if quadrant_wins is None:
+        quadrant_wins = {"fc": 0.8, "vd": 0.4, "po": 0.6, "ll": 0.3}
+    rows = []
+    per_q = n // 4
+    # vol >= 0.5 and cs >= 0.5 → full_confirm
+    for i in range(per_q):
+        rows.append({"volume_expansion_quality": 0.6 + i * 0.01, "close_strength": 0.6, "actual_return": 0.05 if i < per_q * quadrant_wins["fc"] else -0.02})
+    # vol >= 0.5 and cs < 0.5 → vol_diverge
+    for i in range(per_q):
+        rows.append({"volume_expansion_quality": 0.6 + i * 0.01, "close_strength": 0.4, "actual_return": 0.05 if i < per_q * quadrant_wins["vd"] else -0.02})
+    # vol < 0.5 and cs >= 0.5 → price_only
+    for i in range(per_q):
+        rows.append({"volume_expansion_quality": 0.4, "close_strength": 0.6 + i * 0.01, "actual_return": 0.05 if i < per_q * quadrant_wins["po"] else -0.02})
+    # vol < 0.5 and cs < 0.5 → low-low (not a named quadrant metric)
+    for i in range(per_q):
+        rows.append({"volume_expansion_quality": 0.4, "close_strength": 0.4, "actual_return": 0.05 if i < per_q * quadrant_wins["ll"] else -0.02})
+    return rows
+
+
+def _make_r82_ev_windows(slopes: list[float]) -> list[dict]:
+    """Build window summaries from a list of ev_ev_spread values."""
+    return [{"ev_ev_spread": v} for v in slopes]
+
+
+# =============================================================================
+# Round 82, Task 1 (Alpha): compute_score_prediction_accuracy
+# =============================================================================
+
+def test_r82_t1_basic_valid() -> None:
+    """20 rows with clear high-score win pattern → valid=True."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = _make_r82_score_rows(20, high_win=True)
+    result = compute_score_prediction_accuracy(rows)
+    assert result["valid"] is True
+
+
+def test_r82_t1_precision_value() -> None:
+    """Precision = TP/(TP+FP) verified manually."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    # 10 rows: scores 0-9, median=(4+5)/2=4.5, high-score = score>4.5 → scores 5,6,7,8,9
+    # high_win=True: actual_return>0 for score>=5 (i>=10//2=5), so scores 5..9 win → TP=5, FP=0, FN=0
+    rows = _make_r82_score_rows(10, high_win=True)
+    result = compute_score_prediction_accuracy(rows)
+    assert result["valid"] is True
+    assert result["high_score_precision"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_r82_t1_recall_value() -> None:
+    """Recall = TP/(TP+FN). With all high-score rows winning, recall=1."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = _make_r82_score_rows(10, high_win=True)
+    result = compute_score_prediction_accuracy(rows)
+    assert result["valid"] is True
+    assert result["high_score_recall"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_r82_t1_f1_formula() -> None:
+    """F1 = 2*P*R/(P+R) verified."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = _make_r82_score_rows(20, high_win=True)
+    result = compute_score_prediction_accuracy(rows)
+    p = result["high_score_precision"]
+    r = result["high_score_recall"]
+    expected_f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+    assert result["f1_score"] == pytest.approx(expected_f1, abs=1e-5)
+
+
+def test_r82_t1_too_few_rows() -> None:
+    """Fewer than 10 valid rows → valid=False, all metrics None."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = _make_r82_score_rows(9, high_win=True)
+    result = compute_score_prediction_accuracy(rows)
+    assert result["valid"] is False
+    assert result["high_score_precision"] is None
+    assert result["high_score_recall"] is None
+    assert result["f1_score"] is None
+    assert result["score_median"] is None
+
+
+def test_r82_t1_all_positive_returns() -> None:
+    """If all actual_return > 0 and 20 rows, half are above median (TP=10, FN=10) → recall=0.5."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = [{"score": float(i), "actual_return": 0.05} for i in range(20)]
+    result = compute_score_prediction_accuracy(rows)
+    assert result["valid"] is True
+    # TP=10 (score>9.5), FN=10 (score<=9.5), recall = 10/(10+10) = 0.5
+    assert result["high_score_recall"] == pytest.approx(0.5, abs=1e-5)
+
+
+def test_r82_t1_score_priority_runner() -> None:
+    """runner_composite_score is preferred over composite_score and score."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = _make_r82_score_rows_priority(20)
+    # runner_composite_score = 0..19 (ascending) → same as high_win=True expectation
+    result_priority = compute_score_prediction_accuracy(rows)
+    rows_plain = _make_r82_score_rows(20, high_win=True)
+    result_plain = compute_score_prediction_accuracy(rows_plain)
+    # Both should give identical precision since runner_composite_score maps identically to score
+    assert result_priority["high_score_precision"] == pytest.approx(result_plain["high_score_precision"], abs=1e-4)
+
+
+def test_r82_t1_score_priority_composite_over_score() -> None:
+    """composite_score is used when runner_composite_score is absent."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = []
+    for i in range(20):
+        rows.append({
+            "composite_score": float(i),
+            "score": float(20 - i),  # inverted — should be ignored
+            "actual_return": 0.05 if i >= 10 else -0.02,
+        })
+    result = compute_score_prediction_accuracy(rows)
+    assert result["valid"] is True
+    # With composite_score ascending, high-score correctly predicts positive return
+    assert result["high_score_precision"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_r82_t1_score_median_even() -> None:
+    """Even count: median is average of two middle values."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = [{"score": float(i), "actual_return": 0.05} for i in range(20)]
+    result = compute_score_prediction_accuracy(rows)
+    # sorted scores 0..19, median = (9+10)/2 = 9.5
+    assert result["score_median"] == pytest.approx(9.5, abs=1e-6)
+
+
+def test_r82_t1_score_median_odd() -> None:
+    """Odd count: median is the middle element."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = [{"score": float(i), "actual_return": 0.05} for i in range(11)]
+    result = compute_score_prediction_accuracy(rows)
+    # sorted scores 0..10, median = 5
+    assert result["score_median"] == pytest.approx(5.0, abs=1e-6)
+
+
+def test_r82_t1_metric_in_comparison_metrics() -> None:
+    """clf_high_score_precision and clf_f1_score must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "clf_high_score_precision" in COMPARISON_METRICS
+    assert "clf_f1_score" in COMPARISON_METRICS
+
+
+def test_r82_t1_metric_in_optional_metrics() -> None:
+    """clf_high_score_precision and clf_f1_score must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "clf_high_score_precision" in OPTIONAL_COMPARISON_METRICS
+    assert "clf_f1_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r82_t1_floor_registered() -> None:
+    """clf_high_score_precision floor must be 0.5."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "clf_high_score_precision" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["clf_high_score_precision"] == pytest.approx(0.5)
+
+
+def test_r82_t1_missing_score_field() -> None:
+    """Rows without any score field are skipped; too few valid → valid=False."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = [{"actual_return": 0.05} for _ in range(20)]
+    result = compute_score_prediction_accuracy(rows)
+    assert result["valid"] is False
+
+
+def test_r82_t1_missing_return_field() -> None:
+    """Rows without actual_return are skipped."""
+    from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+    rows = [{"score": float(i)} for i in range(20)]
+    result = compute_score_prediction_accuracy(rows)
+    assert result["valid"] is False
+
+
+# =============================================================================
+# Round 82, Task 2 (Beta): compute_volume_price_divergence_filter
+# =============================================================================
+
+def test_r82_t2_basic_valid() -> None:
+    """40 rows with 4-quadrant data → valid=True."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+    rows = _make_r82_vpd_rows(40)
+    result = compute_volume_price_divergence_filter(rows)
+    assert result["valid"] is True
+
+
+def test_r82_t2_divergence_penalty_formula() -> None:
+    """divergence_penalty = full_confirm_win_rate - vol_diverge_win_rate."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+    rows = _make_r82_vpd_rows(40, quadrant_wins={"fc": 0.8, "vd": 0.4, "po": 0.6, "ll": 0.3})
+    result = compute_volume_price_divergence_filter(rows)
+    assert result["valid"] is True
+    if result["full_confirm_win_rate"] is not None and result["vol_diverge_win_rate"] is not None:
+        expected_penalty = result["full_confirm_win_rate"] - result["vol_diverge_win_rate"]
+        assert result["divergence_penalty"] == pytest.approx(expected_penalty, abs=1e-5)
+
+
+def test_r82_t2_too_few_rows() -> None:
+    """Fewer than 20 valid rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+    rows = _make_r82_vpd_rows(16)
+    result = compute_volume_price_divergence_filter(rows)
+    assert result["valid"] is False
+    assert result["full_confirm_win_rate"] is None
+    assert result["divergence_penalty"] is None
+
+
+def test_r82_t2_missing_vol_field() -> None:
+    """Missing volume_expansion_quality → valid=False."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+    rows = [{"close_strength": 0.5, "actual_return": 0.05} for _ in range(40)]
+    result = compute_volume_price_divergence_filter(rows)
+    assert result["valid"] is False
+
+
+def test_r82_t2_missing_cs_field() -> None:
+    """Missing close_strength → valid=False."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+    rows = [{"volume_expansion_quality": 0.5, "actual_return": 0.05} for _ in range(40)]
+    result = compute_volume_price_divergence_filter(rows)
+    assert result["valid"] is False
+
+
+def test_r82_t2_quadrant_with_fewer_than_3_rows_gives_none() -> None:
+    """If a quadrant has < 3 rows, its win_rate is None but result is still valid=True."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+    # Build rows where vol_diverge quadrant is tiny (< 3 rows)
+    rows = []
+    # 10 full_confirm rows (vol>=0.5, cs>=0.5)
+    for i in range(10):
+        rows.append({"volume_expansion_quality": 0.9, "close_strength": 0.9, "actual_return": 0.05 if i < 7 else -0.02})
+    # 2 vol_diverge rows (vol>=0.5, cs<0.5) → < 3 → win_rate=None
+    for i in range(2):
+        rows.append({"volume_expansion_quality": 0.9, "close_strength": 0.1, "actual_return": 0.05})
+    # 8 price_only rows
+    for i in range(8):
+        rows.append({"volume_expansion_quality": 0.1, "close_strength": 0.9, "actual_return": 0.05 if i < 5 else -0.02})
+    result = compute_volume_price_divergence_filter(rows)
+    assert result["valid"] is True
+    assert result["vol_diverge_win_rate"] is None
+    # divergence_penalty should be None since vol_diverge_win_rate is None
+    assert result["divergence_penalty"] is None
+    # full_confirm should still have a value
+    assert result["full_confirm_win_rate"] is not None
+
+
+def test_r82_t2_metric_in_comparison_metrics() -> None:
+    """vpd_full_confirm_win_rate and vpd_divergence_penalty must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "vpd_full_confirm_win_rate" in COMPARISON_METRICS
+    assert "vpd_divergence_penalty" in COMPARISON_METRICS
+
+
+def test_r82_t2_metric_in_optional_metrics() -> None:
+    """vpd metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "vpd_full_confirm_win_rate" in OPTIONAL_COMPARISON_METRICS
+    assert "vpd_divergence_penalty" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r82_t2_floor_registered() -> None:
+    """vpd_divergence_penalty floor must be 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "vpd_divergence_penalty" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["vpd_divergence_penalty"] == pytest.approx(0.0)
+
+
+def test_r82_t2_label_registered() -> None:
+    """vpd metrics must have labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "vpd_full_confirm_win_rate" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["vpd_full_confirm_win_rate"] == "量价双高胜率"
+    assert "vpd_divergence_penalty" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["vpd_divergence_penalty"] == "量价背离惩罚"
+
+
+# =============================================================================
+# Round 82, Task 3 (Gamma): compute_cross_window_ev_spread_trend
+# =============================================================================
+
+def test_r82_t3_rising_trend_slope_positive() -> None:
+    """Rising ev_ev_spread values → positive slope."""
+    from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+    windows = _make_r82_ev_windows([0.1, 0.2, 0.3, 0.4, 0.5])
+    result = compute_cross_window_ev_spread_trend(windows)
+    assert result["valid"] is True
+    assert result["ev_spread_trend_slope"] > 0
+
+
+def test_r82_t3_falling_trend_grade_d() -> None:
+    """Sharply falling trend → grade D."""
+    from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+    windows = _make_r82_ev_windows([0.5, 0.3, 0.1, -0.1, -0.3])
+    result = compute_cross_window_ev_spread_trend(windows)
+    assert result["valid"] is True
+    assert result["ev_spread_trend_grade"] in ("C", "D")
+
+
+def test_r82_t3_too_few_windows() -> None:
+    """Fewer than 3 windows → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+    windows = _make_r82_ev_windows([0.1, 0.2])
+    result = compute_cross_window_ev_spread_trend(windows)
+    assert result["valid"] is False
+    assert result["ev_spread_trend_slope"] is None
+    assert result["ev_spread_window_count"] is None
+
+
+def test_r82_t3_ols_slope_manual() -> None:
+    """Verify OLS slope manually for 3 points: y=[1,2,3], x=[0,1,2]."""
+    from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+    windows = _make_r82_ev_windows([1.0, 2.0, 3.0])
+    result = compute_cross_window_ev_spread_trend(windows)
+    assert result["valid"] is True
+    # slope = (n*sum_xy - sum_x*sum_y) / (n*sum_xx - sum_x^2)
+    # n=3, x=[0,1,2], y=[1,2,3]
+    # sum_x=3, sum_y=6, sum_xy=0+2+6=8, sum_xx=0+1+4=5
+    # slope = (3*8 - 3*6) / (3*5 - 9) = (24-18)/(15-9) = 6/6 = 1.0
+    assert result["ev_spread_trend_slope"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_r82_t3_window_count_correct() -> None:
+    """ev_spread_window_count equals the number of windows with ev_ev_spread."""
+    from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+    windows = _make_r82_ev_windows([0.1, 0.2, 0.3, 0.4])
+    result = compute_cross_window_ev_spread_trend(windows)
+    assert result["ev_spread_window_count"] == 4
+
+
+def test_r82_t3_missing_ev_spread_skipped() -> None:
+    """Windows without ev_ev_spread are skipped; count only valid windows."""
+    from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+    windows = [{"ev_ev_spread": 0.1}, {"other_key": 0.5}, {"ev_ev_spread": 0.2}, {"ev_ev_spread": 0.3}]
+    result = compute_cross_window_ev_spread_trend(windows)
+    assert result["valid"] is True
+    assert result["ev_spread_window_count"] == 3
+
+
+def test_r82_t3_grade_a_strong_rising() -> None:
+    """Slope > 0.005 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+    # y=[0, 0.01, 0.02, 0.03, 0.04] → slope = 0.01
+    windows = _make_r82_ev_windows([0.0, 0.01, 0.02, 0.03, 0.04])
+    result = compute_cross_window_ev_spread_trend(windows)
+    assert result["ev_spread_trend_grade"] == "A"
+
+
+def test_r82_t3_grade_b_mild_rising() -> None:
+    """0 < slope <= 0.005 → grade B."""
+    from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+    # y=[0, 0.001, 0.002, 0.003, 0.004] → slope = 0.001
+    windows = _make_r82_ev_windows([0.0, 0.001, 0.002, 0.003, 0.004])
+    result = compute_cross_window_ev_spread_trend(windows)
+    assert result["ev_spread_trend_grade"] == "B"
+
+
+def test_r82_t3_metric_in_comparison_metrics() -> None:
+    """ev_spread_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ev_spread_trend_slope" in COMPARISON_METRICS
+
+
+def test_r82_t3_metric_in_optional_metrics() -> None:
+    """ev_spread_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "ev_spread_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r82_t3_floor_registered() -> None:
+    """ev_spread_trend_slope floor must be -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "ev_spread_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["ev_spread_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r82_t3_label_registered() -> None:
+    """ev_spread_trend_slope must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "ev_spread_trend_slope" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["ev_spread_trend_slope"] == "EV差跨窗趋势斜率"

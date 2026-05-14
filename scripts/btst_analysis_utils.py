@@ -4701,6 +4701,22 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         _surface_result["hi_inflow_high_inflow_avg_return"] = hi_inflow_result["high_inflow_avg_return"]
         _surface_result["hi_inflow_baseline_avg_return"] = hi_inflow_result["baseline_avg_return"]
 
+    # Round 82, Task 1 (Alpha): Score prediction accuracy (Precision/Recall/F1).
+    clf_result: dict = compute_score_prediction_accuracy(rows)
+    if clf_result["valid"]:
+        _surface_result["clf_high_score_precision"] = clf_result["high_score_precision"]
+        _surface_result["clf_high_score_recall"] = clf_result["high_score_recall"]
+        _surface_result["clf_f1_score"] = clf_result["f1_score"]
+        _surface_result["clf_score_median"] = clf_result["score_median"]
+
+    # Round 82, Task 2 (Beta): Volume-price divergence filter.
+    vpd_result: dict = compute_volume_price_divergence_filter(rows)
+    if vpd_result["valid"]:
+        _surface_result["vpd_full_confirm_win_rate"] = vpd_result["full_confirm_win_rate"]
+        _surface_result["vpd_vol_diverge_win_rate"] = vpd_result["vol_diverge_win_rate"]
+        _surface_result["vpd_price_only_win_rate"] = vpd_result["price_only_win_rate"]
+        _surface_result["vpd_divergence_penalty"] = vpd_result["divergence_penalty"]
+
     return _surface_result
 
 
@@ -14310,3 +14326,67 @@ def compute_high_inflow_premium(rows: list[dict]) -> dict:
     high_inflow_avg_return: float = round(sum(r["actual_return"] for r in high_inflow_rows) / len(high_inflow_rows), 6)
     high_inflow_edge: float = round(high_inflow_win_rate - baseline_win_rate, 6)
     return {"valid": True, "high_inflow_win_rate": high_inflow_win_rate, "high_inflow_edge": high_inflow_edge, "high_inflow_avg_return": high_inflow_avg_return, "baseline_avg_return": round(baseline_avg_return, 6)}
+
+
+# ---------------------------------------------------------------------------
+# Round 82, Task 1 (Alpha): Score prediction accuracy (Precision/Recall/F1)
+# ---------------------------------------------------------------------------
+def compute_score_prediction_accuracy(rows: list[dict]) -> dict:
+    """打分系统分类精准度：Precision / Recall / F1。"""
+    EMPTY: dict = {"valid": False, "high_score_precision": None, "high_score_recall": None, "f1_score": None, "score_median": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        ret_val = r.get("actual_return")
+        score_val = r.get("runner_composite_score") if r.get("runner_composite_score") is not None else (r.get("composite_score") if r.get("composite_score") is not None else r.get("score"))
+        if ret_val is None or score_val is None:
+            continue
+        try:
+            valid_rows.append({"actual_return": float(ret_val), "score": float(score_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 10:
+        return EMPTY
+    sorted_scores: list[float] = sorted(r["score"] for r in valid_rows)
+    n: int = len(sorted_scores)
+    score_median: float = (sorted_scores[n // 2 - 1] + sorted_scores[n // 2]) / 2.0 if n % 2 == 0 else sorted_scores[n // 2]
+    tp: int = sum(1 for r in valid_rows if r["score"] > score_median and r["actual_return"] > 0)
+    fp: int = sum(1 for r in valid_rows if r["score"] > score_median and r["actual_return"] <= 0)
+    fn: int = sum(1 for r in valid_rows if r["score"] <= score_median and r["actual_return"] > 0)
+    precision: float = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall: float = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1: float = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    return {"valid": True, "high_score_precision": round(precision, 6), "high_score_recall": round(recall, 6), "f1_score": round(f1, 6), "score_median": round(score_median, 8)}
+
+
+# ---------------------------------------------------------------------------
+# Round 82, Task 2 (Beta): Volume-price divergence filter
+# ---------------------------------------------------------------------------
+def compute_volume_price_divergence_filter(rows: list[dict]) -> dict:
+    """量价背离过滤：量高价低 vs 量价双高的胜率差，量化背离风险。"""
+    EMPTY: dict = {"valid": False, "full_confirm_win_rate": None, "vol_diverge_win_rate": None, "price_only_win_rate": None, "divergence_penalty": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        ret_val = r.get("actual_return")
+        vol_val = r.get("volume_expansion_quality")
+        cs_val = r.get("close_strength")
+        if ret_val is None or vol_val is None or cs_val is None:
+            continue
+        try:
+            valid_rows.append({"actual_return": float(ret_val), "volume_expansion_quality": float(vol_val), "close_strength": float(cs_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 20:
+        return EMPTY
+    sorted_vols: list[float] = sorted(r["volume_expansion_quality"] for r in valid_rows)
+    nv: int = len(sorted_vols)
+    vol_median: float = (sorted_vols[nv // 2 - 1] + sorted_vols[nv // 2]) / 2.0 if nv % 2 == 0 else sorted_vols[nv // 2]
+    sorted_cs: list[float] = sorted(r["close_strength"] for r in valid_rows)
+    cs_median: float = (sorted_cs[nv // 2 - 1] + sorted_cs[nv // 2]) / 2.0 if nv % 2 == 0 else sorted_cs[nv // 2]
+    full_confirm: list[dict] = [r for r in valid_rows if r["volume_expansion_quality"] >= vol_median and r["close_strength"] >= cs_median]
+    vol_diverge: list[dict] = [r for r in valid_rows if r["volume_expansion_quality"] >= vol_median and r["close_strength"] < cs_median]
+    price_only: list[dict] = [r for r in valid_rows if r["volume_expansion_quality"] < vol_median and r["close_strength"] >= cs_median]
+    fc_win_rate: "float | None" = round(sum(1 for r in full_confirm if r["actual_return"] > 0) / len(full_confirm), 6) if len(full_confirm) >= 3 else None
+    vd_win_rate: "float | None" = round(sum(1 for r in vol_diverge if r["actual_return"] > 0) / len(vol_diverge), 6) if len(vol_diverge) >= 3 else None
+    po_win_rate: "float | None" = round(sum(1 for r in price_only if r["actual_return"] > 0) / len(price_only), 6) if len(price_only) >= 3 else None
+    divergence_penalty: "float | None" = round(fc_win_rate - vd_win_rate, 6) if (fc_win_rate is not None and vd_win_rate is not None) else None
+    return {"valid": True, "full_confirm_win_rate": fc_win_rate, "vol_diverge_win_rate": vd_win_rate, "price_only_win_rate": po_win_rate, "divergence_penalty": divergence_penalty}

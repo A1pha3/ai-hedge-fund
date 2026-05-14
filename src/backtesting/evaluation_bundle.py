@@ -674,6 +674,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 81, Gamma): near-high stock trend slope floor.
     # near_high_trend_slope < -0.01 means near-high stock premium is deteriorating across windows.
     "near_high_trend_slope": -0.01,
+    # Task 1 (Round 82, Alpha): score prediction accuracy precision floor.
+    # clf_high_score_precision < 0.5 means high-score stocks win less than random baseline.
+    "clf_high_score_precision": 0.5,
+    # Task 2 (Round 82, Beta): volume-price divergence penalty floor.
+    # vpd_divergence_penalty < 0.0 means divergence pattern outperforms confirmation — model is inverted.
+    "vpd_divergence_penalty": 0.0,
+    # Task 3 (Round 82, Gamma): EV spread trend slope floor.
+    # ev_spread_trend_slope < -0.01 means the scoring EV differential is deteriorating across windows.
+    "ev_spread_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------
