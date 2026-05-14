@@ -418,6 +418,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "resilience_score",
     # Task 3 (Round 61, Gamma): cross-window signal consistency OLS trend slope.
     "consistency_trend_slope",
+    # Task 1 (Round 62, Alpha): low-liquidity candidate fraction — fraction of rows with turnover < 2%.
+    "low_liquidity_pct",
+    # Task 2 (Round 62, Beta): cost-adjusted profit factor after 0.3% bilateral transaction cost.
+    "cost_adjusted_profit_factor",
+    # Task 3 (Round 62, Gamma): cross-window extreme-market resilience OLS trend slope.
+    "resilience_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -724,6 +730,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "resilience_score": "极端行情韧性评分",
     # Task 3 (Round 61, Gamma): signal consistency cross-window trend slope
     "consistency_trend_slope": "信号一致性跨窗趋势",
+    # Task 1 (Round 62, Alpha): low-liquidity candidate fraction
+    "low_liquidity_pct": "低流动性标的占比",
+    # Task 2 (Round 62, Beta): cost-adjusted profit factor
+    "cost_adjusted_profit_factor": "成本调整后盈利因子",
+    # Task 3 (Round 62, Gamma): cross-window extreme resilience trend slope
+    "resilience_trend_slope": "极端韧性跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -792,6 +804,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "drawdown_trend_slope",
     # Task 1 (Round 61, Alpha): concentration risk — higher = more P&L concentrated in few trades = lower-is-better.
     "concentration_risk",
+    # Task 1 (Round 62, Alpha): low-liquidity fraction — higher = more low-turnover candidates = lower-is-better.
+    "low_liquidity_pct",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -1090,6 +1104,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "resilience_score",
     # Task 3 (Round 61, Gamma): signal consistency trend slope — optional; pre-Round-61 outputs omit it.
     "consistency_trend_slope",
+    # Task 1 (Round 62, Alpha): low-liquidity fraction — optional; pre-Round-62 surfaces omit it.
+    "low_liquidity_pct",
+    # Task 2 (Round 62, Beta): cost-adjusted profit factor — optional; pre-Round-62 surfaces omit it.
+    "cost_adjusted_profit_factor",
+    # Task 3 (Round 62, Gamma): cross-window resilience trend slope — optional; pre-Round-62 outputs omit it.
+    "resilience_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3251,6 +3271,40 @@ def compute_cross_window_consistency_trend(all_windows_summaries: list[dict]) ->
     return {"consistency_trend_valid": True, "consistency_trend_slope": slope, "consistency_trend_mean": round(mean_y, 6), "consistency_trend_min": round(min(values), 6), "consistency_trend_max": round(max(values), 6), "consistency_positive_windows_pct": positive_pct, "consistency_trend_grade": grade}
 
 
+def compute_cross_window_resilience_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪极端行情韧性（resilience_score）趋势"""
+    invalid = {"resilience_trend_valid": False, "resilience_trend_slope": None, "resilience_trend_mean": None, "resilience_trend_min": None, "resilience_trend_max": None, "resilience_above_floor_pct": None, "resilience_trend_grade": None}
+    if not all_windows_summaries:
+        return invalid
+    values: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("extreme_resilience_score")
+        if v is not None:
+            try:
+                values.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(values) < 3:
+        return invalid
+    n = len(values)
+    xs = list(range(n))
+    mean_x = sum(xs) / n
+    mean_y = sum(values) / n
+    ss_xx = sum((x - mean_x) ** 2 for x in xs)
+    ss_xy = sum((xs[i] - mean_x) * (values[i] - mean_y) for i in range(n))
+    slope = round(ss_xy / ss_xx, 8) if ss_xx > 0 else 0.0
+    above_floor_pct = round(sum(1 for v in values if v >= 0.3) / n, 6)
+    if slope > 0.01:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.02:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"resilience_trend_valid": True, "resilience_trend_slope": slope, "resilience_trend_mean": round(mean_y, 6), "resilience_trend_min": round(min(values), 6), "resilience_trend_max": round(max(values), 6), "resilience_above_floor_pct": above_floor_pct, "resilience_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -3939,12 +3993,20 @@ def _build_replay_evaluator(
         _cqt: dict[str, Any] = compute_cross_window_quality_trend(all_primary_surfaces)
         # Task 3 (Round 61, Gamma): cross-window signal consistency trend.
         _ccst: dict[str, Any] = compute_cross_window_consistency_trend(all_primary_surfaces)
+        # Task 3 (Round 62, Gamma): cross-window extreme market resilience trend.
+        _crt: dict[str, Any] = compute_cross_window_resilience_trend(all_primary_surfaces)
         # Task 1 (Round 61, Alpha): average overfit_concentration_risk across replay windows.
         _ocr_vals = [float(s["overfit_concentration_risk"]) for s in all_primary_surfaces if s.get("overfit_concentration_risk") is not None]
         avg_concentration_risk: "float | None" = round(sum(_ocr_vals) / len(_ocr_vals), 6) if _ocr_vals else None
         # Task 2 (Round 61, Beta): average extreme_resilience_score across replay windows.
         _ers_vals = [float(s["extreme_resilience_score"]) for s in all_primary_surfaces if s.get("extreme_resilience_score") is not None]
         avg_resilience_score: "float | None" = round(sum(_ers_vals) / len(_ers_vals), 6) if _ers_vals else None
+        # Task 1 (Round 62, Alpha): average liq_low_liquidity_pct across replay windows.
+        _llp_vals = [float(s["liq_low_liquidity_pct"]) for s in all_primary_surfaces if s.get("liq_low_liquidity_pct") is not None]
+        avg_low_liquidity_pct: "float | None" = round(sum(_llp_vals) / len(_llp_vals), 8) if _llp_vals else None
+        # Task 2 (Round 62, Beta): average cost_cost_adjusted_profit_factor across replay windows.
+        _capf_vals = [float(s["cost_cost_adjusted_profit_factor"]) for s in all_primary_surfaces if s.get("cost_cost_adjusted_profit_factor") is not None]
+        avg_cost_adjusted_profit_factor: "float | None" = round(sum(_capf_vals) / len(_capf_vals), 8) if _capf_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4318,6 +4380,18 @@ def _build_replay_evaluator(
             "consistency_positive_windows_pct": _ccst.get("consistency_positive_windows_pct"),
             "consistency_trend_grade": _ccst.get("consistency_trend_grade"),
             "consistency_trend_valid": _ccst.get("consistency_trend_valid"),
+            # Task 1 (Round 62, Alpha): low-liquidity fraction averaged across windows.
+            "low_liquidity_pct": avg_low_liquidity_pct,
+            # Task 2 (Round 62, Beta): cost-adjusted profit factor averaged across windows.
+            "cost_adjusted_profit_factor": avg_cost_adjusted_profit_factor,
+            # Task 3 (Round 62, Gamma): cross-window extreme market resilience trend.
+            "resilience_trend_slope": _crt.get("resilience_trend_slope"),
+            "resilience_trend_mean": _crt.get("resilience_trend_mean"),
+            "resilience_trend_min": _crt.get("resilience_trend_min"),
+            "resilience_trend_max": _crt.get("resilience_trend_max"),
+            "resilience_above_floor_pct": _crt.get("resilience_above_floor_pct"),
+            "resilience_trend_grade": _crt.get("resilience_trend_grade"),
+            "resilience_trend_valid": _crt.get("resilience_trend_valid"),
         }
 
     return evaluator

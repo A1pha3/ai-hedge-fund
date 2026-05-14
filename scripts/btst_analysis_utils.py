@@ -4475,6 +4475,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _emr.items():
         _surface_result[f"extreme_{_k}"] = _v
 
+    # Round 62, Task 1 (Alpha): Liquidity risk analysis.
+    _liq: dict[str, Any] = compute_liquidity_risk_analysis(rows)
+    for _k, _v in _liq.items():
+        _surface_result[f"liq_{_k}"] = _v
+
+    # Round 62, Task 2 (Beta): Transaction cost impact.
+    _tci: dict[str, Any] = compute_transaction_cost_impact(rows)
+    for _k, _v in _tci.items():
+        _surface_result[f"cost_{_k}"] = _v
+
     return _surface_result
 
 
@@ -11628,3 +11638,71 @@ def compute_extreme_market_resilience(rows: list[dict]) -> dict:
     else:
         extreme_divergence = None
     return {"extreme_market_valid": True, "extreme_up_threshold": round(p90, 6), "extreme_down_threshold": round(p10, 6), "extreme_up_win_rate": extreme_up_win_rate, "extreme_down_win_rate": extreme_down_win_rate, "normal_win_rate": normal_win_rate, "resilience_score": resilience_score, "extreme_divergence": extreme_divergence}
+
+
+# ---------------------------------------------------------------------------
+# Round 62, Task 1 (Alpha): Liquidity risk analysis
+# ---------------------------------------------------------------------------
+
+def compute_liquidity_risk_analysis(rows: list[dict]) -> dict:
+    """量化候选标的的流动性风险（换手率不足导致滑点放大、成交困难）"""
+    invalid = {"liquidity_risk_valid": False, "mean_turnover": None, "median_turnover": None, "low_liquidity_pct": None, "high_liquidity_pct": None, "liquidity_concentration": None, "turnover_cv": None, "liquidity_grade": None}
+    if not rows or len(rows) < 5:
+        return invalid
+    if not any("float_turnover_rate" in r for r in rows):
+        return invalid
+    valid_rows = [r for r in rows if r.get("float_turnover_rate") is not None and r.get("float_turnover_rate") != 0]
+    if len(valid_rows) < 5:
+        return invalid
+    turnovers = [float(r["float_turnover_rate"]) for r in valid_rows]
+    n = len(turnovers)
+    mean_turnover = round(sum(turnovers) / n, 8)
+    sorted_t = sorted(turnovers)
+    mid = n // 2
+    median_turnover = round((sorted_t[mid - 1] + sorted_t[mid]) / 2, 8) if n % 2 == 0 else round(sorted_t[mid], 8)
+    low_liquidity_pct = round(sum(1 for t in turnovers if t < 0.02) / n, 8)
+    high_liquidity_pct = round(sum(1 for t in turnovers if t > 0.10) / n, 8)
+    liquidity_concentration = round(low_liquidity_pct / (high_liquidity_pct + 0.001), 8)
+    variance = sum((t - mean_turnover) ** 2 for t in turnovers) / (n - 1) if n > 1 else 0.0
+    std_turnover = variance ** 0.5
+    turnover_cv = round(std_turnover / mean_turnover, 8) if mean_turnover != 0 else None
+    if low_liquidity_pct < 0.1 and high_liquidity_pct > 0.3:
+        grade = "A"
+    elif low_liquidity_pct < 0.2:
+        grade = "B"
+    elif low_liquidity_pct < 0.4:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"liquidity_risk_valid": True, "mean_turnover": mean_turnover, "median_turnover": median_turnover, "low_liquidity_pct": low_liquidity_pct, "high_liquidity_pct": high_liquidity_pct, "liquidity_concentration": liquidity_concentration, "turnover_cv": turnover_cv, "liquidity_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 62, Task 2 (Beta): Transaction cost impact
+# ---------------------------------------------------------------------------
+
+def compute_transaction_cost_impact(rows: list[dict]) -> dict:
+    """估算交易成本对净收益的影响（A股双边交易成本约0.3%）"""
+    invalid = {"transaction_cost_valid": False, "gross_win_rate": None, "net_mean_return": None, "net_win_rate": None, "cost_drag": None, "cost_adjusted_profit_factor": None, "break_even_gross_return": None, "cost_efficiency_ratio": None}
+    if not rows or len(rows) < 5:
+        return invalid
+    rets = [float(r["next_day_return"]) for r in rows if r.get("next_day_return") is not None]
+    if len(rets) < 5:
+        return invalid
+    cost_rate = 0.003
+    n = len(rets)
+    gross_win_rate = round(sum(1 for r in rets if r > 0) / n, 8)
+    net_rets = [r - cost_rate for r in rets]
+    net_mean_return = round(sum(net_rets) / n, 8)
+    net_win_rate = round(sum(1 for r in net_rets if r > 0) / n, 8)
+    cost_drag = round(gross_win_rate - net_win_rate, 8)
+    net_wins_sum = sum(r for r in net_rets if r > 0)
+    net_losses_sum = sum(r for r in net_rets if r < 0)
+    if net_losses_sum == 0:
+        cost_adjusted_profit_factor = 5.0
+    else:
+        raw_pf = net_wins_sum / abs(net_losses_sum)
+        cost_adjusted_profit_factor = round(min(raw_pf, 5.0), 8)
+    break_even_gross_return = cost_rate
+    cost_efficiency_ratio = round(net_mean_return / cost_rate, 8) if cost_rate != 0 else None
+    return {"transaction_cost_valid": True, "gross_win_rate": gross_win_rate, "net_mean_return": net_mean_return, "net_win_rate": net_win_rate, "cost_drag": cost_drag, "cost_adjusted_profit_factor": cost_adjusted_profit_factor, "break_even_gross_return": break_even_gross_return, "cost_efficiency_ratio": cost_efficiency_ratio}

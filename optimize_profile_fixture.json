@@ -198,7 +198,10 @@
       "quality_score_trend_slope_delta": null,
       "concentration_risk_delta": null,
       "resilience_score_delta": null,
-      "consistency_trend_slope_delta": null
+      "consistency_trend_slope_delta": null,
+      "low_liquidity_pct_delta": null,
+      "cost_adjusted_profit_factor_delta": null,
+      "resilience_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -387,7 +390,10 @@
       "quality_score_trend_slope_delta": null,
       "concentration_risk_delta": null,
       "resilience_score_delta": null,
-      "consistency_trend_slope_delta": null
+      "consistency_trend_slope_delta": null,
+      "low_liquidity_pct_delta": null,
+      "cost_adjusted_profit_factor_delta": null,
+      "resilience_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

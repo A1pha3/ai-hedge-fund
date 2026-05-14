@@ -100,6 +100,12 @@ _GUARDRAIL_KEYS = (
     # Task 2 (Round 61, Beta): extreme market resilience score floor guardrail.
     # resilience_score < 0.3 means the strategy wins less than 30% of the time under extreme down conditions.
     "resilience_score",
+    # Task 1 (Round 62, Alpha): low-liquidity fraction cap guardrail.
+    # low_liquidity_pct > 0.4 means >40% of candidates have float turnover < 2% — severe liquidity risk.
+    "low_liquidity_pct",
+    # Task 2 (Round 62, Beta): cost-adjusted profit factor floor guardrail.
+    # cost_adjusted_profit_factor < 1.0 means net wins do not exceed net losses after cost.
+    "cost_adjusted_profit_factor",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -493,6 +499,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 61, Gamma): signal consistency trend slope floor.
     # consistency_trend_slope < -0.01 means the signal consistency is deteriorating meaningfully.
     "consistency_trend_slope": -0.01,
+    # Task 2 (Round 62, Beta): cost-adjusted profit factor floor.
+    # cost_adjusted_profit_factor < 1.0 means net wins do not exceed net losses after 0.3% bilateral cost.
+    "cost_adjusted_profit_factor": 1.0,
+    # Task 3 (Round 62, Gamma): cross-window resilience trend slope floor.
+    # resilience_trend_slope < -0.02 means extreme-market win rate is deteriorating across windows.
+    "resilience_trend_slope": -0.02,
 }
 
 # ---------------------------------------------------------------------------
@@ -572,6 +584,9 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # Task 1 (Round 61, Alpha): concentration risk cap.
     # concentration_risk > 0.7 means P&L is driven by ≤5 extreme trades — overfit risk.
     "concentration_risk": 0.7,
+    # Task 1 (Round 62, Alpha): low-liquidity fraction cap.
+    # low_liquidity_pct > 0.4 means >40% of candidates have float turnover < 2% — severe execution risk.
+    "low_liquidity_pct": 0.4,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

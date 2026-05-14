@@ -16405,3 +16405,388 @@ def test_r61_quality_caps_concentration_risk() -> None:
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
     assert "concentration_risk" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["concentration_risk"] == 0.7
+
+
+# ===========================================================================
+# Round 62 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: compute_liquidity_risk_analysis
+# ---------------------------------------------------------------------------
+
+def test_r62_liquidity_invalid_no_rows() -> None:
+    """Empty rows → liquidity_risk_valid=False."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    result = compute_liquidity_risk_analysis([])
+    assert result["liquidity_risk_valid"] is False
+    assert result["mean_turnover"] is None
+
+
+def test_r62_liquidity_invalid_too_few_rows() -> None:
+    """Fewer than 5 rows → liquidity_risk_valid=False."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"float_turnover_rate": 0.05, "next_day_return": 0.01}] * 4
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is False
+
+
+def test_r62_liquidity_invalid_no_field() -> None:
+    """No float_turnover_rate field → liquidity_risk_valid=False."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"next_day_return": 0.01}] * 10
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is False
+
+
+def test_r62_liquidity_invalid_all_none_turnover() -> None:
+    """All float_turnover_rate values are None → valid=False after filtering."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"float_turnover_rate": None}] * 10
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is False
+
+
+def test_r62_liquidity_valid_basic() -> None:
+    """Valid path: 10 rows with float_turnover_rate → all keys present."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"float_turnover_rate": 0.05 + i * 0.01, "next_day_return": 0.01} for i in range(10)]
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is True
+    assert result["mean_turnover"] is not None
+    assert result["median_turnover"] is not None
+    assert result["low_liquidity_pct"] is not None
+    assert result["high_liquidity_pct"] is not None
+    assert result["liquidity_concentration"] is not None
+    assert result["turnover_cv"] is not None
+    assert result["liquidity_grade"] in ("A", "B", "C", "D")
+
+
+def test_r62_liquidity_low_pct_calculation() -> None:
+    """low_liquidity_pct: fraction with turnover < 0.02."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"float_turnover_rate": 0.01}] * 3 + [{"float_turnover_rate": 0.05}] * 7
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is True
+    assert abs(result["low_liquidity_pct"] - 0.3) < 1e-6
+
+
+def test_r62_liquidity_high_pct_calculation() -> None:
+    """high_liquidity_pct: fraction with turnover > 0.10."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"float_turnover_rate": 0.15}] * 4 + [{"float_turnover_rate": 0.05}] * 6
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is True
+    assert abs(result["high_liquidity_pct"] - 0.4) < 1e-6
+
+
+def test_r62_liquidity_grade_A() -> None:
+    """Grade A: low_liquidity_pct < 0.1 and high_liquidity_pct > 0.3."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"float_turnover_rate": 0.12}] * 4 + [{"float_turnover_rate": 0.08}] * 6
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is True
+    assert result["liquidity_grade"] == "A"
+
+
+def test_r62_liquidity_grade_D() -> None:
+    """Grade D: low_liquidity_pct >= 0.4."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"float_turnover_rate": 0.005}] * 5 + [{"float_turnover_rate": 0.05}] * 5
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is True
+    assert result["liquidity_grade"] == "D"
+
+
+def test_r62_liquidity_turnover_cv_positive() -> None:
+    """turnover_cv >= 0 when mean > 0."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"float_turnover_rate": 0.03 + i * 0.005} for i in range(10)]
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is True
+    assert result["turnover_cv"] >= 0
+
+
+def test_r62_liquidity_concentration_ratio() -> None:
+    """liquidity_concentration = low_liquidity_pct / (high_liquidity_pct + 0.001)."""
+    from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+    rows = [{"float_turnover_rate": 0.01}] * 2 + [{"float_turnover_rate": 0.12}] * 4 + [{"float_turnover_rate": 0.05}] * 4
+    result = compute_liquidity_risk_analysis(rows)
+    assert result["liquidity_risk_valid"] is True
+    expected = result["low_liquidity_pct"] / (result["high_liquidity_pct"] + 0.001)
+    assert abs(result["liquidity_concentration"] - expected) < 1e-4
+
+
+def test_r62_liquidity_in_comparison_metrics() -> None:
+    """low_liquidity_pct is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "low_liquidity_pct" in COMPARISON_METRICS
+
+
+def test_r62_liquidity_in_optional_metrics() -> None:
+    """low_liquidity_pct is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "low_liquidity_pct" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r62_liquidity_in_lower_is_better() -> None:
+    """low_liquidity_pct is in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "low_liquidity_pct" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r62_liquidity_in_guardrail_keys() -> None:
+    """low_liquidity_pct is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "low_liquidity_pct" in _GUARDRAIL_KEYS
+
+
+def test_r62_liquidity_cap_value() -> None:
+    """BTST_QUALITY_CAPS has low_liquidity_pct cap of 0.4."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "low_liquidity_pct" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["low_liquidity_pct"] == 0.4
+
+
+def test_r62_liquidity_label() -> None:
+    """low_liquidity_pct has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "low_liquidity_pct" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["low_liquidity_pct"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_transaction_cost_impact
+# ---------------------------------------------------------------------------
+
+def test_r62_cost_invalid_no_rows() -> None:
+    """Empty rows → transaction_cost_valid=False."""
+    from scripts.btst_analysis_utils import compute_transaction_cost_impact
+    result = compute_transaction_cost_impact([])
+    assert result["transaction_cost_valid"] is False
+    assert result["gross_win_rate"] is None
+
+
+def test_r62_cost_invalid_too_few_rows() -> None:
+    """Fewer than 5 rows → transaction_cost_valid=False."""
+    from scripts.btst_analysis_utils import compute_transaction_cost_impact
+    rows = [{"next_day_return": 0.01}] * 4
+    result = compute_transaction_cost_impact(rows)
+    assert result["transaction_cost_valid"] is False
+
+
+def test_r62_cost_valid_basic() -> None:
+    """Valid path: all expected keys present."""
+    from scripts.btst_analysis_utils import compute_transaction_cost_impact
+    rows = [{"next_day_return": 0.02 - i * 0.005} for i in range(10)]
+    result = compute_transaction_cost_impact(rows)
+    assert result["transaction_cost_valid"] is True
+    assert result["gross_win_rate"] is not None
+    assert result["net_mean_return"] is not None
+    assert result["net_win_rate"] is not None
+    assert result["cost_drag"] is not None
+    assert result["cost_adjusted_profit_factor"] is not None
+    assert result["break_even_gross_return"] == 0.003
+    assert result["cost_efficiency_ratio"] is not None
+
+
+def test_r62_cost_net_win_rate_lower_than_gross() -> None:
+    """net_win_rate ≤ gross_win_rate (cost reduces wins)."""
+    from scripts.btst_analysis_utils import compute_transaction_cost_impact
+    rows = [{"next_day_return": 0.002}] * 5 + [{"next_day_return": -0.01}] * 5
+    result = compute_transaction_cost_impact(rows)
+    assert result["transaction_cost_valid"] is True
+    assert result["net_win_rate"] <= result["gross_win_rate"]
+
+
+def test_r62_cost_drag_non_negative() -> None:
+    """cost_drag = gross_win_rate - net_win_rate >= 0."""
+    from scripts.btst_analysis_utils import compute_transaction_cost_impact
+    rows = [{"next_day_return": 0.005}] * 6 + [{"next_day_return": -0.01}] * 4
+    result = compute_transaction_cost_impact(rows)
+    assert result["transaction_cost_valid"] is True
+    assert result["cost_drag"] >= 0
+
+
+def test_r62_cost_net_win_rate_precision() -> None:
+    """net_win_rate counts (next_day_return - 0.003) > 0 correctly."""
+    from scripts.btst_analysis_utils import compute_transaction_cost_impact
+    rows = [{"next_day_return": 0.01}] * 7 + [{"next_day_return": 0.001}] * 3
+    result = compute_transaction_cost_impact(rows)
+    assert result["transaction_cost_valid"] is True
+    # Only 7/10 rows have net return > 0 after cost (0.001 - 0.003 = -0.002 < 0)
+    assert abs(result["net_win_rate"] - 0.7) < 1e-6
+
+
+def test_r62_cost_adjusted_pf_clamped_to_5() -> None:
+    """cost_adjusted_profit_factor clamped to 5.0 when no net losses."""
+    from scripts.btst_analysis_utils import compute_transaction_cost_impact
+    rows = [{"next_day_return": 0.05}] * 10
+    result = compute_transaction_cost_impact(rows)
+    assert result["transaction_cost_valid"] is True
+    assert result["cost_adjusted_profit_factor"] == 5.0
+
+
+def test_r62_cost_adjusted_pf_with_losses() -> None:
+    """cost_adjusted_profit_factor < 5.0 when some net losses present."""
+    from scripts.btst_analysis_utils import compute_transaction_cost_impact
+    rows = [{"next_day_return": 0.01}] * 5 + [{"next_day_return": -0.02}] * 5
+    result = compute_transaction_cost_impact(rows)
+    assert result["transaction_cost_valid"] is True
+    assert 0 < result["cost_adjusted_profit_factor"] < 5.0
+
+
+def test_r62_cost_in_comparison_metrics() -> None:
+    """cost_adjusted_profit_factor is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "cost_adjusted_profit_factor" in COMPARISON_METRICS
+
+
+def test_r62_cost_in_optional_metrics() -> None:
+    """cost_adjusted_profit_factor is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "cost_adjusted_profit_factor" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r62_cost_not_in_lower_is_better() -> None:
+    """cost_adjusted_profit_factor is NOT in LOWER_IS_BETTER (higher is better)."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "cost_adjusted_profit_factor" not in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r62_cost_in_guardrail_keys() -> None:
+    """cost_adjusted_profit_factor is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "cost_adjusted_profit_factor" in _GUARDRAIL_KEYS
+
+
+def test_r62_cost_floor_value() -> None:
+    """BTST_QUALITY_FLOORS has cost_adjusted_profit_factor floor of 1.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "cost_adjusted_profit_factor" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["cost_adjusted_profit_factor"] == 1.0
+
+
+def test_r62_cost_label() -> None:
+    """cost_adjusted_profit_factor has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "cost_adjusted_profit_factor" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["cost_adjusted_profit_factor"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_resilience_trend
+# ---------------------------------------------------------------------------
+
+def test_r62_resilience_trend_invalid_no_windows() -> None:
+    """Empty windows → resilience_trend_valid=False."""
+    from scripts.optimize_profile import compute_cross_window_resilience_trend
+    result = compute_cross_window_resilience_trend([])
+    assert result["resilience_trend_valid"] is False
+    assert result["resilience_trend_slope"] is None
+
+
+def test_r62_resilience_trend_invalid_too_few_values() -> None:
+    """Fewer than 3 valid values → invalid."""
+    from scripts.optimize_profile import compute_cross_window_resilience_trend
+    summaries = [{"extreme_resilience_score": 0.5}, {"extreme_resilience_score": None}]
+    result = compute_cross_window_resilience_trend(summaries)
+    assert result["resilience_trend_valid"] is False
+
+
+def test_r62_resilience_trend_valid_basic() -> None:
+    """3+ valid resilience scores → all keys present."""
+    from scripts.optimize_profile import compute_cross_window_resilience_trend
+    summaries = [{"extreme_resilience_score": 0.4 + i * 0.02} for i in range(5)]
+    result = compute_cross_window_resilience_trend(summaries)
+    assert result["resilience_trend_valid"] is True
+    assert result["resilience_trend_slope"] is not None
+    assert result["resilience_trend_mean"] is not None
+    assert result["resilience_trend_min"] is not None
+    assert result["resilience_trend_max"] is not None
+    assert result["resilience_above_floor_pct"] is not None
+    assert result["resilience_trend_grade"] in ("A", "B", "C", "D")
+
+
+def test_r62_resilience_trend_positive_slope_grade_A() -> None:
+    """slope > 0.01 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_resilience_trend
+    summaries = [{"extreme_resilience_score": 0.3 + i * 0.05} for i in range(5)]
+    result = compute_cross_window_resilience_trend(summaries)
+    assert result["resilience_trend_valid"] is True
+    assert result["resilience_trend_slope"] > 0.01
+    assert result["resilience_trend_grade"] == "A"
+
+
+def test_r62_resilience_trend_negative_slope_grade_D() -> None:
+    """slope <= -0.02 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_resilience_trend
+    summaries = [{"extreme_resilience_score": 0.9 - i * 0.08} for i in range(5)]
+    result = compute_cross_window_resilience_trend(summaries)
+    assert result["resilience_trend_valid"] is True
+    assert result["resilience_trend_slope"] <= -0.02
+    assert result["resilience_trend_grade"] == "D"
+
+
+def test_r62_resilience_trend_above_floor_pct() -> None:
+    """resilience_above_floor_pct: fraction of windows with score >= 0.3."""
+    from scripts.optimize_profile import compute_cross_window_resilience_trend
+    summaries = [{"extreme_resilience_score": 0.4}] * 3 + [{"extreme_resilience_score": 0.2}] * 2
+    result = compute_cross_window_resilience_trend(summaries)
+    assert result["resilience_trend_valid"] is True
+    assert abs(result["resilience_above_floor_pct"] - 0.6) < 1e-5
+
+
+def test_r62_resilience_trend_in_comparison_metrics() -> None:
+    """resilience_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "resilience_trend_slope" in COMPARISON_METRICS
+
+
+def test_r62_resilience_trend_in_optional_metrics() -> None:
+    """resilience_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "resilience_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r62_resilience_trend_floor_value() -> None:
+    """BTST_QUALITY_FLOORS has resilience_trend_slope floor of -0.02."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "resilience_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["resilience_trend_slope"] == -0.02
+
+
+def test_r62_resilience_trend_label() -> None:
+    """resilience_trend_slope has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "resilience_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["resilience_trend_slope"]) > 0
+
+
+def test_r62_resilience_trend_ols_slope_accuracy() -> None:
+    """OLS slope should match manual computation for known data."""
+    from scripts.optimize_profile import compute_cross_window_resilience_trend
+    values = [0.3, 0.4, 0.5, 0.6, 0.7]
+    summaries = [{"extreme_resilience_score": v} for v in values]
+    result = compute_cross_window_resilience_trend(summaries)
+    assert result["resilience_trend_valid"] is True
+    # For evenly spaced sequence 0.3..0.7 with step 0.1, slope should be 0.1
+    assert abs(result["resilience_trend_slope"] - 0.1) < 1e-5
+
+
+def test_r62_surface_summary_has_liq_prefix() -> None:
+    """build_surface_summary output includes liq_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"next_day_return": 0.01, "next_high_return": 0.02, "float_turnover_rate": 0.05, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.01} for _ in range(20)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    liq_keys = [k for k in result if k.startswith("liq_")]
+    assert len(liq_keys) > 0
+
+
+def test_r62_surface_summary_has_cost_prefix() -> None:
+    """build_surface_summary output includes cost_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"next_day_return": 0.01, "next_high_return": 0.02, "float_turnover_rate": 0.05, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.01} for _ in range(20)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    cost_keys = [k for k in result if k.startswith("cost_")]
+    assert len(cost_keys) > 0
