@@ -430,6 +430,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "best_combo_win_rate",
     # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF OLS trend slope.
     "cost_pf_trend_slope",
+    # Task 3 (Round 64, Gamma): cross-window best combo win rate OLS trend slope.
+    "combo_win_rate_trend_slope",
+    # Task 1 (Round 64, Alpha): adaptive weight effective factor count.
+    "adaptive_weight_effective_factor_count",
+    # Task 2 (Round 64, Beta): factor validity window IC stability.
+    "ic_stability",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -748,6 +754,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "best_combo_win_rate": "最优因子组合胜率",
     # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF trend slope
     "cost_pf_trend_slope": "成本调整PF跨窗趋势",
+    # Task 3 (Round 64, Gamma): cross-window best combo win rate trend slope
+    "combo_win_rate_trend_slope": "最优组合胜率跨窗趋势",
+    # Task 1 (Round 64, Alpha): adaptive weight effective factor count
+    "adaptive_weight_effective_factor_count": "自适应权重有效因子数",
+    # Task 2 (Round 64, Beta): factor validity window IC stability
+    "ic_stability": "因子有效性稳定度",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -818,6 +830,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "concentration_risk",
     # Task 1 (Round 62, Alpha): low-liquidity fraction — higher = more low-turnover candidates = lower-is-better.
     "low_liquidity_pct",
+    # Task 2 (Round 64, Beta): IC stability — higher std = more unstable factor validity = lower-is-better.
+    "ic_stability",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -1128,6 +1142,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "best_combo_win_rate",
     # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF trend slope — optional; pre-Round-63 outputs omit it.
     "cost_pf_trend_slope",
+    # Task 3 (Round 64, Gamma): cross-window combo win rate trend slope — optional; pre-Round-64 outputs omit it.
+    "combo_win_rate_trend_slope",
+    # Task 1 (Round 64, Alpha): adaptive weight effective factor count — optional; pre-Round-64 outputs omit it.
+    "adaptive_weight_effective_factor_count",
+    # Task 2 (Round 64, Beta): IC stability — optional; pre-Round-64 outputs omit it.
+    "ic_stability",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3361,6 +3381,37 @@ def compute_cross_window_cost_trend(all_windows_summaries: list[dict]) -> dict:
     return {"cost_pf_trend_valid": True, "cost_pf_trend_slope": slope, "cost_pf_trend_mean": round(mean_y, 6), "cost_pf_trend_min": round(min(values), 6), "cost_pf_trend_max": round(max(values), 6), "cost_pf_above_floor_pct": above_floor_pct, "cost_pf_trend_grade": grade}
 
 
+# ---------------------------------------------------------------------------
+# Round 64, Task 3 (Gamma): Cross-window best combo win rate trend
+# ---------------------------------------------------------------------------
+
+def compute_cross_window_combo_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪最优因子组合胜率（combo_best_combo_win_rate）趋势"""
+    vals = [s.get("combo_best_combo_win_rate") for s in all_windows_summaries if s.get("combo_best_combo_win_rate") is not None]
+    if len(vals) < 3:
+        return {"combo_trend_valid": False, "combo_win_rate_trend_slope": None, "combo_win_rate_trend_mean": None, "combo_win_rate_trend_min": None, "combo_win_rate_trend_max": None, "combo_above_floor_pct": None, "combo_trend_grade": None}
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    min_v = min(vals)
+    max_v = max(vals)
+    above_floor_pct = sum(1 for v in vals if v >= 0.5) / n
+    if slope > 0.01:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.02:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"combo_trend_valid": True, "combo_win_rate_trend_slope": slope, "combo_win_rate_trend_mean": mean_v, "combo_win_rate_trend_min": min_v, "combo_win_rate_trend_max": max_v, "combo_above_floor_pct": above_floor_pct, "combo_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4071,6 +4122,14 @@ def _build_replay_evaluator(
         # Task 2 (Round 63, Beta): average combo_best_combo_win_rate across replay windows.
         _combo_bcwr_vals = [float(s["combo_best_combo_win_rate"]) for s in all_primary_surfaces if s.get("combo_best_combo_win_rate") is not None]
         avg_best_combo_win_rate: "float | None" = round(sum(_combo_bcwr_vals) / len(_combo_bcwr_vals), 8) if _combo_bcwr_vals else None
+        # Task 3 (Round 64, Gamma): cross-window best combo win rate trend.
+        _ccwt: dict[str, Any] = compute_cross_window_combo_trend(all_primary_surfaces)
+        # Task 1 (Round 64, Alpha): average adaptive weight effective factor count across replay windows.
+        _awef_vals = [float(s["weight_effective_factor_count"]) for s in all_primary_surfaces if s.get("weight_effective_factor_count") is not None]
+        avg_adaptive_weight_effective_factor_count: "float | None" = round(sum(_awef_vals) / len(_awef_vals), 8) if _awef_vals else None
+        # Task 2 (Round 64, Beta): average ic_stability across replay windows.
+        _ics_vals = [float(s["validity_ic_stability"]) for s in all_primary_surfaces if s.get("validity_ic_stability") is not None]
+        avg_ic_stability: "float | None" = round(sum(_ics_vals) / len(_ics_vals), 8) if _ics_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4457,17 +4516,29 @@ def _build_replay_evaluator(
             "resilience_trend_grade": _crt.get("resilience_trend_grade"),
             "resilience_trend_valid": _crt.get("resilience_trend_valid"),
             # Task 1 (Round 63, Alpha): best stop-loss/take-profit profit factor averaged across windows.
-            "best_profit_factor": avg_best_profit_factor,
-            # Task 2 (Round 63, Beta): best factor-combination win rate averaged across windows.
-            "best_combo_win_rate": avg_best_combo_win_rate,
-            # Task 3 (Round 63, Gamma): cross-window cost-adjusted profit factor trend.
-            "cost_pf_trend_slope": _cpft.get("cost_pf_trend_slope"),
-            "cost_pf_trend_mean": _cpft.get("cost_pf_trend_mean"),
-            "cost_pf_trend_min": _cpft.get("cost_pf_trend_min"),
-            "cost_pf_trend_max": _cpft.get("cost_pf_trend_max"),
-            "cost_pf_above_floor_pct": _cpft.get("cost_pf_above_floor_pct"),
-            "cost_pf_trend_grade": _cpft.get("cost_pf_trend_grade"),
-            "cost_pf_trend_valid": _cpft.get("cost_pf_trend_valid"),
+                "best_profit_factor": avg_best_profit_factor,
+                # Task 2 (Round 63, Beta): best factor-combination win rate averaged across windows.
+                "best_combo_win_rate": avg_best_combo_win_rate,
+                # Task 3 (Round 63, Gamma): cross-window cost-adjusted profit factor trend.
+                "cost_pf_trend_slope": _cpft.get("cost_pf_trend_slope"),
+                "cost_pf_trend_mean": _cpft.get("cost_pf_trend_mean"),
+                "cost_pf_trend_min": _cpft.get("cost_pf_trend_min"),
+                "cost_pf_trend_max": _cpft.get("cost_pf_trend_max"),
+                "cost_pf_above_floor_pct": _cpft.get("cost_pf_above_floor_pct"),
+                "cost_pf_trend_grade": _cpft.get("cost_pf_trend_grade"),
+                "cost_pf_trend_valid": _cpft.get("cost_pf_trend_valid"),
+                # Task 3 (Round 64, Gamma): cross-window best combo win rate trend.
+                "combo_win_rate_trend_slope": _ccwt.get("combo_win_rate_trend_slope"),
+                "combo_win_rate_trend_mean": _ccwt.get("combo_win_rate_trend_mean"),
+                "combo_win_rate_trend_min": _ccwt.get("combo_win_rate_trend_min"),
+                "combo_win_rate_trend_max": _ccwt.get("combo_win_rate_trend_max"),
+                "combo_above_floor_pct": _ccwt.get("combo_above_floor_pct"),
+                "combo_trend_grade": _ccwt.get("combo_trend_grade"),
+                "combo_trend_valid": _ccwt.get("combo_trend_valid"),
+                # Task 1 (Round 64, Alpha): adaptive weight effective factor count averaged across windows.
+                "adaptive_weight_effective_factor_count": avg_adaptive_weight_effective_factor_count,
+                # Task 2 (Round 64, Beta): IC stability averaged across windows.
+                "ic_stability": avg_ic_stability,
         }
 
     return evaluator

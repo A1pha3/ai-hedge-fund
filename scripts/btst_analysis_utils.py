@@ -4495,6 +4495,19 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _combo.items():
         _surface_result[f"combo_{_k}"] = _v
 
+    # Round 64, Task 1 (Alpha): Adaptive weight suggestion.
+    _aw: dict = compute_adaptive_weight_suggestion(rows)
+    for _k, _v in _aw.items():
+        if _k != "suggested_weights":
+            _surface_result[f"weight_{_k}"] = _v
+        else:
+            _surface_result["weight_suggested_weights"] = _v
+
+    # Round 64, Task 2 (Beta): Factor validity window.
+    _fv: dict = compute_factor_validity_window(rows)
+    for _k, _v in _fv.items():
+        _surface_result[f"validity_{_k}"] = _v
+
     return _surface_result
 
 
@@ -11809,3 +11822,136 @@ def compute_factor_combination_score(rows: list[dict]) -> dict:
         best_combo_win_rate = valid_wr[best_combo]
         combo_spread = round(max(valid_wr.values()) - min(valid_wr.values()), 8) if len(valid_wr) >= 2 else None
     return {"factor_combination_valid": True, "combo_win_rates": combo_win_rates, "best_combo": best_combo, "best_combo_win_rate": best_combo_win_rate, "combo_spread": combo_spread}
+
+
+# ---------------------------------------------------------------------------
+# Round 64, Task 1 (Alpha): Adaptive weight suggestion
+# ---------------------------------------------------------------------------
+
+def compute_adaptive_weight_suggestion(rows):
+    import math
+    FACTORS = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    if len(rows) < 10:
+        return {"adaptive_weight_valid": False, "suggested_weights": None, "top_weight_factor": None, "weight_concentration": None, "effective_factor_count": None, "weight_entropy": None}
+    rets = [r.get("next_day_return") for r in rows]
+    def _spearman_ic(xs, ys):
+        pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
+        if len(pairs) < 5:
+            return None
+        n = len(pairs)
+        xs2 = [p[0] for p in pairs]
+        ys2 = [p[1] for p in pairs]
+        def _rank(arr):
+            sorted_idx = sorted(range(len(arr)), key=lambda i: arr[i])
+            ranks = [0.0] * len(arr)
+            i = 0
+            while i < len(arr):
+                j = i
+                while j < len(arr) - 1 and arr[sorted_idx[j+1]] == arr[sorted_idx[j]]:
+                    j += 1
+                avg = (i + j) / 2.0 + 1
+                for k in range(i, j+1):
+                    ranks[sorted_idx[k]] = avg
+                i = j + 1
+            return ranks
+        rx = _rank(xs2)
+        ry = _rank(ys2)
+        mx = sum(rx) / n
+        my = sum(ry) / n
+        num = sum((rx[i] - mx) * (ry[i] - my) for i in range(n))
+        dx = sum((rx[i] - mx) ** 2 for i in range(n))
+        dy = sum((ry[i] - my) ** 2 for i in range(n))
+        if dx == 0 or dy == 0:
+            return None
+        return num / math.sqrt(dx * dy)
+    ic_map = {}
+    for f in FACTORS:
+        xs = [r.get(f) for r in rows]
+        ic_map[f] = _spearman_ic(xs, rets)
+    valid_ics = {f: ic_map[f] for f in FACTORS if ic_map[f] is not None}
+    effective_factor_count = len(valid_ics)
+    raw_weights = {f: abs(v) for f, v in valid_ics.items()}
+    total = sum(raw_weights.values())
+    if total == 0:
+        suggested_weights = {f: (1.0 / effective_factor_count if effective_factor_count > 0 else 0.0) for f in FACTORS if f in valid_ics}
+    else:
+        suggested_weights = {f: raw_weights[f] / total for f in FACTORS if f in valid_ics}
+    for f in FACTORS:
+        if f not in suggested_weights:
+            suggested_weights[f] = 0.0
+    top_weight_factor = max(valid_ics.keys(), key=lambda f: suggested_weights[f]) if valid_ics else None
+    top_w = suggested_weights[top_weight_factor] if top_weight_factor else 0.0
+    weight_concentration = (top_w / (1.0 / effective_factor_count)) if effective_factor_count > 0 else None
+    weight_entropy = -sum(suggested_weights[f] * math.log(suggested_weights[f] + 1e-10) for f in FACTORS if suggested_weights[f] > 0)
+    return {"adaptive_weight_valid": True, "suggested_weights": suggested_weights, "top_weight_factor": top_weight_factor, "weight_concentration": weight_concentration, "effective_factor_count": effective_factor_count, "weight_entropy": weight_entropy}
+
+
+# ---------------------------------------------------------------------------
+# Round 64, Task 2 (Beta): Factor validity window
+# ---------------------------------------------------------------------------
+
+def compute_factor_validity_window(rows):
+    import math
+    FACTORS = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    if len(rows) < 20:
+        return {"factor_validity_valid": False, "early_ic": None, "mid_ic": None, "late_ic": None, "ic_stability": None, "ic_trend_direction": None}
+    n = len(rows)
+    t1 = n // 3
+    t2 = 2 * (n // 3)
+    segments = [rows[:t1], rows[t1:t2], rows[t2:]]
+    def _spearman_ic(xs, ys):
+        pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
+        if len(pairs) < 3:
+            return None
+        n2 = len(pairs)
+        xs2 = [p[0] for p in pairs]
+        ys2 = [p[1] for p in pairs]
+        def _rank(arr):
+            sorted_idx = sorted(range(len(arr)), key=lambda i: arr[i])
+            ranks = [0.0] * len(arr)
+            i = 0
+            while i < len(arr):
+                j = i
+                while j < len(arr) - 1 and arr[sorted_idx[j+1]] == arr[sorted_idx[j]]:
+                    j += 1
+                avg = (i + j) / 2.0 + 1
+                for k in range(i, j+1):
+                    ranks[sorted_idx[k]] = avg
+                i = j + 1
+            return ranks
+        rx = _rank(xs2)
+        ry = _rank(ys2)
+        mx = sum(rx) / n2
+        my = sum(ry) / n2
+        num = sum((rx[i] - mx) * (ry[i] - my) for i in range(n2))
+        dx = sum((rx[i] - mx) ** 2 for i in range(n2))
+        dy = sum((ry[i] - my) ** 2 for i in range(n2))
+        if dx == 0 or dy == 0:
+            return None
+        return num / math.sqrt(dx * dy)
+    seg_ics = []
+    for seg in segments:
+        rets = [r.get("next_day_return") for r in seg]
+        ics = []
+        for f in FACTORS:
+            xs = [r.get(f) for r in seg]
+            ic = _spearman_ic(xs, rets)
+            if ic is not None:
+                ics.append(ic)
+        seg_ics.append(sum(ics) / len(ics) if ics else None)
+    early_ic, mid_ic, late_ic = seg_ics[0], seg_ics[1], seg_ics[2]
+    valid_seg_ics = [v for v in seg_ics if v is not None]
+    if len(valid_seg_ics) >= 2:
+        mean_v = sum(valid_seg_ics) / len(valid_seg_ics)
+        ic_stability = math.sqrt(sum((v - mean_v) ** 2 for v in valid_seg_ics) / (len(valid_seg_ics) - 1))
+    else:
+        ic_stability = None
+    if early_ic is None or late_ic is None:
+        ic_trend_direction = "unknown"
+    elif late_ic > early_ic + 0.05:
+        ic_trend_direction = "improving"
+    elif late_ic < early_ic - 0.05:
+        ic_trend_direction = "declining"
+    else:
+        ic_trend_direction = "stable"
+    return {"factor_validity_valid": True, "early_ic": early_ic, "mid_ic": mid_ic, "late_ic": late_ic, "ic_stability": ic_stability, "ic_trend_direction": ic_trend_direction}

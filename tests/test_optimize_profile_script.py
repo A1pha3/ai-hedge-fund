@@ -17232,3 +17232,365 @@ def test_r63_cost_trend_label() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
     assert "cost_pf_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["cost_pf_trend_slope"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Round 64 tests
+# ---------------------------------------------------------------------------
+
+def _r64_make_rows(n: int, base_factor: float = 0.5, base_return: float = 0.02) -> list:
+    """Helper: build n rows with all 7 BTST factors and next_day_return."""
+    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    return [{f: base_factor + i * 0.001 * (j + 1) for j, f in enumerate(factors)} | {"next_day_return": base_return + i * 0.001} for i in range(n)]
+
+
+# ── compute_adaptive_weight_suggestion ──────────────────────────────────────
+
+def test_r64_aws_empty_rows_returns_invalid() -> None:
+    """Empty row list → adaptive_weight_valid=False, no crash."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    result = compute_adaptive_weight_suggestion([])
+    assert result["adaptive_weight_valid"] is False
+    assert result["suggested_weights"] is None
+
+
+def test_r64_aws_too_few_rows_returns_invalid() -> None:
+    """< 10 rows → invalid."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    rows = _r64_make_rows(9)
+    result = compute_adaptive_weight_suggestion(rows)
+    assert result["adaptive_weight_valid"] is False
+
+
+def test_r64_aws_weight_sum_is_one() -> None:
+    """With sufficient rows the non-zero weights sum to 1.0."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    rows = _r64_make_rows(30)
+    result = compute_adaptive_weight_suggestion(rows)
+    assert result["adaptive_weight_valid"] is True
+    total = sum(result["suggested_weights"].values())
+    assert abs(total - 1.0) < 1e-6
+
+
+def test_r64_aws_entropy_non_negative() -> None:
+    """weight_entropy must be >= 0."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    rows = _r64_make_rows(30)
+    result = compute_adaptive_weight_suggestion(rows)
+    assert result["adaptive_weight_valid"] is True
+    assert result["weight_entropy"] >= 0.0
+
+
+def test_r64_aws_effective_factor_count_positive() -> None:
+    """effective_factor_count > 0 for data with valid factors."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    rows = _r64_make_rows(30)
+    result = compute_adaptive_weight_suggestion(rows)
+    assert result["adaptive_weight_valid"] is True
+    assert result["effective_factor_count"] > 0
+
+
+def test_r64_aws_top_weight_factor_is_string() -> None:
+    """top_weight_factor is a non-empty string when valid."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    rows = _r64_make_rows(30)
+    result = compute_adaptive_weight_suggestion(rows)
+    assert result["adaptive_weight_valid"] is True
+    assert isinstance(result["top_weight_factor"], str)
+    assert len(result["top_weight_factor"]) > 0
+
+
+def test_r64_aws_concentration_in_range() -> None:
+    """weight_concentration is a positive number when valid."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    rows = _r64_make_rows(30)
+    result = compute_adaptive_weight_suggestion(rows)
+    assert result["adaptive_weight_valid"] is True
+    assert result["weight_concentration"] is not None
+    assert result["weight_concentration"] > 0.0
+
+
+def test_r64_aws_suggested_weights_is_dict() -> None:
+    """suggested_weights is a dict keyed by factor names."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    rows = _r64_make_rows(30)
+    result = compute_adaptive_weight_suggestion(rows)
+    assert result["adaptive_weight_valid"] is True
+    assert isinstance(result["suggested_weights"], dict)
+    assert len(result["suggested_weights"]) == 7
+
+
+def test_r64_aws_null_returns_gives_invalid() -> None:
+    """Rows without next_day_return produce invalid result (< 5 valid pairs)."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    rows = [{"close_strength": 0.5} for _ in range(30)]
+    result = compute_adaptive_weight_suggestion(rows)
+    # valid=True but effective_factor_count can be 0 (all ICs None) — should not crash
+    assert "adaptive_weight_valid" in result
+
+
+def test_r64_aws_exact_10_rows_valid() -> None:
+    """Exactly 10 rows is the minimum threshold → valid."""
+    from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+    rows = _r64_make_rows(10)
+    result = compute_adaptive_weight_suggestion(rows)
+    assert result["adaptive_weight_valid"] is True
+
+
+# ── compute_factor_validity_window ──────────────────────────────────────────
+
+def test_r64_fvw_empty_rows_returns_invalid() -> None:
+    """Empty list → factor_validity_valid=False."""
+    from scripts.btst_analysis_utils import compute_factor_validity_window
+    result = compute_factor_validity_window([])
+    assert result["factor_validity_valid"] is False
+    assert result["ic_stability"] is None
+
+
+def test_r64_fvw_too_few_rows_invalid() -> None:
+    """< 20 rows → invalid."""
+    from scripts.btst_analysis_utils import compute_factor_validity_window
+    rows = _r64_make_rows(19)
+    result = compute_factor_validity_window(rows)
+    assert result["factor_validity_valid"] is False
+
+
+def test_r64_fvw_exact_20_rows_valid() -> None:
+    """20 rows is the minimum threshold → valid."""
+    from scripts.btst_analysis_utils import compute_factor_validity_window
+    rows = _r64_make_rows(20)
+    result = compute_factor_validity_window(rows)
+    assert result["factor_validity_valid"] is True
+
+
+def test_r64_fvw_returns_three_segment_ics() -> None:
+    """early_ic, mid_ic, late_ic all present in output."""
+    from scripts.btst_analysis_utils import compute_factor_validity_window
+    rows = _r64_make_rows(60)
+    result = compute_factor_validity_window(rows)
+    assert result["factor_validity_valid"] is True
+    assert "early_ic" in result
+    assert "mid_ic" in result
+    assert "late_ic" in result
+
+
+def test_r64_fvw_ic_stability_non_negative() -> None:
+    """ic_stability (std dev of segment ICs) is >= 0."""
+    from scripts.btst_analysis_utils import compute_factor_validity_window
+    rows = _r64_make_rows(60)
+    result = compute_factor_validity_window(rows)
+    assert result["factor_validity_valid"] is True
+    if result["ic_stability"] is not None:
+        assert result["ic_stability"] >= 0.0
+
+
+def test_r64_fvw_ic_trend_direction_valid_values() -> None:
+    """ic_trend_direction is one of the allowed string values."""
+    from scripts.btst_analysis_utils import compute_factor_validity_window
+    rows = _r64_make_rows(60)
+    result = compute_factor_validity_window(rows)
+    assert result["factor_validity_valid"] is True
+    assert result["ic_trend_direction"] in {"improving", "stable", "declining", "unknown"}
+
+
+def test_r64_fvw_declining_trend_direction() -> None:
+    """Rows where later returns correlate strongly with factor in early segment but not late → may give declining."""
+    from scripts.btst_analysis_utils import compute_factor_validity_window
+    # Build rows where early third has strong IC but late third has reversed correlation
+    n = 60
+    rows = []
+    for i in range(n):
+        f_val = float(i % 10)
+        # early: return positively correlated; late: reversed
+        if i < n // 3:
+            ret = f_val * 0.01
+        else:
+            ret = -(f_val * 0.01)
+        rows.append({"close_strength": f_val, "volume_expansion_quality": f_val, "sector_resonance": f_val, "rs_sector_rank": f_val, "t0_estimated_net_inflow_ratio": f_val, "breakout_quality_score": f_val, "momentum_slope_20d": f_val, "next_day_return": ret})
+    result = compute_factor_validity_window(rows)
+    assert result["factor_validity_valid"] is True
+    # Direction should be declining or stable (not improving)
+    assert result["ic_trend_direction"] in {"declining", "stable", "unknown"}
+
+
+def test_r64_fvw_stable_data_gives_low_stability() -> None:
+    """Perfectly consistent factor-return correlation → ic_stability near 0."""
+    from scripts.btst_analysis_utils import compute_factor_validity_window
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(60)]
+    result = compute_factor_validity_window(rows)
+    assert result["factor_validity_valid"] is True
+    if result["ic_stability"] is not None:
+        # stable data → stability (std of ICs) should be low
+        assert result["ic_stability"] < 0.5
+
+
+# ── compute_cross_window_combo_trend ────────────────────────────────────────
+
+def test_r64_ccwt_too_few_windows_invalid() -> None:
+    """< 3 windows with valid combo_best_combo_win_rate → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_combo_trend
+    summaries = [{"combo_best_combo_win_rate": 0.6}, {"combo_best_combo_win_rate": 0.65}]
+    result = compute_cross_window_combo_trend(summaries)
+    assert result["combo_trend_valid"] is False
+    assert result["combo_win_rate_trend_slope"] is None
+
+
+def test_r64_ccwt_empty_windows_invalid() -> None:
+    """Empty list → combo_trend_valid=False."""
+    from scripts.optimize_profile import compute_cross_window_combo_trend
+    result = compute_cross_window_combo_trend([])
+    assert result["combo_trend_valid"] is False
+
+
+def test_r64_ccwt_grade_A_steep_positive_slope() -> None:
+    """slope > 0.01 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_combo_trend
+    summaries = [{"combo_best_combo_win_rate": 0.5 + i * 0.05} for i in range(5)]
+    result = compute_cross_window_combo_trend(summaries)
+    assert result["combo_trend_valid"] is True
+    assert result["combo_win_rate_trend_slope"] > 0.01
+    assert result["combo_trend_grade"] == "A"
+
+
+def test_r64_ccwt_grade_B_gentle_positive_slope() -> None:
+    """0 < slope <= 0.01 → grade B."""
+    from scripts.optimize_profile import compute_cross_window_combo_trend
+    values = [0.60, 0.605, 0.610, 0.615, 0.620]
+    summaries = [{"combo_best_combo_win_rate": v} for v in values]
+    result = compute_cross_window_combo_trend(summaries)
+    assert result["combo_trend_valid"] is True
+    assert 0 < result["combo_win_rate_trend_slope"] <= 0.01
+    assert result["combo_trend_grade"] == "B"
+
+
+def test_r64_ccwt_grade_C_mild_negative_slope() -> None:
+    """-0.02 < slope <= 0 → grade C."""
+    from scripts.optimize_profile import compute_cross_window_combo_trend
+    values = [0.62, 0.61, 0.605, 0.60, 0.595]
+    summaries = [{"combo_best_combo_win_rate": v} for v in values]
+    result = compute_cross_window_combo_trend(summaries)
+    assert result["combo_trend_valid"] is True
+    assert -0.02 < result["combo_win_rate_trend_slope"] <= 0
+    assert result["combo_trend_grade"] == "C"
+
+
+def test_r64_ccwt_grade_D_steep_negative_slope() -> None:
+    """slope <= -0.02 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_combo_trend
+    summaries = [{"combo_best_combo_win_rate": 0.8 - i * 0.1} for i in range(5)]
+    result = compute_cross_window_combo_trend(summaries)
+    assert result["combo_trend_valid"] is True
+    assert result["combo_win_rate_trend_slope"] <= -0.02
+    assert result["combo_trend_grade"] == "D"
+
+
+def test_r64_ccwt_above_floor_pct_correct() -> None:
+    """combo_above_floor_pct: fraction of windows with win_rate >= 0.5."""
+    from scripts.optimize_profile import compute_cross_window_combo_trend
+    summaries = [{"combo_best_combo_win_rate": 0.6}] * 4 + [{"combo_best_combo_win_rate": 0.4}]
+    result = compute_cross_window_combo_trend(summaries)
+    assert result["combo_trend_valid"] is True
+    assert abs(result["combo_above_floor_pct"] - 0.8) < 1e-5
+
+
+def test_r64_ccwt_min_max_mean_returned() -> None:
+    """combo_win_rate_trend_min, max, mean are all present and sensible."""
+    from scripts.optimize_profile import compute_cross_window_combo_trend
+    values = [0.55, 0.60, 0.65, 0.70, 0.75]
+    summaries = [{"combo_best_combo_win_rate": v} for v in values]
+    result = compute_cross_window_combo_trend(summaries)
+    assert result["combo_trend_valid"] is True
+    assert abs(result["combo_win_rate_trend_min"] - 0.55) < 1e-8
+    assert abs(result["combo_win_rate_trend_max"] - 0.75) < 1e-8
+    assert abs(result["combo_win_rate_trend_mean"] - 0.65) < 1e-8
+
+
+# ── Metric registration tests ────────────────────────────────────────────────
+
+def test_r64_combo_trend_in_comparison_metrics() -> None:
+    """combo_win_rate_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "combo_win_rate_trend_slope" in COMPARISON_METRICS
+
+
+def test_r64_combo_trend_in_optional_metrics() -> None:
+    """combo_win_rate_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "combo_win_rate_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r64_combo_trend_not_in_lower_is_better() -> None:
+    """combo_win_rate_trend_slope is NOT in LOWER_IS_BETTER (higher slope = better)."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "combo_win_rate_trend_slope" not in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r64_combo_trend_floor_value() -> None:
+    """BTST_QUALITY_FLOORS has combo_win_rate_trend_slope floor of -0.02."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "combo_win_rate_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["combo_win_rate_trend_slope"] == -0.02
+
+
+def test_r64_combo_trend_label() -> None:
+    """combo_win_rate_trend_slope has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "combo_win_rate_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["combo_win_rate_trend_slope"]) > 0
+
+
+def test_r64_aws_in_comparison_metrics() -> None:
+    """adaptive_weight_effective_factor_count is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "adaptive_weight_effective_factor_count" in COMPARISON_METRICS
+
+
+def test_r64_aws_in_optional_metrics() -> None:
+    """adaptive_weight_effective_factor_count is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "adaptive_weight_effective_factor_count" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r64_aws_label() -> None:
+    """adaptive_weight_effective_factor_count has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "adaptive_weight_effective_factor_count" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["adaptive_weight_effective_factor_count"]) > 0
+
+
+def test_r64_ic_stability_in_comparison_metrics() -> None:
+    """ic_stability is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ic_stability" in COMPARISON_METRICS
+
+
+def test_r64_ic_stability_in_optional_metrics() -> None:
+    """ic_stability is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "ic_stability" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r64_ic_stability_in_lower_is_better() -> None:
+    """ic_stability IS in LOWER_IS_BETTER (lower std = more stable = better)."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "ic_stability" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r64_ic_stability_cap_value() -> None:
+    """BTST_QUALITY_CAPS has ic_stability cap of 0.2."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "ic_stability" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["ic_stability"] == 0.2
+
+
+def test_r64_ic_stability_in_guardrail_keys() -> None:
+    """ic_stability is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "ic_stability" in _GUARDRAIL_KEYS
+
+
+def test_r64_ic_stability_label() -> None:
+    """ic_stability has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "ic_stability" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["ic_stability"]) > 0

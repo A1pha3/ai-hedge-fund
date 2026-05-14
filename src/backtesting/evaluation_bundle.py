@@ -112,6 +112,9 @@ _GUARDRAIL_KEYS = (
     # Task 2 (Round 63, Beta): best factor-combination win rate floor guardrail.
     # best_combo_win_rate < 0.5 means no factor subset achieves majority win rate.
     "best_combo_win_rate",
+    # Task 2 (Round 64, Beta): factor validity window IC stability guardrail.
+    # ic_stability > 0.2 means the IC across time segments is too volatile to trust factor signals.
+    "ic_stability",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -520,6 +523,9 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF trend slope floor.
     # cost_pf_trend_slope < -0.1 means cost-adjusted profit factor is deteriorating significantly across windows.
     "cost_pf_trend_slope": -0.1,
+    # Task 3 (Round 64, Gamma): cross-window best combo win rate trend slope floor.
+    # combo_win_rate_trend_slope < -0.02 means best combo win rate is declining meaningfully.
+    "combo_win_rate_trend_slope": -0.02,
 }
 
 # ---------------------------------------------------------------------------
@@ -602,6 +608,9 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # Task 1 (Round 62, Alpha): low-liquidity fraction cap.
     # low_liquidity_pct > 0.4 means >40% of candidates have float turnover < 2% — severe execution risk.
     "low_liquidity_pct": 0.4,
+    # Task 2 (Round 64, Beta): factor validity IC stability cap.
+    # ic_stability > 0.2 means IC variation across time segments is too large to trust factor signals.
+    "ic_stability": 0.2,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},
