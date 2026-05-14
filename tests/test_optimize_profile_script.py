@@ -23184,3 +23184,396 @@ def test_r78_t3_label_registered() -> None:
     """threshold_lift_trend_slope must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
     assert "threshold_lift_trend_slope" in COMPARISON_METRIC_LABELS
+
+# ===========================================================================
+# Round 79, Task 1 (Alpha): compute_score_quintile_consistency
+# ===========================================================================
+
+
+def test_r79_t1_too_few_rows_returns_invalid() -> None:
+    """Fewer than 25 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_score_quintile_consistency
+    rows = [{"score": float(i), "actual_return": 0.01} for i in range(24)]
+    result = compute_score_quintile_consistency(rows)
+    assert result["valid"] is False
+
+
+def test_r79_t1_actual_return_all_none_returns_invalid() -> None:
+    """All actual_return=None → valid=False."""
+    from scripts.btst_analysis_utils import compute_score_quintile_consistency
+    rows = [{"score": float(i), "actual_return": None} for i in range(30)]
+    result = compute_score_quintile_consistency(rows)
+    assert result["valid"] is False
+
+
+def test_r79_t1_no_score_field_returns_invalid() -> None:
+    """No score fields → valid=False."""
+    from scripts.btst_analysis_utils import compute_score_quintile_consistency
+    rows = [{"actual_return": 0.01} for _ in range(30)]
+    result = compute_score_quintile_consistency(rows)
+    assert result["valid"] is False
+
+
+def test_r79_t1_perfect_monotonicity() -> None:
+    """Strictly increasing win-rate across quintiles → monotonicity_score=1.0."""
+    from scripts.btst_analysis_utils import compute_score_quintile_consistency
+    rows = []
+    # Q1: 0 wins (0%), Q2: 20%, Q3: 40%, Q4: 60%, Q5: 80%
+    for q in range(5):
+        win_rate = q * 0.2
+        for j in range(10):
+            ret = 0.01 if j / 10 < win_rate else -0.01
+            rows.append({"score": float(q * 10 + j), "actual_return": ret})
+    result = compute_score_quintile_consistency(rows)
+    assert result["valid"] is True
+    assert result["quintile_monotonicity_score"] == pytest.approx(1.0)
+
+
+def test_r79_t1_partial_monotonicity() -> None:
+    """3 out of 4 adjacent pairs monotone → score=0.75."""
+    from scripts.btst_analysis_utils import compute_score_quintile_consistency
+    rows = []
+    # win rates: 0.1, 0.3, 0.5, 0.4, 0.7 → monotone pairs: (0,1),(1,2),(3,4) = 3 out of 4
+    win_rates = [0.1, 0.3, 0.5, 0.4, 0.7]
+    for q, wr in enumerate(win_rates):
+        for j in range(10):
+            ret = 0.01 if j / 10 < wr else -0.01
+            rows.append({"score": float(q * 10 + j), "actual_return": ret})
+    result = compute_score_quintile_consistency(rows)
+    assert result["valid"] is True
+    assert 0.0 < result["quintile_monotonicity_score"] < 1.0
+
+
+def test_r79_t1_top_bottom_spread_positive_when_q5_better() -> None:
+    """q5_win_rate > q1_win_rate → top_bottom_spread > 0."""
+    from scripts.btst_analysis_utils import compute_score_quintile_consistency
+    rows = []
+    # Q1: 20% win, Q5: 80% win, others in between
+    win_rates = [0.2, 0.3, 0.5, 0.6, 0.8]
+    for q, wr in enumerate(win_rates):
+        for j in range(10):
+            ret = 0.01 if j / 10 < wr else -0.01
+            rows.append({"score": float(q * 10 + j), "actual_return": ret})
+    result = compute_score_quintile_consistency(rows)
+    assert result["valid"] is True
+    assert result["quintile_top_bottom_spread"] > 0
+
+
+def test_r79_t1_uses_runner_composite_score_first() -> None:
+    """runner_composite_score takes priority over score."""
+    from scripts.btst_analysis_utils import compute_score_quintile_consistency
+    rows = []
+    for i in range(50):
+        rows.append({"runner_composite_score": float(i), "score": 99.0, "actual_return": 0.01 if i > 25 else -0.01})
+    result = compute_score_quintile_consistency(rows)
+    assert result["valid"] is True
+
+
+def test_r79_t1_uses_composite_score_fallback() -> None:
+    """composite_score is used when runner_composite_score absent."""
+    from scripts.btst_analysis_utils import compute_score_quintile_consistency
+    rows = []
+    for i in range(50):
+        rows.append({"composite_score": float(i), "actual_return": 0.01 if i > 25 else -0.01})
+    result = compute_score_quintile_consistency(rows)
+    assert result["valid"] is True
+
+
+def test_r79_t1_q5_q1_win_rate_values_match_quintiles() -> None:
+    """q5_win_rate and q1_win_rate correspond to top and bottom quintile."""
+    from scripts.btst_analysis_utils import compute_score_quintile_consistency
+    rows = []
+    # All bottom 10 lose, all top 10 win
+    for i in range(10):
+        rows.append({"score": float(i), "actual_return": -0.01})  # Q1
+    for i in range(10, 40):
+        rows.append({"score": float(i), "actual_return": 0.01})   # Q2-Q4
+    for i in range(40, 50):
+        rows.append({"score": float(i), "actual_return": 0.01})   # Q5
+    result = compute_score_quintile_consistency(rows)
+    assert result["valid"] is True
+    assert result["q1_win_rate"] == pytest.approx(0.0)
+    assert result["q5_win_rate"] == pytest.approx(1.0)
+
+
+def test_r79_t1_metric_in_comparison_metrics() -> None:
+    """sq_consist_quintile_monotonicity_score must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "sq_consist_quintile_monotonicity_score" in COMPARISON_METRICS
+
+
+def test_r79_t1_spread_metric_in_comparison_metrics() -> None:
+    """sq_consist_quintile_top_bottom_spread must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "sq_consist_quintile_top_bottom_spread" in COMPARISON_METRICS
+
+
+def test_r79_t1_metric_in_optional_comparison_metrics() -> None:
+    """sq_consist_quintile_monotonicity_score must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "sq_consist_quintile_monotonicity_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r79_t1_spread_in_optional_comparison_metrics() -> None:
+    """sq_consist_quintile_top_bottom_spread must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "sq_consist_quintile_top_bottom_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r79_t1_floor_registered() -> None:
+    """sq_consist_quintile_monotonicity_score floor must be 0.4."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "sq_consist_quintile_monotonicity_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["sq_consist_quintile_monotonicity_score"] == pytest.approx(0.4)
+
+
+def test_r79_t1_label_registered() -> None:
+    """sq_consist_quintile_monotonicity_score must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "sq_consist_quintile_monotonicity_score" in COMPARISON_METRIC_LABELS
+
+
+# ===========================================================================
+# Round 79, Task 2 (Beta): compute_entry_quality_filter
+# ===========================================================================
+
+
+def test_r79_t2_too_few_rows_returns_invalid() -> None:
+    """Fewer than 20 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_entry_quality_filter
+    rows = [{"actual_return": 0.01, "volume_expansion_quality": 0.8, "close_strength": 0.8} for _ in range(19)]
+    result = compute_entry_quality_filter(rows)
+    assert result["valid"] is False
+
+
+def test_r79_t2_missing_volume_expansion_quality_returns_invalid() -> None:
+    """Missing volume_expansion_quality → valid=False."""
+    from scripts.btst_analysis_utils import compute_entry_quality_filter
+    rows = [{"actual_return": 0.01, "close_strength": 0.8} for _ in range(30)]
+    result = compute_entry_quality_filter(rows)
+    assert result["valid"] is False
+
+
+def test_r79_t2_missing_close_strength_returns_invalid() -> None:
+    """Missing close_strength → valid=False."""
+    from scripts.btst_analysis_utils import compute_entry_quality_filter
+    rows = [{"actual_return": 0.01, "volume_expansion_quality": 0.8} for _ in range(30)]
+    result = compute_entry_quality_filter(rows)
+    assert result["valid"] is False
+
+
+def test_r79_t2_high_quality_fewer_than_5_returns_invalid() -> None:
+    """High-quality entries < 5 → valid=False."""
+    from scripts.btst_analysis_utils import compute_entry_quality_filter
+    rows = []
+    for i in range(20):
+        rows.append({"actual_return": 0.01, "volume_expansion_quality": 0.3, "close_strength": 0.3})
+    # Only 3 high-quality entries
+    for i in range(3):
+        rows.append({"actual_return": 0.01, "volume_expansion_quality": 0.7, "close_strength": 0.7})
+    result = compute_entry_quality_filter(rows)
+    assert result["valid"] is False
+
+
+def test_r79_t2_high_quality_entry_edge_positive() -> None:
+    """High-quality entries with all wins → positive edge."""
+    from scripts.btst_analysis_utils import compute_entry_quality_filter
+    rows = []
+    # 20 low-quality rows: 50% win
+    for i in range(20):
+        rows.append({"actual_return": 0.01 if i < 10 else -0.01, "volume_expansion_quality": 0.3, "close_strength": 0.3})
+    # 10 high-quality rows: 100% win
+    for i in range(10):
+        rows.append({"actual_return": 0.01, "volume_expansion_quality": 0.8, "close_strength": 0.8})
+    result = compute_entry_quality_filter(rows)
+    assert result["valid"] is True
+    assert result["quality_entry_edge"] > 0
+
+
+def test_r79_t2_baseline_win_rate_correct() -> None:
+    """baseline_win_rate covers all valid rows."""
+    from scripts.btst_analysis_utils import compute_entry_quality_filter
+    rows = []
+    # 30 rows: 15 wins + 15 losses, 10 high-quality all wins
+    for i in range(20):
+        rows.append({"actual_return": 0.01 if i < 10 else -0.01, "volume_expansion_quality": 0.3, "close_strength": 0.3})
+    for i in range(10):
+        rows.append({"actual_return": 0.01, "volume_expansion_quality": 0.8, "close_strength": 0.8})
+    result = compute_entry_quality_filter(rows)
+    assert result["valid"] is True
+    expected_baseline = 20 / 30
+    assert result["baseline_win_rate"] == pytest.approx(expected_baseline, rel=1e-4)
+
+
+def test_r79_t2_quality_entry_ratio_correct() -> None:
+    """quality_entry_ratio = high_quality / total."""
+    from scripts.btst_analysis_utils import compute_entry_quality_filter
+    rows = []
+    for i in range(20):
+        rows.append({"actual_return": 0.01, "volume_expansion_quality": 0.3, "close_strength": 0.3})
+    for i in range(10):
+        rows.append({"actual_return": 0.01, "volume_expansion_quality": 0.8, "close_strength": 0.8})
+    result = compute_entry_quality_filter(rows)
+    assert result["valid"] is True
+    assert result["quality_entry_ratio"] == pytest.approx(10 / 30, rel=1e-4)
+
+
+def test_r79_t2_metric_in_comparison_metrics() -> None:
+    """entry_qual_high_quality_entry_win_rate must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "entry_qual_high_quality_entry_win_rate" in COMPARISON_METRICS
+
+
+def test_r79_t2_edge_in_comparison_metrics() -> None:
+    """entry_qual_quality_entry_edge must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "entry_qual_quality_entry_edge" in COMPARISON_METRICS
+
+
+def test_r79_t2_metric_in_optional_comparison_metrics() -> None:
+    """entry_qual_high_quality_entry_win_rate must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "entry_qual_high_quality_entry_win_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r79_t2_edge_in_optional_comparison_metrics() -> None:
+    """entry_qual_quality_entry_edge must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "entry_qual_quality_entry_edge" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r79_t2_floor_registered() -> None:
+    """entry_qual_quality_entry_edge floor must be 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "entry_qual_quality_entry_edge" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["entry_qual_quality_entry_edge"] == pytest.approx(0.0)
+
+
+def test_r79_t2_label_registered() -> None:
+    """entry_qual_quality_entry_edge must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "entry_qual_quality_entry_edge" in COMPARISON_METRIC_LABELS
+
+
+# ===========================================================================
+# Round 79, Task 3 (Gamma): compute_cross_window_robustness_trend
+# ===========================================================================
+
+
+def test_r79_t3_too_few_windows_returns_invalid() -> None:
+    """Fewer than 3 windows → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    summaries = [{"robust_robustness_ratio": 0.5}, {"robust_robustness_ratio": 0.6}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is False
+
+
+def test_r79_t3_no_robustness_ratio_values_returns_invalid() -> None:
+    """No robust_robustness_ratio values → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    summaries = [{"other": 1}, {"other": 2}, {"other": 3}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is False
+
+
+def test_r79_t3_rising_trend_positive_slope() -> None:
+    """Rising robustness_ratio values → positive slope."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    summaries = [{"robust_robustness_ratio": 0.4}, {"robust_robustness_ratio": 0.5}, {"robust_robustness_ratio": 0.6}, {"robust_robustness_ratio": 0.7}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is True
+    assert result["robustness_trend_slope"] > 0
+
+
+def test_r79_t3_falling_trend_negative_slope() -> None:
+    """Falling robustness_ratio values → negative slope."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    summaries = [{"robust_robustness_ratio": 0.8}, {"robust_robustness_ratio": 0.6}, {"robust_robustness_ratio": 0.4}, {"robust_robustness_ratio": 0.2}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is True
+    assert result["robustness_trend_slope"] < 0
+
+
+def test_r79_t3_grade_a_large_positive_slope() -> None:
+    """Slope > 0.01 → grade=A."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    # Values: 0.0, 0.2, 0.4 → slope = 0.2 per step
+    summaries = [{"robust_robustness_ratio": 0.0}, {"robust_robustness_ratio": 0.2}, {"robust_robustness_ratio": 0.4}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is True
+    assert result["robustness_trend_grade"] == "A"
+
+
+def test_r79_t3_grade_b_small_positive_slope() -> None:
+    """0 < slope <= 0.01 → grade=B."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    # Tiny upward trend
+    summaries = [{"robust_robustness_ratio": 0.500}, {"robust_robustness_ratio": 0.505}, {"robust_robustness_ratio": 0.510}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is True
+    assert result["robustness_trend_grade"] in ("A", "B")
+    assert result["robustness_trend_slope"] > 0
+
+
+def test_r79_t3_grade_c_small_negative_slope() -> None:
+    """−0.01 < slope <= 0 → grade=C."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    # Very slight decrease
+    summaries = [{"robust_robustness_ratio": 0.510}, {"robust_robustness_ratio": 0.505}, {"robust_robustness_ratio": 0.500}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is True
+    assert result["robustness_trend_grade"] in ("C", "D")
+    assert result["robustness_trend_slope"] < 0
+
+
+def test_r79_t3_grade_d_large_negative_slope() -> None:
+    """Slope <= -0.01 → grade=D."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    summaries = [{"robust_robustness_ratio": 0.8}, {"robust_robustness_ratio": 0.5}, {"robust_robustness_ratio": 0.2}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is True
+    assert result["robustness_trend_grade"] == "D"
+
+
+def test_r79_t3_ols_slope_numerical_accuracy() -> None:
+    """OLS slope for [0,1,2] x=[0,1,2] must equal 1.0."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    summaries = [{"robust_robustness_ratio": 0.0}, {"robust_robustness_ratio": 1.0}, {"robust_robustness_ratio": 2.0}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is True
+    assert result["robustness_trend_slope"] == pytest.approx(1.0, rel=1e-5)
+
+
+def test_r79_t3_window_count_correct() -> None:
+    """robustness_window_count must match valid data points."""
+    from scripts.optimize_profile import compute_cross_window_robustness_trend
+    summaries = [{"robust_robustness_ratio": 0.5}, {}, {"robust_robustness_ratio": 0.6}, {"other": 99}, {"robust_robustness_ratio": 0.7}]
+    result = compute_cross_window_robustness_trend(summaries)
+    assert result["valid"] is True
+    assert result["robustness_window_count"] == 3
+
+
+def test_r79_t3_metric_in_comparison_metrics() -> None:
+    """robustness_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "robustness_trend_slope" in COMPARISON_METRICS
+
+
+def test_r79_t3_metric_in_optional_comparison_metrics() -> None:
+    """robustness_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "robustness_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r79_t3_floor_registered() -> None:
+    """robustness_trend_slope floor must be -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "robustness_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["robustness_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r79_t3_label_registered() -> None:
+    """robustness_trend_slope must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "robustness_trend_slope" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["robustness_trend_slope"] == "稳健性跨窗趋势斜率"

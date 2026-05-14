@@ -520,6 +520,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "hotstock_edge",
     # Task 2 (Round 78, Beta): factor robustness ratio (jackknife sign-consistent fraction).
     "robustness_ratio",
+    # Task 1 (Round 79, Alpha): score quintile monotonicity score and top-bottom spread.
+    "sq_consist_quintile_monotonicity_score",
+    "sq_consist_quintile_top_bottom_spread",
+    # Task 2 (Round 79, Beta): high-quality entry win rate and edge.
+    "entry_qual_high_quality_entry_win_rate",
+    "entry_qual_quality_entry_edge",
+    # Task 3 (Round 79, Gamma): cross-window factor robustness OLS trend slope.
+    "robustness_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -928,6 +936,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "hotstock_edge": "热门股胜率优势",
     # Task 2 (Round 78, Beta): 因子稳健性比率
     "robustness_ratio": "因子稳健性比率",
+    # Task 1 (Round 79, Alpha): 五分位单调性
+    "sq_consist_quintile_monotonicity_score": "五分位单调性得分",
+    "sq_consist_quintile_top_bottom_spread": "五分位Q5-Q1胜率差",
+    # Task 2 (Round 79, Beta): 量价共振入场质量
+    "entry_qual_high_quality_entry_win_rate": "高质量入场胜率",
+    "entry_qual_quality_entry_edge": "入场质量胜率溢价",
+    # Task 3 (Round 79, Gamma): 稳健性跨窗趋势
+    "robustness_trend_slope": "稳健性跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1410,6 +1426,14 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "hotstock_edge",
     # Task 2 (Round 78, Beta): factor robustness ratio — optional; pre-Round-78 outputs omit it.
     "robustness_ratio",
+    # Task 1 (Round 79, Alpha): score quintile monotonicity — optional; pre-Round-79 outputs omit these.
+    "sq_consist_quintile_monotonicity_score",
+    "sq_consist_quintile_top_bottom_spread",
+    # Task 2 (Round 79, Beta): entry quality filter — optional; pre-Round-79 outputs omit these.
+    "entry_qual_high_quality_entry_win_rate",
+    "entry_qual_quality_entry_edge",
+    # Task 3 (Round 79, Gamma): cross-window robustness trend slope — optional; pre-Round-79 outputs omit it.
+    "robustness_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3030,6 +3054,42 @@ def compute_cross_window_threshold_lift_trend(all_windows_summaries: list[dict])
     else:
         grade = "D"
     return {"threshold_lift_trend_valid": True, "threshold_lift_trend_slope": round(slope, 8), "threshold_lift_trend_mean": round(mean_y, 6), "threshold_lift_positive_windows_pct": threshold_lift_positive_windows_pct, "threshold_lift_trend_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 79, Task 3 (Gamma): Cross-window factor robustness OLS trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_robustness_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口因子稳健性趋势：robustness_ratio 的 OLS 时序斜率。"""
+    _null: dict = {"valid": False, "robustness_trend_slope": None, "robustness_trend_grade": None, "robustness_window_count": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("robust_robustness_ratio")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    sum_x = n * (n - 1) // 2
+    sum_y = sum(vals)
+    sum_xy = sum(i * vals[i] for i in range(n))
+    sum_x2 = sum(i * i for i in range(n))
+    denom = n * sum_x2 - sum_x * sum_x
+    slope = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+    if slope > 0.01:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"valid": True, "robustness_trend_slope": round(slope, 8), "robustness_trend_grade": grade, "robustness_window_count": n}
 
 
 # ---------------------------------------------------------------------------
@@ -4894,6 +4954,8 @@ def _build_replay_evaluator(
         _skew_trend: dict[str, Any] = compute_cross_window_skew_trend(all_primary_surfaces)
         # Task 3 (Round 78, Gamma): cross-window adaptive threshold lift trend.
         _tlt: dict[str, Any] = compute_cross_window_threshold_lift_trend(all_primary_surfaces)
+        # Task 3 (Round 79, Gamma): cross-window factor robustness OLS trend.
+        _rbt: dict[str, Any] = compute_cross_window_robustness_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -5059,6 +5121,18 @@ def _build_replay_evaluator(
         # Task 2 (Round 78, Beta): average robust_robustness_ratio across replay windows.
         _robustness_ratio_vals = [float(s["robust_robustness_ratio"]) for s in all_primary_surfaces if s.get("robust_robustness_ratio") is not None]
         avg_robustness_ratio: "float | None" = round(sum(_robustness_ratio_vals) / len(_robustness_ratio_vals), 6) if _robustness_ratio_vals else None
+        # Task 1 (Round 79, Alpha): average sq_consist_quintile_monotonicity_score across replay windows.
+        _sq_mono_vals = [float(s["sq_consist_quintile_monotonicity_score"]) for s in all_primary_surfaces if s.get("sq_consist_quintile_monotonicity_score") is not None]
+        avg_sq_quintile_monotonicity_score: "float | None" = round(sum(_sq_mono_vals) / len(_sq_mono_vals), 6) if _sq_mono_vals else None
+        # Task 1 (Round 79, Alpha): average sq_consist_quintile_top_bottom_spread across replay windows.
+        _sq_tbs_vals = [float(s["sq_consist_quintile_top_bottom_spread"]) for s in all_primary_surfaces if s.get("sq_consist_quintile_top_bottom_spread") is not None]
+        avg_sq_quintile_top_bottom_spread: "float | None" = round(sum(_sq_tbs_vals) / len(_sq_tbs_vals), 6) if _sq_tbs_vals else None
+        # Task 2 (Round 79, Beta): average entry_qual_high_quality_entry_win_rate across replay windows.
+        _eq_hqewr_vals = [float(s["entry_qual_high_quality_entry_win_rate"]) for s in all_primary_surfaces if s.get("entry_qual_high_quality_entry_win_rate") is not None]
+        avg_entry_qual_high_quality_entry_win_rate: "float | None" = round(sum(_eq_hqewr_vals) / len(_eq_hqewr_vals), 6) if _eq_hqewr_vals else None
+        # Task 2 (Round 79, Beta): average entry_qual_quality_entry_edge across replay windows.
+        _eq_qee_vals = [float(s["entry_qual_quality_entry_edge"]) for s in all_primary_surfaces if s.get("entry_qual_quality_entry_edge") is not None]
+        avg_entry_qual_quality_entry_edge: "float | None" = round(sum(_eq_qee_vals) / len(_eq_qee_vals), 6) if _eq_qee_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe_r75 if avg_sharpe_r75 is not None else avg_sharpe,
@@ -5594,6 +5668,18 @@ def _build_replay_evaluator(
                 "hotstock_edge": avg_hotstock_edge,
                 # Task 2 (Round 78, Beta): factor robustness ratio averaged across windows.
                 "robustness_ratio": avg_robustness_ratio,
+                # Task 1 (Round 79, Alpha): score quintile monotonicity score averaged across windows.
+                "sq_consist_quintile_monotonicity_score": avg_sq_quintile_monotonicity_score,
+                # Task 1 (Round 79, Alpha): score quintile top-bottom spread averaged across windows.
+                "sq_consist_quintile_top_bottom_spread": avg_sq_quintile_top_bottom_spread,
+                # Task 2 (Round 79, Beta): high-quality entry win rate averaged across windows.
+                "entry_qual_high_quality_entry_win_rate": avg_entry_qual_high_quality_entry_win_rate,
+                # Task 2 (Round 79, Beta): quality entry edge averaged across windows.
+                "entry_qual_quality_entry_edge": avg_entry_qual_quality_entry_edge,
+                # Task 3 (Round 79, Gamma): cross-window factor robustness OLS trend slope.
+                "robustness_trend_slope": _rbt.get("robustness_trend_slope"),
+                "robustness_trend_grade": _rbt.get("robustness_trend_grade"),
+                "robustness_trend_window_count": _rbt.get("robustness_window_count"),
         }
 
     return evaluator

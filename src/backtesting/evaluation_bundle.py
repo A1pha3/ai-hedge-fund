@@ -647,6 +647,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 78, Gamma): threshold lift cross-window trend slope floor.
     # threshold_lift_trend_slope < -0.01 means threshold lift is deteriorating across windows.
     "threshold_lift_trend_slope": -0.01,
+    # Task 1 (Round 79, Alpha): score quintile monotonicity score floor.
+    # sq_consist_quintile_monotonicity_score < 0.4 means scoring system lacks monotonic ordering.
+    "sq_consist_quintile_monotonicity_score": 0.4,
+    # Task 2 (Round 79, Beta): entry quality edge floor.
+    # entry_qual_quality_entry_edge < 0.0 means high-quality entry signals provide no win-rate lift.
+    "entry_qual_quality_entry_edge": 0.0,
+    # Task 3 (Round 79, Gamma): robustness trend slope floor.
+    # robustness_trend_slope < -0.01 means factor robustness is deteriorating across windows.
+    "robustness_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

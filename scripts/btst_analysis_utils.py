@@ -4651,6 +4651,22 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _frc.items():
         _surface_result[f"robust_{_k}"] = _v
 
+    # Round 79, Task 1 (Alpha): Score quintile monotonicity consistency.
+    sq_consist_result: dict = compute_score_quintile_consistency(rows)
+    if sq_consist_result["valid"]:
+        _surface_result["sq_consist_quintile_monotonicity_score"] = sq_consist_result["quintile_monotonicity_score"]
+        _surface_result["sq_consist_quintile_top_bottom_spread"] = sq_consist_result["quintile_top_bottom_spread"]
+        _surface_result["sq_consist_q5_win_rate"] = sq_consist_result["q5_win_rate"]
+        _surface_result["sq_consist_q1_win_rate"] = sq_consist_result["q1_win_rate"]
+
+    # Round 79, Task 2 (Beta): Entry quality filter (volume-price resonance).
+    entry_qual_result: dict = compute_entry_quality_filter(rows)
+    if entry_qual_result["valid"]:
+        _surface_result["entry_qual_high_quality_entry_win_rate"] = entry_qual_result["high_quality_entry_win_rate"]
+        _surface_result["entry_qual_quality_entry_edge"] = entry_qual_result["quality_entry_edge"]
+        _surface_result["entry_qual_quality_entry_ratio"] = entry_qual_result["quality_entry_ratio"]
+        _surface_result["entry_qual_baseline_win_rate"] = entry_qual_result["baseline_win_rate"]
+
     return _surface_result
 
 
@@ -14048,3 +14064,75 @@ def compute_factor_robustness_check(rows: list[dict]) -> dict:
         result[f"ic_second_{f}"] = ic_second.get(f)
         result[f"ic_sign_consistent_{f}"] = ic_sign_consistent.get(f)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Round 79, Task 1 (Alpha): Score quintile monotonicity consistency
+# ---------------------------------------------------------------------------
+
+
+def compute_score_quintile_consistency(rows: list[dict]) -> dict:
+    """五分位单调性：分数越高胜率越高则系统越稳健。"""
+    EMPTY: dict = {"valid": False, "quintile_monotonicity_score": None, "quintile_top_bottom_spread": None, "q5_win_rate": None, "q1_win_rate": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        score_val = r.get("runner_composite_score") if r.get("runner_composite_score") is not None else (r.get("composite_score") if r.get("composite_score") is not None else r.get("score"))
+        if score_val is None:
+            continue
+        if r.get("actual_return") is None:
+            continue
+        try:
+            score_f = float(score_val)
+            ret_f = float(r["actual_return"])
+        except (TypeError, ValueError):
+            continue
+        valid_rows.append({"score": score_f, "actual_return": ret_f})
+    n: int = len(valid_rows)
+    if n < 25:
+        return EMPTY
+    sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
+    groups: list[list[dict]] = [sorted_rows[i * n // 5:(i + 1) * n // 5] for i in range(5)]
+    win_rates: list[float] = []
+    for g in groups:
+        if len(g) == 0:
+            return EMPTY
+        wr = sum(1 for row in g if row["actual_return"] > 0) / len(g)
+        win_rates.append(wr)
+    monotone_pairs: int = sum(1 for i in range(4) if win_rates[i + 1] >= win_rates[i])
+    quintile_monotonicity_score: float = round(monotone_pairs / 4, 6)
+    q1_win_rate: float = round(win_rates[0], 6)
+    q5_win_rate: float = round(win_rates[4], 6)
+    quintile_top_bottom_spread: float = round(q5_win_rate - q1_win_rate, 6)
+    return {"valid": True, "quintile_monotonicity_score": quintile_monotonicity_score, "quintile_top_bottom_spread": quintile_top_bottom_spread, "q5_win_rate": q5_win_rate, "q1_win_rate": q1_win_rate}
+
+
+# ---------------------------------------------------------------------------
+# Round 79, Task 2 (Beta): Entry quality filter (volume-price resonance)
+# ---------------------------------------------------------------------------
+
+
+def compute_entry_quality_filter(rows: list[dict]) -> dict:
+    """双因子高质量入场过滤：量价共振时的胜率溢价。"""
+    EMPTY: dict = {"valid": False, "high_quality_entry_win_rate": None, "quality_entry_edge": None, "quality_entry_ratio": None, "baseline_win_rate": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        if r.get("actual_return") is None or r.get("volume_expansion_quality") is None or r.get("close_strength") is None:
+            continue
+        try:
+            ret_f = float(r["actual_return"])
+            veq_f = float(r["volume_expansion_quality"])
+            cs_f = float(r["close_strength"])
+        except (TypeError, ValueError):
+            continue
+        valid_rows.append({"actual_return": ret_f, "volume_expansion_quality": veq_f, "close_strength": cs_f})
+    total: int = len(valid_rows)
+    if total < 20:
+        return EMPTY
+    baseline_win_rate: float = round(sum(1 for r in valid_rows if r["actual_return"] > 0) / total, 6)
+    high_quality: list[dict] = [r for r in valid_rows if r["volume_expansion_quality"] >= 0.6 and r["close_strength"] >= 0.6]
+    if len(high_quality) < 5:
+        return EMPTY
+    high_quality_entry_win_rate: float = round(sum(1 for r in high_quality if r["actual_return"] > 0) / len(high_quality), 6)
+    quality_entry_edge: float = round(high_quality_entry_win_rate - baseline_win_rate, 6)
+    quality_entry_ratio: float = round(len(high_quality) / total, 6)
+    return {"valid": True, "high_quality_entry_win_rate": high_quality_entry_win_rate, "quality_entry_edge": quality_entry_edge, "quality_entry_ratio": quality_entry_ratio, "baseline_win_rate": baseline_win_rate}
