@@ -4157,6 +4157,30 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["optimal_sentiment_bucket"] = _nss.get("optimal_sentiment_bucket")
     _surface_result["sentiment_effective"] = _nss.get("sentiment_effective")
 
+    # Round 44, Task 1 (Alpha): Relative-Strength Quartile Stratification.
+    # -----------------------------------------------------------------------
+    _rss: dict[str, Any] = compute_relative_strength_stratification(next_day_rows)
+    _surface_result["rs_stratification_valid"] = _rss.get("rs_stratification_valid")
+    _surface_result["rs_q1_win_rate"] = _rss.get("rs_q1_win_rate")
+    _surface_result["rs_q2_win_rate"] = _rss.get("rs_q2_win_rate")
+    _surface_result["rs_q3_win_rate"] = _rss.get("rs_q3_win_rate")
+    _surface_result["rs_q4_win_rate"] = _rss.get("rs_q4_win_rate")
+    _surface_result["rs_top_quartile_win_rate"] = _rss.get("rs_top_quartile_win_rate")
+    _surface_result["rs_bottom_quartile_win_rate"] = _rss.get("rs_bottom_quartile_win_rate")
+    _surface_result["rs_top_quartile_premium"] = _rss.get("rs_top_quartile_premium")
+    _surface_result["rs_monotone"] = _rss.get("rs_monotone")
+
+    # Round 44, Task 2 (Beta): Breakout-Quality Tercile Stratification.
+    # -----------------------------------------------------------------------
+    _bqs: dict[str, Any] = compute_breakout_quality_stratification(next_day_rows)
+    _surface_result["bq_stratification_valid"] = _bqs.get("bq_stratification_valid")
+    _surface_result["bq_low_win_rate"] = _bqs.get("bq_low_win_rate")
+    _surface_result["bq_mid_win_rate"] = _bqs.get("bq_mid_win_rate")
+    _surface_result["bq_high_win_rate"] = _bqs.get("bq_high_win_rate")
+    _surface_result["bq_high_vs_low_lift"] = _bqs.get("bq_high_vs_low_lift")
+    _surface_result["bq_monotone"] = _bqs.get("bq_monotone")
+    _surface_result["bq_effective"] = _bqs.get("bq_effective")
+
     return _surface_result
 
 
@@ -8133,4 +8157,239 @@ def compute_news_sentiment_stratification(rows: list[dict]) -> dict:
         "high_vs_low_sentiment_lift": lift,
         "optimal_sentiment_bucket": best_bucket,
         "sentiment_effective": effective,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 44, Task 1 (Alpha): Relative-Strength Quartile Stratification
+# ---------------------------------------------------------------------------
+
+
+def compute_relative_strength_stratification(rows: list[dict]) -> dict:
+    """Stratify BTST T+1 win rate by relative_strength_rank quartile (Q1/Q2/Q3/Q4).
+
+    Splits rows into four quartiles using P25/P50/P75 of ``relative_strength_rank``
+    and computes per-quartile win rate (``next_day_return > 0`` fraction).  Quartiles
+    with fewer than 3 rows are treated as invalid (None win rate).
+
+    Args:
+        rows: List of per-candidate dicts.  Each dict may contain:
+            - ``relative_strength_rank`` (float | None): relative-strength rank score.
+            - ``next_day_return`` (float | None): T+1 return used for win/loss.
+
+    Returns:
+        Dict with keys:
+
+        - ``rs_stratification_valid`` (bool): True when ≥ 2 quartiles have valid win rates.
+        - ``rs_q1_win_rate`` (float | None): Q1 (lowest RS) win rate.
+        - ``rs_q2_win_rate`` (float | None): Q2 win rate.
+        - ``rs_q3_win_rate`` (float | None): Q3 win rate.
+        - ``rs_q4_win_rate`` (float | None): Q4 (highest RS) win rate.
+        - ``rs_top_quartile_win_rate`` (float | None): same as rs_q4_win_rate.
+        - ``rs_bottom_quartile_win_rate`` (float | None): same as rs_q1_win_rate.
+        - ``rs_top_quartile_premium`` (float | None): Q4 − Q1 win rate differential.
+        - ``rs_monotone`` (bool | None): True when Q1 < Q2 < Q3 < Q4 win rates.
+    """
+    _null: dict = {
+        "rs_stratification_valid": False,
+        "rs_q1_win_rate": None,
+        "rs_q2_win_rate": None,
+        "rs_q3_win_rate": None,
+        "rs_q4_win_rate": None,
+        "rs_top_quartile_win_rate": None,
+        "rs_bottom_quartile_win_rate": None,
+        "rs_top_quartile_premium": None,
+        "rs_monotone": None,
+    }
+    if not rows:
+        return _null
+
+    has_rs = any(row.get("relative_strength_rank") is not None for row in rows)
+    if not has_rs:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        rs = row.get("relative_strength_rank")
+        ret = row.get("next_day_return")
+        if rs is None or ret is None:
+            continue
+        try:
+            paired.append((float(rs), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if not paired:
+        return _null
+
+    paired.sort(key=lambda x: x[0])
+    n = len(paired)
+
+    def _percentile_val(p: float) -> float:
+        idx = (p / 100.0) * (n - 1)
+        lo = int(idx)
+        hi = min(lo + 1, n - 1)
+        frac = idx - lo
+        return paired[lo][0] * (1.0 - frac) + paired[hi][0] * frac
+
+    p25 = _percentile_val(25)
+    p50 = _percentile_val(50)
+    p75 = _percentile_val(75)
+
+    q1_rets: list[float] = []
+    q2_rets: list[float] = []
+    q3_rets: list[float] = []
+    q4_rets: list[float] = []
+    for rs_val, ret_val in paired:
+        if rs_val <= p25:
+            q1_rets.append(ret_val)
+        elif rs_val <= p50:
+            q2_rets.append(ret_val)
+        elif rs_val <= p75:
+            q3_rets.append(ret_val)
+        else:
+            q4_rets.append(ret_val)
+
+    def _wr(rets: list[float]) -> float | None:
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_q1 = _wr(q1_rets)
+    wr_q2 = _wr(q2_rets)
+    wr_q3 = _wr(q3_rets)
+    wr_q4 = _wr(q4_rets)
+
+    valid_count = sum(1 for w in (wr_q1, wr_q2, wr_q3, wr_q4) if w is not None)
+    stratification_valid = valid_count >= 2
+
+    premium: float | None = None
+    if wr_q4 is not None and wr_q1 is not None:
+        premium = round(wr_q4 - wr_q1, 6)
+
+    monotone: bool | None = None
+    if wr_q1 is not None and wr_q2 is not None and wr_q3 is not None and wr_q4 is not None:
+        monotone = wr_q1 < wr_q2 < wr_q3 < wr_q4
+
+    return {
+        "rs_stratification_valid": stratification_valid,
+        "rs_q1_win_rate": wr_q1,
+        "rs_q2_win_rate": wr_q2,
+        "rs_q3_win_rate": wr_q3,
+        "rs_q4_win_rate": wr_q4,
+        "rs_top_quartile_win_rate": wr_q4,
+        "rs_bottom_quartile_win_rate": wr_q1,
+        "rs_top_quartile_premium": premium,
+        "rs_monotone": monotone,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 44, Task 2 (Beta): Breakout-Quality Tercile Stratification
+# ---------------------------------------------------------------------------
+
+
+def compute_breakout_quality_stratification(rows: list[dict]) -> dict:
+    """Stratify BTST T+1 win rate by breakout_quality_score tercile (low/mid/high).
+
+    Splits rows into three terciles using P33/P67 of ``breakout_quality_score``
+    and computes per-tercile win rate.  Terciles with fewer than 3 rows are
+    treated as invalid (None win rate).
+
+    Args:
+        rows: List of per-candidate dicts.  Each dict may contain:
+            - ``breakout_quality_score`` (float | None): breakout quality score.
+            - ``next_day_return`` (float | None): T+1 return used for win/loss.
+
+    Returns:
+        Dict with keys:
+
+        - ``bq_stratification_valid`` (bool): True when ≥ 2 terciles have valid win rates.
+        - ``bq_low_win_rate`` (float | None): low tercile win rate.
+        - ``bq_mid_win_rate`` (float | None): mid tercile win rate.
+        - ``bq_high_win_rate`` (float | None): high tercile win rate.
+        - ``bq_high_vs_low_lift`` (float | None): high − low win rate differential.
+        - ``bq_monotone`` (bool | None): True when low < mid < high win rates.
+        - ``bq_effective`` (bool | None): True when bq_high_vs_low_lift > 0.05.
+    """
+    _null: dict = {
+        "bq_stratification_valid": False,
+        "bq_low_win_rate": None,
+        "bq_mid_win_rate": None,
+        "bq_high_win_rate": None,
+        "bq_high_vs_low_lift": None,
+        "bq_monotone": None,
+        "bq_effective": None,
+    }
+    if not rows:
+        return _null
+
+    has_bq = any(row.get("breakout_quality_score") is not None for row in rows)
+    if not has_bq:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        bq = row.get("breakout_quality_score")
+        ret = row.get("next_day_return")
+        if bq is None or ret is None:
+            continue
+        try:
+            paired.append((float(bq), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if not paired:
+        return _null
+
+    paired.sort(key=lambda x: x[0])
+    n = len(paired)
+    p33_idx = int(n / 3)
+    p67_idx = int(2 * n / 3)
+    p33_val = paired[min(p33_idx, n - 1)][0]
+    p67_val = paired[min(p67_idx, n - 1)][0]
+
+    low_rets: list[float] = []
+    mid_rets: list[float] = []
+    high_rets: list[float] = []
+    for bq_val, ret_val in paired:
+        if bq_val <= p33_val:
+            low_rets.append(ret_val)
+        elif bq_val <= p67_val:
+            mid_rets.append(ret_val)
+        else:
+            high_rets.append(ret_val)
+
+    def _wr(rets: list[float]) -> float | None:
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_low = _wr(low_rets)
+    wr_mid = _wr(mid_rets)
+    wr_high = _wr(high_rets)
+
+    valid_count = sum(1 for w in (wr_low, wr_mid, wr_high) if w is not None)
+    stratification_valid = valid_count >= 2
+
+    lift: float | None = None
+    if wr_high is not None and wr_low is not None:
+        lift = round(wr_high - wr_low, 6)
+
+    monotone: bool | None = None
+    if wr_low is not None and wr_mid is not None and wr_high is not None:
+        monotone = wr_low < wr_mid < wr_high
+
+    effective: bool | None = None
+    if lift is not None:
+        effective = lift > 0.05
+
+    return {
+        "bq_stratification_valid": stratification_valid,
+        "bq_low_win_rate": wr_low,
+        "bq_mid_win_rate": wr_mid,
+        "bq_high_win_rate": wr_high,
+        "bq_high_vs_low_lift": lift,
+        "bq_monotone": monotone,
+        "bq_effective": effective,
     }

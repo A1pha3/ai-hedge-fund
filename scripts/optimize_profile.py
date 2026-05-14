@@ -308,6 +308,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "high_vs_low_sentiment_lift",
     # Task 3 (Round 43, Gamma): score momentum trend — normalized OLS slope.
     "score_trend_normalized",
+    # Task 1 (Round 44, Alpha): RS top-quartile win-rate premium over bottom quartile.
+    "rs_top_quartile_premium",
+    # Task 2 (Round 44, Beta): breakout-quality high-vs-low win-rate lift.
+    "bq_high_vs_low_lift",
+    # Task 3 (Round 44, Gamma): cross-window win-rate coefficient of variation.
+    "win_rate_cv",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -504,6 +510,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "high_vs_low_sentiment_lift": "高低情绪胜率差",
     # Task 3 (Round 43, Gamma): score momentum trend
     "score_trend_normalized": "评分动量趋势",
+    # Task 1 (Round 44, Alpha): RS top-quartile premium
+    "rs_top_quartile_premium": "RS高分位溢价",
+    # Task 2 (Round 44, Beta): breakout quality high-vs-low lift
+    "bq_high_vs_low_lift": "突破质量高低胜率差",
+    # Task 3 (Round 44, Gamma): cross-window win-rate CV
+    "win_rate_cv": "跨窗胜率变异系数",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -558,6 +570,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "max_drawdown_simulated",
     # Task 3 (Round 40, Gamma): factor drift score — higher = more unstable factor exposure = lower-is-better.
     "factor_drift_score",
+    # Task 3 (Round 44, Gamma): cross-window win-rate CV — higher = more unstable win rate = lower-is-better.
+    "win_rate_cv",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -746,6 +760,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "high_vs_low_sentiment_lift",
     # Task 3 (Round 43, Gamma): score momentum trend — optional; pre-Round-43 outputs omit it.
     "score_trend_normalized",
+    # Task 1 (Round 44, Alpha): RS top-quartile premium — optional; pre-Round-44 outputs omit it.
+    "rs_top_quartile_premium",
+    # Task 2 (Round 44, Beta): breakout quality lift — optional; pre-Round-44 outputs omit it.
+    "bq_high_vs_low_lift",
+    # Task 3 (Round 44, Gamma): cross-window win-rate CV — optional; pre-Round-44 outputs omit it.
+    "win_rate_cv",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1703,6 +1723,97 @@ def compute_score_momentum_trend(all_windows_summaries: list[dict]) -> dict:
     }
 
 
+# Round 44, Task 3 (Gamma): Win-Rate Stability Analysis — 跨窗胜率稳定性
+# ---------------------------------------------------------------------------
+# Tracks how stable the per-window win rate (next_close_positive_rate) is
+# across all replay windows.  High CV indicates the strategy is regime-sensitive
+# and the observed win rate may not persist out-of-sample.
+
+
+def compute_win_rate_stability_analysis(all_windows_summaries: list[dict]) -> dict:
+    """Compute descriptive statistics of next_close_positive_rate across replay windows.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts ordered by
+            window index (oldest → newest).
+
+    Returns:
+        Dict with keys:
+
+        - ``win_rate_mean`` (float | None): Mean win rate across valid windows.
+        - ``win_rate_std`` (float | None): Sample std dev (N-1 denominator, N≥2).
+        - ``win_rate_cv`` (float | None): Coefficient of variation = std / max(mean, 1e-8).
+        - ``win_rate_min`` (float | None): Minimum win rate across windows.
+        - ``win_rate_max`` (float | None): Maximum win rate across windows.
+        - ``win_rate_range`` (float | None): max − min win rate.
+        - ``win_rate_stability_grade`` (str | None): A(cv<0.10)/B(cv<0.20)/C(cv<0.30)/D(cv≥0.30).
+        - ``win_rate_stability_valid`` (bool): True when ≥ 3 valid windows.
+    """
+    _null: dict = {
+        "win_rate_mean": None,
+        "win_rate_std": None,
+        "win_rate_cv": None,
+        "win_rate_min": None,
+        "win_rate_max": None,
+        "win_rate_range": None,
+        "win_rate_stability_grade": None,
+        "win_rate_stability_valid": False,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    wr_series: list[float] = []
+    for surf in all_windows_summaries:
+        val = surf.get("win_rate")
+        if val is None:
+            continue
+        try:
+            wr_series.append(float(val))
+        except (TypeError, ValueError):
+            continue
+
+    if len(wr_series) < 3:
+        return _null
+
+    n = len(wr_series)
+    mean_wr = sum(wr_series) / n
+    if n >= 2:
+        variance = sum((v - mean_wr) ** 2 for v in wr_series) / (n - 1)
+        std_wr: float | None = variance ** 0.5
+    else:
+        std_wr = None
+
+    cv: float | None = None
+    if std_wr is not None:
+        cv = round(std_wr / max(mean_wr, 1e-8), 6)
+
+    min_wr = min(wr_series)
+    max_wr = max(wr_series)
+    range_wr = round(max_wr - min_wr, 6)
+
+    grade: str | None = None
+    if cv is not None:
+        if cv < 0.10:
+            grade = "A"
+        elif cv < 0.20:
+            grade = "B"
+        elif cv < 0.30:
+            grade = "C"
+        else:
+            grade = "D"
+
+    return {
+        "win_rate_mean": round(mean_wr, 6),
+        "win_rate_std": round(std_wr, 6) if std_wr is not None else None,
+        "win_rate_cv": cv,
+        "win_rate_min": round(min_wr, 6),
+        "win_rate_max": round(max_wr, 6),
+        "win_rate_range": range_wr,
+        "win_rate_stability_grade": grade,
+        "win_rate_stability_valid": True,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -2326,6 +2437,8 @@ def _build_replay_evaluator(
         avg_high_vs_low_sentiment_lift: float | None = round(sum(_hsl_vals) / len(_hsl_vals), 6) if _hsl_vals else None
         # Task 3 (Round 43, Gamma): score momentum trend — OLS slope of avg composite score.
         _smt: dict[str, Any] = compute_score_momentum_trend(all_primary_surfaces)
+        # Task 3 (Round 44, Gamma): win-rate stability across replay windows.
+        _wrst: dict[str, Any] = compute_win_rate_stability_analysis(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -2535,6 +2648,15 @@ def _build_replay_evaluator(
             "score_momentum_positive": _smt.get("score_momentum_positive"),
             "score_trend_acceleration": _smt.get("score_trend_acceleration"),
             "score_trend_grade": _smt.get("score_trend_grade"),
+            # Task 3 (Round 44, Gamma): win-rate stability across replay windows.
+            "win_rate_cv": _wrst.get("win_rate_cv"),
+            "win_rate_mean": _wrst.get("win_rate_mean"),
+            "win_rate_std": _wrst.get("win_rate_std"),
+            "win_rate_min": _wrst.get("win_rate_min"),
+            "win_rate_max": _wrst.get("win_rate_max"),
+            "win_rate_range": _wrst.get("win_rate_range"),
+            "win_rate_stability_grade": _wrst.get("win_rate_stability_grade"),
+            "win_rate_stability_valid": _wrst.get("win_rate_stability_valid"),
         }
 
     return evaluator

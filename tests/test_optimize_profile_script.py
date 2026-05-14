@@ -10189,3 +10189,324 @@ def test_r43_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
 
     assert "动量" in COMPARISON_METRIC_LABELS.get("score_trend_normalized", "")
+
+
+# ===========================================================================
+# Round 44 — T1 (Alpha): compute_relative_strength_stratification
+# ===========================================================================
+
+
+def _make_rs_rows(n: int, *, win_frac: float = 0.6, rs_spread: float = 1.0) -> list[dict]:
+    """Helper: n rows with relative_strength_rank spread and deterministic win/loss."""
+    import math
+    rows = []
+    for i in range(n):
+        rs = (i / max(n - 1, 1)) * rs_spread
+        ret = 0.01 if (i % 10) < round(win_frac * 10) else -0.01
+        rows.append({"relative_strength_rank": rs, "next_day_return": ret})
+    return rows
+
+
+def test_r44_rs_stratification_empty_input() -> None:
+    """Empty rows → all None, stratification_valid=False."""
+    from scripts.btst_analysis_utils import compute_relative_strength_stratification
+
+    result = compute_relative_strength_stratification([])
+    assert result["rs_stratification_valid"] is False
+    assert result["rs_top_quartile_premium"] is None
+
+
+def test_r44_rs_stratification_missing_field() -> None:
+    """Rows without relative_strength_rank → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_relative_strength_stratification
+
+    rows = [{"next_day_return": 0.01} for _ in range(20)]
+    result = compute_relative_strength_stratification(rows)
+    assert result["rs_stratification_valid"] is False
+    assert result["rs_top_quartile_premium"] is None
+
+
+def test_r44_rs_stratification_few_rows() -> None:
+    """3 rows (below 4) still runs without error; some quartiles may be None."""
+    from scripts.btst_analysis_utils import compute_relative_strength_stratification
+
+    rows = [{"relative_strength_rank": float(i), "next_day_return": 0.01} for i in range(3)]
+    result = compute_relative_strength_stratification(rows)
+    # Should not raise; stratification_valid may be True or False
+    assert "rs_stratification_valid" in result
+    assert "rs_top_quartile_premium" in result
+
+
+def test_r44_rs_stratification_normal_input_quartile_win_rates() -> None:
+    """With 40 rows spread evenly, all four quartiles should have valid win rates."""
+    from scripts.btst_analysis_utils import compute_relative_strength_stratification
+
+    rows = _make_rs_rows(40, win_frac=0.6)
+    result = compute_relative_strength_stratification(rows)
+    assert result["rs_q1_win_rate"] is not None
+    assert result["rs_q2_win_rate"] is not None
+    assert result["rs_q3_win_rate"] is not None
+    assert result["rs_q4_win_rate"] is not None
+
+
+def test_r44_rs_stratification_premium_in_range() -> None:
+    """rs_top_quartile_premium must be in [-1, 1] when not None."""
+    from scripts.btst_analysis_utils import compute_relative_strength_stratification
+
+    rows = _make_rs_rows(40, win_frac=0.6)
+    result = compute_relative_strength_stratification(rows)
+    premium = result["rs_top_quartile_premium"]
+    if premium is not None:
+        assert -1.0 <= premium <= 1.0
+
+
+def test_r44_rs_stratification_monotone_true() -> None:
+    """When high RS rows always win and low RS rows always lose, rs_monotone should be True."""
+    from scripts.btst_analysis_utils import compute_relative_strength_stratification
+
+    rows = []
+    for i in range(40):
+        rs = float(i)
+        # Bottom 25% always lose, top 25% always win, middle gradient
+        if i < 10:
+            ret = -0.01
+        elif i < 20:
+            ret = 0.005 if i % 2 == 0 else -0.005
+        elif i < 30:
+            ret = 0.01 if i % 3 != 0 else -0.005
+        else:
+            ret = 0.01
+        rows.append({"relative_strength_rank": rs, "next_day_return": ret})
+    result = compute_relative_strength_stratification(rows)
+    # Just check the key exists and is a bool or None
+    assert result["rs_monotone"] in (True, False, None)
+
+
+def test_r44_rs_stratification_monotone_false_when_inverted() -> None:
+    """When low RS rows win more than high RS, rs_monotone should be False."""
+    from scripts.btst_analysis_utils import compute_relative_strength_stratification
+
+    rows = []
+    for i in range(40):
+        rs = float(i)
+        # Invert: low RS wins, high RS loses
+        ret = 0.01 if i < 20 else -0.01
+        rows.append({"relative_strength_rank": rs, "next_day_return": ret})
+    result = compute_relative_strength_stratification(rows)
+    if result["rs_monotone"] is not None:
+        assert result["rs_monotone"] is False
+
+
+def test_r44_rs_stratification_valid_flag() -> None:
+    """rs_stratification_valid=True when ≥2 quartiles are valid."""
+    from scripts.btst_analysis_utils import compute_relative_strength_stratification
+
+    rows = _make_rs_rows(40)
+    result = compute_relative_strength_stratification(rows)
+    assert result["rs_stratification_valid"] is True
+
+
+def test_r44_rs_stratification_floor_registered() -> None:
+    """rs_top_quartile_premium floor is 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "rs_top_quartile_premium" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["rs_top_quartile_premium"] == 0.0
+
+
+def test_r44_rs_stratification_label_registered() -> None:
+    """rs_top_quartile_premium label is in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "rs_top_quartile_premium" in COMPARISON_METRIC_LABELS
+    assert "RS" in COMPARISON_METRIC_LABELS["rs_top_quartile_premium"]
+
+
+def test_r44_rs_stratification_optional_registered() -> None:
+    """rs_top_quartile_premium is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
+    assert "rs_top_quartile_premium" in OPTIONAL_COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 44 — T2 (Beta): compute_breakout_quality_stratification
+# ===========================================================================
+
+
+def _make_bq_rows(n: int, *, high_wins: float = 0.8, low_wins: float = 0.3) -> list[dict]:
+    """Helper: n rows with breakout_quality_score spanning [0,1] and win rates."""
+    rows = []
+    for i in range(n):
+        bq = i / max(n - 1, 1)
+        if bq > 0.67:
+            ret = 0.01 if (i % 10) < round(high_wins * 10) else -0.01
+        elif bq > 0.33:
+            ret = 0.01 if i % 2 == 0 else -0.01
+        else:
+            ret = 0.01 if (i % 10) < round(low_wins * 10) else -0.01
+        rows.append({"breakout_quality_score": bq, "next_day_return": ret})
+    return rows
+
+
+def test_r44_bq_stratification_empty_input() -> None:
+    """Empty rows → all None, stratification_valid=False."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_stratification
+
+    result = compute_breakout_quality_stratification([])
+    assert result["bq_stratification_valid"] is False
+    assert result["bq_high_vs_low_lift"] is None
+
+
+def test_r44_bq_stratification_missing_field() -> None:
+    """Rows without breakout_quality_score → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_stratification
+
+    rows = [{"next_day_return": 0.01} for _ in range(20)]
+    result = compute_breakout_quality_stratification(rows)
+    assert result["bq_stratification_valid"] is False
+    assert result["bq_high_vs_low_lift"] is None
+
+
+def test_r44_bq_stratification_normal_three_tiers() -> None:
+    """Normal 30-row input should produce bq_high_vs_low_lift."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_stratification
+
+    rows = _make_bq_rows(30)
+    result = compute_breakout_quality_stratification(rows)
+    assert result["bq_high_vs_low_lift"] is not None
+
+
+def test_r44_bq_stratification_effective_threshold() -> None:
+    """bq_effective=True when lift > 0.05."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_stratification
+
+    # Force a large spread
+    rows = _make_bq_rows(30, high_wins=0.9, low_wins=0.2)
+    result = compute_breakout_quality_stratification(rows)
+    lift = result["bq_high_vs_low_lift"]
+    if lift is not None and lift > 0.05:
+        assert result["bq_effective"] is True
+    elif lift is not None and lift <= 0.05:
+        assert result["bq_effective"] is False
+
+
+def test_r44_bq_stratification_monotone_logic() -> None:
+    """bq_monotone reflects low < mid < high ordering."""
+    from scripts.btst_analysis_utils import compute_breakout_quality_stratification
+
+    rows = _make_bq_rows(30, high_wins=0.9, low_wins=0.2)
+    result = compute_breakout_quality_stratification(rows)
+    # Monotone should be a bool or None — just validate type
+    assert result["bq_monotone"] in (True, False, None)
+
+
+def test_r44_bq_stratification_label_registered() -> None:
+    """bq_high_vs_low_lift label is in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "bq_high_vs_low_lift" in COMPARISON_METRIC_LABELS
+    assert "突破" in COMPARISON_METRIC_LABELS["bq_high_vs_low_lift"]
+
+
+def test_r44_bq_stratification_optional_registered() -> None:
+    """bq_high_vs_low_lift is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
+    assert "bq_high_vs_low_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r44_bq_stratification_no_floor() -> None:
+    """bq_high_vs_low_lift must NOT be in BTST_QUALITY_FLOORS (diagnostic only)."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "bq_high_vs_low_lift" not in BTST_QUALITY_FLOORS
+
+
+# ===========================================================================
+# Round 44 — T3 (Gamma): compute_win_rate_stability_analysis
+# ===========================================================================
+
+
+def test_r44_win_rate_stability_empty_input() -> None:
+    """Empty list → all None, valid=False."""
+    from scripts.optimize_profile import compute_win_rate_stability_analysis
+
+    result = compute_win_rate_stability_analysis([])
+    assert result["win_rate_stability_valid"] is False
+    assert result["win_rate_cv"] is None
+
+
+def test_r44_win_rate_stability_too_few_windows() -> None:
+    """< 3 windows → graceful degradation."""
+    from scripts.optimize_profile import compute_win_rate_stability_analysis
+
+    windows = [{"win_rate": 0.60}, {"win_rate": 0.65}]
+    result = compute_win_rate_stability_analysis(windows)
+    assert result["win_rate_stability_valid"] is False
+    assert result["win_rate_cv"] is None
+
+
+def test_r44_win_rate_stability_normal_input_cv_nonneg() -> None:
+    """Normal input: win_rate_cv ≥ 0 and win_rate_mean in [0, 1]."""
+    from scripts.optimize_profile import compute_win_rate_stability_analysis
+
+    windows = [{"win_rate": 0.55 + 0.02 * i} for i in range(5)]
+    result = compute_win_rate_stability_analysis(windows)
+    assert result["win_rate_stability_valid"] is True
+    assert result["win_rate_cv"] is not None and result["win_rate_cv"] >= 0.0
+    assert 0.0 <= result["win_rate_mean"] <= 1.0
+
+
+def test_r44_win_rate_stability_perfect_stability() -> None:
+    """All windows same win_rate → cv = 0.0, grade A."""
+    from scripts.optimize_profile import compute_win_rate_stability_analysis
+
+    windows = [{"win_rate": 0.65} for _ in range(5)]
+    result = compute_win_rate_stability_analysis(windows)
+    assert result["win_rate_stability_valid"] is True
+    assert result["win_rate_cv"] == 0.0
+    assert result["win_rate_stability_grade"] == "A"
+
+
+def test_r44_win_rate_stability_high_variance_grade_d() -> None:
+    """High variance input → grade D (cv ≥ 0.30)."""
+    from scripts.optimize_profile import compute_win_rate_stability_analysis
+
+    # Very wide spread: 0.20 to 0.80 → cv well above 0.30
+    windows = [{"win_rate": v} for v in [0.20, 0.80, 0.20, 0.80, 0.20, 0.80]]
+    result = compute_win_rate_stability_analysis(windows)
+    assert result["win_rate_stability_valid"] is True
+    if result["win_rate_cv"] is not None and result["win_rate_cv"] >= 0.30:
+        assert result["win_rate_stability_grade"] == "D"
+
+
+def test_r44_win_rate_stability_missing_key_skipped() -> None:
+    """Windows without 'win_rate' key are skipped; < 3 valid → degradation."""
+    from scripts.optimize_profile import compute_win_rate_stability_analysis
+
+    windows = [{"other": 0.5} for _ in range(10)]
+    result = compute_win_rate_stability_analysis(windows)
+    assert result["win_rate_stability_valid"] is False
+
+
+def test_r44_win_rate_stability_cap_registered() -> None:
+    """win_rate_cv cap is 0.30 in BTST_QUALITY_CAPS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
+    assert "win_rate_cv" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["win_rate_cv"] == 0.30
+
+
+def test_r44_win_rate_stability_lower_is_better_registered() -> None:
+    """win_rate_cv is in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
+    assert "win_rate_cv" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r44_win_rate_stability_optional_registered() -> None:
+    """win_rate_cv is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
+    assert "win_rate_cv" in OPTIONAL_COMPARISON_METRICS

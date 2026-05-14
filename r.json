@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_0ea395a4cdeb_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_0d0e0b163523_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -157,7 +157,16 @@
       "factor_drift_score_delta": null,
       "factor_rank_consistency_score_delta": null,
       "vol_price_alignment_rate_delta": null,
-      "combined_significance_score_delta": null
+      "combined_significance_score_delta": null,
+      "calibration_slope_delta": null,
+      "cs_top_quartile_premium_delta": null,
+      "consensus_windows_pct_delta": null,
+      "profit_factor_delta": null,
+      "high_vs_low_sentiment_lift_delta": null,
+      "score_trend_normalized_delta": null,
+      "rs_top_quartile_premium_delta": null,
+      "bq_high_vs_low_lift_delta": null,
+      "win_rate_cv_delta": null
     },
     "default": {
       "candidate": {
@@ -310,7 +319,16 @@
       "factor_drift_score_delta": null,
       "factor_rank_consistency_score_delta": null,
       "vol_price_alignment_rate_delta": null,
-      "combined_significance_score_delta": null
+      "combined_significance_score_delta": null,
+      "calibration_slope_delta": null,
+      "cs_top_quartile_premium_delta": null,
+      "consensus_windows_pct_delta": null,
+      "profit_factor_delta": null,
+      "high_vs_low_sentiment_lift_delta": null,
+      "score_trend_normalized_delta": null,
+      "rs_top_quartile_premium_delta": null,
+      "bq_high_vs_low_lift_delta": null,
+      "win_rate_cv_delta": null
     }
   },
   "rollout_recommendation": "hold",

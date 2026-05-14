@@ -279,6 +279,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # of its mean value per window — the optimizer is degrading candidate quality.
     # Floor ≥ −0.10 requires the score trend not to collapse severely across replay windows.
     "score_trend_normalized": -0.10,
+    # Task 1 (Round 44, Alpha): RS top-quartile win-rate premium floor.
+    # rs_top_quartile_premium = win_rate(Q4) − win_rate(Q1) where Q4/Q1 are top/bottom RS quartiles.
+    # A value < 0.0 means the highest-RS candidates do not outperform the lowest-RS candidates,
+    # indicating the relative-strength factor provides no positive selection edge.
+    # Floor ≥ 0.0 requires the RS factor to deliver at least a neutral (non-negative) premium.
+    "rs_top_quartile_premium": 0.0,
 }
 
 # ---------------------------------------------------------------------------
@@ -327,6 +333,12 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # their mean across walk-forward windows — a sign of serious regime sensitivity or over-fitting.
     # Profiles with factor_drift_score > 0.50 carry high out-of-sample instability risk.
     "factor_drift_score": 0.50,
+    # Task 3 (Round 44, Gamma): cross-window win-rate coefficient of variation cap.
+    # win_rate_cv = std(win_rate_across_windows) / mean(win_rate_across_windows).
+    # A CV above 0.30 means the strategy's per-window win rate varies by more than 30 % relative
+    # to its mean — a sign of high regime sensitivity; the strategy is not reliably repeatable.
+    # Profiles with win_rate_cv > 0.30 carry high out-of-sample win-rate instability risk.
+    "win_rate_cv": 0.30,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},
