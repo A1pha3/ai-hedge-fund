@@ -216,7 +216,10 @@
       "attribution_trend_slope_delta": null,
       "score_win_rate_spread_delta": null,
       "flow_breakout_synergy_delta": null,
-      "interaction_trend_slope_delta": null
+      "interaction_trend_slope_delta": null,
+      "tail_filter_effect_delta": null,
+      "sector_hhi_delta": null,
+      "dispersion_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -423,7 +426,10 @@
       "attribution_trend_slope_delta": null,
       "score_win_rate_spread_delta": null,
       "flow_breakout_synergy_delta": null,
-      "interaction_trend_slope_delta": null
+      "interaction_trend_slope_delta": null,
+      "tail_filter_effect_delta": null,
+      "sector_hhi_delta": null,
+      "dispersion_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

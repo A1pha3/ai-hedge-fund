@@ -563,6 +563,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend slope floor.
     # interaction_trend_slope < -0.01 means nonlinear interaction effect is declining across windows.
     "interaction_trend_slope": -0.01,
+    # Task 1 (Round 68, Alpha): tail filter effect floor.
+    # tail_filter_effect < -0.05 means filtering tail events sharply reduces win rate — alarming.
+    "tail_filter_effect": -0.05,
+    # Task 3 (Round 68, Gamma): cross-window score dispersion trend slope floor.
+    # dispersion_trend_slope < -0.01 means score discrimination power is declining across windows.
+    "dispersion_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------
@@ -651,6 +657,12 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # Task 3 (Round 65, Gamma): IC stability trend slope cap.
     # ic_stability_trend_slope > 0.01 means factor validity is becoming less stable across windows — worsening.
     "ic_stability_trend_slope": 0.01,
+    # Task 1 (Round 68, Alpha): tail risk score cap.
+    # tail_risk_score > 3.0 means extreme losses are ≥3× more frequent than extreme gains — high downside risk.
+    "tail_risk_score": 3.0,
+    # Task 2 (Round 68, Beta): position concentration HHI cap.
+    # sector_hhi > 0.5 means portfolio is highly concentrated in one sector — concentration risk too high.
+    "sector_hhi": 0.5,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

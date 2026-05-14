@@ -454,6 +454,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "flow_breakout_synergy",
     # Task 3 (Round 67, Gamma): cross-window nonlinear interaction OLS trend slope.
     "interaction_trend_slope",
+    # Task 1 (Round 68, Alpha): tail event filter effect — normal_win_rate minus full_win_rate.
+    "tail_filter_effect",
+    # Task 2 (Round 68, Beta): position concentration HHI — Herfindahl-Hirschman Index of sector distribution.
+    "sector_hhi",
+    # Task 3 (Round 68, Gamma): cross-window score dispersion OLS trend slope.
+    "dispersion_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -796,6 +802,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "flow_breakout_synergy": "资金突破协同胜率",
     # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend slope
     "interaction_trend_slope": "非线性交互跨窗趋势",
+    # Task 1 (Round 68, Alpha): tail event filter effect
+    "tail_filter_effect": "尾部过滤净效果",
+    # Task 2 (Round 68, Beta): position concentration HHI
+    "sector_hhi": "持仓HHI集中度",
+    # Task 3 (Round 68, Gamma): cross-window score dispersion trend slope
+    "dispersion_trend_slope": "得分区分度跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -872,6 +884,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "ic_stability_trend_slope",
     # Task 3 (Round 66, Gamma): attribution trend slope — more-negative slope = declining attribution = lower-is-better.
     "attribution_trend_slope",
+    # Task 2 (Round 68, Beta): position concentration HHI — higher = more concentrated sector pool = lower-is-better.
+    "sector_hhi",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -1206,6 +1220,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "flow_breakout_synergy",
     # Task 3 (Round 67, Gamma): interaction trend slope — optional; pre-Round-67 outputs omit it.
     "interaction_trend_slope",
+    # Task 1 (Round 68, Alpha): tail filter effect — optional; pre-Round-68 outputs omit it.
+    "tail_filter_effect",
+    # Task 2 (Round 68, Beta): position sector HHI — optional; pre-Round-68 outputs omit it.
+    "sector_hhi",
+    # Task 3 (Round 68, Gamma): score dispersion trend slope — optional; pre-Round-68 outputs omit it.
+    "dispersion_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3597,6 +3617,53 @@ def compute_cross_window_interaction_trend(all_windows_summaries: list[dict]) ->
     return {"interaction_trend_valid": True, "interaction_trend_slope": round(slope, 8), "interaction_trend_mean": round(mean_v, 6), "interaction_positive_windows_pct": interaction_positive_windows_pct, "interaction_trend_grade": grade}
 
 
+# ---------------------------------------------------------------------------
+# Round 68, Task 3 (Gamma): Cross-window score dispersion trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_dispersion_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪得分离散区分度（score_win_rate_spread）趋势。
+
+    从各窗口 summary 收集 ``dispersion_score_win_rate_spread``（Round 67 T1 的输出），需≥3个有效值。
+    Returns:
+        - ``dispersion_trend_slope``: OLS 斜率
+        - ``dispersion_trend_mean``: 均值
+        - ``dispersion_positive_windows_pct``: score_win_rate_spread > 0 的窗口占比
+        - ``dispersion_trend_grade``: A/B/C/D
+        - ``dispersion_trend_valid``: bool
+    """
+    _null: dict = {"dispersion_trend_valid": False, "dispersion_trend_slope": None, "dispersion_trend_mean": None, "dispersion_positive_windows_pct": None, "dispersion_trend_grade": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("dispersion_score_win_rate_spread")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    dispersion_positive_windows_pct = round(sum(1 for v in vals if v > 0) / n, 6)
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"dispersion_trend_valid": True, "dispersion_trend_slope": round(slope, 8), "dispersion_trend_mean": round(mean_v, 6), "dispersion_positive_windows_pct": dispersion_positive_windows_pct, "dispersion_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4333,6 +4400,8 @@ def _build_replay_evaluator(
         _cat: dict[str, Any] = compute_cross_window_attribution_trend(all_primary_surfaces)
         # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend.
         _cwit: dict[str, Any] = compute_cross_window_interaction_trend(all_primary_surfaces)
+        # Task 3 (Round 68, Gamma): cross-window score dispersion trend.
+        _cwdt: dict[str, Any] = compute_cross_window_dispersion_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4772,6 +4841,12 @@ def _build_replay_evaluator(
                 "interaction_positive_windows_pct": _cwit.get("interaction_positive_windows_pct"),
                 "interaction_trend_grade": _cwit.get("interaction_trend_grade"),
                 "interaction_trend_valid": _cwit.get("interaction_trend_valid"),
+                # Task 3 (Round 68, Gamma): cross-window score dispersion trend.
+                "dispersion_trend_slope": _cwdt.get("dispersion_trend_slope"),
+                "dispersion_trend_mean": _cwdt.get("dispersion_trend_mean"),
+                "dispersion_positive_windows_pct": _cwdt.get("dispersion_positive_windows_pct"),
+                "dispersion_trend_grade": _cwdt.get("dispersion_trend_grade"),
+                "dispersion_trend_valid": _cwdt.get("dispersion_trend_valid"),
         }
 
     return evaluator

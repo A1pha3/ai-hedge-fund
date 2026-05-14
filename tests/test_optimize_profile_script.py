@@ -18779,3 +18779,389 @@ def test_r67_all_three_metrics_have_labels() -> None:
     for key in ("score_win_rate_spread", "flow_breakout_synergy", "interaction_trend_slope"):
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Round 68 tests
+# ---------------------------------------------------------------------------
+
+# T1: compute_tail_event_filter_analysis
+
+
+def test_r68_t1_invalid_too_few_rows() -> None:
+    """compute_tail_event_filter_analysis: returns valid=False when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+    rows = [{"next_day_return": 0.01 * i} for i in range(9)]
+    result = compute_tail_event_filter_analysis(rows)
+    assert result["tail_event_filter_valid"] is False
+    assert result["tail_filter_effect"] is None
+    assert result["tail_risk_score"] is None
+
+
+def test_r68_t1_invalid_too_few_valid_returns() -> None:
+    """compute_tail_event_filter_analysis: returns valid=False when fewer than 10 non-None next_day_return."""
+    from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+    rows = [{"next_day_return": None}] * 5 + [{"next_day_return": 0.01 * i} for i in range(4)]
+    result = compute_tail_event_filter_analysis(rows)
+    assert result["tail_event_filter_valid"] is False
+
+
+def test_r68_t1_valid_basic() -> None:
+    """compute_tail_event_filter_analysis: returns valid=True with 20 rows."""
+    from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+    rows = [{"next_day_return": -0.10 + 0.01 * i} for i in range(20)]
+    result = compute_tail_event_filter_analysis(rows)
+    assert result["tail_event_filter_valid"] is True
+    assert result["extreme_loss_count"] is not None
+    assert result["extreme_gain_count"] is not None
+    assert result["normal_count"] is not None
+
+
+def test_r68_t1_counts_sum_to_total() -> None:
+    """compute_tail_event_filter_analysis: extreme_loss + extreme_gain + normal = total non-None rows."""
+    from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+    rows = [{"next_day_return": -0.10 + 0.01 * i} for i in range(20)]
+    result = compute_tail_event_filter_analysis(rows)
+    assert result["tail_event_filter_valid"] is True
+    assert result["extreme_loss_count"] + result["extreme_gain_count"] + result["normal_count"] == 20
+
+
+def test_r68_t1_p5_p95_partition() -> None:
+    """compute_tail_event_filter_analysis: extreme rates + normal rate sum to ≤1."""
+    from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+    rows = [{"next_day_return": float(i) / 100} for i in range(-10, 15)]
+    result = compute_tail_event_filter_analysis(rows)
+    assert result["tail_event_filter_valid"] is True
+    total_rate = result["extreme_loss_rate"] + result["extreme_gain_rate"] + (result["normal_count"] / (result["extreme_loss_count"] + result["extreme_gain_count"] + result["normal_count"]))
+    assert abs(total_rate - 1.0) < 1e-5
+
+
+def test_r68_t1_tail_filter_effect_positive_when_extremes_negative() -> None:
+    """compute_tail_event_filter_analysis: tail_filter_effect > 0 when tail losses drag down full win rate."""
+    from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+    good = [{"next_day_return": 0.02 + 0.001 * i} for i in range(15)]
+    bad = [{"next_day_return": -0.15 - 0.01 * i} for i in range(5)]
+    rows = good + bad
+    result = compute_tail_event_filter_analysis(rows)
+    assert result["tail_event_filter_valid"] is True
+    if result["tail_filter_effect"] is not None:
+        assert result["tail_filter_effect"] > 0
+
+
+def test_r68_t1_tail_risk_score_formula() -> None:
+    """compute_tail_event_filter_analysis: tail_risk_score = extreme_loss_rate / (extreme_gain_rate + 0.001)."""
+    from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+    rows = [{"next_day_return": float(i) / 100} for i in range(-15, 20)]
+    result = compute_tail_event_filter_analysis(rows)
+    assert result["tail_event_filter_valid"] is True
+    expected = result["extreme_loss_rate"] / (result["extreme_gain_rate"] + 0.001)
+    assert abs(result["tail_risk_score"] - round(expected, 6)) < 1e-4
+
+
+def test_r68_t1_normal_win_rate_none_when_normal_count_lt_3() -> None:
+    """compute_tail_event_filter_analysis: normal_win_rate is None when normal_count < 3."""
+    from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+    extreme_vals = [-0.20, -0.19, -0.18, -0.17, -0.16, -0.15, 0.30, 0.31, 0.32, 0.33, 0.34, 0.35]
+    rows = [{"next_day_return": v} for v in extreme_vals]
+    result = compute_tail_event_filter_analysis(rows)
+    if result["tail_event_filter_valid"] and result["normal_count"] < 3:
+        assert result["normal_win_rate"] is None
+        assert result["tail_filter_effect"] is None
+
+
+def test_r68_t1_full_win_rate_correct() -> None:
+    """compute_tail_event_filter_analysis: full_win_rate matches manual calculation."""
+    from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+    rets = [0.01, 0.02, 0.03, -0.01, -0.02, 0.04, 0.05, 0.06, -0.03, 0.07, 0.08, 0.09, -0.10, 0.10, 0.11]
+    rows = [{"next_day_return": v} for v in rets]
+    result = compute_tail_event_filter_analysis(rows)
+    assert result["tail_event_filter_valid"] is True
+    expected_full_wr = sum(1 for v in rets if v > 0) / len(rets)
+    assert abs(result["full_win_rate"] - expected_full_wr) < 1e-4
+
+
+def test_r68_t1_in_comparison_metrics() -> None:
+    """tail_filter_effect is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "tail_filter_effect" in COMPARISON_METRICS
+
+
+def test_r68_t1_in_optional_comparison_metrics() -> None:
+    """tail_filter_effect is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "tail_filter_effect" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r68_t1_has_label() -> None:
+    """tail_filter_effect has a non-empty label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "tail_filter_effect" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["tail_filter_effect"]) > 0
+
+
+def test_r68_t1_tail_filter_effect_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has tail_filter_effect floor of -0.05."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "tail_filter_effect" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["tail_filter_effect"] == -0.05
+
+
+def test_r68_t1_tail_risk_score_cap_in_quality_caps() -> None:
+    """BTST_QUALITY_CAPS has tail_risk_score cap of 3.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "tail_risk_score" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["tail_risk_score"] == 3.0
+
+
+# T2: compute_position_concentration_risk
+
+
+def test_r68_t2_invalid_too_few_rows() -> None:
+    """compute_position_concentration_risk: returns valid=False when fewer than 5 rows."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    rows = [{"sector": "A"}] * 4
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is False
+    assert result["sector_hhi"] is None
+
+
+def test_r68_t2_invalid_no_sector_field() -> None:
+    """compute_position_concentration_risk: returns valid=False when no sector field present."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    rows = [{"name": "stock_" + str(i)} for i in range(10)]
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is False
+
+
+def test_r68_t2_valid_basic() -> None:
+    """compute_position_concentration_risk: returns valid=True with sector field."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    rows = [{"sector": s} for s in ["A", "A", "B", "C", "D", "A", "B", "C", "D", "E"]]
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is True
+    assert result["sector_hhi"] is not None
+    assert result["dominant_sector"] is not None
+
+
+def test_r68_t2_hhi_uniform_distribution() -> None:
+    """compute_position_concentration_risk: HHI = 1/N for perfectly uniform distribution."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    n = 5
+    rows = [{"sector": str(i)} for i in range(n)] * 4
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is True
+    expected_hhi = 1.0 / n
+    assert abs(result["sector_hhi"] - expected_hhi) < 1e-4
+
+
+def test_r68_t2_hhi_monopoly() -> None:
+    """compute_position_concentration_risk: HHI = 1.0 when all stocks same sector."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    rows = [{"sector": "Tech"} for _ in range(10)]
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is True
+    assert abs(result["sector_hhi"] - 1.0) < 1e-6
+    assert result["dominant_sector"] == "Tech"
+    assert abs(result["dominant_sector_pct"] - 1.0) < 1e-6
+
+
+def test_r68_t2_concentration_grade_a() -> None:
+    """compute_position_concentration_risk: grade A when HHI < 0.2 (6 equal sectors)."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    rows = [{"sector": str(i)} for i in range(6)] * 3
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is True
+    if result["sector_hhi"] < 0.2:
+        assert result["concentration_grade"] == "A"
+
+
+def test_r68_t2_concentration_grade_d() -> None:
+    """compute_position_concentration_risk: grade D when HHI >= 0.5."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    rows = [{"sector": "Tech"}] * 8 + [{"sector": "Finance"}] * 2
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is True
+    if result["sector_hhi"] >= 0.5:
+        assert result["concentration_grade"] == "D"
+
+
+def test_r68_t2_sector_count_correct() -> None:
+    """compute_position_concentration_risk: sector_count matches distinct sectors."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    rows = [{"sector": s} for s in ["A", "A", "B", "B", "C", "C", "D", "D", "E", "E"]]
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is True
+    assert result["sector_count"] == 5
+
+
+def test_r68_t2_sector_name_fallback() -> None:
+    """compute_position_concentration_risk: uses sector_name when sector is absent."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    rows = [{"sector_name": s} for s in ["X", "X", "Y", "Y", "Z", "Z", "W", "W", "V", "V"]]
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is True
+
+
+def test_r68_t2_industry_fallback() -> None:
+    """compute_position_concentration_risk: uses industry when sector/sector_name absent."""
+    from scripts.btst_analysis_utils import compute_position_concentration_risk
+    rows = [{"industry": s} for s in ["A", "A", "B", "B", "C", "C", "D", "D", "E", "E"]]
+    result = compute_position_concentration_risk(rows)
+    assert result["position_concentration_valid"] is True
+
+
+def test_r68_t2_in_comparison_metrics() -> None:
+    """sector_hhi is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "sector_hhi" in COMPARISON_METRICS
+
+
+def test_r68_t2_in_optional_comparison_metrics() -> None:
+    """sector_hhi is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "sector_hhi" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r68_t2_has_label() -> None:
+    """sector_hhi has a non-empty label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "sector_hhi" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["sector_hhi"]) > 0
+
+
+def test_r68_t2_sector_hhi_cap_in_quality_caps() -> None:
+    """BTST_QUALITY_CAPS has sector_hhi cap of 0.5."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "sector_hhi" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["sector_hhi"] == 0.5
+
+
+def test_r68_t2_sector_hhi_in_lower_is_better() -> None:
+    """sector_hhi is in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "sector_hhi" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+# T3: compute_cross_window_dispersion_trend
+
+
+def test_r68_t3_invalid_too_few_windows() -> None:
+    """compute_cross_window_dispersion_trend: returns valid=False when fewer than 3 valid values."""
+    from scripts.optimize_profile import compute_cross_window_dispersion_trend
+    summaries = [{"dispersion_score_win_rate_spread": 0.1}, {"dispersion_score_win_rate_spread": 0.2}]
+    result = compute_cross_window_dispersion_trend(summaries)
+    assert result["dispersion_trend_valid"] is False
+    assert result["dispersion_trend_slope"] is None
+
+
+def test_r68_t3_ols_slope_positive_for_increasing_series() -> None:
+    """compute_cross_window_dispersion_trend: slope > 0 for strictly increasing values."""
+    from scripts.optimize_profile import compute_cross_window_dispersion_trend
+    summaries = [{"dispersion_score_win_rate_spread": 0.01 * (i + 1)} for i in range(6)]
+    result = compute_cross_window_dispersion_trend(summaries)
+    assert result["dispersion_trend_valid"] is True
+    assert result["dispersion_trend_slope"] > 0.0
+
+
+def test_r68_t3_ols_slope_negative_for_decreasing_series() -> None:
+    """compute_cross_window_dispersion_trend: slope < 0 for strictly decreasing values."""
+    from scripts.optimize_profile import compute_cross_window_dispersion_trend
+    summaries = [{"dispersion_score_win_rate_spread": 0.10 - 0.01 * i} for i in range(6)]
+    result = compute_cross_window_dispersion_trend(summaries)
+    assert result["dispersion_trend_valid"] is True
+    assert result["dispersion_trend_slope"] < 0.0
+
+
+def test_r68_t3_grade_a_steep_positive_slope() -> None:
+    """compute_cross_window_dispersion_trend: grade A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_dispersion_trend
+    summaries = [{"dispersion_score_win_rate_spread": 0.1 * (i + 1)} for i in range(6)]
+    result = compute_cross_window_dispersion_trend(summaries)
+    assert result["dispersion_trend_valid"] is True
+    if result["dispersion_trend_slope"] > 0.005:
+        assert result["dispersion_trend_grade"] == "A"
+
+
+def test_r68_t3_grade_b_gentle_positive_slope() -> None:
+    """compute_cross_window_dispersion_trend: grade B when 0 < slope <= 0.005."""
+    from scripts.optimize_profile import compute_cross_window_dispersion_trend
+    summaries = [{"dispersion_score_win_rate_spread": 0.001 * i} for i in range(6)]
+    result = compute_cross_window_dispersion_trend(summaries)
+    assert result["dispersion_trend_valid"] is True
+    if result["dispersion_trend_slope"] is not None and 0 < result["dispersion_trend_slope"] <= 0.005:
+        assert result["dispersion_trend_grade"] == "B"
+
+
+def test_r68_t3_grade_d_steep_negative_slope() -> None:
+    """compute_cross_window_dispersion_trend: grade D when slope <= -0.01."""
+    from scripts.optimize_profile import compute_cross_window_dispersion_trend
+    summaries = [{"dispersion_score_win_rate_spread": 0.10 - 0.05 * i} for i in range(6)]
+    result = compute_cross_window_dispersion_trend(summaries)
+    assert result["dispersion_trend_valid"] is True
+    if result["dispersion_trend_slope"] is not None and result["dispersion_trend_slope"] <= -0.01:
+        assert result["dispersion_trend_grade"] == "D"
+
+
+def test_r68_t3_dispersion_positive_windows_pct_correct() -> None:
+    """compute_cross_window_dispersion_trend: dispersion_positive_windows_pct is correct."""
+    from scripts.optimize_profile import compute_cross_window_dispersion_trend
+    summaries = [{"dispersion_score_win_rate_spread": v} for v in [0.05, 0.03, -0.02, 0.01, 0.0]]
+    result = compute_cross_window_dispersion_trend(summaries)
+    assert result["dispersion_trend_valid"] is True
+    assert abs(result["dispersion_positive_windows_pct"] - 3.0 / 5.0) < 1e-4
+
+
+def test_r68_t3_skips_none_values() -> None:
+    """compute_cross_window_dispersion_trend: skips windows with None dispersion_score_win_rate_spread."""
+    from scripts.optimize_profile import compute_cross_window_dispersion_trend
+    summaries = [{"dispersion_score_win_rate_spread": None}, {"dispersion_score_win_rate_spread": 0.05}, {"dispersion_score_win_rate_spread": 0.06}, {"dispersion_score_win_rate_spread": 0.07}]
+    result = compute_cross_window_dispersion_trend(summaries)
+    assert result["dispersion_trend_valid"] is True
+
+
+def test_r68_t3_in_comparison_metrics() -> None:
+    """dispersion_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "dispersion_trend_slope" in COMPARISON_METRICS
+
+
+def test_r68_t3_in_optional_comparison_metrics() -> None:
+    """dispersion_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "dispersion_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r68_t3_has_label() -> None:
+    """dispersion_trend_slope has a non-empty label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "dispersion_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["dispersion_trend_slope"]) > 0
+
+
+def test_r68_t3_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has dispersion_trend_slope floor of -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "dispersion_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["dispersion_trend_slope"] == -0.01
+
+
+def test_r68_all_three_metrics_in_comparison_metrics() -> None:
+    """All three Round 68 primary metrics appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("tail_filter_effect", "sector_hhi", "dispersion_trend_slope"):
+        assert key in COMPARISON_METRICS
+
+
+def test_r68_all_three_metrics_in_optional() -> None:
+    """All three Round 68 primary metrics are in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("tail_filter_effect", "sector_hhi", "dispersion_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r68_all_three_metrics_have_labels() -> None:
+    """All three Round 68 primary metrics have non-empty labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for key in ("tail_filter_effect", "sector_hhi", "dispersion_trend_slope"):
+        assert key in COMPARISON_METRIC_LABELS
+        assert len(COMPARISON_METRIC_LABELS[key]) > 0

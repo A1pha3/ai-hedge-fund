@@ -4541,6 +4541,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _ffc.items():
         _surface_result[f"flow_{_k}"] = _v
 
+    # Round 68, Task 1 (Alpha): Tail event filter analysis.
+    _tefa: dict = compute_tail_event_filter_analysis(rows)
+    for _k, _v in _tefa.items():
+        _surface_result[f"tail_filter_{_k}"] = _v
+
+    # Round 68, Task 2 (Beta): Position concentration risk analysis.
+    _pcr: dict = compute_position_concentration_risk(rows)
+    for _k, _v in _pcr.items():
+        _surface_result[f"conc_{_k}"] = _v
+
     return _surface_result
 
 
@@ -12365,3 +12375,123 @@ def compute_fund_flow_consistency(rows: list[dict]) -> dict:
     quadrant_spread = round(best_wr - worst_wr, 6) if best_wr is not None and worst_wr is not None else None
     flow_breakout_synergy = hfhb_wr
     return {"fund_flow_consistency_valid": True, "high_flow_high_breakout_win_rate": hfhb_wr, "high_flow_low_breakout_win_rate": hflb_wr, "low_flow_high_breakout_win_rate": lfhb_wr, "low_flow_low_breakout_win_rate": lflb_wr, "best_quadrant_win_rate": best_wr, "worst_quadrant_win_rate": worst_wr, "quadrant_spread": quadrant_spread, "flow_breakout_synergy": flow_breakout_synergy}
+
+
+# ---------------------------------------------------------------------------
+# Round 68, Task 1 (Alpha): Tail event filter analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_tail_event_filter_analysis(rows: list[dict]) -> dict:
+    """分析极端尾部事件对BTST策略的影响，评估过滤尾部事件后的净效果。
+
+    Returns:
+        - ``extreme_loss_count``: 极端亏损行数（整数）
+        - ``extreme_gain_count``: 极端盈利行数（整数）
+        - ``normal_count``: 正常行数（整数）
+        - ``extreme_loss_rate``: 极端亏损行占总行比例
+        - ``extreme_gain_rate``: 极端盈利行占总行比例
+        - ``normal_win_rate``: 正常行情中 next_day_return > 0 的比例（<3行时None）
+        - ``full_win_rate``: 所有行的总体胜率
+        - ``tail_filter_effect``: normal_win_rate - full_win_rate（正值=过滤后胜率提升；normal_win_rate为None则None）
+        - ``tail_risk_score``: extreme_loss_rate / (extreme_gain_rate + 0.001)（>1表示下行尾部更频繁）
+        - ``tail_event_filter_valid``: bool
+    """
+    _null: dict = {"tail_event_filter_valid": False, "extreme_loss_count": None, "extreme_gain_count": None, "normal_count": None, "extreme_loss_rate": None, "extreme_gain_rate": None, "normal_win_rate": None, "full_win_rate": None, "tail_filter_effect": None, "tail_risk_score": None}
+    if len(rows) < 10:
+        return _null
+    rets: list[float] = [float(r["next_day_return"]) for r in rows if r.get("next_day_return") is not None]
+    if len(rets) < 10:
+        return _null
+    n_vals = len(rets)
+    sorted_rets = sorted(rets)
+    p5_idx = int(n_vals * 0.05)
+    p95_idx = int(n_vals * 0.95)
+    if p5_idx >= n_vals:
+        p5_idx = n_vals - 1
+    if p95_idx >= n_vals:
+        p95_idx = n_vals - 1
+    p5 = sorted_rets[p5_idx]
+    p95 = sorted_rets[p95_idx]
+    extreme_loss_rows: list[dict] = []
+    extreme_gain_rows: list[dict] = []
+    normal_rows: list[dict] = []
+    for r in rows:
+        rv = r.get("next_day_return")
+        if rv is None:
+            continue
+        rv_f = float(rv)
+        if rv_f < p5:
+            extreme_loss_rows.append(r)
+        elif rv_f > p95:
+            extreme_gain_rows.append(r)
+        else:
+            normal_rows.append(r)
+    total = len(extreme_loss_rows) + len(extreme_gain_rows) + len(normal_rows)
+    if total == 0:
+        return _null
+    extreme_loss_count = len(extreme_loss_rows)
+    extreme_gain_count = len(extreme_gain_rows)
+    normal_count = len(normal_rows)
+    extreme_loss_rate = round(extreme_loss_count / total, 6)
+    extreme_gain_rate = round(extreme_gain_count / total, 6)
+    full_win_rets = [float(r["next_day_return"]) for r in rows if r.get("next_day_return") is not None]
+    full_win_rate = round(sum(1 for v in full_win_rets if v > 0) / len(full_win_rets), 6) if full_win_rets else None
+    if normal_count >= 3:
+        normal_rets = [float(r["next_day_return"]) for r in normal_rows if r.get("next_day_return") is not None]
+        normal_win_rate: "float | None" = round(sum(1 for v in normal_rets if v > 0) / len(normal_rets), 6) if normal_rets else None
+    else:
+        normal_win_rate = None
+    tail_filter_effect: "float | None" = round(normal_win_rate - full_win_rate, 6) if (normal_win_rate is not None and full_win_rate is not None) else None
+    tail_risk_score = round(extreme_loss_rate / (extreme_gain_rate + 0.001), 6)
+    return {"tail_event_filter_valid": True, "extreme_loss_count": extreme_loss_count, "extreme_gain_count": extreme_gain_count, "normal_count": normal_count, "extreme_loss_rate": extreme_loss_rate, "extreme_gain_rate": extreme_gain_rate, "normal_win_rate": normal_win_rate, "full_win_rate": full_win_rate, "tail_filter_effect": tail_filter_effect, "tail_risk_score": tail_risk_score}
+
+
+# ---------------------------------------------------------------------------
+# Round 68, Task 2 (Beta): Position concentration risk analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_position_concentration_risk(rows: list[dict]) -> dict:
+    """分析持仓集中度风险——选出股票的行业/板块集中程度（HHI指数）。
+
+    Returns:
+        - ``sector_hhi``: Herfindahl-Hirschman Index（sum((count_i/total)^2)；值域 [1/N, 1.0]）
+        - ``dominant_sector``: 占比最大的板块名称
+        - ``dominant_sector_pct``: 最大板块占比
+        - ``sector_count``: 共有多少个不同板块
+        - ``concentration_grade``: A（HHI<0.2）/B（HHI<0.35）/C（HHI<0.5）/D（HHI>=0.5）
+        - ``position_concentration_valid``: bool
+    """
+    _null: dict = {"position_concentration_valid": False, "sector_hhi": None, "dominant_sector": None, "dominant_sector_pct": None, "sector_count": None, "concentration_grade": None}
+    if len(rows) < 5:
+        return _null
+    sector_field: "str | None" = None
+    for candidate in ("sector", "sector_name", "industry"):
+        if any(r.get(candidate) is not None for r in rows):
+            sector_field = candidate
+            break
+    if sector_field is None:
+        return _null
+    valid_rows = [r for r in rows if r.get(sector_field) is not None]
+    if len(valid_rows) < 5:
+        return _null
+    counts: dict[str, int] = {}
+    for r in valid_rows:
+        sec = str(r[sector_field])
+        counts[sec] = counts.get(sec, 0) + 1
+    total = sum(counts.values())
+    hhi = sum((c / total) ** 2 for c in counts.values())
+    sector_hhi = round(hhi, 6)
+    dominant_sector = max(counts, key=lambda k: counts[k])
+    dominant_sector_pct = round(counts[dominant_sector] / total, 6)
+    sector_count = len(counts)
+    if hhi < 0.2:
+        grade = "A"
+    elif hhi < 0.35:
+        grade = "B"
+    elif hhi < 0.5:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"position_concentration_valid": True, "sector_hhi": sector_hhi, "dominant_sector": dominant_sector, "dominant_sector_pct": dominant_sector_pct, "sector_count": sector_count, "concentration_grade": grade}
