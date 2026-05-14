@@ -313,6 +313,24 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # indicating the scoring system is too conservative or the candidate pool quality is poor.
     # Floor ≥ 0.50 requires the majority of scored candidates to have a positive composite score.
     "score_positive_pct": 0.50,
+    # Task 1 (Round 47, Alpha): momentum slope high-vs-low win-rate lift floor.
+    # ms_high_vs_low_lift = win_rate(high momentum) − win_rate(low momentum).
+    # A value < 0.0 means high-momentum stocks do not outperform low-momentum stocks —
+    # the momentum_slope_20d factor has no discriminative power.
+    # Floor ≥ 0.0 requires high-momentum candidates to be at least as good as low-momentum.
+    "ms_high_vs_low_lift": 0.0,
+    # Task 2 (Round 47, Beta): net inflow ratio high-vs-low win-rate lift floor.
+    # inflow_high_vs_low_lift = win_rate(high inflow) − win_rate(low inflow).
+    # A value < 0.0 means high net-inflow stocks do not outperform low net-inflow stocks —
+    # the t0_estimated_net_inflow_ratio factor has no discriminative power.
+    # Floor ≥ 0.0 requires high-inflow candidates to be at least as good as low-inflow.
+    "inflow_high_vs_low_lift": 0.0,
+    # Task 3 (Round 47, Gamma): cross-window factor IC positive consistency rate floor.
+    # positive_ic_consistency_rate = fraction of (factor × window) pairs where IC > 0.
+    # A rate < 0.50 means fewer than half the factor-window pairs show positive IC,
+    # indicating most factors are unreliable or regime-dependent across windows.
+    # Floor ≥ 0.50 requires the majority of factor predictions to be positively predictive.
+    "positive_ic_consistency_rate": 0.50,
 }
 
 # ---------------------------------------------------------------------------

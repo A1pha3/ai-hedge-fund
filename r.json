@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_f6710e868678_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_f32a60d329f5_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -173,7 +173,10 @@
       "vpd_low_vs_high_lift_delta": null,
       "score_skewness_delta": null,
       "score_positive_pct_delta": null,
-      "gate_above_threshold_cv_delta": null
+      "gate_above_threshold_cv_delta": null,
+      "ms_high_vs_low_lift_delta": null,
+      "inflow_high_vs_low_lift_delta": null,
+      "positive_ic_consistency_rate_delta": null
     },
     "default": {
       "candidate": {
@@ -342,7 +345,10 @@
       "vpd_low_vs_high_lift_delta": null,
       "score_skewness_delta": null,
       "score_positive_pct_delta": null,
-      "gate_above_threshold_cv_delta": null
+      "gate_above_threshold_cv_delta": null,
+      "ms_high_vs_low_lift_delta": null,
+      "inflow_high_vs_low_lift_delta": null,
+      "positive_ic_consistency_rate_delta": null
     }
   },
   "rollout_recommendation": "hold",

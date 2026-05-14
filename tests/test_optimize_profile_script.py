@@ -11098,3 +11098,400 @@ def test_r46_gate_consistency_optional_registered() -> None:
     """gate_above_threshold_cv must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
     assert "gate_above_threshold_cv" in OPTIONAL_COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 47 — T1 (Alpha): compute_momentum_slope_stratification
+# ===========================================================================
+
+
+def _make_ms_rows(n: int, *, high_wins: float = 0.8, low_wins: float = 0.3) -> list[dict]:
+    """Helper: n rows with momentum_slope_20d spanning [-1, 1] and controlled win rates."""
+    rows = []
+    third = n // 3
+    for i in range(n):
+        ms_val = -1.0 + 2.0 * i / max(1, n - 1)
+        if i < third:
+            # low tier — low_wins fraction should win
+            ret = 0.05 if (i % 10) < int(low_wins * 10) else -0.05
+        elif i < 2 * third:
+            # mid tier
+            mid_wins = (high_wins + low_wins) / 2.0
+            ret = 0.05 if (i % 10) < int(mid_wins * 10) else -0.05
+        else:
+            # high tier — high_wins fraction should win
+            ret = 0.05 if (i % 10) < int(high_wins * 10) else -0.05
+        rows.append({"momentum_slope_20d": ms_val, "next_day_return": ret})
+    return rows
+
+
+def test_r47_momentum_strat_empty_input() -> None:
+    """Empty rows → ms_stratification_valid=False, all None."""
+    from scripts.btst_analysis_utils import compute_momentum_slope_stratification
+
+    result = compute_momentum_slope_stratification([])
+    assert result["ms_stratification_valid"] is False
+    assert result["ms_high_vs_low_lift"] is None
+    assert result["ms_high_win_rate"] is None
+    assert result["ms_low_win_rate"] is None
+
+
+def test_r47_momentum_strat_missing_field() -> None:
+    """Rows missing momentum_slope_20d → degraded (ms_stratification_valid=False)."""
+    from scripts.btst_analysis_utils import compute_momentum_slope_stratification
+
+    rows = [{"next_day_return": 0.05} for _ in range(20)]
+    result = compute_momentum_slope_stratification(rows)
+    assert result["ms_stratification_valid"] is False
+    assert result["ms_high_vs_low_lift"] is None
+
+
+def test_r47_momentum_strat_normal_three_tiers() -> None:
+    """Normal 30-row input: ms_high_vs_low_lift has a value, valid=True."""
+    from scripts.btst_analysis_utils import compute_momentum_slope_stratification
+
+    rows = _make_ms_rows(30, high_wins=0.8, low_wins=0.3)
+    result = compute_momentum_slope_stratification(rows)
+    assert result["ms_stratification_valid"] is True
+    assert result["ms_high_vs_low_lift"] is not None
+    assert result["ms_high_win_rate"] is not None
+    assert result["ms_low_win_rate"] is not None
+
+
+def test_r47_momentum_strat_lift_direction() -> None:
+    """High-momentum wins > low-momentum wins → lift > 0."""
+    from scripts.btst_analysis_utils import compute_momentum_slope_stratification
+
+    rows = _make_ms_rows(30, high_wins=0.8, low_wins=0.3)
+    result = compute_momentum_slope_stratification(rows)
+    assert result["ms_high_vs_low_lift"] is not None
+    assert result["ms_high_vs_low_lift"] > 0.0
+
+
+def test_r47_momentum_strat_monotone_true() -> None:
+    """low < mid < high win rates → ms_monotone=True."""
+    from scripts.btst_analysis_utils import compute_momentum_slope_stratification
+
+    # Build rows where win rate increases with momentum tier
+    rows = []
+    for i in range(30):
+        ms_val = float(i)
+        tier = i // 10
+        # low tier wins 30%, mid 50%, high 80%
+        win_probs = [0.3, 0.5, 0.8]
+        ret = 0.05 if (i % 10) < int(win_probs[tier] * 10) else -0.05
+        rows.append({"momentum_slope_20d": ms_val, "next_day_return": ret})
+    result = compute_momentum_slope_stratification(rows)
+    assert result["ms_monotone"] is True
+
+
+def test_r47_momentum_strat_effective_threshold() -> None:
+    """lift > 0.05 → ms_effective=True; lift ≤ 0.05 → ms_effective=False."""
+    from scripts.btst_analysis_utils import compute_momentum_slope_stratification
+
+    # High lift scenario
+    rows_high = _make_ms_rows(30, high_wins=0.9, low_wins=0.2)
+    result_high = compute_momentum_slope_stratification(rows_high)
+    if result_high["ms_high_vs_low_lift"] is not None and result_high["ms_high_vs_low_lift"] > 0.05:
+        assert result_high["ms_effective"] is True
+
+    # Zero lift scenario — same win rate for all
+    rows_flat = []
+    for i in range(30):
+        rows_flat.append({"momentum_slope_20d": float(i), "next_day_return": 0.05 if i % 2 == 0 else -0.05})
+    result_flat = compute_momentum_slope_stratification(rows_flat)
+    if result_flat["ms_high_vs_low_lift"] is not None:
+        assert result_flat["ms_effective"] == (result_flat["ms_high_vs_low_lift"] > 0.05)
+
+
+def test_r47_momentum_strat_floor_registered() -> None:
+    """ms_high_vs_low_lift floor is 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "ms_high_vs_low_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["ms_high_vs_low_lift"] == 0.0
+
+
+def test_r47_momentum_strat_label_registered() -> None:
+    """ms_high_vs_low_lift label is in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "ms_high_vs_low_lift" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["ms_high_vs_low_lift"]) > 0
+
+
+def test_r47_momentum_strat_optional_registered() -> None:
+    """ms_high_vs_low_lift is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
+    assert "ms_high_vs_low_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r47_momentum_strat_in_comparison_metrics() -> None:
+    """ms_high_vs_low_lift is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "ms_high_vs_low_lift" in COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 47 — T2 (Beta): compute_inflow_ratio_stratification
+# ===========================================================================
+
+
+def _make_inflow_rows(n: int, *, high_wins: float = 0.8, low_wins: float = 0.3) -> list[dict]:
+    """Helper: n rows with t0_estimated_net_inflow_ratio and controlled win rates."""
+    rows = []
+    third = n // 3
+    for i in range(n):
+        inflow_val = -0.5 + 1.0 * i / max(1, n - 1)
+        if i < third:
+            ret = 0.05 if (i % 10) < int(low_wins * 10) else -0.05
+        elif i < 2 * third:
+            mid_wins = (high_wins + low_wins) / 2.0
+            ret = 0.05 if (i % 10) < int(mid_wins * 10) else -0.05
+        else:
+            ret = 0.05 if (i % 10) < int(high_wins * 10) else -0.05
+        rows.append({"t0_estimated_net_inflow_ratio": inflow_val, "next_day_return": ret})
+    return rows
+
+
+def test_r47_inflow_strat_empty_input() -> None:
+    """Empty rows → inflow_stratification_valid=False, all None."""
+    from scripts.btst_analysis_utils import compute_inflow_ratio_stratification
+
+    result = compute_inflow_ratio_stratification([])
+    assert result["inflow_stratification_valid"] is False
+    assert result["inflow_high_vs_low_lift"] is None
+    assert result["inflow_high_win_rate"] is None
+
+
+def test_r47_inflow_strat_missing_field() -> None:
+    """Rows missing t0_estimated_net_inflow_ratio → degraded."""
+    from scripts.btst_analysis_utils import compute_inflow_ratio_stratification
+
+    rows = [{"next_day_return": 0.05} for _ in range(20)]
+    result = compute_inflow_ratio_stratification(rows)
+    assert result["inflow_stratification_valid"] is False
+    assert result["inflow_high_vs_low_lift"] is None
+
+
+def test_r47_inflow_strat_normal_three_tiers() -> None:
+    """Normal 30-row input: inflow_high_vs_low_lift has a value, valid=True."""
+    from scripts.btst_analysis_utils import compute_inflow_ratio_stratification
+
+    rows = _make_inflow_rows(30, high_wins=0.8, low_wins=0.3)
+    result = compute_inflow_ratio_stratification(rows)
+    assert result["inflow_stratification_valid"] is True
+    assert result["inflow_high_vs_low_lift"] is not None
+    assert result["inflow_high_win_rate"] is not None
+    assert result["inflow_low_win_rate"] is not None
+
+
+def test_r47_inflow_strat_lift_direction() -> None:
+    """High-inflow wins > low-inflow wins → lift > 0."""
+    from scripts.btst_analysis_utils import compute_inflow_ratio_stratification
+
+    rows = _make_inflow_rows(30, high_wins=0.8, low_wins=0.3)
+    result = compute_inflow_ratio_stratification(rows)
+    assert result["inflow_high_vs_low_lift"] is not None
+    assert result["inflow_high_vs_low_lift"] > 0.0
+
+
+def test_r47_inflow_strat_monotone_logic() -> None:
+    """low < mid < high inflow win rates → inflow_monotone=True."""
+    from scripts.btst_analysis_utils import compute_inflow_ratio_stratification
+
+    rows = []
+    for i in range(30):
+        inflow_val = float(i)
+        tier = i // 10
+        win_probs = [0.3, 0.5, 0.8]
+        ret = 0.05 if (i % 10) < int(win_probs[tier] * 10) else -0.05
+        rows.append({"t0_estimated_net_inflow_ratio": inflow_val, "next_day_return": ret})
+    result = compute_inflow_ratio_stratification(rows)
+    assert result["inflow_monotone"] is True
+
+
+def test_r47_inflow_strat_effective_threshold() -> None:
+    """lift > 0.05 → inflow_effective=True."""
+    from scripts.btst_analysis_utils import compute_inflow_ratio_stratification
+
+    rows = _make_inflow_rows(30, high_wins=0.9, low_wins=0.2)
+    result = compute_inflow_ratio_stratification(rows)
+    if result["inflow_high_vs_low_lift"] is not None:
+        expected = result["inflow_high_vs_low_lift"] > 0.05
+        assert result["inflow_effective"] == expected
+
+
+def test_r47_inflow_strat_floor_registered() -> None:
+    """inflow_high_vs_low_lift floor is 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "inflow_high_vs_low_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["inflow_high_vs_low_lift"] == 0.0
+
+
+def test_r47_inflow_strat_label_registered() -> None:
+    """inflow_high_vs_low_lift label is in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "inflow_high_vs_low_lift" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["inflow_high_vs_low_lift"]) > 0
+
+
+def test_r47_inflow_strat_optional_registered() -> None:
+    """inflow_high_vs_low_lift is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
+    assert "inflow_high_vs_low_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r47_inflow_strat_in_comparison_metrics() -> None:
+    """inflow_high_vs_low_lift is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "inflow_high_vs_low_lift" in COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 47 — T3 (Gamma): compute_factor_ic_consistency
+# ===========================================================================
+
+_R47_FACTOR_NAMES = [
+    "close_strength",
+    "volume_expansion_quality",
+    "sector_resonance",
+    "rs_sector_rank",
+    "t0_estimated_net_inflow_ratio",
+    "breakout_quality_score",
+    "momentum_slope_20d",
+    "volume_price_divergence",
+    "catalyst_theme_score",
+    "relative_strength_rank",
+    "market_cap_score",
+    "news_sentiment_score",
+    "float_turnover_rate",
+]
+
+
+def _make_r47_ic_windows(n: int, ic_value: float = 0.10) -> list[dict]:
+    """Helper: n window summaries each with factor_ic_values set to ic_value for all factors."""
+    windows = []
+    for _ in range(n):
+        ic_dict = {f: ic_value for f in _R47_FACTOR_NAMES}
+        windows.append({"factor_ic_values": ic_dict})
+    return windows
+
+
+def test_r47_factor_ic_consistency_empty_list() -> None:
+    """Empty list → positive_ic_consistency_rate=None, factor_ic_consistency_valid=False."""
+    from scripts.optimize_profile import compute_factor_ic_consistency
+
+    result = compute_factor_ic_consistency([])
+    assert result["positive_ic_consistency_rate"] is None
+    assert result["factor_ic_consistency_valid"] is False
+    assert result["consistent_factor_count"] is None
+
+
+def test_r47_factor_ic_consistency_too_few_valid_windows() -> None:
+    """Only 2 windows with factor_ic_values → degraded (< 3 valid)."""
+    from scripts.optimize_profile import compute_factor_ic_consistency
+
+    windows = _make_r47_ic_windows(2, ic_value=0.10)
+    result = compute_factor_ic_consistency(windows)
+    assert result["positive_ic_consistency_rate"] is None
+    assert result["factor_ic_consistency_valid"] is False
+
+
+def test_r47_factor_ic_consistency_skip_windows_without_ic_values() -> None:
+    """Windows missing factor_ic_values are skipped; < 3 valid → degraded."""
+    from scripts.optimize_profile import compute_factor_ic_consistency
+
+    windows = [{"other_key": 1.0} for _ in range(10)]
+    result = compute_factor_ic_consistency(windows)
+    assert result["positive_ic_consistency_rate"] is None
+    assert result["factor_ic_consistency_valid"] is False
+
+
+def test_r47_factor_ic_consistency_all_positive_ic() -> None:
+    """All IC > 0 across 3+ windows → rate=1.0, consistent_factor_count=num_factors."""
+    from scripts.optimize_profile import compute_factor_ic_consistency
+
+    windows = _make_r47_ic_windows(5, ic_value=0.10)
+    result = compute_factor_ic_consistency(windows)
+    assert result["factor_ic_consistency_valid"] is True
+    assert result["positive_ic_consistency_rate"] == 1.0
+    assert result["consistent_factor_count"] == len(_R47_FACTOR_NAMES)
+
+
+def test_r47_factor_ic_consistency_all_negative_ic() -> None:
+    """All IC < 0 → rate=0.0."""
+    from scripts.optimize_profile import compute_factor_ic_consistency
+
+    windows = _make_r47_ic_windows(5, ic_value=-0.10)
+    result = compute_factor_ic_consistency(windows)
+    assert result["factor_ic_consistency_valid"] is True
+    assert result["positive_ic_consistency_rate"] == 0.0
+    assert result["consistent_factor_count"] == 0
+
+
+def test_r47_factor_ic_consistency_mixed_scenario() -> None:
+    """50% positive IC windows → rate ≈ 0.5."""
+    from scripts.optimize_profile import compute_factor_ic_consistency
+
+    # 3 windows positive, 3 windows negative
+    pos_windows = _make_r47_ic_windows(3, ic_value=0.10)
+    neg_windows = _make_r47_ic_windows(3, ic_value=-0.10)
+    windows = pos_windows + neg_windows
+    result = compute_factor_ic_consistency(windows)
+    assert result["factor_ic_consistency_valid"] is True
+    assert result["positive_ic_consistency_rate"] is not None
+    # 3/6 windows × 13 factors → 39/78 = 0.5
+    assert abs(result["positive_ic_consistency_rate"] - 0.5) < 1e-5
+
+
+def test_r47_factor_ic_consistency_best_worst_factor() -> None:
+    """best_factor_name has highest mean IC; worst_factor_name has lowest."""
+    from scripts.optimize_profile import compute_factor_ic_consistency
+
+    # Build 4 windows where one factor always has IC=0.5 and one always has IC=-0.5
+    windows = []
+    for _ in range(4):
+        ic_dict = {f: 0.10 for f in _R47_FACTOR_NAMES}
+        ic_dict["close_strength"] = 0.50   # always best
+        ic_dict["float_turnover_rate"] = -0.50  # always worst
+        windows.append({"factor_ic_values": ic_dict})
+    result = compute_factor_ic_consistency(windows)
+    assert result["best_factor_name"] == "close_strength"
+    assert result["worst_factor_name"] == "float_turnover_rate"
+
+
+def test_r47_factor_ic_consistency_floor_registered() -> None:
+    """positive_ic_consistency_rate: 0.50 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "positive_ic_consistency_rate" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["positive_ic_consistency_rate"] == 0.50
+
+
+def test_r47_factor_ic_consistency_label_registered() -> None:
+    """positive_ic_consistency_rate label is in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "positive_ic_consistency_rate" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["positive_ic_consistency_rate"]) > 0
+
+
+def test_r47_factor_ic_consistency_optional_registered() -> None:
+    """positive_ic_consistency_rate is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
+    assert "positive_ic_consistency_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r47_factor_ic_consistency_in_comparison_metrics() -> None:
+    """positive_ic_consistency_rate is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "positive_ic_consistency_rate" in COMPARISON_METRICS

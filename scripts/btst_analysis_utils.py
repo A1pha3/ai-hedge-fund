@@ -4229,6 +4229,28 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["score_p90"] = _sdm.get("score_p90")
     _surface_result["score_iqr"] = _sdm.get("score_iqr")
 
+    # Round 47, Task 1 (Alpha): Momentum Slope Stratification.
+    # ---------------------------------------------------------
+    _mss: dict[str, Any] = compute_momentum_slope_stratification(next_day_rows)
+    _surface_result["ms_stratification_valid"] = _mss.get("ms_stratification_valid")
+    _surface_result["ms_low_win_rate"] = _mss.get("ms_low_win_rate")
+    _surface_result["ms_mid_win_rate"] = _mss.get("ms_mid_win_rate")
+    _surface_result["ms_high_win_rate"] = _mss.get("ms_high_win_rate")
+    _surface_result["ms_high_vs_low_lift"] = _mss.get("ms_high_vs_low_lift")
+    _surface_result["ms_monotone"] = _mss.get("ms_monotone")
+    _surface_result["ms_effective"] = _mss.get("ms_effective")
+
+    # Round 47, Task 2 (Beta): Inflow Ratio Stratification.
+    # ------------------------------------------------------
+    _irs: dict[str, Any] = compute_inflow_ratio_stratification(next_day_rows)
+    _surface_result["inflow_stratification_valid"] = _irs.get("inflow_stratification_valid")
+    _surface_result["inflow_low_win_rate"] = _irs.get("inflow_low_win_rate")
+    _surface_result["inflow_mid_win_rate"] = _irs.get("inflow_mid_win_rate")
+    _surface_result["inflow_high_win_rate"] = _irs.get("inflow_high_win_rate")
+    _surface_result["inflow_high_vs_low_lift"] = _irs.get("inflow_high_vs_low_lift")
+    _surface_result["inflow_monotone"] = _irs.get("inflow_monotone")
+    _surface_result["inflow_effective"] = _irs.get("inflow_effective")
+
     return _surface_result
 
 
@@ -8866,4 +8888,216 @@ def compute_score_distribution_moments(rows: list[dict]) -> dict:
         "score_p75": round(p75, 6),
         "score_p90": round(p90, 6),
         "score_iqr": round(p75 - p25, 6),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 47, Alpha): Momentum Slope Stratification
+# ---------------------------------------------------------------------------
+# Stratifies rows by ``momentum_slope_20d`` (P33/P67) and computes per-tier
+# win rates (next_day_return > 0).  Expects high momentum → higher win rate.
+
+
+def compute_momentum_slope_stratification(rows: list[dict]) -> dict:
+    """Stratify rows by momentum_slope_20d and compute tier win rates.
+
+    Args:
+        rows: List of row dicts.  Each row should contain ``momentum_slope_20d``
+            and ``next_day_return`` fields.
+
+    Returns:
+        Dict containing:
+
+        - ``ms_stratification_valid`` (bool): True when ≥ 2 tiers have valid win rates.
+        - ``ms_low_win_rate`` (float | None): Win rate for low-momentum tier (≤ P33).
+        - ``ms_mid_win_rate`` (float | None): Win rate for mid-momentum tier (P33–P67).
+        - ``ms_high_win_rate`` (float | None): Win rate for high-momentum tier (> P67).
+        - ``ms_high_vs_low_lift`` (float | None): ms_high_win_rate − ms_low_win_rate.
+        - ``ms_monotone`` (bool | None): True when low < mid < high.
+        - ``ms_effective`` (bool): True when ms_high_vs_low_lift > 0.05.
+    """
+    _null: dict = {
+        "ms_stratification_valid": False,
+        "ms_low_win_rate": None,
+        "ms_mid_win_rate": None,
+        "ms_high_win_rate": None,
+        "ms_high_vs_low_lift": None,
+        "ms_monotone": None,
+        "ms_effective": False,
+    }
+    if not rows:
+        return _null
+
+    has_ms = any(row.get("momentum_slope_20d") is not None for row in rows)
+    if not has_ms:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        ms = row.get("momentum_slope_20d")
+        ret = row.get("next_day_return")
+        if ms is None or ret is None:
+            continue
+        try:
+            paired.append((float(ms), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if not paired:
+        return _null
+
+    ms_vals = sorted(v for v, _ in paired)
+    n = len(ms_vals)
+    p33_idx = max(0, int(n * 1 / 3) - 1)
+    p67_idx = max(0, int(n * 2 / 3) - 1)
+    p33_val = ms_vals[p33_idx]
+    p67_val = ms_vals[p67_idx]
+
+    low_rets: list[float] = []
+    mid_rets: list[float] = []
+    high_rets: list[float] = []
+    for ms_val, ret_val in paired:
+        if ms_val <= p33_val:
+            low_rets.append(ret_val)
+        elif ms_val <= p67_val:
+            mid_rets.append(ret_val)
+        else:
+            high_rets.append(ret_val)
+
+    def _wr(rets: list[float]) -> float | None:
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_low = _wr(low_rets)
+    wr_mid = _wr(mid_rets)
+    wr_high = _wr(high_rets)
+
+    valid_count = sum(1 for w in (wr_low, wr_mid, wr_high) if w is not None)
+    stratification_valid = valid_count >= 2
+
+    lift: float | None = None
+    if wr_high is not None and wr_low is not None:
+        lift = round(wr_high - wr_low, 6)
+
+    monotone: bool | None = None
+    if wr_low is not None and wr_mid is not None and wr_high is not None:
+        monotone = wr_low < wr_mid < wr_high
+
+    effective = lift is not None and lift > 0.05
+
+    return {
+        "ms_stratification_valid": stratification_valid,
+        "ms_low_win_rate": wr_low,
+        "ms_mid_win_rate": wr_mid,
+        "ms_high_win_rate": wr_high,
+        "ms_high_vs_low_lift": lift,
+        "ms_monotone": monotone,
+        "ms_effective": effective,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 47, Beta): Inflow Ratio Stratification
+# ---------------------------------------------------------------------------
+# Stratifies rows by ``t0_estimated_net_inflow_ratio`` (P33/P67) and computes
+# per-tier win rates.  Expects high inflow → higher win rate.
+
+
+def compute_inflow_ratio_stratification(rows: list[dict]) -> dict:
+    """Stratify rows by t0_estimated_net_inflow_ratio and compute tier win rates.
+
+    Args:
+        rows: List of row dicts.  Each row should contain
+            ``t0_estimated_net_inflow_ratio`` and ``next_day_return`` fields.
+
+    Returns:
+        Dict containing:
+
+        - ``inflow_stratification_valid`` (bool): True when ≥ 2 tiers have valid win rates.
+        - ``inflow_low_win_rate`` (float | None): Win rate for low-inflow tier (≤ P33).
+        - ``inflow_mid_win_rate`` (float | None): Win rate for mid-inflow tier (P33–P67).
+        - ``inflow_high_win_rate`` (float | None): Win rate for high-inflow tier (> P67).
+        - ``inflow_high_vs_low_lift`` (float | None): inflow_high_win_rate − inflow_low_win_rate.
+        - ``inflow_monotone`` (bool | None): True when low < mid < high.
+        - ``inflow_effective`` (bool): True when inflow_high_vs_low_lift > 0.05.
+    """
+    _null: dict = {
+        "inflow_stratification_valid": False,
+        "inflow_low_win_rate": None,
+        "inflow_mid_win_rate": None,
+        "inflow_high_win_rate": None,
+        "inflow_high_vs_low_lift": None,
+        "inflow_monotone": None,
+        "inflow_effective": False,
+    }
+    if not rows:
+        return _null
+
+    has_inflow = any(row.get("t0_estimated_net_inflow_ratio") is not None for row in rows)
+    if not has_inflow:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        inflow = row.get("t0_estimated_net_inflow_ratio")
+        ret = row.get("next_day_return")
+        if inflow is None or ret is None:
+            continue
+        try:
+            paired.append((float(inflow), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if not paired:
+        return _null
+
+    inflow_vals = sorted(v for v, _ in paired)
+    n = len(inflow_vals)
+    p33_idx = max(0, int(n * 1 / 3) - 1)
+    p67_idx = max(0, int(n * 2 / 3) - 1)
+    p33_val = inflow_vals[p33_idx]
+    p67_val = inflow_vals[p67_idx]
+
+    low_rets: list[float] = []
+    mid_rets: list[float] = []
+    high_rets: list[float] = []
+    for inflow_val, ret_val in paired:
+        if inflow_val <= p33_val:
+            low_rets.append(ret_val)
+        elif inflow_val <= p67_val:
+            mid_rets.append(ret_val)
+        else:
+            high_rets.append(ret_val)
+
+    def _wr(rets: list[float]) -> float | None:
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_low = _wr(low_rets)
+    wr_mid = _wr(mid_rets)
+    wr_high = _wr(high_rets)
+
+    valid_count = sum(1 for w in (wr_low, wr_mid, wr_high) if w is not None)
+    stratification_valid = valid_count >= 2
+
+    lift: float | None = None
+    if wr_high is not None and wr_low is not None:
+        lift = round(wr_high - wr_low, 6)
+
+    monotone: bool | None = None
+    if wr_low is not None and wr_mid is not None and wr_high is not None:
+        monotone = wr_low < wr_mid < wr_high
+
+    effective = lift is not None and lift > 0.05
+
+    return {
+        "inflow_stratification_valid": stratification_valid,
+        "inflow_low_win_rate": wr_low,
+        "inflow_mid_win_rate": wr_mid,
+        "inflow_high_win_rate": wr_high,
+        "inflow_high_vs_low_lift": lift,
+        "inflow_monotone": monotone,
+        "inflow_effective": effective,
     }

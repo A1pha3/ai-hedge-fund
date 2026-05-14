@@ -328,6 +328,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "score_positive_pct",
     # Task 3 (Round 46, Gamma): cross-window gate consistency coefficient of variation.
     "gate_above_threshold_cv",
+    # Task 1 (Round 47, Alpha): momentum slope high-vs-low win-rate lift.
+    "ms_high_vs_low_lift",
+    # Task 2 (Round 47, Beta): net inflow ratio high-vs-low win-rate lift.
+    "inflow_high_vs_low_lift",
+    # Task 3 (Round 47, Gamma): cross-window factor IC positive consistency rate.
+    "positive_ic_consistency_rate",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -544,6 +550,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "score_positive_pct": "评分正值占比",
     # Task 3 (Round 46, Gamma): cross-window gate consistency coefficient of variation
     "gate_above_threshold_cv": "跨窗门控占比变异系数",
+    # Task 1 (Round 47, Alpha): momentum slope high-vs-low win-rate lift
+    "ms_high_vs_low_lift": "动量高低胜率差",
+    # Task 2 (Round 47, Beta): net inflow ratio high-vs-low win-rate lift
+    "inflow_high_vs_low_lift": "净流入高低胜率差",
+    # Task 3 (Round 47, Gamma): cross-window factor IC positive consistency rate
+    "positive_ic_consistency_rate": "因子IC跨窗正向一致率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -810,6 +822,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "score_positive_pct",
     # Task 3 (Round 46, Gamma): gate consistency CV — optional; pre-Round-46 outputs omit it.
     "gate_above_threshold_cv",
+    # Task 1 (Round 47, Alpha): momentum slope lift — optional; pre-Round-47 outputs omit it.
+    "ms_high_vs_low_lift",
+    # Task 2 (Round 47, Beta): inflow ratio lift — optional; pre-Round-47 outputs omit it.
+    "inflow_high_vs_low_lift",
+    # Task 3 (Round 47, Gamma): factor IC consistency rate — optional; pre-Round-47 outputs omit it.
+    "positive_ic_consistency_rate",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2018,6 +2036,104 @@ def compute_cross_window_gate_consistency(all_windows_summaries: list[dict]) -> 
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 3 (Round 47, Gamma): Cross-Window Factor IC Positive Consistency
+# ---------------------------------------------------------------------------
+# Aggregates ``factor_ic_values`` dicts across replay windows to compute the
+# global positive-IC rate, per-factor mean IC, and consistency statistics.
+
+
+def compute_factor_ic_consistency(all_windows_summaries: list[dict]) -> dict:
+    """Compute cross-window factor IC positive consistency rate.
+
+    For each window summary that contains a ``factor_ic_values`` dict, collect
+    per-factor IC values.  Compute the fraction of (factor × window) pairs
+    where IC > 0 as the global ``positive_ic_consistency_rate``.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts.  Each
+            entry may contain a ``factor_ic_values`` key mapping factor names to
+            IC floats.  Windows missing this key are skipped.
+
+    Returns:
+        Dict containing:
+
+        - ``positive_ic_consistency_rate`` (float | None): Fraction of all
+          (factor × window) pairs where IC > 0.  None if < 3 valid windows.
+        - ``consistent_factor_count`` (int | None): Number of factors with
+          per-factor positive-IC rate ≥ 0.60.  None if degraded.
+        - ``best_factor_name`` (str | None): Factor with the highest mean IC.
+        - ``worst_factor_name`` (str | None): Factor with the lowest mean IC.
+        - ``factor_ic_consistency_valid`` (bool): True when ≥ 3 valid windows.
+    """
+    _null: dict = {
+        "positive_ic_consistency_rate": None,
+        "consistent_factor_count": None,
+        "best_factor_name": None,
+        "worst_factor_name": None,
+        "factor_ic_consistency_valid": False,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    # Collect per-factor IC values across windows that have factor_ic_values.
+    factor_ic_map: dict[str, list[float]] = {}
+    valid_window_count = 0
+    for surf in all_windows_summaries:
+        ic_dict = surf.get("factor_ic_values")
+        if not isinstance(ic_dict, dict) or not ic_dict:
+            continue
+        valid_window_count += 1
+        for factor_name, ic_val in ic_dict.items():
+            if ic_val is None:
+                continue
+            try:
+                fv = float(ic_val)
+            except (TypeError, ValueError):
+                continue
+            if factor_name not in factor_ic_map:
+                factor_ic_map[factor_name] = []
+            factor_ic_map[factor_name].append(fv)
+
+    if valid_window_count < 3 or not factor_ic_map:
+        return _null
+
+    # Global positive-IC rate: count all IC > 0 across every factor × window pair.
+    total_pairs = 0
+    positive_pairs = 0
+    for ic_list in factor_ic_map.values():
+        total_pairs += len(ic_list)
+        positive_pairs += sum(1 for v in ic_list if v > 0)
+
+    positive_ic_consistency_rate: float | None = None
+    if total_pairs > 0:
+        positive_ic_consistency_rate = round(positive_pairs / total_pairs, 6)
+
+    # Per-factor mean IC and positive-IC rate.
+    factor_mean_ic: dict[str, float] = {}
+    factor_positive_ic_rate: dict[str, float] = {}
+    for factor_name, ic_list in factor_ic_map.items():
+        mean_ic = sum(ic_list) / len(ic_list)
+        factor_mean_ic[factor_name] = mean_ic
+        factor_positive_ic_rate[factor_name] = sum(1 for v in ic_list if v > 0) / len(ic_list)
+
+    consistent_factor_count = sum(1 for r in factor_positive_ic_rate.values() if r >= 0.60)
+
+    best_factor_name: str | None = None
+    worst_factor_name: str | None = None
+    if factor_mean_ic:
+        best_factor_name = max(factor_mean_ic, key=lambda k: factor_mean_ic[k])
+        worst_factor_name = min(factor_mean_ic, key=lambda k: factor_mean_ic[k])
+
+    return {
+        "positive_ic_consistency_rate": positive_ic_consistency_rate,
+        "consistent_factor_count": consistent_factor_count,
+        "best_factor_name": best_factor_name,
+        "worst_factor_name": worst_factor_name,
+        "factor_ic_consistency_valid": True,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -2647,6 +2763,8 @@ def _build_replay_evaluator(
         _tccs: dict[str, Any] = compute_top_candidate_consistency(all_primary_surfaces)
         # Task 3 (Round 46, Gamma): cross-window gate consistency.
         _cgc: dict[str, Any] = compute_cross_window_gate_consistency(all_primary_surfaces)
+        # Task 3 (Round 47, Gamma): cross-window factor IC positive consistency.
+        _fic: dict[str, Any] = compute_factor_ic_consistency(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -2877,6 +2995,12 @@ def _build_replay_evaluator(
             "gate_above_threshold_min": _cgc.get("gate_above_threshold_min"),
             "gate_above_threshold_max": _cgc.get("gate_above_threshold_max"),
             "gate_consistency_grade": _cgc.get("gate_consistency_grade"),
+            # Task 3 (Round 47, Gamma): cross-window factor IC positive consistency.
+            "positive_ic_consistency_rate": _fic.get("positive_ic_consistency_rate"),
+            "consistent_factor_count": _fic.get("consistent_factor_count"),
+            "best_factor_name": _fic.get("best_factor_name"),
+            "worst_factor_name": _fic.get("worst_factor_name"),
+            "factor_ic_consistency_valid": _fic.get("factor_ic_consistency_valid"),
         }
 
     return evaluator
