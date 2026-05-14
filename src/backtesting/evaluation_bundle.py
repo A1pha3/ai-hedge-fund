@@ -163,6 +163,17 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # A score < 50 (grade D) means fewer than half the sizing dimensions pass their quality thresholds.
     # Floor ≥ 50 ensures at least C-grade sizing confidence before a profile is considered rollout-ready.
     "adaptive_sizing_score": 50.0,
+    # Task 1 (Round 35, Alpha): Sortino ratio floor.
+    # sortino_ratio ≤ 0 means the strategy has negative risk-adjusted returns when only
+    # downside volatility is counted.  Even if the Sharpe is mildly positive, a negative
+    # Sortino indicates the downside tail is disproportionately large relative to the mean return.
+    # Floor ≥ 0.0 requires at least break-even risk-adjusted performance on a downside basis.
+    "sortino_ratio": 0.0,
+    # Task 3 (Round 35, Beta): candidate diversity score floor.
+    # diversity_score = 1 − HHI; a value < 0.30 means the top-1 sector dominates the pool
+    # to a degree that exposes the strategy to correlated sector-specific shocks.
+    # Floor ≥ 0.30 ensures at least moderate cross-sector distribution in the candidate pool.
+    "diversity_score": 0.30,
 }
 
 # ---------------------------------------------------------------------------

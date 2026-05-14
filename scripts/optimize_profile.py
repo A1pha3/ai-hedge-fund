@@ -253,6 +253,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "signal_churn_rate",
     # Task 3 (Round 34, Beta): signal persistence — average Jaccard similarity of top-stock sets.
     "avg_signal_persistence",
+    # Task 1 (Round 35, Alpha): Sortino risk-adjusted return ratio — annualised Sortino clamped [-5, 5].
+    "sortino_ratio",
+    # Task 2 (Round 35, Gamma): quality trend score — fraction of quality metrics with positive OLS slope.
+    "quality_trend_score",
+    # Task 3 (Round 35, Beta): candidate diversity score — 1 − HHI sector concentration index.
+    "diversity_score",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -393,6 +399,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "signal_churn_rate": "信号流失率",
     # Task 3 (Round 34, Beta): signal persistence
     "avg_signal_persistence": "信号持续率",
+    # Task 1 (Round 35, Alpha): Sortino risk-adjusted return ratio
+    "sortino_ratio": "Sortino风险收益比",
+    # Task 2 (Round 35, Gamma): quality trend score
+    "quality_trend_score": "质量趋势评分",
+    # Task 3 (Round 35, Beta): candidate diversity score
+    "diversity_score": "候选多样性评分",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -572,6 +584,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 3 (Round 34, Beta): signal churn metrics — optional; pre-Round-34 outputs omit these.
     "signal_churn_rate",
     "avg_signal_persistence",
+    # Task 1 (Round 35, Alpha): Sortino ratio — optional; pre-Round-35 outputs omit it.
+    "sortino_ratio",
+    # Task 2 (Round 35, Gamma): quality trend score — optional; pre-Round-35 outputs omit it.
+    "quality_trend_score",
+    # Task 3 (Round 35, Beta): diversity score — optional; pre-Round-35 outputs omit it.
+    "diversity_score",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1064,6 +1082,70 @@ def compute_factor_ic_trend(all_windows_summaries: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Tracks how much the candidate pool changes between consecutive replay windows.
 # High churn rate signals an unstable selection system with high real-money friction.
+
+
+def compute_quality_trend_analysis(all_windows_summaries: list[dict]) -> dict:
+    """Track quality-metric improvement trends across replay windows.
+
+    Fits an OLS slope to each of four quality indicators across window indices
+    and reports what fraction of those slopes are positive (improving).  A score
+    ≥ 0.5 means at least half the tracked metrics have been getting better over
+    time, which supports confidence in the strategy's continuing improvement.
+
+    Args:
+        all_windows_summaries: List of per-window surface summary dicts (output of
+            ``build_surface_summary``).  Each dict may optionally contain
+            ``win_rate``, ``expected_value_per_trade``, ``composite_gate_score``,
+            and ``sortino_ratio``.
+
+    Returns:
+        Dict with keys:
+
+        - ``quality_trend_improving``: bool|None — True when ≥ 50 % of tracked
+          metrics show a positive OLS slope; None when fewer than 3 windows.
+        - ``quality_trend_score``: float|None — fraction of improving slopes ∈
+          [0, 1]; None when data insufficient.
+        - ``quality_trend_grade``: str|None — 'A'(≥0.75)/'B'(≥0.50)/'C'(≥0.25)/'D'(<0.25).
+    """
+    _null: dict = {"quality_trend_improving": None, "quality_trend_score": None, "quality_trend_grade": None}
+    if len(all_windows_summaries) < 3:
+        return _null
+
+    _metric_keys = ["win_rate", "expected_value_per_trade", "composite_gate_score", "sortino_ratio"]
+    slopes: list[float] = []
+    for key in _metric_keys:
+        raw_vals = [s.get(key) for s in all_windows_summaries]
+        pairs: list[tuple[int, float]] = [(i, float(v)) for i, v in enumerate(raw_vals) if v is not None]
+        if len(pairs) < 3:
+            continue
+        xs = [float(i) for i, _ in pairs]
+        ys = [v for _, v in pairs]
+        n = len(xs)
+        mx = sum(xs) / n
+        my = sum(ys) / n
+        var_x = sum((x - mx) ** 2 for x in xs)
+        cov_xy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        slope = cov_xy / max(var_x, 1e-8)
+        normalized_slope = slope / max(abs(my), 1e-8)
+        slopes.append(normalized_slope)
+
+    if not slopes:
+        return _null
+
+    improving_count = sum(1 for s in slopes if s > 0)
+    quality_trend_score = round(improving_count / len(slopes), 4)
+    quality_trend_improving = quality_trend_score >= 0.5
+
+    if quality_trend_score >= 0.75:
+        quality_trend_grade = "A"
+    elif quality_trend_score >= 0.50:
+        quality_trend_grade = "B"
+    elif quality_trend_score >= 0.25:
+        quality_trend_grade = "C"
+    else:
+        quality_trend_grade = "D"
+
+    return {"quality_trend_improving": quality_trend_improving, "quality_trend_score": quality_trend_score, "quality_trend_grade": quality_trend_grade}
 
 
 def compute_signal_churn_metrics(all_windows_summaries: list[dict]) -> dict:
@@ -1688,10 +1770,18 @@ def _build_replay_evaluator(
         avg_adaptive_sizing_score: float | None = round(sum(_asz_vals) / len(_asz_vals), 2) if _asz_vals else None
         # Task 3 (Round 34, Beta): signal churn metrics — cross-window candidate pool stability.
         _signal_churn: dict[str, Any] = compute_signal_churn_metrics(all_primary_surfaces)
+        # Task 1 (Round 35, Alpha): average sortino_ratio from T1 per-window Sortino analysis.
+        _sortino_r35_vals = [float(s["sortino_ratio"]) for s in all_primary_surfaces if s.get("sortino_ratio") is not None]
+        avg_sortino_r35: float | None = round(sum(_sortino_r35_vals) / len(_sortino_r35_vals), 4) if _sortino_r35_vals else None
+        # Task 2 (Round 35, Gamma): quality trend analysis — tracks improvement across windows.
+        _quality_trend: dict[str, Any] = compute_quality_trend_analysis(all_primary_surfaces)
+        # Task 3 (Round 35, Beta): average diversity_score across replay windows.
+        _div_vals = [float(s["diversity_score"]) for s in all_primary_surfaces if s.get("diversity_score") is not None]
+        avg_diversity_score: float | None = round(sum(_div_vals) / len(_div_vals), 4) if _div_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
-            "sortino_ratio": avg_sortino,
+            "sortino_ratio": avg_sortino_r35 if avg_sortino_r35 is not None else avg_sortino,
             "max_drawdown": avg_max_dd,
             "next_close_positive_rate": avg_next_close_positive_rate,
             "next_close_payoff_ratio": avg_next_close_payoff_ratio,
@@ -1826,6 +1916,14 @@ def _build_replay_evaluator(
             "avg_signal_persistence": _signal_churn.get("avg_signal_persistence"),
             "avg_pool_size_churn": _signal_churn.get("avg_pool_size_churn"),
             "pool_stable": _signal_churn.get("pool_stable"),
+            # Task 1 (Round 35, Alpha): Sortino ratio is now returned via avg_sortino_r35 above.
+            # Task 2 (Round 35, Gamma): quality trend analysis — fraction of quality metrics improving.
+            "quality_trend_analysis": _quality_trend,
+            "quality_trend_score": _quality_trend.get("quality_trend_score"),
+            "quality_trend_improving": _quality_trend.get("quality_trend_improving"),
+            "quality_trend_grade": _quality_trend.get("quality_trend_grade"),
+            # Task 3 (Round 35, Beta): average candidate diversity score across replay windows.
+            "diversity_score": avg_diversity_score,
         }
 
     return evaluator

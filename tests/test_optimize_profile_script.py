@@ -7278,3 +7278,287 @@ def test_r34_t3_signal_churn_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
 
     assert COMPARISON_METRIC_LABELS.get("signal_churn_rate") == "信号流失率"
+
+
+# ===========================================================================
+# Round 35 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Round 35, T1 — compute_sharpe_sortino_analysis
+# ---------------------------------------------------------------------------
+
+def _make_rows_with_returns(returns: list[float]) -> list[dict]:
+    """Helper: build row dicts with next_close_return."""
+    return [{"next_close_return": r} for r in returns]
+
+
+def test_r35_t1_basic_returns_required_keys() -> None:
+    """compute_sharpe_sortino_analysis returns all required keys."""
+    from scripts.btst_analysis_utils import compute_sharpe_sortino_analysis
+
+    rows = _make_rows_with_returns([0.01] * 10 + [-0.005] * 5)
+    result = compute_sharpe_sortino_analysis(rows)
+    for key in ("sharpe_ratio", "sortino_ratio", "calmar_proxy", "annualized_return", "annualized_vol", "risk_adjusted_grade", "sortino_positive"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r35_t1_insufficient_rows_returns_all_none() -> None:
+    """Fewer than 10 rows → all None values."""
+    from scripts.btst_analysis_utils import compute_sharpe_sortino_analysis
+
+    result = compute_sharpe_sortino_analysis(_make_rows_with_returns([0.01] * 9))
+    assert result["sortino_ratio"] is None
+    assert result["sharpe_ratio"] is None
+    assert result["risk_adjusted_grade"] is None
+
+
+def test_r35_t1_empty_rows_all_none() -> None:
+    """Empty rows → all None."""
+    from scripts.btst_analysis_utils import compute_sharpe_sortino_analysis
+
+    result = compute_sharpe_sortino_analysis([])
+    assert result["sortino_ratio"] is None
+
+
+def test_r35_t1_none_returns_filtered_gracefully() -> None:
+    """Rows with None next_close_return are silently skipped."""
+    from scripts.btst_analysis_utils import compute_sharpe_sortino_analysis
+
+    rows = [{"next_close_return": None}] * 5 + _make_rows_with_returns([0.01] * 15)
+    result = compute_sharpe_sortino_analysis(rows)
+    assert result["sortino_ratio"] is not None
+
+
+def test_r35_t1_positive_returns_grade_reflects_sortino() -> None:
+    """Consistently positive returns → sortino_positive True and grade A or B."""
+    from scripts.btst_analysis_utils import compute_sharpe_sortino_analysis
+
+    rows = _make_rows_with_returns([0.02] * 20)
+    result = compute_sharpe_sortino_analysis(rows)
+    assert result["sortino_positive"] is True
+    assert result["risk_adjusted_grade"] in ("A", "B", "C")
+
+
+def test_r35_t1_all_losses_grade_d() -> None:
+    """All negative returns → sortino_positive False, grade D."""
+    from scripts.btst_analysis_utils import compute_sharpe_sortino_analysis
+
+    rows = _make_rows_with_returns([-0.01] * 20)
+    result = compute_sharpe_sortino_analysis(rows)
+    assert result["sortino_positive"] is False
+    assert result["risk_adjusted_grade"] == "D"
+
+
+def test_r35_t1_sortino_ratio_clamped() -> None:
+    """sortino_ratio is clamped to [-5, 5]."""
+    from scripts.btst_analysis_utils import compute_sharpe_sortino_analysis
+
+    rows = _make_rows_with_returns([0.10] * 10 + [-0.0001] * 5)
+    result = compute_sharpe_sortino_analysis(rows)
+    assert -5.0 <= result["sortino_ratio"] <= 5.0
+
+
+def test_r35_t1_floor_registered() -> None:
+    """sortino_ratio floor = 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "sortino_ratio" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["sortino_ratio"] == 0.0
+
+
+def test_r35_t1_in_comparison_metrics() -> None:
+    """sortino_ratio registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "sortino_ratio" in COMPARISON_METRICS
+
+
+def test_r35_t1_label_registered() -> None:
+    """sortino_ratio has Chinese label 'Sortino风险收益比'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("sortino_ratio") == "Sortino风险收益比"
+
+
+# ---------------------------------------------------------------------------
+# Round 35, T2 — compute_quality_trend_analysis
+# ---------------------------------------------------------------------------
+
+def test_r35_t2_basic_returns_required_keys() -> None:
+    """compute_quality_trend_analysis returns required keys."""
+    from scripts.optimize_profile import compute_quality_trend_analysis
+
+    summaries = [{"win_rate": 0.55 + i * 0.01, "expected_value_per_trade": 0.005 * (i + 1)} for i in range(5)]
+    result = compute_quality_trend_analysis(summaries)
+    for key in ("quality_trend_improving", "quality_trend_score", "quality_trend_grade"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r35_t2_too_few_windows_returns_none() -> None:
+    """Fewer than 3 windows → all None."""
+    from scripts.optimize_profile import compute_quality_trend_analysis
+
+    result = compute_quality_trend_analysis([{"win_rate": 0.6}] * 2)
+    assert result["quality_trend_improving"] is None
+    assert result["quality_trend_score"] is None
+
+
+def test_r35_t2_empty_returns_none() -> None:
+    """Empty list → all None."""
+    from scripts.optimize_profile import compute_quality_trend_analysis
+
+    result = compute_quality_trend_analysis([])
+    assert result["quality_trend_score"] is None
+
+
+def test_r35_t2_all_improving_score_one() -> None:
+    """All metrics monotonically increasing → quality_trend_score = 1.0, grade A."""
+    from scripts.optimize_profile import compute_quality_trend_analysis
+
+    summaries = [
+        {"win_rate": 0.50 + i * 0.02, "expected_value_per_trade": 0.001 * (i + 1), "composite_gate_score": 60 + i * 2, "sortino_ratio": 0.1 * (i + 1)}
+        for i in range(5)
+    ]
+    result = compute_quality_trend_analysis(summaries)
+    assert result["quality_trend_score"] == 1.0
+    assert result["quality_trend_improving"] is True
+    assert result["quality_trend_grade"] == "A"
+
+
+def test_r35_t2_all_declining_score_zero() -> None:
+    """All metrics declining → quality_trend_score = 0.0, grade D."""
+    from scripts.optimize_profile import compute_quality_trend_analysis
+
+    summaries = [
+        {"win_rate": 0.70 - i * 0.02, "expected_value_per_trade": 0.01 - i * 0.002, "composite_gate_score": 80 - i * 3, "sortino_ratio": 1.0 - i * 0.2}
+        for i in range(5)
+    ]
+    result = compute_quality_trend_analysis(summaries)
+    assert result["quality_trend_score"] == 0.0
+    assert result["quality_trend_improving"] is False
+    assert result["quality_trend_grade"] == "D"
+
+
+def test_r35_t2_partial_none_metrics_graceful() -> None:
+    """Metrics with all-None values are excluded; remaining metrics drive the score."""
+    from scripts.optimize_profile import compute_quality_trend_analysis
+
+    summaries = [{"win_rate": 0.50 + i * 0.01} for i in range(4)]
+    result = compute_quality_trend_analysis(summaries)
+    assert result["quality_trend_score"] is not None
+    assert result["quality_trend_improving"] is True
+
+
+def test_r35_t2_in_comparison_metrics() -> None:
+    """quality_trend_score registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "quality_trend_score" in COMPARISON_METRICS
+
+
+def test_r35_t2_label_registered() -> None:
+    """quality_trend_score has Chinese label '质量趋势评分'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("quality_trend_score") == "质量趋势评分"
+
+
+# ---------------------------------------------------------------------------
+# Round 35, T3 — compute_candidate_diversity_score
+# ---------------------------------------------------------------------------
+
+def _make_rows_with_sectors(sectors: list[str | None]) -> list[dict]:
+    """Helper: build row dicts with sector field."""
+    return [{"sector": s} for s in sectors]
+
+
+def test_r35_t3_basic_returns_required_keys() -> None:
+    """compute_candidate_diversity_score returns all required keys."""
+    from scripts.btst_analysis_utils import compute_candidate_diversity_score
+
+    rows = _make_rows_with_sectors(["tech", "finance", "health", "energy", "tech", "finance", "health"])
+    result = compute_candidate_diversity_score(rows)
+    for key in ("sector_hhi", "diversity_score", "diversity_grade", "sector_count", "dominant_sector_share", "concentration_risk"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r35_t3_too_few_rows_returns_all_none() -> None:
+    """Fewer than 5 valid rows → all None."""
+    from scripts.btst_analysis_utils import compute_candidate_diversity_score
+
+    result = compute_candidate_diversity_score(_make_rows_with_sectors(["tech", "finance", "health", "energy"]))
+    assert result["diversity_score"] is None
+    assert result["sector_hhi"] is None
+
+
+def test_r35_t3_empty_rows_returns_all_none() -> None:
+    """Empty rows → all None."""
+    from scripts.btst_analysis_utils import compute_candidate_diversity_score
+
+    result = compute_candidate_diversity_score([])
+    assert result["diversity_score"] is None
+
+
+def test_r35_t3_all_same_sector_low_diversity() -> None:
+    """All rows same sector → diversity_score ≈ 0, grade D, concentration_risk True."""
+    from scripts.btst_analysis_utils import compute_candidate_diversity_score
+
+    rows = _make_rows_with_sectors(["tech"] * 10)
+    result = compute_candidate_diversity_score(rows)
+    assert result["diversity_score"] is not None
+    assert result["diversity_score"] == 0.0
+    assert result["diversity_grade"] == "D"
+    assert result["concentration_risk"] is True
+
+
+def test_r35_t3_uniform_distribution_high_diversity() -> None:
+    """Equal distribution across 10 sectors → high diversity_score, grade A."""
+    from scripts.btst_analysis_utils import compute_candidate_diversity_score
+
+    rows = _make_rows_with_sectors([f"sector_{i}" for i in range(10)] * 2)
+    result = compute_candidate_diversity_score(rows)
+    assert result["diversity_score"] is not None
+    assert result["diversity_score"] >= 0.70
+    assert result["diversity_grade"] == "A"
+    assert result["concentration_risk"] is False
+
+
+def test_r35_t3_fallback_to_industry() -> None:
+    """When all sector fields are None, falls back to industry field."""
+    from scripts.btst_analysis_utils import compute_candidate_diversity_score
+
+    rows = [{"sector": None, "industry": ind} for ind in ["ind_a", "ind_b", "ind_c", "ind_d", "ind_e"]]
+    result = compute_candidate_diversity_score(rows)
+    assert result["diversity_score"] is not None
+
+
+def test_r35_t3_none_sector_rows_filtered() -> None:
+    """Rows with None sector are filtered; remaining rows computed normally."""
+    from scripts.btst_analysis_utils import compute_candidate_diversity_score
+
+    rows = [{"sector": None}] * 3 + _make_rows_with_sectors(["tech", "finance", "health", "energy", "tech"])
+    result = compute_candidate_diversity_score(rows)
+    assert result["diversity_score"] is not None
+
+
+def test_r35_t3_floor_registered() -> None:
+    """diversity_score floor = 0.30 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "diversity_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["diversity_score"] == 0.30
+
+
+def test_r35_t3_in_comparison_metrics() -> None:
+    """diversity_score registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "diversity_score" in COMPARISON_METRICS
+
+
+def test_r35_t3_label_registered() -> None:
+    """diversity_score has Chinese label '候选多样性评分'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("diversity_score") == "候选多样性评分"

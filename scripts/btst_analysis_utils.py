@@ -3876,6 +3876,30 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["sizing_grade"] = _asz.get("sizing_grade")
     _surface_result["full_size_recommended"] = _asz.get("full_size_recommended")
 
+    # -----------------------------------------------------------------------
+    # Round 35, Task 1 (Alpha): Sharpe / Sortino risk-adjusted return metrics.
+    # Must be called after next_day_rows is assembled (uses next_close_return).
+    # -----------------------------------------------------------------------
+    _ssa: dict[str, Any] = compute_sharpe_sortino_analysis(next_day_rows)
+    _surface_result["sortino_ratio"] = _ssa.get("sortino_ratio")
+    _surface_result["sharpe_ratio_r35"] = _ssa.get("sharpe_ratio")
+    _surface_result["calmar_proxy"] = _ssa.get("calmar_proxy")
+    _surface_result["risk_adjusted_grade"] = _ssa.get("risk_adjusted_grade")
+    _surface_result["sortino_positive"] = _ssa.get("sortino_positive")
+    # win_rate alias — convenience key equal to next_close_positive_rate.
+    _surface_result["win_rate"] = _surface_result.get("next_close_positive_rate")
+
+    # -----------------------------------------------------------------------
+    # Round 35, Task 3 (Beta): Candidate pool sector/industry diversity score.
+    # -----------------------------------------------------------------------
+    _cds: dict[str, Any] = compute_candidate_diversity_score(rows)
+    _surface_result["diversity_score"] = _cds.get("diversity_score")
+    _surface_result["sector_hhi"] = _cds.get("sector_hhi")
+    _surface_result["diversity_grade"] = _cds.get("diversity_grade")
+    _surface_result["sector_count"] = _cds.get("sector_count")
+    _surface_result["dominant_sector_share"] = _cds.get("dominant_sector_share")
+    _surface_result["concentration_risk"] = _cds.get("concentration_risk")
+
     return _surface_result
 
 
@@ -5682,4 +5706,168 @@ def compute_adaptive_sizing_score(summary_dict: dict) -> dict:
         "sizing_multiplier": sizing_multiplier,
         "sizing_grade": sizing_grade,
         "full_size_recommended": full_size_recommended,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 35, Task 1 (Alpha): Sharpe / Sortino risk-adjusted return metrics
+# ---------------------------------------------------------------------------
+# Computes annualised Sharpe (total-volatility) and Sortino (downside-volatility)
+# ratios from the per-window next_close_return series so the optimiser can
+# distinguish strategies with good win-rates but fat left tails.
+
+
+def compute_sharpe_sortino_analysis(rows: list[dict]) -> dict:
+    """Compute Sharpe, Sortino, and Calmar proxy risk-adjusted return metrics.
+
+    Uses ``next_close_return`` as the per-trade return series and annualises on a
+    252-trading-day basis.  Both the standard Sharpe (total volatility) and the Sortino
+    (downside volatility only) are computed so callers can distinguish strategies that
+    have a high win rate but fat left tails.
+
+    Args:
+        rows: Per-row dicts each containing a ``next_close_return`` float field.
+              Rows where the field is absent or None are silently skipped.
+
+    Returns:
+        Dict with keys:
+
+        - ``sharpe_ratio``: float|None — annualised Sharpe, clamped [-5, 5].
+        - ``sortino_ratio``: float|None — annualised Sortino, clamped [-5, 5].
+        - ``calmar_proxy``: float|None — mean_r / |max single-trade loss|, clamped [-5, 5].
+        - ``annualized_return``: float|None — mean_r × 252.
+        - ``annualized_vol``: float|None — std_r × √252.
+        - ``risk_adjusted_grade``: str|None — 'A'(sortino>1.5)/'B'(>0.5)/'C'(>0)/'D'(≤0).
+        - ``sortino_positive``: bool|None — True when sortino_ratio > 0.
+
+        All values are None when fewer than 10 valid rows are present.
+    """
+    import math
+
+    returns: list[float] = [float(r["next_close_return"]) for r in rows if r.get("next_close_return") is not None]
+    if len(returns) < 10:
+        return {"sharpe_ratio": None, "sortino_ratio": None, "calmar_proxy": None, "annualized_return": None, "annualized_vol": None, "risk_adjusted_grade": None, "sortino_positive": None}
+
+    n = len(returns)
+    mean_r = sum(returns) / n
+    if n >= 2:
+        variance = sum((r - mean_r) ** 2 for r in returns) / (n - 1)
+        std_r = math.sqrt(max(variance, 0.0))
+    else:
+        std_r = 1.0
+
+    annualized_return = mean_r * 252
+    annualized_vol = std_r * math.sqrt(252)
+
+    def _clamp(v: float, lo: float, hi: float) -> float:
+        return max(lo, min(hi, v))
+
+    sharpe_ratio = _clamp(annualized_return / max(annualized_vol, 1e-8), -5.0, 5.0)
+
+    downside_returns = [r for r in returns if r < 0]
+    if len(downside_returns) >= 2:
+        dm = sum(downside_returns) / len(downside_returns)
+        d_var = sum((r - dm) ** 2 for r in downside_returns) / (len(downside_returns) - 1)
+        downside_std = math.sqrt(max(d_var, 0.0))
+    else:
+        downside_std = std_r
+
+    annualized_downside_vol = downside_std * math.sqrt(252)
+    sortino_ratio = _clamp(annualized_return / max(annualized_downside_vol, 1e-8), -5.0, 5.0)
+
+    worst_loss = min(returns)
+    calmar_proxy = _clamp(mean_r / max(abs(worst_loss), 1e-6), -5.0, 5.0)
+
+    if sortino_ratio > 1.5:
+        risk_adjusted_grade = "A"
+    elif sortino_ratio > 0.5:
+        risk_adjusted_grade = "B"
+    elif sortino_ratio > 0:
+        risk_adjusted_grade = "C"
+    else:
+        risk_adjusted_grade = "D"
+
+    return {
+        "sharpe_ratio": round(sharpe_ratio, 4),
+        "sortino_ratio": round(sortino_ratio, 4),
+        "calmar_proxy": round(calmar_proxy, 4),
+        "annualized_return": round(annualized_return, 6),
+        "annualized_vol": round(annualized_vol, 6),
+        "risk_adjusted_grade": risk_adjusted_grade,
+        "sortino_positive": sortino_ratio > 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 35, Task 3 (Beta): Candidate pool sector/industry diversity score
+# ---------------------------------------------------------------------------
+# Measures how diversified the candidate pool is across sectors or industries
+# using the Herfindahl-Hirschman Index (HHI) as the concentration measure.
+# A high HHI (near 1.0) signals sector-concentrated pool; low HHI means broad
+# diversification.  Registered as a quality floor (≥ 0.30) so strategies that
+# routinely concentrate in one sector are flagged.
+
+
+def compute_candidate_diversity_score(rows: list[dict]) -> dict:
+    """Compute sector/industry diversity score for the candidate pool.
+
+    Evaluates how diversified the candidate pool is across sectors or industries,
+    using the Herfindahl-Hirschman Index (HHI) as the concentration measure.
+    A high HHI (near 1.0) signals a sector-concentrated pool; low HHI means
+    broad diversification across many sectors.
+
+    Args:
+        rows: Per-row dicts each optionally containing ``sector`` or ``industry``
+              string fields.  ``sector`` is preferred; ``industry`` is tried when
+              ``sector`` is entirely absent from all rows.
+
+    Returns:
+        Dict with keys:
+
+        - ``sector_hhi``: float|None — Herfindahl-Hirschman Index ∈ [1/n, 1.0].
+        - ``diversity_score``: float|None — 1 − HHI ∈ [0, 1]; higher = more diverse.
+        - ``diversity_grade``: str|None — 'A'(≥0.70)/'B'(≥0.50)/'C'(≥0.30)/'D'(<0.30).
+        - ``sector_count``: int|None — number of distinct sectors in the pool.
+        - ``dominant_sector_share``: float|None — fraction held by the largest sector.
+        - ``concentration_risk``: bool|None — True when dominant sector > 50 % of pool.
+
+        Returns a dict of all-None values when fewer than 5 valid rows are available.
+    """
+    _null: dict = {"sector_hhi": None, "diversity_score": None, "diversity_grade": None, "sector_count": None, "dominant_sector_share": None, "concentration_risk": None}
+
+    sector_values: list = [r.get("sector") for r in rows]
+    if all(v is None for v in sector_values):
+        sector_values = [r.get("industry") for r in rows]
+
+    valid: list[str] = [v for v in sector_values if v is not None]
+    if len(valid) < 5:
+        return _null
+
+    counts: dict[str, int] = {}
+    for s in valid:
+        counts[s] = counts.get(s, 0) + 1
+    total = len(valid)
+    freq = {s: c / total for s, c in counts.items()}
+
+    sector_hhi = sum(f ** 2 for f in freq.values())
+    diversity_score = round(1.0 - sector_hhi, 4)
+    sector_count = len(counts)
+    dominant_sector_share = max(freq.values())
+
+    if diversity_score >= 0.70:
+        diversity_grade = "A"
+    elif diversity_score >= 0.50:
+        diversity_grade = "B"
+    elif diversity_score >= 0.30:
+        diversity_grade = "C"
+    else:
+        diversity_grade = "D"
+
+    return {
+        "sector_hhi": round(sector_hhi, 4),
+        "diversity_score": diversity_score,
+        "diversity_grade": diversity_grade,
+        "sector_count": sector_count,
+        "dominant_sector_share": round(dominant_sector_share, 4),
+        "concentration_risk": dominant_sector_share > 0.50,
     }

@@ -116,7 +116,10 @@
       "multi_factor_lift_delta": null,
       "adaptive_sizing_score_delta": null,
       "signal_churn_rate_delta": null,
-      "avg_signal_persistence_delta": null
+      "avg_signal_persistence_delta": null,
+      "sortino_ratio_delta": null,
+      "quality_trend_score_delta": null,
+      "diversity_score_delta": null
     },
     "default": {
       "candidate": {
@@ -223,7 +226,10 @@
       "multi_factor_lift_delta": null,
       "adaptive_sizing_score_delta": null,
       "signal_churn_rate_delta": null,
-      "avg_signal_persistence_delta": null
+      "avg_signal_persistence_delta": null,
+      "sortino_ratio_delta": null,
+      "quality_trend_score_delta": null,
+      "diversity_score_delta": null
     }
   },
   "rollout_recommendation": "hold",
