@@ -376,6 +376,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "drawdown_max_drawdown",
     # Task 3 (Round 54, Gamma): cross-window conditional factor synergy OLS trend slope.
     "conditional_lift_trend_slope",
+    # Task 1 (Round 55, Alpha): multi-factor mean IC — signed average Spearman IC across 7 core factors.
+    "decay_mean_ic",
+    # Task 2 (Round 55, Beta): intraday session win-rate spread — max − min across early/mid/late.
+    "time_seg_session_win_rate_spread",
+    # Task 3 (Round 55, Gamma): cross-window max-drawdown OLS trend slope.
+    "drawdown_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -640,6 +646,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "drawdown_max_drawdown": "最大回撤率",
     # Task 3 (Round 54, Gamma): conditional factor synergy cross-window trend
     "conditional_lift_trend_slope": "条件因子协同跨窗趋势",
+    # Task 1 (Round 55, Alpha): multi-factor mean IC
+    "decay_mean_ic": "多因子平均IC",
+    # Task 2 (Round 55, Beta): intraday session win-rate spread
+    "time_seg_session_win_rate_spread": "最佳时段胜率差异",
+    # Task 3 (Round 55, Gamma): cross-window max-drawdown OLS trend slope
+    "drawdown_trend_slope": "最大回撤跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -704,6 +716,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "outlier_dependency_ratio",
     # Task 2 (Round 54, Beta): maximum drawdown — higher = larger drawdown = lower-is-better.
     "drawdown_max_drawdown",
+    # Task 3 (Round 55, Gamma): cross-window drawdown trend slope — negative slope = improving risk = lower is better.
+    "drawdown_trend_slope",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -960,6 +974,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "drawdown_max_drawdown",
     # Task 3 (Round 54, Gamma): conditional lift trend slope — optional; pre-Round-54 outputs omit it.
     "conditional_lift_trend_slope",
+    # Task 1 (Round 55, Alpha): multi-factor mean IC — optional; pre-Round-55 outputs omit it.
+    "decay_mean_ic",
+    # Task 2 (Round 55, Beta): intraday session win-rate spread — optional; pre-Round-55 outputs omit it.
+    "time_seg_session_win_rate_spread",
+    # Task 3 (Round 55, Gamma): cross-window drawdown trend slope — optional; pre-Round-55 outputs omit it.
+    "drawdown_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2723,6 +2743,62 @@ def compute_cross_window_conditional_trend(all_windows_summaries: list[dict]) ->
 
 
 # ---------------------------------------------------------------------------
+# Round 55, Task 3 (Gamma): cross-window max-drawdown trend — is drawdown risk improving?
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_drawdown_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track OLS trend of ``max_drawdown`` across replay windows to assess whether risk is improving.
+
+    A negative slope means drawdown is shrinking over time (improving); a positive slope signals deterioration.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts ordered chronologically.  Each dict should carry a ``drawdown_max_drawdown`` key produced by ``compute_max_drawdown_analysis`` (positive float; 0.05 = 5%).
+
+    Returns:
+        Dict with keys: ``drawdown_trend_slope``, ``drawdown_trend_mean``, ``drawdown_trend_min``, ``drawdown_trend_max``, ``drawdown_improving_windows_pct``, ``drawdown_trend_grade``, ``drawdown_trend_valid``.
+    """
+    _null: dict = {"drawdown_trend_slope": None, "drawdown_trend_mean": None, "drawdown_trend_min": None, "drawdown_trend_max": None, "drawdown_improving_windows_pct": None, "drawdown_trend_grade": None, "drawdown_trend_valid": False}
+    if not all_windows_summaries:
+        return _null
+    dd_series: list[float] = []
+    for surf in all_windows_summaries:
+        v = surf.get("drawdown_max_drawdown")
+        if v is not None:
+            try:
+                dd_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(dd_series) < 3:
+        return _null
+    n = len(dd_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(dd_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, dd_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+    mean_val = sum_y / n
+    if n < 2:
+        improving_pct = 0.5
+    else:
+        half = n // 2
+        first_half_mean = sum(dd_series[:half]) / half if half > 0 else 0.0
+        second_half_mean = sum(dd_series[n - half:]) / half if half > 0 else 0.0
+        improving_pct = 1.0 if second_half_mean < first_half_mean else 0.0
+    if slope < -0.005:
+        grade = "A"
+    elif slope < 0:
+        grade = "B"
+    elif slope < 0.005:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"drawdown_trend_slope": round(slope, 8), "drawdown_trend_mean": round(mean_val, 6), "drawdown_trend_min": round(min(dd_series), 6), "drawdown_trend_max": round(max(dd_series), 6), "drawdown_improving_windows_pct": improving_pct, "drawdown_trend_grade": grade, "drawdown_trend_valid": True}
+
+
+# ---------------------------------------------------------------------------
 
 
 def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
@@ -3457,6 +3533,8 @@ def _build_replay_evaluator(
 
         # Task 3 (Round 54, Gamma): cross-window conditional factor synergy trend.
         _clt: dict[str, Any] = compute_cross_window_conditional_trend(all_primary_surfaces)
+        # Task 3 (Round 55, Gamma): cross-window max-drawdown trend.
+        _ddt: dict[str, Any] = compute_cross_window_drawdown_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -3757,6 +3835,14 @@ def _build_replay_evaluator(
             "conditional_positive_windows_pct": _clt.get("conditional_positive_windows_pct"),
             "conditional_trend_grade": _clt.get("conditional_trend_grade"),
             "conditional_lift_trend_valid": _clt.get("conditional_lift_trend_valid"),
+            # Task 3 (Round 55, Gamma): cross-window max-drawdown trend.
+            "drawdown_trend_slope": _ddt.get("drawdown_trend_slope"),
+            "drawdown_trend_mean": _ddt.get("drawdown_trend_mean"),
+            "drawdown_trend_min": _ddt.get("drawdown_trend_min"),
+            "drawdown_trend_max": _ddt.get("drawdown_trend_max"),
+            "drawdown_improving_windows_pct": _ddt.get("drawdown_improving_windows_pct"),
+            "drawdown_trend_grade": _ddt.get("drawdown_trend_grade"),
+            "drawdown_trend_valid": _ddt.get("drawdown_trend_valid"),
         }
 
     return evaluator

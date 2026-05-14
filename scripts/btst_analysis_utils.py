@@ -4404,6 +4404,17 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["drawdown_calmar_ratio"] = _mda.get("calmar_ratio")
     _surface_result["drawdown_max_drawdown_valid"] = _mda.get("max_drawdown_valid")
 
+    # Round 55, Task 1 (Alpha): Factor decay IC analysis.
+    _fda: dict[str, Any] = compute_factor_decay_analysis(next_day_rows)
+    for _k, _v in _fda.items():
+        if _k != "factor_ic_scores":
+            _surface_result[f"decay_{_k}"] = _v
+
+    # Round 55, Task 2 (Beta): Intraday time segmentation analysis.
+    _its: dict[str, Any] = compute_intraday_time_segmentation(next_day_rows)
+    for _k, _v in _its.items():
+        _surface_result[f"time_seg_{_k}"] = _v
+
     return _surface_result
 
 
@@ -10590,3 +10601,198 @@ def compute_max_drawdown_analysis(rows: list[dict]) -> dict:
     annualised = mean_ret * 252
     calmar: float = round(min(annualised / max_dd, 10.0), 6) if max_dd > 0 else 10.0
     return {"max_drawdown": round(max_dd, 8), "max_drawdown_duration": max_dd_duration, "recovery_ratio": recovery_ratio, "calmar_ratio": calmar, "max_drawdown_valid": True}
+
+
+# ---------------------------------------------------------------------------
+# Round 55, Task 1 (Alpha): Factor decay IC analysis — multi-factor vs next_day_return Spearman correlation
+# ---------------------------------------------------------------------------
+# Computes per-factor IC (Spearman ρ) between 7 core factors and next_day_return.
+# All ranking is done manually (no scipy); Spearman = Pearson(rank(x), rank(y)).
+# ---------------------------------------------------------------------------
+
+
+def compute_factor_decay_analysis(rows: list[dict]) -> dict:
+    """Analyse per-factor Information Coefficient (Spearman ρ) between 7 core BTST factors and next_day_return.
+
+    Args:
+        rows: Per-candidate dicts.  Requires ≥ 12 valid rows.
+
+    Returns:
+        Dict with keys:
+
+        - ``factor_ic_scores``: dict mapping factor name → IC float | None (< 5 valid pairs → None).
+        - ``mean_ic``: float | None — mean IC across valid factors (signed, not absolute).
+        - ``max_ic_factor``: str | None — factor with highest |IC|.
+        - ``min_ic_factor``: str | None — factor with lowest |IC|.
+        - ``ic_spread``: float | None — max(|IC|) − min(|IC|) across valid factors.
+        - ``positive_ic_count``: int | None — number of factors with IC > 0.
+        - ``factor_decay_valid``: bool — True when ≥ 12 rows available.
+    """
+    _FACTOR_KEYS: list[str] = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    _null: dict = {"factor_ic_scores": None, "mean_ic": None, "max_ic_factor": None, "min_ic_factor": None, "ic_spread": None, "positive_ic_count": None, "factor_decay_valid": False}
+    if not rows or len(rows) < 12:
+        return _null
+
+    def _spearman(xs: list[float], ys: list[float]) -> float | None:
+        n = len(xs)
+        if n < 5:
+            return None
+        sorted_x = sorted(range(n), key=lambda i: xs[i])
+        rank_x: list[float] = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j < n - 1 and xs[sorted_x[j + 1]] == xs[sorted_x[j]]:
+                j += 1
+            avg_rank = (i + j) / 2.0
+            for k in range(i, j + 1):
+                rank_x[sorted_x[k]] = avg_rank
+            i = j + 1
+        sorted_y = sorted(range(n), key=lambda i: ys[i])
+        rank_y: list[float] = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j < n - 1 and ys[sorted_y[j + 1]] == ys[sorted_y[j]]:
+                j += 1
+            avg_rank = (i + j) / 2.0
+            for k in range(i, j + 1):
+                rank_y[sorted_y[k]] = avg_rank
+            i = j + 1
+        mean_rx = sum(rank_x) / n
+        mean_ry = sum(rank_y) / n
+        num = sum((rank_x[i] - mean_rx) * (rank_y[i] - mean_ry) for i in range(n))
+        denom_sq = sum((rank_x[i] - mean_rx) ** 2 for i in range(n)) * sum((rank_y[i] - mean_ry) ** 2 for i in range(n))
+        if denom_sq <= 0:
+            return None
+        return num / (denom_sq ** 0.5)
+
+    factor_ic_scores: dict[str, float | None] = {}
+    for fk in _FACTOR_KEYS:
+        pairs: list[tuple[float, float]] = []
+        for row in rows:
+            fv = row.get(fk)
+            rv = row.get("next_day_return")
+            if fv is None or rv is None:
+                continue
+            try:
+                pairs.append((float(fv), float(rv)))
+            except (TypeError, ValueError):
+                pass
+        if len(pairs) < 5:
+            factor_ic_scores[fk] = None
+        else:
+            xs = [p[0] for p in pairs]
+            ys = [p[1] for p in pairs]
+            ic = _spearman(xs, ys)
+            factor_ic_scores[fk] = round(ic, 8) if ic is not None else None
+
+    valid_ics: list[tuple[str, float]] = [(k, v) for k, v in factor_ic_scores.items() if v is not None]
+    if not valid_ics:
+        return {"factor_ic_scores": factor_ic_scores, "mean_ic": None, "max_ic_factor": None, "min_ic_factor": None, "ic_spread": None, "positive_ic_count": None, "factor_decay_valid": True}
+    mean_ic: float = round(sum(v for _, v in valid_ics) / len(valid_ics), 8)
+    max_ic_factor: str = max(valid_ics, key=lambda t: abs(t[1]))[0]
+    min_ic_factor: str = min(valid_ics, key=lambda t: abs(t[1]))[0]
+    ic_spread: float = round(max(abs(v) for _, v in valid_ics) - min(abs(v) for _, v in valid_ics), 8)
+    positive_ic_count: int = sum(1 for _, v in valid_ics if v > 0)
+    return {"factor_ic_scores": factor_ic_scores, "mean_ic": mean_ic, "max_ic_factor": max_ic_factor, "min_ic_factor": min_ic_factor, "ic_spread": ic_spread, "positive_ic_count": positive_ic_count, "factor_decay_valid": True}
+
+
+# ---------------------------------------------------------------------------
+# Round 55, Task 2 (Beta): Intraday time segmentation — early/mid/late session return analysis
+# ---------------------------------------------------------------------------
+# Segments rows into early (<11h), mid (11–14h), and late (>=14h) sessions by trade_time
+# or signal_time.  Falls back to row-index three-way split when neither field exists.
+# ---------------------------------------------------------------------------
+
+
+def compute_intraday_time_segmentation(rows: list[dict]) -> dict:
+    """Analyse win rate and mean return split by intraday trading session.
+
+    Args:
+        rows: Per-candidate dicts.  Requires ≥ 9 valid rows.
+
+    Returns:
+        Dict with keys:
+
+        - ``early_session_win_rate``, ``mid_session_win_rate``, ``late_session_win_rate``: float | None.
+        - ``early_session_mean_return``, ``mid_session_mean_return``, ``late_session_mean_return``: float | None.
+        - ``best_session``: str | None — "early"/"mid"/"late" by highest win_rate.
+        - ``session_win_rate_spread``: float | None — max(win_rate) − min(win_rate).
+        - ``intraday_time_valid``: bool — True when ≥ 9 rows are available.
+    """
+    _null: dict = {"early_session_win_rate": None, "mid_session_win_rate": None, "late_session_win_rate": None, "early_session_mean_return": None, "mid_session_mean_return": None, "late_session_mean_return": None, "best_session": None, "session_win_rate_spread": None, "intraday_time_valid": False}
+    if not rows or len(rows) < 9:
+        return _null
+
+    def _seg_stats(seg: list[float]) -> tuple[float | None, float | None]:
+        if not seg:
+            return None, None
+        wr = round(sum(1 for r in seg if r > 0) / len(seg), 6)
+        mr = round(sum(seg) / len(seg), 8)
+        return wr, mr
+
+    has_time = any(row.get("trade_time") is not None or row.get("signal_time") is not None for row in rows)
+    early: list[float] = []
+    mid: list[float] = []
+    late: list[float] = []
+    if has_time:
+        for row in rows:
+            rv = row.get("next_day_return")
+            if rv is None:
+                continue
+            try:
+                ret = float(rv)
+            except (TypeError, ValueError):
+                continue
+            t_raw = row.get("trade_time") if row.get("trade_time") is not None else row.get("signal_time")
+            hour: int | None = None
+            if t_raw is not None:
+                try:
+                    t_str = str(t_raw)
+                    if ":" in t_str:
+                        hour = int(t_str.split(":")[0].split(" ")[-1])
+                    else:
+                        hour = int(float(t_str))
+                except (TypeError, ValueError):
+                    pass
+            if hour is None:
+                continue
+            if hour < 11:
+                early.append(ret)
+            elif hour < 14:
+                mid.append(ret)
+            else:
+                late.append(ret)
+    else:
+        valid_rets: list[float] = []
+        for row in rows:
+            rv = row.get("next_day_return")
+            if rv is None:
+                continue
+            try:
+                valid_rets.append(float(rv))
+            except (TypeError, ValueError):
+                pass
+        n = len(valid_rets)
+        if n < 9:
+            return _null
+        seg_size = n // 3
+        early = valid_rets[:seg_size]
+        late = valid_rets[n - seg_size:]
+        mid = valid_rets[seg_size: n - seg_size]
+
+    early_wr, early_mr = _seg_stats(early)
+    mid_wr, mid_mr = _seg_stats(mid)
+    late_wr, late_mr = _seg_stats(late)
+
+    named: list[tuple[str, float]] = [(name, wr) for name, wr in [("early", early_wr), ("mid", mid_wr), ("late", late_wr)] if wr is not None]
+    if named:
+        best_session = max(named, key=lambda t: t[1])[0]
+        win_rates = [t[1] for t in named]
+        session_win_rate_spread: float | None = round(max(win_rates) - min(win_rates), 6)
+    else:
+        best_session = None
+        session_win_rate_spread = None
+
+    return {"early_session_win_rate": early_wr, "mid_session_win_rate": mid_wr, "late_session_win_rate": late_wr, "early_session_mean_return": early_mr, "mid_session_mean_return": mid_mr, "late_session_mean_return": late_mr, "best_session": best_session, "session_win_rate_spread": session_win_rate_spread, "intraday_time_valid": True}

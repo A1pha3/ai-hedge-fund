@@ -13703,3 +13703,373 @@ def test_r54_max_drawdown_missing_next_day_return_skipped() -> None:
     rows = [{"next_day_return": 0.01 * i} for i in range(10)] + [{"other": 1}] * 5
     result = compute_max_drawdown_analysis(rows)
     assert result["max_drawdown_valid"] is True
+
+
+# ===========================================================================
+# Round 55 Tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# T1: compute_factor_decay_analysis
+# ---------------------------------------------------------------------------
+
+
+def test_r55_factor_decay_invalid_too_few_rows() -> None:
+    """Fewer than 12 rows → factor_decay_valid=False."""
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    rows = [{"close_strength": 0.5, "next_day_return": 0.01} for _ in range(11)]
+    result = compute_factor_decay_analysis(rows)
+    assert result["factor_decay_valid"] is False
+    assert result["mean_ic"] is None
+
+
+def test_r55_factor_decay_valid_flag() -> None:
+    """12+ rows → factor_decay_valid=True."""
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    rows = [{"close_strength": float(i) * 0.1, "next_day_return": float(i) * 0.01} for i in range(15)]
+    result = compute_factor_decay_analysis(rows)
+    assert result["factor_decay_valid"] is True
+
+
+def test_r55_factor_decay_spearman_positive_corr() -> None:
+    """Perfectly monotone close_strength vs next_day_return → IC ≈ 1.0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    rows = [{"close_strength": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_decay_analysis(rows)
+    assert result["factor_decay_valid"] is True
+    assert result["factor_ic_scores"]["close_strength"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_r55_factor_decay_spearman_negative_corr() -> None:
+    """Perfectly inverse close_strength vs next_day_return → IC ≈ -1.0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    rows = [{"close_strength": float(i), "next_day_return": -float(i) * 0.01} for i in range(20)]
+    result = compute_factor_decay_analysis(rows)
+    assert result["factor_ic_scores"]["close_strength"] == pytest.approx(-1.0, abs=1e-5)
+
+
+def test_r55_factor_decay_missing_factor_none() -> None:
+    """Factor with < 5 valid pairs returns None IC."""
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    rows = [{"close_strength": None, "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_decay_analysis(rows)
+    assert result["factor_decay_valid"] is True
+    assert result["factor_ic_scores"]["close_strength"] is None
+
+
+def test_r55_factor_decay_mean_ic_signed() -> None:
+    """mean_ic is signed average, not absolute."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    rows = [{"close_strength": float(i), "next_day_return": -float(i) * 0.01} for i in range(20)]
+    result = compute_factor_decay_analysis(rows)
+    assert result["mean_ic"] is not None
+    assert result["mean_ic"] < 0
+
+
+def test_r55_factor_decay_ic_spread_nonnegative() -> None:
+    """ic_spread = max|IC| - min|IC| >= 0."""
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    import random
+    random.seed(42)
+    rows = [{"close_strength": random.random(), "volume_expansion_quality": random.random(), "next_day_return": random.gauss(0, 0.01)} for _ in range(20)]
+    result = compute_factor_decay_analysis(rows)
+    assert result["factor_decay_valid"] is True
+    if result["ic_spread"] is not None:
+        assert result["ic_spread"] >= 0.0
+
+
+def test_r55_factor_decay_max_ic_factor() -> None:
+    """max_ic_factor points to highest |IC| factor."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i % 3), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_decay_analysis(rows)
+    assert result["max_ic_factor"] is not None
+    ics = result["factor_ic_scores"]
+    valid_ics = {k: v for k, v in ics.items() if v is not None}
+    expected_max = max(valid_ics, key=lambda k: abs(valid_ics[k]))
+    assert result["max_ic_factor"] == expected_max
+
+
+def test_r55_factor_decay_min_ic_factor() -> None:
+    """min_ic_factor points to lowest |IC| factor."""
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i % 3), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_decay_analysis(rows)
+    assert result["min_ic_factor"] is not None
+    ics = result["factor_ic_scores"]
+    valid_ics = {k: v for k, v in ics.items() if v is not None}
+    expected_min = min(valid_ics, key=lambda k: abs(valid_ics[k]))
+    assert result["min_ic_factor"] == expected_min
+
+
+def test_r55_factor_decay_positive_ic_count() -> None:
+    """positive_ic_count counts factors with IC > 0."""
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
+    rows = [{"close_strength": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_decay_analysis(rows)
+    ics = result["factor_ic_scores"]
+    expected = sum(1 for v in ics.values() if v is not None and v > 0)
+    assert result["positive_ic_count"] == expected
+
+
+def test_r55_factor_decay_in_comparison_metrics() -> None:
+    """decay_mean_ic must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "decay_mean_ic" in COMPARISON_METRICS
+
+
+def test_r55_factor_decay_in_optional_metrics() -> None:
+    """decay_mean_ic must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "decay_mean_ic" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r55_factor_decay_floor_registered() -> None:
+    """mean_ic must have floor 0.0 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "mean_ic" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["mean_ic"] == pytest.approx(0.0)
+
+
+def test_r55_factor_decay_label() -> None:
+    """decay_mean_ic label must be '多因子平均IC'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("decay_mean_ic") == "多因子平均IC"
+
+
+def test_r55_factor_decay_guardrail_key() -> None:
+    """mean_ic must be in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "mean_ic" in _GUARDRAIL_KEYS
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_intraday_time_segmentation
+# ---------------------------------------------------------------------------
+
+
+def test_r55_time_seg_invalid_too_few_rows() -> None:
+    """Fewer than 9 rows → intraday_time_valid=False."""
+    from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+    rows = [{"next_day_return": 0.01} for _ in range(8)]
+    result = compute_intraday_time_segmentation(rows)
+    assert result["intraday_time_valid"] is False
+    assert result["early_session_win_rate"] is None
+
+
+def test_r55_time_seg_valid_no_time_field() -> None:
+    """9+ rows without time field → intraday_time_valid=True (row-index split)."""
+    from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+    rows = [{"next_day_return": 0.01 * i} for i in range(12)]
+    result = compute_intraday_time_segmentation(rows)
+    assert result["intraday_time_valid"] is True
+
+
+def test_r55_time_seg_valid_with_trade_time() -> None:
+    """Rows with trade_time → session split by hour."""
+    from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+    rows = (
+        [{"trade_time": "09:30", "next_day_return": 0.02}] * 5
+        + [{"trade_time": "11:30", "next_day_return": -0.01}] * 5
+        + [{"trade_time": "14:00", "next_day_return": 0.01}] * 5
+    )
+    result = compute_intraday_time_segmentation(rows)
+    assert result["intraday_time_valid"] is True
+
+
+def test_r55_time_seg_early_win_rate_correct() -> None:
+    """early_session_win_rate from time-based split: all positive → 1.0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+    rows = [{"trade_time": "09:30", "next_day_return": 0.02}] * 10 + [{"trade_time": "11:30", "next_day_return": -0.01}] * 5 + [{"trade_time": "14:00", "next_day_return": 0.01}] * 5
+    result = compute_intraday_time_segmentation(rows)
+    assert result["early_session_win_rate"] == pytest.approx(1.0)
+
+
+def test_r55_time_seg_best_session() -> None:
+    """best_session points to session with highest win_rate."""
+    from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+    rows = [{"trade_time": "09:30", "next_day_return": 0.02}] * 10 + [{"trade_time": "11:30", "next_day_return": -0.01}] * 5 + [{"trade_time": "14:00", "next_day_return": 0.01}] * 5
+    result = compute_intraday_time_segmentation(rows)
+    assert result["best_session"] == "early"
+
+
+def test_r55_time_seg_session_win_rate_spread() -> None:
+    """session_win_rate_spread = max(wr) - min(wr)."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+    rows = (
+        [{"trade_time": "09:30", "next_day_return": 0.02}] * 10
+        + [{"trade_time": "11:30", "next_day_return": -0.01}] * 10
+        + [{"trade_time": "14:00", "next_day_return": -0.02}] * 10
+    )
+    result = compute_intraday_time_segmentation(rows)
+    assert result["session_win_rate_spread"] is not None
+    assert result["session_win_rate_spread"] >= 0.0
+
+
+def test_r55_time_seg_row_index_split_segments() -> None:
+    """Row-index split: front segment win_rate = 1.0 when all positive."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+    rows = [{"next_day_return": 0.01}] * 5 + [{"next_day_return": -0.01}] * 4 + [{"next_day_return": -0.01}] * 3
+    result = compute_intraday_time_segmentation(rows)
+    assert result["intraday_time_valid"] is True
+    assert result["early_session_win_rate"] == pytest.approx(1.0)
+
+
+def test_r55_time_seg_in_comparison_metrics() -> None:
+    """time_seg_session_win_rate_spread must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "time_seg_session_win_rate_spread" in COMPARISON_METRICS
+
+
+def test_r55_time_seg_in_optional_metrics() -> None:
+    """time_seg_session_win_rate_spread must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "time_seg_session_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r55_time_seg_label() -> None:
+    """time_seg_session_win_rate_spread label must be '最佳时段胜率差异'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("time_seg_session_win_rate_spread") == "最佳时段胜率差异"
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_drawdown_trend
+# ---------------------------------------------------------------------------
+
+
+def test_r55_drawdown_trend_invalid_too_few_windows() -> None:
+    """Fewer than 3 valid drawdown values → drawdown_trend_valid=False."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": 0.05}, {"drawdown_max_drawdown": 0.04}]
+    result = compute_cross_window_drawdown_trend(summaries)
+    assert result["drawdown_trend_valid"] is False
+
+
+def test_r55_drawdown_trend_valid_flag() -> None:
+    """3+ valid drawdown values → drawdown_trend_valid=True."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": 0.05 - i * 0.005} for i in range(5)]
+    result = compute_cross_window_drawdown_trend(summaries)
+    assert result["drawdown_trend_valid"] is True
+
+
+def test_r55_drawdown_trend_slope_negative_when_improving() -> None:
+    """Decreasing drawdown series → negative slope."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": 0.10 - i * 0.01} for i in range(5)]
+    result = compute_cross_window_drawdown_trend(summaries)
+    assert result["drawdown_trend_valid"] is True
+    assert result["drawdown_trend_slope"] < 0
+
+
+def test_r55_drawdown_trend_slope_positive_when_worsening() -> None:
+    """Increasing drawdown series → positive slope."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": 0.01 * (i + 1)} for i in range(5)]
+    result = compute_cross_window_drawdown_trend(summaries)
+    assert result["drawdown_trend_slope"] > 0
+
+
+def test_r55_drawdown_trend_grade_a_steep_decline() -> None:
+    """slope < -0.005 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": 0.20 - i * 0.05} for i in range(5)]
+    result = compute_cross_window_drawdown_trend(summaries)
+    assert result["drawdown_trend_valid"] is True
+    if result["drawdown_trend_slope"] is not None and result["drawdown_trend_slope"] < -0.005:
+        assert result["drawdown_trend_grade"] == "A"
+
+
+def test_r55_drawdown_trend_grade_b_mild_decline() -> None:
+    """−0.005 ≤ slope < 0 → grade B."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": 0.05 - i * 0.001} for i in range(5)]
+    result = compute_cross_window_drawdown_trend(summaries)
+    if result["drawdown_trend_slope"] is not None and -0.005 <= result["drawdown_trend_slope"] < 0:
+        assert result["drawdown_trend_grade"] == "B"
+
+
+def test_r55_drawdown_trend_grade_d_sharp_increase() -> None:
+    """slope >= 0.005 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": 0.01 * (i + 1) * 2} for i in range(5)]
+    result = compute_cross_window_drawdown_trend(summaries)
+    if result["drawdown_trend_slope"] is not None and result["drawdown_trend_slope"] >= 0.005:
+        assert result["drawdown_trend_grade"] == "D"
+
+
+def test_r55_drawdown_improving_windows_pct_1() -> None:
+    """Decreasing series → drawdown_improving_windows_pct = 1.0."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": 0.10 - i * 0.01} for i in range(6)]
+    result = compute_cross_window_drawdown_trend(summaries)
+    assert result["drawdown_improving_windows_pct"] == 1.0
+
+
+def test_r55_drawdown_improving_windows_pct_0() -> None:
+    """Increasing series → drawdown_improving_windows_pct = 0.0."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": 0.01 * (i + 1)} for i in range(6)]
+    result = compute_cross_window_drawdown_trend(summaries)
+    assert result["drawdown_improving_windows_pct"] == 0.0
+
+
+def test_r55_drawdown_trend_skips_none() -> None:
+    """None drawdown values are skipped."""
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    summaries = [{"drawdown_max_drawdown": None}, {"drawdown_max_drawdown": 0.05}, {"drawdown_max_drawdown": 0.04}, {"drawdown_max_drawdown": 0.03}]
+    result = compute_cross_window_drawdown_trend(summaries)
+    assert result["drawdown_trend_valid"] is True
+
+
+def test_r55_drawdown_trend_in_comparison_metrics() -> None:
+    """drawdown_trend_slope must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "drawdown_trend_slope" in COMPARISON_METRICS
+
+
+def test_r55_drawdown_trend_in_optional_metrics() -> None:
+    """drawdown_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "drawdown_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r55_drawdown_trend_lower_is_better() -> None:
+    """drawdown_trend_slope must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "drawdown_trend_slope" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r55_drawdown_trend_cap_registered() -> None:
+    """drawdown_trend_slope cap must be 0.005 in BTST_QUALITY_CAPS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "drawdown_trend_slope" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["drawdown_trend_slope"] == pytest.approx(0.005)
+
+
+def test_r55_drawdown_trend_label() -> None:
+    """drawdown_trend_slope label must be '最大回撤跨窗趋势'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("drawdown_trend_slope") == "最大回撤跨窗趋势"
+
+
+def test_r55_drawdown_trend_min_max() -> None:
+    """drawdown_trend_min and max match series extremes."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_drawdown_trend
+    vals = [0.05, 0.03, 0.07, 0.02, 0.06]
+    summaries = [{"drawdown_max_drawdown": v} for v in vals]
+    result = compute_cross_window_drawdown_trend(summaries)
+    assert result["drawdown_trend_min"] == pytest.approx(min(vals), abs=1e-5)
+    assert result["drawdown_trend_max"] == pytest.approx(max(vals), abs=1e-5)

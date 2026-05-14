@@ -63,6 +63,10 @@ _GUARDRAIL_KEYS = (
     # tail_asymmetry = right_tail_95 − abs(CVaR_5%); positive = right-skewed (good).
     # Floor ≥ 0.0 requires the right tail to be at least as large as the left tail in absolute terms.
     "tail_asymmetry",
+    # Task 1 (Round 55, Alpha): multi-factor mean IC floor guardrail.
+    # mean_ic = signed average Spearman IC across 7 core BTST factors vs next_day_return.
+    # Floor ≥ 0.0 requires the factor set to have net positive predictive power.
+    "mean_ic",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -407,6 +411,10 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # conditional_lift_trend_slope = OLS slope of conditional_lift across replay windows.
     # Floor ≥ -0.01 prevents strategies whose factor synergy is deteriorating steeply from passing.
     "conditional_lift_trend_slope": -0.01,
+    # Task 1 (Round 55, Alpha): multi-factor mean IC floor.
+    # mean_ic = signed average Spearman IC across 7 core BTST factors vs next_day_return.
+    # Floor ≥ 0.0 requires that the factor set has net positive predictive power on average.
+    "mean_ic": 0.0,
 }
 
 # ---------------------------------------------------------------------------
@@ -479,6 +487,10 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # the top-10% return outliers are removed — indicating the edge is highly dependent
     # on rare "black swan" surges that are unlikely to repeat in live trading.
     "outlier_dependency_ratio": 0.30,
+    # Task 3 (Round 55, Gamma): cross-window max-drawdown OLS trend slope cap.
+    # drawdown_trend_slope > 0.005 means drawdown is growing faster than 0.5 %/window — deteriorating risk.
+    # Profiles above this cap carry unacceptable risk escalation and should be penalised.
+    "drawdown_trend_slope": 0.005,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},
