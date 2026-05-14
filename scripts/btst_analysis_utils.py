@@ -4683,6 +4683,24 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         _surface_result["nh_near_high_ratio"] = nh_result["near_high_ratio"]
         _surface_result["nh_non_near_high_win_rate"] = nh_result["non_near_high_win_rate"]
 
+    # Round 81, Task 1 (Alpha): Expected value analysis (高低分组期望收益EV).
+    ev_result: dict = compute_expected_value_analysis(rows)
+    if ev_result["valid"]:
+        _surface_result["ev_top_ev"] = ev_result["top_ev"]
+        _surface_result["ev_bot_ev"] = ev_result["bot_ev"]
+        _surface_result["ev_ev_spread"] = ev_result["ev_spread"]
+        _surface_result["ev_top_win_rate"] = ev_result["top_win_rate"]
+        _surface_result["ev_top_avg_win"] = ev_result["top_avg_win"]
+        _surface_result["ev_top_avg_loss"] = ev_result["top_avg_loss"]
+
+    # Round 81, Task 2 (Beta): High inflow premium (高净流入胜率溢价).
+    hi_inflow_result: dict = compute_high_inflow_premium(rows)
+    if hi_inflow_result["valid"]:
+        _surface_result["hi_inflow_high_inflow_win_rate"] = hi_inflow_result["high_inflow_win_rate"]
+        _surface_result["hi_inflow_high_inflow_edge"] = hi_inflow_result["high_inflow_edge"]
+        _surface_result["hi_inflow_high_inflow_avg_return"] = hi_inflow_result["high_inflow_avg_return"]
+        _surface_result["hi_inflow_baseline_avg_return"] = hi_inflow_result["baseline_avg_return"]
+
     return _surface_result
 
 
@@ -14222,3 +14240,73 @@ def compute_near_high_stock_analysis(rows: list[dict]) -> dict:
     near_high_edge: float = round(near_high_win_rate - baseline_win_rate, 6)
     near_high_ratio: float = round(len(near_high_rows) / total, 6)
     return {"valid": True, "near_high_win_rate": near_high_win_rate, "near_high_edge": near_high_edge, "near_high_ratio": near_high_ratio, "non_near_high_win_rate": non_near_high_win_rate}
+
+
+# ---------------------------------------------------------------------------
+# Round 81, Task 1 (Alpha): Expected Value Analysis
+# ---------------------------------------------------------------------------
+def compute_expected_value_analysis(rows: list[dict]) -> dict:
+    """期望收益分析：高分组 EV vs 低分组 EV，量化系统盈利期望。"""
+    EMPTY: dict = {"valid": False, "top_ev": None, "bot_ev": None, "ev_spread": None, "top_win_rate": None, "top_avg_win": None, "top_avg_loss": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        score_val = r.get("runner_composite_score") if r.get("runner_composite_score") is not None else (r.get("composite_score") if r.get("composite_score") is not None else r.get("score"))
+        ret_val = r.get("actual_return")
+        if score_val is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"score": float(score_val), "actual_return": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return EMPTY
+    sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
+    n: int = len(sorted_rows)
+    top: list[dict] = sorted_rows[2 * n // 3:]
+    bot: list[dict] = sorted_rows[:n // 3]
+    top_winners: list[float] = [r["actual_return"] for r in top if r["actual_return"] > 0]
+    top_losers: list[float] = [r["actual_return"] for r in top if r["actual_return"] <= 0]
+    top_win_rate: float = len(top_winners) / len(top)
+    top_avg_win: float = sum(top_winners) / len(top_winners) if top_winners else 0.0
+    top_avg_loss: float = sum(top_losers) / len(top_losers) if top_losers else 0.0
+    top_ev: float = round(top_win_rate * top_avg_win + (1 - top_win_rate) * top_avg_loss, 8)
+    bot_winners: list[float] = [r["actual_return"] for r in bot if r["actual_return"] > 0]
+    bot_losers: list[float] = [r["actual_return"] for r in bot if r["actual_return"] <= 0]
+    bot_win_rate: float = len(bot_winners) / len(bot) if bot else 0.0
+    bot_avg_win: float = sum(bot_winners) / len(bot_winners) if bot_winners else 0.0
+    bot_avg_loss: float = sum(bot_losers) / len(bot_losers) if bot_losers else 0.0
+    bot_ev: float = round(bot_win_rate * bot_avg_win + (1 - bot_win_rate) * bot_avg_loss, 8)
+    ev_spread: float = round(top_ev - bot_ev, 8)
+    return {"valid": True, "top_ev": top_ev, "bot_ev": bot_ev, "ev_spread": ev_spread, "top_win_rate": round(top_win_rate, 6), "top_avg_win": round(top_avg_win, 6), "top_avg_loss": round(top_avg_loss, 6)}
+
+
+# ---------------------------------------------------------------------------
+# Round 81, Task 2 (Beta): High Inflow Premium
+# ---------------------------------------------------------------------------
+def compute_high_inflow_premium(rows: list[dict]) -> dict:
+    """高净流入溢价：净流入Top P75股票的胜率和收益溢价。"""
+    EMPTY: dict = {"valid": False, "high_inflow_win_rate": None, "high_inflow_edge": None, "high_inflow_avg_return": None, "baseline_avg_return": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        ret_val = r.get("actual_return")
+        inflow_val = r.get("t0_estimated_net_inflow_ratio")
+        if ret_val is None or inflow_val is None:
+            continue
+        try:
+            valid_rows.append({"actual_return": float(ret_val), "t0_estimated_net_inflow_ratio": float(inflow_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 20:
+        return EMPTY
+    n: int = len(valid_rows)
+    baseline_win_rate: float = sum(1 for r in valid_rows if r["actual_return"] > 0) / n
+    baseline_avg_return: float = sum(r["actual_return"] for r in valid_rows) / n
+    sorted_inflows: list[float] = sorted(r["t0_estimated_net_inflow_ratio"] for r in valid_rows)
+    p75_threshold: float = sorted_inflows[int(n * 0.75)]
+    high_inflow_rows: list[dict] = [r for r in valid_rows if r["t0_estimated_net_inflow_ratio"] >= p75_threshold]
+    if len(high_inflow_rows) < 5:
+        return EMPTY
+    high_inflow_win_rate: float = round(sum(1 for r in high_inflow_rows if r["actual_return"] > 0) / len(high_inflow_rows), 6)
+    high_inflow_avg_return: float = round(sum(r["actual_return"] for r in high_inflow_rows) / len(high_inflow_rows), 6)
+    high_inflow_edge: float = round(high_inflow_win_rate - baseline_win_rate, 6)
+    return {"valid": True, "high_inflow_win_rate": high_inflow_win_rate, "high_inflow_edge": high_inflow_edge, "high_inflow_avg_return": high_inflow_avg_return, "baseline_avg_return": round(baseline_avg_return, 6)}

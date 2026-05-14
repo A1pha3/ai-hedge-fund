@@ -536,6 +536,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "nh_near_high_edge",
     # Task 3 (Round 80, Gamma): cross-window entry quality trend slope.
     "entry_quality_trend_slope",
+    # Task 1 (Round 81, Alpha): expected value analysis metrics.
+    "ev_top_ev",
+    "ev_ev_spread",
+    # Task 2 (Round 81, Beta): high inflow premium metrics.
+    "hi_inflow_high_inflow_win_rate",
+    "hi_inflow_high_inflow_edge",
+    # Task 3 (Round 81, Gamma): cross-window near-high stock trend slope.
+    "near_high_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -960,6 +968,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "nh_near_high_edge": "近高位股胜率溢价",
     # Task 3 (Round 80, Gamma): 入场质量跨窗趋势
     "entry_quality_trend_slope": "入场质量跨窗趋势斜率",
+    # Task 1 (Round 81, Alpha): 高低分组期望收益
+    "ev_top_ev": "高分组期望收益",
+    "ev_ev_spread": "高低分组EV差",
+    # Task 2 (Round 81, Beta): 高净流入胜率溢价
+    "hi_inflow_high_inflow_win_rate": "高净流入胜率",
+    "hi_inflow_high_inflow_edge": "高净流入胜率溢价",
+    # Task 3 (Round 81, Gamma): 近高位股跨窗趋势
+    "near_high_trend_slope": "近高位股跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1458,6 +1474,14 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "nh_near_high_edge",
     # Task 3 (Round 80, Gamma): cross-window entry quality trend slope — optional; pre-Round-80 outputs omit it.
     "entry_quality_trend_slope",
+    # Task 1 (Round 81, Alpha): expected value analysis — optional; pre-Round-81 outputs omit these.
+    "ev_top_ev",
+    "ev_ev_spread",
+    # Task 2 (Round 81, Beta): high inflow premium — optional; pre-Round-81 outputs omit these.
+    "hi_inflow_high_inflow_win_rate",
+    "hi_inflow_high_inflow_edge",
+    # Task 3 (Round 81, Gamma): cross-window near-high trend slope — optional; pre-Round-81 outputs omit it.
+    "near_high_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3150,6 +3174,40 @@ def compute_cross_window_entry_quality_trend(all_windows_summaries: list[dict]) 
     else:
         grade = "D"
     return {"valid": True, "entry_quality_trend_slope": round(slope, 8), "entry_quality_trend_grade": grade, "entry_quality_window_count": n}
+
+
+# ---------------------------------------------------------------------------
+# Round 81, Task 3 (Gamma): Cross-window Near-High Stock Premium Trend
+# ---------------------------------------------------------------------------
+def compute_cross_window_near_high_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口近高位股溢价趋势：nh_near_high_edge 的 OLS 时序斜率。"""
+    _null: dict = {"valid": False, "near_high_trend_slope": None, "near_high_trend_grade": None, "near_high_trend_window_count": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("nh_near_high_edge")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n: int = len(vals)
+    sum_x: int = n * (n - 1) // 2
+    sum_y: float = sum(vals)
+    sum_xy: float = sum(i * vals[i] for i in range(n))
+    sum_x2: int = sum(i * i for i in range(n))
+    denom: int = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+    if slope > 0.005:
+        grade: str = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"valid": True, "near_high_trend_slope": round(slope, 8), "near_high_trend_grade": grade, "near_high_trend_window_count": n}
 
 
 # ---------------------------------------------------------------------------
@@ -5018,6 +5076,8 @@ def _build_replay_evaluator(
         _rbt: dict[str, Any] = compute_cross_window_robustness_trend(all_primary_surfaces)
         # Task 3 (Round 80, Gamma): cross-window entry quality OLS trend.
         _eqt: dict[str, Any] = compute_cross_window_entry_quality_trend(all_primary_surfaces)
+        # Task 3 (Round 81, Gamma): cross-window near-high stock premium OLS trend.
+        _nht: dict[str, Any] = compute_cross_window_near_high_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -5746,6 +5806,10 @@ def _build_replay_evaluator(
                 "entry_quality_trend_slope": _eqt.get("entry_quality_trend_slope"),
                 "entry_quality_trend_grade": _eqt.get("entry_quality_trend_grade"),
                 "entry_quality_trend_window_count": _eqt.get("entry_quality_window_count"),
+                # Task 3 (Round 81, Gamma): cross-window near-high stock premium OLS trend slope.
+                "near_high_trend_slope": _nht.get("near_high_trend_slope"),
+                "near_high_trend_grade": _nht.get("near_high_trend_grade"),
+                "near_high_trend_window_count": _nht.get("near_high_trend_window_count"),
         }
 
     return evaluator

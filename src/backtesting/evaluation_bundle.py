@@ -665,6 +665,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 80, Gamma): entry quality trend slope floor.
     # entry_quality_trend_slope < -0.01 means entry quality edge is deteriorating across windows.
     "entry_quality_trend_slope": -0.01,
+    # Task 1 (Round 81, Alpha): expected value of high-score group floor.
+    # ev_top_ev < 0.0 means the top-score group has negative expected return per trade.
+    "ev_top_ev": 0.0,
+    # Task 2 (Round 81, Beta): high inflow edge floor.
+    # hi_inflow_high_inflow_edge < 0.0 means high net inflow stocks provide no win-rate premium.
+    "hi_inflow_high_inflow_edge": 0.0,
+    # Task 3 (Round 81, Gamma): near-high stock trend slope floor.
+    # near_high_trend_slope < -0.01 means near-high stock premium is deteriorating across windows.
+    "near_high_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------
