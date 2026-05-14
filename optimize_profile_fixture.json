@@ -186,7 +186,10 @@
       "ic_trend_slope_delta": null,
       "regime_adaptability_delta": null,
       "turnover_efficiency_delta": null,
-      "rank_ic_trend_slope_delta": null
+      "rank_ic_trend_slope_delta": null,
+      "optimal_win_rate_delta": null,
+      "total_explained_variance_delta": null,
+      "regime_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -363,7 +366,10 @@
       "ic_trend_slope_delta": null,
       "regime_adaptability_delta": null,
       "turnover_efficiency_delta": null,
-      "rank_ic_trend_slope_delta": null
+      "rank_ic_trend_slope_delta": null,
+      "optimal_win_rate_delta": null,
+      "total_explained_variance_delta": null,
+      "regime_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

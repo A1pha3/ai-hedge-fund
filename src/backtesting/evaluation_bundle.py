@@ -79,6 +79,10 @@ _GUARDRAIL_KEYS = (
     # regime_adaptability = min(bull_win_rate, bear_win_rate); measures ability to profit in both regimes.
     # Floor ≥ 0.4 ensures the strategy has at least 40% win rate in the weaker market regime.
     "regime_adaptability",
+    # Task 1 (Round 58, Alpha): optimal entry threshold win rate floor guardrail.
+    # optimal_win_rate = best win rate achieved across P40–P80 score percentile thresholds.
+    # Floor ≥ 0.5 requires the best score-filtered sub-pool to achieve at least 50% win rate.
+    "optimal_win_rate",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -439,9 +443,16 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # regime_adaptability = min(bull_win_rate, bear_win_rate).
     # Floor ≥ 0.4 ensures the strategy retains at least 40% win rate in the weaker regime.
     "regime_adaptability": 0.4,
+    # Task 1 (Round 58, Alpha): optimal entry threshold win rate floor.
+    # optimal_win_rate = best win rate achieved by filtering on score percentile thresholds (P40–P80).
+    # Floor ≥ 0.5 requires at least one threshold to yield a majority win rate.
+    "optimal_win_rate": 0.5,
     # Task 3 (Round 57, Gamma): cross-window rank-IC OLS trend slope floor.
     # rank_ic_trend_slope < -0.02 signals rapid predictive-validity deterioration across windows.
     "rank_ic_trend_slope": -0.02,
+    # Task 3 (Round 58, Gamma): cross-window regime adaptability OLS trend slope floor.
+    # regime_trend_slope < -0.02 signals consistent deterioration of regime adaptability over time.
+    "regime_trend_slope": -0.02,
 }
 
 # ---------------------------------------------------------------------------

@@ -4435,6 +4435,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _tea.items():
         _surface_result[f"turnover_eff_{_k}"] = _v
 
+    # Round 58, Task 1 (Alpha): Dynamic threshold analysis.
+    _dta: dict[str, Any] = compute_dynamic_threshold_analysis(rows)
+    for _k, _v in _dta.items():
+        _surface_result[f"dyn_thresh_{_k}"] = _v
+
+    # Round 58, Task 2 (Beta): Factor contribution analysis.
+    _fca: dict[str, Any] = compute_factor_contribution_analysis(rows)
+    for _k, _v in _fca.items():
+        _surface_result[f"contrib_{_k}"] = _v
+
     return _surface_result
 
 
@@ -11133,3 +11143,121 @@ def compute_turnover_efficiency_analysis(rows: list[dict]) -> dict:
             turnover_ic = round(cov / (std_tr * std_ret), 8)
 
     return {"high_turnover_win_rate": high_turnover_win_rate, "low_turnover_win_rate": low_turnover_win_rate, "high_turnover_mean_return": high_turnover_mean_return, "low_turnover_mean_return": low_turnover_mean_return, "turnover_efficiency": turnover_efficiency, "optimal_turnover_regime": optimal_turnover_regime, "turnover_ic": turnover_ic, "turnover_efficiency_valid": True}
+
+
+# ---------------------------------------------------------------------------
+# Round 58, Task 1 (Alpha): Dynamic threshold analysis
+# ---------------------------------------------------------------------------
+# Evaluates how win rate changes across 5 score percentile thresholds (P40–P80),
+# identifies the optimal entry threshold, and measures monotonicity.
+# ---------------------------------------------------------------------------
+
+
+def compute_dynamic_threshold_analysis(rows: list[dict]) -> dict:
+    """Analyse win-rate sensitivity to score entry thresholds across P40–P80.
+
+    Args:
+        rows: Per-candidate dicts. Requires >= 15 rows with valid score and next_day_return.
+
+    Returns:
+        Dict with keys: threshold_win_rates, optimal_threshold, optimal_win_rate,
+        threshold_monotonicity, dynamic_threshold_valid.
+    """
+    _null: dict = {"threshold_win_rates": None, "optimal_threshold": None, "optimal_win_rate": None, "threshold_monotonicity": None, "dynamic_threshold_valid": False}
+    if len(rows) < 15:
+        return _null
+    pairs: list[tuple[float, float]] = []
+    for row in rows:
+        score = row.get("runner_composite_score")
+        if score is None:
+            score = row.get("composite_score")
+        if score is None:
+            score = row.get("score")
+        rv = row.get("next_day_return")
+        if score is None or rv is None:
+            continue
+        try:
+            pairs.append((float(score), float(rv)))
+        except (TypeError, ValueError):
+            pass
+    if len(pairs) < 15:
+        return _null
+    sorted_scores = sorted(p[0] for p in pairs)
+    n = len(sorted_scores)
+    pct_values: dict[str, float] = {"p40": sorted_scores[int(40 / 100 * (n - 1))], "p50": sorted_scores[int(50 / 100 * (n - 1))], "p60": sorted_scores[int(60 / 100 * (n - 1))], "p70": sorted_scores[int(70 / 100 * (n - 1))], "p80": sorted_scores[int(80 / 100 * (n - 1))]}
+    threshold_win_rates: dict[str, "float | None"] = {}
+    for pname, pval in pct_values.items():
+        filtered_rets = [p[1] for p in pairs if p[0] >= pval]
+        threshold_win_rates[pname] = round(sum(1 for r in filtered_rets if r > 0) / len(filtered_rets), 6) if len(filtered_rets) >= 3 else None
+    valid_entries = [(pname, wr) for pname, wr in threshold_win_rates.items() if wr is not None]
+    if not valid_entries:
+        return {"threshold_win_rates": threshold_win_rates, "optimal_threshold": "p50", "optimal_win_rate": None, "threshold_monotonicity": None, "dynamic_threshold_valid": True}
+    max_wr = max(wr for _, wr in valid_entries)
+    porder: dict[str, int] = {"p40": 0, "p50": 1, "p60": 2, "p70": 3, "p80": 4}
+    tie_candidates = [pname for pname, wr in valid_entries if wr == max_wr]
+    optimal_threshold: str = max(tie_candidates, key=lambda p: porder.get(p, 0))
+    optimal_win_rate: "float | None" = threshold_win_rates[optimal_threshold]
+    wr_p40 = threshold_win_rates.get("p40")
+    wr_p80 = threshold_win_rates.get("p80")
+    threshold_monotonicity: "float | None" = round(wr_p80 - wr_p40, 6) if wr_p80 is not None and wr_p40 is not None else None
+    return {"threshold_win_rates": threshold_win_rates, "optimal_threshold": optimal_threshold, "optimal_win_rate": optimal_win_rate, "threshold_monotonicity": threshold_monotonicity, "dynamic_threshold_valid": True}
+
+
+# ---------------------------------------------------------------------------
+# Round 58, Task 2 (Beta): Factor contribution analysis
+# ---------------------------------------------------------------------------
+# Quantifies each of the 7 core BTST factors' relative contribution to portfolio
+# return via Pearson r² (explained-variance perspective).
+# ---------------------------------------------------------------------------
+
+
+def compute_factor_contribution_analysis(rows: list[dict]) -> dict:
+    """Quantify each core factor's explained-variance contribution via Pearson r².
+
+    Args:
+        rows: Per-candidate dicts. Requires >= 10 rows.
+
+    Returns:
+        Dict with keys: factor_r2_scores, total_explained_variance, top_contributor,
+        bottom_contributor, contribution_concentration, factor_contribution_valid.
+    """
+    _null: dict = {"factor_r2_scores": None, "total_explained_variance": None, "top_contributor": None, "bottom_contributor": None, "contribution_concentration": None, "factor_contribution_valid": False}
+    if len(rows) < 10:
+        return _null
+    factor_names: list[str] = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    factor_r2_scores: dict[str, "float | None"] = {}
+    for fname in factor_names:
+        xys: list[tuple[float, float]] = []
+        for row in rows:
+            fx = row.get(fname)
+            ry = row.get("next_day_return")
+            if fx is None or ry is None:
+                continue
+            try:
+                xys.append((float(fx), float(ry)))
+            except (TypeError, ValueError):
+                pass
+        if len(xys) < 5:
+            factor_r2_scores[fname] = None
+            continue
+        nf = len(xys)
+        xs = [p[0] for p in xys]
+        ys = [p[1] for p in xys]
+        mean_x = sum(xs) / nf
+        mean_y = sum(ys) / nf
+        ss_x = sum((x - mean_x) ** 2 for x in xs)
+        ss_y = sum((y - mean_y) ** 2 for y in ys)
+        cov_sum = sum((xs[i] - mean_x) * (ys[i] - mean_y) for i in range(nf))
+        if ss_x <= 0 or ss_y <= 0:
+            factor_r2_scores[fname] = 0.0
+            continue
+        r = cov_sum / (ss_x ** 0.5 * ss_y ** 0.5)
+        factor_r2_scores[fname] = round(r * r, 8)
+    valid_r2: dict[str, float] = {k: v for k, v in factor_r2_scores.items() if v is not None}
+    if not valid_r2:
+        return {"factor_r2_scores": factor_r2_scores, "total_explained_variance": None, "top_contributor": None, "bottom_contributor": None, "contribution_concentration": None, "factor_contribution_valid": True}
+    total_explained_variance: float = round(sum(valid_r2.values()), 8)
+    top_contributor: str = max(valid_r2, key=lambda k: valid_r2[k])
+    bottom_contributor: str = min(valid_r2, key=lambda k: valid_r2[k])
+    contribution_concentration: "float | None" = round(valid_r2[top_contributor] / total_explained_variance, 6) if total_explained_variance > 0 else None
+    return {"factor_r2_scores": factor_r2_scores, "total_explained_variance": total_explained_variance, "top_contributor": top_contributor, "bottom_contributor": bottom_contributor, "contribution_concentration": contribution_concentration, "factor_contribution_valid": True}

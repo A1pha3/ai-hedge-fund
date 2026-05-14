@@ -14849,3 +14849,425 @@ def test_r57_t3_empty_summaries() -> None:
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
     result = compute_cross_window_rank_ic_trend([])
     assert result["rank_ic_trend_valid"] is False
+
+
+# ===========================================================================
+# Round 58 Tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Round 58, Task 1 (Alpha): compute_dynamic_threshold_analysis
+# ---------------------------------------------------------------------------
+
+
+def _make_scored_rows(n: int, score_start: float = 0.1, score_step: float = 0.05, ret_positive: bool = True) -> list[dict]:
+    """Helper: build N rows with runner_composite_score and next_day_return."""
+    rows = []
+    for i in range(n):
+        rows.append({"runner_composite_score": round(score_start + i * score_step, 6), "next_day_return": 0.02 if ret_positive else -0.01})
+    return rows
+
+
+def test_r58_t1_too_few_rows() -> None:
+    """Returns valid=False with fewer than 15 rows."""
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = _make_scored_rows(14)
+    result = compute_dynamic_threshold_analysis(rows)
+    assert result["dynamic_threshold_valid"] is False
+    assert result["optimal_win_rate"] is None
+
+
+def test_r58_t1_too_few_valid_pairs() -> None:
+    """Returns valid=False when fewer than 15 valid (score, return) pairs after filtering."""
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = [{"runner_composite_score": None, "next_day_return": 0.01}] * 20
+    result = compute_dynamic_threshold_analysis(rows)
+    assert result["dynamic_threshold_valid"] is False
+
+
+def test_r58_t1_valid_result_structure() -> None:
+    """Valid input returns all expected keys."""
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = _make_scored_rows(30)
+    result = compute_dynamic_threshold_analysis(rows)
+    assert result["dynamic_threshold_valid"] is True
+    for key in ("threshold_win_rates", "optimal_threshold", "optimal_win_rate", "threshold_monotonicity"):
+        assert key in result
+
+
+def test_r58_t1_threshold_win_rates_has_five_keys() -> None:
+    """threshold_win_rates dict contains exactly p40, p50, p60, p70, p80."""
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = _make_scored_rows(30)
+    result = compute_dynamic_threshold_analysis(rows)
+    twr = result["threshold_win_rates"]
+    assert set(twr.keys()) == {"p40", "p50", "p60", "p70", "p80"}
+
+
+def test_r58_t1_optimal_threshold_is_valid_pname() -> None:
+    """optimal_threshold is one of p40, p50, p60, p70, p80."""
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = _make_scored_rows(30)
+    result = compute_dynamic_threshold_analysis(rows)
+    assert result["optimal_threshold"] in {"p40", "p50", "p60", "p70", "p80"}
+
+
+def test_r58_t1_all_positive_returns_win_rate_one() -> None:
+    """All positive returns → all threshold win rates equal 1.0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = _make_scored_rows(30, ret_positive=True)
+    result = compute_dynamic_threshold_analysis(rows)
+    assert result["optimal_win_rate"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_r58_t1_all_negative_returns_win_rate_zero() -> None:
+    """All negative returns → all threshold win rates equal 0.0, optimal still set."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = _make_scored_rows(30, ret_positive=False)
+    result = compute_dynamic_threshold_analysis(rows)
+    assert result["optimal_win_rate"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_r58_t1_score_field_priority_composite_score() -> None:
+    """Uses composite_score when runner_composite_score is absent."""
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = [{"composite_score": round(0.1 + i * 0.05, 6), "next_day_return": 0.01} for i in range(30)]
+    result = compute_dynamic_threshold_analysis(rows)
+    assert result["dynamic_threshold_valid"] is True
+
+
+def test_r58_t1_score_field_priority_score_fallback() -> None:
+    """Uses score field when both runner_composite_score and composite_score are absent."""
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = [{"score": round(0.1 + i * 0.05, 6), "next_day_return": 0.01} for i in range(30)]
+    result = compute_dynamic_threshold_analysis(rows)
+    assert result["dynamic_threshold_valid"] is True
+
+
+def test_r58_t1_tie_breaking_higher_percentile_wins() -> None:
+    """When p70 and p80 have identical win rates, p80 is chosen as optimal_threshold."""
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    # Design: all rows have return > 0, so all win_rates = 1.0 → p80 wins tie-break
+    rows = [{"runner_composite_score": round(0.1 + i * 0.01, 6), "next_day_return": 0.02} for i in range(40)]
+    result = compute_dynamic_threshold_analysis(rows)
+    # All win_rates = 1.0 → tie, highest percentile (p80) should win
+    assert result["optimal_threshold"] == "p80"
+
+
+def test_r58_t1_threshold_monotonicity_computed() -> None:
+    """threshold_monotonicity is p80_win_rate - p40_win_rate."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+    rows = _make_scored_rows(30)
+    result = compute_dynamic_threshold_analysis(rows)
+    twr = result["threshold_win_rates"]
+    if twr.get("p40") is not None and twr.get("p80") is not None:
+        expected = round(twr["p80"] - twr["p40"], 6)
+        assert result["threshold_monotonicity"] == pytest.approx(expected, abs=1e-6)
+
+
+def test_r58_t1_in_comparison_metrics() -> None:
+    """optimal_win_rate is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "optimal_win_rate" in COMPARISON_METRICS
+
+
+def test_r58_t1_in_optional_comparison_metrics() -> None:
+    """optimal_win_rate is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "optimal_win_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r58_t1_floor_value() -> None:
+    """optimal_win_rate floor is 0.5 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "optimal_win_rate" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["optimal_win_rate"] == pytest.approx(0.5)
+
+
+def test_r58_t1_guardrail_key() -> None:
+    """optimal_win_rate is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "optimal_win_rate" in _GUARDRAIL_KEYS
+
+
+def test_r58_t1_label_present() -> None:
+    """optimal_win_rate has label '最优阈值胜率' in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("optimal_win_rate") == "最优阈值胜率"
+
+
+# ---------------------------------------------------------------------------
+# Round 58, Task 2 (Beta): compute_factor_contribution_analysis
+# ---------------------------------------------------------------------------
+
+
+def _make_factor_rows(n: int, with_return: bool = True) -> list[dict]:
+    """Helper: build N rows with all 7 core factors and next_day_return."""
+    import math
+    factor_names = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    rows = []
+    for i in range(n):
+        row: dict = {}
+        for j, fn in enumerate(factor_names):
+            row[fn] = round(math.sin(i * 0.3 + j * 0.7), 6)
+        if with_return:
+            row["next_day_return"] = round(math.cos(i * 0.5), 6)
+        rows.append(row)
+    return rows
+
+
+def test_r58_t2_too_few_rows() -> None:
+    """Returns valid=False with fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    rows = _make_factor_rows(9)
+    result = compute_factor_contribution_analysis(rows)
+    assert result["factor_contribution_valid"] is False
+    assert result["total_explained_variance"] is None
+
+
+def test_r58_t2_valid_result_structure() -> None:
+    """Valid input returns all expected keys."""
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    rows = _make_factor_rows(20)
+    result = compute_factor_contribution_analysis(rows)
+    assert result["factor_contribution_valid"] is True
+    for key in ("factor_r2_scores", "total_explained_variance", "top_contributor", "bottom_contributor", "contribution_concentration"):
+        assert key in result
+
+
+def test_r58_t2_factor_r2_scores_has_seven_keys() -> None:
+    """factor_r2_scores contains exactly the 7 core factor names."""
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    rows = _make_factor_rows(20)
+    result = compute_factor_contribution_analysis(rows)
+    expected_keys = {"close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"}
+    assert set(result["factor_r2_scores"].keys()) == expected_keys
+
+
+def test_r58_t2_r2_values_in_0_1_range() -> None:
+    """All non-None r² values are in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    rows = _make_factor_rows(20)
+    result = compute_factor_contribution_analysis(rows)
+    for v in result["factor_r2_scores"].values():
+        if v is not None:
+            assert 0.0 <= v <= 1.0
+
+
+def test_r58_t2_total_explained_variance_equals_sum() -> None:
+    """total_explained_variance equals sum of non-None factor r² values."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    rows = _make_factor_rows(20)
+    result = compute_factor_contribution_analysis(rows)
+    if result["total_explained_variance"] is not None:
+        expected = sum(v for v in result["factor_r2_scores"].values() if v is not None)
+        assert result["total_explained_variance"] == pytest.approx(expected, abs=1e-6)
+
+
+def test_r58_t2_top_contributor_has_max_r2() -> None:
+    """top_contributor maps to the factor with the highest r² value."""
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    rows = _make_factor_rows(20)
+    result = compute_factor_contribution_analysis(rows)
+    if result["top_contributor"] is not None:
+        top_r2 = result["factor_r2_scores"][result["top_contributor"]]
+        for v in result["factor_r2_scores"].values():
+            if v is not None:
+                assert top_r2 >= v
+
+
+def test_r58_t2_bottom_contributor_has_min_r2() -> None:
+    """bottom_contributor maps to the factor with the lowest r² value."""
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    rows = _make_factor_rows(20)
+    result = compute_factor_contribution_analysis(rows)
+    if result["bottom_contributor"] is not None:
+        bot_r2 = result["factor_r2_scores"][result["bottom_contributor"]]
+        for v in result["factor_r2_scores"].values():
+            if v is not None:
+                assert bot_r2 <= v
+
+
+def test_r58_t2_contribution_concentration_in_0_1() -> None:
+    """contribution_concentration is in (0, 1]."""
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    rows = _make_factor_rows(20)
+    result = compute_factor_contribution_analysis(rows)
+    cc = result["contribution_concentration"]
+    if cc is not None:
+        assert 0.0 < cc <= 1.0
+
+
+def test_r58_t2_missing_factor_returns_none_r2() -> None:
+    """Factor with fewer than 5 valid pairs has r² = None."""
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    # Only 4 rows have close_strength; all others have it None
+    rows = _make_factor_rows(20)
+    for row in rows:
+        row.pop("close_strength", None)  # remove to force None
+    result = compute_factor_contribution_analysis(rows)
+    assert result["factor_r2_scores"]["close_strength"] is None
+
+
+def test_r58_t2_perfect_correlation_r2_is_one() -> None:
+    """Perfect linear relationship between factor and return gives r² ≈ 1.0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+    n = 20
+    factor_names = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    rows = []
+    for i in range(n):
+        row: dict = {fn: float(i) for fn in factor_names}
+        row["next_day_return"] = float(i) * 2.0  # perfect linear
+        rows.append(row)
+    result = compute_factor_contribution_analysis(rows)
+    for fn in factor_names:
+        r2 = result["factor_r2_scores"].get(fn)
+        if r2 is not None:
+            assert r2 == pytest.approx(1.0, abs=1e-6)
+
+
+def test_r58_t2_in_comparison_metrics() -> None:
+    """total_explained_variance is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "total_explained_variance" in COMPARISON_METRICS
+
+
+def test_r58_t2_in_optional_comparison_metrics() -> None:
+    """total_explained_variance is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "total_explained_variance" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r58_t2_label_present() -> None:
+    """total_explained_variance has label '因子总解释方差' in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("total_explained_variance") == "因子总解释方差"
+
+
+# ---------------------------------------------------------------------------
+# Round 58, Task 3 (Gamma): compute_cross_window_regime_trend
+# ---------------------------------------------------------------------------
+
+
+def test_r58_t3_empty_summaries() -> None:
+    """Returns valid=False with empty summaries list."""
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    result = compute_cross_window_regime_trend([])
+    assert result["regime_trend_valid"] is False
+    assert result["regime_trend_slope"] is None
+
+
+def test_r58_t3_too_few_windows() -> None:
+    """Returns valid=False with fewer than 3 windows having the key."""
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    summaries = [{"regime_regime_adaptability": 0.5}, {"regime_regime_adaptability": 0.6}]
+    result = compute_cross_window_regime_trend(summaries)
+    assert result["regime_trend_valid"] is False
+
+
+def test_r58_t3_valid_result_structure() -> None:
+    """Valid input returns all expected keys."""
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    summaries = [{"regime_regime_adaptability": 0.5 + i * 0.01} for i in range(5)]
+    result = compute_cross_window_regime_trend(summaries)
+    assert result["regime_trend_valid"] is True
+    for key in ("regime_trend_slope", "regime_trend_mean", "regime_trend_min", "regime_trend_max", "regime_above_floor_pct", "regime_trend_grade"):
+        assert key in result
+
+
+def test_r58_t3_ols_slope_increasing() -> None:
+    """OLS slope is positive for monotonically increasing regime adaptability."""
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    summaries = [{"regime_regime_adaptability": float(i) * 0.05} for i in range(5)]
+    result = compute_cross_window_regime_trend(summaries)
+    assert result["regime_trend_valid"] is True
+    assert result["regime_trend_slope"] > 0
+
+
+def test_r58_t3_ols_slope_decreasing() -> None:
+    """OLS slope is negative for monotonically decreasing regime adaptability."""
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    summaries = [{"regime_regime_adaptability": float(4 - i) * 0.05} for i in range(5)]
+    result = compute_cross_window_regime_trend(summaries)
+    assert result["regime_trend_slope"] < 0
+
+
+def test_r58_t3_grade_A_when_slope_above_0_01() -> None:
+    """Grade A when slope > 0.01."""
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    summaries = [{"regime_regime_adaptability": float(i) * 0.1} for i in range(5)]
+    result = compute_cross_window_regime_trend(summaries)
+    assert result["regime_trend_grade"] == "A"
+
+
+def test_r58_t3_grade_D_when_slope_below_minus_0_02() -> None:
+    """Grade D when slope <= -0.02."""
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    summaries = [{"regime_regime_adaptability": float(4 - i) * 0.1} for i in range(5)]
+    result = compute_cross_window_regime_trend(summaries)
+    assert result["regime_trend_grade"] == "D"
+
+
+def test_r58_t3_regime_above_floor_pct() -> None:
+    """regime_above_floor_pct is fraction of windows with value >= 0.4."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    # 3 out of 4 windows are >= 0.4
+    summaries = [{"regime_regime_adaptability": v} for v in [0.5, 0.3, 0.6, 0.7]]
+    result = compute_cross_window_regime_trend(summaries)
+    assert result["regime_above_floor_pct"] == pytest.approx(3 / 4, abs=1e-6)
+
+
+def test_r58_t3_mean_min_max_correct() -> None:
+    """regime_trend_mean/min/max match series statistics."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    vals = [0.4, 0.5, 0.6, 0.7, 0.8]
+    summaries = [{"regime_regime_adaptability": v} for v in vals]
+    result = compute_cross_window_regime_trend(summaries)
+    assert result["regime_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-5)
+    assert result["regime_trend_min"] == pytest.approx(min(vals), abs=1e-5)
+    assert result["regime_trend_max"] == pytest.approx(max(vals), abs=1e-5)
+
+
+def test_r58_t3_in_comparison_metrics() -> None:
+    """regime_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "regime_trend_slope" in COMPARISON_METRICS
+
+
+def test_r58_t3_in_optional_comparison_metrics() -> None:
+    """regime_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "regime_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r58_t3_floor_value() -> None:
+    """regime_trend_slope floor is -0.02 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "regime_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["regime_trend_slope"] == pytest.approx(-0.02)
+
+
+def test_r58_t3_label_present() -> None:
+    """regime_trend_slope has label '市场适应性跨窗趋势' in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("regime_trend_slope") == "市场适应性跨窗趋势"
+
+
+def test_r58_t3_constant_series_slope_zero() -> None:
+    """Constant regime adaptability series gives slope of 0.0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_regime_trend
+    summaries = [{"regime_regime_adaptability": 0.55}] * 5
+    result = compute_cross_window_regime_trend(summaries)
+    assert result["regime_trend_slope"] == pytest.approx(0.0, abs=1e-8)
+    assert result["regime_trend_grade"] in ("B", "C")

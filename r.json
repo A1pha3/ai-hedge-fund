@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_46d9d8ae028c_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_d6d36b7cdc47_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -205,7 +205,10 @@
       "ic_trend_slope_delta": null,
       "regime_adaptability_delta": null,
       "turnover_efficiency_delta": null,
-      "rank_ic_trend_slope_delta": null
+      "rank_ic_trend_slope_delta": null,
+      "optimal_win_rate_delta": null,
+      "total_explained_variance_delta": null,
+      "regime_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -406,7 +409,10 @@
       "ic_trend_slope_delta": null,
       "regime_adaptability_delta": null,
       "turnover_efficiency_delta": null,
-      "rank_ic_trend_slope_delta": null
+      "rank_ic_trend_slope_delta": null,
+      "optimal_win_rate_delta": null,
+      "total_explained_variance_delta": null,
+      "regime_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

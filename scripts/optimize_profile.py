@@ -394,6 +394,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "turnover_efficiency",
     # Task 3 (Round 57, Gamma): cross-window rank-IC OLS trend slope.
     "rank_ic_trend_slope",
+    # Task 1 (Round 58, Alpha): optimal entry threshold win rate — best per-percentile win rate.
+    "optimal_win_rate",
+    # Task 2 (Round 58, Beta): total explained variance — sum of factor r² across 7 core factors.
+    "total_explained_variance",
+    # Task 3 (Round 58, Gamma): cross-window regime adaptability OLS trend slope.
+    "regime_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -676,6 +682,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "turnover_efficiency": "换手率效率差异",
     # Task 3 (Round 57, Gamma): cross-window rank-IC OLS trend slope
     "rank_ic_trend_slope": "排名IC跨窗趋势",
+    # Task 1 (Round 58, Alpha): optimal entry threshold win rate
+    "optimal_win_rate": "最优阈值胜率",
+    # Task 2 (Round 58, Beta): total factor explained variance
+    "total_explained_variance": "因子总解释方差",
+    # Task 3 (Round 58, Gamma): cross-window regime adaptability trend slope
+    "regime_trend_slope": "市场适应性跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1016,6 +1028,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "turnover_efficiency",
     # Task 3 (Round 57, Gamma): cross-window rank-IC trend slope — optional; pre-Round-57 outputs omit it.
     "rank_ic_trend_slope",
+    # Task 1 (Round 58, Alpha): optimal entry threshold win rate — optional; pre-Round-58 outputs omit it.
+    "optimal_win_rate",
+    # Task 2 (Round 58, Beta): total factor explained variance — optional; pre-Round-58 outputs omit it.
+    "total_explained_variance",
+    # Task 3 (Round 58, Gamma): cross-window regime adaptability trend slope — optional; pre-Round-58 outputs omit it.
+    "regime_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2946,6 +2964,61 @@ def compute_cross_window_rank_ic_trend(all_windows_summaries: list[dict]) -> dic
 
 
 # ---------------------------------------------------------------------------
+# Round 58, Task 3 (Gamma): Cross-window regime adaptability trend
+# ---------------------------------------------------------------------------
+# Tracks OLS trend of ``regime_adaptability`` (min of bull/bear win rates) across
+# replay windows.  A positive slope indicates the strategy is becoming more robust
+# across market regimes over time.
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_regime_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track OLS trend of ``regime_adaptability`` across replay windows.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (ordered chronologically).
+            Each dict should carry a ``regime_regime_adaptability`` value produced by
+            ``compute_market_regime_adaptation`` via ``build_surface_summary``.
+
+    Returns:
+        Dict with keys: ``regime_trend_slope``, ``regime_trend_mean``, ``regime_trend_min``,
+        ``regime_trend_max``, ``regime_above_floor_pct``, ``regime_trend_grade``, ``regime_trend_valid``.
+    """
+    _null: dict = {"regime_trend_slope": None, "regime_trend_mean": None, "regime_trend_min": None, "regime_trend_max": None, "regime_above_floor_pct": None, "regime_trend_grade": None, "regime_trend_valid": False}
+    if not all_windows_summaries:
+        return _null
+    regime_series: list[float] = []
+    for surf in all_windows_summaries:
+        v = surf.get("regime_regime_adaptability")
+        if v is not None:
+            try:
+                regime_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(regime_series) < 3:
+        return _null
+    n = len(regime_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(regime_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, regime_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+    mean_val = sum_y / n
+    if slope > 0.01:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.02:
+        grade = "C"
+    else:
+        grade = "D"
+    regime_above_floor_pct: float = round(sum(1 for v in regime_series if v >= 0.4) / n, 6)
+    return {"regime_trend_slope": round(slope, 8), "regime_trend_mean": round(mean_val, 6), "regime_trend_min": round(min(regime_series), 6), "regime_trend_max": round(max(regime_series), 6), "regime_above_floor_pct": regime_above_floor_pct, "regime_trend_grade": grade, "regime_trend_valid": True}
+
+
+# ---------------------------------------------------------------------------
 
 
 def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
@@ -3698,6 +3771,8 @@ def _build_replay_evaluator(
         _ict: dict[str, Any] = compute_cross_window_ic_trend(all_primary_surfaces)
         # Task 3 (Round 57, Gamma): cross-window rank-IC trend.
         _rict: dict[str, Any] = compute_cross_window_rank_ic_trend(all_primary_surfaces)
+        # Task 3 (Round 58, Gamma): cross-window regime adaptability trend.
+        _rat: dict[str, Any] = compute_cross_window_regime_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4031,6 +4106,14 @@ def _build_replay_evaluator(
             "rank_ic_positive_windows_pct": _rict.get("rank_ic_positive_windows_pct"),
             "rank_ic_trend_grade": _rict.get("rank_ic_trend_grade"),
             "rank_ic_trend_valid": _rict.get("rank_ic_trend_valid"),
+            # Task 3 (Round 58, Gamma): cross-window regime adaptability trend.
+            "regime_trend_slope": _rat.get("regime_trend_slope"),
+            "regime_trend_mean": _rat.get("regime_trend_mean"),
+            "regime_trend_min": _rat.get("regime_trend_min"),
+            "regime_trend_max": _rat.get("regime_trend_max"),
+            "regime_above_floor_pct": _rat.get("regime_above_floor_pct"),
+            "regime_trend_grade": _rat.get("regime_trend_grade"),
+            "regime_trend_valid": _rat.get("regime_trend_valid"),
         }
 
     return evaluator
