@@ -586,8 +586,8 @@ def test_resolve_guardrails_includes_execution_and_exposure_defaults_for_momentu
         raw_guardrails=[],
     )
 
-    assert guardrails["projected_theme_exposure"] == {"max": pytest.approx(0.35)}
-    assert guardrails["incremental_theme_exposure"] == {"max": pytest.approx(0.12)}
+    assert guardrails["projected_theme_exposure"] == {"max": pytest.approx(0.35), "skip_if_null": True}
+    assert guardrails["incremental_theme_exposure"] == {"max": pytest.approx(0.12), "skip_if_null": True}
     assert guardrails["liquidity_capacity_raw_100"] == {"min": pytest.approx(50.0)}
     assert guardrails["crowding_risk_raw_100"] == {"max": pytest.approx(70.0)}
     assert guardrails["gap_risk_raw_100"] == {"max": pytest.approx(60.0)}
@@ -758,8 +758,8 @@ def test_main_passes_guardrails_and_focused_grid_to_run_param_search(monkeypatch
         "next_high_hit_rate": pytest.approx(0.56),
         "downside_p10": pytest.approx(-0.06),
         "window_coverage": pytest.approx(0.75),
-        "projected_theme_exposure": {"max": pytest.approx(0.35)},
-        "incremental_theme_exposure": {"max": pytest.approx(0.12)},
+        "projected_theme_exposure": {"max": pytest.approx(0.35), "skip_if_null": True},
+        "incremental_theme_exposure": {"max": pytest.approx(0.12), "skip_if_null": True},
         "liquidity_capacity_raw_100": {"min": pytest.approx(50.0)},
         "crowding_risk_raw_100": {"max": pytest.approx(70.0)},
         "gap_risk_raw_100": {"max": pytest.approx(60.0)},
