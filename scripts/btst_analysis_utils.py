@@ -4667,6 +4667,22 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         _surface_result["entry_qual_quality_entry_ratio"] = entry_qual_result["quality_entry_ratio"]
         _surface_result["entry_qual_baseline_win_rate"] = entry_qual_result["baseline_win_rate"]
 
+    # Round 80, Task 1 (Alpha): Return quantile lift (高低分组中位收益差).
+    ret_qlift_result: dict = compute_return_quantile_lift(rows)
+    if ret_qlift_result["valid"]:
+        _surface_result["ret_qlift_top_median_return"] = ret_qlift_result["top_median_return"]
+        _surface_result["ret_qlift_bot_median_return"] = ret_qlift_result["bot_median_return"]
+        _surface_result["ret_qlift_median_return_lift"] = ret_qlift_result["median_return_lift"]
+        _surface_result["ret_qlift_top_p75_return"] = ret_qlift_result["top_p75_return"]
+
+    # Round 80, Task 2 (Beta): Near-high stock analysis (近高位股胜率溢价).
+    nh_result: dict = compute_near_high_stock_analysis(rows)
+    if nh_result["valid"]:
+        _surface_result["nh_near_high_win_rate"] = nh_result["near_high_win_rate"]
+        _surface_result["nh_near_high_edge"] = nh_result["near_high_edge"]
+        _surface_result["nh_near_high_ratio"] = nh_result["near_high_ratio"]
+        _surface_result["nh_non_near_high_win_rate"] = nh_result["non_near_high_win_rate"]
+
     return _surface_result
 
 
@@ -14136,3 +14152,73 @@ def compute_entry_quality_filter(rows: list[dict]) -> dict:
     quality_entry_edge: float = round(high_quality_entry_win_rate - baseline_win_rate, 6)
     quality_entry_ratio: float = round(len(high_quality) / total, 6)
     return {"valid": True, "high_quality_entry_win_rate": high_quality_entry_win_rate, "quality_entry_edge": quality_entry_edge, "quality_entry_ratio": quality_entry_ratio, "baseline_win_rate": baseline_win_rate}
+
+
+# ---------------------------------------------------------------------------
+# Round 80, Task 1 (Alpha): Return Quantile Lift (收益分位提升分析)
+# ---------------------------------------------------------------------------
+
+
+def compute_return_quantile_lift(rows: list[dict]) -> dict:
+    """收益分位提升：高分组中位收益 vs 低分组中位收益的幅度差。"""
+    EMPTY: dict = {"valid": False, "top_median_return": None, "bot_median_return": None, "median_return_lift": None, "top_p75_return": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        score_val = r.get("runner_composite_score") if r.get("runner_composite_score") is not None else (r.get("composite_score") if r.get("composite_score") is not None else r.get("score"))
+        if score_val is None or r.get("actual_return") is None:
+            continue
+        try:
+            s_f = float(score_val); ret_f = float(r["actual_return"])
+        except (TypeError, ValueError):
+            continue
+        valid_rows.append({"score": s_f, "actual_return": ret_f})
+    if len(valid_rows) < 15:
+        return EMPTY
+    sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
+    n: int = len(sorted_rows)
+    top: list[dict] = sorted_rows[2 * n // 3:]
+    bot: list[dict] = sorted_rows[: n // 3]
+    top_returns: list[float] = sorted([r["actual_return"] for r in top])
+    bot_returns: list[float] = sorted([r["actual_return"] for r in bot])
+    def _median(lst: list[float]) -> float:
+        m = len(lst); return lst[m // 2] if m % 2 == 1 else (lst[m // 2 - 1] + lst[m // 2]) / 2
+    top_median_return: float = round(_median(top_returns), 6)
+    bot_median_return: float = round(_median(bot_returns), 6)
+    median_return_lift: float = round(top_median_return - bot_median_return, 6)
+    p75_idx: int = int(len(top_returns) * 0.75)
+    if p75_idx >= len(top_returns):
+        p75_idx = len(top_returns) - 1
+    top_p75_return: float = round(top_returns[p75_idx], 6)
+    return {"valid": True, "top_median_return": top_median_return, "bot_median_return": bot_median_return, "median_return_lift": median_return_lift, "top_p75_return": top_p75_return}
+
+
+# ---------------------------------------------------------------------------
+# Round 80, Task 2 (Beta): Near-High Stock Analysis (近高位股分析)
+# ---------------------------------------------------------------------------
+
+
+def compute_near_high_stock_analysis(rows: list[dict]) -> dict:
+    """近高位股分析：收盘价靠近日高的股票胜率溢价。"""
+    EMPTY: dict = {"valid": False, "near_high_win_rate": None, "near_high_edge": None, "near_high_ratio": None, "non_near_high_win_rate": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        if r.get("actual_return") is None or r.get("close_strength") is None:
+            continue
+        try:
+            ret_f = float(r["actual_return"]); cs_f = float(r["close_strength"])
+        except (TypeError, ValueError):
+            continue
+        valid_rows.append({"actual_return": ret_f, "close_strength": cs_f})
+    if len(valid_rows) < 20:
+        return EMPTY
+    total: int = len(valid_rows)
+    baseline_win_rate: float = sum(1 for r in valid_rows if r["actual_return"] > 0) / total
+    near_high_rows: list[dict] = [r for r in valid_rows if r["close_strength"] >= 0.85]
+    if len(near_high_rows) < 5:
+        return EMPTY
+    near_high_win_rate: float = round(sum(1 for r in near_high_rows if r["actual_return"] > 0) / len(near_high_rows), 6)
+    non_near_high_rows: list[dict] = [r for r in valid_rows if r["close_strength"] < 0.85]
+    non_near_high_win_rate: "float | None" = round(sum(1 for r in non_near_high_rows if r["actual_return"] > 0) / len(non_near_high_rows), 6) if non_near_high_rows else None
+    near_high_edge: float = round(near_high_win_rate - baseline_win_rate, 6)
+    near_high_ratio: float = round(len(near_high_rows) / total, 6)
+    return {"valid": True, "near_high_win_rate": near_high_win_rate, "near_high_edge": near_high_edge, "near_high_ratio": near_high_ratio, "non_near_high_win_rate": non_near_high_win_rate}

@@ -528,6 +528,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "entry_qual_quality_entry_edge",
     # Task 3 (Round 79, Gamma): cross-window factor robustness OLS trend slope.
     "robustness_trend_slope",
+    # Task 1 (Round 80, Alpha): return quantile lift metrics.
+    "ret_qlift_median_return_lift",
+    "ret_qlift_top_median_return",
+    # Task 2 (Round 80, Beta): near-high stock analysis metrics.
+    "nh_near_high_win_rate",
+    "nh_near_high_edge",
+    # Task 3 (Round 80, Gamma): cross-window entry quality trend slope.
+    "entry_quality_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -944,6 +952,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "entry_qual_quality_entry_edge": "入场质量胜率溢价",
     # Task 3 (Round 79, Gamma): 稳健性跨窗趋势
     "robustness_trend_slope": "稳健性跨窗趋势斜率",
+    # Task 1 (Round 80, Alpha): 高低分组中位收益差
+    "ret_qlift_median_return_lift": "高低分组中位收益差",
+    "ret_qlift_top_median_return": "高分组中位收益",
+    # Task 2 (Round 80, Beta): 近高位股胜率
+    "nh_near_high_win_rate": "近高位股胜率",
+    "nh_near_high_edge": "近高位股胜率溢价",
+    # Task 3 (Round 80, Gamma): 入场质量跨窗趋势
+    "entry_quality_trend_slope": "入场质量跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1434,6 +1450,14 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "entry_qual_quality_entry_edge",
     # Task 3 (Round 79, Gamma): cross-window robustness trend slope — optional; pre-Round-79 outputs omit it.
     "robustness_trend_slope",
+    # Task 1 (Round 80, Alpha): return quantile lift — optional; pre-Round-80 outputs omit these.
+    "ret_qlift_median_return_lift",
+    "ret_qlift_top_median_return",
+    # Task 2 (Round 80, Beta): near-high stock analysis — optional; pre-Round-80 outputs omit these.
+    "nh_near_high_win_rate",
+    "nh_near_high_edge",
+    # Task 3 (Round 80, Gamma): cross-window entry quality trend slope — optional; pre-Round-80 outputs omit it.
+    "entry_quality_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3090,6 +3114,42 @@ def compute_cross_window_robustness_trend(all_windows_summaries: list[dict]) -> 
     else:
         grade = "D"
     return {"valid": True, "robustness_trend_slope": round(slope, 8), "robustness_trend_grade": grade, "robustness_window_count": n}
+
+
+# ---------------------------------------------------------------------------
+# Round 80, Task 3 (Gamma): Cross-window Entry Quality Trend (入场质量跨窗趋势)
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_entry_quality_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口量价共振入场质量趋势：quality_entry_edge 的 OLS 时序斜率。"""
+    _null: dict = {"valid": False, "entry_quality_trend_slope": None, "entry_quality_trend_grade": None, "entry_quality_window_count": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("entry_qual_quality_entry_edge")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    sum_x = n * (n - 1) // 2
+    sum_y = sum(vals)
+    sum_xy = sum(i * vals[i] for i in range(n))
+    sum_x2 = sum(i * i for i in range(n))
+    denom = n * sum_x2 - sum_x * sum_x
+    slope = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"valid": True, "entry_quality_trend_slope": round(slope, 8), "entry_quality_trend_grade": grade, "entry_quality_window_count": n}
 
 
 # ---------------------------------------------------------------------------
@@ -4956,6 +5016,8 @@ def _build_replay_evaluator(
         _tlt: dict[str, Any] = compute_cross_window_threshold_lift_trend(all_primary_surfaces)
         # Task 3 (Round 79, Gamma): cross-window factor robustness OLS trend.
         _rbt: dict[str, Any] = compute_cross_window_robustness_trend(all_primary_surfaces)
+        # Task 3 (Round 80, Gamma): cross-window entry quality OLS trend.
+        _eqt: dict[str, Any] = compute_cross_window_entry_quality_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -5680,6 +5742,10 @@ def _build_replay_evaluator(
                 "robustness_trend_slope": _rbt.get("robustness_trend_slope"),
                 "robustness_trend_grade": _rbt.get("robustness_trend_grade"),
                 "robustness_trend_window_count": _rbt.get("robustness_window_count"),
+                # Task 3 (Round 80, Gamma): cross-window entry quality OLS trend slope.
+                "entry_quality_trend_slope": _eqt.get("entry_quality_trend_slope"),
+                "entry_quality_trend_grade": _eqt.get("entry_quality_trend_grade"),
+                "entry_quality_trend_window_count": _eqt.get("entry_quality_window_count"),
         }
 
     return evaluator

@@ -23577,3 +23577,387 @@ def test_r79_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
     assert "robustness_trend_slope" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["robustness_trend_slope"] == "稳健性跨窗趋势斜率"
+
+
+# ===========================================================================
+# Round 80, Task 1 (Alpha): compute_return_quantile_lift
+# ===========================================================================
+
+
+def test_r80_t1_too_few_rows_returns_invalid() -> None:
+    """Fewer than 15 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = [{"score": float(i), "actual_return": 0.01} for i in range(14)]
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is False
+
+
+def test_r80_t1_actual_return_all_none_returns_invalid() -> None:
+    """All actual_return=None → valid=False."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = [{"score": float(i), "actual_return": None} for i in range(20)]
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is False
+
+
+def test_r80_t1_no_score_field_returns_invalid() -> None:
+    """No score fields at all → valid=False."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = [{"actual_return": 0.01} for _ in range(20)]
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is False
+
+
+def test_r80_t1_high_score_group_higher_return() -> None:
+    """High-score group median return > low-score group → median_return_lift > 0."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = []
+    # Low scores: returns around -0.02; high scores: returns around 0.05
+    for i in range(10):
+        rows.append({"score": float(i), "actual_return": -0.02})
+    for i in range(10, 20):
+        rows.append({"score": float(i), "actual_return": 0.05})
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is True
+    assert result["median_return_lift"] > 0
+
+
+def test_r80_t1_even_row_median_correct() -> None:
+    """Even-length list median uses average of two middle elements."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = []
+    # 30 rows: low-score 10 rows with return -0.02, mid 10 with 0.01, high 10 with 0.06
+    for i in range(10):
+        rows.append({"score": float(i), "actual_return": -0.02})
+    for i in range(10, 20):
+        rows.append({"score": float(i), "actual_return": 0.01})
+    for i in range(20, 30):
+        rows.append({"score": float(i), "actual_return": 0.06})
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is True
+    # top group: indices 20..29 → returns=[0.06]*10 → median=0.06
+    assert result["top_median_return"] == pytest.approx(0.06, rel=1e-4)
+
+
+def test_r80_t1_lift_equals_top_minus_bot() -> None:
+    """median_return_lift = top_median_return - bot_median_return."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = [{"score": float(i), "actual_return": float(i) * 0.01 - 0.1} for i in range(30)]
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is True
+    expected = result["top_median_return"] - result["bot_median_return"]
+    assert result["median_return_lift"] == pytest.approx(expected, rel=1e-5)
+
+
+def test_r80_t1_uses_runner_composite_score_first() -> None:
+    """runner_composite_score takes priority over composite_score and score."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = []
+    for i in range(30):
+        rows.append({"runner_composite_score": float(i), "composite_score": 99.0, "score": 99.0, "actual_return": float(i) * 0.001})
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is True
+
+
+def test_r80_t1_uses_composite_score_fallback() -> None:
+    """composite_score used when runner_composite_score missing."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = [{"composite_score": float(i), "actual_return": float(i) * 0.001} for i in range(20)]
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is True
+
+
+def test_r80_t1_top_p75_return_in_top_group() -> None:
+    """top_p75_return is the 75th percentile of top-group returns."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = [{"score": float(i), "actual_return": float(i) * 0.01} for i in range(30)]
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is True
+    assert result["top_p75_return"] is not None
+    # top group is indices 20..29 → returns 0.20..0.29; p75 idx=7 → 0.27
+    assert result["top_p75_return"] >= result["top_median_return"]
+
+
+def test_r80_t1_minimum_15_rows_passes() -> None:
+    """Exactly 15 rows → valid=True."""
+    from scripts.btst_analysis_utils import compute_return_quantile_lift
+    rows = [{"score": float(i), "actual_return": 0.01 if i > 7 else -0.01} for i in range(15)]
+    result = compute_return_quantile_lift(rows)
+    assert result["valid"] is True
+
+
+def test_r80_t1_metric_in_comparison_metrics() -> None:
+    """ret_qlift_median_return_lift must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ret_qlift_median_return_lift" in COMPARISON_METRICS
+
+
+def test_r80_t1_top_median_in_comparison_metrics() -> None:
+    """ret_qlift_top_median_return must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ret_qlift_top_median_return" in COMPARISON_METRICS
+
+
+def test_r80_t1_lift_in_optional_metrics() -> None:
+    """ret_qlift_median_return_lift must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "ret_qlift_median_return_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r80_t1_top_median_in_optional_metrics() -> None:
+    """ret_qlift_top_median_return must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "ret_qlift_top_median_return" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r80_t1_floor_registered() -> None:
+    """ret_qlift_median_return_lift floor must be 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "ret_qlift_median_return_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["ret_qlift_median_return_lift"] == pytest.approx(0.0)
+
+
+def test_r80_t1_label_registered() -> None:
+    """ret_qlift_median_return_lift must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "ret_qlift_median_return_lift" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["ret_qlift_median_return_lift"] == "高低分组中位收益差"
+
+
+# ===========================================================================
+# Round 80, Task 2 (Beta): compute_near_high_stock_analysis
+# ===========================================================================
+
+
+def test_r80_t2_too_few_rows_returns_invalid() -> None:
+    """Fewer than 20 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+    rows = [{"actual_return": 0.01, "close_strength": 0.9} for _ in range(19)]
+    result = compute_near_high_stock_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r80_t2_missing_close_strength_returns_invalid() -> None:
+    """No close_strength field → valid=False (filtered out, < 20 valid)."""
+    from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+    rows = [{"actual_return": 0.01} for _ in range(30)]
+    result = compute_near_high_stock_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r80_t2_near_high_rows_fewer_than_5_invalid() -> None:
+    """near_high_rows < 5 → valid=False."""
+    from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+    rows = []
+    for _ in range(20):
+        rows.append({"actual_return": 0.01, "close_strength": 0.5})
+    for _ in range(4):
+        rows.append({"actual_return": 0.01, "close_strength": 0.9})
+    result = compute_near_high_stock_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r80_t2_near_high_win_rate_computed_correctly() -> None:
+    """near_high_win_rate: all near-high return > 0 → 1.0."""
+    from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+    rows = []
+    for _ in range(15):
+        rows.append({"actual_return": -0.01, "close_strength": 0.5})
+    for _ in range(10):
+        rows.append({"actual_return": 0.03, "close_strength": 0.9})
+    result = compute_near_high_stock_analysis(rows)
+    assert result["valid"] is True
+    assert result["near_high_win_rate"] == pytest.approx(1.0)
+
+
+def test_r80_t2_near_high_edge_equals_difference() -> None:
+    """near_high_edge = near_high_win_rate - baseline_win_rate."""
+    from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+    rows = []
+    # 20 non-near-high: 10 positive, 10 negative → baseline partial
+    for i in range(20):
+        rows.append({"actual_return": 0.01 if i < 10 else -0.01, "close_strength": 0.5})
+    # 10 near-high: all positive
+    for _ in range(10):
+        rows.append({"actual_return": 0.03, "close_strength": 0.9})
+    result = compute_near_high_stock_analysis(rows)
+    assert result["valid"] is True
+    expected_edge = result["near_high_win_rate"] - (20 / 30)
+    assert result["near_high_edge"] == pytest.approx(expected_edge, rel=1e-4)
+
+
+def test_r80_t2_near_high_ratio_correct() -> None:
+    """near_high_ratio = len(near_high) / len(valid)."""
+    from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+    rows = []
+    for _ in range(20):
+        rows.append({"actual_return": -0.01, "close_strength": 0.5})
+    for _ in range(10):
+        rows.append({"actual_return": 0.03, "close_strength": 0.9})
+    result = compute_near_high_stock_analysis(rows)
+    assert result["valid"] is True
+    assert result["near_high_ratio"] == pytest.approx(10 / 30, rel=1e-4)
+
+
+def test_r80_t2_non_near_high_win_rate_computed() -> None:
+    """non_near_high_win_rate is computed when non-near-high rows exist."""
+    from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+    rows = []
+    for i in range(20):
+        rows.append({"actual_return": 0.01 if i % 2 == 0 else -0.01, "close_strength": 0.5})
+    for _ in range(10):
+        rows.append({"actual_return": 0.03, "close_strength": 0.9})
+    result = compute_near_high_stock_analysis(rows)
+    assert result["valid"] is True
+    assert result["non_near_high_win_rate"] is not None
+    assert result["non_near_high_win_rate"] == pytest.approx(0.5, rel=1e-4)
+
+
+def test_r80_t2_metric_in_comparison_metrics() -> None:
+    """nh_near_high_win_rate must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "nh_near_high_win_rate" in COMPARISON_METRICS
+
+
+def test_r80_t2_edge_in_comparison_metrics() -> None:
+    """nh_near_high_edge must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "nh_near_high_edge" in COMPARISON_METRICS
+
+
+def test_r80_t2_metric_in_optional_metrics() -> None:
+    """nh_near_high_win_rate must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "nh_near_high_win_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r80_t2_edge_in_optional_metrics() -> None:
+    """nh_near_high_edge must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "nh_near_high_edge" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r80_t2_floor_registered() -> None:
+    """nh_near_high_edge floor must be 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "nh_near_high_edge" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["nh_near_high_edge"] == pytest.approx(0.0)
+
+
+def test_r80_t2_label_registered() -> None:
+    """nh_near_high_edge must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "nh_near_high_edge" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["nh_near_high_edge"] == "近高位股胜率溢价"
+
+
+# ===========================================================================
+# Round 80, Task 3 (Gamma): compute_cross_window_entry_quality_trend
+# ===========================================================================
+
+
+def test_r80_t3_too_few_windows_returns_invalid() -> None:
+    """Fewer than 3 windows → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+    summaries = [{"entry_qual_quality_entry_edge": 0.05}, {"entry_qual_quality_entry_edge": 0.06}]
+    result = compute_cross_window_entry_quality_trend(summaries)
+    assert result["valid"] is False
+
+
+def test_r80_t3_no_entry_quality_values_invalid() -> None:
+    """No entry_qual_quality_entry_edge values → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+    summaries = [{"other": 1}, {"other": 2}, {"other": 3}]
+    result = compute_cross_window_entry_quality_trend(summaries)
+    assert result["valid"] is False
+
+
+def test_r80_t3_rising_trend_positive_slope() -> None:
+    """Rising entry_qual_quality_entry_edge → positive slope."""
+    from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+    summaries = [{"entry_qual_quality_entry_edge": 0.04}, {"entry_qual_quality_entry_edge": 0.06}, {"entry_qual_quality_entry_edge": 0.08}, {"entry_qual_quality_entry_edge": 0.10}]
+    result = compute_cross_window_entry_quality_trend(summaries)
+    assert result["valid"] is True
+    assert result["entry_quality_trend_slope"] > 0
+
+
+def test_r80_t3_falling_trend_negative_slope() -> None:
+    """Falling entry_qual_quality_entry_edge → negative slope."""
+    from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+    summaries = [{"entry_qual_quality_entry_edge": 0.10}, {"entry_qual_quality_entry_edge": 0.07}, {"entry_qual_quality_entry_edge": 0.04}, {"entry_qual_quality_entry_edge": 0.01}]
+    result = compute_cross_window_entry_quality_trend(summaries)
+    assert result["valid"] is True
+    assert result["entry_quality_trend_slope"] < 0
+
+
+def test_r80_t3_grade_a_large_positive_slope() -> None:
+    """Slope > 0.005 → grade=A."""
+    from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+    summaries = [{"entry_qual_quality_entry_edge": 0.0}, {"entry_qual_quality_entry_edge": 0.1}, {"entry_qual_quality_entry_edge": 0.2}]
+    result = compute_cross_window_entry_quality_trend(summaries)
+    assert result["valid"] is True
+    assert result["entry_quality_trend_grade"] == "A"
+
+
+def test_r80_t3_grade_b_small_positive_slope() -> None:
+    """0 < slope <= 0.005 → grade=B."""
+    from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+    # Very tiny upward trend: slope ~ 0.001
+    summaries = [{"entry_qual_quality_entry_edge": 0.500}, {"entry_qual_quality_entry_edge": 0.501}, {"entry_qual_quality_entry_edge": 0.502}]
+    result = compute_cross_window_entry_quality_trend(summaries)
+    assert result["valid"] is True
+    assert result["entry_quality_trend_slope"] > 0
+    assert result["entry_quality_trend_grade"] in ("A", "B")
+
+
+def test_r80_t3_grade_d_large_negative_slope() -> None:
+    """Slope <= -0.01 → grade=D."""
+    from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+    summaries = [{"entry_qual_quality_entry_edge": 0.3}, {"entry_qual_quality_entry_edge": 0.1}, {"entry_qual_quality_entry_edge": -0.1}]
+    result = compute_cross_window_entry_quality_trend(summaries)
+    assert result["valid"] is True
+    assert result["entry_quality_trend_grade"] == "D"
+
+
+def test_r80_t3_ols_slope_linear_sequence() -> None:
+    """OLS slope for y=[0,1,2] must equal 1.0."""
+    from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+    summaries = [{"entry_qual_quality_entry_edge": 0.0}, {"entry_qual_quality_entry_edge": 1.0}, {"entry_qual_quality_entry_edge": 2.0}]
+    result = compute_cross_window_entry_quality_trend(summaries)
+    assert result["valid"] is True
+    assert result["entry_quality_trend_slope"] == pytest.approx(1.0, rel=1e-5)
+
+
+def test_r80_t3_window_count_correct() -> None:
+    """entry_quality_window_count must match valid data points."""
+    from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+    summaries = [{"entry_qual_quality_entry_edge": 0.05}, {}, {"entry_qual_quality_entry_edge": 0.06}, {"other": 99}, {"entry_qual_quality_entry_edge": 0.07}]
+    result = compute_cross_window_entry_quality_trend(summaries)
+    assert result["valid"] is True
+    assert result["entry_quality_window_count"] == 3
+
+
+def test_r80_t3_metric_in_comparison_metrics() -> None:
+    """entry_quality_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "entry_quality_trend_slope" in COMPARISON_METRICS
+
+
+def test_r80_t3_metric_in_optional_metrics() -> None:
+    """entry_quality_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "entry_quality_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r80_t3_floor_registered() -> None:
+    """entry_quality_trend_slope floor must be -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "entry_quality_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["entry_quality_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r80_t3_label_registered() -> None:
+    """entry_quality_trend_slope must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "entry_quality_trend_slope" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["entry_quality_trend_slope"] == "入场质量跨窗趋势斜率"

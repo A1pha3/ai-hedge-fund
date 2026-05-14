@@ -656,6 +656,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 79, Gamma): robustness trend slope floor.
     # robustness_trend_slope < -0.01 means factor robustness is deteriorating across windows.
     "robustness_trend_slope": -0.01,
+    # Task 1 (Round 80, Alpha): return quantile lift floor.
+    # ret_qlift_median_return_lift < 0.0 means high-score group underperforms low-score group.
+    "ret_qlift_median_return_lift": 0.0,
+    # Task 2 (Round 80, Beta): near-high stock edge floor.
+    # nh_near_high_edge < 0.0 means near-high stocks provide no win-rate premium.
+    "nh_near_high_edge": 0.0,
+    # Task 3 (Round 80, Gamma): entry quality trend slope floor.
+    # entry_quality_trend_slope < -0.01 means entry quality edge is deteriorating across windows.
+    "entry_quality_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------
