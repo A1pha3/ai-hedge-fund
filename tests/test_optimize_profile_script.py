@@ -545,7 +545,7 @@ def test_resolve_guardrails_uses_btst_replay_defaults_for_momentum_profile() -> 
         raw_guardrails=[],
     )
 
-    assert guardrails["next_close_positive_rate"] == pytest.approx(0.54)
+    assert guardrails["next_close_positive_rate"] == pytest.approx(0.52)
     assert guardrails["next_high_hit_rate"] == pytest.approx(0.56)
     assert guardrails["downside_p10"] == pytest.approx(-0.06)
     assert guardrails["window_coverage"] == pytest.approx(0.60)
@@ -754,7 +754,7 @@ def test_main_passes_guardrails_and_focused_grid_to_run_param_search(monkeypatch
 
     assert exit_code == 0
     assert captured["guardrails"] == {
-        "next_close_positive_rate": pytest.approx(0.54),
+        "next_close_positive_rate": pytest.approx(0.52),
         "next_high_hit_rate": pytest.approx(0.56),
         "downside_p10": pytest.approx(-0.06),
         "window_coverage": pytest.approx(0.75),
@@ -861,7 +861,7 @@ def test_main_writes_stage_metadata_to_output_files(monkeypatch: pytest.MonkeyPa
     assert exit_code == 0
     metadata_payload = json.loads(output_json.read_text(encoding="utf-8"))
     assert metadata_payload["metadata"]["search_stage"] == "coarse"
-    assert metadata_payload["metadata"]["guardrails"]["next_close_positive_rate"] == pytest.approx(0.54)
+    assert metadata_payload["metadata"]["guardrails"]["next_close_positive_rate"] == pytest.approx(0.52)
     assert "## Search Metadata" in output_md.read_text(encoding="utf-8")
     assert "Search Stage: **coarse**" in output_md.read_text(encoding="utf-8")
 

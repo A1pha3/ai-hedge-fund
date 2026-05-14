@@ -58,7 +58,10 @@ IC_SIGNAL_MIN: float = 0.02          # minimum IC for a factor to be considered 
 IC_FRACTION_FLOOR: float = 0.50      # fraction of factors that must have IC >= IC_SIGNAL_MIN
 IC_QUALITY_SAMPLE_WEIGHT_PENALTY: float = 0.90  # multiply sample_weight when IC quality is poor
 DEFAULT_BTST_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
-    "next_close_positive_rate": BTST_QUALITY_FLOORS["next_close_positive_rate"],
+    # Relaxed floor relative to BTST_QUALITY_FLOORS (0.54) so the optimizer can search across
+    # market regimes where the natural day-win-rate sits around 0.53.  Production promotion
+    # still uses the stricter evaluation_bundle floor for final sign-off.
+    "next_close_positive_rate": 0.52,
     "next_high_hit_rate": BTST_QUALITY_FLOORS["next_high_hit_rate"],
     "downside_p10": BTST_QUALITY_FLOORS["downside_p10"],
     "window_coverage": BTST_QUALITY_FLOORS["window_coverage"],
