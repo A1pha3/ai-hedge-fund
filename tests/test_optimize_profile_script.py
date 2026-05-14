@@ -25567,3 +25567,388 @@ def test_r84_t3_floor_registered() -> None:
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "upside_asymmetry_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["upside_asymmetry_trend_slope"] == pytest.approx(-0.01)
+
+
+# ===========================================================================
+# Round 85 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_r85_batch_rows(win_pattern: list[bool]) -> list[dict]:
+    """Build rows with actual_return matching win_pattern (True=win, False=loss)."""
+    return [{"actual_return": 0.01 if w else -0.01} for w in win_pattern]
+
+
+def _make_r85_liq_rows(returns: list[float], turnovers: list[float]) -> list[dict]:
+    """Build rows with actual_return and turnover_rate."""
+    return [{"actual_return": r, "turnover_rate": t} for r, t in zip(returns, turnovers)]
+
+
+def _make_r85_momentum_windows(vals: list[float]) -> list[dict]:
+    """Build window summaries with mom_rev_momentum_breadth_effect."""
+    return [{"mom_rev_momentum_breadth_effect": v} for v in vals]
+
+
+# ---------------------------------------------------------------------------
+# T1: compute_batch_consistency_analysis
+# ---------------------------------------------------------------------------
+
+
+def test_r85_t1_basic_valid_15_rows() -> None:
+    """15 rows → valid=True, three batches of 5."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    rows = _make_r85_batch_rows([True] * 8 + [False] * 7)
+    result = compute_batch_consistency_analysis(rows)
+    assert result["valid"] is True
+    assert result["batch1_win_rate"] is not None
+    assert result["batch2_win_rate"] is not None
+    assert result["batch3_win_rate"] is not None
+
+
+def test_r85_t1_too_few_rows_invalid() -> None:
+    """14 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    rows = _make_r85_batch_rows([True] * 7 + [False] * 7)
+    result = compute_batch_consistency_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r85_t1_empty_rows_invalid() -> None:
+    """0 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    result = compute_batch_consistency_analysis([])
+    assert result["valid"] is False
+
+
+def test_r85_t1_three_equal_batches_n15() -> None:
+    """n=15: each batch has exactly 5 rows."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    # b1=5 wins, b2=5 wins, b3=5 wins → all win_rates=1.0
+    rows = _make_r85_batch_rows([True] * 15)
+    result = compute_batch_consistency_analysis(rows)
+    assert result["valid"] is True
+    assert result["batch1_win_rate"] == pytest.approx(1.0)
+    assert result["batch2_win_rate"] == pytest.approx(1.0)
+    assert result["batch3_win_rate"] == pytest.approx(1.0)
+
+
+def test_r85_t1_consistency_score_perfect() -> None:
+    """All win_rates equal → std=0 → consistency_score=1.0."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    rows = _make_r85_batch_rows([True] * 15)
+    result = compute_batch_consistency_analysis(rows)
+    assert result["batch_consistency_score"] == pytest.approx(1.0)
+
+
+def test_r85_t1_consistency_score_formula() -> None:
+    """Verify formula: 1 - std/mean with known values."""
+    import math
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    # b1: 5/5=1.0, b2: 3/5=0.6, b3: 1/5=0.2  → mean=0.6, std=sqrt(((0.4^2+0^2+0.4^2)/3))
+    rows = _make_r85_batch_rows([True, True, True, True, True, True, True, True, False, False, True, False, False, False, False])
+    result = compute_batch_consistency_analysis(rows)
+    assert result["valid"] is True
+    expected_mean = (1.0 + 0.6 + 0.2) / 3
+    expected_std = math.sqrt(((1.0 - expected_mean)**2 + (0.6 - expected_mean)**2 + (0.2 - expected_mean)**2) / 3)
+    expected_score = 1.0 - expected_std / expected_mean
+    assert result["batch_consistency_score"] == pytest.approx(expected_score, abs=1e-6)
+
+
+def test_r85_t1_mean_zero_consistency_zero() -> None:
+    """mean_wr=0 → consistency_score=0.0 (no crash)."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    rows = _make_r85_batch_rows([False] * 15)
+    result = compute_batch_consistency_analysis(rows)
+    assert result["valid"] is True
+    assert result["batch_consistency_score"] == pytest.approx(0.0)
+
+
+def test_r85_t1_trend_direction_improving() -> None:
+    """b3 win_rate > b1 win_rate → 'improving'."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    # b1: 1/5=0.2, b2: 3/5=0.6, b3: 5/5=1.0
+    rows = _make_r85_batch_rows([True, False, False, False, False, True, True, True, False, False, True, True, True, True, True])
+    result = compute_batch_consistency_analysis(rows)
+    assert result["batch_trend_direction"] == "improving"
+
+
+def test_r85_t1_trend_direction_declining() -> None:
+    """b3 win_rate < b1 win_rate → 'declining'."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    # b1: 5/5=1.0, b2: 3/5=0.6, b3: 1/5=0.2
+    rows = _make_r85_batch_rows([True, True, True, True, True, True, True, True, False, False, True, False, False, False, False])
+    result = compute_batch_consistency_analysis(rows)
+    assert result["batch_trend_direction"] == "declining"
+
+
+def test_r85_t1_trend_direction_stable() -> None:
+    """b3 win_rate == b1 win_rate → 'stable'."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    # b1: 3/5=0.6, b2: 3/5=0.6, b3: 3/5=0.6
+    rows = _make_r85_batch_rows([True, True, True, False, False, True, True, True, False, False, True, True, True, False, False])
+    result = compute_batch_consistency_analysis(rows)
+    assert result["batch_trend_direction"] == "stable"
+
+
+def test_r85_t1_preserves_temporal_order() -> None:
+    """T1 must NOT sort by score; rows processed in given order."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    # b1 has score=10 (wins), b3 has score=1 (losses) — order matters
+    rows = [{"actual_return": 0.05, "score": 10}] * 5 + [{"actual_return": 0.01, "score": 5}] * 5 + [{"actual_return": -0.02, "score": 1}] * 5
+    result = compute_batch_consistency_analysis(rows)
+    assert result["valid"] is True
+    assert result["batch1_win_rate"] == pytest.approx(1.0)
+    assert result["batch3_win_rate"] == pytest.approx(0.0)
+
+
+def test_r85_t1_consistency_score_can_be_negative() -> None:
+    """Consistency score can be negative if std > mean."""
+    from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+    # b1=0/5=0.0, b2=5/5=1.0, b3=0/5=0.0  →  mean=1/3, std is large
+    rows = _make_r85_batch_rows([False, False, False, False, False, True, True, True, True, True, False, False, False, False, False])
+    result = compute_batch_consistency_analysis(rows)
+    assert result["valid"] is True
+    # score could be negative
+    assert result["batch_consistency_score"] is not None
+
+
+def test_r85_t1_in_comparison_metrics() -> None:
+    """batch_batch_consistency_score must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "batch_batch_consistency_score" in COMPARISON_METRICS
+    assert "batch_batch3_win_rate" in COMPARISON_METRICS
+
+
+def test_r85_t1_in_optional_metrics() -> None:
+    """batch metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "batch_batch_consistency_score" in OPTIONAL_COMPARISON_METRICS
+    assert "batch_batch3_win_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r85_t1_labels_registered() -> None:
+    """Batch metric labels must be registered."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("batch_batch_consistency_score") == "批次时序一致性分数"
+    assert COMPARISON_METRIC_LABELS.get("batch_batch3_win_rate") == "最新批次胜率"
+
+
+def test_r85_t1_floor_registered() -> None:
+    """batch_batch_consistency_score floor must be 0.5."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "batch_batch_consistency_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["batch_batch_consistency_score"] == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_liquidity_weighted_return_analysis
+# ---------------------------------------------------------------------------
+
+
+def test_r85_t2_basic_valid() -> None:
+    """15 rows with turnover_rate → valid=True."""
+    from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+    rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [2.0] * 15)
+    result = compute_liquidity_weighted_return_analysis(rows)
+    assert result["valid"] is True
+
+
+def test_r85_t2_no_turnover_rate_invalid() -> None:
+    """Rows without turnover_rate field → valid=False."""
+    from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+    rows = [{"actual_return": 0.01}] * 20
+    result = compute_liquidity_weighted_return_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r85_t2_too_few_rows_invalid() -> None:
+    """14 valid rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+    rows = _make_r85_liq_rows([0.01] * 14, [1.0] * 14)
+    result = compute_liquidity_weighted_return_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r85_t2_ew_win_rate_correct() -> None:
+    """ew_win_rate = 10/15 when 10 wins."""
+    from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+    rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [1.0] * 15)
+    result = compute_liquidity_weighted_return_analysis(rows)
+    assert result["ew_win_rate"] == pytest.approx(10 / 15, abs=1e-6)
+
+
+def test_r85_t2_lw_win_rate_equal_weights() -> None:
+    """With equal turnover_rates, lw_win_rate should equal ew_win_rate."""
+    from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+    rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [2.0] * 15)
+    result = compute_liquidity_weighted_return_analysis(rows)
+    assert result["lw_win_rate"] == pytest.approx(result["ew_win_rate"], abs=1e-6)
+
+
+def test_r85_t2_lw_win_rate_weighted() -> None:
+    """Higher turnover on winning rows → lw_win_rate > ew_win_rate."""
+    from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+    # 10 wins with turnover=3.0, 5 losses with turnover=1.0
+    rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [3.0] * 10 + [1.0] * 5)
+    result = compute_liquidity_weighted_return_analysis(rows)
+    assert result["lw_win_rate"] > result["ew_win_rate"]
+
+
+def test_r85_t2_liquidity_bias_formula() -> None:
+    """liquidity_bias = lw_win_rate - ew_win_rate."""
+    from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+    rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [3.0] * 10 + [1.0] * 5)
+    result = compute_liquidity_weighted_return_analysis(rows)
+    assert result["liquidity_bias"] == pytest.approx(result["lw_win_rate"] - result["ew_win_rate"], abs=1e-8)
+
+
+def test_r85_t2_high_liquidity_win_rate_p75() -> None:
+    """high_liquidity_win_rate uses P75 threshold of turnover values."""
+    from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+    # 20 rows: 15 low turnover=1.0, 5 high turnover=10.0; all high-turnover are wins
+    rows = _make_r85_liq_rows([-0.01] * 15 + [0.01] * 5, [1.0] * 15 + [10.0] * 5)
+    result = compute_liquidity_weighted_return_analysis(rows)
+    assert result["valid"] is True
+    assert result["high_liquidity_win_rate"] == pytest.approx(1.0)
+
+
+def test_r85_t2_zero_turnover_excluded() -> None:
+    """Rows with turnover_rate=0 are excluded from valid rows."""
+    from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+    rows = _make_r85_liq_rows([0.01] * 15, [0.0] * 15)
+    result = compute_liquidity_weighted_return_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r85_t2_in_comparison_metrics() -> None:
+    """liq metrics must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "liq_lw_win_rate" in COMPARISON_METRICS
+    assert "liq_liquidity_bias" in COMPARISON_METRICS
+
+
+def test_r85_t2_in_optional_metrics() -> None:
+    """liq metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "liq_lw_win_rate" in OPTIONAL_COMPARISON_METRICS
+    assert "liq_liquidity_bias" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r85_t2_labels_registered() -> None:
+    """Liquidity metric labels must be registered."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("liq_lw_win_rate") == "流动性加权胜率"
+    assert COMPARISON_METRIC_LABELS.get("liq_liquidity_bias") == "流动性执行偏差"
+
+
+def test_r85_t2_floor_registered() -> None:
+    """liq_liquidity_bias floor must be -0.05."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "liq_liquidity_bias" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["liq_liquidity_bias"] == pytest.approx(-0.05)
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_momentum_reversal_trend
+# ---------------------------------------------------------------------------
+
+
+def test_r85_t3_rising_trend_grade_a() -> None:
+    """Strongly rising trend → slope > 0.005 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+    windows = _make_r85_momentum_windows([0.0, 0.01, 0.02, 0.03, 0.04])
+    result = compute_cross_window_momentum_reversal_trend(windows)
+    assert result["valid"] is True
+    assert result["momentum_reversal_trend_grade"] == "A"
+    assert result["momentum_reversal_trend_slope"] > 0.005
+
+
+def test_r85_t3_mild_rising_grade_b() -> None:
+    """Mildly rising trend (0 < slope <= 0.005) → grade B."""
+    from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+    windows = _make_r85_momentum_windows([0.0, 0.001, 0.002, 0.003, 0.004])
+    result = compute_cross_window_momentum_reversal_trend(windows)
+    assert result["valid"] is True
+    assert result["momentum_reversal_trend_grade"] == "B"
+
+
+def test_r85_t3_flat_trend_grade_c() -> None:
+    """Flat trend (slope=0) → grade C."""
+    from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+    windows = _make_r85_momentum_windows([0.5, 0.5, 0.5, 0.5, 0.5])
+    result = compute_cross_window_momentum_reversal_trend(windows)
+    assert result["valid"] is True
+    assert result["momentum_reversal_trend_grade"] == "C"
+
+
+def test_r85_t3_strongly_falling_grade_d() -> None:
+    """Strongly falling trend → slope < -0.01 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+    windows = _make_r85_momentum_windows([0.04, 0.02, 0.0, -0.02, -0.04])
+    result = compute_cross_window_momentum_reversal_trend(windows)
+    assert result["valid"] is True
+    assert result["momentum_reversal_trend_grade"] == "D"
+
+
+def test_r85_t3_too_few_windows() -> None:
+    """Fewer than 3 valid windows → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+    windows = _make_r85_momentum_windows([0.1, 0.2])
+    result = compute_cross_window_momentum_reversal_trend(windows)
+    assert result["valid"] is False
+
+
+def test_r85_t3_exactly_3_windows() -> None:
+    """Exactly 3 windows → valid=True."""
+    from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+    windows = _make_r85_momentum_windows([0.1, 0.2, 0.3])
+    result = compute_cross_window_momentum_reversal_trend(windows)
+    assert result["valid"] is True
+    assert result["momentum_reversal_window_count"] == 3
+
+
+def test_r85_t3_ols_slope_numerical() -> None:
+    """Verify OLS slope for y=[0,1,2,3,4] x=[0,1,2,3,4] → slope=1.0."""
+    from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+    windows = _make_r85_momentum_windows([0.0, 1.0, 2.0, 3.0, 4.0])
+    result = compute_cross_window_momentum_reversal_trend(windows)
+    assert result["valid"] is True
+    assert result["momentum_reversal_trend_slope"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_r85_t3_missing_key_skipped() -> None:
+    """Windows missing mom_rev_momentum_breadth_effect are skipped."""
+    from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+    windows = [{"mom_rev_momentum_breadth_effect": 0.1}, {"other_key": 0.5}, {"mom_rev_momentum_breadth_effect": 0.2}, {"mom_rev_momentum_breadth_effect": 0.3}]
+    result = compute_cross_window_momentum_reversal_trend(windows)
+    assert result["valid"] is True
+    assert result["momentum_reversal_window_count"] == 3
+
+
+def test_r85_t3_in_comparison_metrics() -> None:
+    """momentum_reversal_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "momentum_reversal_trend_slope" in COMPARISON_METRICS
+
+
+def test_r85_t3_in_optional_metrics() -> None:
+    """momentum_reversal_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "momentum_reversal_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r85_t3_label_registered() -> None:
+    """momentum_reversal_trend_slope must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("momentum_reversal_trend_slope") == "动量广度效应跨窗趋势"
+
+
+def test_r85_t3_floor_registered() -> None:
+    """momentum_reversal_trend_slope floor must be -0.02."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "momentum_reversal_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["momentum_reversal_trend_slope"] == pytest.approx(-0.02)

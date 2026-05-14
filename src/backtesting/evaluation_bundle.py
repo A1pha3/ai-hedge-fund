@@ -701,6 +701,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 84, Gamma): upside asymmetry trend slope floor.
     # upside_asymmetry_trend_slope < -0.01 means the return upside asymmetry is deteriorating across windows.
     "upside_asymmetry_trend_slope": -0.01,
+    # Task 1 (Round 85, Alpha): batch consistency score floor.
+    # batch_batch_consistency_score < 0.5 means the win-rate is highly unstable across time batches.
+    "batch_batch_consistency_score": 0.5,
+    # Task 2 (Round 85, Beta): liquidity bias floor.
+    # liq_liquidity_bias < -0.05 means the system performs significantly worse on high-liquidity stocks.
+    "liq_liquidity_bias": -0.05,
+    # Task 3 (Round 85, Gamma): momentum reversal trend slope floor.
+    # momentum_reversal_trend_slope < -0.02 means the momentum breadth effect is rapidly deteriorating.
+    "momentum_reversal_trend_slope": -0.02,
 }
 
 # ---------------------------------------------------------------------------

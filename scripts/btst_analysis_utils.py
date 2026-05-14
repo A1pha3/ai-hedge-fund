@@ -4750,6 +4750,23 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         _surface_result["tailwind_gap_protection_effect"] = tailwind_result["gap_protection_effect"]
         _surface_result["tailwind_protected_count"] = tailwind_result["protected_count"]
 
+    # Round 85, Task 1 (Alpha): Batch consistency analysis.
+    batch_result: dict = compute_batch_consistency_analysis(rows)
+    if batch_result["valid"]:
+        _surface_result["batch_batch1_win_rate"] = batch_result["batch1_win_rate"]
+        _surface_result["batch_batch2_win_rate"] = batch_result["batch2_win_rate"]
+        _surface_result["batch_batch3_win_rate"] = batch_result["batch3_win_rate"]
+        _surface_result["batch_batch_consistency_score"] = batch_result["batch_consistency_score"]
+        _surface_result["batch_batch_trend_direction"] = batch_result["batch_trend_direction"]
+
+    # Round 85, Task 2 (Beta): Liquidity weighted return analysis.
+    liq_result: dict = compute_liquidity_weighted_return_analysis(rows)
+    if liq_result["valid"]:
+        _surface_result["liq_lw_win_rate"] = liq_result["lw_win_rate"]
+        _surface_result["liq_ew_win_rate"] = liq_result["ew_win_rate"]
+        _surface_result["liq_liquidity_bias"] = liq_result["liquidity_bias"]
+        _surface_result["liq_high_liquidity_win_rate"] = liq_result["high_liquidity_win_rate"]
+
     return _surface_result
 
 
@@ -14592,3 +14609,73 @@ def compute_sector_tailwind_protection(rows: list[dict]) -> dict:
     exposed_win_rate: float = round(sum(1 for r in exposed_rows if r["actual_return"] > 0) / len(exposed_rows), 8)
     gap_protection_effect: float = round(protected_win_rate - exposed_win_rate, 8)
     return {"valid": True, "protected_win_rate": protected_win_rate, "exposed_win_rate": exposed_win_rate, "gap_protection_effect": gap_protection_effect, "protected_count": len(protected_rows)}
+
+
+# ---------------------------------------------------------------------------
+# Round 85, Task 1 (Alpha): Batch consistency analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_batch_consistency_analysis(rows: list[dict]) -> dict:
+    """批次时序一致性：窗口内3等份时序批次的胜率稳定性。"""
+    import math as _math
+    EMPTY: dict = {"valid": False, "batch1_win_rate": None, "batch2_win_rate": None, "batch3_win_rate": None, "batch_consistency_score": None, "batch_trend_direction": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        ret_val = r.get("actual_return")
+        if ret_val is None:
+            continue
+        try:
+            valid_rows.append({"actual_return": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return EMPTY
+    n: int = len(valid_rows)
+    b1: list[dict] = valid_rows[: n // 3]
+    b2: list[dict] = valid_rows[n // 3 : 2 * n // 3]
+    b3: list[dict] = valid_rows[2 * n // 3 :]
+    b1_wr: float = round(sum(1 for r in b1 if r["actual_return"] > 0) / len(b1), 8)
+    b2_wr: float = round(sum(1 for r in b2 if r["actual_return"] > 0) / len(b2), 8)
+    b3_wr: float = round(sum(1 for r in b3 if r["actual_return"] > 0) / len(b3), 8)
+    win_rates: list[float] = [b1_wr, b2_wr, b3_wr]
+    mean_wr: float = sum(win_rates) / 3
+    std_wr: float = _math.sqrt(sum((x - mean_wr) ** 2 for x in win_rates) / 3)
+    batch_consistency_score: float = round(1.0 - (std_wr / mean_wr), 8) if mean_wr > 0 else 0.0
+    batch_trend_direction: str = "improving" if b3_wr > b1_wr else ("declining" if b3_wr < b1_wr else "stable")
+    return {"valid": True, "batch1_win_rate": b1_wr, "batch2_win_rate": b2_wr, "batch3_win_rate": b3_wr, "batch_consistency_score": batch_consistency_score, "batch_trend_direction": batch_trend_direction}
+
+
+# ---------------------------------------------------------------------------
+# Round 85, Task 2 (Beta): Liquidity weighted return analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_liquidity_weighted_return_analysis(rows: list[dict]) -> dict:
+    """流动性加权收益分析：高换手率股票胜率是否优于低换手率（执行可行性）。"""
+    EMPTY: dict = {"valid": False, "lw_win_rate": None, "ew_win_rate": None, "liquidity_bias": None, "high_liquidity_win_rate": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        ret_val = r.get("actual_return")
+        tr_val = r.get("turnover_rate")
+        if ret_val is None or tr_val is None:
+            continue
+        try:
+            tr_f: float = float(tr_val)
+            if tr_f <= 0:
+                continue
+            valid_rows.append({"actual_return": float(ret_val), "turnover_rate": tr_f})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return EMPTY
+    n: int = len(valid_rows)
+    ew_win_rate: float = round(sum(1 for r in valid_rows if r["actual_return"] > 0) / n, 8)
+    total_weight: float = sum(r["turnover_rate"] for r in valid_rows)
+    lw_win_rate: float = round(sum((r["turnover_rate"] / total_weight) * (1 if r["actual_return"] > 0 else 0) for r in valid_rows), 8)
+    liquidity_bias: float = round(lw_win_rate - ew_win_rate, 8)
+    sorted_turnover: list[float] = sorted(r["turnover_rate"] for r in valid_rows)
+    p75: float = sorted_turnover[int(n * 0.75)]
+    high_liq_rows: list[dict] = [r for r in valid_rows if r["turnover_rate"] >= p75]
+    high_liquidity_win_rate: "float | None" = round(sum(1 for r in high_liq_rows if r["actual_return"] > 0) / len(high_liq_rows), 8) if len(high_liq_rows) >= 3 else None
+    return {"valid": True, "lw_win_rate": lw_win_rate, "ew_win_rate": ew_win_rate, "liquidity_bias": liquidity_bias, "high_liquidity_win_rate": high_liquidity_win_rate}
