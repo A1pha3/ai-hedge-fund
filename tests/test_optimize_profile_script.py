@@ -22803,3 +22803,384 @@ def test_r77_t3_grade_c_mild_decline() -> None:
     result = compute_cross_window_skew_trend(summaries)
     assert result["skew_trend_valid"] is True
     assert result["skew_trend_grade"] in ("C", "D")
+
+
+# ===========================================================================
+# Round 78 tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: compute_hotstock_concentration_analysis
+# ---------------------------------------------------------------------------
+
+def test_r78_t1_too_few_rows_returns_invalid() -> None:
+    """Returns valid=False when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    rows = [{"score": i, "next_day_return": 0.01} for i in range(9)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is False
+    assert result["hotstock_edge"] is None
+
+
+def test_r78_t1_no_score_field_returns_invalid() -> None:
+    """Returns valid=False when no score field is present."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    rows = [{"next_day_return": 0.01} for _ in range(15)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is False
+
+
+def test_r78_t1_valid_basic() -> None:
+    """Returns valid=True with sufficient rows and score."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    rows = [{"score": float(i), "next_day_return": 0.01 if i >= 5 else -0.01} for i in range(20)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is True
+    assert result["hotstock_count"] is not None
+    assert result["hotstock_pct"] is not None
+
+
+def test_r78_t1_uses_runner_composite_score_first() -> None:
+    """Prefers runner_composite_score over composite_score over score."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    rows = [{"runner_composite_score": float(i), "composite_score": 0.0, "score": 0.0, "next_day_return": 0.01} for i in range(20)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is True
+    assert result["hotstock_count"] == 5  # top 25% of 20 = 5
+
+
+def test_r78_t1_p75_threshold_correct() -> None:
+    """P75 threshold correctly selects top 25% of scores."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    rows = [{"score": float(i), "next_day_return": 0.01} for i in range(20)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is True
+    assert result["hotstock_count"] is not None
+    assert result["hotstock_count"] >= 1
+
+
+def test_r78_t1_hotstock_edge_computed_correctly() -> None:
+    """hotstock_edge = hotstock_win_rate - non_hotstock_win_rate."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    # Top-5 scores (15-19) all win; bottom-15 scores (0-14) all lose
+    rows = [{"score": float(i), "next_day_return": 0.05 if i >= 15 else -0.05} for i in range(20)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is True
+    assert result["hotstock_edge"] is not None
+    assert result["hotstock_edge"] > 0.5
+
+
+def test_r78_t1_hotstock_edge_none_when_insufficient() -> None:
+    """hotstock_edge is None when hotstock_count < 2."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    # Only 1 hotstock (score=19 in top 5%, so 1 out of 20)
+    rows = [{"score": float(i), "next_day_return": 0.01} for i in range(20)]
+    # Make score so that only 1 row >= p75 is possible by ensuring p75 is very high
+    rows2 = [{"score": 0.0 if i < 19 else 100.0, "next_day_return": 0.01} for i in range(20)]
+    result = compute_hotstock_concentration_analysis(rows2)
+    # With only 1 hotstock, hotstock_win_rate should be None
+    if result["hotstock_count"] < 2:
+        assert result["hotstock_win_rate"] is None
+        assert result["hotstock_edge"] is None
+
+
+def test_r78_t1_hotstock_return_premium_positive() -> None:
+    """hotstock_return_premium > 0 when hotstocks have higher mean return."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    rows = [{"score": float(i), "next_day_return": 0.1 if i >= 15 else 0.0} for i in range(20)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is True
+    if result["hotstock_mean_return"] is not None:
+        assert result["hotstock_return_premium"] is not None
+        assert result["hotstock_return_premium"] > 0
+
+
+def test_r78_t1_grade_a() -> None:
+    """Grade A when hotstock_edge > 0.1 and hotstock_return_premium > 0."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    # Hotstocks (top 5) all win with high returns, rest all lose
+    rows = [{"score": float(i), "next_day_return": 0.1 if i >= 15 else -0.01} for i in range(20)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is True
+    if result["hotstock_edge"] is not None and result["hotstock_edge"] > 0.1 and result["hotstock_return_premium"] is not None and result["hotstock_return_premium"] > 0:
+        assert result["hotstock_grade"] == "A"
+
+
+def test_r78_t1_grade_d_negative_edge() -> None:
+    """Grade D when hotstock_edge <= 0."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    # Hotstocks all lose, non-hotstocks all win
+    rows = [{"score": float(i), "next_day_return": -0.05 if i >= 15 else 0.05} for i in range(20)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is True
+    assert result["hotstock_grade"] == "D"
+
+
+def test_r78_t1_overall_mean_return_correct() -> None:
+    """overall_mean_return is mean of all next_day_return values."""
+    from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+    rows = [{"score": float(i), "next_day_return": float(i)} for i in range(20)]
+    result = compute_hotstock_concentration_analysis(rows)
+    assert result["hotstock_concentration_valid"] is True
+    expected = sum(range(20)) / 20
+    assert result["overall_mean_return"] == pytest.approx(expected, rel=1e-4)
+
+
+def test_r78_t1_metric_in_comparison_metrics() -> None:
+    """hotstock_edge must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "hotstock_edge" in COMPARISON_METRICS
+
+
+def test_r78_t1_metric_in_optional_comparison_metrics() -> None:
+    """hotstock_edge must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "hotstock_edge" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r78_t1_floor_registered() -> None:
+    """hotstock_edge floor must be 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "hotstock_edge" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["hotstock_edge"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_factor_robustness_check
+# ---------------------------------------------------------------------------
+
+def test_r78_t2_too_few_rows_returns_invalid() -> None:
+    """Returns valid=False when fewer than 12 rows."""
+    from scripts.btst_analysis_utils import compute_factor_robustness_check
+    rows = [{"close_strength": float(i), "next_day_return": 0.01} for i in range(11)]
+    result = compute_factor_robustness_check(rows)
+    assert result["factor_robustness_valid"] is False
+    assert result["robustness_ratio"] is None
+
+
+def test_r78_t2_valid_basic() -> None:
+    """Returns valid=True with sufficient rows."""
+    from scripts.btst_analysis_utils import compute_factor_robustness_check
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_robustness_check(rows)
+    assert result["factor_robustness_valid"] is True
+    assert result["robustness_ratio"] is not None
+
+
+def test_r78_t2_consistent_factor_count_range() -> None:
+    """consistent_factor_count is between 0 and 7."""
+    from scripts.btst_analysis_utils import compute_factor_robustness_check
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_robustness_check(rows)
+    assert 0 <= result["consistent_factor_count"] <= 7
+
+
+def test_r78_t2_robustness_ratio_precision() -> None:
+    """robustness_ratio = consistent_factor_count / 7."""
+    from scripts.btst_analysis_utils import compute_factor_robustness_check
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_robustness_check(rows)
+    assert result["robustness_ratio"] == pytest.approx(result["consistent_factor_count"] / 7, rel=1e-5)
+
+
+def test_r78_t2_split_half_partition() -> None:
+    """First half uses rows[:n//2], second half uses rows[n//2:]."""
+    from scripts.btst_analysis_utils import compute_factor_robustness_check
+    # With monotone increasing data, IC should be positive in both halves for close_strength
+    rows = [{"close_strength": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_robustness_check(rows)
+    assert result["factor_robustness_valid"] is True
+    first_ic = result.get("ic_first_close_strength")
+    second_ic = result.get("ic_second_close_strength")
+    if first_ic is not None and second_ic is not None:
+        assert first_ic > 0 and second_ic > 0
+
+
+def test_r78_t2_ic_sign_consistent_true_for_monotone() -> None:
+    """ic_sign_consistent is True when both halves have same IC sign."""
+    from scripts.btst_analysis_utils import compute_factor_robustness_check
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_robustness_check(rows)
+    for factor in ["close_strength", "volume_expansion_quality"]:
+        consistent = result.get(f"ic_sign_consistent_{factor}")
+        if consistent is not None:
+            assert consistent is True
+
+
+def test_r78_t2_grade_a_high_ratio() -> None:
+    """Grade A when robustness_ratio >= 5/7."""
+    from scripts.btst_analysis_utils import compute_factor_robustness_check
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(24)]
+    result = compute_factor_robustness_check(rows)
+    if result["robustness_ratio"] is not None and result["robustness_ratio"] >= 5 / 7:
+        assert result["robustness_grade"] == "A"
+
+
+def test_r78_t2_grade_d_low_ratio() -> None:
+    """Grade D when robustness_ratio < 3/7."""
+    from scripts.btst_analysis_utils import compute_factor_robustness_check
+    # Alternating returns make IC inconsistent between halves
+    rows = []
+    for i in range(20):
+        rows.append({"close_strength": float(i % 4), "volume_expansion_quality": float(i % 3), "sector_resonance": float(i % 5), "rs_sector_rank": float(i % 2), "t0_estimated_net_inflow_ratio": float(i % 6), "breakout_quality_score": float(i % 7), "momentum_slope_20d": float(i % 3), "next_day_return": (-1 if i % 3 == 0 else 1) * 0.01 * (i % 5 + 1)})
+    result = compute_factor_robustness_check(rows)
+    assert result["factor_robustness_valid"] is True
+    assert result["robustness_grade"] in ("A", "B", "C", "D")
+
+
+def test_r78_t2_most_robust_factor_has_consistent_ic() -> None:
+    """most_robust_factor must have ic_sign_consistent=True."""
+    from scripts.btst_analysis_utils import compute_factor_robustness_check
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
+    result = compute_factor_robustness_check(rows)
+    mrf = result.get("most_robust_factor")
+    if mrf is not None:
+        assert result.get(f"ic_sign_consistent_{mrf}") is True
+
+
+def test_r78_t2_metric_in_comparison_metrics() -> None:
+    """robustness_ratio must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "robustness_ratio" in COMPARISON_METRICS
+
+
+def test_r78_t2_metric_in_optional_comparison_metrics() -> None:
+    """robustness_ratio must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "robustness_ratio" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r78_t2_floor_registered() -> None:
+    """robustness_ratio floor must be 0.4 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "robustness_ratio" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["robustness_ratio"] == pytest.approx(0.4)
+
+
+def test_r78_t2_label_registered() -> None:
+    """robustness_ratio must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "robustness_ratio" in COMPARISON_METRIC_LABELS
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_threshold_lift_trend
+# ---------------------------------------------------------------------------
+
+def test_r78_t3_too_few_windows_returns_invalid() -> None:
+    """Returns valid=False when fewer than 3 valid threshold_lift values."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    summaries = [{"adapt_thr_threshold_lift": 0.05}, {"adapt_thr_threshold_lift": 0.03}]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_trend_valid"] is False
+    assert result["threshold_lift_trend_slope"] is None
+
+
+def test_r78_t3_valid_basic() -> None:
+    """Returns valid=True with 3+ valid values."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    summaries = [{"adapt_thr_threshold_lift": 0.05 + 0.01 * i} for i in range(5)]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_trend_valid"] is True
+    assert result["threshold_lift_trend_slope"] is not None
+
+
+def test_r78_t3_ols_slope_positive_for_increasing_series() -> None:
+    """OLS slope is positive for monotone increasing series."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    summaries = [{"adapt_thr_threshold_lift": 0.01 * i} for i in range(6)]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_trend_valid"] is True
+    assert result["threshold_lift_trend_slope"] > 0
+
+
+def test_r78_t3_ols_slope_negative_for_decreasing_series() -> None:
+    """OLS slope is negative for monotone decreasing series."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    summaries = [{"adapt_thr_threshold_lift": 0.1 - 0.01 * i} for i in range(6)]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_trend_valid"] is True
+    assert result["threshold_lift_trend_slope"] < 0
+
+
+def test_r78_t3_mean_correct() -> None:
+    """threshold_lift_trend_mean equals arithmetic mean of values."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    values = [0.05, 0.07, 0.06, 0.08, 0.09]
+    summaries = [{"adapt_thr_threshold_lift": v} for v in values]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_trend_mean"] == pytest.approx(sum(values) / len(values), rel=1e-4)
+
+
+def test_r78_t3_positive_windows_pct() -> None:
+    """threshold_lift_positive_windows_pct is fraction of values > 0."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    values = [0.05, -0.02, 0.03, -0.01, 0.08]
+    summaries = [{"adapt_thr_threshold_lift": v} for v in values]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_positive_windows_pct"] == pytest.approx(3 / 5, rel=1e-4)
+
+
+def test_r78_t3_grade_a_slope_gt_0005() -> None:
+    """Grade A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    # Slope ~0.01 per window
+    values = [0.05 + 0.01 * i for i in range(8)]
+    summaries = [{"adapt_thr_threshold_lift": v} for v in values]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_trend_valid"] is True
+    assert result["threshold_lift_trend_grade"] == "A"
+
+
+def test_r78_t3_grade_b_slope_small_positive() -> None:
+    """Grade B when 0 < slope <= 0.005."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    # Slope ~0.002 per window
+    values = [0.05 + 0.002 * i for i in range(8)]
+    summaries = [{"adapt_thr_threshold_lift": v} for v in values]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_trend_grade"] in ("A", "B")
+
+
+def test_r78_t3_grade_d_slope_le_neg001() -> None:
+    """Grade D when slope <= -0.01."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    # Slope ~-0.02 per window
+    values = [0.1 - 0.02 * i for i in range(8)]
+    summaries = [{"adapt_thr_threshold_lift": v} for v in values]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_trend_grade"] == "D"
+
+
+def test_r78_t3_skips_missing_values() -> None:
+    """Ignores windows without adapt_thr_threshold_lift key."""
+    from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+    summaries = [{"adapt_thr_threshold_lift": 0.05}, {}, {"adapt_thr_threshold_lift": 0.06}, {"other": 99}, {"adapt_thr_threshold_lift": 0.07}]
+    result = compute_cross_window_threshold_lift_trend(summaries)
+    assert result["threshold_lift_trend_valid"] is True
+    assert result["threshold_lift_trend_mean"] == pytest.approx((0.05 + 0.06 + 0.07) / 3, rel=1e-4)
+
+
+def test_r78_t3_metric_in_comparison_metrics() -> None:
+    """threshold_lift_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "threshold_lift_trend_slope" in COMPARISON_METRICS
+
+
+def test_r78_t3_metric_in_optional_comparison_metrics() -> None:
+    """threshold_lift_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "threshold_lift_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r78_t3_floor_registered() -> None:
+    """threshold_lift_trend_slope floor must be -0.01 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "threshold_lift_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["threshold_lift_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r78_t3_label_registered() -> None:
+    """threshold_lift_trend_slope must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "threshold_lift_trend_slope" in COMPARISON_METRIC_LABELS

@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_913e68b39318_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_5c4359ad95d1_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -259,7 +259,16 @@
       "breadth_trend_slope_delta": null,
       "sharpe_ratio_delta": null,
       "max_collinearity_delta": null,
-      "stratification_trend_slope_delta": null
+      "stratification_trend_slope_delta": null,
+      "gain_loss_ratio_delta": null,
+      "tail_asymmetry_score_delta": null,
+      "orthogonality_score_delta": null,
+      "threshold_lift_delta": null,
+      "sector_win_rate_dispersion_delta": null,
+      "skew_trend_slope_delta": null,
+      "threshold_lift_trend_slope_delta": null,
+      "hotstock_edge_delta": null,
+      "robustness_ratio_delta": null
     },
     "default": {
       "candidate": {
@@ -514,7 +523,16 @@
       "breadth_trend_slope_delta": null,
       "sharpe_ratio_delta": null,
       "max_collinearity_delta": null,
-      "stratification_trend_slope_delta": null
+      "stratification_trend_slope_delta": null,
+      "gain_loss_ratio_delta": null,
+      "tail_asymmetry_score_delta": null,
+      "orthogonality_score_delta": null,
+      "threshold_lift_delta": null,
+      "sector_win_rate_dispersion_delta": null,
+      "skew_trend_slope_delta": null,
+      "threshold_lift_trend_slope_delta": null,
+      "hotstock_edge_delta": null,
+      "robustness_ratio_delta": null
     }
   },
   "rollout_recommendation": "hold",

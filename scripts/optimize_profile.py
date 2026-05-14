@@ -514,6 +514,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "sector_win_rate_dispersion",
     # Task 3 (Round 77, Gamma): cross-window skew quality OLS trend slope.
     "skew_trend_slope",
+    # Task 3 (Round 78, Gamma): cross-window adaptive threshold lift OLS trend slope.
+    "threshold_lift_trend_slope",
+    # Task 1 (Round 78, Alpha): hotstock win-rate edge vs non-hotstock.
+    "hotstock_edge",
+    # Task 2 (Round 78, Beta): factor robustness ratio (jackknife sign-consistent fraction).
+    "robustness_ratio",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -916,6 +922,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "sector_win_rate_dispersion": "板块轮动分散度",
     # Task 3 (Round 77, Gamma): 偏斜质量跨窗趋势
     "skew_trend_slope": "偏斜质量跨窗趋势",
+    # Task 3 (Round 78, Gamma): 阈值提升跨窗趋势
+    "threshold_lift_trend_slope": "阈值提升跨窗趋势",
+    # Task 1 (Round 78, Alpha): 热门股胜率优势
+    "hotstock_edge": "热门股胜率优势",
+    # Task 2 (Round 78, Beta): 因子稳健性比率
+    "robustness_ratio": "因子稳健性比率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1392,6 +1404,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "sector_win_rate_dispersion",
     # Task 3 (Round 77, Gamma): cross-window skew trend slope — optional; pre-Round-77 outputs omit it.
     "skew_trend_slope",
+    # Task 3 (Round 78, Gamma): cross-window threshold lift trend slope — optional; pre-Round-78 outputs omit it.
+    "threshold_lift_trend_slope",
+    # Task 1 (Round 78, Alpha): hotstock win-rate edge — optional; pre-Round-78 outputs omit it.
+    "hotstock_edge",
+    # Task 2 (Round 78, Beta): factor robustness ratio — optional; pre-Round-78 outputs omit it.
+    "robustness_ratio",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2976,6 +2994,42 @@ def compute_cross_window_skew_trend(all_windows_summaries: list[dict]) -> dict:
     else:
         grade = "D"
     return {"skew_trend_valid": True, "skew_trend_slope": round(slope, 8), "skew_trend_mean": round(mean_y, 6), "skew_favorable_windows_pct": skew_favorable_windows_pct, "skew_trend_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 78, Task 3 (Gamma): Cross-window adaptive threshold lift trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_threshold_lift_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪自适应阈值提升效果（threshold_lift）趋势。"""
+    _null: dict = {"threshold_lift_trend_valid": False, "threshold_lift_trend_slope": None, "threshold_lift_trend_mean": None, "threshold_lift_positive_windows_pct": None, "threshold_lift_trend_grade": "D"}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("adapt_thr_threshold_lift")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    mean_x = (n - 1) / 2.0
+    mean_y = sum(vals) / n
+    ss_xx = sum((i - mean_x) ** 2 for i in range(n))
+    ss_xy = sum((i - mean_x) * (vals[i] - mean_y) for i in range(n))
+    slope = ss_xy / ss_xx if ss_xx != 0.0 else 0.0
+    threshold_lift_positive_windows_pct = round(sum(1 for v in vals if v > 0) / n, 8)
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"threshold_lift_trend_valid": True, "threshold_lift_trend_slope": round(slope, 8), "threshold_lift_trend_mean": round(mean_y, 6), "threshold_lift_positive_windows_pct": threshold_lift_positive_windows_pct, "threshold_lift_trend_grade": grade}
 
 
 # ---------------------------------------------------------------------------
@@ -4838,6 +4892,8 @@ def _build_replay_evaluator(
         _sharpe_trend: dict[str, Any] = compute_cross_window_sharpe_trend(all_primary_surfaces)
         # Task 3 (Round 77, Gamma): cross-window skew quality gain/loss ratio trend.
         _skew_trend: dict[str, Any] = compute_cross_window_skew_trend(all_primary_surfaces)
+        # Task 3 (Round 78, Gamma): cross-window adaptive threshold lift trend.
+        _tlt: dict[str, Any] = compute_cross_window_threshold_lift_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -4997,6 +5053,12 @@ def _build_replay_evaluator(
         # Task 2 (Round 77, Beta): average sec_rot_sector_win_rate_dispersion across replay windows.
         _sec_rot_disp_vals = [float(s["sec_rot_sector_win_rate_dispersion"]) for s in all_primary_surfaces if s.get("sec_rot_sector_win_rate_dispersion") is not None]
         avg_sector_win_rate_dispersion: "float | None" = round(sum(_sec_rot_disp_vals) / len(_sec_rot_disp_vals), 6) if _sec_rot_disp_vals else None
+        # Task 1 (Round 78, Alpha): average hotstock_hotstock_edge across replay windows.
+        _hotstock_edge_vals = [float(s["hotstock_hotstock_edge"]) for s in all_primary_surfaces if s.get("hotstock_hotstock_edge") is not None]
+        avg_hotstock_edge: "float | None" = round(sum(_hotstock_edge_vals) / len(_hotstock_edge_vals), 6) if _hotstock_edge_vals else None
+        # Task 2 (Round 78, Beta): average robust_robustness_ratio across replay windows.
+        _robustness_ratio_vals = [float(s["robust_robustness_ratio"]) for s in all_primary_surfaces if s.get("robust_robustness_ratio") is not None]
+        avg_robustness_ratio: "float | None" = round(sum(_robustness_ratio_vals) / len(_robustness_ratio_vals), 6) if _robustness_ratio_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe_r75 if avg_sharpe_r75 is not None else avg_sharpe,
@@ -5522,6 +5584,16 @@ def _build_replay_evaluator(
                 "skew_favorable_windows_pct": _skew_trend.get("skew_favorable_windows_pct"),
                 "skew_trend_grade": _skew_trend.get("skew_trend_grade"),
                 "skew_trend_valid": _skew_trend.get("skew_trend_valid"),
+                # Task 3 (Round 78, Gamma): cross-window adaptive threshold lift trend.
+                "threshold_lift_trend_slope": _tlt.get("threshold_lift_trend_slope"),
+                "threshold_lift_trend_mean": _tlt.get("threshold_lift_trend_mean"),
+                "threshold_lift_positive_windows_pct": _tlt.get("threshold_lift_positive_windows_pct"),
+                "threshold_lift_trend_grade": _tlt.get("threshold_lift_trend_grade"),
+                "threshold_lift_trend_valid": _tlt.get("threshold_lift_trend_valid"),
+                # Task 1 (Round 78, Alpha): hotstock win-rate edge averaged across windows.
+                "hotstock_edge": avg_hotstock_edge,
+                # Task 2 (Round 78, Beta): factor robustness ratio averaged across windows.
+                "robustness_ratio": avg_robustness_ratio,
         }
 
     return evaluator

@@ -638,6 +638,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 77, Gamma): skew quality cross-window trend slope floor.
     # skew_trend_slope < -0.02 means gain/loss ratio declining meaningfully across windows.
     "skew_trend_slope": -0.02,
+    # Task 1 (Round 78, Alpha): hotstock win-rate edge floor.
+    # hotstock_edge < 0.0 means high-score stocks do not outperform in win rate.
+    "hotstock_edge": 0.0,
+    # Task 2 (Round 78, Beta): factor robustness ratio floor.
+    # robustness_ratio < 0.4 means fewer than 3 of 7 factors are sign-consistent across splits.
+    "robustness_ratio": 0.4,
+    # Task 3 (Round 78, Gamma): threshold lift cross-window trend slope floor.
+    # threshold_lift_trend_slope < -0.01 means threshold lift is deteriorating across windows.
+    "threshold_lift_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

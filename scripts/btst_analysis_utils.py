@@ -4641,6 +4641,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _srs.items():
         _surface_result[f"sec_rot_{_k}"] = _v
 
+    # Round 78, Task 1 (Alpha): Hotstock concentration analysis.
+    _hca: dict = compute_hotstock_concentration_analysis(rows)
+    for _k, _v in _hca.items():
+        _surface_result[f"hotstock_{_k}"] = _v
+
+    # Round 78, Task 2 (Beta): Factor robustness check.
+    _frc: dict = compute_factor_robustness_check(rows)
+    for _k, _v in _frc.items():
+        _surface_result[f"robust_{_k}"] = _v
+
     return _surface_result
 
 
@@ -13839,3 +13849,202 @@ def compute_sector_rotation_signal(rows: list[dict]) -> dict:
     board_count = len(sector_win_rates)
     rotation_score = round(board_count * sector_win_rate_dispersion, 8)
     return {"sector_rotation_valid": True, "sector_win_rates": sector_win_rates, "best_sector": best_sector, "best_sector_win_rate": best_sector_win_rate, "worst_sector_win_rate": worst_sector_win_rate, "sector_win_rate_dispersion": sector_win_rate_dispersion, "top_inflow_sector": top_inflow_sector, "rotation_score": rotation_score}
+
+
+# ---------------------------------------------------------------------------
+# Round 78, Task 1 (Alpha): Hotstock concentration analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_hotstock_concentration_analysis(rows: list[dict]) -> dict:
+    """分析候选池中高分股票（热门股）集中度对整体绩效的贡献。
+
+    热门股定义：score >= P75（前25%得分）。评估热门股的胜率优势与收益溢价。
+    """
+    _null: dict = {"hotstock_concentration_valid": False, "hotstock_count": None, "hotstock_pct": None, "hotstock_win_rate": None, "non_hotstock_win_rate": None, "hotstock_edge": None, "hotstock_mean_return": None, "overall_mean_return": None, "hotstock_return_premium": None, "hotstock_grade": "D"}
+    if len(rows) < 10:
+        return _null
+    scores: list[float] = []
+    for r in rows:
+        sv = r.get("runner_composite_score") if r.get("runner_composite_score") is not None else (r.get("composite_score") if r.get("composite_score") is not None else r.get("score"))
+        if sv is not None:
+            try:
+                scores.append(float(sv))
+            except (TypeError, ValueError):
+                pass
+    if not scores or all(s is None for s in scores):
+        return _null
+    sorted_scores = sorted(scores)
+    p75_threshold: float = sorted_scores[int(len(sorted_scores) * 0.75)]
+    score_map: list["float | None"] = []
+    for r in rows:
+        sv = r.get("runner_composite_score") if r.get("runner_composite_score") is not None else (r.get("composite_score") if r.get("composite_score") is not None else r.get("score"))
+        if sv is not None:
+            try:
+                score_map.append(float(sv))
+            except (TypeError, ValueError):
+                score_map.append(None)
+        else:
+            score_map.append(None)
+    n = len(rows)
+    hotstock_returns: list[float] = []
+    non_hotstock_returns: list[float] = []
+    all_returns: list[float] = []
+    hotstock_wins: int = 0
+    hotstock_count_with_return: int = 0
+    non_hotstock_wins: int = 0
+    non_hotstock_count_with_return: int = 0
+    hotstock_total: int = 0
+    for i, r in enumerate(rows):
+        sc = score_map[i]
+        is_hot = sc is not None and sc >= p75_threshold
+        if is_hot:
+            hotstock_total += 1
+        ret = r.get("next_day_return")
+        if ret is not None:
+            try:
+                ret_f = float(ret)
+            except (TypeError, ValueError):
+                continue
+            all_returns.append(ret_f)
+            if is_hot:
+                hotstock_returns.append(ret_f)
+                hotstock_count_with_return += 1
+                if ret_f > 0:
+                    hotstock_wins += 1
+            else:
+                non_hotstock_returns.append(ret_f)
+                non_hotstock_count_with_return += 1
+                if ret_f > 0:
+                    non_hotstock_wins += 1
+    hotstock_count: int = hotstock_total
+    hotstock_pct: float = round(hotstock_count / n, 8)
+    hotstock_win_rate: "float | None" = round(hotstock_wins / hotstock_count_with_return, 8) if hotstock_count_with_return >= 2 else None
+    non_hotstock_win_rate: "float | None" = round(non_hotstock_wins / non_hotstock_count_with_return, 8) if non_hotstock_count_with_return >= 2 else None
+    hotstock_edge: "float | None" = round(hotstock_win_rate - non_hotstock_win_rate, 8) if (hotstock_win_rate is not None and non_hotstock_win_rate is not None) else None
+    hotstock_mean_return: "float | None" = round(sum(hotstock_returns) / len(hotstock_returns), 8) if len(hotstock_returns) >= 2 else None
+    overall_mean_return: "float | None" = round(sum(all_returns) / len(all_returns), 8) if all_returns else None
+    hotstock_return_premium: "float | None" = round(hotstock_mean_return - overall_mean_return, 8) if (hotstock_mean_return is not None and overall_mean_return is not None) else None
+    if hotstock_edge is not None and hotstock_edge > 0.1 and hotstock_return_premium is not None and hotstock_return_premium > 0:
+        grade = "A"
+    elif hotstock_edge is not None and hotstock_edge > 0.05:
+        grade = "B"
+    elif hotstock_edge is not None and hotstock_edge > 0:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"hotstock_concentration_valid": True, "hotstock_count": hotstock_count, "hotstock_pct": hotstock_pct, "hotstock_win_rate": hotstock_win_rate, "non_hotstock_win_rate": non_hotstock_win_rate, "hotstock_edge": hotstock_edge, "hotstock_mean_return": hotstock_mean_return, "overall_mean_return": overall_mean_return, "hotstock_return_premium": hotstock_return_premium, "hotstock_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 78, Task 2 (Beta): Factor robustness check (jackknife / split-half)
+# ---------------------------------------------------------------------------
+
+
+def compute_factor_robustness_check(rows: list[dict]) -> dict:
+    """通过删一法（前后半段分割）检验7个核心因子排名稳健性。
+
+    对每个因子分别在前半段和后半段计算 Spearman IC，判断符号是否一致。
+    """
+    _FACTORS_R78 = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    _null: dict = {"factor_robustness_valid": False, "consistent_factor_count": None, "robustness_ratio": None, "most_robust_factor": None, "robustness_grade": "D"}
+    for f in _FACTORS_R78:
+        _null[f"ic_full_{f}"] = None
+        _null[f"ic_first_{f}"] = None
+        _null[f"ic_second_{f}"] = None
+        _null[f"ic_sign_consistent_{f}"] = None
+    if len(rows) < 12:
+        return _null
+
+    def _spearman_ic_manual(data_pairs: list[tuple[float, float]]) -> "float | None":
+        if len(data_pairs) < 4:
+            return None
+        xs = [p[0] for p in data_pairs]
+        ys = [p[1] for p in data_pairs]
+        n = len(xs)
+        sorted_x = sorted(range(n), key=lambda i: xs[i])
+        rx: list[float] = [0.0] * n
+        i2 = 0
+        while i2 < n:
+            j2 = i2
+            while j2 < n - 1 and xs[sorted_x[j2 + 1]] == xs[sorted_x[j2]]:
+                j2 += 1
+            avg_rank = (i2 + j2) / 2.0 + 1.0
+            for k2 in range(i2, j2 + 1):
+                rx[sorted_x[k2]] = avg_rank
+            i2 = j2 + 1
+        sorted_y = sorted(range(n), key=lambda i: ys[i])
+        ry: list[float] = [0.0] * n
+        i3 = 0
+        while i3 < n:
+            j3 = i3
+            while j3 < n - 1 and ys[sorted_y[j3 + 1]] == ys[sorted_y[j3]]:
+                j3 += 1
+            avg_rank = (i3 + j3) / 2.0 + 1.0
+            for k3 in range(i3, j3 + 1):
+                ry[sorted_y[k3]] = avg_rank
+            i3 = j3 + 1
+        mean_rx = sum(rx) / n
+        mean_ry = sum(ry) / n
+        num = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(n))
+        dx = sum((v - mean_rx) ** 2 for v in rx) ** 0.5
+        dy = sum((v - mean_ry) ** 2 for v in ry) ** 0.5
+        if dx == 0.0 or dy == 0.0:
+            return None
+        return round(num / (dx * dy), 6)
+
+    n_rows = len(rows)
+    half = n_rows // 2
+    first_rows = rows[:half]
+    second_rows = rows[half:]
+    ic_full: dict[str, "float | None"] = {}
+    ic_first: dict[str, "float | None"] = {}
+    ic_second: dict[str, "float | None"] = {}
+    ic_sign_consistent: dict[str, "bool | None"] = {}
+    for factor in _FACTORS_R78:
+        def _collect_pairs(rlist):
+            pairs = []
+            for r in rlist:
+                fv = r.get(factor)
+                rv = r.get("next_day_return")
+                if fv is not None and rv is not None:
+                    try:
+                        pairs.append((float(fv), float(rv)))
+                    except (TypeError, ValueError):
+                        pass
+            return pairs
+        full_pairs = _collect_pairs(rows)
+        first_pairs = _collect_pairs(first_rows)
+        second_pairs = _collect_pairs(second_rows)
+        ic_full[factor] = _spearman_ic_manual(full_pairs)
+        ic_first[factor] = _spearman_ic_manual(first_pairs)
+        ic_second[factor] = _spearman_ic_manual(second_pairs)
+        if ic_first[factor] is None or ic_second[factor] is None:
+            ic_sign_consistent[factor] = None
+        else:
+            ic_sign_consistent[factor] = (ic_first[factor] > 0 and ic_second[factor] > 0) or (ic_first[factor] < 0 and ic_second[factor] < 0)
+    consistent_factor_count: int = sum(1 for v in ic_sign_consistent.values() if v is True)
+    robustness_ratio: float = round(consistent_factor_count / 7, 6)
+    most_robust_factor: "str | None" = None
+    best_abs_ic: float = -1.0
+    for f in _FACTORS_R78:
+        if ic_sign_consistent.get(f) is True and ic_full.get(f) is not None:
+            abs_ic = abs(ic_full[f])
+            if abs_ic > best_abs_ic:
+                best_abs_ic = abs_ic
+                most_robust_factor = f
+    if robustness_ratio >= 5 / 7:
+        grade = "A"
+    elif robustness_ratio >= 4 / 7:
+        grade = "B"
+    elif robustness_ratio >= 3 / 7:
+        grade = "C"
+    else:
+        grade = "D"
+    result: dict = {"factor_robustness_valid": True, "consistent_factor_count": consistent_factor_count, "robustness_ratio": robustness_ratio, "most_robust_factor": most_robust_factor, "robustness_grade": grade}
+    for f in _FACTORS_R78:
+        result[f"ic_full_{f}"] = ic_full.get(f)
+        result[f"ic_first_{f}"] = ic_first.get(f)
+        result[f"ic_second_{f}"] = ic_second.get(f)
+        result[f"ic_sign_consistent_{f}"] = ic_sign_consistent.get(f)
+    return result

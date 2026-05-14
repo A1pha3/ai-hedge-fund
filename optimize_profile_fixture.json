@@ -240,7 +240,16 @@
       "breadth_trend_slope_delta": null,
       "sharpe_ratio_delta": null,
       "max_collinearity_delta": null,
-      "stratification_trend_slope_delta": null
+      "stratification_trend_slope_delta": null,
+      "gain_loss_ratio_delta": null,
+      "tail_asymmetry_score_delta": null,
+      "orthogonality_score_delta": null,
+      "threshold_lift_delta": null,
+      "sector_win_rate_dispersion_delta": null,
+      "skew_trend_slope_delta": null,
+      "threshold_lift_trend_slope_delta": null,
+      "hotstock_edge_delta": null,
+      "robustness_ratio_delta": null
     },
     "default": {
       "candidate": {
@@ -471,7 +480,16 @@
       "breadth_trend_slope_delta": null,
       "sharpe_ratio_delta": null,
       "max_collinearity_delta": null,
-      "stratification_trend_slope_delta": null
+      "stratification_trend_slope_delta": null,
+      "gain_loss_ratio_delta": null,
+      "tail_asymmetry_score_delta": null,
+      "orthogonality_score_delta": null,
+      "threshold_lift_delta": null,
+      "sector_win_rate_dispersion_delta": null,
+      "skew_trend_slope_delta": null,
+      "threshold_lift_trend_slope_delta": null,
+      "hotstock_edge_delta": null,
+      "robustness_ratio_delta": null
     }
   },
   "rollout_recommendation": "hold",
