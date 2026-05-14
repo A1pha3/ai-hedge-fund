@@ -267,6 +267,18 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # the strategy is not consistently tradeable across market regimes.
     # Floor ≥ 0.40 requires at least 40 % of windows to satisfy ≥ 3 quality conditions.
     "consensus_windows_pct": 0.40,
+    # Task 1 (Round 43, Alpha): profit factor floor.
+    # profit_factor = gross_profit / gross_loss (total wins / total losses in aggregate).
+    # A value < 1.0 means the strategy loses more in aggregate than it earns —
+    # total losses exceed total profits across all trades in the window.
+    # Floor ≥ 1.0 requires total profits to at least match total losses before rollout.
+    "profit_factor": 1.0,
+    # Task 3 (Round 43, Gamma): score momentum trend normalized slope floor.
+    # score_trend_normalized = OLS slope of candidate_pool_avg_composite_score / mean(score).
+    # A value < −0.10 means the average pool quality score is declining at more than 10 %
+    # of its mean value per window — the optimizer is degrading candidate quality.
+    # Floor ≥ −0.10 requires the score trend not to collapse severely across replay windows.
+    "score_trend_normalized": -0.10,
 }
 
 # ---------------------------------------------------------------------------

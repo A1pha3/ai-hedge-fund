@@ -9826,3 +9826,366 @@ def test_r42_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
 
     assert "共识" in COMPARISON_METRIC_LABELS.get("consensus_windows_pct", "")
+
+
+# ===========================================================================
+# Round 43 — T1 (Alpha): Profit Factor Analysis helpers
+# ===========================================================================
+
+def _make_r43_pf_rows(n: int, *, seed: int = 0, win_rate: float = 0.6, avg_win: float = 0.03, avg_loss: float = -0.02) -> list[dict]:
+    import random as _r
+    rng = _r.Random(seed)
+    rows = []
+    for _ in range(n):
+        if rng.random() < win_rate:
+            rows.append({"next_close_return": abs(avg_win) * rng.uniform(0.5, 1.5)})
+        else:
+            rows.append({"next_close_return": -abs(avg_loss) * rng.uniform(0.5, 1.5)})
+    return rows
+
+
+# ===========================================================================
+# Round 43 — T2 (Beta): News Sentiment Stratification helpers
+# ===========================================================================
+
+def _make_r43_sentiment_rows(n: int, *, seed: int = 0, sentiment_lift: float = 0.10) -> list[dict]:
+    import random as _r
+    rng = _r.Random(seed)
+    rows = []
+    for i in range(n):
+        score = rng.uniform(0.0, 1.0)
+        base_wr = 0.50 + sentiment_lift * score
+        ret = rng.uniform(0.01, 0.05) if rng.random() < base_wr else rng.uniform(-0.05, -0.01)
+        rows.append({"news_sentiment_score": score, "next_close_return": ret})
+    return rows
+
+
+# ===========================================================================
+# Round 43 — T3 (Gamma): Score Momentum Trend helpers
+# ===========================================================================
+
+def _make_r43_trend_windows(n: int, *, seed: int = 0, slope: float = 0.01) -> list[dict]:
+    import random as _r
+    rng = _r.Random(seed)
+    base = 0.55
+    return [{"candidate_pool_avg_composite_score": base + slope * i + rng.uniform(-0.005, 0.005)} for i in range(n)]
+
+
+# ---------------------------------------------------------------------------
+# T1 tests
+# ---------------------------------------------------------------------------
+
+def test_r43_t1_basic_returns_result() -> None:
+    """compute_profit_factor_analysis returns dict with expected keys."""
+    from scripts.btst_analysis_utils import compute_profit_factor_analysis
+
+    rows = _make_r43_pf_rows(30, seed=0)
+    result = compute_profit_factor_analysis(rows)
+    assert "profit_factor" in result
+    assert "profit_factor_grade" in result
+    assert "profitable" in result
+    assert "profit_factor_valid" in result
+
+
+def test_r43_t1_empty_returns_invalid() -> None:
+    """Empty input returns profit_factor_valid=False."""
+    from scripts.btst_analysis_utils import compute_profit_factor_analysis
+
+    result = compute_profit_factor_analysis([])
+    assert result["profit_factor_valid"] is False
+    assert result["profit_factor"] is None
+
+
+def test_r43_t1_insufficient_rows_returns_invalid() -> None:
+    """Fewer than 10 valid rows returns invalid."""
+    from scripts.btst_analysis_utils import compute_profit_factor_analysis
+
+    rows = _make_r43_pf_rows(5, seed=0)
+    result = compute_profit_factor_analysis(rows)
+    assert result["profit_factor_valid"] is False
+
+
+def test_r43_t1_profitable_strategy_pf_above_one() -> None:
+    """Strategy with win_rate=0.7 and avg_win>avg_loss should have profit_factor>=1.0."""
+    from scripts.btst_analysis_utils import compute_profit_factor_analysis
+
+    rows = _make_r43_pf_rows(60, seed=1, win_rate=0.70, avg_win=0.04, avg_loss=0.02)
+    result = compute_profit_factor_analysis(rows)
+    assert result["profit_factor_valid"] is True
+    assert result["profit_factor"] is not None
+    assert result["profit_factor"] >= 1.0
+    assert result["profitable"] is True
+
+
+def test_r43_t1_losing_strategy_pf_below_one() -> None:
+    """Strategy with low win_rate and avg_win<avg_loss should have profit_factor<1.0."""
+    from scripts.btst_analysis_utils import compute_profit_factor_analysis
+
+    rows = _make_r43_pf_rows(50, seed=2, win_rate=0.30, avg_win=0.01, avg_loss=0.05)
+    result = compute_profit_factor_analysis(rows)
+    assert result["profit_factor_valid"] is True
+    assert result["profit_factor"] < 1.0
+    assert result["profitable"] is False
+    assert result["profit_factor_grade"] == "D"
+
+
+def test_r43_t1_pf_clamped_at_10() -> None:
+    """Profit factor is clamped to [0, 10] even with extreme wins."""
+    from scripts.btst_analysis_utils import compute_profit_factor_analysis
+
+    rows = [{"next_close_return": 100.0} for _ in range(15)]
+    rows += [{"next_close_return": -0.0001} for _ in range(3)]
+    result = compute_profit_factor_analysis(rows)
+    assert result["profit_factor"] <= 10.0
+
+
+def test_r43_t1_none_returns_skipped() -> None:
+    """Rows with None next_close_return are excluded gracefully."""
+    from scripts.btst_analysis_utils import compute_profit_factor_analysis
+
+    rows = [{"next_close_return": None} for _ in range(5)]
+    rows += _make_r43_pf_rows(20, seed=3)
+    result = compute_profit_factor_analysis(rows)
+    assert result["profit_factor_valid"] is True
+
+
+def test_r43_t1_grade_a_for_high_pf() -> None:
+    """Grade A is assigned when profit_factor >= 2.0."""
+    from scripts.btst_analysis_utils import compute_profit_factor_analysis
+
+    rows = _make_r43_pf_rows(50, seed=4, win_rate=0.80, avg_win=0.05, avg_loss=0.01)
+    result = compute_profit_factor_analysis(rows)
+    if result["profit_factor"] is not None and result["profit_factor"] >= 2.0:
+        assert result["profit_factor_grade"] == "A"
+
+
+def test_r43_t1_floor_registered() -> None:
+    """profit_factor floor is 1.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "profit_factor" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["profit_factor"] == 1.0
+
+
+def test_r43_t1_metric_registered() -> None:
+    """profit_factor is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "profit_factor" in COMPARISON_METRICS
+    assert "profit_factor" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r43_t1_label_registered() -> None:
+    """profit_factor label contains 'PF'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "PF" in COMPARISON_METRIC_LABELS.get("profit_factor", "")
+
+
+# ---------------------------------------------------------------------------
+# T2 tests
+# ---------------------------------------------------------------------------
+
+def test_r43_t2_basic_returns_result() -> None:
+    """compute_news_sentiment_stratification returns dict with expected keys."""
+    from scripts.btst_analysis_utils import compute_news_sentiment_stratification
+
+    rows = _make_r43_sentiment_rows(40, seed=0)
+    result = compute_news_sentiment_stratification(rows)
+    assert "sentiment_analysis_valid" in result
+    assert "high_vs_low_sentiment_lift" in result
+    assert "optimal_sentiment_bucket" in result
+
+
+def test_r43_t2_empty_returns_invalid() -> None:
+    """Empty input returns sentiment_analysis_valid=False."""
+    from scripts.btst_analysis_utils import compute_news_sentiment_stratification
+
+    result = compute_news_sentiment_stratification([])
+    assert result["sentiment_analysis_valid"] is False
+    assert result["high_vs_low_sentiment_lift"] is None
+
+
+def test_r43_t2_all_none_sentiment_returns_invalid() -> None:
+    """All-None news_sentiment_score returns invalid."""
+    from scripts.btst_analysis_utils import compute_news_sentiment_stratification
+
+    rows = [{"news_sentiment_score": None, "next_close_return": 0.01} for _ in range(20)]
+    result = compute_news_sentiment_stratification(rows)
+    assert result["sentiment_analysis_valid"] is False
+
+
+def test_r43_t2_insufficient_rows_returns_invalid() -> None:
+    """Fewer than 10 paired rows returns invalid."""
+    from scripts.btst_analysis_utils import compute_news_sentiment_stratification
+
+    rows = _make_r43_sentiment_rows(5, seed=0)
+    result = compute_news_sentiment_stratification(rows)
+    assert result["sentiment_analysis_valid"] is False
+
+
+def test_r43_t2_positive_lift_for_sentiment_correlated_rows() -> None:
+    """High sentiment lift (0.20) should produce positive high_vs_low_sentiment_lift."""
+    from scripts.btst_analysis_utils import compute_news_sentiment_stratification
+
+    rows = _make_r43_sentiment_rows(80, seed=5, sentiment_lift=0.20)
+    result = compute_news_sentiment_stratification(rows)
+    if result["sentiment_analysis_valid"] and result["high_vs_low_sentiment_lift"] is not None:
+        assert result["high_vs_low_sentiment_lift"] > 0
+
+
+def test_r43_t2_sentiment_effective_when_lift_above_5pct() -> None:
+    """sentiment_effective is True when lift > 0.05."""
+    from scripts.btst_analysis_utils import compute_news_sentiment_stratification
+
+    rows = _make_r43_sentiment_rows(80, seed=6, sentiment_lift=0.30)
+    result = compute_news_sentiment_stratification(rows)
+    if result["sentiment_analysis_valid"] and result["high_vs_low_sentiment_lift"] is not None:
+        if result["high_vs_low_sentiment_lift"] > 0.05:
+            assert result["sentiment_effective"] is True
+
+
+def test_r43_t2_optimal_bucket_is_valid_string() -> None:
+    """optimal_sentiment_bucket is one of 'low'/'mid'/'high' when valid."""
+    from scripts.btst_analysis_utils import compute_news_sentiment_stratification
+
+    rows = _make_r43_sentiment_rows(40, seed=7)
+    result = compute_news_sentiment_stratification(rows)
+    if result["sentiment_analysis_valid"] and result["optimal_sentiment_bucket"] is not None:
+        assert result["optimal_sentiment_bucket"] in ("low", "mid", "high")
+
+
+def test_r43_t2_win_rates_in_unit_interval() -> None:
+    """All per-tercile win rates are in [0, 1] when not None."""
+    from scripts.btst_analysis_utils import compute_news_sentiment_stratification
+
+    rows = _make_r43_sentiment_rows(60, seed=8)
+    result = compute_news_sentiment_stratification(rows)
+    for key in ("sentiment_low_win_rate", "sentiment_mid_win_rate", "sentiment_high_win_rate"):
+        val = result.get(key)
+        if val is not None:
+            assert 0.0 <= val <= 1.0
+
+
+def test_r43_t2_metric_registered() -> None:
+    """high_vs_low_sentiment_lift is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "high_vs_low_sentiment_lift" in COMPARISON_METRICS
+    assert "high_vs_low_sentiment_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r43_t2_label_registered() -> None:
+    """high_vs_low_sentiment_lift label contains '情绪'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "情绪" in COMPARISON_METRIC_LABELS.get("high_vs_low_sentiment_lift", "")
+
+
+# ---------------------------------------------------------------------------
+# T3 tests
+# ---------------------------------------------------------------------------
+
+def test_r43_t3_basic_returns_result() -> None:
+    """compute_score_momentum_trend returns dict with expected keys."""
+    from scripts.optimize_profile import compute_score_momentum_trend
+
+    windows = _make_r43_trend_windows(5, seed=0)
+    result = compute_score_momentum_trend(windows)
+    assert "score_trend_slope" in result
+    assert "score_trend_normalized" in result
+    assert "score_momentum_positive" in result
+    assert "score_trend_acceleration" in result
+    assert "score_trend_grade" in result
+
+
+def test_r43_t3_empty_returns_null() -> None:
+    """Empty input returns all-None."""
+    from scripts.optimize_profile import compute_score_momentum_trend
+
+    result = compute_score_momentum_trend([])
+    assert result["score_trend_slope"] is None
+    assert result["score_momentum_positive"] is None
+
+
+def test_r43_t3_fewer_than_3_windows_returns_null() -> None:
+    """Fewer than 3 windows returns all-None."""
+    from scripts.optimize_profile import compute_score_momentum_trend
+
+    result = compute_score_momentum_trend(_make_r43_trend_windows(2))
+    assert result["score_trend_slope"] is None
+
+
+def test_r43_t3_positive_slope_for_rising_scores() -> None:
+    """Rising score series should produce positive slope and momentum."""
+    from scripts.optimize_profile import compute_score_momentum_trend
+
+    windows = [{"candidate_pool_avg_composite_score": 0.50 + 0.02 * i} for i in range(6)]
+    result = compute_score_momentum_trend(windows)
+    assert result["score_trend_slope"] is not None
+    assert result["score_trend_slope"] > 0
+    assert result["score_momentum_positive"] is True
+
+
+def test_r43_t3_negative_slope_for_declining_scores() -> None:
+    """Declining score series should produce negative slope."""
+    from scripts.optimize_profile import compute_score_momentum_trend
+
+    windows = [{"candidate_pool_avg_composite_score": 0.60 - 0.02 * i} for i in range(6)]
+    result = compute_score_momentum_trend(windows)
+    assert result["score_trend_slope"] < 0
+    assert result["score_momentum_positive"] is False
+
+
+def test_r43_t3_acceleration_is_last_minus_first() -> None:
+    """score_trend_acceleration = last score - first score."""
+    from scripts.optimize_profile import compute_score_momentum_trend
+
+    scores = [0.50, 0.52, 0.54, 0.56, 0.58]
+    windows = [{"candidate_pool_avg_composite_score": s} for s in scores]
+    result = compute_score_momentum_trend(windows)
+    assert result["score_trend_acceleration"] is not None
+    assert abs(result["score_trend_acceleration"] - (scores[-1] - scores[0])) < 1e-6
+
+
+def test_r43_t3_missing_score_key_skipped() -> None:
+    """Windows without candidate_pool_avg_composite_score are skipped gracefully."""
+    from scripts.optimize_profile import compute_score_momentum_trend
+
+    windows = [{"candidate_pool_avg_composite_score": 0.55 + 0.01 * i} for i in range(4)]
+    windows.insert(2, {"other_key": 0.99})
+    result = compute_score_momentum_trend(windows)
+    assert "score_trend_slope" in result
+
+
+def test_r43_t3_grade_a_for_strong_uptrend() -> None:
+    """Grade A for normalized slope > 0.05."""
+    from scripts.optimize_profile import compute_score_momentum_trend
+
+    windows = [{"candidate_pool_avg_composite_score": 0.10 + 0.10 * i} for i in range(5)]
+    result = compute_score_momentum_trend(windows)
+    if result["score_trend_normalized"] is not None and result["score_trend_normalized"] > 0.05:
+        assert result["score_trend_grade"] == "A"
+
+
+def test_r43_t3_floor_registered() -> None:
+    """score_trend_normalized floor is -0.10 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "score_trend_normalized" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["score_trend_normalized"] == -0.10
+
+
+def test_r43_t3_metric_registered() -> None:
+    """score_trend_normalized is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "score_trend_normalized" in COMPARISON_METRICS
+    assert "score_trend_normalized" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r43_t3_label_registered() -> None:
+    """score_trend_normalized label contains '动量'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "动量" in COMPARISON_METRIC_LABELS.get("score_trend_normalized", "")

@@ -302,6 +302,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "cs_top_quartile_premium",
     # Task 3 (Round 42, Gamma): cross-window consensus pass rate.
     "consensus_windows_pct",
+    # Task 1 (Round 43, Alpha): profit factor — gross profit / gross loss.
+    "profit_factor",
+    # Task 2 (Round 43, Beta): high-vs-low news sentiment win-rate lift.
+    "high_vs_low_sentiment_lift",
+    # Task 3 (Round 43, Gamma): score momentum trend — normalized OLS slope.
+    "score_trend_normalized",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -492,6 +498,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "cs_top_quartile_premium": "收盘强度顶档溢价",
     # Task 3 (Round 42, Gamma): cross-window consensus pass rate
     "consensus_windows_pct": "跨窗共识通过率",
+    # Task 1 (Round 43, Alpha): profit factor
+    "profit_factor": "盈利因子PF",
+    # Task 2 (Round 43, Beta): high-vs-low sentiment lift
+    "high_vs_low_sentiment_lift": "高低情绪胜率差",
+    # Task 3 (Round 43, Gamma): score momentum trend
+    "score_trend_normalized": "评分动量趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -728,6 +740,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "cs_top_quartile_premium",
     # Task 3 (Round 42, Gamma): cross-window consensus pass rate — optional; pre-Round-42 outputs omit it.
     "consensus_windows_pct",
+    # Task 1 (Round 43, Alpha): profit factor — optional; pre-Round-43 outputs omit it.
+    "profit_factor",
+    # Task 2 (Round 43, Beta): high-vs-low sentiment lift — optional; field may be absent when news_sentiment_score is absent.
+    "high_vs_low_sentiment_lift",
+    # Task 3 (Round 43, Gamma): score momentum trend — optional; pre-Round-43 outputs omit it.
+    "score_trend_normalized",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1609,6 +1627,82 @@ def compute_window_consensus_score(all_windows_summaries: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 43, Task 3 (Gamma): Score Momentum Trend — 评分动量跨窗趋势
+# ---------------------------------------------------------------------------
+# Tracks whether candidate_pool_avg_composite_score is trending upward across
+# replay windows.  An upward trend indicates the optimizer converges toward
+# profiles that surface higher-quality candidates over time.
+
+
+def compute_score_momentum_trend(all_windows_summaries: list[dict]) -> dict:
+    """Compute OLS slope of candidate pool avg composite score across replay windows.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts ordered by
+            window index (oldest → newest).
+
+    Returns:
+        Dict with keys:
+
+        - ``score_trend_slope`` (float | None): Raw OLS slope of score vs window index.
+        - ``score_trend_normalized`` (float | None): Slope / max(|mean(scores)|, 1e-8).
+        - ``score_momentum_positive`` (bool | None): True when score_trend_slope > 0.
+        - ``score_trend_acceleration`` (float | None): Last score − first score.
+        - ``score_trend_grade`` (str | None): 'A'(norm>0.05)/'B'(norm>0)/'C'(norm>-0.05)/'D'.
+    """
+    _null: dict = {
+        "score_trend_slope": None,
+        "score_trend_normalized": None,
+        "score_momentum_positive": None,
+        "score_trend_acceleration": None,
+        "score_trend_grade": None,
+    }
+    if len(all_windows_summaries) < 3:
+        return _null
+
+    score_series: list[float] = []
+    for surf in all_windows_summaries:
+        val = surf.get("candidate_pool_avg_composite_score")
+        if val is None:
+            continue
+        try:
+            score_series.append(float(val))
+        except (TypeError, ValueError):
+            continue
+
+    if len(score_series) < 3:
+        return _null
+
+    n = len(score_series)
+    x = list(range(n))
+    mean_x = sum(x) / n
+    mean_y = sum(score_series) / n
+    cov_xy = sum((x[i] - mean_x) * (score_series[i] - mean_y) for i in range(n)) / max(n, 1)
+    var_x = sum((xi - mean_x) ** 2 for xi in x) / max(n, 1)
+    slope = cov_xy / max(var_x, 1e-8)
+
+    norm = slope / max(abs(mean_y), 1e-8)
+    accel = score_series[-1] - score_series[0]
+
+    if norm > 0.05:
+        grade = "A"
+    elif norm > 0.0:
+        grade = "B"
+    elif norm > -0.05:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {
+        "score_trend_slope": round(slope, 8),
+        "score_trend_normalized": round(norm, 6),
+        "score_momentum_positive": slope > 0,
+        "score_trend_acceleration": round(accel, 6),
+        "score_trend_grade": grade,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -2224,6 +2318,14 @@ def _build_replay_evaluator(
         avg_cs_top_quartile_premium: float | None = round(sum(_csp_vals) / len(_csp_vals), 6) if _csp_vals else None
         # Task 3 (Round 42, Gamma): cross-window consensus score — computed over all window summaries.
         _wconsensus: dict[str, Any] = compute_window_consensus_score(all_primary_surfaces)
+        # Task 1 (Round 43, Alpha): average profit_factor across replay windows.
+        _pf_vals = [float(s["profit_factor"]) for s in all_primary_surfaces if s.get("profit_factor") is not None]
+        avg_profit_factor: float | None = round(sum(_pf_vals) / len(_pf_vals), 6) if _pf_vals else None
+        # Task 2 (Round 43, Beta): average high_vs_low_sentiment_lift across replay windows.
+        _hsl_vals = [float(s["high_vs_low_sentiment_lift"]) for s in all_primary_surfaces if s.get("high_vs_low_sentiment_lift") is not None]
+        avg_high_vs_low_sentiment_lift: float | None = round(sum(_hsl_vals) / len(_hsl_vals), 6) if _hsl_vals else None
+        # Task 3 (Round 43, Gamma): score momentum trend — OLS slope of avg composite score.
+        _smt: dict[str, Any] = compute_score_momentum_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -2423,6 +2525,16 @@ def _build_replay_evaluator(
             "strategy_consistently_valid": _wconsensus.get("strategy_consistently_valid"),
             "consensus_grade": _wconsensus.get("consensus_grade"),
             "best_consensus_window_idx": _wconsensus.get("best_consensus_window_idx"),
+            # Task 1 (Round 43, Alpha): average profit factor across replay windows.
+            "profit_factor": avg_profit_factor,
+            # Task 2 (Round 43, Beta): average high-vs-low sentiment lift across replay windows.
+            "high_vs_low_sentiment_lift": avg_high_vs_low_sentiment_lift,
+            # Task 3 (Round 43, Gamma): score momentum trend across replay windows.
+            "score_trend_normalized": _smt.get("score_trend_normalized"),
+            "score_trend_slope": _smt.get("score_trend_slope"),
+            "score_momentum_positive": _smt.get("score_momentum_positive"),
+            "score_trend_acceleration": _smt.get("score_trend_acceleration"),
+            "score_trend_grade": _smt.get("score_trend_grade"),
         }
 
     return evaluator

@@ -4129,6 +4129,34 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["cs_return_spread"] = _css.get("cs_return_spread")
     _surface_result["cs_effective"] = _css.get("cs_effective")
 
+    # -----------------------------------------------------------------------
+    # Round 43, Task 1 (Alpha): Profit Factor Analysis — 盈利因子PF.
+    # -----------------------------------------------------------------------
+    _pfa: dict[str, Any] = compute_profit_factor_analysis(next_day_rows)
+    _surface_result["profit_factor"] = _pfa.get("profit_factor")
+    _surface_result["gross_profit"] = _pfa.get("gross_profit")
+    _surface_result["gross_loss"] = _pfa.get("gross_loss")
+    _surface_result["avg_win"] = _pfa.get("avg_win")
+    _surface_result["avg_loss"] = _pfa.get("avg_loss")
+    _surface_result["win_loss_ratio"] = _pfa.get("win_loss_ratio")
+    _surface_result["profit_factor_grade"] = _pfa.get("profit_factor_grade")
+    _surface_result["profitable"] = _pfa.get("profitable")
+    _surface_result["profit_factor_vs_kelly_consistent"] = _pfa.get("profit_factor_vs_kelly_consistent")
+    _surface_result["profit_factor_valid"] = _pfa.get("profit_factor_valid")
+
+    # -----------------------------------------------------------------------
+    # Round 43, Task 2 (Beta): News Sentiment Stratification — 情绪评分分层.
+    # -----------------------------------------------------------------------
+    _nss: dict[str, Any] = compute_news_sentiment_stratification(next_day_rows)
+    _surface_result["sentiment_analysis_valid"] = _nss.get("sentiment_analysis_valid")
+    _surface_result["sentiment_low_win_rate"] = _nss.get("sentiment_low_win_rate")
+    _surface_result["sentiment_mid_win_rate"] = _nss.get("sentiment_mid_win_rate")
+    _surface_result["sentiment_high_win_rate"] = _nss.get("sentiment_high_win_rate")
+    _surface_result["sentiment_monotone"] = _nss.get("sentiment_monotone")
+    _surface_result["high_vs_low_sentiment_lift"] = _nss.get("high_vs_low_sentiment_lift")
+    _surface_result["optimal_sentiment_bucket"] = _nss.get("optimal_sentiment_bucket")
+    _surface_result["sentiment_effective"] = _nss.get("sentiment_effective")
+
     return _surface_result
 
 
@@ -7884,4 +7912,225 @@ def compute_close_strength_stratification(rows: list[dict]) -> dict:
         "cs_bottom_quartile_avg_return": round(bot_avg, 6) if bot_avg is not None else None,
         "cs_return_spread": spread,
         "cs_effective": cs_effective,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 43, Task 1 (Alpha): Profit Factor Analysis — 盈利因子PF
+# ---------------------------------------------------------------------------
+# Computes the profit factor (gross_profit / gross_loss) and related win/loss
+# asymmetry metrics.  Profit factor > 1.0 means the strategy earns more than it
+# loses in aggregate.  Complements kelly_fraction_half (Kelly edge) and
+# realized_payoff_ratio (per-trade asymmetry) with a portfolio-level view.
+
+
+def compute_profit_factor_analysis(rows: list[dict]) -> dict:
+    """Compute profit factor and win/loss asymmetry metrics from per-trade rows.
+
+    Args:
+        rows: Per-trade row dicts.  Required field per row:
+
+            - ``next_close_return`` (float | None): T+1 close return.
+
+    Returns:
+        Dict with keys:
+
+        - ``profit_factor`` (float | None): gross_profit / gross_loss, clamped [0, 10].
+        - ``gross_profit`` (float | None): sum of positive returns.
+        - ``gross_loss`` (float | None): abs(sum of negative returns).
+        - ``avg_win`` (float | None): mean return of winning trades.
+        - ``avg_loss`` (float | None): abs(mean return) of losing trades.
+        - ``win_loss_ratio`` (float | None): avg_win / avg_loss, clamped [0, 10].
+        - ``profit_factor_grade`` (str | None): 'A'/'B'/'C'/'D'.
+        - ``profitable`` (bool | None): profit_factor >= 1.0.
+        - ``profit_factor_vs_kelly_consistent`` (bool | None): profit_factor > 1.0.
+        - ``profit_factor_valid`` (bool): False when fewer than 10 valid rows.
+    """
+    _null: dict = {
+        "profit_factor": None,
+        "gross_profit": None,
+        "gross_loss": None,
+        "avg_win": None,
+        "avg_loss": None,
+        "win_loss_ratio": None,
+        "profit_factor_grade": None,
+        "profitable": None,
+        "profit_factor_vs_kelly_consistent": None,
+        "profit_factor_valid": False,
+    }
+    if not rows:
+        return _null
+
+    returns: list[float] = []
+    for row in rows:
+        val = row.get("next_close_return")
+        if val is None:
+            continue
+        try:
+            returns.append(float(val))
+        except (TypeError, ValueError):
+            continue
+
+    if len(returns) < 10:
+        return _null
+
+    wins = [r for r in returns if r > 0]
+    losses = [r for r in returns if r < 0]
+
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+
+    raw_pf = gross_profit / max(gross_loss, 1e-8)
+    profit_factor = round(min(max(raw_pf, 0.0), 10.0), 6)
+
+    avg_win: float = round(sum(wins) / len(wins), 6) if wins else 0.0
+    avg_loss_val: float = round(abs(sum(losses) / len(losses)), 6) if losses else 0.0
+
+    raw_wlr = avg_win / max(avg_loss_val, 1e-8)
+    win_loss_ratio = round(min(max(raw_wlr, 0.0), 10.0), 6)
+
+    if profit_factor >= 2.0:
+        grade = "A"
+    elif profit_factor >= 1.5:
+        grade = "B"
+    elif profit_factor >= 1.0:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {
+        "profit_factor": profit_factor,
+        "gross_profit": round(gross_profit, 6),
+        "gross_loss": round(gross_loss, 6),
+        "avg_win": avg_win,
+        "avg_loss": avg_loss_val,
+        "win_loss_ratio": win_loss_ratio,
+        "profit_factor_grade": grade,
+        "profitable": profit_factor >= 1.0,
+        "profit_factor_vs_kelly_consistent": profit_factor > 1.0,
+        "profit_factor_valid": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 43, Task 2 (Beta): News Sentiment Stratification — 情绪评分分层
+# ---------------------------------------------------------------------------
+# Checks whether news_sentiment_score creates a monotone win-rate ladder from
+# low-sentiment to high-sentiment candidates.  A lift > 5 pp confirms that the
+# sentiment signal adds genuine edge for next-day selection.
+
+
+def compute_news_sentiment_stratification(rows: list[dict]) -> dict:
+    """Stratify BTST T+1 win rate by news_sentiment_score percentile tercile.
+
+    Splits rows into three equal-frequency terciles (low / mid / high) by
+    ``news_sentiment_score`` and computes per-tercile win rate plus key spread
+    metrics.  Degrades gracefully when the field is absent.
+
+    Args:
+        rows: Per-trade row dicts.  Required fields per row:
+
+            - ``next_close_return`` (float | None): T+1 close return.
+            - ``news_sentiment_score`` (float | None): news sentiment score.
+
+    Returns:
+        Dict with keys:
+
+        - ``sentiment_analysis_valid`` (bool): False when field is absent or < 10 paired rows.
+        - ``sentiment_low_win_rate`` (float | None): win rate in bottom tercile.
+        - ``sentiment_mid_win_rate`` (float | None): win rate in middle tercile.
+        - ``sentiment_high_win_rate`` (float | None): win rate in top tercile.
+        - ``sentiment_monotone`` (bool | None): low < mid < high win rates.
+        - ``high_vs_low_sentiment_lift`` (float | None): high_win_rate − low_win_rate.
+        - ``optimal_sentiment_bucket`` (str | None): 'low'/'mid'/'high'.
+        - ``sentiment_effective`` (bool | None): lift > 0.05.
+    """
+    _null: dict = {
+        "sentiment_analysis_valid": False,
+        "sentiment_low_win_rate": None,
+        "sentiment_mid_win_rate": None,
+        "sentiment_high_win_rate": None,
+        "sentiment_monotone": None,
+        "high_vs_low_sentiment_lift": None,
+        "optimal_sentiment_bucket": None,
+        "sentiment_effective": None,
+    }
+    if not rows:
+        return _null
+
+    has_sentiment = any(row.get("news_sentiment_score") is not None for row in rows)
+    if not has_sentiment:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        score = row.get("news_sentiment_score")
+        ret = row.get("next_close_return")
+        if score is None or ret is None:
+            continue
+        try:
+            paired.append((float(score), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if len(paired) < 10:
+        return _null
+
+    paired.sort(key=lambda x: x[0])
+    n = len(paired)
+    p33_idx = int(n / 3)
+    p67_idx = int(2 * n / 3)
+    p33_val = paired[min(p33_idx, n - 1)][0]
+    p67_val = paired[min(p67_idx, n - 1)][0]
+
+    low_rets: list[float] = []
+    mid_rets: list[float] = []
+    high_rets: list[float] = []
+    for score, ret in paired:
+        if score <= p33_val:
+            low_rets.append(ret)
+        elif score <= p67_val:
+            mid_rets.append(ret)
+        else:
+            high_rets.append(ret)
+
+    def _wr(rets: list[float]) -> float | None:
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_low = _wr(low_rets)
+    wr_mid = _wr(mid_rets)
+    wr_high = _wr(high_rets)
+
+    monotone: bool | None = None
+    if wr_low is not None and wr_mid is not None and wr_high is not None:
+        monotone = wr_low < wr_mid < wr_high
+
+    lift: float | None = None
+    if wr_high is not None and wr_low is not None:
+        lift = round(wr_high - wr_low, 6)
+
+    valid_buckets = {"low": wr_low, "mid": wr_mid, "high": wr_high}
+    best_bucket: str | None = None
+    best_wr: float | None = None
+    for bname, bwr in valid_buckets.items():
+        if bwr is not None:
+            if best_wr is None or bwr > best_wr:
+                best_wr = bwr
+                best_bucket = bname
+
+    effective: bool | None = None
+    if lift is not None:
+        effective = lift > 0.05
+
+    return {
+        "sentiment_analysis_valid": True,
+        "sentiment_low_win_rate": wr_low,
+        "sentiment_mid_win_rate": wr_mid,
+        "sentiment_high_win_rate": wr_high,
+        "sentiment_monotone": monotone,
+        "high_vs_low_sentiment_lift": lift,
+        "optimal_sentiment_bucket": best_bucket,
+        "sentiment_effective": effective,
     }
