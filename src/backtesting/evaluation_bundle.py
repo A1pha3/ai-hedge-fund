@@ -719,6 +719,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 86, Gamma): batch consistency trend slope floor.
     # batch_consistency_trend_slope < -0.01 means time-ordered batch consistency is deteriorating across windows.
     "batch_consistency_trend_slope": -0.01,
+    # Task 1 (Round 87, Alpha): regime spread floor.
+    # regime_regime_spread < 0.0 means high-regime stocks do not outperform low-regime stocks.
+    "regime_regime_spread": 0.0,
+    # Task 2 (Round 87, Beta): signal persistence edge floor.
+    # sig_signal_persistence_edge < 0.0 means top-signal stocks don't outperform bot-signal stocks.
+    "sig_signal_persistence_edge": 0.0,
+    # Task 3 (Round 87, Gamma): regime spread trend slope floor.
+    # regime_spread_trend_slope < -0.01 means the regime spread is deteriorating across windows.
+    "regime_spread_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

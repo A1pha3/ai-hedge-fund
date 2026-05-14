@@ -4781,6 +4781,22 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         _surface_result["bq_breakout_premium_edge"] = bq_result["breakout_premium_edge"]
         _surface_result["bq_high_breakout_avg_return"] = bq_result["high_breakout_avg_return"]
 
+    # Round 87, Task 1 (Alpha): Market regime adaptive win rate.
+    regime_result: dict = compute_regime_adaptive_winrate(rows)
+    if regime_result["valid"]:
+        _surface_result["regime_high_regime_win_rate"] = regime_result["high_regime_win_rate"]
+        _surface_result["regime_low_regime_win_rate"] = regime_result["low_regime_win_rate"]
+        _surface_result["regime_regime_spread"] = regime_result["regime_spread"]
+        _surface_result["regime_regime_stability"] = regime_result["regime_stability"]
+
+    # Round 87, Task 2 (Beta): Consecutive signal quality analysis.
+    sig_result: dict = compute_consecutive_signal_quality(rows)
+    if sig_result["valid"]:
+        _surface_result["sig_top_signal_win_rate"] = sig_result["top_signal_win_rate"]
+        _surface_result["sig_bot_signal_win_rate"] = sig_result["bot_signal_win_rate"]
+        _surface_result["sig_signal_persistence_edge"] = sig_result["signal_persistence_edge"]
+        _surface_result["sig_top_signal_count"] = sig_result["top_signal_count"]
+
     return _surface_result
 
 
@@ -14783,3 +14799,78 @@ def compute_breakout_quality_premium(rows: list[dict]) -> dict:
     breakout_premium_edge: float = round(high_breakout_win_rate - all_wr, 8)
     high_breakout_avg_return: float = round(sum(r["ret"] for r in high_rows) / len(high_rows), 8)
     return {"valid": True, "high_breakout_win_rate": high_breakout_win_rate, "breakout_premium_edge": breakout_premium_edge, "high_breakout_avg_return": high_breakout_avg_return}
+
+
+# ---------------------------------------------------------------------------
+# Round 87, Task 1 (Alpha): Market regime adaptive win rate
+# ---------------------------------------------------------------------------
+
+
+def compute_regime_adaptive_winrate(rows: list[dict]) -> dict:
+    """市场机制自适应胜率：按close_strength P50切割高/低机制，分别计算胜率。"""
+    EMPTY: dict = {"valid": False, "high_regime_win_rate": None, "low_regime_win_rate": None, "regime_spread": None, "regime_stability": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        cs_val = r.get("close_strength")
+        ret_val = r.get("actual_return")
+        if cs_val is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"close_strength": float(cs_val), "actual_return": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return EMPTY
+    sorted_vals: list[float] = sorted(r["close_strength"] for r in valid_rows)
+    n: int = len(sorted_vals)
+    mid: int = n // 2
+    median: float = sorted_vals[mid] if n % 2 == 1 else (sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0
+    high_regime_rows: list[dict] = [r for r in valid_rows if r["close_strength"] >= median]
+    low_regime_rows: list[dict] = [r for r in valid_rows if r["close_strength"] < median]
+    if not high_regime_rows or not low_regime_rows:
+        return EMPTY
+    high_regime_win_rate: float = round(sum(1 for r in high_regime_rows if r["actual_return"] > 0) / len(high_regime_rows), 8)
+    low_regime_win_rate: float = round(sum(1 for r in low_regime_rows if r["actual_return"] > 0) / len(low_regime_rows), 8)
+    regime_spread: float = round(high_regime_win_rate - low_regime_win_rate, 8)
+    regime_stability: float = round(min(high_regime_win_rate, low_regime_win_rate), 8)
+    return {"valid": True, "high_regime_win_rate": high_regime_win_rate, "low_regime_win_rate": low_regime_win_rate, "regime_spread": regime_spread, "regime_stability": regime_stability}
+
+
+# ---------------------------------------------------------------------------
+# Round 87, Task 2 (Beta): Consecutive signal quality analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_consecutive_signal_quality(rows: list[dict]) -> dict:
+    """信号持续质量分析：top-third vs bot-third by score 的胜率对比。"""
+    EMPTY: dict = {"valid": False, "top_signal_win_rate": None, "bot_signal_win_rate": None, "signal_persistence_edge": None, "top_signal_count": None}
+    valid_rows: list[dict] = []
+    score_field: "str | None" = None
+    for candidate in ("runner_composite_score", "composite_score", "score"):
+        if any(r.get(candidate) is not None for r in rows):
+            score_field = candidate
+            break
+    if score_field is None:
+        return EMPTY
+    for r in rows:
+        sc_val = r.get(score_field)
+        ret_val = r.get("actual_return")
+        if sc_val is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"score": float(sc_val), "actual_return": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return EMPTY
+    n: int = len(valid_rows)
+    sorted_rows: list[dict] = sorted(valid_rows, key=lambda r: r["score"])
+    bot_third: list[dict] = sorted_rows[: n // 3]
+    top_third: list[dict] = sorted_rows[2 * n // 3 :]
+    if not top_third or not bot_third:
+        return EMPTY
+    top_signal_win_rate: float = round(sum(1 for r in top_third if r["actual_return"] > 0) / len(top_third), 8)
+    bot_signal_win_rate: float = round(sum(1 for r in bot_third if r["actual_return"] > 0) / len(bot_third), 8)
+    signal_persistence_edge: float = round(top_signal_win_rate - bot_signal_win_rate, 8)
+    top_signal_count: int = len(top_third)
+    return {"valid": True, "top_signal_win_rate": top_signal_win_rate, "bot_signal_win_rate": bot_signal_win_rate, "signal_persistence_edge": signal_persistence_edge, "top_signal_count": top_signal_count}

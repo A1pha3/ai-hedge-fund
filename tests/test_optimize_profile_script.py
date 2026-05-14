@@ -26330,3 +26330,346 @@ def test_r86_t3_floor_registered() -> None:
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "batch_consistency_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["batch_consistency_trend_slope"] == pytest.approx(-0.01)
+
+
+# ===========================================================================
+# Round 87 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_r87_regime_rows(n: int = 20, high_wins: bool = True) -> list[dict]:
+    """Generate rows with close_strength and actual_return for T1 tests."""
+    import random
+    random.seed(42)
+    rows = []
+    for i in range(n):
+        cs = i / n  # spread 0..1
+        if cs >= 0.5:
+            ret = 0.03 if high_wins else -0.03
+        else:
+            ret = -0.02 if high_wins else 0.03
+        rows.append({"close_strength": cs, "actual_return": ret})
+    return rows
+
+
+def _make_r87_signal_rows(n: int = 30, top_wins: bool = True) -> list[dict]:
+    """Generate rows with score and actual_return for T2 tests."""
+    rows = []
+    for i in range(n):
+        score = float(i)
+        if i >= 2 * n // 3:
+            ret = 0.04 if top_wins else -0.04
+        elif i < n // 3:
+            ret = -0.03 if top_wins else 0.04
+        else:
+            ret = 0.01
+        rows.append({"score": score, "actual_return": ret})
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# T1: compute_regime_adaptive_winrate
+# ---------------------------------------------------------------------------
+
+def test_r87_t1_basic_valid() -> None:
+    """Basic valid case returns expected keys."""
+    from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+    rows = _make_r87_regime_rows(20)
+    result = compute_regime_adaptive_winrate(rows)
+    assert result["valid"] is True
+    assert result["high_regime_win_rate"] is not None
+    assert result["low_regime_win_rate"] is not None
+    assert result["regime_spread"] is not None
+    assert result["regime_stability"] is not None
+
+
+def test_r87_t1_too_few_rows_invalid() -> None:
+    """Fewer than 15 valid rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+    rows = [{"close_strength": 0.5, "actual_return": 0.01}] * 10
+    result = compute_regime_adaptive_winrate(rows)
+    assert result["valid"] is False
+    assert result["high_regime_win_rate"] is None
+
+
+def test_r87_t1_no_close_strength_invalid() -> None:
+    """Rows without close_strength → valid=False."""
+    from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+    rows = [{"actual_return": 0.01} for _ in range(20)]
+    result = compute_regime_adaptive_winrate(rows)
+    assert result["valid"] is False
+
+
+def test_r87_t1_high_regime_outperforms() -> None:
+    """High-regime win rate > low-regime win rate when constructed so."""
+    from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+    rows = _make_r87_regime_rows(20, high_wins=True)
+    result = compute_regime_adaptive_winrate(rows)
+    assert result["valid"] is True
+    assert result["high_regime_win_rate"] > result["low_regime_win_rate"]
+
+
+def test_r87_t1_regime_spread_formula() -> None:
+    """regime_spread == high_win_rate - low_win_rate."""
+    from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+    rows = _make_r87_regime_rows(20)
+    result = compute_regime_adaptive_winrate(rows)
+    assert result["valid"] is True
+    expected = round(result["high_regime_win_rate"] - result["low_regime_win_rate"], 8)
+    assert result["regime_spread"] == pytest.approx(expected, abs=1e-7)
+
+
+def test_r87_t1_regime_stability_is_min() -> None:
+    """regime_stability == min(high_win_rate, low_win_rate)."""
+    from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+    rows = _make_r87_regime_rows(20)
+    result = compute_regime_adaptive_winrate(rows)
+    assert result["valid"] is True
+    expected = round(min(result["high_regime_win_rate"], result["low_regime_win_rate"]), 8)
+    assert result["regime_stability"] == pytest.approx(expected, abs=1e-7)
+
+
+def test_r87_t1_in_comparison_metrics() -> None:
+    """regime_regime_spread in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "regime_regime_spread" in COMPARISON_METRICS
+
+
+def test_r87_t1_in_optional_metrics() -> None:
+    """regime_regime_spread in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "regime_regime_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r87_t1_labels_registered() -> None:
+    """regime_regime_spread label registered."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "regime_regime_spread" in COMPARISON_METRIC_LABELS
+
+
+def test_r87_t1_floor_registered() -> None:
+    """regime_regime_spread floor == 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "regime_regime_spread" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["regime_regime_spread"] == pytest.approx(0.0)
+
+
+def test_r87_t1_surface_keys_wired() -> None:
+    """build_surface_summary wires regime_ keys when valid."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = _make_r87_regime_rows(20)
+    for r in rows:
+        r["next_close_return"] = r["actual_return"]
+    surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "regime_regime_spread" in surface
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_consecutive_signal_quality
+# ---------------------------------------------------------------------------
+
+def test_r87_t2_basic_valid() -> None:
+    """Basic valid case returns expected keys."""
+    from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+    rows = _make_r87_signal_rows(30)
+    result = compute_consecutive_signal_quality(rows)
+    assert result["valid"] is True
+    assert result["top_signal_win_rate"] is not None
+    assert result["bot_signal_win_rate"] is not None
+    assert result["signal_persistence_edge"] is not None
+    assert result["top_signal_count"] is not None
+
+
+def test_r87_t2_too_few_rows_invalid() -> None:
+    """Fewer than 15 valid rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+    rows = [{"score": float(i), "actual_return": 0.01} for i in range(10)]
+    result = compute_consecutive_signal_quality(rows)
+    assert result["valid"] is False
+    assert result["top_signal_win_rate"] is None
+
+
+def test_r87_t2_no_score_field_invalid() -> None:
+    """Rows without any score field → valid=False."""
+    from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+    rows = [{"actual_return": 0.01} for _ in range(20)]
+    result = compute_consecutive_signal_quality(rows)
+    assert result["valid"] is False
+
+
+def test_r87_t2_edge_positive_when_top_wins() -> None:
+    """signal_persistence_edge > 0 when top third wins more."""
+    from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+    rows = _make_r87_signal_rows(30, top_wins=True)
+    result = compute_consecutive_signal_quality(rows)
+    assert result["valid"] is True
+    assert result["signal_persistence_edge"] > 0
+
+
+def test_r87_t2_edge_negative_when_top_loses() -> None:
+    """signal_persistence_edge < 0 when top third loses more."""
+    from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+    rows = _make_r87_signal_rows(30, top_wins=False)
+    result = compute_consecutive_signal_quality(rows)
+    assert result["valid"] is True
+    assert result["signal_persistence_edge"] < 0
+
+
+def test_r87_t2_persistence_count_correct() -> None:
+    """top_signal_count == n - 2*(n//3)."""
+    from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+    n = 30
+    rows = _make_r87_signal_rows(n)
+    result = compute_consecutive_signal_quality(rows)
+    assert result["valid"] is True
+    expected_count = n - 2 * (n // 3)
+    assert result["top_signal_count"] == expected_count
+
+
+def test_r87_t2_in_comparison_metrics() -> None:
+    """sig_signal_persistence_edge in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "sig_signal_persistence_edge" in COMPARISON_METRICS
+
+
+def test_r87_t2_in_optional_metrics() -> None:
+    """sig_signal_persistence_edge in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "sig_signal_persistence_edge" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r87_t2_labels_registered() -> None:
+    """sig_signal_persistence_edge label registered."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "sig_signal_persistence_edge" in COMPARISON_METRIC_LABELS
+
+
+def test_r87_t2_floor_registered() -> None:
+    """sig_signal_persistence_edge floor == 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "sig_signal_persistence_edge" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["sig_signal_persistence_edge"] == pytest.approx(0.0)
+
+
+def test_r87_t2_surface_keys_wired() -> None:
+    """build_surface_summary wires sig_ keys when valid."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = _make_r87_signal_rows(30)
+    for r in rows:
+        r["next_close_return"] = r["actual_return"]
+    surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "sig_signal_persistence_edge" in surface
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_regime_spread_trend
+# ---------------------------------------------------------------------------
+
+def test_r87_t3_rising_grade_a() -> None:
+    """Strongly rising regime_spread → grade=A."""
+    from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+    windows = [{"regime_regime_spread": v} for v in [0.1, 0.15, 0.2, 0.25, 0.3]]
+    result = compute_cross_window_regime_spread_trend(windows)
+    assert result["valid"] is True
+    assert result["regime_spread_trend_grade"] == "A"
+    assert result["regime_spread_trend_slope"] > 0.005
+
+
+def test_r87_t3_mild_rising_grade_b() -> None:
+    """Mildly rising (0 < slope <= 0.005) → grade=B."""
+    from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+    windows = [{"regime_regime_spread": v} for v in [0.2, 0.2001, 0.2002, 0.2003, 0.2004]]
+    result = compute_cross_window_regime_spread_trend(windows)
+    assert result["valid"] is True
+    assert result["regime_spread_trend_grade"] == "B"
+
+
+def test_r87_t3_flat_grade_c() -> None:
+    """Slightly negative slope (-0.01 < slope <= 0) → grade=C."""
+    from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+    windows = [{"regime_regime_spread": v} for v in [0.3, 0.299, 0.298, 0.297, 0.296]]
+    result = compute_cross_window_regime_spread_trend(windows)
+    assert result["valid"] is True
+    assert result["regime_spread_trend_grade"] in ("C", "B")
+
+
+def test_r87_t3_falling_grade_d() -> None:
+    """Strongly falling regime_spread → grade=D."""
+    from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+    windows = [{"regime_regime_spread": v} for v in [0.5, 0.3, 0.1, -0.1, -0.3]]
+    result = compute_cross_window_regime_spread_trend(windows)
+    assert result["valid"] is True
+    assert result["regime_spread_trend_grade"] == "D"
+
+
+def test_r87_t3_too_few_windows() -> None:
+    """Fewer than 3 windows → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+    windows = [{"regime_regime_spread": 0.2}, {"regime_regime_spread": 0.3}]
+    result = compute_cross_window_regime_spread_trend(windows)
+    assert result["valid"] is False
+    assert result["regime_spread_trend_slope"] is None
+
+
+def test_r87_t3_exactly_3_windows() -> None:
+    """Exactly 3 windows → valid=True."""
+    from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+    windows = [{"regime_regime_spread": v} for v in [0.1, 0.2, 0.3]]
+    result = compute_cross_window_regime_spread_trend(windows)
+    assert result["valid"] is True
+    assert result["regime_spread_trend_window_count"] == 3
+
+
+def test_r87_t3_ols_slope_numerical() -> None:
+    """OLS slope matches manual calculation."""
+    from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+    vals = [0.1, 0.2, 0.3, 0.4, 0.5]
+    windows = [{"regime_regime_spread": v} for v in vals]
+    result = compute_cross_window_regime_spread_trend(windows)
+    assert result["valid"] is True
+    n = 5
+    xs = list(range(n))
+    sum_x = sum(xs)
+    sum_y = sum(vals)
+    sum_xy = sum(xs[i] * vals[i] for i in range(n))
+    sum_xx = sum(x * x for x in xs)
+    denom = n * sum_xx - sum_x * sum_x
+    expected_slope = (n * sum_xy - sum_x * sum_y) / denom
+    assert result["regime_spread_trend_slope"] == pytest.approx(expected_slope, abs=1e-6)
+
+
+def test_r87_t3_missing_key_skipped() -> None:
+    """Windows without regime_regime_spread are skipped."""
+    from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+    windows = [{"other": 0.5}, {"regime_regime_spread": 0.2}, {"regime_regime_spread": 0.3}, {"regime_regime_spread": 0.4}]
+    result = compute_cross_window_regime_spread_trend(windows)
+    assert result["valid"] is True
+    assert result["regime_spread_trend_window_count"] == 3
+
+
+def test_r87_t3_in_comparison_metrics() -> None:
+    """regime_spread_trend_slope in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "regime_spread_trend_slope" in COMPARISON_METRICS
+
+
+def test_r87_t3_in_optional_metrics() -> None:
+    """regime_spread_trend_slope in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "regime_spread_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r87_t3_label_registered() -> None:
+    """regime_spread_trend_slope label registered."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "regime_spread_trend_slope" in COMPARISON_METRIC_LABELS
+
+
+def test_r87_t3_floor_registered() -> None:
+    """regime_spread_trend_slope floor == -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "regime_spread_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["regime_spread_trend_slope"] == pytest.approx(-0.01)

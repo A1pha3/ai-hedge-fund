@@ -582,6 +582,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "bq_breakout_premium_edge",
     # Task 3 (Round 86, Gamma): cross-window batch consistency OLS trend slope.
     "batch_consistency_trend_slope",
+    # Task 1 (Round 87, Alpha): market regime adaptive win rate — regime spread.
+    "regime_regime_spread",
+    # Task 2 (Round 87, Beta): consecutive signal quality — signal persistence edge.
+    "sig_signal_persistence_edge",
+    # Task 3 (Round 87, Gamma): cross-window regime spread OLS trend slope.
+    "regime_spread_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -1052,6 +1058,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "bq_breakout_premium_edge": "突破质量P75胜率溢价",
     # Task 3 (Round 86, Gamma): batch consistency trend slope label.
     "batch_consistency_trend_slope": "批次一致性跨窗趋势斜率",
+    # Task 1 (Round 87, Alpha): regime adaptive win rate spread label.
+    "regime_regime_spread": "机制差值(高-低机制胜率)",
+    # Task 2 (Round 87, Beta): signal persistence edge label.
+    "sig_signal_persistence_edge": "信号持续质量边缘(Top-Bot胜率差)",
+    # Task 3 (Round 87, Gamma): regime spread cross-window trend slope label.
+    "regime_spread_trend_slope": "机制差跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1600,6 +1612,18 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "bq_high_breakout_avg_return",
     # Task 3 (Round 86, Gamma): batch consistency trend slope — optional; pre-Round-86 outputs omit it.
     "batch_consistency_trend_slope",
+    # Task 1 (Round 87, Alpha): regime adaptive win rate metrics — optional; pre-Round-87 surfaces omit these.
+    "regime_high_regime_win_rate",
+    "regime_low_regime_win_rate",
+    "regime_regime_spread",
+    "regime_regime_stability",
+    # Task 2 (Round 87, Beta): consecutive signal quality metrics — optional; pre-Round-87 surfaces omit these.
+    "sig_top_signal_win_rate",
+    "sig_bot_signal_win_rate",
+    "sig_signal_persistence_edge",
+    "sig_top_signal_count",
+    # Task 3 (Round 87, Gamma): regime spread cross-window trend slope — optional; pre-Round-87 outputs omit it.
+    "regime_spread_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3452,6 +3476,39 @@ def compute_cross_window_momentum_reversal_trend(all_windows_summaries: list[dic
     slope: float = (n * sum_xy - sum_x * sum_y) / denom
     grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
     return {"valid": True, "momentum_reversal_trend_slope": round(slope, 8), "momentum_reversal_trend_grade": grade, "momentum_reversal_window_count": n}
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Round 87, Task 3 (Gamma): Cross-window regime spread trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_regime_spread_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口机制差值趋势：regime_regime_spread 的 OLS 时序斜率。"""
+    EMPTY: dict = {"valid": False, "regime_spread_trend_slope": None, "regime_spread_trend_grade": None, "regime_spread_trend_window_count": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("regime_regime_spread")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    n: int = len(vals)
+    if n < 3:
+        return EMPTY
+    xs: list[float] = list(range(n))
+    sum_x: float = sum(xs)
+    sum_y: float = sum(vals)
+    sum_xy: float = sum(xs[i] * vals[i] for i in range(n))
+    sum_xx: float = sum(x * x for x in xs)
+    denom: float = n * sum_xx - sum_x * sum_x
+    if denom == 0:
+        return EMPTY
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom
+    grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
+    return {"valid": True, "regime_spread_trend_slope": round(slope, 8), "regime_spread_trend_grade": grade, "regime_spread_trend_window_count": n}
+
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -5360,6 +5417,8 @@ def _build_replay_evaluator(
         _mrt85: dict[str, Any] = compute_cross_window_momentum_reversal_trend(all_primary_surfaces)
         # Task 3 (Round 86, Gamma): cross-window batch consistency OLS trend.
         _bct86: dict[str, Any] = compute_cross_window_batch_consistency_trend(all_primary_surfaces)
+        # Task 3 (Round 87, Gamma): cross-window regime spread OLS trend.
+        _rsp87: dict[str, Any] = compute_cross_window_regime_spread_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -6112,6 +6171,10 @@ def _build_replay_evaluator(
                 "batch_consistency_trend_slope": _bct86.get("batch_consistency_trend_slope"),
                 "batch_consistency_trend_grade": _bct86.get("batch_consistency_trend_grade"),
                 "batch_consistency_trend_window_count": _bct86.get("batch_consistency_trend_window_count"),
+                # Task 3 (Round 87, Gamma): cross-window regime spread OLS trend slope.
+                "regime_spread_trend_slope": _rsp87.get("regime_spread_trend_slope"),
+                "regime_spread_trend_grade": _rsp87.get("regime_spread_trend_grade"),
+                "regime_spread_trend_window_count": _rsp87.get("regime_spread_trend_window_count"),
         }
 
     return evaluator
