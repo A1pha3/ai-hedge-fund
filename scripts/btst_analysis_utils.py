@@ -3900,6 +3900,47 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["dominant_sector_share"] = _cds.get("dominant_sector_share")
     _surface_result["concentration_risk"] = _cds.get("concentration_risk")
 
+    # -----------------------------------------------------------------------
+    # Round 36, Task 1 (Alpha): Return percentile breakdown — right-tail dominance.
+    # -----------------------------------------------------------------------
+    _rpb: dict[str, Any] = compute_return_percentile_breakdown(next_day_rows)
+    _surface_result["right_tail_dominance"] = _rpb.get("right_tail_dominance")
+    _surface_result["return_p5"] = _rpb.get("p5")
+    _surface_result["return_p10"] = _rpb.get("p10")
+    _surface_result["return_p25"] = _rpb.get("p25")
+    _surface_result["return_p50"] = _rpb.get("p50")
+    _surface_result["return_p75"] = _rpb.get("p75")
+    _surface_result["return_p90"] = _rpb.get("p90")
+    _surface_result["return_p95"] = _rpb.get("p95")
+    _surface_result["return_iqr"] = _rpb.get("iqr")
+    _surface_result["return_iqr_ratio"] = _rpb.get("iqr_ratio")
+    _surface_result["upper_fence"] = _rpb.get("upper_fence")
+    _surface_result["lower_fence"] = _rpb.get("lower_fence")
+    _surface_result["right_outlier_rate"] = _rpb.get("right_outlier_rate")
+    _surface_result["left_outlier_rate"] = _rpb.get("left_outlier_rate")
+    _surface_result["tail_asymmetry_index"] = _rpb.get("tail_asymmetry_index")
+
+    # -----------------------------------------------------------------------
+    # Round 36, Task 2 (Beta): Composite score IC — Spearman rank correlation.
+    # -----------------------------------------------------------------------
+    _csic: dict[str, Any] = compute_composite_score_ic(next_day_rows)
+    _surface_result["composite_ic"] = _csic.get("composite_ic")
+    _surface_result["composite_ic_positive"] = _csic.get("composite_ic_positive")
+    _surface_result["composite_ic_magnitude"] = _csic.get("composite_ic_magnitude")
+    _surface_result["ic_t_stat"] = _csic.get("ic_t_stat")
+    _surface_result["ic_significant"] = _csic.get("ic_significant")
+
+    # -----------------------------------------------------------------------
+    # Round 36, Task 3 (Gamma): Win-rate Bootstrap confidence interval.
+    # -----------------------------------------------------------------------
+    _wrci: dict[str, Any] = compute_win_rate_confidence_interval(next_day_rows)
+    _surface_result["observed_win_rate"] = _wrci.get("observed_win_rate")
+    _surface_result["win_rate_ci_lower"] = _wrci.get("ci_lower")
+    _surface_result["win_rate_ci_upper"] = _wrci.get("ci_upper")
+    _surface_result["win_rate_ci_width"] = _wrci.get("ci_width")
+    _surface_result["win_rate_reliable"] = _wrci.get("win_rate_reliable")
+    _surface_result["win_rate_ci_grade"] = _wrci.get("win_rate_ci_grade")
+
     return _surface_result
 
 
@@ -5870,4 +5911,220 @@ def compute_candidate_diversity_score(rows: list[dict]) -> dict:
         "sector_count": sector_count,
         "dominant_sector_share": round(dominant_sector_share, 4),
         "concentration_risk": dominant_sector_share > 0.50,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 36, Task 1 (Alpha): Return percentile breakdown — right-tail dominance
+# ---------------------------------------------------------------------------
+def compute_return_percentile_breakdown(rows: list[dict]) -> dict:
+    """Compute detailed return distribution percentiles and right-tail dominance metrics.
+
+    Analyses the shape of the T+1 return distribution, focusing on whether the right
+    tail (upside) is wider than the left tail (downside) — a prerequisite for BTST
+    profitability even at moderate win rates.
+
+    Args:
+        rows: Per-row dicts each containing ``next_close_return`` (float|None).
+
+    Returns:
+        Dict with keys:
+
+        - ``p5, p10, p25, p50, p75, p90, p95``: float|None — distribution percentiles.
+        - ``right_tail_dominance``: float|None — (P95−P50)/|P5−P50|, clamped [0, 5].
+        - ``iqr``: float|None — interquartile range P75−P25.
+        - ``iqr_ratio``: float|None — IQR/|P50|, clamped [0, 10].
+        - ``upper_fence``: float|None — P75 + 1.5×IQR.
+        - ``lower_fence``: float|None — P25 − 1.5×IQR.
+        - ``right_outlier_rate``: float|None — fraction of returns above upper_fence.
+        - ``left_outlier_rate``: float|None — fraction of returns below lower_fence.
+        - ``tail_asymmetry_index``: float|None — right_outlier_rate − left_outlier_rate.
+
+        Returns all-None dict when fewer than 10 valid rows are available.
+    """
+    _null: dict = {
+        "p5": None, "p10": None, "p25": None, "p50": None,
+        "p75": None, "p90": None, "p95": None,
+        "right_tail_dominance": None, "iqr": None, "iqr_ratio": None,
+        "upper_fence": None, "lower_fence": None,
+        "right_outlier_rate": None, "left_outlier_rate": None,
+        "tail_asymmetry_index": None,
+    }
+    returns = [float(r["next_close_return"]) for r in rows if r.get("next_close_return") is not None]
+    if len(returns) < 10:
+        return _null
+
+    p5, p10, p25, p50, p75, p90, p95 = np.percentile(returns, [5, 10, 25, 50, 75, 90, 95]).tolist()
+    iqr = p75 - p25
+    iqr_ratio = min(10.0, iqr / max(abs(p50), 1e-6))
+    upper_fence = p75 + 1.5 * iqr
+    lower_fence = p25 - 1.5 * iqr
+    n = len(returns)
+    right_outlier_rate = sum(1 for r in returns if r > upper_fence) / n
+    left_outlier_rate = sum(1 for r in returns if r < lower_fence) / n
+    tail_asymmetry_index = right_outlier_rate - left_outlier_rate
+    right_tail_dominance = min(5.0, (p95 - p50) / max(abs(p5 - p50), 1e-6))
+    right_tail_dominance = max(0.0, right_tail_dominance)
+    return {
+        "p5": round(p5, 6), "p10": round(p10, 6), "p25": round(p25, 6),
+        "p50": round(p50, 6), "p75": round(p75, 6), "p90": round(p90, 6), "p95": round(p95, 6),
+        "right_tail_dominance": round(right_tail_dominance, 4),
+        "iqr": round(iqr, 6),
+        "iqr_ratio": round(iqr_ratio, 4),
+        "upper_fence": round(upper_fence, 6),
+        "lower_fence": round(lower_fence, 6),
+        "right_outlier_rate": round(right_outlier_rate, 4),
+        "left_outlier_rate": round(left_outlier_rate, 4),
+        "tail_asymmetry_index": round(tail_asymmetry_index, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 36, Task 2 (Beta): Composite score IC — Spearman rank correlation
+# ---------------------------------------------------------------------------
+def compute_composite_score_ic(rows: list[dict]) -> dict:
+    """Compute Spearman IC between composite score and T+1 return — verifies predictive validity.
+
+    Uses the first available score field (runner_composite_score > composite_score > score)
+    and computes Spearman rank correlation against next_close_return.  A positive IC
+    confirms the scoring function correctly ranks candidates by future return.
+
+    Args:
+        rows: Per-row dicts each optionally containing a composite score field
+              and ``next_close_return`` (float|None).
+
+    Returns:
+        Dict with keys:
+
+        - ``composite_ic``: float|None — Spearman IC ∈ [−1, 1].
+        - ``composite_ic_positive``: bool|None — True when IC > 0.
+        - ``composite_ic_magnitude``: str|None — 'strong'(>0.10)/'moderate'(>0.05)/'weak'.
+        - ``ic_t_stat``: float|None — t-statistic for H₀: IC = 0.
+        - ``ic_significant``: bool|None — True when |t| > 1.96 (95 % confidence).
+
+        Returns ``composite_ic=None, composite_ic_positive=None`` dict when fewer than
+        10 paired observations are available.
+    """
+    _null: dict = {
+        "composite_ic": None, "composite_ic_positive": None,
+        "composite_ic_magnitude": None, "ic_t_stat": None, "ic_significant": None,
+    }
+
+    def _spearman_ic(x: list[float], y: list[float]) -> float:
+        n = len(x)
+        rank_x = sorted(range(n), key=lambda i: x[i])
+        rank_y = sorted(range(n), key=lambda i: y[i])
+        rx = [0] * n
+        ry = [0] * n
+        for r, i in enumerate(rank_x):
+            rx[i] = r
+        for r, i in enumerate(rank_y):
+            ry[i] = r
+        mean_rx = sum(rx) / n
+        mean_ry = sum(ry) / n
+        num = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(n))
+        den = (sum((rx[i] - mean_rx) ** 2 for i in range(n)) * sum((ry[i] - mean_ry) ** 2 for i in range(n))) ** 0.5
+        return num / max(den, 1e-8)
+
+    pairs: list[tuple[float, float]] = []
+    for r in rows:
+        ret = r.get("next_close_return")
+        if ret is None:
+            continue
+        score = r.get("runner_composite_score")
+        if score is None:
+            score = r.get("composite_score")
+        if score is None:
+            score = r.get("score")
+        if score is None:
+            continue
+        pairs.append((float(score), float(ret)))
+
+    if len(pairs) < 10:
+        return _null
+
+    scores_list = [p[0] for p in pairs]
+    returns_list = [p[1] for p in pairs]
+    n = len(pairs)
+    ic_raw = _spearman_ic(scores_list, returns_list)
+    ic = max(-1.0, min(1.0, ic_raw))
+    ic_t_stat = ic * ((n - 2) ** 0.5) / max((1 - ic ** 2) ** 0.5, 1e-8)
+    if abs(ic) > 0.10:
+        magnitude = "strong"
+    elif abs(ic) > 0.05:
+        magnitude = "moderate"
+    else:
+        magnitude = "weak"
+    return {
+        "composite_ic": round(ic, 6),
+        "composite_ic_positive": ic > 0,
+        "composite_ic_magnitude": magnitude,
+        "ic_t_stat": round(ic_t_stat, 4),
+        "ic_significant": abs(ic_t_stat) > 1.96,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 36, Task 3 (Gamma): Win-rate Bootstrap confidence interval
+# ---------------------------------------------------------------------------
+def compute_win_rate_confidence_interval(rows: list[dict]) -> dict:
+    """Estimate win-rate 95 % confidence interval via deterministic Bootstrap (seed=42).
+
+    Uses 200 bootstrap resamplings with a fixed random.Random(42) seed to produce
+    a reproducible, scipy-free confidence interval for the observed win rate.
+    A narrow CI (< 20 %) indicates the estimate is reliable; a wide CI signals
+    insufficient sample size.
+
+    Args:
+        rows: Per-row dicts each containing ``next_close_return`` (float|None).
+
+    Returns:
+        Dict with keys:
+
+        - ``observed_win_rate``: float|None — fraction of returns > 0.
+        - ``ci_lower``: float|None — P2.5 of bootstrap distribution.
+        - ``ci_upper``: float|None — P97.5 of bootstrap distribution.
+        - ``ci_width``: float|None — ci_upper − ci_lower.
+        - ``win_rate_reliable``: bool|None — True when ci_width < 0.20.
+        - ``win_rate_ci_grade``: str|None — 'A'(<0.10)/'B'(<0.15)/'C'(<0.20)/'D'(≥0.20).
+
+        Returns all-None dict when fewer than 10 valid rows are available.
+    """
+    import random
+
+    _null: dict = {
+        "observed_win_rate": None, "ci_lower": None, "ci_upper": None,
+        "ci_width": None, "win_rate_reliable": None, "win_rate_ci_grade": None,
+    }
+    returns = [float(r["next_close_return"]) for r in rows if r.get("next_close_return") is not None]
+    if len(returns) < 10:
+        return _null
+
+    wins = [1 if r > 0 else 0 for r in returns]
+    n = len(wins)
+    observed_win_rate = sum(wins) / n
+    rng = random.Random(42)
+    boot_rates: list[float] = []
+    for _ in range(200):
+        sample = [rng.choice(wins) for _ in range(n)]
+        boot_rates.append(sum(sample) / n)
+    boot_rates.sort()
+    ci_lower = boot_rates[int(0.025 * 200)]
+    ci_upper = boot_rates[int(0.975 * 200)]
+    ci_width = ci_upper - ci_lower
+    if ci_width < 0.10:
+        grade = "A"
+    elif ci_width < 0.15:
+        grade = "B"
+    elif ci_width < 0.20:
+        grade = "C"
+    else:
+        grade = "D"
+    return {
+        "observed_win_rate": round(observed_win_rate, 4),
+        "ci_lower": round(ci_lower, 4),
+        "ci_upper": round(ci_upper, 4),
+        "ci_width": round(ci_width, 4),
+        "win_rate_reliable": ci_width < 0.20,
+        "win_rate_ci_grade": grade,
     }

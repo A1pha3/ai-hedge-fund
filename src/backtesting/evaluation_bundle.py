@@ -174,6 +174,17 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # to a degree that exposes the strategy to correlated sector-specific shocks.
     # Floor ≥ 0.30 ensures at least moderate cross-sector distribution in the candidate pool.
     "diversity_score": 0.30,
+    # Task 1 (Round 36, Alpha): right-tail dominance floor.
+    # right_tail_dominance = (P95−P50)/|P5−P50|; a value < 0.80 means the upside tail is
+    # narrower than 80 % of the downside tail width, indicating unfavourable return asymmetry.
+    # Floor ≥ 0.80 ensures the right tail is at least 80 % as wide as the left tail.
+    "right_tail_dominance": 0.80,
+    # Task 2 (Round 36, Beta): composite score IC floor.
+    # composite_ic = Spearman rank correlation between composite score and T+1 return.
+    # A value ≤ 0 means the scoring function has zero or negative predictive power —
+    # candidates ranked higher by the score do not achieve better returns on average.
+    # Floor ≥ 0.0 requires at least a neutral positive IC before rollout.
+    "composite_ic": 0.0,
 }
 
 # ---------------------------------------------------------------------------
@@ -210,6 +221,12 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # A CV above 0.30 means the scoring system produces wildly inconsistent evaluations window-to-window,
     # indicating that factor weights are regime-sensitive and the composite score lacks generality.
     "score_cv_across_windows": 0.30,
+    # Task 3 (Round 36, Gamma): win-rate bootstrap CI width cap.
+    # win_rate_ci_width = P97.5 − P2.5 of bootstrap win-rate distribution (200 resamples, seed=42).
+    # A CI width above 0.30 means the sample is too small to reliably estimate the strategy's
+    # win rate — the observed win rate could plausibly range over a 30 %-point band.
+    # Profiles above this cap carry high estimation uncertainty and should not be promoted.
+    "win_rate_ci_width": 0.30,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

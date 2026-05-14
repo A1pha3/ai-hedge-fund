@@ -7562,3 +7562,297 @@ def test_r35_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
 
     assert COMPARISON_METRIC_LABELS.get("diversity_score") == "候选多样性评分"
+
+
+# ===========================================================================
+# Round 36 tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1 — compute_return_percentile_breakdown
+# ---------------------------------------------------------------------------
+
+def test_r36_t1_basic_returns_required_keys() -> None:
+    """compute_return_percentile_breakdown returns all required keys for >=10 rows."""
+    from scripts.btst_analysis_utils import compute_return_percentile_breakdown
+
+    rows = [{"next_close_return": v} for v in [0.05, 0.03, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06]]
+    result = compute_return_percentile_breakdown(rows)
+    for key in ("p5", "p10", "p25", "p50", "p75", "p90", "p95", "right_tail_dominance", "iqr", "iqr_ratio", "upper_fence", "lower_fence", "right_outlier_rate", "left_outlier_rate", "tail_asymmetry_index"):
+        assert key in result, f"Missing key: {key}"
+        assert result[key] is not None, f"Key {key} should not be None with 10 rows"
+
+
+def test_r36_t1_insufficient_rows_returns_all_none() -> None:
+    """compute_return_percentile_breakdown returns all-None dict when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_return_percentile_breakdown
+
+    rows = [{"next_close_return": 0.05} for _ in range(9)]
+    result = compute_return_percentile_breakdown(rows)
+    assert result["right_tail_dominance"] is None
+    assert result["p50"] is None
+
+
+def test_r36_t1_empty_rows_no_error() -> None:
+    """compute_return_percentile_breakdown handles empty input gracefully."""
+    from scripts.btst_analysis_utils import compute_return_percentile_breakdown
+
+    result = compute_return_percentile_breakdown([])
+    assert result["right_tail_dominance"] is None
+
+
+def test_r36_t1_none_returns_filtered() -> None:
+    """compute_return_percentile_breakdown filters None next_close_return values."""
+    from scripts.btst_analysis_utils import compute_return_percentile_breakdown
+
+    rows = [{"next_close_return": None}] * 5 + [{"next_close_return": v} for v in [0.05, 0.03, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06]]
+    result = compute_return_percentile_breakdown(rows)
+    assert result["p50"] is not None
+
+
+def test_r36_t1_right_tail_dominance_clamped_max() -> None:
+    """right_tail_dominance is clamped to 5.0."""
+    from scripts.btst_analysis_utils import compute_return_percentile_breakdown
+
+    # Very right-skewed: huge upside, tiny downside
+    rows = [{"next_close_return": v} for v in [0.0] * 5 + [10.0] * 5]
+    result = compute_return_percentile_breakdown(rows)
+    assert result["right_tail_dominance"] is not None
+    assert result["right_tail_dominance"] <= 5.0
+
+
+def test_r36_t1_right_tail_dominance_clamped_min() -> None:
+    """right_tail_dominance is non-negative (clamped to 0.0)."""
+    from scripts.btst_analysis_utils import compute_return_percentile_breakdown
+
+    rows = [{"next_close_return": v} for v in [-0.05, -0.03, -0.02, -0.08, -0.12, -0.01, -0.07, -0.15, -0.03, -0.06]]
+    result = compute_return_percentile_breakdown(rows)
+    assert result["right_tail_dominance"] is not None
+    assert result["right_tail_dominance"] >= 0.0
+
+
+def test_r36_t1_percentile_ordering() -> None:
+    """Percentiles are non-decreasing: p5<=p10<=p25<=p50<=p75<=p90<=p95."""
+    from scripts.btst_analysis_utils import compute_return_percentile_breakdown
+
+    rows = [{"next_close_return": v} for v in [0.05, 0.03, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06, 0.04, -0.05, 0.09, 0.11, 0.02]]
+    result = compute_return_percentile_breakdown(rows)
+    assert result["p5"] <= result["p10"] <= result["p25"] <= result["p50"] <= result["p75"] <= result["p90"] <= result["p95"]
+
+
+def test_r36_t1_floor_registered() -> None:
+    """right_tail_dominance floor = 0.80 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "right_tail_dominance" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["right_tail_dominance"] == 0.80
+
+
+def test_r36_t1_in_comparison_metrics() -> None:
+    """right_tail_dominance registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "right_tail_dominance" in COMPARISON_METRICS
+
+
+def test_r36_t1_label_registered() -> None:
+    """right_tail_dominance has Chinese label '右尾优势比'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("right_tail_dominance") == "右尾优势比"
+
+
+# ---------------------------------------------------------------------------
+# T2 — compute_composite_score_ic
+# ---------------------------------------------------------------------------
+
+def test_r36_t2_basic_returns_required_keys() -> None:
+    """compute_composite_score_ic returns all required keys for >=10 paired rows."""
+    from scripts.btst_analysis_utils import compute_composite_score_ic
+
+    rows = [{"next_close_return": v, "runner_composite_score": s} for v, s in zip([0.05, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06, 0.04], [0.7, 0.3, 0.8, 0.9, 0.4, 0.75, 0.95, 0.2, 0.65, 0.55])]
+    result = compute_composite_score_ic(rows)
+    for key in ("composite_ic", "composite_ic_positive", "composite_ic_magnitude", "ic_t_stat", "ic_significant"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r36_t2_insufficient_rows_returns_none() -> None:
+    """compute_composite_score_ic returns None composite_ic when fewer than 10 paired rows."""
+    from scripts.btst_analysis_utils import compute_composite_score_ic
+
+    rows = [{"next_close_return": 0.05, "runner_composite_score": 0.7} for _ in range(9)]
+    result = compute_composite_score_ic(rows)
+    assert result["composite_ic"] is None
+    assert result["composite_ic_positive"] is None
+
+
+def test_r36_t2_empty_rows_no_error() -> None:
+    """compute_composite_score_ic handles empty input gracefully."""
+    from scripts.btst_analysis_utils import compute_composite_score_ic
+
+    result = compute_composite_score_ic([])
+    assert result["composite_ic"] is None
+
+
+def test_r36_t2_score_fallback_priority() -> None:
+    """Fallback from runner_composite_score to composite_score to score."""
+    from scripts.btst_analysis_utils import compute_composite_score_ic
+
+    rows = [{"next_close_return": v, "score": s} for v, s in zip([0.05, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06, 0.04], [0.7, 0.3, 0.8, 0.9, 0.4, 0.75, 0.95, 0.2, 0.65, 0.55])]
+    result = compute_composite_score_ic(rows)
+    assert result["composite_ic"] is not None
+
+
+def test_r36_t2_ic_clamped_to_neg1_pos1() -> None:
+    """composite_ic is clamped to [-1, 1]."""
+    from scripts.btst_analysis_utils import compute_composite_score_ic
+
+    rows = [{"next_close_return": float(i), "runner_composite_score": float(i)} for i in range(15)]
+    result = compute_composite_score_ic(rows)
+    assert result["composite_ic"] is not None
+    assert -1.0 <= result["composite_ic"] <= 1.0
+
+
+def test_r36_t2_magnitude_strong_for_high_ic() -> None:
+    """composite_ic_magnitude is 'strong' when |IC| > 0.10."""
+    from scripts.btst_analysis_utils import compute_composite_score_ic
+
+    rows = [{"next_close_return": float(i) * 0.01, "runner_composite_score": float(i)} for i in range(15)]
+    result = compute_composite_score_ic(rows)
+    assert result["composite_ic"] is not None
+    if abs(result["composite_ic"]) > 0.10:
+        assert result["composite_ic_magnitude"] == "strong"
+
+
+def test_r36_t2_none_returns_filtered() -> None:
+    """Rows with None next_close_return or None score are excluded from IC computation."""
+    from scripts.btst_analysis_utils import compute_composite_score_ic
+
+    rows = [{"next_close_return": None, "runner_composite_score": 0.7}] * 5
+    rows += [{"next_close_return": v, "runner_composite_score": s} for v, s in zip([0.05, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06, 0.04], [0.7, 0.3, 0.8, 0.9, 0.4, 0.75, 0.95, 0.2, 0.65, 0.55])]
+    result = compute_composite_score_ic(rows)
+    assert result["composite_ic"] is not None
+
+
+def test_r36_t2_floor_registered() -> None:
+    """composite_ic floor = 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "composite_ic" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["composite_ic"] == 0.0
+
+
+def test_r36_t2_in_comparison_metrics() -> None:
+    """composite_ic registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "composite_ic" in COMPARISON_METRICS
+
+
+def test_r36_t2_label_registered() -> None:
+    """composite_ic has Chinese label '综合评分IC'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("composite_ic") == "综合评分IC"
+
+
+# ---------------------------------------------------------------------------
+# T3 — compute_win_rate_confidence_interval
+# ---------------------------------------------------------------------------
+
+def test_r36_t3_basic_returns_required_keys() -> None:
+    """compute_win_rate_confidence_interval returns all required keys for >=10 rows."""
+    from scripts.btst_analysis_utils import compute_win_rate_confidence_interval
+
+    rows = [{"next_close_return": v} for v in [0.05, 0.03, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06]]
+    result = compute_win_rate_confidence_interval(rows)
+    for key in ("observed_win_rate", "ci_lower", "ci_upper", "ci_width", "win_rate_reliable", "win_rate_ci_grade"):
+        assert key in result, f"Missing key: {key}"
+        assert result[key] is not None
+
+
+def test_r36_t3_insufficient_rows_returns_all_none() -> None:
+    """compute_win_rate_confidence_interval returns all-None when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_win_rate_confidence_interval
+
+    rows = [{"next_close_return": 0.05} for _ in range(9)]
+    result = compute_win_rate_confidence_interval(rows)
+    assert result["observed_win_rate"] is None
+    assert result["ci_width"] is None
+
+
+def test_r36_t3_empty_rows_no_error() -> None:
+    """compute_win_rate_confidence_interval handles empty input gracefully."""
+    from scripts.btst_analysis_utils import compute_win_rate_confidence_interval
+
+    result = compute_win_rate_confidence_interval([])
+    assert result["observed_win_rate"] is None
+
+
+def test_r36_t3_none_returns_filtered() -> None:
+    """compute_win_rate_confidence_interval filters None next_close_return values."""
+    from scripts.btst_analysis_utils import compute_win_rate_confidence_interval
+
+    rows = [{"next_close_return": None}] * 5 + [{"next_close_return": v} for v in [0.05, 0.03, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06]]
+    result = compute_win_rate_confidence_interval(rows)
+    assert result["observed_win_rate"] is not None
+
+
+def test_r36_t3_ci_bounds_valid() -> None:
+    """ci_lower <= observed_win_rate <= ci_upper and ci_width = ci_upper - ci_lower."""
+    from scripts.btst_analysis_utils import compute_win_rate_confidence_interval
+
+    rows = [{"next_close_return": v} for v in [0.05, 0.03, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06, 0.04, -0.05, 0.09, 0.11, 0.02]]
+    result = compute_win_rate_confidence_interval(rows)
+    assert result["ci_lower"] <= result["observed_win_rate"] <= result["ci_upper"]
+    assert abs(result["ci_width"] - (result["ci_upper"] - result["ci_lower"])) < 1e-4
+
+
+def test_r36_t3_deterministic_seed() -> None:
+    """compute_win_rate_confidence_interval produces identical results on two calls (deterministic seed=42)."""
+    from scripts.btst_analysis_utils import compute_win_rate_confidence_interval
+
+    rows = [{"next_close_return": v} for v in [0.05, 0.03, -0.02, 0.08, 0.12, -0.01, 0.07, 0.15, -0.03, 0.06, 0.04, -0.05, 0.09, 0.11, 0.02]]
+    r1 = compute_win_rate_confidence_interval(rows)
+    r2 = compute_win_rate_confidence_interval(rows)
+    assert r1["ci_lower"] == r2["ci_lower"]
+    assert r1["ci_upper"] == r2["ci_upper"]
+
+
+def test_r36_t3_all_wins_grade_A_for_large_sample() -> None:
+    """All-positive returns with large sample produce grade A (narrow CI)."""
+    from scripts.btst_analysis_utils import compute_win_rate_confidence_interval
+
+    rows = [{"next_close_return": 0.05} for _ in range(100)]
+    result = compute_win_rate_confidence_interval(rows)
+    assert result["win_rate_ci_grade"] == "A"
+    assert result["win_rate_reliable"] is True
+
+
+def test_r36_t3_cap_registered() -> None:
+    """win_rate_ci_width cap = 0.30 in BTST_QUALITY_CAPS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
+    assert "win_rate_ci_width" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["win_rate_ci_width"] == 0.30
+
+
+def test_r36_t3_in_comparison_metrics() -> None:
+    """win_rate_ci_width registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "win_rate_ci_width" in COMPARISON_METRICS
+
+
+def test_r36_t3_in_lower_is_better() -> None:
+    """win_rate_ci_width registered in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
+    assert "win_rate_ci_width" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r36_t3_label_registered() -> None:
+    """win_rate_ci_width has Chinese label '胜率置信区间宽度'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("win_rate_ci_width") == "胜率置信区间宽度"

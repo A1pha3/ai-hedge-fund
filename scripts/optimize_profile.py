@@ -259,6 +259,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "quality_trend_score",
     # Task 3 (Round 35, Beta): candidate diversity score — 1 − HHI sector concentration index.
     "diversity_score",
+    # Task 1 (Round 36, Alpha): right-tail dominance — (P95−P50)/|P5−P50|, clamped [0, 5].
+    "right_tail_dominance",
+    # Task 2 (Round 36, Beta): composite score Spearman IC — direct predictive validity metric.
+    "composite_ic",
+    # Task 3 (Round 36, Gamma): win-rate bootstrap CI width — lower = more reliable estimate.
+    "win_rate_ci_width",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -405,6 +411,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "quality_trend_score": "质量趋势评分",
     # Task 3 (Round 35, Beta): candidate diversity score
     "diversity_score": "候选多样性评分",
+    # Task 1 (Round 36, Alpha): right-tail dominance ratio
+    "right_tail_dominance": "右尾优势比",
+    # Task 2 (Round 36, Beta): composite score Spearman IC
+    "composite_ic": "综合评分IC",
+    # Task 3 (Round 36, Gamma): win-rate bootstrap CI width
+    "win_rate_ci_width": "胜率置信区间宽度",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -451,6 +463,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "momentum_half_life_days",
     # Task 3 (Round 34, Beta): signal churn rate — higher = more pool turnover = less stable = lower-is-better.
     "signal_churn_rate",
+    # Task 3 (Round 36, Gamma): win-rate CI width — wider = less reliable estimate = lower-is-better.
+    "win_rate_ci_width",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -590,6 +604,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "quality_trend_score",
     # Task 3 (Round 35, Beta): diversity score — optional; pre-Round-35 outputs omit it.
     "diversity_score",
+    # Task 1 (Round 36, Alpha): right-tail dominance — optional; pre-Round-36 outputs omit it.
+    "right_tail_dominance",
+    # Task 2 (Round 36, Beta): composite score IC — optional; pre-Round-36 outputs omit it.
+    "composite_ic",
+    # Task 3 (Round 36, Gamma): win-rate CI width — optional; pre-Round-36 outputs omit it.
+    "win_rate_ci_width",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1778,6 +1798,15 @@ def _build_replay_evaluator(
         # Task 3 (Round 35, Beta): average diversity_score across replay windows.
         _div_vals = [float(s["diversity_score"]) for s in all_primary_surfaces if s.get("diversity_score") is not None]
         avg_diversity_score: float | None = round(sum(_div_vals) / len(_div_vals), 4) if _div_vals else None
+        # Task 1 (Round 36, Alpha): average right_tail_dominance across replay windows.
+        _rtd_vals = [float(s["right_tail_dominance"]) for s in all_primary_surfaces if s.get("right_tail_dominance") is not None]
+        avg_right_tail_dominance: float | None = round(sum(_rtd_vals) / len(_rtd_vals), 4) if _rtd_vals else None
+        # Task 2 (Round 36, Beta): average composite_ic across replay windows.
+        _cic_vals = [float(s["composite_ic"]) for s in all_primary_surfaces if s.get("composite_ic") is not None]
+        avg_composite_ic: float | None = round(sum(_cic_vals) / len(_cic_vals), 6) if _cic_vals else None
+        # Task 3 (Round 36, Gamma): average win_rate_ci_width across replay windows.
+        _wrci_vals = [float(s["win_rate_ci_width"]) for s in all_primary_surfaces if s.get("win_rate_ci_width") is not None]
+        avg_win_rate_ci_width: float | None = round(sum(_wrci_vals) / len(_wrci_vals), 4) if _wrci_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1924,6 +1953,12 @@ def _build_replay_evaluator(
             "quality_trend_grade": _quality_trend.get("quality_trend_grade"),
             # Task 3 (Round 35, Beta): average candidate diversity score across replay windows.
             "diversity_score": avg_diversity_score,
+            # Task 1 (Round 36, Alpha): average right-tail dominance across replay windows.
+            "right_tail_dominance": avg_right_tail_dominance,
+            # Task 2 (Round 36, Beta): average composite score Spearman IC across replay windows.
+            "composite_ic": avg_composite_ic,
+            # Task 3 (Round 36, Gamma): average win-rate bootstrap CI width across replay windows.
+            "win_rate_ci_width": avg_win_rate_ci_width,
         }
 
     return evaluator
