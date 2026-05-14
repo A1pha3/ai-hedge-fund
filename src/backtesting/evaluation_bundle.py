@@ -59,6 +59,10 @@ _GUARDRAIL_KEYS = (
     # conditional_lift = high_signal_win_rate − low_signal_win_rate.
     # A negative lift means the scoring system does not differentiate high-signal from low-signal rows.
     "conditional_lift",
+    # Task 1 (Round 54, Alpha): tail-risk asymmetry floor guardrail.
+    # tail_asymmetry = right_tail_95 − abs(CVaR_5%); positive = right-skewed (good).
+    # Floor ≥ 0.0 requires the right tail to be at least as large as the left tail in absolute terms.
+    "tail_asymmetry",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -395,6 +399,14 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # ir_trend_slope = OLS slope of information_ratio across replay windows.
     # Floor ≥ -0.05 prevents strategies whose IR is in severe decline from passing.
     "ir_trend_slope": -0.05,
+    # Task 1 (Round 54, Alpha): tail-risk asymmetry floor.
+    # tail_asymmetry = right_tail_95 − abs(CVaR_5%); positive means the strategy profits more from the right tail than it loses from the left tail.
+    # Floor ≥ 0.0 requires the right tail to at least match the left tail.
+    "tail_asymmetry": 0.0,
+    # Task 3 (Round 54, Gamma): conditional factor synergy cross-window trend slope floor.
+    # conditional_lift_trend_slope = OLS slope of conditional_lift across replay windows.
+    # Floor ≥ -0.01 prevents strategies whose factor synergy is deteriorating steeply from passing.
+    "conditional_lift_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

@@ -4384,6 +4384,26 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["autocorr_persistence"] = _rac.get("autocorr_persistence")
     _surface_result["return_autocorrelation_valid"] = _rac.get("return_autocorrelation_valid")
 
+    # Round 54, Task 1 (Alpha): Tail risk analysis — good-tail / bad-tail asymmetry.
+    _tra: dict[str, Any] = compute_tail_risk_analysis(next_day_rows)
+    _surface_result["tail_var_5pct"] = _tra.get("var_5pct")
+    _surface_result["tail_cvar_5pct"] = _tra.get("cvar_5pct")
+    _surface_result["tail_right_tail_95"] = _tra.get("right_tail_95")
+    _surface_result["tail_asymmetry"] = _tra.get("tail_asymmetry")
+    _surface_result["tail_left_tail_pct"] = _tra.get("left_tail_pct")
+    _surface_result["tail_right_tail_pct"] = _tra.get("right_tail_pct")
+    _surface_result["tail_tail_ratio"] = _tra.get("tail_ratio")
+    _surface_result["tail_tail_risk_grade"] = _tra.get("tail_risk_grade")
+    _surface_result["tail_tail_risk_valid"] = _tra.get("tail_risk_valid")
+
+    # Round 54, Task 2 (Beta): Max drawdown analysis — risk control quality.
+    _mda: dict[str, Any] = compute_max_drawdown_analysis(next_day_rows)
+    _surface_result["drawdown_max_drawdown"] = _mda.get("max_drawdown")
+    _surface_result["drawdown_max_drawdown_duration"] = _mda.get("max_drawdown_duration")
+    _surface_result["drawdown_recovery_ratio"] = _mda.get("recovery_ratio")
+    _surface_result["drawdown_calmar_ratio"] = _mda.get("calmar_ratio")
+    _surface_result["drawdown_max_drawdown_valid"] = _mda.get("max_drawdown_valid")
+
     return _surface_result
 
 
@@ -10429,3 +10449,144 @@ def compute_return_autocorrelation(rows: list[dict]) -> dict:
         "autocorr_persistence": persistence,
         "return_autocorrelation_valid": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# Round 54, Task 1 (Alpha): Tail risk analysis — quantify return distribution tails
+# ---------------------------------------------------------------------------
+# Distinguishes good-tail (right tail profit) from bad-tail (left tail loss).
+# All quantile operations are performed manually (no scipy) via sorted-list indexing.
+# ---------------------------------------------------------------------------
+
+
+def compute_tail_risk_analysis(rows: list[dict]) -> dict:
+    """Quantify the tail-risk asymmetry of the next_day_return distribution.
+
+    Args:
+        rows: Per-candidate dicts containing ``next_day_return``.  Requires ≥ 10 valid rows.
+
+    Returns:
+        Dict with keys:
+
+        - ``var_5pct``: float | None — 5th-percentile return (VaR; typically negative).
+        - ``cvar_5pct``: float | None — mean of returns ≤ var_5pct (CVaR / Expected Shortfall).
+        - ``right_tail_95``: float | None — 95th-percentile return (right-tail profit potential).
+        - ``tail_asymmetry``: float | None — right_tail_95 − abs(cvar_5pct); positive = right-skewed.
+        - ``left_tail_pct``: float | None — fraction of returns below −3 %.
+        - ``right_tail_pct``: float | None — fraction of returns above +3 %.
+        - ``tail_ratio``: float | None — right_tail_pct / left_tail_pct (clamped to 5.0 when denom=0).
+        - ``tail_risk_grade``: str | None — "A"/"B"/"C"/"D" based on tail_ratio thresholds.
+        - ``tail_risk_valid``: bool — True when ≥ 10 valid rows are available.
+    """
+    _null: dict = {"var_5pct": None, "cvar_5pct": None, "right_tail_95": None, "tail_asymmetry": None, "left_tail_pct": None, "right_tail_pct": None, "tail_ratio": None, "tail_risk_grade": None, "tail_risk_valid": False}
+    if not rows or len(rows) < 10:
+        return _null
+    rets: list[float] = []
+    for row in rows:
+        v = row.get("next_day_return")
+        if v is not None:
+            try:
+                rets.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(rets) < 10:
+        return _null
+    n = len(rets)
+    sorted_rets = sorted(rets)
+    p5_idx = int(0.05 * (n - 1))
+    p95_idx = int(0.95 * (n - 1))
+    var_5pct: float = round(sorted_rets[p5_idx], 8)
+    right_tail_95: float = round(sorted_rets[p95_idx], 8)
+    left_rows = [r for r in sorted_rets if r <= var_5pct]
+    cvar_5pct: float = round(sum(left_rows) / len(left_rows), 8) if left_rows else var_5pct
+    tail_asymmetry: float = round(right_tail_95 - abs(cvar_5pct), 8)
+    left_tail_pct: float = round(sum(1 for r in rets if r < -0.03) / n, 6)
+    right_tail_pct: float = round(sum(1 for r in rets if r > 0.03) / n, 6)
+    tail_ratio: float = round(min(right_tail_pct / left_tail_pct, 5.0), 6) if left_tail_pct > 0 else 5.0
+    if tail_ratio > 2.0:
+        grade = "A"
+    elif tail_ratio > 1.0:
+        grade = "B"
+    elif tail_ratio > 0.5:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"var_5pct": var_5pct, "cvar_5pct": cvar_5pct, "right_tail_95": right_tail_95, "tail_asymmetry": tail_asymmetry, "left_tail_pct": left_tail_pct, "right_tail_pct": right_tail_pct, "tail_ratio": tail_ratio, "tail_risk_grade": grade, "tail_risk_valid": True}
+
+
+# ---------------------------------------------------------------------------
+# Round 54, Task 2 (Beta): Max drawdown analysis — risk control quality for short-term systems
+# ---------------------------------------------------------------------------
+# Simulates cumulative NAV from original row order; computes peak-to-trough drawdown,
+# drawdown duration, recovery ratio, and Calmar ratio.
+# ---------------------------------------------------------------------------
+
+
+def compute_max_drawdown_analysis(rows: list[dict]) -> dict:
+    """Analyse maximum drawdown and recovery capability from the next_day_return series.
+
+    Args:
+        rows: Per-candidate dicts containing ``next_day_return``.  Processed in original order.  Requires ≥ 8 valid rows.
+
+    Returns:
+        Dict with keys:
+
+        - ``max_drawdown``: float | None — largest peak-to-trough decline (positive value, e.g. 0.05 = 5 %).
+        - ``max_drawdown_duration``: int | None — longest steps from peak to new-high (or series end).
+        - ``recovery_ratio``: float | None — final NAV / NAV-at-trough (> 1 indicates recovery).
+        - ``calmar_ratio``: float | None — annualised return / max_drawdown (clamped to 10.0 when max_drawdown=0).
+        - ``max_drawdown_valid``: bool — True when ≥ 8 valid rows are available.
+    """
+    _null: dict = {"max_drawdown": None, "max_drawdown_duration": None, "recovery_ratio": None, "calmar_ratio": None, "max_drawdown_valid": False}
+    if not rows or len(rows) < 8:
+        return _null
+    rets: list[float] = []
+    for row in rows:
+        v = row.get("next_day_return")
+        if v is not None:
+            try:
+                rets.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(rets) < 8:
+        return _null
+    nav: list[float] = [1.0]
+    for r in rets:
+        nav.append(nav[-1] * (1.0 + r))
+    peak = nav[0]
+    trough_nav = nav[0]
+    max_dd = 0.0
+    max_dd_trough_nav = nav[0]
+    peak_idx = 0
+    max_dd_start_idx = 0
+    max_dd_duration = 0
+    current_dd_start = 0
+    for i in range(1, len(nav)):
+        if nav[i] > peak:
+            peak = nav[i]
+            peak_idx = i
+            current_dd_start = i
+        dd = (peak - nav[i]) / peak if peak > 0 else 0.0
+        if dd > max_dd:
+            max_dd = dd
+            max_dd_trough_nav = nav[i]
+            max_dd_start_idx = current_dd_start
+    # Compute max drawdown duration: from peak to next new-high or end
+    if max_dd > 0:
+        dd_peak_val = nav[max_dd_start_idx]
+        dur = 0
+        for j in range(max_dd_start_idx + 1, len(nav)):
+            if nav[j] >= dd_peak_val:
+                break
+            dur += 1
+        else:
+            dur = len(nav) - 1 - max_dd_start_idx
+        max_dd_duration = dur
+    else:
+        max_dd_duration = 0
+    final_nav = nav[-1]
+    recovery_ratio: float = round(final_nav / max_dd_trough_nav, 6) if max_dd_trough_nav > 0 else 1.0
+    mean_ret = sum(rets) / len(rets)
+    annualised = mean_ret * 252
+    calmar: float = round(min(annualised / max_dd, 10.0), 6) if max_dd > 0 else 10.0
+    return {"max_drawdown": round(max_dd, 8), "max_drawdown_duration": max_dd_duration, "recovery_ratio": recovery_ratio, "calmar_ratio": calmar, "max_drawdown_valid": True}

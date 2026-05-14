@@ -13329,3 +13329,377 @@ def test_r53_ir_trend_min_max_correct() -> None:
     assert result["ir_trend_valid"] is True
     assert result["ir_trend_min"] == pytest.approx(min(vals), abs=1e-4)
     assert result["ir_trend_max"] == pytest.approx(max(vals), abs=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Round 54 tests
+# ---------------------------------------------------------------------------
+
+def _make_rows(returns: list[float]) -> list[dict]:
+    return [{"next_day_return": r} for r in returns]
+
+
+# T1: compute_tail_risk_analysis
+
+
+def test_r54_tail_risk_invalid_too_few_rows() -> None:
+    """Fewer than 10 rows → valid=False, all metrics None."""
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    result = compute_tail_risk_analysis(_make_rows([0.01] * 9))
+    assert result["tail_risk_valid"] is False
+    assert result["var_5pct"] is None
+    assert result["tail_asymmetry"] is None
+
+
+def test_r54_tail_risk_invalid_empty() -> None:
+    """Empty list → valid=False."""
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    result = compute_tail_risk_analysis([])
+    assert result["tail_risk_valid"] is False
+
+
+def test_r54_tail_risk_valid_basic() -> None:
+    """10+ rows → valid=True and required keys present."""
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    result = compute_tail_risk_analysis(_make_rows([i * 0.01 - 0.05 for i in range(20)]))
+    assert result["tail_risk_valid"] is True
+    for key in ("var_5pct", "cvar_5pct", "right_tail_95", "tail_asymmetry", "left_tail_pct", "right_tail_pct", "tail_ratio", "tail_risk_grade"):
+        assert key in result
+
+
+def test_r54_var_5pct_matches_5th_percentile() -> None:
+    """var_5pct == sorted_rets[int(0.05*(n-1))]."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    rets = [i * 0.01 for i in range(20)]
+    result = compute_tail_risk_analysis(_make_rows(rets))
+    expected = sorted(rets)[int(0.05 * 19)]
+    assert result["var_5pct"] == pytest.approx(expected, abs=1e-6)
+
+
+def test_r54_right_tail_95_matches_95th_percentile() -> None:
+    """right_tail_95 == sorted_rets[int(0.95*(n-1))]."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    rets = [i * 0.01 for i in range(20)]
+    result = compute_tail_risk_analysis(_make_rows(rets))
+    expected = sorted(rets)[int(0.95 * 19)]
+    assert result["right_tail_95"] == pytest.approx(expected, abs=1e-6)
+
+
+def test_r54_cvar_5pct_is_mean_of_left_rows() -> None:
+    """cvar_5pct == mean of returns <= var_5pct."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    rets = [-0.10, -0.08, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
+    result = compute_tail_risk_analysis(_make_rows(rets))
+    assert result["tail_risk_valid"] is True
+    var = result["var_5pct"]
+    left = [r for r in sorted(rets) if r <= var]
+    if left:
+        expected_cvar = sum(left) / len(left)
+        assert result["cvar_5pct"] == pytest.approx(expected_cvar, abs=1e-6)
+
+
+def test_r54_tail_asymmetry_formula() -> None:
+    """tail_asymmetry = right_tail_95 - abs(cvar_5pct)."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    rets = [-0.10, -0.08, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
+    result = compute_tail_risk_analysis(_make_rows(rets))
+    if result["tail_risk_valid"]:
+        expected = result["right_tail_95"] - abs(result["cvar_5pct"])
+        assert result["tail_asymmetry"] == pytest.approx(expected, abs=1e-6)
+
+
+def test_r54_tail_ratio_no_left_tail_clamp() -> None:
+    """tail_ratio clamped to 5.0 when left_tail_pct==0."""
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    rets = [0.05] * 15
+    result = compute_tail_risk_analysis(_make_rows(rets))
+    assert result["tail_risk_valid"] is True
+    assert result["tail_ratio"] == 5.0
+
+
+def test_r54_tail_ratio_formula() -> None:
+    """tail_ratio = right_tail_pct / left_tail_pct."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    rets = [-0.05] * 5 + [0.05] * 15
+    result = compute_tail_risk_analysis(_make_rows(rets))
+    assert result["tail_risk_valid"] is True
+    left_pct = result["left_tail_pct"]
+    right_pct = result["right_tail_pct"]
+    if left_pct and left_pct > 0:
+        assert result["tail_ratio"] == pytest.approx(min(right_pct / left_pct, 5.0), abs=1e-4)
+
+
+def test_r54_tail_risk_grade_a() -> None:
+    """tail_ratio > 2.0 → grade A."""
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    rets = [-0.04] * 2 + [0.05] * 18
+    result = compute_tail_risk_analysis(_make_rows(rets))
+    if result["tail_risk_valid"] and result["tail_ratio"] is not None and result["tail_ratio"] > 2.0:
+        assert result["tail_risk_grade"] == "A"
+
+
+def test_r54_tail_risk_grade_d() -> None:
+    """tail_ratio <= 0.5 → grade D."""
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    rets = [-0.05] * 14 + [0.04] * 6
+    result = compute_tail_risk_analysis(_make_rows(rets))
+    if result["tail_risk_valid"] and result["tail_ratio"] is not None and result["tail_ratio"] <= 0.5:
+        assert result["tail_risk_grade"] == "D"
+
+
+def test_r54_tail_asymmetry_guardrail_registered() -> None:
+    """tail_asymmetry must be in _GUARDRAIL_KEYS."""
+    from src.backtesting import evaluation_bundle
+    assert "tail_asymmetry" in evaluation_bundle._GUARDRAIL_KEYS
+
+
+def test_r54_tail_asymmetry_floor_registered() -> None:
+    """tail_asymmetry must have floor 0.0 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "tail_asymmetry" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["tail_asymmetry"] == pytest.approx(0.0)
+
+
+def test_r54_tail_asymmetry_in_comparison_metrics() -> None:
+    """tail_asymmetry must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "tail_asymmetry" in COMPARISON_METRICS
+
+
+def test_r54_tail_asymmetry_optional() -> None:
+    """tail_asymmetry must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "tail_asymmetry" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r54_tail_asymmetry_label() -> None:
+    """tail_asymmetry label must be '尾部收益不对称度'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("tail_asymmetry") == "尾部收益不对称度"
+
+
+# T2: compute_max_drawdown_analysis
+
+
+def test_r54_max_drawdown_invalid_too_few() -> None:
+    """Fewer than 8 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+    result = compute_max_drawdown_analysis(_make_rows([0.01] * 7))
+    assert result["max_drawdown_valid"] is False
+    assert result["max_drawdown"] is None
+
+
+def test_r54_max_drawdown_invalid_empty() -> None:
+    """Empty list → valid=False."""
+    from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+    result = compute_max_drawdown_analysis([])
+    assert result["max_drawdown_valid"] is False
+
+
+def test_r54_max_drawdown_valid_basic() -> None:
+    """8+ rows → valid=True and required keys present."""
+    from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+    result = compute_max_drawdown_analysis(_make_rows([0.01, -0.02, 0.03, -0.01, 0.02, 0.01, -0.03, 0.04]))
+    assert result["max_drawdown_valid"] is True
+    for key in ("max_drawdown", "max_drawdown_duration", "recovery_ratio", "calmar_ratio"):
+        assert key in result
+
+
+def test_r54_max_drawdown_flat_series_zero() -> None:
+    """All-zero returns → max_drawdown == 0.0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+    result = compute_max_drawdown_analysis(_make_rows([0.0] * 10))
+    assert result["max_drawdown_valid"] is True
+    assert result["max_drawdown"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_r54_max_drawdown_positive_value() -> None:
+    """max_drawdown is expressed as a positive value (fraction)."""
+    from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+    rets = [0.05, 0.05, -0.10, -0.10, 0.02, 0.02, 0.02, 0.02]
+    result = compute_max_drawdown_analysis(_make_rows(rets))
+    assert result["max_drawdown_valid"] is True
+    assert result["max_drawdown"] > 0
+
+
+def test_r54_calmar_ratio_clamp_when_zero_drawdown() -> None:
+    """calmar_ratio clamped to 10.0 when max_drawdown == 0."""
+    from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+    result = compute_max_drawdown_analysis(_make_rows([0.01] * 10))
+    assert result["max_drawdown_valid"] is True
+    assert result["calmar_ratio"] == 10.0
+
+
+def test_r54_recovery_ratio_positive() -> None:
+    """recovery_ratio > 0 for any series."""
+    from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+    rets = [0.05, -0.15, 0.10, 0.05, 0.05, -0.05, 0.05, 0.05]
+    result = compute_max_drawdown_analysis(_make_rows(rets))
+    assert result["max_drawdown_valid"] is True
+    assert result["recovery_ratio"] is not None
+    assert result["recovery_ratio"] > 0
+
+
+def test_r54_max_drawdown_in_comparison_metrics() -> None:
+    """drawdown_max_drawdown must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "drawdown_max_drawdown" in COMPARISON_METRICS
+
+
+def test_r54_max_drawdown_lower_is_better() -> None:
+    """drawdown_max_drawdown must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "drawdown_max_drawdown" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r54_max_drawdown_optional() -> None:
+    """drawdown_max_drawdown must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "drawdown_max_drawdown" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r54_max_drawdown_label() -> None:
+    """drawdown_max_drawdown label must be '最大回撤率'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("drawdown_max_drawdown") == "最大回撤率"
+
+
+# T3: compute_cross_window_conditional_trend
+
+
+def test_r54_conditional_trend_invalid_empty() -> None:
+    """Empty list → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    result = compute_cross_window_conditional_trend([])
+    assert result["conditional_lift_trend_valid"] is False
+
+
+def test_r54_conditional_trend_invalid_too_few() -> None:
+    """Fewer than 3 valid values → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    result = compute_cross_window_conditional_trend([{"conditional_conditional_lift": 0.1}, {"conditional_conditional_lift": 0.2}])
+    assert result["conditional_lift_trend_valid"] is False
+
+
+def test_r54_conditional_trend_valid_basic() -> None:
+    """3+ valid values → valid=True."""
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    summaries = [{"conditional_conditional_lift": 0.1 + 0.01 * i} for i in range(5)]
+    result = compute_cross_window_conditional_trend(summaries)
+    assert result["conditional_lift_trend_valid"] is True
+    assert result["conditional_lift_trend_slope"] is not None
+
+
+def test_r54_conditional_trend_ols_slope_positive() -> None:
+    """Strictly increasing series → positive slope."""
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    summaries = [{"conditional_conditional_lift": float(i) * 0.01} for i in range(5)]
+    result = compute_cross_window_conditional_trend(summaries)
+    assert result["conditional_lift_trend_valid"] is True
+    assert result["conditional_lift_trend_slope"] > 0
+
+
+def test_r54_conditional_trend_ols_slope_negative() -> None:
+    """Strictly decreasing series → negative slope."""
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    summaries = [{"conditional_conditional_lift": 0.1 - float(i) * 0.02} for i in range(5)]
+    result = compute_cross_window_conditional_trend(summaries)
+    assert result["conditional_lift_trend_valid"] is True
+    assert result["conditional_lift_trend_slope"] < 0
+
+
+def test_r54_conditional_trend_grade_a() -> None:
+    """slope > 0.005 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    summaries = [{"conditional_conditional_lift": float(i) * 0.05} for i in range(5)]
+    result = compute_cross_window_conditional_trend(summaries)
+    if result["conditional_lift_trend_valid"] and result["conditional_lift_trend_slope"] is not None and result["conditional_lift_trend_slope"] > 0.005:
+        assert result["conditional_trend_grade"] == "A"
+
+
+def test_r54_conditional_trend_grade_d() -> None:
+    """slope <= -0.01 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    summaries = [{"conditional_conditional_lift": -float(i) * 0.05} for i in range(5)]
+    result = compute_cross_window_conditional_trend(summaries)
+    if result["conditional_lift_trend_valid"] and result["conditional_lift_trend_slope"] is not None and result["conditional_lift_trend_slope"] <= -0.01:
+        assert result["conditional_trend_grade"] == "D"
+
+
+def test_r54_conditional_positive_windows_pct() -> None:
+    """conditional_positive_windows_pct counts windows where lift > 0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    summaries = [{"conditional_conditional_lift": v} for v in [0.1, -0.1, 0.2, -0.2, 0.3]]
+    result = compute_cross_window_conditional_trend(summaries)
+    assert result["conditional_lift_trend_valid"] is True
+    assert result["conditional_positive_windows_pct"] == pytest.approx(3 / 5, abs=1e-5)
+
+
+def test_r54_conditional_trend_min_max() -> None:
+    """conditional_lift_trend_min and max match series extremes."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    vals = [0.05, -0.03, 0.12, 0.07, -0.01]
+    summaries = [{"conditional_conditional_lift": v} for v in vals]
+    result = compute_cross_window_conditional_trend(summaries)
+    assert result["conditional_lift_trend_valid"] is True
+    assert result["conditional_lift_trend_min"] == pytest.approx(min(vals), abs=1e-5)
+    assert result["conditional_lift_trend_max"] == pytest.approx(max(vals), abs=1e-5)
+
+
+def test_r54_conditional_trend_in_comparison_metrics() -> None:
+    """conditional_lift_trend_slope must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "conditional_lift_trend_slope" in COMPARISON_METRICS
+
+
+def test_r54_conditional_trend_optional() -> None:
+    """conditional_lift_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "conditional_lift_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r54_conditional_trend_floor_registered() -> None:
+    """conditional_lift_trend_slope must have floor -0.01 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "conditional_lift_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["conditional_lift_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r54_conditional_trend_label() -> None:
+    """conditional_lift_trend_slope label must be '条件因子协同跨窗趋势'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("conditional_lift_trend_slope") == "条件因子协同跨窗趋势"
+
+
+def test_r54_conditional_trend_skips_none_values() -> None:
+    """None values in conditional_conditional_lift are skipped."""
+    from scripts.optimize_profile import compute_cross_window_conditional_trend
+    summaries = [{"conditional_conditional_lift": None}, {"conditional_conditional_lift": 0.1}, {"conditional_conditional_lift": 0.2}, {"conditional_conditional_lift": 0.3}]
+    result = compute_cross_window_conditional_trend(summaries)
+    assert result["conditional_lift_trend_valid"] is True
+
+
+def test_r54_tail_risk_missing_next_day_return_skipped() -> None:
+    """Rows missing next_day_return are skipped."""
+    from scripts.btst_analysis_utils import compute_tail_risk_analysis
+    rows = [{"next_day_return": 0.01 * i} for i in range(15)] + [{"other": 1}] * 5
+    result = compute_tail_risk_analysis(rows)
+    assert result["tail_risk_valid"] is True
+
+
+def test_r54_max_drawdown_missing_next_day_return_skipped() -> None:
+    """Rows missing next_day_return are skipped."""
+    from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+    rows = [{"next_day_return": 0.01 * i} for i in range(10)] + [{"other": 1}] * 5
+    result = compute_max_drawdown_analysis(rows)
+    assert result["max_drawdown_valid"] is True

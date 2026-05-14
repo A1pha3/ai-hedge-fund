@@ -370,6 +370,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "conditional_lift",
     # Task 3 (Round 53, Gamma): cross-window Information Ratio OLS trend slope.
     "ir_trend_slope",
+    # Task 1 (Round 54, Alpha): tail-risk asymmetry (right_tail_95 − abs(CVaR5%)).
+    "tail_asymmetry",
+    # Task 2 (Round 54, Beta): maximum drawdown of cumulative NAV (positive value).
+    "drawdown_max_drawdown",
+    # Task 3 (Round 54, Gamma): cross-window conditional factor synergy OLS trend slope.
+    "conditional_lift_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -628,6 +634,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "conditional_lift": "条件因子高信号胜率提升",
     # Task 3 (Round 53, Gamma): cross-window Information Ratio trend slope
     "ir_trend_slope": "IR信号跨窗趋势斜率",
+    # Task 1 (Round 54, Alpha): tail-risk asymmetry
+    "tail_asymmetry": "尾部收益不对称度",
+    # Task 2 (Round 54, Beta): maximum drawdown rate
+    "drawdown_max_drawdown": "最大回撤率",
+    # Task 3 (Round 54, Gamma): conditional factor synergy cross-window trend
+    "conditional_lift_trend_slope": "条件因子协同跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -690,6 +702,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "avg_inter_factor_correlation",
     # Task 2 (Round 51, Beta): outlier dependency ratio — higher = more reliance on outliers = lower-is-better.
     "outlier_dependency_ratio",
+    # Task 2 (Round 54, Beta): maximum drawdown — higher = larger drawdown = lower-is-better.
+    "drawdown_max_drawdown",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -940,6 +954,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "conditional_lift",
     # Task 3 (Round 53, Gamma): IR trend slope — optional; pre-Round-53 outputs omit it.
     "ir_trend_slope",
+    # Task 1 (Round 54, Alpha): tail-risk asymmetry — optional; pre-Round-54 outputs omit it.
+    "tail_asymmetry",
+    # Task 2 (Round 54, Beta): max drawdown — optional; pre-Round-54 outputs omit it.
+    "drawdown_max_drawdown",
+    # Task 3 (Round 54, Gamma): conditional lift trend slope — optional; pre-Round-54 outputs omit it.
+    "conditional_lift_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2653,6 +2673,56 @@ def compute_cross_window_ir_trend(all_windows_summaries: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Round 54, Task 3 (Gamma): Cross-window conditional factor synergy trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_conditional_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track OLS trend of ``conditional_lift`` (conditional factor-synergy) across replay windows.
+
+    A positive slope means the strategy's high-signal vs low-signal win-rate delta is improving; a negative slope signals regime deterioration of factor synergy.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts ordered chronologically.  Each dict should carry a ``conditional_conditional_lift`` value produced by ``compute_conditional_factor_performance``.
+
+    Returns:
+        Dict with keys: ``conditional_lift_trend_slope``, ``conditional_lift_trend_mean``, ``conditional_lift_trend_min``, ``conditional_lift_trend_max``, ``conditional_positive_windows_pct``, ``conditional_trend_grade``, ``conditional_lift_trend_valid``.
+    """
+    _null: dict = {"conditional_lift_trend_slope": None, "conditional_lift_trend_mean": None, "conditional_lift_trend_min": None, "conditional_lift_trend_max": None, "conditional_positive_windows_pct": None, "conditional_trend_grade": None, "conditional_lift_trend_valid": False}
+    if not all_windows_summaries:
+        return _null
+    cl_series: list[float] = []
+    for surf in all_windows_summaries:
+        v = surf.get("conditional_conditional_lift")
+        if v is not None:
+            try:
+                cl_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(cl_series) < 3:
+        return _null
+    n = len(cl_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(cl_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, cl_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+    mean_val = sum_y / n
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    positive_pct = round(sum(1 for v in cl_series if v > 0) / n, 6)
+    return {"conditional_lift_trend_slope": round(slope, 8), "conditional_lift_trend_mean": round(mean_val, 6), "conditional_lift_trend_min": round(min(cl_series), 6), "conditional_lift_trend_max": round(max(cl_series), 6), "conditional_positive_windows_pct": positive_pct, "conditional_trend_grade": grade, "conditional_lift_trend_valid": True}
+
+
+# ---------------------------------------------------------------------------
 
 
 def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
@@ -3385,6 +3455,9 @@ def _build_replay_evaluator(
         # Task 3 (Round 53, Gamma): cross-window Information Ratio trend.
         _ir_trend: dict[str, Any] = compute_cross_window_ir_trend(all_primary_surfaces)
 
+        # Task 3 (Round 54, Gamma): cross-window conditional factor synergy trend.
+        _clt: dict[str, Any] = compute_cross_window_conditional_trend(all_primary_surfaces)
+
         return {
             "sharpe_ratio": avg_sharpe,
             "sortino_ratio": avg_sortino_r35 if avg_sortino_r35 is not None else avg_sortino,
@@ -3676,6 +3749,14 @@ def _build_replay_evaluator(
             "ir_trend_grade": _ir_trend.get("ir_trend_grade"),
             "ir_positive_windows_pct": _ir_trend.get("ir_positive_windows_pct"),
             "ir_trend_valid": _ir_trend.get("ir_trend_valid"),
+            # Task 3 (Round 54, Gamma): cross-window conditional factor synergy trend.
+            "conditional_lift_trend_slope": _clt.get("conditional_lift_trend_slope"),
+            "conditional_lift_trend_mean": _clt.get("conditional_lift_trend_mean"),
+            "conditional_lift_trend_min": _clt.get("conditional_lift_trend_min"),
+            "conditional_lift_trend_max": _clt.get("conditional_lift_trend_max"),
+            "conditional_positive_windows_pct": _clt.get("conditional_positive_windows_pct"),
+            "conditional_trend_grade": _clt.get("conditional_trend_grade"),
+            "conditional_lift_trend_valid": _clt.get("conditional_lift_trend_valid"),
         }
 
     return evaluator
