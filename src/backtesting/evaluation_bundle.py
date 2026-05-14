@@ -599,6 +599,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 72, Gamma): momentum rank trend slope floor.
     # momentum_rank_trend_slope < -0.01 means momentum discriminatory power is declining across windows.
     "momentum_rank_trend_slope": -0.01,
+    # Task 1 (Round 73, Alpha): market breadth win rate floor.
+    # breadth_win_rate < 0.45 means the candidate pool quality is very poor (fewer than 45% of stocks advance).
+    "breadth_win_rate": 0.45,
+    # Task 2 (Round 73, Beta): factor IC consistency ratio floor.
+    # ic_consistency_ratio < 0.4 means fewer than 40% of the 7 core factors have positive predictive direction.
+    "ic_consistency_ratio": 0.4,
+    # Task 3 (Round 73, Gamma): Z-score win-spread cross-window trend slope floor.
+    # zscore_trend_slope < -0.01 means multi-factor Z-score discriminatory power is declining across windows.
+    "zscore_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

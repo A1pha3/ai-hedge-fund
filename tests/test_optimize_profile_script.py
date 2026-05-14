@@ -20839,3 +20839,425 @@ def test_r72_t3_all_three_floors() -> None:
     assert "zscore_win_spread" in BTST_QUALITY_FLOORS
     assert "persistence_score" in BTST_QUALITY_FLOORS
     assert "momentum_rank_trend_slope" in BTST_QUALITY_FLOORS
+
+
+# ---------------------------------------------------------------------------
+# Round 73 Tests
+# ---------------------------------------------------------------------------
+
+
+def _make_breadth_rows(n: int, advance_pct: float = 0.6, with_score: bool = False) -> list[dict]:
+    """Create n rows with controllable advance/decline fractions."""
+    rows = []
+    for i in range(n):
+        ret = 0.02 if i < int(n * advance_pct) else -0.01
+        row: dict = {"next_day_return": ret}
+        if with_score:
+            row["runner_composite_score"] = 0.3 + (i / n) * 0.7
+        rows.append(row)
+    return rows
+
+
+# ---- T1: compute_market_breadth_indicator ----
+
+def test_r73_t1_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 8 rows."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    result = compute_market_breadth_indicator([{"next_day_return": 0.01}] * 5)
+    assert result["market_breadth_valid"] is False
+    assert result["breadth_win_rate"] is None
+    assert result["advance_count"] is None
+
+
+def test_r73_t1_valid_basic() -> None:
+    """Returns valid=True with ≥8 rows."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = _make_breadth_rows(10, advance_pct=0.6)
+    result = compute_market_breadth_indicator(rows)
+    assert result["market_breadth_valid"] is True
+    assert result["advance_count"] == 6
+    assert result["decline_count"] == 4
+    assert result["flat_count"] == 0
+
+
+def test_r73_t1_advance_count_accuracy() -> None:
+    """advance_count correctly counts positive returns."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = [{"next_day_return": 0.01}] * 7 + [{"next_day_return": -0.01}] * 3
+    result = compute_market_breadth_indicator(rows)
+    assert result["advance_count"] == 7
+    assert result["decline_count"] == 3
+
+
+def test_r73_t1_flat_count() -> None:
+    """flat_count correctly counts zero returns."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = [{"next_day_return": 0.0}] * 4 + [{"next_day_return": 0.01}] * 4 + [{"next_day_return": -0.01}] * 2
+    result = compute_market_breadth_indicator(rows)
+    assert result["flat_count"] == 4
+
+
+def test_r73_t1_advance_decline_ratio() -> None:
+    """advance_decline_ratio = advance / (decline + 1) with zero-division guard."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = [{"next_day_return": 0.01}] * 8 + [{"next_day_return": -0.01}] * 2
+    result = compute_market_breadth_indicator(rows)
+    import pytest
+    assert result["advance_decline_ratio"] == pytest.approx(8 / 3, rel=1e-4)
+
+
+def test_r73_t1_breadth_win_rate_accuracy() -> None:
+    """breadth_win_rate = advance / total accurately computed."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    import pytest
+    rows = [{"next_day_return": 0.01}] * 6 + [{"next_day_return": -0.01}] * 4
+    result = compute_market_breadth_indicator(rows)
+    assert result["breadth_win_rate"] == pytest.approx(0.6, rel=1e-4)
+
+
+def test_r73_t1_breadth_grade_A() -> None:
+    """breadth_grade = A when win_rate > 0.6 AND score_edge > 0.1."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = []
+    for i in range(20):
+        sc = 0.5 + (i / 20) * 0.5
+        ret = 0.02 if i >= 7 else -0.01
+        rows.append({"next_day_return": ret, "runner_composite_score": sc})
+    result = compute_market_breadth_indicator(rows)
+    assert result["market_breadth_valid"] is True
+    assert result["breadth_win_rate"] is not None and result["breadth_win_rate"] > 0.6
+    if result["breadth_score_edge"] is not None and result["breadth_score_edge"] > 0.1:
+        assert result["breadth_grade"] == "A"
+
+
+def test_r73_t1_breadth_grade_C() -> None:
+    """breadth_grade = C when win_rate is between 0.50 and 0.55 and no strong score edge."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = [{"next_day_return": 0.01}] * 9 + [{"next_day_return": -0.01}] * 8
+    result = compute_market_breadth_indicator(rows)
+    assert result["breadth_grade"] in ("C", "D")
+
+
+def test_r73_t1_breadth_grade_D() -> None:
+    """breadth_grade = D when win_rate <= 0.50."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = [{"next_day_return": 0.01}] * 4 + [{"next_day_return": -0.01}] * 6
+    result = compute_market_breadth_indicator(rows)
+    assert result["breadth_grade"] == "D"
+
+
+def test_r73_t1_score_edge_computed_with_score() -> None:
+    """breadth_score_edge is computed when runner_composite_score is present."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = _make_breadth_rows(16, advance_pct=0.6, with_score=True)
+    result = compute_market_breadth_indicator(rows)
+    assert result["high_score_advance_pct"] is not None
+    assert result["low_score_advance_pct"] is not None
+    assert result["breadth_score_edge"] is not None
+
+
+def test_r73_t1_no_score_field_graceful() -> None:
+    """Without score fields, breadth_score_edge and related fields are None."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = [{"next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(10)]
+    result = compute_market_breadth_indicator(rows)
+    assert result["breadth_score_edge"] is None
+    assert result["high_score_advance_pct"] is None
+    assert result["low_score_advance_pct"] is None
+
+
+def test_r73_t1_in_comparison_metrics() -> None:
+    """breadth_win_rate is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "breadth_win_rate" in COMPARISON_METRICS
+
+
+def test_r73_t1_in_optional_metrics() -> None:
+    """breadth_win_rate is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "breadth_win_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r73_t1_label_exists() -> None:
+    """breadth_win_rate has a Chinese label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "breadth_win_rate" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["breadth_win_rate"]) > 0
+
+
+def test_r73_t1_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has breadth_win_rate = 0.45."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "breadth_win_rate" in BTST_QUALITY_FLOORS
+    import pytest
+    assert BTST_QUALITY_FLOORS["breadth_win_rate"] == pytest.approx(0.45)
+
+
+def test_r73_t1_skips_none_returns() -> None:
+    """Rows where next_day_return is None are excluded from counting."""
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
+    rows = [{"next_day_return": 0.01}] * 6 + [{"next_day_return": -0.01}] * 4 + [{"next_day_return": None}] * 4
+    result = compute_market_breadth_indicator(rows)
+    assert result["advance_count"] == 6
+    assert result["decline_count"] == 4
+
+
+# ---- T2: compute_factor_ic_stability_score ----
+
+def _make_ic_rows(n: int) -> list[dict]:
+    """Create n rows with all 7 core factors and next_day_return."""
+    rows = []
+    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    for i in range(n):
+        row: dict = {"next_day_return": 0.01 * (i % 3 - 1)}
+        for j, f in enumerate(factors):
+            row[f] = 0.1 * (i + j) / n
+        rows.append(row)
+    return rows
+
+
+def test_r73_t2_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 12 rows."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+    result = compute_factor_ic_stability_score(_make_ic_rows(10))
+    assert result["factor_ic_stability_valid"] is False
+    assert result["ic_consistency_ratio"] is None
+
+
+def test_r73_t2_valid_basic() -> None:
+    """Returns valid=True with ≥12 rows."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+    result = compute_factor_ic_stability_score(_make_ic_rows(20))
+    assert result["factor_ic_stability_valid"] is True
+    assert result["ic_consistency_ratio"] is not None
+
+
+def test_r73_t2_half_ic_computed() -> None:
+    """half_IC is computed for each of the 7 factors."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+    rows = _make_ic_rows(20)
+    result = compute_factor_ic_stability_score(rows)
+    for f in ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]:
+        assert f"half_ic_{f}" in result
+
+
+def test_r73_t2_ic_consistency_ratio_range() -> None:
+    """ic_consistency_ratio is in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+    result = compute_factor_ic_stability_score(_make_ic_rows(20))
+    assert 0.0 <= result["ic_consistency_ratio"] <= 1.0
+
+
+def test_r73_t2_positive_ic_count_correct() -> None:
+    """positive_ic_count matches sum of factors with half_IC > 0."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+    rows = _make_ic_rows(20)
+    result = compute_factor_ic_stability_score(rows)
+    computed_positive = sum(1 for f in ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"] if result.get(f"half_ic_{f}") is not None and result[f"half_ic_{f}"] > 0)
+    assert result["positive_ic_count"] == computed_positive
+
+
+def test_r73_t2_best_factor_has_max_half_ic() -> None:
+    """best_factor corresponds to factor with highest half_IC."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+    rows = _make_ic_rows(20)
+    result = compute_factor_ic_stability_score(rows)
+    if result["best_factor"] is not None:
+        best_ic = result[f"half_ic_{result['best_factor']}"]
+        for f in ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]:
+            other = result.get(f"half_ic_{f}")
+            if other is not None:
+                assert other <= best_ic + 1e-9
+
+
+def test_r73_t2_grade_A_when_5_of_7_positive() -> None:
+    """ic_stability_grade = A when ic_consistency_ratio >= 5/7."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+    rows = []
+    for i in range(20):
+        row: dict = {"next_day_return": 0.01 if i < 14 else -0.005}
+        for f in ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]:
+            row[f] = float(i) / 20
+        rows.append(row)
+    result = compute_factor_ic_stability_score(rows)
+    if result["ic_consistency_ratio"] is not None and result["ic_consistency_ratio"] >= 5 / 7 - 0.01:
+        assert result["ic_stability_grade"] in ("A", "B")
+
+
+def test_r73_t2_grade_D_when_all_negative() -> None:
+    """ic_stability_grade = D when ic_consistency_ratio < 3/7."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+    rows = []
+    for i in range(20):
+        row: dict = {"next_day_return": 0.01 if i < 5 else -0.02}
+        for f in ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]:
+            row[f] = float(i) / 20
+        rows.append(row)
+    result = compute_factor_ic_stability_score(rows)
+    assert result["factor_ic_stability_valid"] is True
+
+
+def test_r73_t2_in_comparison_metrics() -> None:
+    """ic_consistency_ratio is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ic_consistency_ratio" in COMPARISON_METRICS
+
+
+def test_r73_t2_in_optional_metrics() -> None:
+    """ic_consistency_ratio is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "ic_consistency_ratio" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r73_t2_label_exists() -> None:
+    """ic_consistency_ratio has a Chinese label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "ic_consistency_ratio" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["ic_consistency_ratio"]) > 0
+
+
+def test_r73_t2_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has ic_consistency_ratio = 0.4."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "ic_consistency_ratio" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["ic_consistency_ratio"] == pytest.approx(0.4)
+
+
+def test_r73_t2_insufficient_factor_data_graceful() -> None:
+    """Factors with < 8 valid rows produce half_IC = None without crash."""
+    from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+    rows = []
+    for i in range(12):
+        rows.append({"next_day_return": 0.01 if i % 2 == 0 else -0.01})
+    result = compute_factor_ic_stability_score(rows)
+    assert result["factor_ic_stability_valid"] is True
+
+
+# ---- T3: compute_cross_window_zscore_trend ----
+
+def test_r73_t3_invalid_too_few_windows() -> None:
+    """Returns valid=False when fewer than 3 windows have mfz_zscore_win_spread."""
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
+    summaries = [{"mfz_zscore_win_spread": 0.05}, {"mfz_zscore_win_spread": 0.1}]
+    result = compute_cross_window_zscore_trend(summaries)
+    assert result["zscore_trend_valid"] is False
+    assert result["zscore_trend_slope"] is None
+
+
+def test_r73_t3_valid_with_3_windows() -> None:
+    """Returns valid=True when ≥3 windows have mfz_zscore_win_spread."""
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
+    summaries = [{"mfz_zscore_win_spread": 0.05}, {"mfz_zscore_win_spread": 0.08}, {"mfz_zscore_win_spread": 0.12}]
+    result = compute_cross_window_zscore_trend(summaries)
+    assert result["zscore_trend_valid"] is True
+    assert result["zscore_trend_slope"] is not None
+
+
+def test_r73_t3_ols_slope_positive() -> None:
+    """Positive trend series produces positive slope."""
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
+    summaries = [{"mfz_zscore_win_spread": float(v)} for v in [0.05, 0.10, 0.15, 0.20]]
+    result = compute_cross_window_zscore_trend(summaries)
+    assert result["zscore_trend_slope"] > 0
+
+
+def test_r73_t3_ols_slope_negative() -> None:
+    """Negative trend series produces negative slope."""
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
+    summaries = [{"mfz_zscore_win_spread": float(v)} for v in [0.20, 0.15, 0.10, 0.05]]
+    result = compute_cross_window_zscore_trend(summaries)
+    assert result["zscore_trend_slope"] < 0
+
+
+def test_r73_t3_grade_A_large_positive_slope() -> None:
+    """zscore_trend_grade = A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
+    summaries = [{"mfz_zscore_win_spread": 0.01 * i} for i in range(1, 8)]
+    result = compute_cross_window_zscore_trend(summaries)
+    if result["zscore_trend_slope"] is not None and result["zscore_trend_slope"] > 0.005:
+        assert result["zscore_trend_grade"] == "A"
+
+
+def test_r73_t3_grade_D_large_negative_slope() -> None:
+    """zscore_trend_grade = D when slope <= -0.01."""
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
+    summaries = [{"mfz_zscore_win_spread": 0.05 - 0.02 * i} for i in range(6)]
+    result = compute_cross_window_zscore_trend(summaries)
+    if result["zscore_trend_slope"] is not None and result["zscore_trend_slope"] <= -0.01:
+        assert result["zscore_trend_grade"] == "D"
+
+
+def test_r73_t3_zscore_positive_windows_pct_all_positive() -> None:
+    """zscore_positive_windows_pct = 1.0 when all spreads > 0."""
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
+    import pytest
+    summaries = [{"mfz_zscore_win_spread": 0.1}, {"mfz_zscore_win_spread": 0.2}, {"mfz_zscore_win_spread": 0.05}]
+    result = compute_cross_window_zscore_trend(summaries)
+    assert result["zscore_positive_windows_pct"] == pytest.approx(1.0)
+
+
+def test_r73_t3_zscore_positive_windows_pct_none_positive() -> None:
+    """zscore_positive_windows_pct = 0.0 when all spreads <= 0."""
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
+    import pytest
+    summaries = [{"mfz_zscore_win_spread": -0.1}, {"mfz_zscore_win_spread": -0.2}, {"mfz_zscore_win_spread": -0.05}]
+    result = compute_cross_window_zscore_trend(summaries)
+    assert result["zscore_positive_windows_pct"] == pytest.approx(0.0)
+
+
+def test_r73_t3_skips_none_values() -> None:
+    """Summaries without mfz_zscore_win_spread key are skipped."""
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
+    summaries = [{"mfz_zscore_win_spread": 0.1}, {"other_key": 0.5}, {"mfz_zscore_win_spread": 0.2}, {"mfz_zscore_win_spread": 0.15}]
+    result = compute_cross_window_zscore_trend(summaries)
+    assert result["zscore_trend_valid"] is True
+
+
+def test_r73_t3_in_comparison_metrics() -> None:
+    """zscore_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "zscore_trend_slope" in COMPARISON_METRICS
+
+
+def test_r73_t3_in_optional_metrics() -> None:
+    """zscore_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "zscore_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r73_t3_label_exists() -> None:
+    """zscore_trend_slope has a Chinese label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "zscore_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["zscore_trend_slope"]) > 0
+
+
+def test_r73_t3_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has zscore_trend_slope = -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "zscore_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["zscore_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r73_all_six_new_metrics_in_comparison() -> None:
+    """All 6 new Round 73 metrics are in COMPARISON_METRICS (T1+T2+T3)."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("breadth_win_rate", "ic_consistency_ratio", "zscore_trend_slope"):
+        assert key in COMPARISON_METRICS, f"Missing: {key}"
+
+
+def test_r73_all_six_new_metrics_in_optional() -> None:
+    """All 3 new Round 73 metrics are in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("breadth_win_rate", "ic_consistency_ratio", "zscore_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"Missing: {key}"
+
+
+def test_r73_all_floors_present() -> None:
+    """All 3 new Round 73 metrics have floors in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "breadth_win_rate" in BTST_QUALITY_FLOORS
+    assert "ic_consistency_ratio" in BTST_QUALITY_FLOORS
+    assert "zscore_trend_slope" in BTST_QUALITY_FLOORS

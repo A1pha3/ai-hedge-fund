@@ -231,7 +231,10 @@
       "price_pos_trend_slope_delta": null,
       "zscore_win_spread_delta": null,
       "persistence_score_delta": null,
-      "momentum_rank_trend_slope_delta": null
+      "momentum_rank_trend_slope_delta": null,
+      "breadth_win_rate_delta": null,
+      "ic_consistency_ratio_delta": null,
+      "zscore_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -453,7 +456,10 @@
       "price_pos_trend_slope_delta": null,
       "zscore_win_spread_delta": null,
       "persistence_score_delta": null,
-      "momentum_rank_trend_slope_delta": null
+      "momentum_rank_trend_slope_delta": null,
+      "breadth_win_rate_delta": null,
+      "ic_consistency_ratio_delta": null,
+      "zscore_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

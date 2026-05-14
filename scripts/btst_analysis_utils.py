@@ -4591,6 +4591,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _rpa.items():
         _surface_result[f"persist_{_k}"] = _v
 
+    # Round 73, Task 1 (Alpha): Market breadth indicator.
+    _mbi: dict = compute_market_breadth_indicator(rows)
+    for _k, _v in _mbi.items():
+        _surface_result[f"breadth_{_k}"] = _v
+
+    # Round 73, Task 2 (Beta): Factor IC stability score.
+    _fiss: dict = compute_factor_ic_stability_score(rows)
+    for _k, _v in _fiss.items():
+        _surface_result[f"ic_stab_{_k}"] = _v
+
     return _surface_result
 
 
@@ -13092,3 +13102,162 @@ def compute_return_persistence_analysis(rows: list[dict]) -> dict:
     else:
         persistence_score = None
     return {"return_persistence_valid": True, "rolling_win_rate_mean": rolling_win_rate_mean, "rolling_win_rate_std": rolling_win_rate_std, "rolling_consistency": rolling_consistency, "block_positive_pct": block_positive_pct, "persistence_score": persistence_score}
+
+
+# ---------------------------------------------------------------------------
+# Round 73, Task 1 (Alpha): Market breadth indicator
+# ---------------------------------------------------------------------------
+
+
+def compute_market_breadth_indicator(rows: list[dict]) -> dict:
+    """计算候选池内部的"市场宽度"指标（涨跌家数比、上涨股比例等），评估整体池质量。
+
+    Args:
+        rows: BTST candidate rows. Fields used: ``next_day_return`` and optionally a score
+              field (``runner_composite_score`` > ``composite_score`` > ``score``).
+
+    Returns:
+        Dict containing: ``market_breadth_valid``, ``advance_count``, ``decline_count``,
+        ``flat_count``, ``advance_decline_ratio``, ``breadth_win_rate``,
+        ``high_score_advance_pct``, ``low_score_advance_pct``, ``breadth_score_edge``,
+        ``breadth_grade``.
+    """
+    _null: dict = {"market_breadth_valid": False, "advance_count": None, "decline_count": None, "flat_count": None, "advance_decline_ratio": None, "breadth_win_rate": None, "high_score_advance_pct": None, "low_score_advance_pct": None, "breadth_score_edge": None, "breadth_grade": "unknown"}
+    if len(rows) < 8:
+        return _null
+    advance_count = 0
+    decline_count = 0
+    flat_count = 0
+    for r in rows:
+        v = r.get("next_day_return")
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if fv > 0:
+            advance_count += 1
+        elif fv < 0:
+            decline_count += 1
+        else:
+            flat_count += 1
+    advance_decline_ratio: "float | None" = round(advance_count / (decline_count + 1), 6)
+    total_counted = advance_count + decline_count + flat_count
+    breadth_win_rate: "float | None" = round(advance_count / total_counted, 6) if total_counted > 0 else None
+    score_key: "str | None" = None
+    for _sk in ("runner_composite_score", "composite_score", "score"):
+        if any(r.get(_sk) is not None for r in rows):
+            score_key = _sk
+            break
+    high_score_advance_pct: "float | None" = None
+    low_score_advance_pct: "float | None" = None
+    breadth_score_edge: "float | None" = None
+    if score_key is not None:
+        scored_rows = []
+        for r in rows:
+            sv = r.get(score_key)
+            rv = r.get("next_day_return")
+            if sv is not None and rv is not None:
+                try:
+                    scored_rows.append((float(sv), float(rv)))
+                except (TypeError, ValueError):
+                    pass
+        if len(scored_rows) >= 2:
+            score_vals = [x[0] for x in scored_rows]
+            score_vals_sorted = sorted(score_vals)
+            mid_idx = len(score_vals_sorted) // 2
+            median_score = score_vals_sorted[mid_idx] if len(score_vals_sorted) % 2 != 0 else (score_vals_sorted[mid_idx - 1] + score_vals_sorted[mid_idx]) / 2.0
+            high_rows = [(sv, rv) for sv, rv in scored_rows if sv > median_score]
+            low_rows = [(sv, rv) for sv, rv in scored_rows if sv <= median_score]
+            if len(high_rows) > 0:
+                high_score_advance_pct = round(sum(1 for _, rv in high_rows if rv > 0) / len(high_rows), 6)
+            if len(low_rows) > 0:
+                low_score_advance_pct = round(sum(1 for _, rv in low_rows if rv > 0) / len(low_rows), 6)
+            if high_score_advance_pct is not None and low_score_advance_pct is not None:
+                breadth_score_edge = round(high_score_advance_pct - low_score_advance_pct, 6)
+    if breadth_win_rate is None:
+        breadth_grade = "unknown"
+    elif breadth_win_rate > 0.6 and breadth_score_edge is not None and breadth_score_edge > 0.1:
+        breadth_grade = "A"
+    elif breadth_win_rate > 0.55 or (breadth_score_edge is not None and breadth_score_edge > 0.1):
+        breadth_grade = "B"
+    elif breadth_win_rate > 0.5:
+        breadth_grade = "C"
+    else:
+        breadth_grade = "D"
+    return {"market_breadth_valid": True, "advance_count": advance_count, "decline_count": decline_count, "flat_count": flat_count, "advance_decline_ratio": advance_decline_ratio, "breadth_win_rate": breadth_win_rate, "high_score_advance_pct": high_score_advance_pct, "low_score_advance_pct": low_score_advance_pct, "breadth_score_edge": breadth_score_edge, "breadth_grade": breadth_grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 73, Task 2 (Beta): Factor IC stability score
+# ---------------------------------------------------------------------------
+
+
+def compute_factor_ic_stability_score(rows: list[dict]) -> dict:
+    """评估各因子IC（信息系数）的跨样本稳定性（IC的一致性方向）。
+
+    7个核心因子：close_strength、volume_expansion_quality、sector_resonance、
+    rs_sector_rank、t0_estimated_net_inflow_ratio、breakout_quality_score、momentum_slope_20d。
+
+    Args:
+        rows: BTST candidate rows. Fields used: the 7 core factor fields and ``next_day_return``.
+
+    Returns:
+        Dict containing: ``factor_ic_stability_valid``, per-factor ``half_IC``,
+        ``positive_ic_count``, ``negative_ic_count``, ``ic_consistency_ratio``,
+        ``mean_half_ic``, ``best_factor``, ``ic_stability_grade``.
+    """
+    _FACTORS_R73 = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    _null: dict = {"factor_ic_stability_valid": False, "positive_ic_count": None, "negative_ic_count": None, "ic_consistency_ratio": None, "mean_half_ic": None, "best_factor": None, "ic_stability_grade": "D"}
+    for f in _FACTORS_R73:
+        _null[f"half_ic_{f}"] = None
+    if len(rows) < 12:
+        return _null
+    half_ics: dict[str, "float | None"] = {}
+    for factor in _FACTORS_R73:
+        valid_rows = []
+        for r in rows:
+            fv = r.get(factor)
+            rv = r.get("next_day_return")
+            if fv is not None and rv is not None:
+                try:
+                    valid_rows.append((float(fv), float(rv)))
+                except (TypeError, ValueError):
+                    pass
+        if len(valid_rows) < 8:
+            half_ics[factor] = None
+            continue
+        sorted_rows = sorted(valid_rows, key=lambda r: r[0])
+        n = len(sorted_rows)
+        bot_half = sorted_rows[: n // 2]
+        top_half = sorted_rows[n // 2 :]
+        top_mean_return = sum(x[1] for x in top_half) / len(top_half) if top_half else 0.0
+        bot_mean_return = sum(x[1] for x in bot_half) / len(bot_half) if bot_half else 0.0
+        half_ics[factor] = round(top_mean_return - bot_mean_return, 8)
+    positive_ic_count = sum(1 for v in half_ics.values() if v is not None and v > 0)
+    negative_ic_count = sum(1 for v in half_ics.values() if v is not None and v < 0)
+    ic_consistency_ratio: "float | None" = round(positive_ic_count / 7, 6)
+    valid_half_ics = [v for v in half_ics.values() if v is not None]
+    mean_half_ic: "float | None" = round(sum(valid_half_ics) / len(valid_half_ics), 8) if valid_half_ics else None
+    best_factor: "str | None" = None
+    if valid_half_ics:
+        best_val = max(v for v in half_ics.values() if v is not None)
+        for f, v in half_ics.items():
+            if v is not None and v == best_val:
+                best_factor = f
+                break
+    if ic_consistency_ratio is None:
+        grade = "D"
+    elif ic_consistency_ratio >= 5 / 7:
+        grade = "A"
+    elif ic_consistency_ratio >= 4 / 7:
+        grade = "B"
+    elif ic_consistency_ratio >= 3 / 7:
+        grade = "C"
+    else:
+        grade = "D"
+    result: dict = {"factor_ic_stability_valid": True, "positive_ic_count": positive_ic_count, "negative_ic_count": negative_ic_count, "ic_consistency_ratio": ic_consistency_ratio, "mean_half_ic": mean_half_ic, "best_factor": best_factor, "ic_stability_grade": grade}
+    for f in _FACTORS_R73:
+        result[f"half_ic_{f}"] = half_ics.get(f)
+    return result
