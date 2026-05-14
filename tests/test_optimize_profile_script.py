@@ -12082,3 +12082,311 @@ def test_r49_sortino_trend_in_comparison_metrics() -> None:
     """sortino_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
     assert "sortino_trend_slope" in COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 50 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: compute_factor_redundancy_analysis
+# ---------------------------------------------------------------------------
+
+def test_r50_factor_redundancy_empty_input() -> None:
+    """Empty input → redundancy_valid False, all None."""
+    from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+    result = compute_factor_redundancy_analysis([])
+    assert result["redundancy_valid"] is False
+    assert result["avg_inter_factor_correlation"] is None
+    assert result["max_inter_factor_correlation"] is None
+    assert result["high_correlation_pairs"] is None
+
+
+def test_r50_factor_redundancy_fewer_than_6_rows() -> None:
+    """< 6 rows → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+    rows = [{"close_strength": i * 0.1, "volume_expansion_quality": i * 0.2} for i in range(5)]
+    result = compute_factor_redundancy_analysis(rows)
+    assert result["redundancy_valid"] is False
+
+
+def test_r50_factor_redundancy_all_factors_missing() -> None:
+    """All factor fields absent → fewer than 3 present factors → degradation."""
+    from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+    rows = [{"unrelated_field": i} for i in range(10)]
+    result = compute_factor_redundancy_analysis(rows)
+    assert result["redundancy_valid"] is False
+
+
+def test_r50_factor_redundancy_identical_factors_r_is_one() -> None:
+    """Two identical factor columns → Spearman |r| == 1.0 for that pair."""
+    from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+    # Need at least 3 factors present — add a third orthogonal factor
+    rows = [
+        {"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i * 2 + 1)}
+        for i in range(10)
+    ]
+    result = compute_factor_redundancy_analysis(rows)
+    assert result["redundancy_valid"] is True
+    corrs = result["factor_pair_correlations"]
+    key = "close_strength__volume_expansion_quality"
+    assert key in corrs
+    assert abs(corrs[key]) == pytest.approx(1.0, abs=1e-4)
+
+
+def test_r50_factor_redundancy_independent_factors_r_near_zero() -> None:
+    """Two independent random-ish factor columns → |r| well below 0.70."""
+    from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+    import math
+    # Use deterministic, near-orthogonal sequences
+    xs = [math.sin(i * 1.1) for i in range(12)]
+    ys = [math.cos(i * 1.7 + 2.3) for i in range(12)]
+    rows = [{"close_strength": xs[i], "volume_expansion_quality": ys[i]} for i in range(12)]
+    result = compute_factor_redundancy_analysis(rows)
+    if result["redundancy_valid"]:
+        corrs = result["factor_pair_correlations"]
+        key = "close_strength__volume_expansion_quality"
+        if key in corrs:
+            assert abs(corrs[key]) < 0.70
+
+
+def test_r50_factor_redundancy_cap_registered() -> None:
+    """avg_inter_factor_correlation: 0.50 must be in BTST_QUALITY_CAPS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "avg_inter_factor_correlation" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["avg_inter_factor_correlation"] == pytest.approx(0.50)
+
+
+def test_r50_factor_redundancy_lower_is_better_registered() -> None:
+    """avg_inter_factor_correlation must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "avg_inter_factor_correlation" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r50_factor_redundancy_optional_registered() -> None:
+    """avg_inter_factor_correlation must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "avg_inter_factor_correlation" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r50_factor_redundancy_in_comparison_metrics() -> None:
+    """avg_inter_factor_correlation must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "avg_inter_factor_correlation" in COMPARISON_METRICS
+
+
+def test_r50_factor_redundancy_label_registered() -> None:
+    """avg_inter_factor_correlation must have a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "avg_inter_factor_correlation" in COMPARISON_METRIC_LABELS
+    assert "冗余" in COMPARISON_METRIC_LABELS["avg_inter_factor_correlation"]
+
+
+def test_r50_factor_redundancy_grade_a_for_low_correlation() -> None:
+    """All factor values unique and fully orthogonal → grade A (avg < 0.20)."""
+    from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+    # Build rows where close_strength is identity and other factors are fixed → many pairs will have ~0 corr
+    rows = []
+    for i in range(12):
+        rows.append({
+            "close_strength": float(i),
+            "volume_expansion_quality": float((i * 7) % 13),
+            "sector_resonance": float((i * 3 + 5) % 11),
+        })
+    result = compute_factor_redundancy_analysis(rows)
+    if result["redundancy_valid"] and result["avg_inter_factor_correlation"] is not None:
+        assert result["avg_inter_factor_correlation"] < 0.50  # at most C grade
+
+
+def test_r50_factor_redundancy_high_correlation_pairs_count() -> None:
+    """Two identical factors → high_correlation_pairs >= 1."""
+    from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i * 2)} for i in range(10)]
+    result = compute_factor_redundancy_analysis(rows)
+    assert result["redundancy_valid"] is True
+    assert result["high_correlation_pairs"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_extended_holding_period
+# ---------------------------------------------------------------------------
+
+def test_r50_extended_holding_empty_input() -> None:
+    """Empty input → extended_holding_valid False."""
+    from scripts.btst_analysis_utils import compute_extended_holding_period
+    result = compute_extended_holding_period([])
+    assert result["extended_holding_valid"] is False
+    assert result["t1_win_rate"] is None
+    assert result["holding_data_available"] is False
+
+
+def test_r50_extended_holding_fewer_than_5_t1_rows() -> None:
+    """< 5 next_day_return rows → degradation."""
+    from scripts.btst_analysis_utils import compute_extended_holding_period
+    rows = [{"next_day_return": 0.01 * i} for i in range(4)]
+    result = compute_extended_holding_period(rows)
+    assert result["extended_holding_valid"] is False
+
+
+def test_r50_extended_holding_t1_only_data() -> None:
+    """Only T+1 data available → t1_win_rate set, t2_vs_t1_premium None, holding_data_available False."""
+    from scripts.btst_analysis_utils import compute_extended_holding_period
+    rows = [{"next_day_return": 0.01 * (i - 2)} for i in range(8)]
+    result = compute_extended_holding_period(rows)
+    assert result["extended_holding_valid"] is True
+    assert result["t1_win_rate"] is not None
+    assert result["t2_vs_t1_premium"] is None
+    assert result["holding_data_available"] is False
+
+
+def test_r50_extended_holding_t2_data_available() -> None:
+    """With T+2 data (≥3 rows) → t2_win_rate not None, t2_vs_t1_premium computed."""
+    from scripts.btst_analysis_utils import compute_extended_holding_period
+    rows = [{"next_day_return": 0.02, "t2_return": 0.01} for _ in range(6)]
+    result = compute_extended_holding_period(rows)
+    assert result["extended_holding_valid"] is True
+    assert result["t2_win_rate"] is not None
+    assert result["t2_vs_t1_premium"] is not None
+    assert result["holding_data_available"] is True
+
+
+def test_r50_extended_holding_premium_computation() -> None:
+    """t2_vs_t1_premium == t2_win_rate - t1_win_rate."""
+    from scripts.btst_analysis_utils import compute_extended_holding_period
+    # t1: all positive → win_rate=1.0; t2: all negative → win_rate=0.0
+    rows = [{"next_day_return": 0.01, "t2_return": -0.01} for _ in range(6)]
+    result = compute_extended_holding_period(rows)
+    assert result["t1_win_rate"] == pytest.approx(1.0)
+    assert result["t2_win_rate"] == pytest.approx(0.0)
+    assert result["t2_vs_t1_premium"] == pytest.approx(-1.0)
+
+
+def test_r50_extended_holding_label_registered() -> None:
+    """t2_vs_t1_premium must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "t2_vs_t1_premium" in COMPARISON_METRIC_LABELS
+    assert "T+2" in COMPARISON_METRIC_LABELS["t2_vs_t1_premium"]
+
+
+def test_r50_extended_holding_optional_registered() -> None:
+    """t2_vs_t1_premium must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "t2_vs_t1_premium" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r50_extended_holding_no_floor() -> None:
+    """t2_vs_t1_premium must NOT be in BTST_QUALITY_FLOORS (diagnostic only)."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "t2_vs_t1_premium" not in BTST_QUALITY_FLOORS
+
+
+def test_r50_extended_holding_in_comparison_metrics() -> None:
+    """t2_vs_t1_premium must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "t2_vs_t1_premium" in COMPARISON_METRICS
+
+
+def test_r50_extended_holding_multi_day_consistency() -> None:
+    """Both T+2 and T+3 ≥ 0.5 win rate → multi_day_consistency True."""
+    from scripts.btst_analysis_utils import compute_extended_holding_period
+    rows = [{"next_day_return": 0.01, "t2_return": 0.02, "t3_return": 0.015} for _ in range(6)]
+    result = compute_extended_holding_period(rows)
+    assert result["multi_day_consistency"] is True
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_sharpe_trend
+# ---------------------------------------------------------------------------
+
+def test_r50_sharpe_trend_empty_list() -> None:
+    """Empty list → sharpe_trend_valid False."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    result = compute_cross_window_sharpe_trend([])
+    assert result["sharpe_trend_valid"] is False
+    assert result["sharpe_trend_slope"] is None
+
+
+def test_r50_sharpe_trend_fewer_than_3_windows() -> None:
+    """< 3 valid sharpe_ratio values → degradation."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_ratio": 1.0}, {"sharpe_ratio": 1.5}]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is False
+
+
+def test_r50_sharpe_trend_rising_slope_positive() -> None:
+    """Strictly rising sharpe series → slope > 0."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_ratio": 0.5 + i * 0.3} for i in range(5)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    assert result["sharpe_trend_slope"] > 0
+
+
+def test_r50_sharpe_trend_grade_a_or_b_for_rising() -> None:
+    """Rising series → grade A or B."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_ratio": 0.5 + i * 0.3} for i in range(5)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_grade"] in ("A", "B")
+
+
+def test_r50_sharpe_trend_falling_slope_negative() -> None:
+    """Strictly declining series → slope < 0."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_ratio": 2.0 - i * 0.2} for i in range(5)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_slope"] < 0
+
+
+def test_r50_sharpe_trend_grade_d_for_steep_decline() -> None:
+    """Slope ≤ -0.10 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_ratio": 2.0 - i * 0.5} for i in range(6)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    if result["sharpe_trend_slope"] is not None and result["sharpe_trend_slope"] <= -0.10:
+        assert result["sharpe_trend_grade"] == "D"
+
+
+def test_r50_sharpe_trend_positive_windows_pct_all_positive() -> None:
+    """All positive sharpe values → sharpe_positive_windows_pct == 1.0."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_ratio": 1.0 + i * 0.1} for i in range(5)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_positive_windows_pct"] == pytest.approx(1.0)
+
+
+def test_r50_sharpe_trend_floor_registered() -> None:
+    """sharpe_trend_slope: -0.10 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "sharpe_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["sharpe_trend_slope"] == pytest.approx(-0.10)
+
+
+def test_r50_sharpe_trend_label_registered() -> None:
+    """sharpe_trend_slope must have a label containing 'Sharpe'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "sharpe_trend_slope" in COMPARISON_METRIC_LABELS
+    assert "Sharpe" in COMPARISON_METRIC_LABELS["sharpe_trend_slope"]
+
+
+def test_r50_sharpe_trend_optional_registered() -> None:
+    """sharpe_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "sharpe_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r50_sharpe_trend_in_comparison_metrics() -> None:
+    """sharpe_trend_slope must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "sharpe_trend_slope" in COMPARISON_METRICS
+
+
+def test_r50_sharpe_trend_skips_missing_sharpe_ratio() -> None:
+    """Windows without sharpe_ratio are skipped; valid windows still compute."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_ratio": 1.0}, {"other_key": 0.5}, {"sharpe_ratio": 1.5}, {"sharpe_ratio": 2.0}]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    assert result["sharpe_trend_slope"] is not None

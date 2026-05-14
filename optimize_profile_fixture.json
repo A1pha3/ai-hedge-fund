@@ -163,7 +163,10 @@
       "ev_trend_slope_delta": null,
       "consensus_lift_delta": null,
       "top_decile_premium_delta": null,
-      "sortino_trend_slope_delta": null
+      "sortino_trend_slope_delta": null,
+      "avg_inter_factor_correlation_delta": null,
+      "t2_vs_t1_premium_delta": null,
+      "sharpe_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -317,7 +320,10 @@
       "ev_trend_slope_delta": null,
       "consensus_lift_delta": null,
       "top_decile_premium_delta": null,
-      "sortino_trend_slope_delta": null
+      "sortino_trend_slope_delta": null,
+      "avg_inter_factor_correlation_delta": null,
+      "t2_vs_t1_premium_delta": null,
+      "sharpe_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

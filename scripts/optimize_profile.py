@@ -346,6 +346,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "top_decile_premium",
     # Task 3 (Round 49, Gamma): cross-window Sortino trend slope.
     "sortino_trend_slope",
+    # Task 1 (Round 50, Alpha): factor inter-correlation (redundancy) average.
+    "avg_inter_factor_correlation",
+    # Task 2 (Round 50, Beta): T+2 relative to T+1 win-rate premium.
+    "t2_vs_t1_premium",
+    # Task 3 (Round 50, Gamma): cross-window Sharpe trend slope.
+    "sharpe_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -580,6 +586,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "top_decile_premium": "评分十分位溢价",
     # Task 3 (Round 49, Gamma): cross-window Sortino trend slope
     "sortino_trend_slope": "Sortino跨窗趋势斜率",
+    # Task 1 (Round 50, Alpha): factor redundancy average correlation
+    "avg_inter_factor_correlation": "因子平均冗余度",
+    # Task 2 (Round 50, Beta): T+2 vs T+1 win-rate premium
+    "t2_vs_t1_premium": "T+2相对T+1胜率差",
+    # Task 3 (Round 50, Gamma): cross-window Sharpe trend slope
+    "sharpe_trend_slope": "Sharpe跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -638,6 +650,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "win_rate_cv",
     # Task 3 (Round 46, Gamma): cross-window gate consistency CV — higher = more gate instability = lower-is-better.
     "gate_above_threshold_cv",
+    # Task 1 (Round 50, Alpha): avg inter-factor correlation — higher = more redundant signals = lower-is-better.
+    "avg_inter_factor_correlation",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -864,6 +878,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "top_decile_premium",
     # Task 3 (Round 49, Gamma): Sortino trend slope — optional; pre-Round-49 outputs omit it.
     "sortino_trend_slope",
+    # Task 1 (Round 50, Alpha): factor redundancy — optional; pre-Round-50 outputs omit it.
+    "avg_inter_factor_correlation",
+    # Task 2 (Round 50, Beta): extended holding T+2 premium — optional; pre-Round-50 outputs omit it.
+    "t2_vs_t1_premium",
+    # Task 3 (Round 50, Gamma): Sharpe trend slope — optional; pre-Round-50 outputs omit it.
+    "sharpe_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2326,6 +2346,87 @@ def compute_cross_window_sortino_trend(all_windows_summaries: list[dict]) -> dic
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 50, Task 3 (Gamma): Cross-window Sharpe Trend
+# ---------------------------------------------------------------------------
+
+def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict:
+    """Compute OLS trend slope of ``sharpe_ratio`` across replay windows.
+
+    Complements :func:`compute_cross_window_sortino_trend` — Sharpe includes upside
+    volatility while Sortino only penalises downside.  A declining Sharpe trend
+    (negative slope) indicates total risk-adjusted returns are deteriorating.
+
+    Args:
+        all_windows_summaries: List of per-window surface summary dicts, each
+            expected to contain a ``sharpe_ratio`` key.
+
+    Returns:
+        Dict with keys: ``sharpe_trend_slope``, ``sharpe_mean``, ``sharpe_std``,
+        ``sharpe_min``, ``sharpe_max``, ``sharpe_trend_grade`` (A/B/C/D),
+        ``sharpe_positive_windows_pct``, ``sharpe_trend_valid``.
+    """
+    _null: dict = {
+        "sharpe_trend_slope": None,
+        "sharpe_mean": None,
+        "sharpe_std": None,
+        "sharpe_min": None,
+        "sharpe_max": None,
+        "sharpe_trend_grade": None,
+        "sharpe_positive_windows_pct": None,
+        "sharpe_trend_valid": False,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    sharpe_series: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("sharpe_ratio")
+        if v is not None:
+            try:
+                sharpe_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(sharpe_series) < 3:
+        return _null
+
+    n = len(sharpe_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(sharpe_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, sharpe_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+
+    mean_val = sum_y / n
+    variance = sum((v - mean_val) ** 2 for v in sharpe_series) / (n - 1) if n > 1 else 0.0
+    std_val = variance ** 0.5
+
+    if slope > 0.10:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.10:
+        grade = "C"
+    else:
+        grade = "D"
+
+    positive_pct = sum(1 for v in sharpe_series if v > 0) / n
+
+    return {
+        "sharpe_trend_slope": round(slope, 8),
+        "sharpe_mean": round(mean_val, 6),
+        "sharpe_std": round(std_val, 6),
+        "sharpe_min": round(min(sharpe_series), 6),
+        "sharpe_max": round(max(sharpe_series), 6),
+        "sharpe_trend_grade": grade,
+        "sharpe_positive_windows_pct": round(positive_pct, 6),
+        "sharpe_trend_valid": True,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -2961,6 +3062,8 @@ def _build_replay_evaluator(
         _ev_trend: dict[str, Any] = compute_cross_window_ev_trend(all_primary_surfaces)
         # Task 3 (Round 49, Gamma): cross-window Sortino trend.
         _sortino_trend: dict[str, Any] = compute_cross_window_sortino_trend(all_primary_surfaces)
+        # Task 3 (Round 50, Gamma): cross-window Sharpe trend.
+        _sharpe_trend: dict[str, Any] = compute_cross_window_sharpe_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -3212,6 +3315,15 @@ def _build_replay_evaluator(
             "sortino_trend_grade": _sortino_trend.get("sortino_trend_grade"),
             "sortino_positive_windows_pct": _sortino_trend.get("sortino_positive_windows_pct"),
             "sortino_trend_valid": _sortino_trend.get("sortino_trend_valid"),
+            # Task 3 (Round 50, Gamma): cross-window Sharpe trend.
+            "sharpe_trend_slope": _sharpe_trend.get("sharpe_trend_slope"),
+            "sharpe_mean": _sharpe_trend.get("sharpe_mean"),
+            "sharpe_std": _sharpe_trend.get("sharpe_std"),
+            "sharpe_min": _sharpe_trend.get("sharpe_min"),
+            "sharpe_max": _sharpe_trend.get("sharpe_max"),
+            "sharpe_trend_grade": _sharpe_trend.get("sharpe_trend_grade"),
+            "sharpe_positive_windows_pct": _sharpe_trend.get("sharpe_positive_windows_pct"),
+            "sharpe_trend_valid": _sharpe_trend.get("sharpe_trend_valid"),
         }
 
     return evaluator

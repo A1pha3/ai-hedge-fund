@@ -355,6 +355,10 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # sortino_trend_slope = OLS slope of sortino_ratio across replay windows.
     # Floor ≥ -0.10 prevents strategies with rapidly deteriorating Sortino from passing.
     "sortino_trend_slope": -0.10,
+    # Task 3 (Round 50, Gamma): cross-window Sharpe trend slope floor.
+    # sharpe_trend_slope = OLS slope of sharpe_ratio across replay windows.
+    # Floor ≥ -0.10 prevents strategies with rapidly deteriorating Sharpe from passing.
+    "sharpe_trend_slope": -0.10,
 }
 
 # ---------------------------------------------------------------------------
@@ -415,6 +419,12 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # across windows — indicating the strategy's gate selectivity is highly regime-sensitive.
     # Profiles with gate_above_threshold_cv > 0.25 carry high gate instability risk.
     "gate_above_threshold_cv": 0.25,
+    # Task 1 (Round 50, Alpha): average inter-factor Spearman correlation cap.
+    # avg_inter_factor_correlation = mean |r| across all valid 7-factor pairs per window.
+    # A value above 0.50 means the core factor set is on average highly correlated,
+    # offering little independent signal diversity.  High redundancy inflates apparent
+    # robustness because correlated signals agree by construction rather than real edge.
+    "avg_inter_factor_correlation": 0.50,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

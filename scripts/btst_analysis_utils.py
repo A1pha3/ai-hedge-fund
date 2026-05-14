@@ -4295,6 +4295,31 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["decile_monotone_count"] = _sda.get("decile_monotone_count")
     _surface_result["top_half_vs_bottom_half_lift"] = _sda.get("top_half_vs_bottom_half_lift")
 
+    # Round 50, Task 1 (Alpha): Factor Redundancy Analysis.
+    # -------------------------------------------------------
+    _fra: dict[str, Any] = compute_factor_redundancy_analysis(next_day_rows)
+    _surface_result["redundancy_valid"] = _fra.get("redundancy_valid")
+    _surface_result["avg_inter_factor_correlation"] = _fra.get("avg_inter_factor_correlation")
+    _surface_result["max_inter_factor_correlation"] = _fra.get("max_inter_factor_correlation")
+    _surface_result["high_correlation_pairs"] = _fra.get("high_correlation_pairs")
+    _surface_result["redundancy_grade"] = _fra.get("redundancy_grade")
+    _surface_result["factor_pair_correlations"] = _fra.get("factor_pair_correlations")
+
+    # Round 50, Task 2 (Beta): Extended Holding Period Analysis.
+    # ------------------------------------------------------------
+    _ehp: dict[str, Any] = compute_extended_holding_period(next_day_rows)
+    _surface_result["extended_holding_valid"] = _ehp.get("extended_holding_valid")
+    _surface_result["t1_win_rate"] = _ehp.get("t1_win_rate")
+    _surface_result["t1_mean_return"] = _ehp.get("t1_mean_return")
+    _surface_result["t2_win_rate"] = _ehp.get("t2_win_rate")
+    _surface_result["t2_mean_return"] = _ehp.get("t2_mean_return")
+    _surface_result["t3_win_rate"] = _ehp.get("t3_win_rate")
+    _surface_result["t3_mean_return"] = _ehp.get("t3_mean_return")
+    _surface_result["t2_vs_t1_premium"] = _ehp.get("t2_vs_t1_premium")
+    _surface_result["t3_vs_t1_premium"] = _ehp.get("t3_vs_t1_premium")
+    _surface_result["multi_day_consistency"] = _ehp.get("multi_day_consistency")
+    _surface_result["holding_data_available"] = _ehp.get("holding_data_available")
+
     return _surface_result
 
 
@@ -9554,3 +9579,247 @@ def compute_score_decile_analysis(rows: list[dict]) -> dict:
         result["top_half_vs_bottom_half_lift"] = None
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Round 50, Task 1 (Alpha): Factor Redundancy Analysis
+# ---------------------------------------------------------------------------
+
+_R50_CORE_FACTORS: list[str] = [
+    "close_strength",
+    "volume_expansion_quality",
+    "sector_resonance",
+    "rs_sector_rank",
+    "t0_estimated_net_inflow_ratio",
+    "breakout_quality_score",
+    "momentum_slope_20d",
+]
+
+
+def compute_factor_redundancy_analysis(rows: list[dict]) -> dict:
+    """Compute pairwise Spearman inter-factor correlation to measure signal redundancy.
+
+    For each pair of the 7 core BTST factors, computes the Spearman rank correlation
+    using only rows where both factor values are non-None.  Summarises the result with
+    ``avg_inter_factor_correlation`` (mean of |r| across all valid pairs),
+    ``max_inter_factor_correlation``, ``high_correlation_pairs`` (count with |r| > 0.70),
+    and a letter grade A–D.
+
+    Args:
+        rows: Per-candidate dicts.  Each should contain one or more of the 7 core factors.
+
+    Returns:
+        Dict with ``factor_pair_correlations``, ``avg_inter_factor_correlation``,
+        ``max_inter_factor_correlation``, ``high_correlation_pairs``,
+        ``redundancy_grade``, ``redundancy_valid``.
+    """
+    _null: dict = {
+        "factor_pair_correlations": {},
+        "avg_inter_factor_correlation": None,
+        "max_inter_factor_correlation": None,
+        "high_correlation_pairs": None,
+        "redundancy_grade": None,
+        "redundancy_valid": False,
+    }
+    if not rows or len(rows) < 6:
+        return _null
+
+    # Extract float values (None where missing/invalid) for each factor.
+    factor_data: dict[str, list] = {}
+    for f in _R50_CORE_FACTORS:
+        vals: list = []
+        for row in rows:
+            v = row.get(f)
+            if v is None:
+                vals.append(None)
+            else:
+                try:
+                    vals.append(float(v))
+                except (TypeError, ValueError):
+                    vals.append(None)
+        factor_data[f] = vals
+
+    # Keep only factors that have at least one non-None value.
+    present_factors = [f for f in _R50_CORE_FACTORS if any(v is not None for v in factor_data[f])]
+    if len(present_factors) < 3:
+        return _null
+
+    def _spearman_r(xa: list, xb: list) -> "float | None":
+        """Return Spearman r for two equal-length lists (None entries are skipped)."""
+        pairs = [(a, b) for a, b in zip(xa, xb) if a is not None and b is not None]
+        if len(pairs) < 4:
+            return None
+        xs = [p[0] for p in pairs]
+        ys = [p[1] for p in pairs]
+        n = len(xs)
+
+        def _rank(vals: list) -> list:
+            order = sorted(range(n), key=lambda i: vals[i])
+            ranks = [0.0] * n
+            i = 0
+            while i < n:
+                j = i
+                while j < n - 1 and vals[order[j + 1]] == vals[order[j]]:
+                    j += 1
+                avg_r = (i + j) / 2.0 + 1.0
+                for k in range(i, j + 1):
+                    ranks[order[k]] = avg_r
+                i = j + 1
+            return ranks
+
+        rx = _rank(xs)
+        ry = _rank(ys)
+        mean_rx = sum(rx) / n
+        mean_ry = sum(ry) / n
+        num = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(n))
+        denom_x = sum((rx[i] - mean_rx) ** 2 for i in range(n)) ** 0.5
+        denom_y = sum((ry[i] - mean_ry) ** 2 for i in range(n)) ** 0.5
+        if denom_x < 1e-12 or denom_y < 1e-12:
+            return None
+        return round(num / (denom_x * denom_y), 8)
+
+    pair_corrs: dict[str, float] = {}
+    abs_corrs: list[float] = []
+    for i in range(len(present_factors)):
+        for j in range(i + 1, len(present_factors)):
+            fa = present_factors[i]
+            fb = present_factors[j]
+            r = _spearman_r(factor_data[fa], factor_data[fb])
+            if r is not None:
+                pair_corrs[f"{fa}__{fb}"] = r
+                abs_corrs.append(abs(r))
+
+    if not abs_corrs:
+        return _null
+
+    avg_corr = round(sum(abs_corrs) / len(abs_corrs), 8)
+    max_corr = round(max(abs_corrs), 8)
+    high_pairs = sum(1 for v in abs_corrs if v > 0.70)
+
+    if avg_corr < 0.20:
+        grade = "A"
+    elif avg_corr < 0.35:
+        grade = "B"
+    elif avg_corr < 0.50:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {
+        "factor_pair_correlations": pair_corrs,
+        "avg_inter_factor_correlation": avg_corr,
+        "max_inter_factor_correlation": max_corr,
+        "high_correlation_pairs": high_pairs,
+        "redundancy_grade": grade,
+        "redundancy_valid": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 50, Task 2 (Beta): Extended Holding Period Analysis
+# ---------------------------------------------------------------------------
+
+def compute_extended_holding_period(rows: list[dict]) -> dict:
+    """Compute multi-day (T+1, T+2, T+3) win-rate and return statistics.
+
+    Uses ``next_day_return`` for T+1 (required), ``t2_return`` for T+2 (optional),
+    and ``t3_return`` for T+3 (optional).  Computes win rates and mean returns for
+    each horizon, and a cross-horizon premium comparing T+2/T+3 win rates against T+1.
+
+    Args:
+        rows: Per-candidate dicts.  Must have ``next_day_return`` for at least 5 rows.
+
+    Returns:
+        Dict with ``t1_win_rate``, ``t1_mean_return``, ``t2_win_rate``,
+        ``t2_mean_return``, ``t3_win_rate``, ``t3_mean_return``,
+        ``t2_vs_t1_premium``, ``t3_vs_t1_premium``, ``multi_day_consistency``,
+        ``holding_data_available``, ``extended_holding_valid``.
+    """
+    _null: dict = {
+        "t1_win_rate": None,
+        "t1_mean_return": None,
+        "t2_win_rate": None,
+        "t2_mean_return": None,
+        "t3_win_rate": None,
+        "t3_mean_return": None,
+        "t2_vs_t1_premium": None,
+        "t3_vs_t1_premium": None,
+        "multi_day_consistency": None,
+        "holding_data_available": False,
+        "extended_holding_valid": False,
+    }
+    if not rows:
+        return _null
+
+    t1_rets: list[float] = []
+    for row in rows:
+        v = row.get("next_day_return")
+        if v is not None:
+            try:
+                t1_rets.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(t1_rets) < 5:
+        return _null
+
+    t1_win_rate = round(sum(1 for r in t1_rets if r > 0) / len(t1_rets), 6)
+    t1_mean_return = round(sum(t1_rets) / len(t1_rets), 8)
+
+    t2_rets: list[float] = []
+    for row in rows:
+        v = row.get("t2_return")
+        if v is not None:
+            try:
+                t2_rets.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    t2_win_rate: "float | None" = None
+    t2_mean_return: "float | None" = None
+    if len(t2_rets) >= 3:
+        t2_win_rate = round(sum(1 for r in t2_rets if r > 0) / len(t2_rets), 6)
+        t2_mean_return = round(sum(t2_rets) / len(t2_rets), 8)
+
+    t3_rets: list[float] = []
+    for row in rows:
+        v = row.get("t3_return")
+        if v is not None:
+            try:
+                t3_rets.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    t3_win_rate: "float | None" = None
+    t3_mean_return: "float | None" = None
+    if len(t3_rets) >= 3:
+        t3_win_rate = round(sum(1 for r in t3_rets if r > 0) / len(t3_rets), 6)
+        t3_mean_return = round(sum(t3_rets) / len(t3_rets), 8)
+
+    t2_vs_t1_premium: "float | None" = None
+    if t2_win_rate is not None:
+        t2_vs_t1_premium = round(t2_win_rate - t1_win_rate, 6)
+
+    t3_vs_t1_premium: "float | None" = None
+    if t3_win_rate is not None:
+        t3_vs_t1_premium = round(t3_win_rate - t1_win_rate, 6)
+
+    multi_day_consistency: "bool | None" = None
+    if t2_win_rate is not None and t3_win_rate is not None:
+        multi_day_consistency = t2_win_rate >= 0.50 and t3_win_rate >= 0.50
+
+    holding_data_available = t2_win_rate is not None
+
+    return {
+        "t1_win_rate": t1_win_rate,
+        "t1_mean_return": t1_mean_return,
+        "t2_win_rate": t2_win_rate,
+        "t2_mean_return": t2_mean_return,
+        "t3_win_rate": t3_win_rate,
+        "t3_mean_return": t3_mean_return,
+        "t2_vs_t1_premium": t2_vs_t1_premium,
+        "t3_vs_t1_premium": t3_vs_t1_premium,
+        "multi_day_consistency": multi_day_consistency,
+        "holding_data_available": holding_data_available,
+        "extended_holding_valid": True,
+    }
