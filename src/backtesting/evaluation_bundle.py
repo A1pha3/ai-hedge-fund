@@ -297,6 +297,22 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # top-scored candidates — the strategy is not reliably selecting high-conviction winners.
     # Floor ≥ 0.40 requires the top candidates to consistently beat 60 % win rate in ≥ 40 % of windows.
     "top_candidate_consistency_rate": 0.40,
+    # Task 1 (Round 46, Alpha): volume-price divergence low-vs-high win-rate lift floor.
+    # vpd_low_vs_high_lift = win_rate(low divergence) − win_rate(high divergence).
+    # A value < 0.0 means low-divergence stocks do not outperform high-divergence stocks —
+    # the volume-price-divergence signal has no discriminative power.
+    # Floor ≥ 0.0 requires low-divergence candidates to be at least as good as high-divergence.
+    "vpd_low_vs_high_lift": 0.0,
+    # Task 2 (Round 46, Beta): score distribution skewness floor.
+    # score_skewness < 0.0 indicates a left-skewed score distribution (more low-scoring candidates).
+    # An ideal scoring system should produce right-skewed scores (more high-quality candidates selected).
+    # Floor ≥ 0.0 requires the score distribution to be non-left-skewed.
+    "score_skewness": 0.0,
+    # Task 2 (Round 46, Beta): score positive fraction floor.
+    # score_positive_pct < 0.50 means fewer than half of candidates receive a positive composite score,
+    # indicating the scoring system is too conservative or the candidate pool quality is poor.
+    # Floor ≥ 0.50 requires the majority of scored candidates to have a positive composite score.
+    "score_positive_pct": 0.50,
 }
 
 # ---------------------------------------------------------------------------
@@ -351,6 +367,12 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # to its mean — a sign of high regime sensitivity; the strategy is not reliably repeatable.
     # Profiles with win_rate_cv > 0.30 carry high out-of-sample win-rate instability risk.
     "win_rate_cv": 0.30,
+    # Task 3 (Round 46, Gamma): cross-window gate consistency CV cap.
+    # gate_above_threshold_cv = std / mean of gate ≥ 60 fraction across replay windows.
+    # A CV above 0.25 means the gate-pass fraction varies by more than 25 % relative to its mean
+    # across windows — indicating the strategy's gate selectivity is highly regime-sensitive.
+    # Profiles with gate_above_threshold_cv > 0.25 carry high gate instability risk.
+    "gate_above_threshold_cv": 0.25,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

@@ -320,6 +320,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "catalyst_top_quartile_premium",
     # Task 3 (Round 45, Gamma): top-candidate cross-window win-rate consistency rate.
     "top_candidate_consistency_rate",
+    # Task 1 (Round 46, Alpha): volume-price divergence low-vs-high win-rate lift.
+    "vpd_low_vs_high_lift",
+    # Task 2 (Round 46, Beta): score distribution skewness (right-skew is better).
+    "score_skewness",
+    # Task 2 (Round 46, Beta): fraction of scores > 0.
+    "score_positive_pct",
+    # Task 3 (Round 46, Gamma): cross-window gate consistency coefficient of variation.
+    "gate_above_threshold_cv",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -528,6 +536,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "catalyst_top_quartile_premium": "催化主题高分位溢价",
     # Task 3 (Round 45, Gamma): top-candidate cross-window consistency rate
     "top_candidate_consistency_rate": "顶候选胜率一致性",
+    # Task 1 (Round 46, Alpha): volume-price divergence low-vs-high win-rate lift
+    "vpd_low_vs_high_lift": "量价低背离胜率溢价",
+    # Task 2 (Round 46, Beta): score distribution skewness
+    "score_skewness": "评分分布偏度",
+    # Task 2 (Round 46, Beta): score positive-value fraction
+    "score_positive_pct": "评分正值占比",
+    # Task 3 (Round 46, Gamma): cross-window gate consistency coefficient of variation
+    "gate_above_threshold_cv": "跨窗门控占比变异系数",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -584,6 +600,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "factor_drift_score",
     # Task 3 (Round 44, Gamma): cross-window win-rate CV — higher = more unstable win rate = lower-is-better.
     "win_rate_cv",
+    # Task 3 (Round 46, Gamma): cross-window gate consistency CV — higher = more gate instability = lower-is-better.
+    "gate_above_threshold_cv",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -784,6 +802,14 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "catalyst_top_quartile_premium",
     # Task 3 (Round 45, Gamma): top-candidate consistency rate — optional; pre-Round-45 outputs omit it.
     "top_candidate_consistency_rate",
+    # Task 1 (Round 46, Alpha): volume-price divergence lift — optional; pre-Round-46 outputs omit it.
+    "vpd_low_vs_high_lift",
+    # Task 2 (Round 46, Beta): score skewness — optional; pre-Round-46 outputs omit it.
+    "score_skewness",
+    # Task 2 (Round 46, Beta): score positive fraction — optional; pre-Round-46 outputs omit it.
+    "score_positive_pct",
+    # Task 3 (Round 46, Gamma): gate consistency CV — optional; pre-Round-46 outputs omit it.
+    "gate_above_threshold_cv",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1913,6 +1939,85 @@ def compute_top_candidate_consistency(all_windows_summaries: list[dict]) -> dict
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 3 (Round 46, Gamma): Cross-Window Gate Consistency
+# ---------------------------------------------------------------------------
+# Measures how stable the fraction of candidates with composite_gate_score ≥ 60
+# is across replay windows.  High CV = gate is regime-sensitive.
+
+
+def compute_cross_window_gate_consistency(all_windows_summaries: list[dict]) -> dict:
+    """Compute cross-window stability of gate ≥ 60 candidate fraction.
+
+    For each window summary, the gate-above-threshold fraction is resolved:
+    1. ``gate_high_pct`` — preferred if present.
+    2. ``composite_gate_score`` — used directly as the gate fraction if present.
+    Windows providing neither are skipped.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts.
+
+    Returns:
+        Dict with keys:
+
+        - ``gate_above_threshold_mean`` (float | None): Mean across windows.
+        - ``gate_above_threshold_std`` (float | None): Std dev (N-1) across windows.
+        - ``gate_above_threshold_cv`` (float | None): CV = std / max(mean, 1e-8).
+        - ``gate_above_threshold_min`` (float | None): Min across windows.
+        - ``gate_above_threshold_max`` (float | None): Max across windows.
+        - ``gate_consistency_grade`` (str | None): A(cv<0.10)/B(cv<0.20)/C(cv<0.25)/D(cv≥0.25).
+    """
+    _null: dict = {
+        "gate_above_threshold_mean": None,
+        "gate_above_threshold_std": None,
+        "gate_above_threshold_cv": None,
+        "gate_above_threshold_min": None,
+        "gate_above_threshold_max": None,
+        "gate_consistency_grade": None,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    gate_vals: list[float] = []
+    for summary in all_windows_summaries:
+        raw = summary.get("gate_high_pct")
+        if raw is None:
+            raw = summary.get("composite_gate_score")
+        if raw is None:
+            continue
+        try:
+            gate_vals.append(float(raw))
+        except (TypeError, ValueError):
+            continue
+
+    if len(gate_vals) < 3:
+        return _null
+
+    n = len(gate_vals)
+    mean_v = sum(gate_vals) / n
+    var_v = sum((x - mean_v) ** 2 for x in gate_vals) / (n - 1) if n > 1 else 0.0
+    std_v = var_v ** 0.5
+    cv_v = std_v / max(mean_v, 1e-8)
+
+    if cv_v < 0.10:
+        grade = "A"
+    elif cv_v < 0.20:
+        grade = "B"
+    elif cv_v < 0.25:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {
+        "gate_above_threshold_mean": round(mean_v, 6),
+        "gate_above_threshold_std": round(std_v, 6),
+        "gate_above_threshold_cv": round(cv_v, 6),
+        "gate_above_threshold_min": round(min(gate_vals), 6),
+        "gate_above_threshold_max": round(max(gate_vals), 6),
+        "gate_consistency_grade": grade,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -2540,6 +2645,8 @@ def _build_replay_evaluator(
         _wrst: dict[str, Any] = compute_win_rate_stability_analysis(all_primary_surfaces)
         # Task 3 (Round 45, Gamma): top-candidate cross-window win-rate consistency.
         _tccs: dict[str, Any] = compute_top_candidate_consistency(all_primary_surfaces)
+        # Task 3 (Round 46, Gamma): cross-window gate consistency.
+        _cgc: dict[str, Any] = compute_cross_window_gate_consistency(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -2763,6 +2870,13 @@ def _build_replay_evaluator(
             "top_candidate_mean_win_rate": _tccs.get("top_candidate_mean_win_rate"),
             "top_candidate_best_win_rate": _tccs.get("top_candidate_best_win_rate"),
             "top_candidate_consistency_grade": _tccs.get("top_candidate_consistency_grade"),
+            # Task 3 (Round 46, Gamma): cross-window gate consistency.
+            "gate_above_threshold_mean": _cgc.get("gate_above_threshold_mean"),
+            "gate_above_threshold_std": _cgc.get("gate_above_threshold_std"),
+            "gate_above_threshold_cv": _cgc.get("gate_above_threshold_cv"),
+            "gate_above_threshold_min": _cgc.get("gate_above_threshold_min"),
+            "gate_above_threshold_max": _cgc.get("gate_above_threshold_max"),
+            "gate_consistency_grade": _cgc.get("gate_consistency_grade"),
         }
 
     return evaluator

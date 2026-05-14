@@ -4203,6 +4203,32 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["catalyst_top_quartile_premium"] = _cats.get("catalyst_top_quartile_premium")
     _surface_result["catalyst_monotone"] = _cats.get("catalyst_monotone")
 
+    # Round 46, Task 1 (Alpha): Volume-Price Divergence Stratification.
+    # ------------------------------------------------------------------
+    _vpds: dict[str, Any] = compute_volume_price_divergence_stratification(next_day_rows)
+    _surface_result["vpd_stratification_valid"] = _vpds.get("vpd_stratification_valid")
+    _surface_result["vpd_low_win_rate"] = _vpds.get("vpd_low_win_rate")
+    _surface_result["vpd_mid_win_rate"] = _vpds.get("vpd_mid_win_rate")
+    _surface_result["vpd_high_win_rate"] = _vpds.get("vpd_high_win_rate")
+    _surface_result["vpd_low_vs_high_lift"] = _vpds.get("vpd_low_vs_high_lift")
+    _surface_result["vpd_anti_monotone"] = _vpds.get("vpd_anti_monotone")
+    _surface_result["vpd_effective"] = _vpds.get("vpd_effective")
+
+    # Round 46, Task 2 (Beta): Score Distribution Moments.
+    # -----------------------------------------------------
+    _sdm: dict[str, Any] = compute_score_distribution_moments(next_day_rows)
+    _surface_result["score_mean"] = _sdm.get("score_mean")
+    _surface_result["score_std"] = _sdm.get("score_std")
+    _surface_result["score_skewness"] = _sdm.get("score_skewness")
+    _surface_result["score_kurtosis"] = _sdm.get("score_kurtosis")
+    _surface_result["score_positive_pct"] = _sdm.get("score_positive_pct")
+    _surface_result["score_p10"] = _sdm.get("score_p10")
+    _surface_result["score_p25"] = _sdm.get("score_p25")
+    _surface_result["score_p50"] = _sdm.get("score_p50")
+    _surface_result["score_p75"] = _sdm.get("score_p75")
+    _surface_result["score_p90"] = _sdm.get("score_p90")
+    _surface_result["score_iqr"] = _sdm.get("score_iqr")
+
     return _surface_result
 
 
@@ -8630,4 +8656,214 @@ def compute_catalyst_score_stratification(rows: list[dict]) -> dict:
         "catalyst_q4_win_rate": wr_q4,
         "catalyst_top_quartile_premium": premium,
         "catalyst_monotone": monotone,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 46, Alpha): Volume-Price Divergence Three-Tier Stratification
+# ---------------------------------------------------------------------------
+# Splits rows into three tiers (low/mid/high) based on P33/P67 of
+# volume_price_divergence and reports next-day win rate per tier.
+# Low divergence = good volume-price alignment (bullish); high = bearish signal.
+
+
+def compute_volume_price_divergence_stratification(rows: list[dict]) -> dict:
+    """Stratify next-day win rates across three volume-price-divergence tiers.
+
+    Args:
+        rows: Per-row dicts containing ``volume_price_divergence`` and ``next_day_return``.
+
+    Returns:
+        Dict with keys:
+
+        - ``vpd_stratification_valid`` (bool): True when ≥ 2 tiers have ≥ 3 rows.
+        - ``vpd_low_win_rate`` (float | None): Win rate for low-divergence tier.
+        - ``vpd_mid_win_rate`` (float | None): Win rate for mid-divergence tier.
+        - ``vpd_high_win_rate`` (float | None): Win rate for high-divergence tier.
+        - ``vpd_low_vs_high_lift`` (float | None): low win rate − high win rate.
+        - ``vpd_anti_monotone`` (bool | None): True when low > mid > high (expected signal).
+        - ``vpd_effective`` (bool): True when vpd_low_vs_high_lift > 0.05.
+    """
+    _null: dict = {
+        "vpd_stratification_valid": False,
+        "vpd_low_win_rate": None,
+        "vpd_mid_win_rate": None,
+        "vpd_high_win_rate": None,
+        "vpd_low_vs_high_lift": None,
+        "vpd_anti_monotone": None,
+        "vpd_effective": False,
+    }
+    if not rows:
+        return _null
+
+    has_vpd = any(row.get("volume_price_divergence") is not None for row in rows)
+    if not has_vpd:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        vpd = row.get("volume_price_divergence")
+        ret = row.get("next_day_return")
+        if vpd is None or ret is None:
+            continue
+        try:
+            paired.append((float(vpd), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if not paired:
+        return _null
+
+    vpd_vals = sorted(v for v, _ in paired)
+    n = len(vpd_vals)
+    p33_idx = max(0, int(n * 1 / 3) - 1)
+    p67_idx = max(0, int(n * 2 / 3) - 1)
+    p33_val = vpd_vals[p33_idx]
+    p67_val = vpd_vals[p67_idx]
+
+    low_rets: list[float] = []
+    mid_rets: list[float] = []
+    high_rets: list[float] = []
+    for vpd_val, ret_val in paired:
+        if vpd_val <= p33_val:
+            low_rets.append(ret_val)
+        elif vpd_val <= p67_val:
+            mid_rets.append(ret_val)
+        else:
+            high_rets.append(ret_val)
+
+    def _wr(rets: list[float]) -> float | None:
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_low = _wr(low_rets)
+    wr_mid = _wr(mid_rets)
+    wr_high = _wr(high_rets)
+
+    valid_count = sum(1 for w in (wr_low, wr_mid, wr_high) if w is not None)
+    stratification_valid = valid_count >= 2
+
+    lift: float | None = None
+    if wr_low is not None and wr_high is not None:
+        lift = round(wr_low - wr_high, 6)
+
+    anti_monotone: bool | None = None
+    if wr_low is not None and wr_mid is not None and wr_high is not None:
+        anti_monotone = wr_low > wr_mid > wr_high
+
+    effective = lift is not None and lift > 0.05
+
+    return {
+        "vpd_stratification_valid": stratification_valid,
+        "vpd_low_win_rate": wr_low,
+        "vpd_mid_win_rate": wr_mid,
+        "vpd_high_win_rate": wr_high,
+        "vpd_low_vs_high_lift": lift,
+        "vpd_anti_monotone": anti_monotone,
+        "vpd_effective": effective,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 46, Beta): Score Distribution Moments Analysis
+# ---------------------------------------------------------------------------
+# Extracts the composite score for all rows and computes distribution moments:
+# mean, std, skewness (3rd moment), kurtosis (4th excess moment), percentiles,
+# IQR, and positive-score fraction.  No scipy dependency — pure Python/numpy.
+
+
+def compute_score_distribution_moments(rows: list[dict]) -> dict:
+    """Compute distribution moments of the composite score across rows.
+
+    Score priority: ``runner_composite_score`` > ``composite_score`` > ``score``.
+
+    Args:
+        rows: Per-row dicts containing at least one score field.
+
+    Returns:
+        Dict with keys:
+
+        - ``score_mean`` (float | None)
+        - ``score_std`` (float | None)
+        - ``score_skewness`` (float | None): 3rd-moment skewness (no scipy).
+        - ``score_kurtosis`` (float | None): Excess kurtosis (4th moment − 3).
+        - ``score_positive_pct`` (float | None): Fraction with score > 0.
+        - ``score_p10`` / ``score_p25`` / ``score_p50`` / ``score_p75`` / ``score_p90`` (float | None)
+        - ``score_iqr`` (float | None): P75 − P25.
+    """
+    _null: dict = {
+        "score_mean": None,
+        "score_std": None,
+        "score_skewness": None,
+        "score_kurtosis": None,
+        "score_positive_pct": None,
+        "score_p10": None,
+        "score_p25": None,
+        "score_p50": None,
+        "score_p75": None,
+        "score_p90": None,
+        "score_iqr": None,
+    }
+    if not rows:
+        return _null
+
+    scores: list[float] = []
+    for row in rows:
+        raw = row.get("runner_composite_score")
+        if raw is None:
+            raw = row.get("composite_score")
+        if raw is None:
+            raw = row.get("score")
+        if raw is None:
+            continue
+        try:
+            scores.append(float(raw))
+        except (TypeError, ValueError):
+            continue
+
+    if len(scores) < 5:
+        return _null
+
+    n = len(scores)
+    mu = sum(scores) / n
+    var = sum((x - mu) ** 2 for x in scores) / (n - 1)
+    std = var ** 0.5
+
+    if std < 1e-12:
+        skewness = 0.0
+        kurtosis = 0.0
+    else:
+        skewness = (sum((x - mu) ** 3 for x in scores) / n) / (std ** 3)
+        kurtosis = (sum((x - mu) ** 4 for x in scores) / n) / (std ** 4) - 3.0
+
+    positive_pct = sum(1 for s in scores if s > 0) / n
+
+    sorted_scores = sorted(scores)
+
+    def _percentile(data: list[float], pct: float) -> float:
+        idx = (len(data) - 1) * pct / 100.0
+        lo = int(idx)
+        hi = min(lo + 1, len(data) - 1)
+        frac = idx - lo
+        return data[lo] + frac * (data[hi] - data[lo])
+
+    p10 = _percentile(sorted_scores, 10)
+    p25 = _percentile(sorted_scores, 25)
+    p50 = _percentile(sorted_scores, 50)
+    p75 = _percentile(sorted_scores, 75)
+    p90 = _percentile(sorted_scores, 90)
+
+    return {
+        "score_mean": round(mu, 6),
+        "score_std": round(std, 6),
+        "score_skewness": round(skewness, 6),
+        "score_kurtosis": round(kurtosis, 6),
+        "score_positive_pct": round(positive_pct, 6),
+        "score_p10": round(p10, 6),
+        "score_p25": round(p25, 6),
+        "score_p50": round(p50, 6),
+        "score_p75": round(p75, 6),
+        "score_p90": round(p90, 6),
+        "score_iqr": round(p75 - p25, 6),
     }

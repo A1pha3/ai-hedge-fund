@@ -10801,3 +10801,300 @@ def test_r45_top_candidate_consistency_optional_registered() -> None:
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
 
     assert "top_candidate_consistency_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 46 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1 — compute_volume_price_divergence_stratification
+# ---------------------------------------------------------------------------
+
+def test_r46_vpd_strat_empty_input() -> None:
+    """Empty rows -> graceful degradation with vpd_stratification_valid=False."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    result = compute_volume_price_divergence_stratification([])
+    assert result["vpd_stratification_valid"] is False
+    assert result["vpd_low_win_rate"] is None
+    assert result["vpd_mid_win_rate"] is None
+    assert result["vpd_high_win_rate"] is None
+    assert result["vpd_low_vs_high_lift"] is None
+
+
+def test_r46_vpd_strat_missing_field() -> None:
+    """Rows lacking volume_price_divergence -> graceful degradation."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    rows = [{"next_day_return": 0.01} for _ in range(20)]
+    result = compute_volume_price_divergence_stratification(rows)
+    assert result["vpd_stratification_valid"] is False
+    assert result["vpd_low_vs_high_lift"] is None
+
+
+def test_r46_vpd_strat_normal_three_tiers() -> None:
+    """Normal input with clear low/mid/high tiers -> lift has a value."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    rows = []
+    # low vpd rows: 9 rows returning positive (high win rate in low tier)
+    for _ in range(9):
+        rows.append({"volume_price_divergence": 0.1, "next_day_return": 0.02})
+    rows.append({"volume_price_divergence": 0.1, "next_day_return": -0.01})
+    # mid vpd rows: ~50% win rate
+    for _ in range(5):
+        rows.append({"volume_price_divergence": 0.5, "next_day_return": 0.01})
+    for _ in range(5):
+        rows.append({"volume_price_divergence": 0.5, "next_day_return": -0.01})
+    # high vpd rows: low win rate
+    rows.append({"volume_price_divergence": 0.9, "next_day_return": 0.02})
+    for _ in range(9):
+        rows.append({"volume_price_divergence": 0.9, "next_day_return": -0.02})
+    result = compute_volume_price_divergence_stratification(rows)
+    assert result["vpd_low_vs_high_lift"] is not None
+    assert result["vpd_stratification_valid"] is True
+
+
+def test_r46_vpd_strat_anti_monotone_logic() -> None:
+    """When low > mid > high win rate, vpd_anti_monotone should be True."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    rows = []
+    # low tier: 8/10 win
+    for _ in range(8):
+        rows.append({"volume_price_divergence": 0.1, "next_day_return": 0.03})
+    for _ in range(2):
+        rows.append({"volume_price_divergence": 0.1, "next_day_return": -0.01})
+    # mid tier: 5/10 win
+    for _ in range(5):
+        rows.append({"volume_price_divergence": 0.5, "next_day_return": 0.02})
+    for _ in range(5):
+        rows.append({"volume_price_divergence": 0.5, "next_day_return": -0.02})
+    # high tier: 2/10 win
+    for _ in range(2):
+        rows.append({"volume_price_divergence": 0.9, "next_day_return": 0.01})
+    for _ in range(8):
+        rows.append({"volume_price_divergence": 0.9, "next_day_return": -0.03})
+    result = compute_volume_price_divergence_stratification(rows)
+    assert result["vpd_anti_monotone"] is True
+
+
+def test_r46_vpd_strat_effective_threshold() -> None:
+    """When lift > 0.05 vpd_effective should be True, otherwise False."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    # Build rows where low wins 9/10 and high wins 2/10 -> lift ~ 0.70
+    rows = []
+    for _ in range(9):
+        rows.append({"volume_price_divergence": 0.1, "next_day_return": 0.02})
+    rows.append({"volume_price_divergence": 0.1, "next_day_return": -0.01})
+    for _ in range(5):
+        rows.append({"volume_price_divergence": 0.5, "next_day_return": 0.01})
+    for _ in range(5):
+        rows.append({"volume_price_divergence": 0.5, "next_day_return": -0.01})
+    for _ in range(2):
+        rows.append({"volume_price_divergence": 0.9, "next_day_return": 0.01})
+    for _ in range(8):
+        rows.append({"volume_price_divergence": 0.9, "next_day_return": -0.02})
+    result = compute_volume_price_divergence_stratification(rows)
+    assert result["vpd_effective"] is True
+    # Now build rows where lift < 0.05 (both tiers have same win rate)
+    rows2 = []
+    for _ in range(6):
+        rows2.append({"volume_price_divergence": 0.1, "next_day_return": 0.01})
+    for _ in range(4):
+        rows2.append({"volume_price_divergence": 0.1, "next_day_return": -0.01})
+    for _ in range(5):
+        rows2.append({"volume_price_divergence": 0.5, "next_day_return": 0.01})
+    for _ in range(5):
+        rows2.append({"volume_price_divergence": 0.5, "next_day_return": -0.01})
+    for _ in range(6):
+        rows2.append({"volume_price_divergence": 0.9, "next_day_return": 0.01})
+    for _ in range(4):
+        rows2.append({"volume_price_divergence": 0.9, "next_day_return": -0.01})
+    result2 = compute_volume_price_divergence_stratification(rows2)
+    assert result2["vpd_effective"] is False
+
+
+def test_r46_vpd_strat_floor_registered() -> None:
+    """vpd_low_vs_high_lift: 0.0 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "vpd_low_vs_high_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["vpd_low_vs_high_lift"] == 0.0
+
+
+def test_r46_vpd_strat_label_registered() -> None:
+    """vpd_low_vs_high_lift must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "vpd_low_vs_high_lift" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["vpd_low_vs_high_lift"] == "量价低背离胜率溢价"
+
+
+def test_r46_vpd_strat_optional_registered() -> None:
+    """vpd_low_vs_high_lift must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "vpd_low_vs_high_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+# ---------------------------------------------------------------------------
+# T2 — compute_score_distribution_moments
+# ---------------------------------------------------------------------------
+
+def test_r46_score_moments_empty_input() -> None:
+    """Empty rows -> graceful degradation (all None)."""
+    from scripts.btst_analysis_utils import compute_score_distribution_moments
+    result = compute_score_distribution_moments([])
+    assert result["score_mean"] is None
+    assert result["score_skewness"] is None
+    assert result["score_positive_pct"] is None
+
+
+def test_r46_score_moments_too_few_rows() -> None:
+    """Fewer than 5 rows -> graceful degradation."""
+    from scripts.btst_analysis_utils import compute_score_distribution_moments
+    rows = [{"score": float(i)} for i in range(4)]
+    result = compute_score_distribution_moments(rows)
+    assert result["score_mean"] is None
+    assert result["score_std"] is None
+
+
+def test_r46_score_moments_near_normal_skewness() -> None:
+    """Near-symmetric input -> |skewness| < 0.3."""
+    from scripts.btst_analysis_utils import compute_score_distribution_moments
+    # symmetric around 0: -4 -3 -2 -1 0 1 2 3 4
+    rows = [{"score": float(v)} for v in range(-4, 5)]
+    result = compute_score_distribution_moments(rows)
+    assert result["score_skewness"] is not None
+    assert abs(result["score_skewness"]) < 0.3
+
+
+def test_r46_score_moments_right_skewed() -> None:
+    """Right-skewed input -> score_skewness > 0."""
+    from scripts.btst_analysis_utils import compute_score_distribution_moments
+    # Many low values, a few high ones -> right skew
+    rows = [{"score": 0.1}] * 15 + [{"score": 5.0}, {"score": 8.0}, {"score": 10.0}]
+    result = compute_score_distribution_moments(rows)
+    assert result["score_skewness"] is not None
+    assert result["score_skewness"] > 0
+
+
+def test_r46_score_moments_all_positive_pct() -> None:
+    """All scores > 0 -> score_positive_pct == 1.0."""
+    from scripts.btst_analysis_utils import compute_score_distribution_moments
+    rows = [{"score": float(i + 1)} for i in range(10)]
+    result = compute_score_distribution_moments(rows)
+    assert result["score_positive_pct"] == 1.0
+
+
+def test_r46_score_moments_floor_skewness_registered() -> None:
+    """score_skewness: 0.0 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "score_skewness" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["score_skewness"] == 0.0
+
+
+def test_r46_score_moments_floor_positive_pct_registered() -> None:
+    """score_positive_pct: 0.50 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "score_positive_pct" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["score_positive_pct"] == 0.50
+
+
+def test_r46_score_moments_label_skewness_registered() -> None:
+    """score_skewness must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "score_skewness" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["score_skewness"] == "评分分布偏度"
+
+
+def test_r46_score_moments_label_positive_pct_registered() -> None:
+    """score_positive_pct must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "score_positive_pct" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["score_positive_pct"] == "评分正值占比"
+
+
+def test_r46_score_moments_optional_skewness_registered() -> None:
+    """score_skewness must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "score_skewness" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r46_score_moments_optional_positive_pct_registered() -> None:
+    """score_positive_pct must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "score_positive_pct" in OPTIONAL_COMPARISON_METRICS
+
+
+# ---------------------------------------------------------------------------
+# T3 — compute_cross_window_gate_consistency
+# ---------------------------------------------------------------------------
+
+def test_r46_gate_consistency_empty_list() -> None:
+    """Empty list -> graceful degradation (all None)."""
+    from scripts.optimize_profile import compute_cross_window_gate_consistency
+    result = compute_cross_window_gate_consistency([])
+    assert result["gate_above_threshold_mean"] is None
+    assert result["gate_above_threshold_cv"] is None
+    assert result["gate_consistency_grade"] is None
+
+
+def test_r46_gate_consistency_too_few_windows() -> None:
+    """Fewer than 3 valid windows -> graceful degradation."""
+    from scripts.optimize_profile import compute_cross_window_gate_consistency
+    summaries = [{"gate_high_pct": 0.5}, {"gate_high_pct": 0.4}]
+    result = compute_cross_window_gate_consistency(summaries)
+    assert result["gate_above_threshold_cv"] is None
+    assert result["gate_consistency_grade"] is None
+
+
+def test_r46_gate_consistency_perfectly_stable() -> None:
+    """All windows with same gate fraction -> cv == 0.0, grade A."""
+    from scripts.optimize_profile import compute_cross_window_gate_consistency
+    summaries = [{"gate_high_pct": 0.6}] * 5
+    result = compute_cross_window_gate_consistency(summaries)
+    assert result["gate_above_threshold_cv"] == 0.0
+    assert result["gate_consistency_grade"] == "A"
+
+
+def test_r46_gate_consistency_high_variation_grade_d() -> None:
+    """High variation -> cv >= 0.25, grade D."""
+    from scripts.optimize_profile import compute_cross_window_gate_consistency
+    summaries = [
+        {"gate_high_pct": 0.1},
+        {"gate_high_pct": 0.9},
+        {"gate_high_pct": 0.05},
+        {"gate_high_pct": 0.85},
+    ]
+    result = compute_cross_window_gate_consistency(summaries)
+    assert result["gate_consistency_grade"] == "D"
+    assert result["gate_above_threshold_cv"] is not None
+    assert result["gate_above_threshold_cv"] >= 0.25
+
+
+def test_r46_gate_consistency_grade_b_boundary() -> None:
+    """Values close together but not identical -> cv in [0.10, 0.20) -> grade B."""
+    from scripts.optimize_profile import compute_cross_window_gate_consistency
+    # mean ~0.6, std ~0.08 -> cv ~0.13 (grade B)
+    summaries = [
+        {"gate_high_pct": 0.52},
+        {"gate_high_pct": 0.60},
+        {"gate_high_pct": 0.68},
+    ]
+    result = compute_cross_window_gate_consistency(summaries)
+    assert result["gate_consistency_grade"] == "B"
+
+
+def test_r46_gate_consistency_cap_registered() -> None:
+    """gate_above_threshold_cv: 0.25 must be in BTST_QUALITY_CAPS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "gate_above_threshold_cv" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["gate_above_threshold_cv"] == 0.25
+
+
+def test_r46_gate_consistency_lower_is_better_registered() -> None:
+    """gate_above_threshold_cv must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "gate_above_threshold_cv" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r46_gate_consistency_optional_registered() -> None:
+    """gate_above_threshold_cv must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "gate_above_threshold_cv" in OPTIONAL_COMPARISON_METRICS

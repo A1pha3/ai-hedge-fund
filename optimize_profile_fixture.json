@@ -150,7 +150,11 @@
       "win_rate_cv_delta": null,
       "mc_high_vs_low_lift_delta": null,
       "catalyst_top_quartile_premium_delta": null,
-      "top_candidate_consistency_rate_delta": null
+      "top_candidate_consistency_rate_delta": null,
+      "vpd_low_vs_high_lift_delta": null,
+      "score_skewness_delta": null,
+      "score_positive_pct_delta": null,
+      "gate_above_threshold_cv_delta": null
     },
     "default": {
       "candidate": {
@@ -291,7 +295,11 @@
       "win_rate_cv_delta": null,
       "mc_high_vs_low_lift_delta": null,
       "catalyst_top_quartile_premium_delta": null,
-      "top_candidate_consistency_rate_delta": null
+      "top_candidate_consistency_rate_delta": null,
+      "vpd_low_vs_high_lift_delta": null,
+      "score_skewness_delta": null,
+      "score_positive_pct_delta": null,
+      "gate_above_threshold_cv_delta": null
     }
   },
   "rollout_recommendation": "hold",
