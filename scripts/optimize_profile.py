@@ -352,6 +352,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "t2_vs_t1_premium",
     # Task 3 (Round 50, Gamma): cross-window Sharpe trend slope.
     "sharpe_trend_slope",
+    # Task 1 (Round 51, Alpha): win/loss magnitude ratio — average win / average loss.
+    "win_loss_magnitude_ratio",
+    # Task 1 (Round 51, Alpha): Kelly criterion fraction — positive edge sizing.
+    "kelly_fraction",
+    # Task 2 (Round 51, Beta): outlier dependency ratio — sensitivity to top-10% returns.
+    "outlier_dependency_ratio",
+    # Task 3 (Round 51, Gamma): cross-window profit-factor OLS trend slope.
+    "pf_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -592,6 +600,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "t2_vs_t1_premium": "T+2相对T+1胜率差",
     # Task 3 (Round 50, Gamma): cross-window Sharpe trend slope
     "sharpe_trend_slope": "Sharpe跨窗趋势斜率",
+    # Task 1 (Round 51, Alpha): win/loss magnitude ratio
+    "win_loss_magnitude_ratio": "平均盈亏比",
+    # Task 1 (Round 51, Alpha): Kelly criterion fraction
+    "kelly_fraction": "Kelly分数",
+    # Task 2 (Round 51, Beta): outlier dependency ratio
+    "outlier_dependency_ratio": "离群收益依赖度",
+    # Task 3 (Round 51, Gamma): cross-window profit-factor trend slope
+    "pf_trend_slope": "盈利因子跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -652,6 +668,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "gate_above_threshold_cv",
     # Task 1 (Round 50, Alpha): avg inter-factor correlation — higher = more redundant signals = lower-is-better.
     "avg_inter_factor_correlation",
+    # Task 2 (Round 51, Beta): outlier dependency ratio — higher = more reliance on outliers = lower-is-better.
+    "outlier_dependency_ratio",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -884,6 +902,14 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "t2_vs_t1_premium",
     # Task 3 (Round 50, Gamma): Sharpe trend slope — optional; pre-Round-50 outputs omit it.
     "sharpe_trend_slope",
+    # Task 1 (Round 51, Alpha): win/loss magnitude ratio — optional; pre-Round-51 outputs omit it.
+    "win_loss_magnitude_ratio",
+    # Task 1 (Round 51, Alpha): Kelly fraction — optional; pre-Round-51 outputs omit it.
+    "kelly_fraction",
+    # Task 2 (Round 51, Beta): outlier dependency ratio — optional; pre-Round-51 outputs omit it.
+    "outlier_dependency_ratio",
+    # Task 3 (Round 51, Gamma): profit-factor trend slope — optional; pre-Round-51 outputs omit it.
+    "pf_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2427,6 +2453,87 @@ def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 51, Task 3 (Gamma): Cross-window Profit Factor Trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track OLS trend of ``profit_factor`` across replay windows.
+
+    A positive slope means the strategy's gross-profit / gross-loss ratio is
+    improving over time; a negative slope signals deterioration.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (one per
+            replay window, ordered chronologically).  Each dict should carry a
+            ``profit_factor`` value produced by ``compute_profit_factor_analysis``.
+
+    Returns:
+        Dict with keys: ``pf_trend_slope``, ``pf_mean``, ``pf_std``, ``pf_min``,
+        ``pf_max``, ``pf_trend_grade``, ``pf_above_one_pct``, ``pf_trend_valid``.
+    """
+    _null: dict = {
+        "pf_trend_slope": None,
+        "pf_mean": None,
+        "pf_std": None,
+        "pf_min": None,
+        "pf_max": None,
+        "pf_trend_grade": None,
+        "pf_above_one_pct": None,
+        "pf_trend_valid": False,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    pf_series: list[float] = []
+    for surf in all_windows_summaries:
+        v = surf.get("profit_factor")
+        if v is not None:
+            try:
+                pf_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(pf_series) < 3:
+        return _null
+
+    n = len(pf_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(pf_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, pf_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+
+    mean_val = sum_y / n
+    variance = sum((v - mean_val) ** 2 for v in pf_series) / (n - 1) if n > 1 else 0.0
+    std_val = variance ** 0.5
+
+    if slope > 0.10:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.10:
+        grade = "C"
+    else:
+        grade = "D"
+
+    pf_above_one_pct = round(sum(1 for v in pf_series if v >= 1.0) / n, 6)
+
+    return {
+        "pf_trend_slope": round(slope, 8),
+        "pf_mean": round(mean_val, 6),
+        "pf_std": round(std_val, 6),
+        "pf_min": round(min(pf_series), 6),
+        "pf_max": round(max(pf_series), 6),
+        "pf_trend_grade": grade,
+        "pf_above_one_pct": pf_above_one_pct,
+        "pf_trend_valid": True,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -3048,6 +3155,14 @@ def _build_replay_evaluator(
         # Task 2 (Round 43, Beta): average high_vs_low_sentiment_lift across replay windows.
         _hsl_vals = [float(s["high_vs_low_sentiment_lift"]) for s in all_primary_surfaces if s.get("high_vs_low_sentiment_lift") is not None]
         avg_high_vs_low_sentiment_lift: float | None = round(sum(_hsl_vals) / len(_hsl_vals), 6) if _hsl_vals else None
+        # Task 1 (Round 51, Alpha): average win_loss_magnitude_ratio and kelly_fraction.
+        _wlmr_vals = [float(s["win_loss_magnitude_ratio"]) for s in all_primary_surfaces if s.get("win_loss_magnitude_ratio") is not None]
+        avg_win_loss_magnitude_ratio: "float | None" = round(sum(_wlmr_vals) / len(_wlmr_vals), 6) if _wlmr_vals else None
+        _kf_vals = [float(s["kelly_fraction"]) for s in all_primary_surfaces if s.get("kelly_fraction") is not None]
+        avg_kelly_fraction: "float | None" = round(sum(_kf_vals) / len(_kf_vals), 6) if _kf_vals else None
+        # Task 2 (Round 51, Beta): average outlier_dependency_ratio.
+        _odr_vals = [float(s["outlier_dependency_ratio"]) for s in all_primary_surfaces if s.get("outlier_dependency_ratio") is not None]
+        avg_outlier_dependency_ratio: "float | None" = round(sum(_odr_vals) / len(_odr_vals), 6) if _odr_vals else None
         # Task 3 (Round 43, Gamma): score momentum trend — OLS slope of avg composite score.
         _smt: dict[str, Any] = compute_score_momentum_trend(all_primary_surfaces)
         # Task 3 (Round 44, Gamma): win-rate stability across replay windows.
@@ -3064,6 +3179,8 @@ def _build_replay_evaluator(
         _sortino_trend: dict[str, Any] = compute_cross_window_sortino_trend(all_primary_surfaces)
         # Task 3 (Round 50, Gamma): cross-window Sharpe trend.
         _sharpe_trend: dict[str, Any] = compute_cross_window_sharpe_trend(all_primary_surfaces)
+        # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
+        _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -3324,6 +3441,20 @@ def _build_replay_evaluator(
             "sharpe_trend_grade": _sharpe_trend.get("sharpe_trend_grade"),
             "sharpe_positive_windows_pct": _sharpe_trend.get("sharpe_positive_windows_pct"),
             "sharpe_trend_valid": _sharpe_trend.get("sharpe_trend_valid"),
+            # Task 1 (Round 51, Alpha): win/loss magnitude ratio and Kelly fraction.
+            "win_loss_magnitude_ratio": avg_win_loss_magnitude_ratio,
+            "kelly_fraction": avg_kelly_fraction,
+            # Task 2 (Round 51, Beta): outlier dependency ratio.
+            "outlier_dependency_ratio": avg_outlier_dependency_ratio,
+            # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
+            "pf_trend_slope": _pf_trend.get("pf_trend_slope"),
+            "pf_mean": _pf_trend.get("pf_mean"),
+            "pf_std": _pf_trend.get("pf_std"),
+            "pf_min": _pf_trend.get("pf_min"),
+            "pf_max": _pf_trend.get("pf_max"),
+            "pf_trend_grade": _pf_trend.get("pf_trend_grade"),
+            "pf_above_one_pct": _pf_trend.get("pf_above_one_pct"),
+            "pf_trend_valid": _pf_trend.get("pf_trend_valid"),
         }
 
     return evaluator

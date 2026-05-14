@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_e7765412f0eb_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_a8f5234affc5_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -185,7 +185,11 @@
       "sortino_trend_slope_delta": null,
       "avg_inter_factor_correlation_delta": null,
       "t2_vs_t1_premium_delta": null,
-      "sharpe_trend_slope_delta": null
+      "sharpe_trend_slope_delta": null,
+      "win_loss_magnitude_ratio_delta": null,
+      "kelly_fraction_delta": null,
+      "outlier_dependency_ratio_delta": null,
+      "pf_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -366,7 +370,11 @@
       "sortino_trend_slope_delta": null,
       "avg_inter_factor_correlation_delta": null,
       "t2_vs_t1_premium_delta": null,
-      "sharpe_trend_slope_delta": null
+      "sharpe_trend_slope_delta": null,
+      "win_loss_magnitude_ratio_delta": null,
+      "kelly_fraction_delta": null,
+      "outlier_dependency_ratio_delta": null,
+      "pf_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

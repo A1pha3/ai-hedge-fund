@@ -4320,6 +4320,30 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["multi_day_consistency"] = _ehp.get("multi_day_consistency")
     _surface_result["holding_data_available"] = _ehp.get("holding_data_available")
 
+    # Round 51, Task 1 (Alpha): Win/Loss Magnitude Analysis.
+    # -------------------------------------------------------
+    _wlm: dict[str, Any] = compute_win_loss_magnitude_analysis(next_day_rows)
+    _surface_result["win_loss_magnitude_ratio"] = _wlm.get("win_loss_magnitude_ratio")
+    _surface_result["kelly_fraction"] = _wlm.get("kelly_fraction")
+    _surface_result["avg_win_return"] = _wlm.get("avg_win_return")
+    _surface_result["avg_loss_return"] = _wlm.get("avg_loss_return")
+    _surface_result["gross_win_sum"] = _wlm.get("gross_win_sum")
+    _surface_result["gross_loss_sum"] = _wlm.get("gross_loss_sum")
+    _surface_result["profit_factor_v2"] = _wlm.get("profit_factor_v2")
+    _surface_result["wlm_win_count"] = _wlm.get("win_count")
+    _surface_result["wlm_loss_count"] = _wlm.get("loss_count")
+    _surface_result["wlm_total_count"] = _wlm.get("total_count")
+
+    # Round 51, Task 2 (Beta): Outlier Robustness Check.
+    # ----------------------------------------------------
+    _orc: dict[str, Any] = compute_outlier_robustness_check(next_day_rows)
+    _surface_result["outlier_dependency_ratio"] = _orc.get("outlier_dependency_ratio")
+    _surface_result["outlier_threshold"] = _orc.get("outlier_threshold")
+    _surface_result["win_rate_ex_top10"] = _orc.get("win_rate_ex_top10")
+    _surface_result["outlier_win_contribution"] = _orc.get("outlier_win_contribution")
+    _surface_result["robustness_grade"] = _orc.get("robustness_grade")
+    _surface_result["orc_full_win_rate"] = _orc.get("full_win_rate")
+
     return _surface_result
 
 
@@ -9822,4 +9846,175 @@ def compute_extended_holding_period(rows: list[dict]) -> dict:
         "multi_day_consistency": multi_day_consistency,
         "holding_data_available": holding_data_available,
         "extended_holding_valid": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 51, Task 1 (Alpha): Win/Loss Magnitude Analysis (平均盈亏比 & Kelly)
+# ---------------------------------------------------------------------------
+
+
+def compute_win_loss_magnitude_analysis(rows: list[dict]) -> dict:
+    """Compute win/loss magnitude ratio, profit factor v2, and Kelly fraction.
+
+    Separates rows by sign of ``next_day_return`` and computes average win /
+    average loss magnitudes.  Uses these to derive the classic Kelly criterion.
+
+    Args:
+        rows: Per-candidate dicts.  Must contain ``next_day_return`` for ≥ 5 rows.
+
+    Returns:
+        Dict with keys: ``avg_win_return``, ``avg_loss_return``,
+        ``win_loss_magnitude_ratio``, ``gross_win_sum``, ``gross_loss_sum``,
+        ``profit_factor_v2``, ``win_count``, ``loss_count``, ``total_count``,
+        ``kelly_fraction``.
+    """
+    _null: dict = {
+        "avg_win_return": None,
+        "avg_loss_return": None,
+        "win_loss_magnitude_ratio": None,
+        "gross_win_sum": None,
+        "gross_loss_sum": None,
+        "profit_factor_v2": None,
+        "win_count": None,
+        "loss_count": None,
+        "total_count": None,
+        "kelly_fraction": None,
+    }
+    if not rows:
+        return _null
+
+    rets: list[float] = []
+    for row in rows:
+        v = row.get("next_day_return")
+        if v is not None:
+            try:
+                rets.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(rets) < 5:
+        return _null
+
+    win_rets = [r for r in rets if r > 0]
+    loss_rets = [r for r in rets if r < 0]
+
+    avg_win: "float | None" = None
+    if len(win_rets) >= 2:
+        avg_win = round(sum(win_rets) / len(win_rets), 8)
+
+    avg_loss: "float | None" = None
+    if len(loss_rets) >= 2:
+        avg_loss = round(abs(sum(loss_rets) / len(loss_rets)), 8)
+
+    ratio: "float | None" = None
+    if avg_win is not None and avg_loss is not None:
+        raw_ratio = avg_win / max(avg_loss, 1e-8)
+        ratio = round(max(0.0, min(20.0, raw_ratio)), 8)
+
+    gross_win = round(sum(win_rets), 8) if win_rets else 0.0
+    gross_loss = round(sum(abs(r) for r in loss_rets), 8) if loss_rets else 0.0
+    raw_pf2 = gross_win / max(gross_loss, 1e-8)
+    profit_factor_v2 = round(max(0.0, min(20.0, raw_pf2)), 8)
+
+    win_rate = len(win_rets) / len(rets)
+    kelly: "float | None" = None
+    if ratio is not None:
+        raw_kelly = win_rate - (1.0 - win_rate) / max(ratio, 1e-8)
+        kelly = round(max(-1.0, min(1.0, raw_kelly)), 8)
+
+    return {
+        "avg_win_return": avg_win,
+        "avg_loss_return": avg_loss,
+        "win_loss_magnitude_ratio": ratio,
+        "gross_win_sum": gross_win,
+        "gross_loss_sum": gross_loss,
+        "profit_factor_v2": profit_factor_v2,
+        "win_count": len(win_rets),
+        "loss_count": len(loss_rets),
+        "total_count": len(rets),
+        "kelly_fraction": kelly,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 51, Task 2 (Beta): Outlier Robustness Check (离群收益依赖度)
+# ---------------------------------------------------------------------------
+
+
+def compute_outlier_robustness_check(rows: list[dict]) -> dict:
+    """Assess strategy robustness after removing the top-10% return outliers.
+
+    If the win rate drops significantly once the top-10% largest-return rows are
+    removed, the strategy relies heavily on rare "black-swan" surges that are
+    unlikely to repeat in live trading.
+
+    Args:
+        rows: Per-candidate dicts.  Must contain ``next_day_return`` for ≥ 10 rows.
+
+    Returns:
+        Dict with keys: ``full_win_rate``, ``outlier_threshold``,
+        ``win_rate_ex_top10``, ``outlier_win_contribution``,
+        ``outlier_dependency_ratio``, ``robustness_grade``.
+    """
+    _null: dict = {
+        "full_win_rate": None,
+        "outlier_threshold": None,
+        "win_rate_ex_top10": None,
+        "outlier_win_contribution": None,
+        "outlier_dependency_ratio": None,
+        "robustness_grade": None,
+    }
+    if not rows:
+        return _null
+
+    rets: list[float] = []
+    for row in rows:
+        v = row.get("next_day_return")
+        if v is not None:
+            try:
+                rets.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(rets) < 10:
+        return _null
+
+    full_win_rate = round(sum(1 for r in rets if r > 0) / len(rets), 8)
+
+    sorted_rets = sorted(rets)
+    n = len(sorted_rets)
+    p90_idx = int(0.90 * n)
+    if p90_idx >= n:
+        p90_idx = n - 1
+    outlier_threshold = round(sorted_rets[p90_idx], 8)
+
+    non_outlier = [r for r in rets if r <= outlier_threshold]
+
+    win_rate_ex: "float | None" = None
+    contribution: "float | None" = None
+    dep_ratio: "float | None" = None
+    grade: "str | None" = None
+
+    if len(non_outlier) >= 5:
+        win_rate_ex = round(sum(1 for r in non_outlier if r > 0) / len(non_outlier), 8)
+        contribution = round(full_win_rate - win_rate_ex, 8)
+        raw_dep = contribution / max(full_win_rate, 1e-8)
+        dep_ratio = round(max(0.0, min(1.0, raw_dep)), 8)
+        if dep_ratio < 0.10:
+            grade = "A"
+        elif dep_ratio < 0.20:
+            grade = "B"
+        elif dep_ratio < 0.30:
+            grade = "C"
+        else:
+            grade = "D"
+
+    return {
+        "full_win_rate": full_win_rate,
+        "outlier_threshold": outlier_threshold,
+        "win_rate_ex_top10": win_rate_ex,
+        "outlier_win_contribution": contribution,
+        "outlier_dependency_ratio": dep_ratio,
+        "robustness_grade": grade,
     }

@@ -359,6 +359,18 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # sharpe_trend_slope = OLS slope of sharpe_ratio across replay windows.
     # Floor ≥ -0.10 prevents strategies with rapidly deteriorating Sharpe from passing.
     "sharpe_trend_slope": -0.10,
+    # Task 1 (Round 51, Alpha): win/loss magnitude ratio floor.
+    # win_loss_magnitude_ratio = avg_win / avg_loss magnitude; floor ≥ 1.0 ensures wins
+    # exceed losses on average — a necessary condition for positive expectancy.
+    "win_loss_magnitude_ratio": 1.0,
+    # Task 1 (Round 51, Alpha): Kelly fraction floor.
+    # kelly_fraction = win_rate − (1 − win_rate) / ratio; floor ≥ 0.0 means the strategy
+    # has enough edge to warrant a positive position size (negative Kelly = no bet).
+    "kelly_fraction": 0.0,
+    # Task 3 (Round 51, Gamma): cross-window profit-factor trend slope floor.
+    # pf_trend_slope = OLS slope of profit_factor across replay windows.
+    # Floor ≥ -0.10 prevents strategies with rapidly deteriorating PF from passing.
+    "pf_trend_slope": -0.10,
 }
 
 # ---------------------------------------------------------------------------
@@ -425,6 +437,12 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # offering little independent signal diversity.  High redundancy inflates apparent
     # robustness because correlated signals agree by construction rather than real edge.
     "avg_inter_factor_correlation": 0.50,
+    # Task 2 (Round 51, Beta): outlier dependency ratio cap.
+    # outlier_dependency_ratio = (full_win_rate - win_rate_ex_top10) / full_win_rate.
+    # A value above 0.30 means the strategy's win rate shrinks by more than 30 % once
+    # the top-10% return outliers are removed — indicating the edge is highly dependent
+    # on rare "black swan" surges that are unlikely to repeat in live trading.
+    "outlier_dependency_ratio": 0.30,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

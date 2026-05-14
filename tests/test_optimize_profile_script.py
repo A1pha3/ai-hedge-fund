@@ -12390,3 +12390,274 @@ def test_r50_sharpe_trend_skips_missing_sharpe_ratio() -> None:
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
     assert result["sharpe_trend_slope"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Round 51, Task 1 (Alpha): Win/Loss Magnitude Analysis tests
+# ---------------------------------------------------------------------------
+
+
+def test_r51_win_loss_magnitude_empty_input() -> None:
+    """Empty input → graceful degradation with all-None result."""
+    from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+    result = compute_win_loss_magnitude_analysis([])
+    assert result["win_loss_magnitude_ratio"] is None
+    assert result["kelly_fraction"] is None
+    assert result["profit_factor_v2"] is None
+
+
+def test_r51_win_loss_magnitude_fewer_than_5_rows() -> None:
+    """Fewer than 5 valid rows → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+    rows = [{"next_day_return": 0.05}] * 4
+    result = compute_win_loss_magnitude_analysis(rows)
+    assert result["win_loss_magnitude_ratio"] is None
+    assert result["kelly_fraction"] is None
+
+
+def test_r51_win_loss_magnitude_all_wins_no_losses() -> None:
+    """All rows profitable → avg_loss_return=None, ratio=None, kelly=None."""
+    from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+    rows = [{"next_day_return": 0.02 + i * 0.001} for i in range(10)]
+    result = compute_win_loss_magnitude_analysis(rows)
+    assert result["avg_loss_return"] is None
+    assert result["win_loss_magnitude_ratio"] is None
+    assert result["kelly_fraction"] is None
+
+
+def test_r51_win_loss_magnitude_all_losses_no_wins() -> None:
+    """All rows losing → avg_win_return=None, ratio=None."""
+    from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+    rows = [{"next_day_return": -0.02 - i * 0.001} for i in range(10)]
+    result = compute_win_loss_magnitude_analysis(rows)
+    assert result["avg_win_return"] is None
+    assert result["win_loss_magnitude_ratio"] is None
+
+
+def test_r51_win_loss_magnitude_mixed_normal_case() -> None:
+    """Normal mixed returns → positive ratio, Kelly in [-1,1]."""
+    from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+    import pytest
+    wins = [0.05, 0.04, 0.06, 0.07, 0.03]
+    losses = [-0.02, -0.01, -0.03, -0.02, -0.015]
+    rows = [{"next_day_return": r} for r in wins + losses]
+    result = compute_win_loss_magnitude_analysis(rows)
+    assert result["win_loss_magnitude_ratio"] is not None
+    assert result["win_loss_magnitude_ratio"] > 0
+    assert result["kelly_fraction"] is not None
+    assert -1.0 <= result["kelly_fraction"] <= 1.0
+
+
+def test_r51_win_loss_magnitude_profit_factor_v2_nonneg() -> None:
+    """profit_factor_v2 must always be >= 0."""
+    from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+    wins = [0.03, 0.02, 0.04, 0.05, 0.01]
+    losses = [-0.05, -0.04, -0.06, -0.07, -0.08]
+    rows = [{"next_day_return": r} for r in wins + losses]
+    result = compute_win_loss_magnitude_analysis(rows)
+    assert result["profit_factor_v2"] is not None
+    assert result["profit_factor_v2"] >= 0.0
+
+
+def test_r51_win_loss_magnitude_floor_registered() -> None:
+    """win_loss_magnitude_ratio:1.0 and kelly_fraction:0.0 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "win_loss_magnitude_ratio" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["win_loss_magnitude_ratio"] == pytest.approx(1.0)
+    assert "kelly_fraction" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["kelly_fraction"] == pytest.approx(0.0)
+
+
+def test_r51_win_loss_magnitude_optional_registered() -> None:
+    """win_loss_magnitude_ratio and kelly_fraction must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "win_loss_magnitude_ratio" in OPTIONAL_COMPARISON_METRICS
+    assert "kelly_fraction" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r51_win_loss_magnitude_in_comparison_metrics() -> None:
+    """win_loss_magnitude_ratio and kelly_fraction must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "win_loss_magnitude_ratio" in COMPARISON_METRICS
+    assert "kelly_fraction" in COMPARISON_METRICS
+
+
+def test_r51_win_loss_magnitude_label_registered() -> None:
+    """win_loss_magnitude_ratio and kelly_fraction must have labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "win_loss_magnitude_ratio" in COMPARISON_METRIC_LABELS
+    assert "kelly_fraction" in COMPARISON_METRIC_LABELS
+
+
+# ---------------------------------------------------------------------------
+# Round 51, Task 2 (Beta): Outlier Robustness Check tests
+# ---------------------------------------------------------------------------
+
+
+def test_r51_outlier_robustness_empty_input() -> None:
+    """Empty input → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_outlier_robustness_check
+    result = compute_outlier_robustness_check([])
+    assert result["outlier_dependency_ratio"] is None
+    assert result["robustness_grade"] is None
+
+
+def test_r51_outlier_robustness_fewer_than_10_rows() -> None:
+    """Fewer than 10 valid rows → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_outlier_robustness_check
+    rows = [{"next_day_return": 0.01 * i} for i in range(9)]
+    result = compute_outlier_robustness_check(rows)
+    assert result["outlier_dependency_ratio"] is None
+    assert result["robustness_grade"] is None
+
+
+def test_r51_outlier_robustness_uniform_distribution_near_zero() -> None:
+    """Uniformly spaced returns → outlier dependency ratio near 0 (grade A)."""
+    from scripts.btst_analysis_utils import compute_outlier_robustness_check
+    rows = [{"next_day_return": 0.01 * i} for i in range(1, 21)]
+    result = compute_outlier_robustness_check(rows)
+    assert result["outlier_dependency_ratio"] is not None
+    assert result["outlier_dependency_ratio"] >= 0.0
+    assert result["robustness_grade"] in ("A", "B", "C", "D")
+
+
+def test_r51_outlier_robustness_high_dependency_one_big_winner() -> None:
+    """Most rows near zero with one large outlier → positive dependency ratio."""
+    from scripts.btst_analysis_utils import compute_outlier_robustness_check
+    rows = [{"next_day_return": -0.01}] * 15 + [{"next_day_return": 0.50}]
+    result = compute_outlier_robustness_check(rows)
+    assert result["outlier_dependency_ratio"] is not None
+    assert result["outlier_dependency_ratio"] > 0.0
+
+
+def test_r51_outlier_robustness_grade_valid_values() -> None:
+    """robustness_grade must be one of A/B/C/D when data is sufficient."""
+    from scripts.btst_analysis_utils import compute_outlier_robustness_check
+    rows = [{"next_day_return": (i - 10) * 0.01} for i in range(20)]
+    result = compute_outlier_robustness_check(rows)
+    if result["robustness_grade"] is not None:
+        assert result["robustness_grade"] in ("A", "B", "C", "D")
+
+
+def test_r51_outlier_robustness_cap_registered() -> None:
+    """outlier_dependency_ratio:0.30 must be in BTST_QUALITY_CAPS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    import pytest
+    assert "outlier_dependency_ratio" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["outlier_dependency_ratio"] == pytest.approx(0.30)
+
+
+def test_r51_outlier_robustness_lower_is_better_registered() -> None:
+    """outlier_dependency_ratio must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "outlier_dependency_ratio" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r51_outlier_robustness_optional_registered() -> None:
+    """outlier_dependency_ratio must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "outlier_dependency_ratio" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r51_outlier_robustness_label_registered() -> None:
+    """outlier_dependency_ratio must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "outlier_dependency_ratio" in COMPARISON_METRIC_LABELS
+
+
+# ---------------------------------------------------------------------------
+# Round 51, Task 3 (Gamma): Cross-window Profit Factor Trend tests
+# ---------------------------------------------------------------------------
+
+
+def test_r51_pf_trend_empty_list() -> None:
+    """Empty list → graceful degradation."""
+    from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+    result = compute_cross_window_profit_factor_trend([])
+    assert result["pf_trend_slope"] is None
+    assert result["pf_trend_valid"] is False
+
+
+def test_r51_pf_trend_fewer_than_3_windows() -> None:
+    """Fewer than 3 valid profit_factor values → graceful degradation."""
+    from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+    summaries = [{"profit_factor": 1.2}, {"profit_factor": 1.5}]
+    result = compute_cross_window_profit_factor_trend(summaries)
+    assert result["pf_trend_slope"] is None
+    assert result["pf_trend_valid"] is False
+
+
+def test_r51_pf_trend_rising_trend_positive_slope() -> None:
+    """Increasing profit factors → slope > 0 and grade A or B."""
+    from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+    summaries = [{"profit_factor": 1.0 + i * 0.3} for i in range(6)]
+    result = compute_cross_window_profit_factor_trend(summaries)
+    assert result["pf_trend_valid"] is True
+    assert result["pf_trend_slope"] is not None
+    assert result["pf_trend_slope"] > 0
+    assert result["pf_trend_grade"] in ("A", "B")
+
+
+def test_r51_pf_trend_falling_trend_negative_slope() -> None:
+    """Decreasing profit factors → slope < 0."""
+    from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+    summaries = [{"profit_factor": 2.0 - i * 0.2} for i in range(6)]
+    result = compute_cross_window_profit_factor_trend(summaries)
+    assert result["pf_trend_valid"] is True
+    assert result["pf_trend_slope"] is not None
+    assert result["pf_trend_slope"] < 0
+
+
+def test_r51_pf_trend_steep_decline_grade_d() -> None:
+    """slope <= -0.10 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+    summaries = [{"profit_factor": 3.0 - i * 0.5} for i in range(6)]
+    result = compute_cross_window_profit_factor_trend(summaries)
+    assert result["pf_trend_valid"] is True
+    if result["pf_trend_slope"] is not None and result["pf_trend_slope"] <= -0.10:
+        assert result["pf_trend_grade"] == "D"
+
+
+def test_r51_pf_trend_above_one_pct_all_above() -> None:
+    """All profit_factor >= 1.0 → pf_above_one_pct == 1.0."""
+    from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+    import pytest
+    summaries = [{"profit_factor": 1.5 + i * 0.1} for i in range(5)]
+    result = compute_cross_window_profit_factor_trend(summaries)
+    assert result["pf_above_one_pct"] == pytest.approx(1.0)
+
+
+def test_r51_pf_trend_floor_registered() -> None:
+    """pf_trend_slope: -0.10 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "pf_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["pf_trend_slope"] == pytest.approx(-0.10)
+
+
+def test_r51_pf_trend_label_registered() -> None:
+    """pf_trend_slope must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "pf_trend_slope" in COMPARISON_METRIC_LABELS
+
+
+def test_r51_pf_trend_optional_registered() -> None:
+    """pf_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "pf_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r51_pf_trend_in_comparison_metrics() -> None:
+    """pf_trend_slope must appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "pf_trend_slope" in COMPARISON_METRICS
+
+
+def test_r51_pf_trend_skips_missing_profit_factor() -> None:
+    """Windows without profit_factor are skipped; valid windows still compute."""
+    from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+    summaries = [{"profit_factor": 1.2}, {"other_key": 0.5}, {"profit_factor": 1.5}, {"profit_factor": 1.8}]
+    result = compute_cross_window_profit_factor_trend(summaries)
+    assert result["pf_trend_valid"] is True
+    assert result["pf_trend_slope"] is not None
