@@ -728,6 +728,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 87, Gamma): regime spread trend slope floor.
     # regime_spread_trend_slope < -0.01 means the regime spread is deteriorating across windows.
     "regime_spread_trend_slope": -0.01,
+    # Task 1 (Round 88, Alpha): volume-price premium edge floor.
+    # vp_volume_premium_edge < 0.0 means high-volume stocks don't produce higher returns than low-volume stocks.
+    "vp_volume_premium_edge": 0.0,
+    # Task 2 (Round 88, Beta): entry timing edge floor.
+    # et_inflow_timing_edge < 0.0 means high-inflow stocks don't outperform low-inflow stocks in win rate.
+    "et_inflow_timing_edge": 0.0,
+    # Task 3 (Round 88, Gamma): signal quality trend slope floor.
+    # signal_quality_trend_slope < -0.01 means signal persistence edge is deteriorating across windows.
+    "signal_quality_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

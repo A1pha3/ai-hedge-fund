@@ -588,6 +588,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "sig_signal_persistence_edge",
     # Task 3 (Round 87, Gamma): cross-window regime spread OLS trend slope.
     "regime_spread_trend_slope",
+    # Task 1 (Round 88, Alpha): volume-price divergence score — volume premium edge.
+    "vp_volume_premium_edge",
+    # Task 2 (Round 88, Beta): entry timing quality — inflow timing edge.
+    "et_inflow_timing_edge",
+    # Task 3 (Round 88, Gamma): cross-window signal quality OLS trend slope.
+    "signal_quality_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -1064,6 +1070,17 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "sig_signal_persistence_edge": "信号持续质量边缘(Top-Bot胜率差)",
     # Task 3 (Round 87, Gamma): regime spread cross-window trend slope label.
     "regime_spread_trend_slope": "机制差跨窗趋势斜率",
+    # Task 1 (Round 88, Alpha): volume-price divergence score labels.
+    "vp_volume_premium_edge": "量价溢价优势",
+    "vp_volume_return_alignment": "量价对齐相关系数",
+    "vp_high_vol_win_rate": "高量区胜率",
+    # Task 2 (Round 88, Beta): entry timing quality labels.
+    "et_inflow_timing_edge": "入场时机优势",
+    "et_high_inflow_win_rate": "高流入组胜率",
+    "et_low_inflow_win_rate": "低流入组胜率",
+    "et_high_inflow_avg_return": "高流入组平均回报",
+    # Task 3 (Round 88, Gamma): signal quality cross-window trend slope label.
+    "signal_quality_trend_slope": "信号质量趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1624,6 +1641,20 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "sig_top_signal_count",
     # Task 3 (Round 87, Gamma): regime spread cross-window trend slope — optional; pre-Round-87 outputs omit it.
     "regime_spread_trend_slope",
+    # Task 1 (Round 88, Alpha): volume-price divergence metrics — optional; pre-Round-88 surfaces omit these.
+    "vp_volume_return_alignment",
+    "vp_high_vol_win_rate",
+    "vp_volume_premium_edge",
+    "vp_high_vol_count",
+    # Task 2 (Round 88, Beta): entry timing quality metrics — optional; pre-Round-88 surfaces omit these.
+    "et_high_inflow_win_rate",
+    "et_low_inflow_win_rate",
+    "et_inflow_timing_edge",
+    "et_high_inflow_avg_return",
+    # Task 3 (Round 88, Gamma): signal quality cross-window trend — optional; pre-Round-88 outputs omit these.
+    "signal_quality_trend_slope",
+    "signal_quality_trend_grade",
+    "signal_quality_trend_n",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3508,6 +3539,39 @@ def compute_cross_window_regime_spread_trend(all_windows_summaries: list[dict]) 
     slope: float = (n * sum_xy - sum_x * sum_y) / denom
     grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
     return {"valid": True, "regime_spread_trend_slope": round(slope, 8), "regime_spread_trend_grade": grade, "regime_spread_trend_window_count": n}
+
+
+# ---------------------------------------------------------------------------
+# Round 88, Task 3 (Gamma): Cross-window signal quality trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_signal_quality_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口信号质量趋势：sig_signal_persistence_edge 的 OLS 时序斜率。"""
+    EMPTY: dict = {"valid": False, "signal_quality_trend_slope": None, "signal_quality_trend_grade": None, "signal_quality_trend_n": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("sig_signal_persistence_edge")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    n: int = len(vals)
+    if n < 3:
+        return EMPTY
+    xs: list[float] = list(range(n))
+    sum_x: float = sum(xs)
+    sum_y: float = sum(vals)
+    sum_xy: float = sum(xs[i] * vals[i] for i in range(n))
+    sum_xx: float = sum(x * x for x in xs)
+    denom: float = n * sum_xx - sum_x * sum_x
+    if denom == 0:
+        return EMPTY
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom
+    grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
+    return {"valid": True, "signal_quality_trend_slope": round(slope, 8), "signal_quality_trend_grade": grade, "signal_quality_trend_n": n}
+
 
 # ---------------------------------------------------------------------------
 
@@ -5419,6 +5483,8 @@ def _build_replay_evaluator(
         _bct86: dict[str, Any] = compute_cross_window_batch_consistency_trend(all_primary_surfaces)
         # Task 3 (Round 87, Gamma): cross-window regime spread OLS trend.
         _rsp87: dict[str, Any] = compute_cross_window_regime_spread_trend(all_primary_surfaces)
+        # Task 3 (Round 88, Gamma): cross-window signal quality OLS trend.
+        _sqt88: dict[str, Any] = compute_cross_window_signal_quality_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -6175,6 +6241,10 @@ def _build_replay_evaluator(
                 "regime_spread_trend_slope": _rsp87.get("regime_spread_trend_slope"),
                 "regime_spread_trend_grade": _rsp87.get("regime_spread_trend_grade"),
                 "regime_spread_trend_window_count": _rsp87.get("regime_spread_trend_window_count"),
+                # Task 3 (Round 88, Gamma): cross-window signal quality OLS trend slope.
+                "signal_quality_trend_slope": _sqt88.get("signal_quality_trend_slope"),
+                "signal_quality_trend_grade": _sqt88.get("signal_quality_trend_grade"),
+                "signal_quality_trend_n": _sqt88.get("signal_quality_trend_n"),
         }
 
     return evaluator

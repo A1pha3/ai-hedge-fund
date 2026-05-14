@@ -4797,6 +4797,20 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         _surface_result["sig_signal_persistence_edge"] = sig_result["signal_persistence_edge"]
         _surface_result["sig_top_signal_count"] = sig_result["top_signal_count"]
 
+    # Round 88, Task 1 (Alpha): Volume-price divergence score.
+    _vp88 = compute_volume_price_divergence_score(rows)
+    _surface_result["vp_volume_return_alignment"] = _vp88["vp_volume_return_alignment"] if _vp88["valid"] else 0.0
+    _surface_result["vp_high_vol_win_rate"] = _vp88["vp_high_vol_win_rate"] if _vp88["valid"] else 0.0
+    _surface_result["vp_volume_premium_edge"] = _vp88["vp_volume_premium_edge"] if _vp88["valid"] else 0.0
+    _surface_result["vp_high_vol_count"] = _vp88["vp_high_vol_count"] if _vp88["valid"] else 0
+
+    # Round 88, Task 2 (Beta): Entry timing quality.
+    _et88 = compute_entry_timing_quality(rows)
+    _surface_result["et_high_inflow_win_rate"] = _et88["et_high_inflow_win_rate"] if _et88["valid"] else 0.0
+    _surface_result["et_low_inflow_win_rate"] = _et88["et_low_inflow_win_rate"] if _et88["valid"] else 0.0
+    _surface_result["et_inflow_timing_edge"] = _et88["et_inflow_timing_edge"] if _et88["valid"] else 0.0
+    _surface_result["et_high_inflow_avg_return"] = _et88["et_high_inflow_avg_return"] if _et88["valid"] else 0.0
+
     return _surface_result
 
 
@@ -14874,3 +14888,157 @@ def compute_consecutive_signal_quality(rows: list[dict]) -> dict:
     signal_persistence_edge: float = round(top_signal_win_rate - bot_signal_win_rate, 8)
     top_signal_count: int = len(top_third)
     return {"valid": True, "top_signal_win_rate": top_signal_win_rate, "bot_signal_win_rate": bot_signal_win_rate, "signal_persistence_edge": signal_persistence_edge, "top_signal_count": top_signal_count}
+
+
+# ---------------------------------------------------------------------------
+# Round 88, Task 1 (Alpha): Volume-price divergence score
+# ---------------------------------------------------------------------------
+
+
+def compute_volume_price_divergence_score(rows: list[dict]) -> dict:
+    """量价背离因子——衡量股票涨幅与成交量放大之间的质量。
+
+    Computes Pearson correlation between z-scored return and z-scored
+    volume_expansion_quality, then splits rows by P75 of volume_expansion_quality
+    to measure whether high-volume rows produce superior returns.
+
+    Args:
+        rows: Per-window candidate rows; each must contain ``actual_return`` and
+            ``volume_expansion_quality``.
+
+    Returns:
+        Dict with keys ``valid``, ``vp_volume_return_alignment``,
+        ``vp_high_vol_win_rate``, ``vp_volume_premium_edge``,
+        ``vp_high_vol_count``.
+    """
+    _INVALID: dict = {
+        "valid": False,
+        "vp_volume_return_alignment": 0.0,
+        "vp_high_vol_win_rate": 0.0,
+        "vp_volume_premium_edge": 0.0,
+        "vp_high_vol_count": 0,
+    }
+    valid_rows: list[dict] = []
+    for r in rows:
+        ret_val = r.get("actual_return")
+        vol_val = r.get("volume_expansion_quality")
+        if ret_val is None or vol_val is None:
+            continue
+        try:
+            valid_rows.append({"ret": float(ret_val), "vol": float(vol_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return _INVALID
+    n: int = len(valid_rows)
+    # Compute Pearson correlation between z_return and z_volume
+    ret_vals: list[float] = [r["ret"] for r in valid_rows]
+    vol_vals: list[float] = [r["vol"] for r in valid_rows]
+    mean_ret: float = sum(ret_vals) / n
+    mean_vol: float = sum(vol_vals) / n
+    std_ret: float = (sum((v - mean_ret) ** 2 for v in ret_vals) / n) ** 0.5
+    std_vol: float = (sum((v - mean_vol) ** 2 for v in vol_vals) / n) ** 0.5
+    # Pearson via sums (handles zero-std gracefully)
+    sum_x: float = sum(ret_vals)
+    sum_y: float = sum(vol_vals)
+    sum_xy: float = sum(ret_vals[i] * vol_vals[i] for i in range(n))
+    sum_xx: float = sum(v * v for v in ret_vals)
+    sum_yy: float = sum(v * v for v in vol_vals)
+    corr_denom: float = ((n * sum_xx - sum_x * sum_x) * (n * sum_yy - sum_y * sum_y)) ** 0.5
+    vp_volume_return_alignment: float = 0.0
+    if corr_denom != 0:
+        vp_volume_return_alignment = round((n * sum_xy - sum_x * sum_y) / corr_denom, 8)
+    # P75 split by volume_expansion_quality
+    sorted_vols: list[float] = sorted(vol_vals)
+    p75_index: int = int(n * 0.75)
+    p75_threshold: float = sorted_vols[p75_index]
+    high_vol_rows: list[dict] = [r for r in valid_rows if r["vol"] >= p75_threshold]
+    low_vol_rows: list[dict] = [r for r in valid_rows if r["vol"] < p75_threshold]
+    if len(high_vol_rows) < 5:
+        return _INVALID
+    vp_high_vol_count: int = len(high_vol_rows)
+    vp_high_vol_win_rate: float = round(
+        sum(1 for r in high_vol_rows if r["ret"] > 0) / vp_high_vol_count, 8
+    )
+    if low_vol_rows:
+        low_vol_avg_return: float = sum(r["ret"] for r in low_vol_rows) / len(low_vol_rows)
+    else:
+        low_vol_avg_return = 0.0
+    high_vol_avg_return: float = sum(r["ret"] for r in high_vol_rows) / vp_high_vol_count
+    vp_volume_premium_edge: float = round(high_vol_avg_return - low_vol_avg_return, 8)
+    return {
+        "valid": True,
+        "vp_volume_return_alignment": vp_volume_return_alignment,
+        "vp_high_vol_win_rate": vp_high_vol_win_rate,
+        "vp_volume_premium_edge": vp_volume_premium_edge,
+        "vp_high_vol_count": vp_high_vol_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 88, Task 2 (Beta): Entry timing quality
+# ---------------------------------------------------------------------------
+
+
+def compute_entry_timing_quality(rows: list[dict]) -> dict:
+    """入场时机质量——衡量早盘资金流入信号的预测力。
+
+    Splits rows at the median of ``t0_estimated_net_inflow_ratio`` into
+    high-inflow and low-inflow groups, then computes per-group win rates and
+    the timing edge (high_inflow_win_rate − low_inflow_win_rate).
+
+    Args:
+        rows: Per-window candidate rows; each must contain
+            ``t0_estimated_net_inflow_ratio`` and ``actual_return``.
+
+    Returns:
+        Dict with keys ``valid``, ``et_high_inflow_win_rate``,
+        ``et_low_inflow_win_rate``, ``et_inflow_timing_edge``,
+        ``et_high_inflow_avg_return``.
+    """
+    _INVALID: dict = {
+        "valid": False,
+        "et_high_inflow_win_rate": 0.0,
+        "et_low_inflow_win_rate": 0.0,
+        "et_inflow_timing_edge": 0.0,
+        "et_high_inflow_avg_return": 0.0,
+    }
+    valid_rows: list[dict] = []
+    for r in rows:
+        inflow_val = r.get("t0_estimated_net_inflow_ratio")
+        ret_val = r.get("actual_return")
+        if inflow_val is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"inflow": float(inflow_val), "ret": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 10:
+        return _INVALID
+    n: int = len(valid_rows)
+    sorted_inflow: list[float] = sorted(r["inflow"] for r in valid_rows)
+    mid: int = n // 2
+    median_inflow: float = (
+        sorted_inflow[mid] if n % 2 == 1 else (sorted_inflow[mid - 1] + sorted_inflow[mid]) / 2.0
+    )
+    high_inflow_rows: list[dict] = [r for r in valid_rows if r["inflow"] >= median_inflow]
+    low_inflow_rows: list[dict] = [r for r in valid_rows if r["inflow"] < median_inflow]
+    if len(high_inflow_rows) < 3 or len(low_inflow_rows) < 3:
+        return _INVALID
+    et_high_inflow_win_rate: float = round(
+        sum(1 for r in high_inflow_rows if r["ret"] > 0) / len(high_inflow_rows), 8
+    )
+    et_low_inflow_win_rate: float = round(
+        sum(1 for r in low_inflow_rows if r["ret"] > 0) / len(low_inflow_rows), 8
+    )
+    et_inflow_timing_edge: float = round(et_high_inflow_win_rate - et_low_inflow_win_rate, 8)
+    et_high_inflow_avg_return: float = round(
+        sum(r["ret"] for r in high_inflow_rows) / len(high_inflow_rows), 8
+    )
+    return {
+        "valid": True,
+        "et_high_inflow_win_rate": et_high_inflow_win_rate,
+        "et_low_inflow_win_rate": et_low_inflow_win_rate,
+        "et_inflow_timing_edge": et_inflow_timing_edge,
+        "et_high_inflow_avg_return": et_high_inflow_avg_return,
+    }

@@ -26673,3 +26673,395 @@ def test_r87_t3_floor_registered() -> None:
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "regime_spread_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["regime_spread_trend_slope"] == pytest.approx(-0.01)
+
+
+# ===========================================================================
+# Round 88 — T1: compute_volume_price_divergence_score
+#            T2: compute_entry_timing_quality
+#            T3: compute_cross_window_signal_quality_trend
+# ===========================================================================
+
+
+def _make_r88_vp_rows(n: int, high_vol_wins: bool = True) -> list[dict]:
+    """Generate rows with actual_return and volume_expansion_quality for T1 tests."""
+    rows = []
+    for i in range(n):
+        vol_q = float(i) / n  # 0..1
+        if vol_q >= 0.75:
+            ret = 0.05 if high_vol_wins else -0.05
+        else:
+            ret = -0.01 if high_vol_wins else 0.04
+        rows.append({
+            "actual_return": ret,
+            "volume_expansion_quality": vol_q,
+            "next_close_return": ret,
+        })
+    return rows
+
+
+def _make_r88_et_rows(n: int, high_inflow_wins: bool = True) -> list[dict]:
+    """Generate rows with t0_estimated_net_inflow_ratio and actual_return for T2 tests."""
+    rows = []
+    for i in range(n):
+        inflow = float(i) / n  # 0..1
+        if inflow >= 0.5:
+            ret = 0.04 if high_inflow_wins else -0.04
+        else:
+            ret = -0.02 if high_inflow_wins else 0.04
+        rows.append({
+            "t0_estimated_net_inflow_ratio": inflow,
+            "actual_return": ret,
+            "next_close_return": ret,
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# T1: compute_volume_price_divergence_score
+# ---------------------------------------------------------------------------
+
+
+def test_r88_t1_basic_valid() -> None:
+    """20 rows with valid fields returns valid=True."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+    rows = _make_r88_vp_rows(20)
+    result = compute_volume_price_divergence_score(rows)
+    assert result["valid"] is True
+    assert "vp_volume_return_alignment" in result
+    assert "vp_high_vol_win_rate" in result
+    assert "vp_volume_premium_edge" in result
+    assert "vp_high_vol_count" in result
+
+
+def test_r88_t1_too_few_rows() -> None:
+    """14 rows returns valid=False."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+    rows = _make_r88_vp_rows(14)
+    result = compute_volume_price_divergence_score(rows)
+    assert result["valid"] is False
+
+
+def test_r88_t1_high_vol_group_small() -> None:
+    """When P75 group < 5, returns valid=False."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+    # 15 rows: P75 index = int(15*0.75)=11, so group is rows with vol >= sorted_vols[11]
+    # That leaves 4 rows in high group (indices 11,12,13,14 -> sorted_vols positions)
+    # Actually: sorted_vols[11] means indices 11..14 = 4 rows -> < 5
+    rows = _make_r88_vp_rows(15)
+    result = compute_volume_price_divergence_score(rows)
+    # With 15 rows, P75 index = int(15*0.75) = 11, high group = rows with vol >= sorted_vols[11]
+    # sorted vols = [0/15, 1/15, ..., 14/15], sorted_vols[11] = 11/15
+    # high group = rows where vol >= 11/15 → indices 11..14 = 4 rows < 5 → invalid
+    assert result["valid"] is False
+
+
+def test_r88_t1_perfect_alignment() -> None:
+    """Perfect vol-return alignment gives positive correlation."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+    rows = [{"actual_return": float(i), "volume_expansion_quality": float(i)} for i in range(20)]
+    result = compute_volume_price_divergence_score(rows)
+    assert result["valid"] is True
+    assert result["vp_volume_return_alignment"] > 0.99
+
+
+def test_r88_t1_negative_alignment() -> None:
+    """When returns decrease as volume increases, alignment < 0."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+    rows = [{"actual_return": float(19 - i), "volume_expansion_quality": float(i)} for i in range(20)]
+    result = compute_volume_price_divergence_score(rows)
+    assert result["valid"] is True
+    assert result["vp_volume_return_alignment"] < 0.0
+
+
+def test_r88_t1_zero_std_volume() -> None:
+    """When volume_expansion_quality is constant, correlation = 0.0 (no crash)."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+    rows = [{"actual_return": float(i % 2) * 0.01, "volume_expansion_quality": 0.5} for i in range(20)]
+    result = compute_volume_price_divergence_score(rows)
+    # P75 group all equal → alignment = 0.0, but high group size might be 0 or = n
+    # With constant vol, all in same group at threshold, so valid depends on group size
+    # If all 20 rows have vol=0.5 >= threshold=0.5, high_vol_rows = 20 >= 5 → valid
+    assert result["vp_volume_return_alignment"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_r88_t1_premium_edge_positive() -> None:
+    """high_vol rows have higher avg_return → premium_edge > 0."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+    rows = _make_r88_vp_rows(20, high_vol_wins=True)
+    result = compute_volume_price_divergence_score(rows)
+    assert result["valid"] is True
+    assert result["vp_volume_premium_edge"] > 0.0
+
+
+def test_r88_t1_premium_edge_negative() -> None:
+    """high_vol rows have lower avg_return → premium_edge < 0."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+    rows = _make_r88_vp_rows(20, high_vol_wins=False)
+    result = compute_volume_price_divergence_score(rows)
+    assert result["valid"] is True
+    assert result["vp_volume_premium_edge"] < 0.0
+
+
+def test_r88_t1_surface_keys() -> None:
+    """build_surface_summary includes vp_* keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = _make_r88_vp_rows(20)
+    surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "vp_volume_return_alignment" in surface
+    assert "vp_high_vol_win_rate" in surface
+    assert "vp_volume_premium_edge" in surface
+    assert "vp_high_vol_count" in surface
+
+
+def test_r88_t1_valid_flag() -> None:
+    """20 rows sets valid=True."""
+    from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+    rows = _make_r88_vp_rows(20)
+    result = compute_volume_price_divergence_score(rows)
+    assert result["valid"] is True
+
+
+def test_r88_t1_floor_key_exists() -> None:
+    """vp_volume_premium_edge in BTST_QUALITY_FLOORS with floor 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "vp_volume_premium_edge" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["vp_volume_premium_edge"] == pytest.approx(0.0)
+
+
+def test_r88_t1_optional_metric_key() -> None:
+    """vp_* keys in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "vp_volume_return_alignment" in OPTIONAL_COMPARISON_METRICS
+    assert "vp_high_vol_win_rate" in OPTIONAL_COMPARISON_METRICS
+    assert "vp_volume_premium_edge" in OPTIONAL_COMPARISON_METRICS
+    assert "vp_high_vol_count" in OPTIONAL_COMPARISON_METRICS
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_entry_timing_quality
+# ---------------------------------------------------------------------------
+
+
+def test_r88_t2_basic_valid() -> None:
+    """10 rows with valid fields returns valid=True."""
+    from scripts.btst_analysis_utils import compute_entry_timing_quality
+    rows = _make_r88_et_rows(20)
+    result = compute_entry_timing_quality(rows)
+    assert result["valid"] is True
+    assert "et_high_inflow_win_rate" in result
+    assert "et_low_inflow_win_rate" in result
+    assert "et_inflow_timing_edge" in result
+    assert "et_high_inflow_avg_return" in result
+
+
+def test_r88_t2_too_few_rows() -> None:
+    """9 rows returns valid=False."""
+    from scripts.btst_analysis_utils import compute_entry_timing_quality
+    rows = _make_r88_et_rows(9)
+    result = compute_entry_timing_quality(rows)
+    assert result["valid"] is False
+
+
+def test_r88_t2_equal_split() -> None:
+    """With 20 rows, two groups each have 10 rows (>= 3)."""
+    from scripts.btst_analysis_utils import compute_entry_timing_quality
+    rows = _make_r88_et_rows(20)
+    result = compute_entry_timing_quality(rows)
+    assert result["valid"] is True
+
+
+def test_r88_t2_edge_positive() -> None:
+    """high_inflow_wins=True → timing_edge > 0."""
+    from scripts.btst_analysis_utils import compute_entry_timing_quality
+    rows = _make_r88_et_rows(20, high_inflow_wins=True)
+    result = compute_entry_timing_quality(rows)
+    assert result["valid"] is True
+    assert result["et_inflow_timing_edge"] > 0.0
+
+
+def test_r88_t2_edge_negative() -> None:
+    """high_inflow_wins=False → timing_edge < 0."""
+    from scripts.btst_analysis_utils import compute_entry_timing_quality
+    rows = _make_r88_et_rows(20, high_inflow_wins=False)
+    result = compute_entry_timing_quality(rows)
+    assert result["valid"] is True
+    assert result["et_inflow_timing_edge"] < 0.0
+
+
+def test_r88_t2_all_win() -> None:
+    """All rows win → both groups win_rate=1.0, edge=0."""
+    from scripts.btst_analysis_utils import compute_entry_timing_quality
+    rows = [{"t0_estimated_net_inflow_ratio": float(i), "actual_return": 0.03} for i in range(20)]
+    result = compute_entry_timing_quality(rows)
+    assert result["valid"] is True
+    assert result["et_high_inflow_win_rate"] == pytest.approx(1.0)
+    assert result["et_low_inflow_win_rate"] == pytest.approx(1.0)
+    assert result["et_inflow_timing_edge"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_r88_t2_all_lose() -> None:
+    """All rows lose → both groups win_rate=0.0, edge=0."""
+    from scripts.btst_analysis_utils import compute_entry_timing_quality
+    rows = [{"t0_estimated_net_inflow_ratio": float(i), "actual_return": -0.03} for i in range(20)]
+    result = compute_entry_timing_quality(rows)
+    assert result["valid"] is True
+    assert result["et_high_inflow_win_rate"] == pytest.approx(0.0)
+    assert result["et_low_inflow_win_rate"] == pytest.approx(0.0)
+    assert result["et_inflow_timing_edge"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_r88_t2_surface_wired() -> None:
+    """build_surface_summary includes et_* keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = _make_r88_et_rows(20)
+    surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "et_high_inflow_win_rate" in surface
+    assert "et_low_inflow_win_rate" in surface
+    assert "et_inflow_timing_edge" in surface
+    assert "et_high_inflow_avg_return" in surface
+
+
+def test_r88_t2_valid_flag() -> None:
+    """10 rows sets valid=True."""
+    from scripts.btst_analysis_utils import compute_entry_timing_quality
+    rows = _make_r88_et_rows(10)
+    result = compute_entry_timing_quality(rows)
+    assert result["valid"] is True
+
+
+def test_r88_t2_floor_key_exists() -> None:
+    """et_inflow_timing_edge in BTST_QUALITY_FLOORS with floor 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "et_inflow_timing_edge" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["et_inflow_timing_edge"] == pytest.approx(0.0)
+
+
+def test_r88_t2_optional_metric_key() -> None:
+    """et_* keys in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "et_high_inflow_win_rate" in OPTIONAL_COMPARISON_METRICS
+    assert "et_low_inflow_win_rate" in OPTIONAL_COMPARISON_METRICS
+    assert "et_inflow_timing_edge" in OPTIONAL_COMPARISON_METRICS
+    assert "et_high_inflow_avg_return" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r88_t2_high_inflow_avg_return() -> None:
+    """et_high_inflow_avg_return is mean of high-inflow group returns."""
+    from scripts.btst_analysis_utils import compute_entry_timing_quality
+    rows = [{"t0_estimated_net_inflow_ratio": float(i), "actual_return": float(i) * 0.01} for i in range(20)]
+    result = compute_entry_timing_quality(rows)
+    assert result["valid"] is True
+    # median inflow = 9.5, high group = i >= 10 (i=10..19), returns = 0.10..0.19
+    expected = sum(i * 0.01 for i in range(10, 20)) / 10
+    assert result["et_high_inflow_avg_return"] == pytest.approx(expected, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_signal_quality_trend
+# ---------------------------------------------------------------------------
+
+
+def test_r88_t3_basic_valid() -> None:
+    """3+ windows with sig_signal_persistence_edge returns valid=True."""
+    from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+    windows = [{"sig_signal_persistence_edge": v} for v in [0.1, 0.2, 0.3]]
+    result = compute_cross_window_signal_quality_trend(windows)
+    assert result["valid"] is True
+    assert "signal_quality_trend_slope" in result
+    assert "signal_quality_trend_grade" in result
+    assert "signal_quality_trend_n" in result
+
+
+def test_r88_t3_too_few_windows() -> None:
+    """2 windows returns valid=False."""
+    from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+    windows = [{"sig_signal_persistence_edge": 0.1}, {"sig_signal_persistence_edge": 0.2}]
+    result = compute_cross_window_signal_quality_trend(windows)
+    assert result["valid"] is False
+
+
+def test_r88_t3_negative_slope() -> None:
+    """Decreasing values produce negative slope."""
+    from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+    windows = [{"sig_signal_persistence_edge": v} for v in [0.5, 0.3, 0.1]]
+    result = compute_cross_window_signal_quality_trend(windows)
+    assert result["valid"] is True
+    assert result["signal_quality_trend_slope"] < 0.0
+
+
+def test_r88_t3_flat_slope() -> None:
+    """Constant values produce zero slope."""
+    from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+    windows = [{"sig_signal_persistence_edge": 0.3} for _ in range(5)]
+    result = compute_cross_window_signal_quality_trend(windows)
+    assert result["valid"] is True
+    assert result["signal_quality_trend_slope"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_r88_t3_grade_a() -> None:
+    """Slope > 0.005 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+    # slope = 0.1 per window (strong rise)
+    windows = [{"sig_signal_persistence_edge": float(i) * 0.1} for i in range(5)]
+    result = compute_cross_window_signal_quality_trend(windows)
+    assert result["valid"] is True
+    assert result["signal_quality_trend_grade"] == "A"
+
+
+def test_r88_t3_grade_b() -> None:
+    """Slope in (0, 0.005] → grade B."""
+    from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+    # slope = 0.001 per window
+    windows = [{"sig_signal_persistence_edge": float(i) * 0.001} for i in range(5)]
+    result = compute_cross_window_signal_quality_trend(windows)
+    assert result["valid"] is True
+    assert result["signal_quality_trend_grade"] == "B"
+
+
+def test_r88_t3_grade_c() -> None:
+    """Slope in (-0.01, 0] → grade C."""
+    from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+    # slope = -0.001 per window
+    windows = [{"sig_signal_persistence_edge": -float(i) * 0.001} for i in range(5)]
+    result = compute_cross_window_signal_quality_trend(windows)
+    assert result["valid"] is True
+    assert result["signal_quality_trend_grade"] == "C"
+
+
+def test_r88_t3_grade_d() -> None:
+    """Slope <= -0.01 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+    # slope = -0.05 per window
+    windows = [{"sig_signal_persistence_edge": -float(i) * 0.05} for i in range(5)]
+    result = compute_cross_window_signal_quality_trend(windows)
+    assert result["valid"] is True
+    assert result["signal_quality_trend_grade"] == "D"
+
+
+def test_r88_t3_missing_field() -> None:
+    """Windows without sig_signal_persistence_edge are skipped."""
+    from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+    windows = [
+        {"other_key": 0.5},
+        {"sig_signal_persistence_edge": 0.2},
+        {"sig_signal_persistence_edge": 0.3},
+        {"sig_signal_persistence_edge": 0.4},
+    ]
+    result = compute_cross_window_signal_quality_trend(windows)
+    assert result["valid"] is True
+    assert result["signal_quality_trend_n"] == 3
+
+
+def test_r88_t3_floor_key_exists() -> None:
+    """signal_quality_trend_slope in BTST_QUALITY_FLOORS with floor -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "signal_quality_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["signal_quality_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r88_t3_optional_metric_key() -> None:
+    """signal_quality_trend_* in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "signal_quality_trend_slope" in OPTIONAL_COMPARISON_METRICS
+    assert "signal_quality_trend_grade" in OPTIONAL_COMPARISON_METRICS
+    assert "signal_quality_trend_n" in OPTIONAL_COMPARISON_METRICS

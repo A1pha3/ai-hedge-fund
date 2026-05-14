@@ -290,7 +290,10 @@
       "batch_consistency_trend_slope_delta": null,
       "regime_regime_spread_delta": null,
       "sig_signal_persistence_edge_delta": null,
-      "regime_spread_trend_slope_delta": null
+      "regime_spread_trend_slope_delta": null,
+      "vp_volume_premium_edge_delta": null,
+      "et_inflow_timing_edge_delta": null,
+      "signal_quality_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -571,7 +574,10 @@
       "batch_consistency_trend_slope_delta": null,
       "regime_regime_spread_delta": null,
       "sig_signal_persistence_edge_delta": null,
-      "regime_spread_trend_slope_delta": null
+      "regime_spread_trend_slope_delta": null,
+      "vp_volume_premium_edge_delta": null,
+      "et_inflow_timing_edge_delta": null,
+      "signal_quality_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

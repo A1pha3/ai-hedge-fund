@@ -50,7 +50,8 @@ class TushareDataSource(BaseDataSource):
             token = os.environ.get("TUSHARE_TOKEN")
             if token:
                 ts.set_token(token)
-                cls._pro = ts.pro_api()
+                _ts_timeout = int(os.environ.get("TUSHARE_TIMEOUT", "120"))
+                cls._pro = ts.pro_api(timeout=_ts_timeout)
                 cls.available = True
                 return True
             print("Warning: TUSHARE_TOKEN 环境变量未设置，Tushare 不可用")
