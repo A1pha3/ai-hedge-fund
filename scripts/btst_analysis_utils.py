@@ -4251,6 +4251,28 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["inflow_monotone"] = _irs.get("inflow_monotone")
     _surface_result["inflow_effective"] = _irs.get("inflow_effective")
 
+    # Round 48, Task 1 (Alpha): VEQ Stratification.
+    # ------------------------------------------------
+    _veqs: dict[str, Any] = compute_veq_stratification(next_day_rows)
+    _surface_result["veq_stratification_valid"] = _veqs.get("veq_stratification_valid")
+    _surface_result["veq_low_win_rate"] = _veqs.get("veq_low_win_rate")
+    _surface_result["veq_mid_win_rate"] = _veqs.get("veq_mid_win_rate")
+    _surface_result["veq_high_win_rate"] = _veqs.get("veq_high_win_rate")
+    _surface_result["veq_high_vs_low_lift"] = _veqs.get("veq_high_vs_low_lift")
+    _surface_result["veq_monotone"] = _veqs.get("veq_monotone")
+    _surface_result["veq_effective"] = _veqs.get("veq_effective")
+
+    # Round 48, Task 2 (Beta): Sector Resonance Stratification.
+    # -----------------------------------------------------------
+    _srs: dict[str, Any] = compute_sector_resonance_stratification(next_day_rows)
+    _surface_result["sr_stratification_valid"] = _srs.get("sr_stratification_valid")
+    _surface_result["sr_low_win_rate"] = _srs.get("sr_low_win_rate")
+    _surface_result["sr_mid_win_rate"] = _srs.get("sr_mid_win_rate")
+    _surface_result["sr_high_win_rate"] = _srs.get("sr_high_win_rate")
+    _surface_result["sr_high_vs_low_lift"] = _srs.get("sr_high_vs_low_lift")
+    _surface_result["sr_monotone"] = _srs.get("sr_monotone")
+    _surface_result["sr_effective"] = _srs.get("sr_effective")
+
     return _surface_result
 
 
@@ -9100,4 +9122,196 @@ def compute_inflow_ratio_stratification(rows: list[dict]) -> dict:
         "inflow_high_vs_low_lift": lift,
         "inflow_monotone": monotone,
         "inflow_effective": effective,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 48, Task 1 (Alpha): VEQ (Volume Expansion Quality) Stratification
+# ---------------------------------------------------------------------------
+def compute_veq_stratification(rows: list[dict]) -> dict:
+    """Stratify candidates by ``volume_expansion_quality`` (VEQ) and compute per-tier win rates.
+
+    Args:
+        rows: List of per-candidate dicts; each must have ``volume_expansion_quality`` and
+            ``next_day_return``.
+
+    Returns:
+        Dict with keys: ``veq_stratification_valid``, ``veq_low_win_rate``,
+        ``veq_mid_win_rate``, ``veq_high_win_rate``, ``veq_high_vs_low_lift``,
+        ``veq_monotone``, ``veq_effective``.
+    """
+    _null: dict = {
+        "veq_stratification_valid": False,
+        "veq_low_win_rate": None,
+        "veq_mid_win_rate": None,
+        "veq_high_win_rate": None,
+        "veq_high_vs_low_lift": None,
+        "veq_monotone": None,
+        "veq_effective": False,
+    }
+    if not rows:
+        return _null
+
+    has_veq = any(row.get("volume_expansion_quality") is not None for row in rows)
+    if not has_veq:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        veq = row.get("volume_expansion_quality")
+        ret = row.get("next_day_return")
+        if veq is None or ret is None:
+            continue
+        try:
+            paired.append((float(veq), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if not paired:
+        return _null
+
+    veq_vals = sorted(v for v, _ in paired)
+    n = len(veq_vals)
+    p33_idx = max(0, int(n * 1 / 3) - 1)
+    p67_idx = max(0, int(n * 2 / 3) - 1)
+    p33_val = veq_vals[p33_idx]
+    p67_val = veq_vals[p67_idx]
+
+    low_rets: list[float] = []
+    mid_rets: list[float] = []
+    high_rets: list[float] = []
+    for veq_val, ret_val in paired:
+        if veq_val <= p33_val:
+            low_rets.append(ret_val)
+        elif veq_val <= p67_val:
+            mid_rets.append(ret_val)
+        else:
+            high_rets.append(ret_val)
+
+    def _wr(rets: list[float]) -> "float | None":
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_low = _wr(low_rets)
+    wr_mid = _wr(mid_rets)
+    wr_high = _wr(high_rets)
+
+    valid_count = sum(1 for w in (wr_low, wr_mid, wr_high) if w is not None)
+    stratification_valid = valid_count >= 2
+
+    lift: "float | None" = None
+    if wr_high is not None and wr_low is not None:
+        lift = round(wr_high - wr_low, 6)
+
+    monotone: "bool | None" = None
+    if wr_low is not None and wr_mid is not None and wr_high is not None:
+        monotone = wr_low < wr_mid < wr_high
+
+    effective = lift is not None and lift > 0.05
+
+    return {
+        "veq_stratification_valid": stratification_valid,
+        "veq_low_win_rate": wr_low,
+        "veq_mid_win_rate": wr_mid,
+        "veq_high_win_rate": wr_high,
+        "veq_high_vs_low_lift": lift,
+        "veq_monotone": monotone,
+        "veq_effective": effective,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 48, Task 2 (Beta): Sector Resonance Stratification
+# ---------------------------------------------------------------------------
+def compute_sector_resonance_stratification(rows: list[dict]) -> dict:
+    """Stratify candidates by ``sector_resonance`` and compute per-tier win rates.
+
+    Args:
+        rows: List of per-candidate dicts; each must have ``sector_resonance`` and
+            ``next_day_return``.
+
+    Returns:
+        Dict with keys: ``sr_stratification_valid``, ``sr_low_win_rate``,
+        ``sr_mid_win_rate``, ``sr_high_win_rate``, ``sr_high_vs_low_lift``,
+        ``sr_monotone``, ``sr_effective``.
+    """
+    _null: dict = {
+        "sr_stratification_valid": False,
+        "sr_low_win_rate": None,
+        "sr_mid_win_rate": None,
+        "sr_high_win_rate": None,
+        "sr_high_vs_low_lift": None,
+        "sr_monotone": None,
+        "sr_effective": False,
+    }
+    if not rows:
+        return _null
+
+    has_sr = any(row.get("sector_resonance") is not None for row in rows)
+    if not has_sr:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        sr = row.get("sector_resonance")
+        ret = row.get("next_day_return")
+        if sr is None or ret is None:
+            continue
+        try:
+            paired.append((float(sr), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if not paired:
+        return _null
+
+    sr_vals = sorted(v for v, _ in paired)
+    n = len(sr_vals)
+    p33_idx = max(0, int(n * 1 / 3) - 1)
+    p67_idx = max(0, int(n * 2 / 3) - 1)
+    p33_val = sr_vals[p33_idx]
+    p67_val = sr_vals[p67_idx]
+
+    low_rets: list[float] = []
+    mid_rets: list[float] = []
+    high_rets: list[float] = []
+    for sr_val, ret_val in paired:
+        if sr_val <= p33_val:
+            low_rets.append(ret_val)
+        elif sr_val <= p67_val:
+            mid_rets.append(ret_val)
+        else:
+            high_rets.append(ret_val)
+
+    def _wr(rets: list[float]) -> "float | None":
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_low = _wr(low_rets)
+    wr_mid = _wr(mid_rets)
+    wr_high = _wr(high_rets)
+
+    valid_count = sum(1 for w in (wr_low, wr_mid, wr_high) if w is not None)
+    stratification_valid = valid_count >= 2
+
+    lift: "float | None" = None
+    if wr_high is not None and wr_low is not None:
+        lift = round(wr_high - wr_low, 6)
+
+    monotone: "bool | None" = None
+    if wr_low is not None and wr_mid is not None and wr_high is not None:
+        monotone = wr_low < wr_mid < wr_high
+
+    effective = lift is not None and lift > 0.05
+
+    return {
+        "sr_stratification_valid": stratification_valid,
+        "sr_low_win_rate": wr_low,
+        "sr_mid_win_rate": wr_mid,
+        "sr_high_win_rate": wr_high,
+        "sr_high_vs_low_lift": lift,
+        "sr_monotone": monotone,
+        "sr_effective": effective,
     }

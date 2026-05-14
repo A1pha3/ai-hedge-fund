@@ -331,6 +331,18 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # indicating most factors are unreliable or regime-dependent across windows.
     # Floor ≥ 0.50 requires the majority of factor predictions to be positively predictive.
     "positive_ic_consistency_rate": 0.50,
+    # Task 1 (Round 48, Alpha): VEQ high-vs-low win-rate lift floor.
+    # veq_high_vs_low_lift = win_rate(high VEQ) − win_rate(low VEQ).
+    # Floor ≥ 0.0 requires high-VEQ candidates to be at least as good as low-VEQ.
+    "veq_high_vs_low_lift": 0.0,
+    # Task 2 (Round 48, Beta): sector resonance high-vs-low win-rate lift floor.
+    # sr_high_vs_low_lift = win_rate(high resonance) − win_rate(low resonance).
+    # Floor ≥ 0.0 requires high-resonance candidates to be at least as good as low-resonance.
+    "sr_high_vs_low_lift": 0.0,
+    # Task 3 (Round 48, Gamma): cross-window expected-value trend slope floor.
+    # ev_trend_slope = OLS slope of expected_value_per_trade across replay windows.
+    # Floor ≥ -0.05 prevents strategies whose EV is in severe decline from passing quality gates.
+    "ev_trend_slope": -0.05,
 }
 
 # ---------------------------------------------------------------------------

@@ -11495,3 +11495,255 @@ def test_r47_factor_ic_consistency_in_comparison_metrics() -> None:
     from scripts.optimize_profile import COMPARISON_METRICS
 
     assert "positive_ic_consistency_rate" in COMPARISON_METRICS
+
+
+# ---------------------------------------------------------------------------
+# Round 48 Tests
+# ---------------------------------------------------------------------------
+
+# ---- T1: VEQ Stratification ----
+
+def test_r48_veq_strat_empty_input() -> None:
+    """Empty rows → veq_stratification_valid=False."""
+    from scripts.btst_analysis_utils import compute_veq_stratification
+    result = compute_veq_stratification([])
+    assert result["veq_stratification_valid"] is False
+    assert result["veq_high_vs_low_lift"] is None
+
+
+def test_r48_veq_strat_missing_field() -> None:
+    """Rows without volume_expansion_quality → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_veq_stratification
+    rows = [{"next_day_return": 0.01} for _ in range(20)]
+    result = compute_veq_stratification(rows)
+    assert result["veq_stratification_valid"] is False
+    assert result["veq_high_vs_low_lift"] is None
+
+
+def test_r48_veq_strat_normal_three_tiers() -> None:
+    """Normal data with three tiers: lift is a float, valid=True."""
+    from scripts.btst_analysis_utils import compute_veq_stratification
+    rows = []
+    for i in range(30):
+        rows.append({"volume_expansion_quality": float(i), "next_day_return": 0.01 if i >= 20 else -0.01})
+    result = compute_veq_stratification(rows)
+    assert result["veq_stratification_valid"] is True
+    assert result["veq_high_vs_low_lift"] is not None
+
+
+def test_r48_veq_strat_lift_direction() -> None:
+    """High VEQ group should win more → positive lift."""
+    from scripts.btst_analysis_utils import compute_veq_stratification
+    rows = []
+    for i in range(30):
+        win = 1 if i >= 20 else 0
+        rows.append({"volume_expansion_quality": float(i), "next_day_return": 0.05 if win else -0.05})
+    result = compute_veq_stratification(rows)
+    assert result["veq_high_vs_low_lift"] is not None
+    assert result["veq_high_vs_low_lift"] > 0
+
+
+def test_r48_veq_strat_monotone_logic() -> None:
+    """Strictly increasing win rates → veq_monotone=True."""
+    from scripts.btst_analysis_utils import compute_veq_stratification
+    # Low tier: 10 rows, 2 wins (WR=0.2); Mid: 10 rows, 5 wins (WR=0.5); High: 10 rows, 9 wins (WR=0.9)
+    rows = []
+    for i in range(10):
+        rows.append({"volume_expansion_quality": float(i), "next_day_return": 0.05 if i < 2 else -0.05})
+    for i in range(10, 20):
+        rows.append({"volume_expansion_quality": float(i), "next_day_return": 0.05 if i < 15 else -0.05})
+    for i in range(20, 30):
+        rows.append({"volume_expansion_quality": float(i), "next_day_return": 0.05 if i < 29 else -0.05})
+    result = compute_veq_stratification(rows)
+    assert result["veq_monotone"] is True
+
+
+def test_r48_veq_strat_effective_threshold() -> None:
+    """veq_effective=True when lift > 0.05."""
+    from scripts.btst_analysis_utils import compute_veq_stratification
+    rows = []
+    for i in range(30):
+        win = i >= 20
+        rows.append({"volume_expansion_quality": float(i), "next_day_return": 0.1 if win else -0.1})
+    result = compute_veq_stratification(rows)
+    if result["veq_high_vs_low_lift"] is not None and result["veq_high_vs_low_lift"] > 0.05:
+        assert result["veq_effective"] is True
+    else:
+        assert result["veq_effective"] is False
+
+
+def test_r48_veq_strat_floor_registered() -> None:
+    """veq_high_vs_low_lift: 0.0 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "veq_high_vs_low_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["veq_high_vs_low_lift"] == 0.0
+
+
+def test_r48_veq_strat_label_registered() -> None:
+    """veq_high_vs_low_lift must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "veq_high_vs_low_lift" in COMPARISON_METRIC_LABELS
+    assert "成交量质量" in COMPARISON_METRIC_LABELS["veq_high_vs_low_lift"]
+
+
+def test_r48_veq_strat_optional_registered() -> None:
+    """veq_high_vs_low_lift must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "veq_high_vs_low_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r48_veq_strat_in_comparison_metrics() -> None:
+    """veq_high_vs_low_lift must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "veq_high_vs_low_lift" in COMPARISON_METRICS
+
+
+# ---- T2: Sector Resonance Stratification ----
+
+def test_r48_sr_strat_empty_input() -> None:
+    """Empty rows → sr_stratification_valid=False."""
+    from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+    result = compute_sector_resonance_stratification([])
+    assert result["sr_stratification_valid"] is False
+    assert result["sr_high_vs_low_lift"] is None
+
+
+def test_r48_sr_strat_missing_field() -> None:
+    """Rows without sector_resonance → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+    rows = [{"next_day_return": 0.01} for _ in range(20)]
+    result = compute_sector_resonance_stratification(rows)
+    assert result["sr_stratification_valid"] is False
+
+
+def test_r48_sr_strat_normal_three_tiers() -> None:
+    """Normal data: sr_high_vs_low_lift is a float, valid=True."""
+    from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+    rows = []
+    for i in range(30):
+        rows.append({"sector_resonance": float(i), "next_day_return": 0.01 if i >= 20 else -0.01})
+    result = compute_sector_resonance_stratification(rows)
+    assert result["sr_stratification_valid"] is True
+    assert result["sr_high_vs_low_lift"] is not None
+
+
+def test_r48_sr_strat_monotone_logic() -> None:
+    """Strictly increasing win rates → sr_monotone=True."""
+    from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+    # Low tier: WR=0.2; Mid: WR=0.5; High: WR=0.9
+    rows = []
+    for i in range(10):
+        rows.append({"sector_resonance": float(i), "next_day_return": 0.05 if i < 2 else -0.05})
+    for i in range(10, 20):
+        rows.append({"sector_resonance": float(i), "next_day_return": 0.05 if i < 15 else -0.05})
+    for i in range(20, 30):
+        rows.append({"sector_resonance": float(i), "next_day_return": 0.05 if i < 29 else -0.05})
+    result = compute_sector_resonance_stratification(rows)
+    assert result["sr_monotone"] is True
+
+
+def test_r48_sr_strat_effective_threshold() -> None:
+    """sr_effective=True when lift > 0.05."""
+    from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+    rows = []
+    for i in range(30):
+        win = i >= 20
+        rows.append({"sector_resonance": float(i), "next_day_return": 0.1 if win else -0.1})
+    result = compute_sector_resonance_stratification(rows)
+    if result["sr_high_vs_low_lift"] is not None and result["sr_high_vs_low_lift"] > 0.05:
+        assert result["sr_effective"] is True
+
+
+def test_r48_sr_strat_floor_registered() -> None:
+    """sr_high_vs_low_lift: 0.0 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "sr_high_vs_low_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["sr_high_vs_low_lift"] == 0.0
+
+
+def test_r48_sr_strat_label_registered() -> None:
+    """sr_high_vs_low_lift must have a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "sr_high_vs_low_lift" in COMPARISON_METRIC_LABELS
+    assert "板块共振" in COMPARISON_METRIC_LABELS["sr_high_vs_low_lift"]
+
+
+def test_r48_sr_strat_optional_registered() -> None:
+    """sr_high_vs_low_lift must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "sr_high_vs_low_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+# ---- T3: Cross-window EV Trend ----
+
+def test_r48_ev_trend_empty_list() -> None:
+    """Empty list → ev_trend_slope=None."""
+    from scripts.optimize_profile import compute_cross_window_ev_trend
+    result = compute_cross_window_ev_trend([])
+    assert result["ev_trend_slope"] is None
+
+
+def test_r48_ev_trend_too_few_valid_windows() -> None:
+    """Fewer than 3 windows with ev values → degraded."""
+    from scripts.optimize_profile import compute_cross_window_ev_trend
+    summaries = [
+        {"expected_value_per_trade": 0.1},
+        {"other_key": 999},
+    ]
+    result = compute_cross_window_ev_trend(summaries)
+    assert result["ev_trend_slope"] is None
+
+
+def test_r48_ev_trend_rising_trend() -> None:
+    """Ascending EV series → positive slope, grade A or B."""
+    from scripts.optimize_profile import compute_cross_window_ev_trend
+    summaries = [{"expected_value_per_trade": v} for v in [0.1, 0.2, 0.3]]
+    result = compute_cross_window_ev_trend(summaries)
+    assert result["ev_trend_slope"] is not None
+    assert result["ev_trend_slope"] > 0
+    assert result["ev_trend_grade"] in ("A", "B")
+
+
+def test_r48_ev_trend_falling_trend() -> None:
+    """Descending EV series → negative slope."""
+    from scripts.optimize_profile import compute_cross_window_ev_trend
+    summaries = [{"expected_value_per_trade": v} for v in [0.3, 0.2, 0.1]]
+    result = compute_cross_window_ev_trend(summaries)
+    assert result["ev_trend_slope"] is not None
+    assert result["ev_trend_slope"] < 0
+
+
+def test_r48_ev_trend_severe_decline_grade_d() -> None:
+    """Slope < -0.05 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_ev_trend
+    summaries = [{"expected_value_per_trade": v} for v in [0.5, 0.3, 0.1, -0.1, -0.3]]
+    result = compute_cross_window_ev_trend(summaries)
+    assert result["ev_trend_slope"] is not None
+    if result["ev_trend_slope"] <= -0.05:
+        assert result["ev_trend_grade"] == "D"
+
+
+def test_r48_ev_trend_floor_registered() -> None:
+    """ev_trend_slope: -0.05 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "ev_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["ev_trend_slope"] == -0.05
+
+
+def test_r48_ev_trend_label_registered() -> None:
+    """ev_trend_slope must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "ev_trend_slope" in COMPARISON_METRIC_LABELS
+    assert "期望收益" in COMPARISON_METRIC_LABELS["ev_trend_slope"]
+
+
+def test_r48_ev_trend_optional_registered() -> None:
+    """ev_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "ev_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r48_ev_trend_in_comparison_metrics() -> None:
+    """ev_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ev_trend_slope" in COMPARISON_METRICS

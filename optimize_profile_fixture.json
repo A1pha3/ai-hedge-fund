@@ -157,7 +157,10 @@
       "gate_above_threshold_cv_delta": null,
       "ms_high_vs_low_lift_delta": null,
       "inflow_high_vs_low_lift_delta": null,
-      "positive_ic_consistency_rate_delta": null
+      "positive_ic_consistency_rate_delta": null,
+      "veq_high_vs_low_lift_delta": null,
+      "sr_high_vs_low_lift_delta": null,
+      "ev_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -305,7 +308,10 @@
       "gate_above_threshold_cv_delta": null,
       "ms_high_vs_low_lift_delta": null,
       "inflow_high_vs_low_lift_delta": null,
-      "positive_ic_consistency_rate_delta": null
+      "positive_ic_consistency_rate_delta": null,
+      "veq_high_vs_low_lift_delta": null,
+      "sr_high_vs_low_lift_delta": null,
+      "ev_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

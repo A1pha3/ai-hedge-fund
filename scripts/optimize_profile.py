@@ -334,6 +334,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "inflow_high_vs_low_lift",
     # Task 3 (Round 47, Gamma): cross-window factor IC positive consistency rate.
     "positive_ic_consistency_rate",
+    # Task 1 (Round 48, Alpha): VEQ high-vs-low win-rate lift.
+    "veq_high_vs_low_lift",
+    # Task 2 (Round 48, Beta): sector resonance high-vs-low win-rate lift.
+    "sr_high_vs_low_lift",
+    # Task 3 (Round 48, Gamma): cross-window expected-value trend slope.
+    "ev_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -556,6 +562,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "inflow_high_vs_low_lift": "净流入高低胜率差",
     # Task 3 (Round 47, Gamma): cross-window factor IC positive consistency rate
     "positive_ic_consistency_rate": "因子IC跨窗正向一致率",
+    # Task 1 (Round 48, Alpha): VEQ high-vs-low win-rate lift
+    "veq_high_vs_low_lift": "成交量质量高低胜率差",
+    # Task 2 (Round 48, Beta): sector resonance high-vs-low win-rate lift
+    "sr_high_vs_low_lift": "板块共振高低胜率差",
+    # Task 3 (Round 48, Gamma): cross-window expected-value trend slope
+    "ev_trend_slope": "期望收益跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -828,6 +840,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "inflow_high_vs_low_lift",
     # Task 3 (Round 47, Gamma): factor IC consistency rate — optional; pre-Round-47 outputs omit it.
     "positive_ic_consistency_rate",
+    # Task 1 (Round 48, Alpha): VEQ lift — optional; pre-Round-48 outputs omit it.
+    "veq_high_vs_low_lift",
+    # Task 2 (Round 48, Beta): sector resonance lift — optional; pre-Round-48 outputs omit it.
+    "sr_high_vs_low_lift",
+    # Task 3 (Round 48, Gamma): EV trend slope — optional; pre-Round-48 outputs omit it.
+    "ev_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2134,6 +2152,87 @@ def compute_factor_ic_consistency(all_windows_summaries: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 48, Task 3 (Gamma): Cross-window Expected-Value Trend
+# ---------------------------------------------------------------------------
+def compute_cross_window_ev_trend(all_windows_summaries: list[dict]) -> dict:
+    """Compute OLS trend of ``expected_value_per_trade`` across replay windows.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts ordered
+            by time.  Each entry may contain ``expected_value_per_trade``.
+
+    Returns:
+        Dict containing:
+
+        - ``ev_trend_slope`` (float | None): OLS slope; positive = improving.
+        - ``ev_trend_normalized`` (float | None): slope / max(abs(mean), 1e-8).
+        - ``ev_mean`` (float | None): mean of the EV series.
+        - ``ev_std`` (float | None): std (N-1) of the EV series.
+        - ``ev_min`` (float | None): minimum EV value.
+        - ``ev_max`` (float | None): maximum EV value.
+        - ``ev_trend_grade`` (str | None): A/B/C/D grade.
+    """
+    _null: dict = {
+        "ev_trend_slope": None,
+        "ev_trend_normalized": None,
+        "ev_mean": None,
+        "ev_std": None,
+        "ev_min": None,
+        "ev_max": None,
+        "ev_trend_grade": None,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    ev_series: list[float] = []
+    for surf in all_windows_summaries:
+        val = surf.get("expected_value_per_trade")
+        if val is None:
+            continue
+        try:
+            ev_series.append(float(val))
+        except (TypeError, ValueError):
+            continue
+
+    if len(ev_series) < 3:
+        return _null
+
+    n = len(ev_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(ev_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, ev_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+
+    mean_y = sum_y / n
+    ev_trend_normalized = slope / max(abs(mean_y), 1e-8)
+
+    variance = sum((yi - mean_y) ** 2 for yi in ev_series) / (n - 1) if n > 1 else 0.0
+    std_y = variance ** 0.5
+
+    if slope > 0.001:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.05:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {
+        "ev_trend_slope": round(slope, 8),
+        "ev_trend_normalized": round(ev_trend_normalized, 8),
+        "ev_mean": round(mean_y, 8),
+        "ev_std": round(std_y, 8),
+        "ev_min": round(min(ev_series), 8),
+        "ev_max": round(max(ev_series), 8),
+        "ev_trend_grade": grade,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -2765,6 +2864,8 @@ def _build_replay_evaluator(
         _cgc: dict[str, Any] = compute_cross_window_gate_consistency(all_primary_surfaces)
         # Task 3 (Round 47, Gamma): cross-window factor IC positive consistency.
         _fic: dict[str, Any] = compute_factor_ic_consistency(all_primary_surfaces)
+        # Task 3 (Round 48, Gamma): cross-window expected-value trend.
+        _ev_trend: dict[str, Any] = compute_cross_window_ev_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -3001,6 +3102,14 @@ def _build_replay_evaluator(
             "best_factor_name": _fic.get("best_factor_name"),
             "worst_factor_name": _fic.get("worst_factor_name"),
             "factor_ic_consistency_valid": _fic.get("factor_ic_consistency_valid"),
+            # Task 3 (Round 48, Gamma): cross-window expected-value trend.
+            "ev_trend_slope": _ev_trend.get("ev_trend_slope"),
+            "ev_trend_normalized": _ev_trend.get("ev_trend_normalized"),
+            "ev_mean": _ev_trend.get("ev_mean"),
+            "ev_std": _ev_trend.get("ev_std"),
+            "ev_min": _ev_trend.get("ev_min"),
+            "ev_max": _ev_trend.get("ev_max"),
+            "ev_trend_grade": _ev_trend.get("ev_trend_grade"),
         }
 
     return evaluator
