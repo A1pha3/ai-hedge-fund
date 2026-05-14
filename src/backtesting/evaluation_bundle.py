@@ -106,6 +106,12 @@ _GUARDRAIL_KEYS = (
     # Task 2 (Round 62, Beta): cost-adjusted profit factor floor guardrail.
     # cost_adjusted_profit_factor < 1.0 means net wins do not exceed net losses after cost.
     "cost_adjusted_profit_factor",
+    # Task 1 (Round 63, Alpha): best stop-loss/take-profit profit factor floor guardrail.
+    # best_profit_factor < 1.0 means even the optimal sl/tp combo fails to achieve positive edge.
+    "best_profit_factor",
+    # Task 2 (Round 63, Beta): best factor-combination win rate floor guardrail.
+    # best_combo_win_rate < 0.5 means no factor subset achieves majority win rate.
+    "best_combo_win_rate",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -505,6 +511,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 62, Gamma): cross-window resilience trend slope floor.
     # resilience_trend_slope < -0.02 means extreme-market win rate is deteriorating across windows.
     "resilience_trend_slope": -0.02,
+    # Task 1 (Round 63, Alpha): best stop-loss/take-profit profit factor floor.
+    # best_profit_factor < 1.0 means no sl/tp combination achieves positive net edge.
+    "best_profit_factor": 1.0,
+    # Task 2 (Round 63, Beta): best factor-combination win rate floor.
+    # best_combo_win_rate < 0.5 means no factor subset achieves majority win rate.
+    "best_combo_win_rate": 0.5,
+    # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF trend slope floor.
+    # cost_pf_trend_slope < -0.1 means cost-adjusted profit factor is deteriorating significantly across windows.
+    "cost_pf_trend_slope": -0.1,
 }
 
 # ---------------------------------------------------------------------------

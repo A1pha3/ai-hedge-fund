@@ -4485,6 +4485,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _tci.items():
         _surface_result[f"cost_{_k}"] = _v
 
+    # Round 63, Task 1 (Alpha): Stop-loss / take-profit threshold optimization.
+    _sltp: dict[str, Any] = compute_stop_loss_take_profit_analysis(rows)
+    for _k, _v in _sltp.items():
+        _surface_result[f"sltp_{_k}"] = _v
+
+    # Round 63, Task 2 (Beta): Factor combination score.
+    _combo: dict[str, Any] = compute_factor_combination_score(rows)
+    for _k, _v in _combo.items():
+        _surface_result[f"combo_{_k}"] = _v
+
     return _surface_result
 
 
@@ -11706,3 +11716,96 @@ def compute_transaction_cost_impact(rows: list[dict]) -> dict:
     break_even_gross_return = cost_rate
     cost_efficiency_ratio = round(net_mean_return / cost_rate, 8) if cost_rate != 0 else None
     return {"transaction_cost_valid": True, "gross_win_rate": gross_win_rate, "net_mean_return": net_mean_return, "net_win_rate": net_win_rate, "cost_drag": cost_drag, "cost_adjusted_profit_factor": cost_adjusted_profit_factor, "break_even_gross_return": break_even_gross_return, "cost_efficiency_ratio": cost_efficiency_ratio}
+
+
+# ---------------------------------------------------------------------------
+# Round 63, Task 1 (Alpha): Stop-loss / take-profit threshold optimization
+# ---------------------------------------------------------------------------
+
+def compute_stop_loss_take_profit_analysis(rows: list[dict]) -> dict:
+    """分析最优止损/止盈阈值组合对盈利因子和胜率的影响（3×3=9组合矩阵）"""
+    invalid = {"stop_loss_take_profit_valid": False, "best_sl_tp_combo": None, "best_profit_factor": None, "best_win_rate_combo": None, "best_combo_win_rate": None, "raw_profit_factor": None, "sl_tp_improvement": None}
+    if not rows or len(rows) < 10:
+        return invalid
+    rets = [float(r["next_day_return"]) for r in rows if r.get("next_day_return") is not None]
+    if len(rets) < 10:
+        return invalid
+    raw_wins_sum = sum(r for r in rets if r > 0)
+    raw_losses_sum = sum(r for r in rets if r < 0)
+    raw_profit_factor: float = round(raw_wins_sum / abs(raw_losses_sum), 8) if raw_losses_sum != 0 else 5.0
+    stop_losses = [-0.02, -0.03, -0.05]
+    take_profits = [0.03, 0.05, 0.08]
+    best_pf: float = -1.0
+    best_pf_combo: "str | None" = None
+    best_wr: float = -1.0
+    best_wr_combo: "str | None" = None
+    best_wr_val: "float | None" = None
+    for sl in stop_losses:
+        for tp in take_profits:
+            clipped = [max(min(r, tp), sl) for r in rets]
+            pos_sum = sum(r for r in clipped if r > 0)
+            neg_sum = sum(r for r in clipped if r < 0)
+            pf: float = round(pos_sum / abs(neg_sum), 8) if neg_sum != 0 else 5.0
+            wr: float = round(sum(1 for r in clipped if r > 0) / len(clipped), 8)
+            sl_pct = int(round(abs(sl) * 100))
+            tp_pct = int(round(tp * 100))
+            combo_name = f"sl{sl_pct}_tp{tp_pct}"
+            if pf > best_pf:
+                best_pf = pf
+                best_pf_combo = combo_name
+            if wr > best_wr:
+                best_wr = wr
+                best_wr_combo = combo_name
+                best_wr_val = wr
+    sl_tp_improvement = round(best_pf - raw_profit_factor, 8)
+    return {"stop_loss_take_profit_valid": True, "best_sl_tp_combo": best_pf_combo, "best_profit_factor": round(best_pf, 8), "best_win_rate_combo": best_wr_combo, "best_combo_win_rate": round(best_wr_val, 8) if best_wr_val is not None else None, "raw_profit_factor": round(raw_profit_factor, 8), "sl_tp_improvement": sl_tp_improvement}
+
+
+# ---------------------------------------------------------------------------
+# Round 63, Task 2 (Beta): Factor combination score
+# ---------------------------------------------------------------------------
+
+def compute_factor_combination_score(rows: list[dict]) -> dict:
+    """测试4个预定义因子子集组合的胜率，寻找最优因子组合（AND条件筛选）"""
+    invalid = {"factor_combination_valid": False, "combo_win_rates": None, "best_combo": None, "best_combo_win_rate": None, "combo_spread": None}
+    if not rows or len(rows) < 10:
+        return invalid
+    subsets: dict[str, list[str]] = {"momentum": ["momentum_slope_20d", "breakout_quality_score"], "volume": ["volume_expansion_quality", "t0_estimated_net_inflow_ratio"], "quality": ["close_strength", "sector_resonance"], "rank": ["rs_sector_rank"]}
+
+    def _median(vals: list[float]) -> float:
+        n = len(vals)
+        s = sorted(vals)
+        return (s[n // 2 - 1] + s[n // 2]) / 2 if n % 2 == 0 else s[n // 2]
+
+    combo_win_rates: dict[str, "float | None"] = {}
+    for combo_name, factors in subsets.items():
+        medians: dict[str, "float | None"] = {}
+        for f in factors:
+            vals = [float(r[f]) for r in rows if r.get(f) is not None]
+            medians[f] = _median(vals) if vals else None
+        subset_rets: list[float] = []
+        for r in rows:
+            if r.get("next_day_return") is None:
+                continue
+            ok = True
+            for f in factors:
+                if medians.get(f) is None:
+                    ok = False
+                    break
+                val = r.get(f)
+                if val is None or float(val) <= medians[f]:  # type: ignore[arg-type]
+                    ok = False
+                    break
+            if ok:
+                subset_rets.append(float(r["next_day_return"]))
+        combo_win_rates[combo_name] = round(sum(1 for r in subset_rets if r > 0) / len(subset_rets), 8) if len(subset_rets) >= 3 else None
+    valid_wr: dict[str, float] = {k: v for k, v in combo_win_rates.items() if v is not None}
+    if not valid_wr:
+        best_combo: str = "rank"
+        best_combo_win_rate: "float | None" = None
+        combo_spread: "float | None" = None
+    else:
+        best_combo = max(valid_wr, key=lambda k: valid_wr[k])
+        best_combo_win_rate = valid_wr[best_combo]
+        combo_spread = round(max(valid_wr.values()) - min(valid_wr.values()), 8) if len(valid_wr) >= 2 else None
+    return {"factor_combination_valid": True, "combo_win_rates": combo_win_rates, "best_combo": best_combo, "best_combo_win_rate": best_combo_win_rate, "combo_spread": combo_spread}

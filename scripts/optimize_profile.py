@@ -424,6 +424,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "cost_adjusted_profit_factor",
     # Task 3 (Round 62, Gamma): cross-window extreme-market resilience OLS trend slope.
     "resilience_trend_slope",
+    # Task 1 (Round 63, Alpha): best stop-loss/take-profit profit factor.
+    "best_profit_factor",
+    # Task 2 (Round 63, Beta): best factor-combination win rate.
+    "best_combo_win_rate",
+    # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF OLS trend slope.
+    "cost_pf_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -736,6 +742,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "cost_adjusted_profit_factor": "成本调整后盈利因子",
     # Task 3 (Round 62, Gamma): cross-window extreme resilience trend slope
     "resilience_trend_slope": "极端韧性跨窗趋势",
+    # Task 1 (Round 63, Alpha): best stop-loss/take-profit profit factor
+    "best_profit_factor": "最优止损止盈盈利因子",
+    # Task 2 (Round 63, Beta): best factor-combination win rate
+    "best_combo_win_rate": "最优因子组合胜率",
+    # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF trend slope
+    "cost_pf_trend_slope": "成本调整PF跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1110,6 +1122,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "cost_adjusted_profit_factor",
     # Task 3 (Round 62, Gamma): cross-window resilience trend slope — optional; pre-Round-62 outputs omit it.
     "resilience_trend_slope",
+    # Task 1 (Round 63, Alpha): best sl/tp profit factor — optional; pre-Round-63 surfaces omit it.
+    "best_profit_factor",
+    # Task 2 (Round 63, Beta): best factor-combination win rate — optional; pre-Round-63 surfaces omit it.
+    "best_combo_win_rate",
+    # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF trend slope — optional; pre-Round-63 outputs omit it.
+    "cost_pf_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3305,6 +3323,44 @@ def compute_cross_window_resilience_trend(all_windows_summaries: list[dict]) -> 
     return {"resilience_trend_valid": True, "resilience_trend_slope": slope, "resilience_trend_mean": round(mean_y, 6), "resilience_trend_min": round(min(values), 6), "resilience_trend_max": round(max(values), 6), "resilience_above_floor_pct": above_floor_pct, "resilience_trend_grade": grade}
 
 
+# ---------------------------------------------------------------------------
+# Round 63, Task 3 (Gamma): Cross-window cost-adjusted profit factor trend
+# ---------------------------------------------------------------------------
+
+def compute_cross_window_cost_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪成本调整盈利因子（cost_adjusted_profit_factor）趋势"""
+    invalid = {"cost_pf_trend_valid": False, "cost_pf_trend_slope": None, "cost_pf_trend_mean": None, "cost_pf_trend_min": None, "cost_pf_trend_max": None, "cost_pf_above_floor_pct": None, "cost_pf_trend_grade": None}
+    if not all_windows_summaries:
+        return invalid
+    values: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("cost_cost_adjusted_profit_factor")
+        if v is not None:
+            try:
+                values.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(values) < 3:
+        return invalid
+    n = len(values)
+    xs = list(range(n))
+    mean_x = sum(xs) / n
+    mean_y = sum(values) / n
+    ss_xx = sum((x - mean_x) ** 2 for x in xs)
+    ss_xy = sum((xs[i] - mean_x) * (values[i] - mean_y) for i in range(n))
+    slope = round(ss_xy / ss_xx, 8) if ss_xx > 0 else 0.0
+    above_floor_pct = round(sum(1 for v in values if v >= 1.0) / n, 6)
+    if slope > 0.05:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.1:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"cost_pf_trend_valid": True, "cost_pf_trend_slope": slope, "cost_pf_trend_mean": round(mean_y, 6), "cost_pf_trend_min": round(min(values), 6), "cost_pf_trend_max": round(max(values), 6), "cost_pf_above_floor_pct": above_floor_pct, "cost_pf_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4007,6 +4063,14 @@ def _build_replay_evaluator(
         # Task 2 (Round 62, Beta): average cost_cost_adjusted_profit_factor across replay windows.
         _capf_vals = [float(s["cost_cost_adjusted_profit_factor"]) for s in all_primary_surfaces if s.get("cost_cost_adjusted_profit_factor") is not None]
         avg_cost_adjusted_profit_factor: "float | None" = round(sum(_capf_vals) / len(_capf_vals), 8) if _capf_vals else None
+        # Task 3 (Round 63, Gamma): cross-window cost-adjusted profit factor trend.
+        _cpft: dict[str, Any] = compute_cross_window_cost_trend(all_primary_surfaces)
+        # Task 1 (Round 63, Alpha): average sltp_best_profit_factor across replay windows.
+        _sltp_bpf_vals = [float(s["sltp_best_profit_factor"]) for s in all_primary_surfaces if s.get("sltp_best_profit_factor") is not None]
+        avg_best_profit_factor: "float | None" = round(sum(_sltp_bpf_vals) / len(_sltp_bpf_vals), 8) if _sltp_bpf_vals else None
+        # Task 2 (Round 63, Beta): average combo_best_combo_win_rate across replay windows.
+        _combo_bcwr_vals = [float(s["combo_best_combo_win_rate"]) for s in all_primary_surfaces if s.get("combo_best_combo_win_rate") is not None]
+        avg_best_combo_win_rate: "float | None" = round(sum(_combo_bcwr_vals) / len(_combo_bcwr_vals), 8) if _combo_bcwr_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4392,6 +4456,18 @@ def _build_replay_evaluator(
             "resilience_above_floor_pct": _crt.get("resilience_above_floor_pct"),
             "resilience_trend_grade": _crt.get("resilience_trend_grade"),
             "resilience_trend_valid": _crt.get("resilience_trend_valid"),
+            # Task 1 (Round 63, Alpha): best stop-loss/take-profit profit factor averaged across windows.
+            "best_profit_factor": avg_best_profit_factor,
+            # Task 2 (Round 63, Beta): best factor-combination win rate averaged across windows.
+            "best_combo_win_rate": avg_best_combo_win_rate,
+            # Task 3 (Round 63, Gamma): cross-window cost-adjusted profit factor trend.
+            "cost_pf_trend_slope": _cpft.get("cost_pf_trend_slope"),
+            "cost_pf_trend_mean": _cpft.get("cost_pf_trend_mean"),
+            "cost_pf_trend_min": _cpft.get("cost_pf_trend_min"),
+            "cost_pf_trend_max": _cpft.get("cost_pf_trend_max"),
+            "cost_pf_above_floor_pct": _cpft.get("cost_pf_above_floor_pct"),
+            "cost_pf_trend_grade": _cpft.get("cost_pf_trend_grade"),
+            "cost_pf_trend_valid": _cpft.get("cost_pf_trend_valid"),
         }
 
     return evaluator

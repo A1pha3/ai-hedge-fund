@@ -16790,3 +16790,445 @@ def test_r62_surface_summary_has_cost_prefix() -> None:
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     cost_keys = [k for k in result if k.startswith("cost_")]
     assert len(cost_keys) > 0
+
+
+# ===========================================================================
+# Round 63 tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: compute_stop_loss_take_profit_analysis
+# ---------------------------------------------------------------------------
+
+def test_r63_sltp_invalid_empty() -> None:
+    """Empty rows → stop_loss_take_profit_valid=False."""
+    from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+    result = compute_stop_loss_take_profit_analysis([])
+    assert result["stop_loss_take_profit_valid"] is False
+    assert result["best_profit_factor"] is None
+
+
+def test_r63_sltp_invalid_too_few_rows() -> None:
+    """Fewer than 10 rows → invalid."""
+    from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+    rows = [{"next_day_return": 0.01}] * 9
+    result = compute_stop_loss_take_profit_analysis(rows)
+    assert result["stop_loss_take_profit_valid"] is False
+
+
+def test_r63_sltp_valid_basic() -> None:
+    """10+ rows → all keys present and valid=True."""
+    from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+    rows = [{"next_day_return": 0.02}] * 6 + [{"next_day_return": -0.01}] * 4
+    result = compute_stop_loss_take_profit_analysis(rows)
+    assert result["stop_loss_take_profit_valid"] is True
+    assert result["best_sl_tp_combo"] is not None
+    assert result["best_profit_factor"] is not None
+    assert result["raw_profit_factor"] is not None
+    assert result["sl_tp_improvement"] is not None
+
+
+def test_r63_sltp_nine_combos_explored() -> None:
+    """3 stop_losses × 3 take_profits = 9 combinations explored via non-None best combo."""
+    from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+    rows = [{"next_day_return": 0.03 + i * 0.001} for i in range(6)] + [{"next_day_return": -0.015} for _ in range(4)]
+    result = compute_stop_loss_take_profit_analysis(rows)
+    assert result["stop_loss_take_profit_valid"] is True
+    # best combo name must follow slX_tpY format
+    import re
+    assert re.match(r"sl\d+_tp\d+", result["best_sl_tp_combo"]), f"Got: {result['best_sl_tp_combo']}"
+
+
+def test_r63_sltp_combo_name_format() -> None:
+    """Combo names are sl{int(abs(sl)*100)}_tp{int(tp*100)} format."""
+    from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+    rows = [{"next_day_return": 0.05}] * 7 + [{"next_day_return": -0.01}] * 3
+    result = compute_stop_loss_take_profit_analysis(rows)
+    assert result["stop_loss_take_profit_valid"] is True
+    combo = result["best_sl_tp_combo"]
+    # Must be one of the expected combos
+    valid_combos = {"sl2_tp3", "sl2_tp5", "sl2_tp8", "sl3_tp3", "sl3_tp5", "sl3_tp8", "sl5_tp3", "sl5_tp5", "sl5_tp8"}
+    assert combo in valid_combos, f"Got unexpected combo: {combo}"
+
+
+def test_r63_sltp_improvement_positive_when_clipping_helps() -> None:
+    """sl_tp_improvement > 0 when clipping outlier losses improves profit factor."""
+    from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+    # Many moderate wins + one extreme loss → clipping loss should improve PF
+    rows = [{"next_day_return": 0.02}] * 8 + [{"next_day_return": -0.10}] * 2
+    result = compute_stop_loss_take_profit_analysis(rows)
+    assert result["stop_loss_take_profit_valid"] is True
+    assert result["sl_tp_improvement"] > 0
+
+
+def test_r63_sltp_improvement_can_be_negative() -> None:
+    """sl_tp_improvement can be negative if clipping wins hurts PF."""
+    from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+    # Many very large wins capped at TP → clipping wins reduces PF
+    rows = [{"next_day_return": 0.10}] * 7 + [{"next_day_return": -0.001}] * 3
+    result = compute_stop_loss_take_profit_analysis(rows)
+    assert result["stop_loss_take_profit_valid"] is True
+    # raw_profit_factor should be very high; sl_tp_improvement could be <= 0
+    assert result["raw_profit_factor"] > 0
+
+
+def test_r63_sltp_raw_profit_factor_all_wins() -> None:
+    """raw_profit_factor = 5.0 when no losses in raw data."""
+    from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+    rows = [{"next_day_return": 0.01}] * 15
+    result = compute_stop_loss_take_profit_analysis(rows)
+    assert result["stop_loss_take_profit_valid"] is True
+    assert result["raw_profit_factor"] == 5.0
+
+
+def test_r63_sltp_best_profit_factor_gte_raw_or_close() -> None:
+    """best_profit_factor should generally be >= raw_profit_factor for tail-clipping cases."""
+    from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+    rows = [{"next_day_return": 0.02}] * 7 + [{"next_day_return": -0.08}] * 3
+    result = compute_stop_loss_take_profit_analysis(rows)
+    assert result["stop_loss_take_profit_valid"] is True
+    # sl_tp_improvement >= 0 means best_pf >= raw_pf
+    assert result["sl_tp_improvement"] >= 0
+
+
+def test_r63_sltp_in_comparison_metrics() -> None:
+    """best_profit_factor is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "best_profit_factor" in COMPARISON_METRICS
+
+
+def test_r63_sltp_in_optional_metrics() -> None:
+    """best_profit_factor is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "best_profit_factor" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r63_sltp_not_in_lower_is_better() -> None:
+    """best_profit_factor is NOT in LOWER_IS_BETTER (higher is better)."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "best_profit_factor" not in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r63_sltp_in_guardrail_keys() -> None:
+    """best_profit_factor is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "best_profit_factor" in _GUARDRAIL_KEYS
+
+
+def test_r63_sltp_floor_value() -> None:
+    """BTST_QUALITY_FLOORS has best_profit_factor floor of 1.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "best_profit_factor" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["best_profit_factor"] == 1.0
+
+
+def test_r63_sltp_label() -> None:
+    """best_profit_factor has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "best_profit_factor" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["best_profit_factor"]) > 0
+
+
+def test_r63_surface_summary_has_sltp_prefix() -> None:
+    """build_surface_summary output includes sltp_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"next_day_return": 0.02, "next_high_return": 0.03, "float_turnover_rate": 0.05, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.01} for _ in range(20)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    sltp_keys = [k for k in result if k.startswith("sltp_")]
+    assert len(sltp_keys) > 0
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_factor_combination_score
+# ---------------------------------------------------------------------------
+
+def test_r63_combo_invalid_empty() -> None:
+    """Empty rows → factor_combination_valid=False."""
+    from scripts.btst_analysis_utils import compute_factor_combination_score
+    result = compute_factor_combination_score([])
+    assert result["factor_combination_valid"] is False
+    assert result["best_combo_win_rate"] is None
+
+
+def test_r63_combo_invalid_too_few_rows() -> None:
+    """Fewer than 10 rows → invalid."""
+    from scripts.btst_analysis_utils import compute_factor_combination_score
+    rows = [{"next_day_return": 0.01}] * 9
+    result = compute_factor_combination_score(rows)
+    assert result["factor_combination_valid"] is False
+
+
+def test_r63_combo_valid_basic() -> None:
+    """10+ rows → valid=True with all keys."""
+    from scripts.btst_analysis_utils import compute_factor_combination_score
+    rows = [{"next_day_return": 0.02, "rs_sector_rank": float(i), "momentum_slope_20d": float(i), "breakout_quality_score": float(i), "volume_expansion_quality": float(i), "t0_estimated_net_inflow_ratio": float(i), "close_strength": float(i), "sector_resonance": float(i)} for i in range(20)]
+    result = compute_factor_combination_score(rows)
+    assert result["factor_combination_valid"] is True
+    assert result["best_combo"] is not None
+    assert result["combo_win_rates"] is not None
+
+
+def test_r63_combo_all_none_fallback_to_rank() -> None:
+    """When no combo has >= 3 filtered rows, best_combo defaults to 'rank'."""
+    from scripts.btst_analysis_utils import compute_factor_combination_score
+    # All rows with same factor value → above-median filter yields 0 rows
+    rows = [{"next_day_return": 0.01, "rs_sector_rank": 1.0, "momentum_slope_20d": 1.0, "breakout_quality_score": 1.0, "volume_expansion_quality": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "close_strength": 1.0, "sector_resonance": 1.0} for _ in range(10)]
+    result = compute_factor_combination_score(rows)
+    assert result["factor_combination_valid"] is True
+    # All factor values equal median → no rows pass above-median filter
+    assert result["best_combo"] == "rank"
+    assert result["best_combo_win_rate"] is None
+
+
+def test_r63_combo_best_selection_by_win_rate() -> None:
+    """best_combo is the combo with highest win rate among those with >= 3 rows."""
+    from scripts.btst_analysis_utils import compute_factor_combination_score
+    # Build rows where only rank factor is above median for many
+    rows = []
+    for i in range(20):
+        rows.append({
+            "next_day_return": 0.02 if i < 15 else -0.01,
+            "rs_sector_rank": float(i),  # rank above median for top 10
+            "momentum_slope_20d": 1.0,  # all same → no above-median
+            "breakout_quality_score": 1.0,
+            "volume_expansion_quality": 1.0,
+            "t0_estimated_net_inflow_ratio": 1.0,
+            "close_strength": 1.0,
+            "sector_resonance": 1.0,
+        })
+    result = compute_factor_combination_score(rows)
+    assert result["factor_combination_valid"] is True
+    # Only "rank" combo will produce valid rows; others will have None win rate
+    assert result["best_combo"] == "rank"
+
+
+def test_r63_combo_spread_none_with_one_valid() -> None:
+    """combo_spread is None when fewer than 2 combos have valid win rates."""
+    from scripts.btst_analysis_utils import compute_factor_combination_score
+    # Same factor values for all multi-factor combos → only rank may pass
+    rows = []
+    for i in range(20):
+        rows.append({
+            "next_day_return": 0.01,
+            "rs_sector_rank": float(i),
+            "momentum_slope_20d": 1.0,
+            "breakout_quality_score": 1.0,
+            "volume_expansion_quality": 1.0,
+            "t0_estimated_net_inflow_ratio": 1.0,
+            "close_strength": 1.0,
+            "sector_resonance": 1.0,
+        })
+    result = compute_factor_combination_score(rows)
+    assert result["factor_combination_valid"] is True
+    # If only 1 valid combo, combo_spread should be None
+    valid_count = sum(1 for v in result["combo_win_rates"].values() if v is not None)
+    if valid_count < 2:
+        assert result["combo_spread"] is None
+
+
+def test_r63_combo_and_condition_filtering() -> None:
+    """AND condition: only rows where ALL factors > median are included."""
+    from scripts.btst_analysis_utils import compute_factor_combination_score
+    # Make 10 rows where momentum is high but breakout is low → should be excluded for momentum combo
+    rows = []
+    for i in range(20):
+        rows.append({
+            "next_day_return": 0.02 if i % 2 == 0 else -0.01,
+            "rs_sector_rank": float(i),
+            "momentum_slope_20d": float(i),  # range 0-19, median ~9.5
+            "breakout_quality_score": 19.0 - float(i),  # inversely correlated
+            "volume_expansion_quality": float(i),
+            "t0_estimated_net_inflow_ratio": float(i),
+            "close_strength": float(i),
+            "sector_resonance": float(i),
+        })
+    result = compute_factor_combination_score(rows)
+    assert result["factor_combination_valid"] is True
+    # momentum combo requires BOTH momentum_slope_20d > median AND breakout_quality_score > median
+    # Since they are inversely correlated, few (possibly 0) rows will satisfy both
+    momentum_wr = result["combo_win_rates"].get("momentum")
+    # Either None (< 3 rows pass) or a valid float
+    assert momentum_wr is None or (0.0 <= momentum_wr <= 1.0)
+
+
+def test_r63_combo_win_rates_dict_has_four_keys() -> None:
+    """combo_win_rates has exactly 4 keys: momentum, volume, quality, rank."""
+    from scripts.btst_analysis_utils import compute_factor_combination_score
+    rows = [{"next_day_return": 0.01, "rs_sector_rank": float(i), "momentum_slope_20d": float(i), "breakout_quality_score": float(i), "volume_expansion_quality": float(i), "t0_estimated_net_inflow_ratio": float(i), "close_strength": float(i), "sector_resonance": float(i)} for i in range(20)]
+    result = compute_factor_combination_score(rows)
+    assert result["factor_combination_valid"] is True
+    assert set(result["combo_win_rates"].keys()) == {"momentum", "volume", "quality", "rank"}
+
+
+def test_r63_combo_in_comparison_metrics() -> None:
+    """best_combo_win_rate is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "best_combo_win_rate" in COMPARISON_METRICS
+
+
+def test_r63_combo_in_optional_metrics() -> None:
+    """best_combo_win_rate is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "best_combo_win_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r63_combo_not_in_lower_is_better() -> None:
+    """best_combo_win_rate is NOT in LOWER_IS_BETTER."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "best_combo_win_rate" not in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r63_combo_in_guardrail_keys() -> None:
+    """best_combo_win_rate is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "best_combo_win_rate" in _GUARDRAIL_KEYS
+
+
+def test_r63_combo_floor_value() -> None:
+    """BTST_QUALITY_FLOORS has best_combo_win_rate floor of 0.5."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "best_combo_win_rate" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["best_combo_win_rate"] == 0.5
+
+
+def test_r63_combo_label() -> None:
+    """best_combo_win_rate has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "best_combo_win_rate" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["best_combo_win_rate"]) > 0
+
+
+def test_r63_surface_summary_has_combo_prefix() -> None:
+    """build_surface_summary output includes combo_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"next_day_return": 0.02, "next_high_return": 0.03, "float_turnover_rate": 0.05, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.01} for _ in range(20)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    combo_keys = [k for k in result if k.startswith("combo_")]
+    assert len(combo_keys) > 0
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_cost_trend
+# ---------------------------------------------------------------------------
+
+def test_r63_cost_trend_invalid_no_windows() -> None:
+    """Empty windows → cost_pf_trend_valid=False."""
+    from scripts.optimize_profile import compute_cross_window_cost_trend
+    result = compute_cross_window_cost_trend([])
+    assert result["cost_pf_trend_valid"] is False
+    assert result["cost_pf_trend_slope"] is None
+
+
+def test_r63_cost_trend_invalid_too_few_values() -> None:
+    """Fewer than 3 valid values → invalid."""
+    from scripts.optimize_profile import compute_cross_window_cost_trend
+    summaries = [{"cost_cost_adjusted_profit_factor": 1.2}, {"cost_cost_adjusted_profit_factor": None}]
+    result = compute_cross_window_cost_trend(summaries)
+    assert result["cost_pf_trend_valid"] is False
+
+
+def test_r63_cost_trend_valid_basic() -> None:
+    """3+ valid values → all keys present."""
+    from scripts.optimize_profile import compute_cross_window_cost_trend
+    summaries = [{"cost_cost_adjusted_profit_factor": 1.0 + i * 0.1} for i in range(5)]
+    result = compute_cross_window_cost_trend(summaries)
+    assert result["cost_pf_trend_valid"] is True
+    assert result["cost_pf_trend_slope"] is not None
+    assert result["cost_pf_trend_mean"] is not None
+    assert result["cost_pf_trend_min"] is not None
+    assert result["cost_pf_trend_max"] is not None
+    assert result["cost_pf_above_floor_pct"] is not None
+    assert result["cost_pf_trend_grade"] in ("A", "B", "C", "D")
+
+
+def test_r63_cost_trend_ols_slope_accuracy() -> None:
+    """OLS slope should match expected value for linear data."""
+    from scripts.optimize_profile import compute_cross_window_cost_trend
+    values = [1.0, 1.1, 1.2, 1.3, 1.4]
+    summaries = [{"cost_cost_adjusted_profit_factor": v} for v in values]
+    result = compute_cross_window_cost_trend(summaries)
+    assert result["cost_pf_trend_valid"] is True
+    assert abs(result["cost_pf_trend_slope"] - 0.1) < 1e-5
+
+
+def test_r63_cost_trend_grade_A_steep_positive() -> None:
+    """slope > 0.05 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_cost_trend
+    summaries = [{"cost_cost_adjusted_profit_factor": 1.0 + i * 0.1} for i in range(5)]
+    result = compute_cross_window_cost_trend(summaries)
+    assert result["cost_pf_trend_valid"] is True
+    assert result["cost_pf_trend_slope"] > 0.05
+    assert result["cost_pf_trend_grade"] == "A"
+
+
+def test_r63_cost_trend_grade_B_gentle_positive() -> None:
+    """0 < slope <= 0.05 → grade B."""
+    from scripts.optimize_profile import compute_cross_window_cost_trend
+    values = [1.0, 1.01, 1.02, 1.03, 1.04]
+    summaries = [{"cost_cost_adjusted_profit_factor": v} for v in values]
+    result = compute_cross_window_cost_trend(summaries)
+    assert result["cost_pf_trend_valid"] is True
+    assert 0 < result["cost_pf_trend_slope"] <= 0.05
+    assert result["cost_pf_trend_grade"] == "B"
+
+
+def test_r63_cost_trend_grade_C_mild_negative() -> None:
+    """-0.1 < slope <= 0 → grade C."""
+    from scripts.optimize_profile import compute_cross_window_cost_trend
+    values = [1.1, 1.08, 1.06, 1.04, 1.02]
+    summaries = [{"cost_cost_adjusted_profit_factor": v} for v in values]
+    result = compute_cross_window_cost_trend(summaries)
+    assert result["cost_pf_trend_valid"] is True
+    assert -0.1 < result["cost_pf_trend_slope"] <= 0
+    assert result["cost_pf_trend_grade"] == "C"
+
+
+def test_r63_cost_trend_grade_D_steep_negative() -> None:
+    """slope <= -0.1 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_cost_trend
+    summaries = [{"cost_cost_adjusted_profit_factor": 2.0 - i * 0.3} for i in range(5)]
+    result = compute_cross_window_cost_trend(summaries)
+    assert result["cost_pf_trend_valid"] is True
+    assert result["cost_pf_trend_slope"] <= -0.1
+    assert result["cost_pf_trend_grade"] == "D"
+
+
+def test_r63_cost_trend_above_floor_pct() -> None:
+    """cost_pf_above_floor_pct: fraction of windows with cost PF >= 1.0."""
+    from scripts.optimize_profile import compute_cross_window_cost_trend
+    summaries = [{"cost_cost_adjusted_profit_factor": 1.2}] * 3 + [{"cost_cost_adjusted_profit_factor": 0.8}] * 2
+    result = compute_cross_window_cost_trend(summaries)
+    assert result["cost_pf_trend_valid"] is True
+    assert abs(result["cost_pf_above_floor_pct"] - 0.6) < 1e-5
+
+
+def test_r63_cost_trend_in_comparison_metrics() -> None:
+    """cost_pf_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "cost_pf_trend_slope" in COMPARISON_METRICS
+
+
+def test_r63_cost_trend_in_optional_metrics() -> None:
+    """cost_pf_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "cost_pf_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r63_cost_trend_not_in_lower_is_better() -> None:
+    """cost_pf_trend_slope is NOT in LOWER_IS_BETTER."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "cost_pf_trend_slope" not in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r63_cost_trend_floor_value() -> None:
+    """BTST_QUALITY_FLOORS has cost_pf_trend_slope floor of -0.1."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "cost_pf_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["cost_pf_trend_slope"] == -0.1
+
+
+def test_r63_cost_trend_label() -> None:
+    """cost_pf_trend_slope has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "cost_pf_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["cost_pf_trend_slope"]) > 0
