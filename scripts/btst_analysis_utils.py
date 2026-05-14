@@ -3976,6 +3976,45 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["score_distribution_quality"] = _sgc.get("score_distribution_quality")
     _surface_result["score_well_differentiated"] = _sgc.get("score_well_differentiated")
 
+    # -----------------------------------------------------------------------
+    # Round 38, Task 1 (Alpha): Market environment sensitivity — bull vs bear.
+    # -----------------------------------------------------------------------
+    _mes: dict[str, Any] = compute_market_environment_sensitivity(next_day_rows)
+    _surface_result["bull_env_win_rate"] = _mes.get("bull_env_win_rate")
+    _surface_result["bear_env_win_rate"] = _mes.get("bear_env_win_rate")
+    _surface_result["bull_env_avg_return"] = _mes.get("bull_env_avg_return")
+    _surface_result["bear_env_avg_return"] = _mes.get("bear_env_avg_return")
+    _surface_result["market_sensitivity_ratio"] = _mes.get("market_sensitivity_ratio")
+    _surface_result["env_win_rate_gap"] = _mes.get("env_win_rate_gap")
+    _surface_result["environment_adaptive"] = _mes.get("environment_adaptive")
+    _surface_result["market_neutral"] = _mes.get("market_neutral")
+
+    # -----------------------------------------------------------------------
+    # Round 38, Task 2 (Beta): Factor importance ranking — per-factor Spearman IC.
+    # -----------------------------------------------------------------------
+    _fir: dict[str, Any] = compute_factor_importance_ranking(next_day_rows)
+    _surface_result["factor_ic_ranking"] = _fir.get("factor_ic_ranking")
+    _surface_result["top_factor"] = _fir.get("top_factor")
+    _surface_result["bottom_factor"] = _fir.get("bottom_factor")
+    _surface_result["positive_ic_factor_count"] = _fir.get("positive_ic_factor_count")
+    _surface_result["top3_avg_ic"] = _fir.get("top3_avg_ic")
+    _surface_result["factor_ic_spread"] = _fir.get("factor_ic_spread")
+
+    # -----------------------------------------------------------------------
+    # Round 38, Task 3 (Gamma): Score bucket win rates — quintile monotonicity.
+    # -----------------------------------------------------------------------
+    _sbw: dict[str, Any] = compute_score_bucket_win_rates(next_day_rows)
+    _surface_result["win_rate_q1"] = _sbw.get("win_rate_q1")
+    _surface_result["win_rate_q2"] = _sbw.get("win_rate_q2")
+    _surface_result["win_rate_q3"] = _sbw.get("win_rate_q3")
+    _surface_result["win_rate_q4"] = _sbw.get("win_rate_q4")
+    _surface_result["win_rate_q5"] = _sbw.get("win_rate_q5")
+    _surface_result["score_monotone"] = _sbw.get("score_monotone")
+    _surface_result["score_near_monotone"] = _sbw.get("score_near_monotone")
+    _surface_result["top_quintile_premium"] = _sbw.get("top_quintile_premium")
+    _surface_result["score_rank_ic"] = _sbw.get("score_rank_ic")
+    _surface_result["score_discriminates_well"] = _sbw.get("score_discriminates_well")
+
     return _surface_result
 
 
@@ -6440,4 +6479,341 @@ def compute_score_gini_coefficient(rows: list[dict]) -> dict:
         "elite_candidate_rate": elite_candidate_rate,
         "score_distribution_quality": quality,
         "score_well_differentiated": 0.20 <= gini <= 0.65,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 38, Task 1 (Alpha): Market environment sensitivity — bull vs bear
+# ---------------------------------------------------------------------------
+def compute_market_environment_sensitivity(rows: list[dict]) -> dict:
+    """Analyse strategy win-rate sensitivity to market environment (bull vs bear).
+
+    Uses ``sector_resonance`` as a market-environment proxy: high resonance = bull-leaning
+    market, low resonance = bear-leaning.  Splits at the P50 of ``sector_resonance``
+    and computes win-rate / avg-return for each half.  The ``env_win_rate_gap`` metric
+    surfaces environment-dependency so the optimizer can penalise strategies that only
+    work in favourable macro conditions.
+
+    Args:
+        rows: Per-row dicts with ``next_close_return`` (float|None) and
+            ``sector_resonance`` (float|None).
+
+    Returns:
+        Dict with keys:
+
+        - ``bull_env_win_rate``: float|None — win rate when sector_resonance >= P50.
+        - ``bear_env_win_rate``: float|None — win rate when sector_resonance < P50.
+        - ``bull_env_avg_return``: float|None — mean return in bull-env rows.
+        - ``bear_env_avg_return``: float|None — mean return in bear-env rows.
+        - ``market_sensitivity_ratio``: float|None — bull_wr / max(bear_wr, 1e-6), clamped [0, 5].
+        - ``env_win_rate_gap``: float|None — bull_wr − bear_wr (positive = bull-env better).
+        - ``environment_adaptive``: bool|None — True when env_win_rate_gap > 0.05.
+        - ``market_neutral``: bool|None — True when |env_win_rate_gap| < 0.03.
+
+        Returns all-None dict when fewer than 10 valid paired rows are available.
+    """
+    _null: dict = {
+        "bull_env_win_rate": None,
+        "bear_env_win_rate": None,
+        "bull_env_avg_return": None,
+        "bear_env_avg_return": None,
+        "market_sensitivity_ratio": None,
+        "env_win_rate_gap": None,
+        "environment_adaptive": None,
+        "market_neutral": None,
+    }
+
+    valid: list[tuple[float, float]] = []
+    for r in rows:
+        ret = r.get("next_close_return")
+        sr = r.get("sector_resonance")
+        if ret is not None and sr is not None:
+            valid.append((float(ret), float(sr)))
+
+    if len(valid) < 10:
+        return _null
+
+    srs_sorted = sorted(v[1] for v in valid)
+    n = len(srs_sorted)
+    mid = n // 2
+    p50 = (srs_sorted[mid - 1] + srs_sorted[mid]) / 2.0 if n % 2 == 0 else srs_sorted[mid]
+
+    bull_returns: list[float] = [r for r, sr in valid if sr >= p50]
+    bear_returns: list[float] = [r for r, sr in valid if sr < p50]
+
+    bull_win_rate: float | None = None
+    bear_win_rate: float | None = None
+    bull_avg: float | None = None
+    bear_avg: float | None = None
+
+    if len(bull_returns) >= 5:
+        bull_win_rate = sum(1 for r in bull_returns if r > 0) / max(len(bull_returns), 1)
+        bull_avg = sum(bull_returns) / max(len(bull_returns), 1)
+
+    if len(bear_returns) >= 5:
+        bear_win_rate = sum(1 for r in bear_returns if r > 0) / max(len(bear_returns), 1)
+        bear_avg = sum(bear_returns) / max(len(bear_returns), 1)
+
+    sensitivity_ratio: float | None = None
+    gap: float | None = None
+    env_adaptive: bool | None = None
+    neutral: bool | None = None
+
+    if bull_win_rate is not None and bear_win_rate is not None:
+        raw_ratio = bull_win_rate / max(bear_win_rate, 1e-6)
+        sensitivity_ratio = round(max(0.0, min(5.0, raw_ratio)), 4)
+        gap = round(bull_win_rate - bear_win_rate, 4)
+        env_adaptive = gap > 0.05
+        neutral = abs(gap) < 0.03
+
+    return {
+        "bull_env_win_rate": round(bull_win_rate, 4) if bull_win_rate is not None else None,
+        "bear_env_win_rate": round(bear_win_rate, 4) if bear_win_rate is not None else None,
+        "bull_env_avg_return": round(bull_avg, 6) if bull_avg is not None else None,
+        "bear_env_avg_return": round(bear_avg, 6) if bear_avg is not None else None,
+        "market_sensitivity_ratio": sensitivity_ratio,
+        "env_win_rate_gap": gap,
+        "environment_adaptive": env_adaptive,
+        "market_neutral": neutral,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 38, Task 2 (Beta): Factor importance ranking — per-factor Spearman IC
+# ---------------------------------------------------------------------------
+_FACTORS_TO_RANK: list[str] = [
+    "close_strength", "volume_expansion_quality", "sector_resonance",
+    "breakout_quality_score", "momentum_slope_20d", "volume_price_divergence",
+    "catalyst_theme_score", "relative_strength_rank", "market_cap_score",
+    "news_sentiment_score", "float_turnover_rate", "t0_estimated_net_inflow_ratio",
+    "rs_sector_rank",
+]
+
+
+def compute_factor_importance_ranking(rows: list[dict]) -> dict:
+    """Rank the 13 BTST factors by individual Spearman IC against ``next_close_return``.
+
+    Each factor is independently evaluated for its linear rank-correlation with the T+1
+    close return.  Factors are sorted from highest to lowest IC so the optimizer can
+    identify the most/least predictive signals and detect factor homogeneity when the
+    IC spread is small.
+
+    Args:
+        rows: Per-row dicts with ``next_close_return`` (float|None) plus factor columns
+            from :data:`_FACTORS_TO_RANK`.
+
+    Returns:
+        Dict with keys:
+
+        - ``factor_ic_ranking``: list[tuple[str, float]] — sorted (factor, IC) pairs, highest first.
+        - ``top_factor``: str|None — factor with the highest IC.
+        - ``bottom_factor``: str|None — factor with the lowest IC (requires ≥ 2 ranked factors).
+        - ``positive_ic_factor_count``: int|None — count of factors with IC > 0.
+        - ``top3_avg_ic``: float|None — mean IC of the top-3 ranked factors (requires ≥ 3).
+        - ``factor_ic_spread``: float|None — top IC − bottom IC (requires ≥ 2 ranked factors).
+
+        Returns all-None / empty dict when fewer than 10 rows have valid ``next_close_return``.
+    """
+    _null: dict = {
+        "factor_ic_ranking": [],
+        "top_factor": None,
+        "bottom_factor": None,
+        "positive_ic_factor_count": None,
+        "top3_avg_ic": None,
+        "factor_ic_spread": None,
+    }
+
+    def _spearman_local(x: list[float], y: list[float]) -> float:
+        m = len(x)
+        rank_x = sorted(range(m), key=lambda i: x[i])
+        rank_y = sorted(range(m), key=lambda i: y[i])
+        rx = [0] * m
+        ry = [0] * m
+        for rank, idx in enumerate(rank_x):
+            rx[idx] = rank
+        for rank, idx in enumerate(rank_y):
+            ry[idx] = rank
+        mean_rx = sum(rx) / m
+        mean_ry = sum(ry) / m
+        num = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(m))
+        den = (
+            sum((rx[i] - mean_rx) ** 2 for i in range(m))
+            * sum((ry[i] - mean_ry) ** 2 for i in range(m))
+        ) ** 0.5
+        return num / max(den, 1e-8)
+
+    ret_rows = [r for r in rows if r.get("next_close_return") is not None]
+    if len(ret_rows) < 10:
+        return _null
+
+    returns: list[float] = [float(r["next_close_return"]) for r in ret_rows]
+
+    factor_ic: dict[str, float | None] = {}
+    for factor in _FACTORS_TO_RANK:
+        paired: list[tuple[float, float]] = [
+            (float(r.get(factor)), returns[i])
+            for i, r in enumerate(ret_rows)
+            if r.get(factor) is not None
+        ]
+        if len(paired) >= 5:
+            xs = [p[0] for p in paired]
+            ys = [p[1] for p in paired]
+            ic = _spearman_local(xs, ys)
+            factor_ic[factor] = round(max(-1.0, min(1.0, ic)), 6)
+        else:
+            factor_ic[factor] = None
+
+    ranking: list[tuple[str, float]] = sorted(
+        [(f, ic) for f, ic in factor_ic.items() if ic is not None],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+    top_factor = ranking[0][0] if ranking else None
+    bottom_factor = ranking[-1][0] if len(ranking) >= 2 else None
+    positive_ic_count: int | None = sum(1 for _, ic in ranking if ic > 0) if ranking else 0
+    top3_avg: float | None = sum(ic for _, ic in ranking[:3]) / 3.0 if len(ranking) >= 3 else None
+    spread: float | None = ranking[0][1] - ranking[-1][1] if len(ranking) >= 2 else None
+
+    return {
+        "factor_ic_ranking": ranking,
+        "top_factor": top_factor,
+        "bottom_factor": bottom_factor,
+        "positive_ic_factor_count": positive_ic_count,
+        "top3_avg_ic": round(top3_avg, 6) if top3_avg is not None else None,
+        "factor_ic_spread": round(spread, 6) if spread is not None else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 38, Task 3 (Gamma): Score bucket win rates — quintile monotonicity check
+# ---------------------------------------------------------------------------
+def compute_score_bucket_win_rates(rows: list[dict]) -> dict:
+    """Validate composite score monotonicity via quintile-bucket win-rate analysis.
+
+    Splits candidates into five equal-width score quintiles (Q1=lowest … Q5=highest)
+    and computes the win rate in each bucket.  A well-calibrated scoring system should
+    produce strictly increasing win rates Q1 < Q2 < Q3 < Q4 < Q5.
+
+    Args:
+        rows: Per-row dicts with ``next_close_return`` (float|None) and either
+            ``runner_composite_score`` or ``composite_score`` (float|None).
+
+    Returns:
+        Dict with keys:
+
+        - ``win_rate_q1`` … ``win_rate_q5``: float|None — per-quintile win rate (None if bucket < 3 rows).
+        - ``score_monotone``: bool|None — True when Q1 < Q2 < Q3 < Q4 < Q5 strictly (all 5 valid).
+        - ``score_near_monotone``: bool|None — True when ≥ 3 of 4 consecutive pairs increase.
+        - ``top_quintile_premium``: float|None — win_rate_q5 − win_rate_q1 (both must be valid).
+        - ``score_rank_ic``: float|None — Spearman IC of bucket index (1–5) vs win-rate (≥ 3 valid).
+        - ``score_discriminates_well``: bool|None — True when top_quintile_premium > 0.10.
+
+        Returns all-None dict when fewer than 15 valid paired rows are available.
+    """
+    _null: dict = {
+        "win_rate_q1": None, "win_rate_q2": None, "win_rate_q3": None,
+        "win_rate_q4": None, "win_rate_q5": None,
+        "score_monotone": None,
+        "score_near_monotone": None,
+        "top_quintile_premium": None,
+        "score_rank_ic": None,
+        "score_discriminates_well": None,
+    }
+
+    valid: list[tuple[float, float]] = []
+    for r in rows:
+        ret = r.get("next_close_return")
+        score = r.get("runner_composite_score")
+        if score is None:
+            score = r.get("composite_score")
+        if ret is not None and score is not None:
+            valid.append((float(score), float(ret)))
+
+    if len(valid) < 15:
+        return _null
+
+    scores_only = sorted(v[0] for v in valid)
+    n = len(scores_only)
+
+    def _pct(lst: list[float], p: float) -> float:
+        idx = p / 100.0 * (len(lst) - 1)
+        lo = int(idx)
+        hi = min(lo + 1, len(lst) - 1)
+        return lst[lo] + (idx - lo) * (lst[hi] - lst[lo])
+
+    p20 = _pct(scores_only, 20)
+    p40 = _pct(scores_only, 40)
+    p60 = _pct(scores_only, 60)
+    p80 = _pct(scores_only, 80)
+
+    buckets: list[list[float]] = [[], [], [], [], []]
+    for score, ret in valid:
+        if score <= p20:
+            buckets[0].append(ret)
+        elif score <= p40:
+            buckets[1].append(ret)
+        elif score <= p60:
+            buckets[2].append(ret)
+        elif score <= p80:
+            buckets[3].append(ret)
+        else:
+            buckets[4].append(ret)
+
+    win_rates: list[float | None] = []
+    for b in buckets:
+        if len(b) >= 3:
+            win_rates.append(sum(1 for r in b if r > 0) / max(len(b), 1))
+        else:
+            win_rates.append(None)
+
+    all_valid = all(wr is not None for wr in win_rates)
+    score_monotone: bool | None = None
+    score_near_monotone: bool | None = None
+    if all_valid:
+        wrs = [wr for wr in win_rates if wr is not None]
+        score_monotone = all(wrs[i] < wrs[i + 1] for i in range(4))
+        mono_count = sum(1 for i in range(4) if wrs[i] < wrs[i + 1])
+        score_near_monotone = mono_count >= 3
+
+    top_quintile_premium: float | None = None
+    if win_rates[4] is not None and win_rates[0] is not None:
+        top_quintile_premium = round(win_rates[4] - win_rates[0], 4)
+
+    score_rank_ic: float | None = None
+    valid_wrs = [(i + 1, wr) for i, wr in enumerate(win_rates) if wr is not None]
+    if len(valid_wrs) >= 3:
+        m = len(valid_wrs)
+        bi = [float(idx) for idx, _ in valid_wrs]
+        wr_vals = [wr for _, wr in valid_wrs]
+        rank_bi = sorted(range(m), key=lambda i: bi[i])
+        rank_wr = sorted(range(m), key=lambda i: wr_vals[i])
+        rx = [0] * m
+        ry = [0] * m
+        for rank, idx in enumerate(rank_bi):
+            rx[idx] = rank
+        for rank, idx in enumerate(rank_wr):
+            ry[idx] = rank
+        mean_rx = sum(rx) / m
+        mean_ry = sum(ry) / m
+        num = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(m))
+        den = (
+            sum((rx[i] - mean_rx) ** 2 for i in range(m))
+            * sum((ry[i] - mean_ry) ** 2 for i in range(m))
+        ) ** 0.5
+        score_rank_ic = round(max(-1.0, min(1.0, num / max(den, 1e-8))), 4)
+
+    score_discriminates_well: bool | None = top_quintile_premium is not None and top_quintile_premium > 0.10
+
+    return {
+        "win_rate_q1": round(win_rates[0], 4) if win_rates[0] is not None else None,
+        "win_rate_q2": round(win_rates[1], 4) if win_rates[1] is not None else None,
+        "win_rate_q3": round(win_rates[2], 4) if win_rates[2] is not None else None,
+        "win_rate_q4": round(win_rates[3], 4) if win_rates[3] is not None else None,
+        "win_rate_q5": round(win_rates[4], 4) if win_rates[4] is not None else None,
+        "score_monotone": score_monotone,
+        "score_near_monotone": score_near_monotone,
+        "top_quintile_premium": top_quintile_premium,
+        "score_rank_ic": score_rank_ic,
+        "score_discriminates_well": score_discriminates_well,
     }

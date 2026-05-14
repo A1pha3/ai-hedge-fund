@@ -271,6 +271,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "loss_signature_strength",
     # Task 3 (Round 37, Gamma): score Gini coefficient — concentration of composite score distribution.
     "score_gini",
+    # Task 1 (Round 38, Alpha): market environment sensitivity — bull vs bear win-rate gap.
+    "env_win_rate_gap",
+    # Task 2 (Round 38, Beta): factor importance ranking — count of factors with positive Spearman IC.
+    "positive_ic_factor_count",
+    # Task 3 (Round 38, Gamma): score bucket win rates — top-quintile vs bottom-quintile premium.
+    "top_quintile_premium",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -429,6 +435,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "loss_signature_strength": "亏损特征区分度",
     # Task 3 (Round 37, Gamma): score Gini coefficient
     "score_gini": "评分基尼系数",
+    # Task 1 (Round 38, Alpha): market environment sensitivity — bull vs bear win-rate gap
+    "env_win_rate_gap": "多空环境胜率差",
+    # Task 2 (Round 38, Beta): factor importance ranking — positive-IC factor count
+    "positive_ic_factor_count": "正IC因子数",
+    # Task 3 (Round 38, Gamma): score bucket win rates — top quintile premium
+    "top_quintile_premium": "顶分位胜率溢价",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -630,6 +642,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "loss_signature_strength",
     # Task 3 (Round 37, Gamma): score Gini — optional; pre-Round-37 outputs omit it.
     "score_gini",
+    # Task 1 (Round 38, Alpha): market environment sensitivity — optional; pre-Round-38 outputs omit it.
+    "env_win_rate_gap",
+    # Task 2 (Round 38, Beta): factor importance ranking — optional; pre-Round-38 outputs omit it.
+    "positive_ic_factor_count",
+    # Task 3 (Round 38, Gamma): score bucket win rates — optional; pre-Round-38 outputs omit it.
+    "top_quintile_premium",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1841,6 +1859,15 @@ def _build_replay_evaluator(
         # Task 3 (Round 37, Gamma): average score_gini across replay windows.
         _sgini_vals = [float(s["score_gini"]) for s in all_primary_surfaces if s.get("score_gini") is not None]
         avg_score_gini: float | None = round(sum(_sgini_vals) / len(_sgini_vals), 4) if _sgini_vals else None
+        # Task 1 (Round 38, Alpha): average env_win_rate_gap across replay windows.
+        _ewg_vals = [float(s["env_win_rate_gap"]) for s in all_primary_surfaces if s.get("env_win_rate_gap") is not None]
+        avg_env_win_rate_gap: float | None = round(sum(_ewg_vals) / len(_ewg_vals), 4) if _ewg_vals else None
+        # Task 2 (Round 38, Beta): average positive_ic_factor_count across replay windows.
+        _pif_vals = [int(s["positive_ic_factor_count"]) for s in all_primary_surfaces if s.get("positive_ic_factor_count") is not None]
+        avg_positive_ic_factor_count: int | None = round(sum(_pif_vals) / len(_pif_vals)) if _pif_vals else None
+        # Task 3 (Round 38, Gamma): average top_quintile_premium across replay windows.
+        _tqp_vals = [float(s["top_quintile_premium"]) for s in all_primary_surfaces if s.get("top_quintile_premium") is not None]
+        avg_top_quintile_premium: float | None = round(sum(_tqp_vals) / len(_tqp_vals), 4) if _tqp_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1999,6 +2026,12 @@ def _build_replay_evaluator(
             "loss_signature_strength": avg_loss_signature_strength,
             # Task 3 (Round 37, Gamma): average score Gini coefficient across replay windows.
             "score_gini": avg_score_gini,
+            # Task 1 (Round 38, Alpha): average market environment win-rate gap across replay windows.
+            "env_win_rate_gap": avg_env_win_rate_gap,
+            # Task 2 (Round 38, Beta): average positive-IC factor count across replay windows.
+            "positive_ic_factor_count": avg_positive_ic_factor_count,
+            # Task 3 (Round 38, Gamma): average top quintile premium across replay windows.
+            "top_quintile_premium": avg_top_quintile_premium,
         }
 
     return evaluator

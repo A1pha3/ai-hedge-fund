@@ -191,6 +191,24 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # losses appear structurally random and cannot be avoided with the current factor set.
     # Floor ≥ 0.02 requires at least a 2 % average factor divergence for rollout eligibility.
     "loss_signature_strength": 0.02,
+    # Task 1 (Round 38, Alpha): market environment win-rate gap floor.
+    # env_win_rate_gap = bull_env_win_rate − bear_env_win_rate.  A value < −0.10 means the strategy
+    # performs more than 10 % worse (win-rate) in bear/low-resonance environments vs bull environments.
+    # Such extreme environment dependency signals hidden bull-market beta and poses OOS regime risk.
+    # Floor ≥ −0.10 ensures the strategy does not collapse in bear conditions.
+    "env_win_rate_gap": -0.10,
+    # Task 2 (Round 38, Beta): positive-IC factor count floor.
+    # positive_ic_factor_count = number of factors (out of 13) with Spearman IC > 0 vs next_close_return.
+    # A count < 6 means fewer than half the scoring factors contribute positively —
+    # the composite score is essentially averaging noise with signal.
+    # Floor ≥ 6 requires at least a majority of factors to carry predictive power.
+    "positive_ic_factor_count": 6,
+    # Task 3 (Round 38, Gamma): top-quintile win-rate premium floor.
+    # top_quintile_premium = win_rate_q5 − win_rate_q1.  A value ≤ 0 means the highest-scored
+    # candidates do not achieve a higher win rate than the lowest-scored candidates — the scoring
+    # system has zero monotone discriminative power.
+    # Floor ≥ 0.0 requires at least a neutral positive premium for rollout eligibility.
+    "top_quintile_premium": 0.0,
 }
 
 # ---------------------------------------------------------------------------

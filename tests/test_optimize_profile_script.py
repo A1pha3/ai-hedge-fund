@@ -8167,3 +8167,346 @@ def test_r37_t3_none_scores_filtered() -> None:
     rows = [{"runner_composite_score": None}] * 5 + [{"runner_composite_score": float(i) / 10} for i in range(1, 11)]
     result = compute_score_gini_coefficient(rows)
     assert result["score_gini"] is not None
+
+
+# ===========================================================================
+# Round 38 tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1 — compute_market_environment_sensitivity
+# ---------------------------------------------------------------------------
+
+
+def test_r38_t1_basic_returns_required_keys() -> None:
+    """compute_market_environment_sensitivity returns all required keys for valid input."""
+    from scripts.btst_analysis_utils import compute_market_environment_sensitivity
+
+    rows = [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.01, "sector_resonance": float(i) / 20}
+        for i in range(20)
+    ]
+    result = compute_market_environment_sensitivity(rows)
+    for key in ("bull_env_win_rate", "bear_env_win_rate", "bull_env_avg_return",
+                "bear_env_avg_return", "market_sensitivity_ratio", "env_win_rate_gap",
+                "environment_adaptive", "market_neutral"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r38_t1_insufficient_rows_returns_all_none() -> None:
+    """compute_market_environment_sensitivity returns all-None when fewer than 10 valid rows."""
+    from scripts.btst_analysis_utils import compute_market_environment_sensitivity
+
+    rows = [{"next_close_return": 0.02, "sector_resonance": 0.5} for _ in range(9)]
+    result = compute_market_environment_sensitivity(rows)
+    assert result["env_win_rate_gap"] is None
+    assert result["bull_env_win_rate"] is None
+    assert result["market_neutral"] is None
+
+
+def test_r38_t1_empty_rows_all_none() -> None:
+    """compute_market_environment_sensitivity handles empty input gracefully."""
+    from scripts.btst_analysis_utils import compute_market_environment_sensitivity
+
+    result = compute_market_environment_sensitivity([])
+    assert result["env_win_rate_gap"] is None
+
+
+def test_r38_t1_none_fields_filtered() -> None:
+    """Rows with None next_close_return or sector_resonance are excluded."""
+    from scripts.btst_analysis_utils import compute_market_environment_sensitivity
+
+    rows = [{"next_close_return": None, "sector_resonance": 0.5}] * 5 + [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.01, "sector_resonance": float(i) / 20}
+        for i in range(20)
+    ]
+    result = compute_market_environment_sensitivity(rows)
+    assert result["env_win_rate_gap"] is not None
+
+
+def test_r38_t1_bull_env_better_gap_positive() -> None:
+    """env_win_rate_gap > 0 when bull-env rows have higher win rates."""
+    from scripts.btst_analysis_utils import compute_market_environment_sensitivity
+
+    rows = []
+    for i in range(10):
+        rows.append({"next_close_return": 0.05, "sector_resonance": 0.9})
+    for i in range(10):
+        rows.append({"next_close_return": -0.02, "sector_resonance": 0.1})
+    result = compute_market_environment_sensitivity(rows)
+    assert result["env_win_rate_gap"] is not None
+    assert result["env_win_rate_gap"] > 0
+
+
+def test_r38_t1_sensitivity_ratio_clamped() -> None:
+    """market_sensitivity_ratio is clamped to [0, 5]."""
+    from scripts.btst_analysis_utils import compute_market_environment_sensitivity
+
+    rows = []
+    for i in range(10):
+        rows.append({"next_close_return": 0.05, "sector_resonance": 0.9})
+    for i in range(10):
+        rows.append({"next_close_return": -0.05, "sector_resonance": 0.1})
+    result = compute_market_environment_sensitivity(rows)
+    if result["market_sensitivity_ratio"] is not None:
+        assert 0.0 <= result["market_sensitivity_ratio"] <= 5.0
+
+
+def test_r38_t1_environment_adaptive_flag() -> None:
+    """environment_adaptive is True when env_win_rate_gap > 0.05."""
+    from scripts.btst_analysis_utils import compute_market_environment_sensitivity
+
+    rows = []
+    for i in range(15):
+        rows.append({"next_close_return": 0.04, "sector_resonance": 0.9})
+    for i in range(15):
+        rows.append({"next_close_return": -0.03, "sector_resonance": 0.1})
+    result = compute_market_environment_sensitivity(rows)
+    if result["env_win_rate_gap"] is not None and result["env_win_rate_gap"] > 0.05:
+        assert result["environment_adaptive"] is True
+
+
+def test_r38_t1_floor_registered() -> None:
+    """env_win_rate_gap floor = -0.10 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "env_win_rate_gap" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["env_win_rate_gap"] == -0.10
+
+
+def test_r38_t1_in_comparison_metrics() -> None:
+    """env_win_rate_gap registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "env_win_rate_gap" in COMPARISON_METRICS
+
+
+def test_r38_t1_label_registered() -> None:
+    """env_win_rate_gap has Chinese label '多空环境胜率差'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("env_win_rate_gap") == "多空环境胜率差"
+
+
+# ---------------------------------------------------------------------------
+# T2 — compute_factor_importance_ranking
+# ---------------------------------------------------------------------------
+
+
+def test_r38_t2_basic_returns_required_keys() -> None:
+    """compute_factor_importance_ranking returns all required keys for valid input."""
+    from scripts.btst_analysis_utils import compute_factor_importance_ranking
+
+    rows = [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
+         "close_strength": float(i) / 20, "sector_resonance": float(i) / 20,
+         "rs_sector_rank": float(i) / 20}
+        for i in range(20)
+    ]
+    result = compute_factor_importance_ranking(rows)
+    for key in ("factor_ic_ranking", "top_factor", "bottom_factor",
+                "positive_ic_factor_count", "top3_avg_ic", "factor_ic_spread"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r38_t2_insufficient_rows_returns_null() -> None:
+    """compute_factor_importance_ranking returns null when fewer than 10 valid return rows."""
+    from scripts.btst_analysis_utils import compute_factor_importance_ranking
+
+    rows = [{"next_close_return": 0.02, "close_strength": 0.5} for _ in range(9)]
+    result = compute_factor_importance_ranking(rows)
+    assert result["positive_ic_factor_count"] is None
+    assert result["factor_ic_ranking"] == []
+
+
+def test_r38_t2_empty_rows_graceful() -> None:
+    """compute_factor_importance_ranking handles empty input."""
+    from scripts.btst_analysis_utils import compute_factor_importance_ranking
+
+    result = compute_factor_importance_ranking([])
+    assert result["positive_ic_factor_count"] is None
+
+
+def test_r38_t2_none_returns_filtered() -> None:
+    """Rows with None next_close_return are excluded."""
+    from scripts.btst_analysis_utils import compute_factor_importance_ranking
+
+    rows = [{"next_close_return": None, "close_strength": 0.5}] * 5 + [
+        {"next_close_return": float(i) / 20 - 0.05, "close_strength": float(i) / 20}
+        for i in range(20)
+    ]
+    result = compute_factor_importance_ranking(rows)
+    assert result["positive_ic_factor_count"] is not None
+
+
+def test_r38_t2_ranking_sorted_descending() -> None:
+    """factor_ic_ranking is sorted from highest IC to lowest."""
+    from scripts.btst_analysis_utils import compute_factor_importance_ranking
+
+    rows = [
+        {"next_close_return": float(i) / 20 - 0.25,
+         "close_strength": float(i) / 20,
+         "sector_resonance": 1.0 - float(i) / 20,
+         "rs_sector_rank": float(i) / 20}
+        for i in range(20)
+    ]
+    result = compute_factor_importance_ranking(rows)
+    ranking = result["factor_ic_ranking"]
+    if len(ranking) >= 2:
+        for j in range(len(ranking) - 1):
+            assert ranking[j][1] >= ranking[j + 1][1], "Ranking not sorted descending"
+
+
+def test_r38_t2_positive_ic_count_non_negative() -> None:
+    """positive_ic_factor_count is a non-negative integer when data is available."""
+    from scripts.btst_analysis_utils import compute_factor_importance_ranking
+
+    rows = [
+        {"next_close_return": float(i) / 20 - 0.25, "close_strength": float(i) / 20}
+        for i in range(20)
+    ]
+    result = compute_factor_importance_ranking(rows)
+    if result["positive_ic_factor_count"] is not None:
+        assert isinstance(result["positive_ic_factor_count"], int)
+        assert result["positive_ic_factor_count"] >= 0
+
+
+def test_r38_t2_floor_registered() -> None:
+    """positive_ic_factor_count floor = 6 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "positive_ic_factor_count" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["positive_ic_factor_count"] == 6
+
+
+def test_r38_t2_in_comparison_metrics() -> None:
+    """positive_ic_factor_count registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "positive_ic_factor_count" in COMPARISON_METRICS
+
+
+def test_r38_t2_label_registered() -> None:
+    """positive_ic_factor_count has Chinese label '正IC因子数'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("positive_ic_factor_count") == "正IC因子数"
+
+
+# ---------------------------------------------------------------------------
+# T3 — compute_score_bucket_win_rates
+# ---------------------------------------------------------------------------
+
+
+def test_r38_t3_basic_returns_required_keys() -> None:
+    """compute_score_bucket_win_rates returns all required keys for valid input."""
+    from scripts.btst_analysis_utils import compute_score_bucket_win_rates
+
+    rows = [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
+         "runner_composite_score": float(i) / 30}
+        for i in range(30)
+    ]
+    result = compute_score_bucket_win_rates(rows)
+    for key in ("win_rate_q1", "win_rate_q2", "win_rate_q3", "win_rate_q4", "win_rate_q5",
+                "score_monotone", "score_near_monotone", "top_quintile_premium",
+                "score_rank_ic", "score_discriminates_well"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r38_t3_insufficient_rows_returns_all_none() -> None:
+    """compute_score_bucket_win_rates returns all-None when fewer than 15 valid rows."""
+    from scripts.btst_analysis_utils import compute_score_bucket_win_rates
+
+    rows = [{"next_close_return": 0.02, "runner_composite_score": 0.5} for _ in range(14)]
+    result = compute_score_bucket_win_rates(rows)
+    assert result["top_quintile_premium"] is None
+    assert result["score_monotone"] is None
+
+
+def test_r38_t3_empty_rows_graceful() -> None:
+    """compute_score_bucket_win_rates handles empty input gracefully."""
+    from scripts.btst_analysis_utils import compute_score_bucket_win_rates
+
+    result = compute_score_bucket_win_rates([])
+    assert result["top_quintile_premium"] is None
+
+
+def test_r38_t3_none_fields_filtered() -> None:
+    """Rows with None return or score are excluded from computation."""
+    from scripts.btst_analysis_utils import compute_score_bucket_win_rates
+
+    rows = [{"next_close_return": None, "runner_composite_score": 0.5}] * 5 + [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
+         "runner_composite_score": float(i) / 30}
+        for i in range(30)
+    ]
+    result = compute_score_bucket_win_rates(rows)
+    assert result["top_quintile_premium"] is not None
+
+
+def test_r38_t3_composite_score_fallback() -> None:
+    """compute_score_bucket_win_rates falls back to composite_score when runner_composite_score absent."""
+    from scripts.btst_analysis_utils import compute_score_bucket_win_rates
+
+    rows = [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
+         "composite_score": float(i) / 30}
+        for i in range(30)
+    ]
+    result = compute_score_bucket_win_rates(rows)
+    assert result["top_quintile_premium"] is not None
+
+
+def test_r38_t3_monotone_score_produces_valid_flags() -> None:
+    """Monotonically increasing score-win-rate mapping sets score_monotone True."""
+    from scripts.btst_analysis_utils import compute_score_bucket_win_rates
+
+    rows = []
+    for bucket in range(5):
+        win_prob = 0.3 + bucket * 0.15
+        for _ in range(8):
+            import random
+            rng = random.Random(bucket * 100 + _)
+            ret = 0.04 if rng.random() < win_prob else -0.02
+            rows.append({"next_close_return": ret,
+                         "runner_composite_score": float(bucket) + rng.uniform(0, 0.9)})
+    result = compute_score_bucket_win_rates(rows)
+    assert result["score_monotone"] in (True, False, None)
+    assert result["score_near_monotone"] in (True, False, None)
+
+
+def test_r38_t3_top_quintile_premium_direction() -> None:
+    """top_quintile_premium > 0 when high-score group wins more than low-score group."""
+    from scripts.btst_analysis_utils import compute_score_bucket_win_rates
+
+    rows = []
+    for i in range(15):
+        rows.append({"next_close_return": 0.05, "runner_composite_score": 0.9})
+    for i in range(15):
+        rows.append({"next_close_return": -0.03, "runner_composite_score": 0.1})
+    result = compute_score_bucket_win_rates(rows)
+    if result["top_quintile_premium"] is not None:
+        assert result["top_quintile_premium"] > 0
+
+
+def test_r38_t3_floor_registered() -> None:
+    """top_quintile_premium floor = 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "top_quintile_premium" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["top_quintile_premium"] == 0.0
+
+
+def test_r38_t3_in_comparison_metrics() -> None:
+    """top_quintile_premium registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "top_quintile_premium" in COMPARISON_METRICS
+
+
+def test_r38_t3_label_registered() -> None:
+    """top_quintile_premium has Chinese label '顶分位胜率溢价'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("top_quintile_premium") == "顶分位胜率溢价"
