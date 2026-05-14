@@ -18073,3 +18073,328 @@ def test_r65_floor_breach_blockers_triggered_for_low_timeframe_consistency() -> 
     metrics = {"timeframe_consistency": 0.0}
     blockers = build_btst_quality_floor_blockers(metrics)
     assert any("timeframe_consistency" in b for b in blockers)
+
+
+# ===========================================================================
+# Round 66 tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: compute_volatility_regime_analysis
+# ---------------------------------------------------------------------------
+
+def test_r66_vra_empty_input() -> None:
+    """compute_volatility_regime_analysis returns invalid result for empty input."""
+    from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+    result = compute_volatility_regime_analysis([])
+    assert result["valid"] is False
+    assert result["edge"] is None
+
+
+def test_r66_vra_insufficient_rows() -> None:
+    """compute_volatility_regime_analysis returns invalid for fewer than 20 rows."""
+    from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+    rows = [{"next_day_return": 0.01 * i} for i in range(10)]
+    result = compute_volatility_regime_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r66_vra_normal_case() -> None:
+    """compute_volatility_regime_analysis produces valid result for sufficient rows."""
+    from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+    rows = [{"next_day_return": 0.01 * (i % 10 - 5)} for i in range(40)]
+    result = compute_volatility_regime_analysis(rows)
+    assert result["valid"] is True
+    assert result["edge"] is not None
+    assert result["low_vol_win_rate"] is not None
+    assert result["high_vol_win_rate"] is not None
+    assert result["low_vol_count"] is not None
+    assert result["high_vol_count"] is not None
+
+
+def test_r66_vra_edge_is_difference() -> None:
+    """edge = low_vol_win_rate - high_vol_win_rate (correct arithmetic)."""
+    from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+    rows = [{"next_day_return": 0.01 * (i % 10 - 5)} for i in range(40)]
+    result = compute_volatility_regime_analysis(rows)
+    assert abs(result["edge"] - (result["low_vol_win_rate"] - result["high_vol_win_rate"])) < 1e-5
+
+
+def test_r66_vra_win_rates_in_range() -> None:
+    """Win rates are in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+    rows = [{"next_day_return": 0.005 * (i - 20)} for i in range(50)]
+    result = compute_volatility_regime_analysis(rows)
+    if result["valid"]:
+        assert 0.0 <= result["low_vol_win_rate"] <= 1.0
+        assert 0.0 <= result["high_vol_win_rate"] <= 1.0
+
+
+def test_r66_vra_missing_next_day_return() -> None:
+    """Rows with missing next_day_return are excluded gracefully."""
+    from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+    rows = [{"next_day_return": 0.01 * i} for i in range(30)]
+    rows.extend([{"other": 1} for _ in range(5)])
+    result = compute_volatility_regime_analysis(rows)
+    assert result["valid"] is True
+
+
+def test_r66_vra_count_sum_equals_total_valid() -> None:
+    """low_vol_count + high_vol_count equals total rows with next_day_return."""
+    from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+    rows = [{"next_day_return": 0.01 * (i - 15)} for i in range(35)]
+    result = compute_volatility_regime_analysis(rows)
+    if result["valid"]:
+        assert result["low_vol_count"] + result["high_vol_count"] == 35
+
+
+def test_r66_vra_build_surface_summary_includes_vol_regime_edge() -> None:
+    """build_surface_summary includes vol_regime_edge key."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"composite_score": 0.5, "runner_composite_score": 0.5, "next_close": 10.2, "prev_close": 10.0, "next_day_return": 0.01 * (i - 15), "date": f"2024-01-{(i % 28) + 1:02d}", "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5} for i in range(30)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "vol_regime_edge" in result
+
+
+def test_r66_vra_in_comparison_metrics() -> None:
+    """vol_regime_edge is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "vol_regime_edge" in COMPARISON_METRICS
+
+
+def test_r66_vra_in_optional_comparison_metrics() -> None:
+    """vol_regime_edge is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "vol_regime_edge" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r66_vra_label_is_chinese() -> None:
+    """vol_regime_edge has a non-empty Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "vol_regime_edge" in COMPARISON_METRIC_LABELS
+    label = COMPARISON_METRIC_LABELS["vol_regime_edge"]
+    assert len(label) > 0 and label == "低波动环境胜率优势"
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_nonlinear_factor_interaction
+# ---------------------------------------------------------------------------
+
+def test_r66_nfi_empty_input() -> None:
+    """compute_nonlinear_factor_interaction returns invalid for empty input."""
+    from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+    result = compute_nonlinear_factor_interaction([])
+    assert result["valid"] is False
+    assert result["mean_interaction_effect"] is None
+
+
+def test_r66_nfi_insufficient_rows() -> None:
+    """compute_nonlinear_factor_interaction returns invalid for fewer than 15 rows."""
+    from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+    rows = [{"close_strength": 0.5, "next_day_return": 0.01} for _ in range(10)]
+    result = compute_nonlinear_factor_interaction(rows)
+    assert result["valid"] is False
+
+
+def test_r66_nfi_normal_case() -> None:
+    """compute_nonlinear_factor_interaction returns valid result when all factors present."""
+    from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+    rows = [{"close_strength": 0.1 * i, "volume_expansion_quality": 0.05 * i, "sector_resonance": 0.2 * (i % 5), "rs_sector_rank": float(i % 7), "t0_estimated_net_inflow_ratio": 0.01 * i, "breakout_quality_score": 0.3 * (i % 4), "momentum_slope_20d": 0.02 * (i - 10), "next_day_return": 0.005 * (i - 10)} for i in range(20)]
+    result = compute_nonlinear_factor_interaction(rows)
+    assert result["valid"] is True
+    assert result["mean_interaction_effect"] is not None
+    assert result["interaction_count"] is not None
+    assert result["top_interaction_pair"] is not None
+
+
+def test_r66_nfi_mean_effect_nonnegative() -> None:
+    """mean_interaction_effect is non-negative (it's mean absolute IC)."""
+    from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+    rows = [{"close_strength": 0.1 * i, "volume_expansion_quality": 0.05 * i, "sector_resonance": 0.2 * (i % 5), "rs_sector_rank": float(i % 7), "t0_estimated_net_inflow_ratio": 0.01 * i, "breakout_quality_score": 0.3 * (i % 4), "momentum_slope_20d": 0.02 * (i - 10), "next_day_return": 0.005 * (i - 10)} for i in range(20)]
+    result = compute_nonlinear_factor_interaction(rows)
+    if result["valid"]:
+        assert result["mean_interaction_effect"] >= 0.0
+
+
+def test_r66_nfi_interaction_count_positive() -> None:
+    """interaction_count is positive when result is valid."""
+    from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+    rows = [{"close_strength": 0.1 * i, "volume_expansion_quality": 0.05 * i, "sector_resonance": 0.2 * (i % 5), "rs_sector_rank": float(i % 7), "t0_estimated_net_inflow_ratio": 0.01 * i, "breakout_quality_score": 0.3 * (i % 4), "momentum_slope_20d": 0.02 * (i - 10), "next_day_return": 0.005 * (i - 10)} for i in range(20)]
+    result = compute_nonlinear_factor_interaction(rows)
+    if result["valid"]:
+        assert result["interaction_count"] > 0
+
+
+def test_r66_nfi_all_factors_missing() -> None:
+    """compute_nonlinear_factor_interaction returns invalid when all factor columns are absent."""
+    from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+    rows = [{"next_day_return": 0.01 * i} for i in range(20)]
+    result = compute_nonlinear_factor_interaction(rows)
+    assert result["valid"] is False
+
+
+def test_r66_nfi_in_comparison_metrics() -> None:
+    """interact_mean_interaction_effect is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "interact_mean_interaction_effect" in COMPARISON_METRICS
+
+
+def test_r66_nfi_in_optional_comparison_metrics() -> None:
+    """interact_mean_interaction_effect is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "interact_mean_interaction_effect" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r66_nfi_label_is_chinese() -> None:
+    """interact_mean_interaction_effect has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "interact_mean_interaction_effect" in COMPARISON_METRIC_LABELS
+    label = COMPARISON_METRIC_LABELS["interact_mean_interaction_effect"]
+    assert len(label) > 0 and label == "最强非线性交互效应"
+
+
+def test_r66_nfi_build_surface_summary_includes_interact_prefix() -> None:
+    """build_surface_summary includes interact_valid key."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"composite_score": 0.5, "runner_composite_score": 0.5, "next_close": 10.2, "prev_close": 10.0, "next_day_return": 0.005 * (i - 10), "date": f"2024-01-{(i % 28) + 1:02d}", "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5} for i in range(20)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "interact_valid" in result
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_attribution_trend / attribution_trend_slope
+# ---------------------------------------------------------------------------
+
+def test_r66_cat_empty_input() -> None:
+    """compute_cross_window_attribution_trend returns invalid for empty input."""
+    from scripts.optimize_profile import compute_cross_window_attribution_trend
+    result = compute_cross_window_attribution_trend([])
+    assert result["attribution_trend_valid"] is False
+    assert result["attribution_trend_slope"] is None
+
+
+def test_r66_cat_insufficient_windows() -> None:
+    """compute_cross_window_attribution_trend returns invalid for fewer than 3 windows."""
+    from scripts.optimize_profile import compute_cross_window_attribution_trend
+    surfaces = [{"attr_total_attribution": 0.5}, {"attr_total_attribution": 0.6}]
+    result = compute_cross_window_attribution_trend(surfaces)
+    assert result["attribution_trend_valid"] is False
+
+
+def test_r66_cat_positive_slope() -> None:
+    """compute_cross_window_attribution_trend detects positive (improving) trend."""
+    from scripts.optimize_profile import compute_cross_window_attribution_trend
+    surfaces = [{"attr_total_attribution": float(i) * 0.1} for i in range(1, 6)]
+    result = compute_cross_window_attribution_trend(surfaces)
+    assert result["attribution_trend_valid"] is True
+    assert result["attribution_trend_slope"] > 0
+
+
+def test_r66_cat_negative_slope() -> None:
+    """compute_cross_window_attribution_trend detects negative (declining) trend."""
+    from scripts.optimize_profile import compute_cross_window_attribution_trend
+    surfaces = [{"attr_total_attribution": 0.5 - float(i) * 0.05} for i in range(5)]
+    result = compute_cross_window_attribution_trend(surfaces)
+    assert result["attribution_trend_valid"] is True
+    assert result["attribution_trend_slope"] < 0
+
+
+def test_r66_cat_grade_a_for_strong_positive() -> None:
+    """Grade A when slope > 0.02."""
+    from scripts.optimize_profile import compute_cross_window_attribution_trend
+    surfaces = [{"attr_total_attribution": float(i) * 0.5} for i in range(1, 8)]
+    result = compute_cross_window_attribution_trend(surfaces)
+    assert result["attribution_trend_grade"] == "A"
+
+
+def test_r66_cat_grade_d_for_strong_negative() -> None:
+    """Grade D when slope < -0.02."""
+    from scripts.optimize_profile import compute_cross_window_attribution_trend
+    surfaces = [{"attr_total_attribution": 1.0 - float(i) * 0.5} for i in range(8)]
+    result = compute_cross_window_attribution_trend(surfaces)
+    assert result["attribution_trend_grade"] == "D"
+
+
+def test_r66_cat_missing_values_skipped() -> None:
+    """Windows without attr_total_attribution are skipped."""
+    from scripts.optimize_profile import compute_cross_window_attribution_trend
+    surfaces = [{"attr_total_attribution": 0.3}, {"other": 1}, {"attr_total_attribution": 0.5}, {"attr_total_attribution": 0.7}]
+    result = compute_cross_window_attribution_trend(surfaces)
+    assert result["attribution_trend_valid"] is True
+    assert result["attribution_trend_slope"] > 0
+
+
+def test_r66_cat_in_comparison_metrics() -> None:
+    """attribution_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "attribution_trend_slope" in COMPARISON_METRICS
+
+
+def test_r66_cat_in_optional_comparison_metrics() -> None:
+    """attribution_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "attribution_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r66_cat_in_lower_is_better() -> None:
+    """attribution_trend_slope is in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "attribution_trend_slope" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r66_cat_label_is_chinese() -> None:
+    """attribution_trend_slope has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "attribution_trend_slope" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["attribution_trend_slope"] == "因子归因力跨窗趋势"
+
+
+def test_r66_attribution_trend_slope_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has attribution_trend_slope floor of -0.02."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "attribution_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["attribution_trend_slope"] == -0.02
+
+
+def test_r66_attribution_trend_slope_in_guardrail_keys() -> None:
+    """attribution_trend_slope is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "attribution_trend_slope" in _GUARDRAIL_KEYS
+
+
+def test_r66_floor_breach_triggers_for_very_negative_attribution_slope() -> None:
+    """build_btst_quality_floor_blockers fires for attribution_trend_slope below -0.02."""
+    from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+    metrics = {"attribution_trend_slope": -0.10}
+    blockers = build_btst_quality_floor_blockers(metrics)
+    assert any("attribution_trend_slope" in b for b in blockers)
+
+
+def test_r66_no_floor_breach_when_attribution_slope_acceptable() -> None:
+    """No floor breach when attribution_trend_slope is above -0.02."""
+    from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+    metrics = {"attribution_trend_slope": 0.01}
+    blockers = build_btst_quality_floor_blockers(metrics)
+    assert not any("attribution_trend_slope" in b for b in blockers)
+
+
+def test_r66_all_three_metrics_in_comparison_metrics() -> None:
+    """All three Round 66 metrics appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("vol_regime_edge", "interact_mean_interaction_effect", "attribution_trend_slope"):
+        assert key in COMPARISON_METRICS
+
+
+def test_r66_all_three_metrics_in_optional() -> None:
+    """All three Round 66 metrics are OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("vol_regime_edge", "interact_mean_interaction_effect", "attribution_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r66_all_three_metrics_have_labels() -> None:
+    """All three Round 66 metrics have non-empty labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for key in ("vol_regime_edge", "interact_mean_interaction_effect", "attribution_trend_slope"):
+        assert key in COMPARISON_METRIC_LABELS
+        assert len(COMPARISON_METRIC_LABELS[key]) > 0

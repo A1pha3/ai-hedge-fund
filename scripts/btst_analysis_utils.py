@@ -4521,6 +4521,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _mtf.items():
         _surface_result[f"mtf_{_k}"] = _v
 
+    # Round 66, Task 1 (Alpha): Volatility regime win-rate analysis.
+    _vra: dict = compute_volatility_regime_analysis(rows)
+    for _k, _v in _vra.items():
+        _surface_result[f"vol_regime_{_k}"] = _v
+
+    # Round 66, Task 2 (Beta): Nonlinear factor interaction analysis.
+    _nfi: dict = compute_nonlinear_factor_interaction(rows)
+    for _k, _v in _nfi.items():
+        _surface_result[f"interact_{_k}"] = _v
+
     return _surface_result
 
 
@@ -12111,3 +12121,99 @@ def compute_multi_timeframe_consistency(rows: list[dict]) -> dict:
         consistency_grade = "D"
 
     return {"multi_timeframe_valid": True, "early_win_rate": early_win_rate, "late_win_rate": late_win_rate, "early_mean_score": early_mean_score, "late_mean_score": late_mean_score, "score_trend": score_trend, "win_rate_trend": win_rate_trend, "timeframe_consistency": timeframe_consistency, "consistency_grade": consistency_grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 66, Task 1 (Alpha): Volatility regime win-rate analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_volatility_regime_analysis(rows: list[dict]) -> dict:
+    """分析低波动率 vs 高波动率环境下的胜率差异。
+
+    以当期窗口 next_day_return 绝对值的中位数为分界线，将行分成低波动组和高波动组，
+    分别计算胜率，返回:
+      - ``edge``:  low_vol_win_rate - high_vol_win_rate  (正值 = 低波动更占优)
+      - ``low_vol_win_rate``: 低波动行的胜率
+      - ``high_vol_win_rate``: 高波动行的胜率
+      - ``low_vol_count``:  低波动行数
+      - ``high_vol_count``: 高波动行数
+      - ``valid``: bool
+    """
+    _null: dict = {"valid": False, "edge": None, "low_vol_win_rate": None, "high_vol_win_rate": None, "low_vol_count": None, "high_vol_count": None}
+    valid_rows = [r for r in rows if r.get("next_day_return") is not None]
+    if len(valid_rows) < 20:
+        return _null
+    abs_rets = [abs(float(r["next_day_return"])) for r in valid_rows]
+    sorted_abs = sorted(abs_rets)
+    n_total = len(sorted_abs)
+    median_abs = (sorted_abs[n_total // 2 - 1] + sorted_abs[n_total // 2]) / 2.0 if n_total % 2 == 0 else sorted_abs[n_total // 2]
+    low_wins: list[float] = []
+    high_wins: list[float] = []
+    for r in valid_rows:
+        ret = float(r["next_day_return"])
+        win = 1.0 if ret > 0 else 0.0
+        if abs(ret) <= median_abs:
+            low_wins.append(win)
+        else:
+            high_wins.append(win)
+    if len(low_wins) < 5 or len(high_wins) < 5:
+        return _null
+    low_vol_win_rate = round(sum(low_wins) / len(low_wins), 6)
+    high_vol_win_rate = round(sum(high_wins) / len(high_wins), 6)
+    edge = round(low_vol_win_rate - high_vol_win_rate, 6)
+    return {"valid": True, "edge": edge, "low_vol_win_rate": low_vol_win_rate, "high_vol_win_rate": high_vol_win_rate, "low_vol_count": len(low_wins), "high_vol_count": len(high_wins)}
+
+
+# ---------------------------------------------------------------------------
+# Round 66, Task 2 (Beta): Nonlinear factor interaction analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_nonlinear_factor_interaction(rows: list[dict]) -> dict:
+    """计算因子乘积项（非线性交互）与次日收益的 Pearson IC，衡量因子间非线性协同效应。
+
+    对 7 个核心因子的所有 C(7,2)=21 个两两组合计算乘积交互项，
+    再计算各交互项与 next_day_return 的 Pearson IC，返回:
+      - ``mean_interaction_effect``: 所有有效交互对绝对 IC 的均值
+      - ``top_interaction_pair``: 绝对 IC 最高的交互因子对名称
+      - ``interaction_count``: 有效交互对数量
+      - ``valid``: bool
+    """
+    FACTORS = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    _null: dict = {"valid": False, "mean_interaction_effect": None, "top_interaction_pair": None, "interaction_count": None}
+    if len(rows) < 15:
+        return _null
+    rets = [r.get("next_day_return") for r in rows]
+
+    def _pearson_ic(xs: list, ys: list) -> "float | None":
+        pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
+        if len(pairs) < 5:
+            return None
+        n = len(pairs)
+        xs2 = [p[0] for p in pairs]
+        ys2 = [p[1] for p in pairs]
+        mx = sum(xs2) / n
+        my = sum(ys2) / n
+        num = sum((xs2[i] - mx) * (ys2[i] - my) for i in range(n))
+        dx = sum((xs2[i] - mx) ** 2 for i in range(n))
+        dy = sum((ys2[i] - my) ** 2 for i in range(n))
+        denom = (dx * dy) ** 0.5
+        return num / denom if denom > 0 else None
+
+    ics: dict[str, float] = {}
+    for i in range(len(FACTORS)):
+        for j in range(i + 1, len(FACTORS)):
+            fa, fb = FACTORS[i], FACTORS[j]
+            xa = [r.get(fa) for r in rows]
+            xb = [r.get(fb) for r in rows]
+            interaction = [xa[k] * xb[k] if xa[k] is not None and xb[k] is not None else None for k in range(len(rows))]
+            ic = _pearson_ic(interaction, rets)
+            if ic is not None:
+                ics[f"{fa}_x_{fb}"] = ic
+    if not ics:
+        return _null
+    abs_ics = {k: abs(v) for k, v in ics.items()}
+    mean_interaction_effect = round(sum(abs_ics.values()) / len(abs_ics), 8)
+    top_interaction_pair = max(abs_ics, key=lambda k: abs_ics[k])
+    return {"valid": True, "mean_interaction_effect": mean_interaction_effect, "top_interaction_pair": top_interaction_pair, "interaction_count": len(ics)}

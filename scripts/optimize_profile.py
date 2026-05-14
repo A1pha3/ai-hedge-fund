@@ -442,6 +442,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "timeframe_consistency",
     # Task 3 (Round 65, Gamma): cross-window IC stability OLS trend slope.
     "ic_stability_trend_slope",
+    # Task 1 (Round 66, Alpha): volatility regime win-rate edge — low-vol win rate minus high-vol win rate.
+    "vol_regime_edge",
+    # Task 2 (Round 66, Beta): mean nonlinear factor interaction Pearson IC — mean |IC| across pairwise factor products.
+    "interact_mean_interaction_effect",
+    # Task 3 (Round 66, Gamma): cross-window total attribution OLS trend slope.
+    "attribution_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -772,6 +778,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "timeframe_consistency": "多时框一致性评分",
     # Task 3 (Round 65, Gamma): cross-window IC stability OLS trend slope
     "ic_stability_trend_slope": "因子有效稳定性跨窗趋势",
+    # Task 1 (Round 66, Alpha): volatility regime win-rate edge
+    "vol_regime_edge": "低波动环境胜率优势",
+    # Task 2 (Round 66, Beta): mean nonlinear factor interaction effect
+    "interact_mean_interaction_effect": "最强非线性交互效应",
+    # Task 3 (Round 66, Gamma): cross-window total attribution trend slope
+    "attribution_trend_slope": "因子归因力跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -846,6 +858,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "ic_stability",
     # Task 3 (Round 65, Gamma): IC stability trend slope — negative slope = validity becoming more stable = lower-is-better.
     "ic_stability_trend_slope",
+    # Task 3 (Round 66, Gamma): attribution trend slope — more-negative slope = declining attribution = lower-is-better.
+    "attribution_trend_slope",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -1168,6 +1182,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "timeframe_consistency",
     # Task 3 (Round 65, Gamma): IC stability trend slope — optional; pre-Round-65 outputs omit it.
     "ic_stability_trend_slope",
+    # Task 1 (Round 66, Alpha): volatility regime edge — optional; pre-Round-66 surfaces omit it.
+    "vol_regime_edge",
+    # Task 2 (Round 66, Beta): mean nonlinear interaction effect — optional; pre-Round-66 surfaces omit it.
+    "interact_mean_interaction_effect",
+    # Task 3 (Round 66, Gamma): attribution trend slope — optional; pre-Round-66 outputs omit it.
+    "attribution_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3468,6 +3488,50 @@ def compute_cross_window_validity_trend(all_windows_summaries: list[dict]) -> di
     return {"ic_stability_trend_valid": True, "ic_stability_trend_slope": slope, "ic_stability_trend_mean": mean_v, "ic_stability_trend_min": min_v, "ic_stability_trend_max": max_v, "ic_stability_below_cap_pct": ic_stability_below_cap_pct, "ic_stability_trend_grade": grade}
 
 
+# ---------------------------------------------------------------------------
+# Round 66, Task 3 (Gamma): Cross-window total attribution trend
+# ---------------------------------------------------------------------------
+
+def compute_cross_window_attribution_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track OLS trend of ``attr_total_attribution`` (sum of absolute factor ICs) across replay windows.
+
+    A positive slope indicates factor attribution explanatory power is growing over time.
+    A strongly negative slope indicates attribution is deteriorating — lower-is-better guardrail
+    triggers when slope < -0.02.
+    """
+    _null: dict = {"attribution_trend_valid": False, "attribution_trend_slope": None, "attribution_trend_mean": None, "attribution_trend_min": None, "attribution_trend_max": None, "attribution_above_floor_pct": None, "attribution_trend_grade": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("attr_total_attribution")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    min_v = min(vals)
+    max_v = max(vals)
+    attribution_above_floor_pct = round(sum(1 for v in vals if v >= 0.0) / n, 6)
+    if slope > 0.02:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.02:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"attribution_trend_valid": True, "attribution_trend_slope": round(slope, 8), "attribution_trend_mean": round(mean_v, 6), "attribution_trend_min": round(min_v, 6), "attribution_trend_max": round(max_v, 6), "attribution_above_floor_pct": attribution_above_floor_pct, "attribution_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4194,6 +4258,14 @@ def _build_replay_evaluator(
         # Task 2 (Round 65, Beta): average mtf_timeframe_consistency across replay windows.
         _mtfc_vals = [float(s["mtf_timeframe_consistency"]) for s in all_primary_surfaces if s.get("mtf_timeframe_consistency") is not None]
         avg_timeframe_consistency: "float | None" = round(sum(_mtfc_vals) / len(_mtfc_vals), 8) if _mtfc_vals else None
+        # Task 1 (Round 66, Alpha): average vol_regime_edge across replay windows.
+        _vre_vals = [float(s["vol_regime_edge"]) for s in all_primary_surfaces if s.get("vol_regime_edge") is not None]
+        avg_vol_regime_edge: "float | None" = round(sum(_vre_vals) / len(_vre_vals), 8) if _vre_vals else None
+        # Task 2 (Round 66, Beta): average interact_mean_interaction_effect across replay windows.
+        _imie_vals = [float(s["interact_mean_interaction_effect"]) for s in all_primary_surfaces if s.get("interact_mean_interaction_effect") is not None]
+        avg_interact_mean_interaction_effect: "float | None" = round(sum(_imie_vals) / len(_imie_vals), 8) if _imie_vals else None
+        # Task 3 (Round 66, Gamma): cross-window total attribution trend.
+        _cat: dict[str, Any] = compute_cross_window_attribution_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4615,6 +4687,18 @@ def _build_replay_evaluator(
                 "ic_stability_below_cap_pct": _cvt.get("ic_stability_below_cap_pct"),
                 "ic_stability_trend_grade": _cvt.get("ic_stability_trend_grade"),
                 "ic_stability_trend_valid": _cvt.get("ic_stability_trend_valid"),
+                # Task 1 (Round 66, Alpha): volatility regime edge averaged across windows.
+                "vol_regime_edge": avg_vol_regime_edge,
+                # Task 2 (Round 66, Beta): mean nonlinear interaction effect averaged across windows.
+                "interact_mean_interaction_effect": avg_interact_mean_interaction_effect,
+                # Task 3 (Round 66, Gamma): cross-window total attribution trend.
+                "attribution_trend_slope": _cat.get("attribution_trend_slope"),
+                "attribution_trend_mean": _cat.get("attribution_trend_mean"),
+                "attribution_trend_min": _cat.get("attribution_trend_min"),
+                "attribution_trend_max": _cat.get("attribution_trend_max"),
+                "attribution_above_floor_pct": _cat.get("attribution_above_floor_pct"),
+                "attribution_trend_grade": _cat.get("attribution_trend_grade"),
+                "attribution_trend_valid": _cat.get("attribution_trend_valid"),
         }
 
     return evaluator

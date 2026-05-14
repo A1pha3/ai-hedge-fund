@@ -125,6 +125,9 @@ _GUARDRAIL_KEYS = (
     # Task 3 (Round 65, Gamma): IC stability trend slope cap guardrail.
     # ic_stability_trend_slope > 0.01 means factor validity is deteriorating across windows.
     "ic_stability_trend_slope",
+    # Task 3 (Round 66, Gamma): cross-window attribution trend slope floor guardrail.
+    # attribution_trend_slope < -0.02 means factor attribution explanatory power is declining across windows.
+    "attribution_trend_slope",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -542,6 +545,9 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 2 (Round 65, Beta): multi-timeframe consistency score floor.
     # timeframe_consistency < 0.5 means score and win-rate trends are both deteriorating — signal degradation.
     "timeframe_consistency": 0.5,
+    # Task 3 (Round 66, Gamma): cross-window total attribution trend slope floor.
+    # attribution_trend_slope < -0.02 means factor attribution explanatory power is deteriorating significantly across windows.
+    "attribution_trend_slope": -0.02,
 }
 
 # ---------------------------------------------------------------------------

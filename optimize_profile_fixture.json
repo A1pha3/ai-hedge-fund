@@ -201,7 +201,16 @@
       "consistency_trend_slope_delta": null,
       "low_liquidity_pct_delta": null,
       "cost_adjusted_profit_factor_delta": null,
-      "resilience_trend_slope_delta": null
+      "resilience_trend_slope_delta": null,
+      "best_profit_factor_delta": null,
+      "best_combo_win_rate_delta": null,
+      "cost_pf_trend_slope_delta": null,
+      "combo_win_rate_trend_slope_delta": null,
+      "adaptive_weight_effective_factor_count_delta": null,
+      "ic_stability_delta": null,
+      "total_attribution_delta": null,
+      "timeframe_consistency_delta": null,
+      "ic_stability_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -393,7 +402,16 @@
       "consistency_trend_slope_delta": null,
       "low_liquidity_pct_delta": null,
       "cost_adjusted_profit_factor_delta": null,
-      "resilience_trend_slope_delta": null
+      "resilience_trend_slope_delta": null,
+      "best_profit_factor_delta": null,
+      "best_combo_win_rate_delta": null,
+      "cost_pf_trend_slope_delta": null,
+      "combo_win_rate_trend_slope_delta": null,
+      "adaptive_weight_effective_factor_count_delta": null,
+      "ic_stability_delta": null,
+      "total_attribution_delta": null,
+      "timeframe_consistency_delta": null,
+      "ic_stability_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",
