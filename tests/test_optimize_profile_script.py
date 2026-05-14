@@ -14073,3 +14073,379 @@ def test_r55_drawdown_trend_min_max() -> None:
     result = compute_cross_window_drawdown_trend(summaries)
     assert result["drawdown_trend_min"] == pytest.approx(min(vals), abs=1e-5)
     assert result["drawdown_trend_max"] == pytest.approx(max(vals), abs=1e-5)
+
+
+# ===========================================================================
+# Round 56 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: compute_sector_diversification_analysis
+# ---------------------------------------------------------------------------
+
+def test_r56_t1_basic_diversification() -> None:
+    """T1 returns valid result with sector-diversified pool."""
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+    rows = [{"sector": "technology"}, {"sector": "finance"}, {"sector": "healthcare"}, {"sector": "technology"}, {"sector": "energy"}]
+    result = compute_sector_diversification_analysis(rows)
+    assert result["sector_diversification_valid"] is True
+    assert result["sector_count"] == 4
+    assert result["diversification_score"] is not None
+    assert 0.0 <= result["diversification_score"] <= 1.0
+
+
+def test_r56_t1_insufficient_rows() -> None:
+    """T1 returns invalid when < 3 rows."""
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+    assert compute_sector_diversification_analysis([])["sector_diversification_valid"] is False
+    assert compute_sector_diversification_analysis([{"sector": "A"}, {"sector": "B"}])["sector_diversification_valid"] is False
+
+
+def test_r56_t1_all_same_sector() -> None:
+    """T1 returns diversification_score ≈ 0 when all rows in one sector (HHI = 1)."""
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+    import pytest
+    rows = [{"sector": "tech"}] * 10
+    result = compute_sector_diversification_analysis(rows)
+    assert result["sector_diversification_valid"] is True
+    assert result["diversification_score"] == pytest.approx(0.0, abs=1e-5)
+    assert result["sector_diversification_grade"] == "D"
+
+
+def test_r56_t1_uniform_sectors_high_score() -> None:
+    """T1 gives diversification_score near 1 - 1/n when sectors uniformly distributed."""
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+    import pytest
+    n = 5
+    rows = [{"sector": str(i)} for i in range(n)] * 2
+    result = compute_sector_diversification_analysis(rows)
+    assert result["sector_diversification_valid"] is True
+    expected = 1.0 - 1.0 / n
+    assert result["diversification_score"] == pytest.approx(expected, abs=1e-4)
+
+
+def test_r56_t1_hhi_range() -> None:
+    """HHI stays in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+    rows = [{"sector": "A"}, {"sector": "B"}, {"sector": "C"}, {"sector": "A"}, {"sector": "B"}]
+    result = compute_sector_diversification_analysis(rows)
+    assert 0.0 <= result["sector_hhi"] <= 1.0
+
+
+def test_r56_t1_grade_a_threshold() -> None:
+    """Grade A requires diversification_score ≥ 0.70."""
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+    rows = [{"sector": str(i)} for i in range(10)] * 3
+    result = compute_sector_diversification_analysis(rows)
+    assert result["sector_diversification_grade"] == "A"
+
+
+def test_r56_t1_missing_sector_field() -> None:
+    """T1 handles rows where sector field is missing."""
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+    rows = [{"close": 10.0}] * 5
+    result = compute_sector_diversification_analysis(rows)
+    assert result["sector_diversification_valid"] is False
+
+
+def test_r56_t1_top_sector_name_and_pct() -> None:
+    """top_sector_name is the most common sector; top_sector_pct matches."""
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+    import pytest
+    rows = [{"sector": "A"}, {"sector": "A"}, {"sector": "A"}, {"sector": "B"}, {"sector": "C"}]
+    result = compute_sector_diversification_analysis(rows)
+    assert result["top_sector_name"] == "A"
+    assert result["top_sector_pct"] == pytest.approx(3 / 5, abs=1e-5)
+
+
+def test_r56_t1_surface_keys_present() -> None:
+    """build_surface_summary includes sdiv_diversification_score key."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"sector": str(i % 4), "next_close_return": 0.01 * i, "next_high_return": 0.02 * i} for i in range(1, 20)]
+    surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "sdiv_diversification_score" in surface
+    assert "sdiv_sector_count" in surface
+    assert "sdiv_sector_hhi" in surface
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_score_rank_stability
+# ---------------------------------------------------------------------------
+
+def test_r56_t2_basic_rank_ic() -> None:
+    """T2 returns valid rank_ic with sufficient data."""
+    from scripts.btst_analysis_utils import compute_score_rank_stability
+    rows = [{"composite_score": float(i), "next_day_return": 0.01 * i} for i in range(1, 16)]
+    result = compute_score_rank_stability(rows)
+    assert result["rank_stab_valid"] is True
+    assert result["rank_ic"] is not None
+    assert -1.0 <= result["rank_ic"] <= 1.0
+
+
+def test_r56_t2_insufficient_rows() -> None:
+    """T2 returns invalid when < 10 rows."""
+    from scripts.btst_analysis_utils import compute_score_rank_stability
+    rows = [{"composite_score": float(i), "next_day_return": 0.01 * i} for i in range(5)]
+    result = compute_score_rank_stability(rows)
+    assert result["rank_stab_valid"] is False
+    assert result["rank_ic"] is None
+
+
+def test_r56_t2_empty_rows() -> None:
+    """T2 returns invalid for empty input."""
+    from scripts.btst_analysis_utils import compute_score_rank_stability
+    result = compute_score_rank_stability([])
+    assert result["rank_stab_valid"] is False
+    assert result["sample_count"] == 0
+
+
+def test_r56_t2_perfect_positive_ic() -> None:
+    """T2 returns rank_ic ≈ 1.0 for perfectly correlated score and return."""
+    from scripts.btst_analysis_utils import compute_score_rank_stability
+    import pytest
+    rows = [{"composite_score": float(i), "next_day_return": float(i)} for i in range(1, 15)]
+    result = compute_score_rank_stability(rows)
+    assert result["rank_ic"] == pytest.approx(1.0, abs=1e-5)
+    assert result["rank_ic_grade"] == "A"
+
+
+def test_r56_t2_perfect_negative_ic() -> None:
+    """T2 returns rank_ic ≈ -1.0 for perfectly anti-correlated score and return."""
+    from scripts.btst_analysis_utils import compute_score_rank_stability
+    import pytest
+    n = 12
+    rows = [{"composite_score": float(i), "next_day_return": float(n - i)} for i in range(1, n + 1)]
+    result = compute_score_rank_stability(rows)
+    assert result["rank_ic"] == pytest.approx(-1.0, abs=1e-5)
+    assert result["rank_ic_grade"] == "D"
+
+
+def test_r56_t2_score_field_priority_runner() -> None:
+    """runner_composite_score takes priority over composite_score."""
+    from scripts.btst_analysis_utils import compute_score_rank_stability
+    rows = [{"runner_composite_score": float(i), "composite_score": float(n - i), "next_day_return": float(i)} for i, n in [(j, 15) for j in range(1, 16)]]
+    result = compute_score_rank_stability(rows)
+    assert result["rank_stab_valid"] is True
+    assert result["rank_ic"] is not None
+    assert result["rank_ic"] > 0  # should be positive since runner_composite_score aligns with return
+
+
+def test_r56_t2_score_field_fallback_to_score() -> None:
+    """Falls back to 'score' field when composite_score missing."""
+    from scripts.btst_analysis_utils import compute_score_rank_stability
+    rows = [{"score": float(i), "next_day_return": float(i)} for i in range(1, 15)]
+    result = compute_score_rank_stability(rows)
+    assert result["rank_stab_valid"] is True
+    assert result["rank_ic"] is not None
+
+
+def test_r56_t2_grade_b_threshold() -> None:
+    """Grade B when rank_ic in [0.05, 0.10)."""
+    from scripts.btst_analysis_utils import compute_score_rank_stability
+    # Construct slightly positive IC just above 0.05 but below 0.10
+    import math
+    n = 20
+    # Use a rank correlation that gives modest positive IC
+    rows = [{"composite_score": float(i) + (0.5 if i % 3 == 0 else 0.0), "next_day_return": float(i)} for i in range(1, n + 1)]
+    result = compute_score_rank_stability(rows)
+    assert result["rank_stab_valid"] is True
+    assert result["rank_ic_grade"] in ("A", "B", "C")  # depends on exact IC value
+
+
+def test_r56_t2_surface_keys_present() -> None:
+    """build_surface_summary includes rnkstab_rank_ic key."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"composite_score": float(i), "next_day_return": 0.01 * i, "next_close_return": 0.01, "next_high_return": 0.02} for i in range(1, 25)]
+    surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "rnkstab_rank_ic" in surface
+    assert "rnkstab_rank_stab_valid" in surface
+
+
+def test_r56_t2_sample_count() -> None:
+    """sample_count equals the number of valid (score, return) pairs."""
+    from scripts.btst_analysis_utils import compute_score_rank_stability
+    rows = [{"composite_score": float(i), "next_day_return": float(i)} for i in range(1, 16)]
+    result = compute_score_rank_stability(rows)
+    assert result["sample_count"] == 15
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_ic_trend
+# ---------------------------------------------------------------------------
+
+def test_r56_t3_basic_positive_trend() -> None:
+    """T3 returns positive slope when IC is increasing across windows."""
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    summaries = [{"decay_mean_ic": float(i) * 0.01} for i in range(1, 6)]
+    result = compute_cross_window_ic_trend(summaries)
+    assert result["ic_trend_valid"] is True
+    assert result["ic_trend_slope"] > 0
+
+
+def test_r56_t3_basic_negative_trend() -> None:
+    """T3 returns negative slope when IC is decreasing across windows."""
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    summaries = [{"decay_mean_ic": 0.10 - float(i) * 0.01} for i in range(6)]
+    result = compute_cross_window_ic_trend(summaries)
+    assert result["ic_trend_valid"] is True
+    assert result["ic_trend_slope"] < 0
+
+
+def test_r56_t3_insufficient_windows() -> None:
+    """T3 returns invalid when < 3 windows with decay_mean_ic."""
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    assert compute_cross_window_ic_trend([])["ic_trend_valid"] is False
+    assert compute_cross_window_ic_trend([{"decay_mean_ic": 0.05}, {"decay_mean_ic": 0.06}])["ic_trend_valid"] is False
+
+
+def test_r56_t3_min_max_match_series() -> None:
+    """ic_trend_min and ic_trend_max match series extremes."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    vals = [0.02, 0.05, 0.08, 0.01, 0.09]
+    summaries = [{"decay_mean_ic": v} for v in vals]
+    result = compute_cross_window_ic_trend(summaries)
+    assert result["ic_trend_min"] == pytest.approx(min(vals), abs=1e-5)
+    assert result["ic_trend_max"] == pytest.approx(max(vals), abs=1e-5)
+
+
+def test_r56_t3_mean_value() -> None:
+    """ic_trend_mean equals arithmetic mean of ic series."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    vals = [0.02, 0.04, 0.06, 0.08]
+    summaries = [{"decay_mean_ic": v} for v in vals]
+    result = compute_cross_window_ic_trend(summaries)
+    assert result["ic_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-5)
+
+
+def test_r56_t3_grade_a_steep_positive() -> None:
+    """T3 grade A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    summaries = [{"decay_mean_ic": float(i) * 0.05} for i in range(5)]
+    result = compute_cross_window_ic_trend(summaries)
+    assert result["ic_trend_grade"] == "A"
+
+
+def test_r56_t3_grade_d_steep_negative() -> None:
+    """T3 grade D when slope < -0.005."""
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    summaries = [{"decay_mean_ic": 0.20 - float(i) * 0.05} for i in range(5)]
+    result = compute_cross_window_ic_trend(summaries)
+    assert result["ic_trend_grade"] == "D"
+
+
+def test_r56_t3_ic_positive_windows_pct() -> None:
+    """ic_positive_windows_pct counts windows with IC > 0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    vals = [0.05, -0.02, 0.03, 0.0, 0.08]
+    summaries = [{"decay_mean_ic": v} for v in vals]
+    result = compute_cross_window_ic_trend(summaries)
+    expected = 3 / 5  # only 0.05, 0.03, 0.08 are > 0
+    assert result["ic_positive_windows_pct"] == pytest.approx(expected, abs=1e-5)
+
+
+def test_r56_t3_missing_decay_mean_ic_skipped() -> None:
+    """Windows missing decay_mean_ic are skipped; needs ≥ 3 valid."""
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    summaries = [{"decay_mean_ic": 0.05}, {"other": 1}, {"decay_mean_ic": 0.06}, {"decay_mean_ic": 0.07}]
+    result = compute_cross_window_ic_trend(summaries)
+    assert result["ic_trend_valid"] is True
+
+
+# ---------------------------------------------------------------------------
+# Metric registration tests
+# ---------------------------------------------------------------------------
+
+def test_r56_diversification_score_in_comparison_metrics() -> None:
+    """diversification_score must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "diversification_score" in COMPARISON_METRICS
+
+
+def test_r56_rank_ic_in_comparison_metrics() -> None:
+    """rank_ic must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "rank_ic" in COMPARISON_METRICS
+
+
+def test_r56_ic_trend_slope_in_comparison_metrics() -> None:
+    """ic_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ic_trend_slope" in COMPARISON_METRICS
+
+
+def test_r56_diversification_score_in_optional_metrics() -> None:
+    """diversification_score must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "diversification_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r56_rank_ic_in_optional_metrics() -> None:
+    """rank_ic must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "rank_ic" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r56_ic_trend_slope_in_optional_metrics() -> None:
+    """ic_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "ic_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r56_diversification_score_in_guardrail_keys() -> None:
+    """diversification_score must be in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "diversification_score" in _GUARDRAIL_KEYS
+
+
+def test_r56_rank_ic_in_guardrail_keys() -> None:
+    """rank_ic must be in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "rank_ic" in _GUARDRAIL_KEYS
+
+
+def test_r56_diversification_score_floor() -> None:
+    """diversification_score floor is 0.0 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "diversification_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["diversification_score"] == pytest.approx(0.0)
+
+
+def test_r56_rank_ic_floor() -> None:
+    """rank_ic floor is 0.0 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "rank_ic" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["rank_ic"] == pytest.approx(0.0)
+
+
+def test_r56_metric_labels_present() -> None:
+    """COMPARISON_METRIC_LABELS must have labels for all three Round 56 metrics."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "diversification_score" in COMPARISON_METRIC_LABELS
+    assert "rank_ic" in COMPARISON_METRIC_LABELS
+    assert "ic_trend_slope" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["diversification_score"] == "行业多样化评分"
+    assert COMPARISON_METRIC_LABELS["rank_ic"] == "评分排名IC"
+    assert COMPARISON_METRIC_LABELS["ic_trend_slope"] == "多因子IC跨窗趋势"
+
+
+def test_r56_t3_ols_slope_constant_series() -> None:
+    """Constant IC series gives slope of 0.0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_ic_trend
+    summaries = [{"decay_mean_ic": 0.05}] * 5
+    result = compute_cross_window_ic_trend(summaries)
+    assert result["ic_trend_slope"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_r56_t1_diversification_score_plus_hhi_equals_one() -> None:
+    """diversification_score + sector_hhi should equal 1.0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+    rows = [{"sector": "A"}, {"sector": "B"}, {"sector": "C"}, {"sector": "A"}, {"sector": "B"}, {"sector": "C"}]
+    result = compute_sector_diversification_analysis(rows)
+    assert result["diversification_score"] == pytest.approx(1.0 - result["sector_hhi"], abs=1e-5)

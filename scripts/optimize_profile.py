@@ -382,6 +382,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "time_seg_session_win_rate_spread",
     # Task 3 (Round 55, Gamma): cross-window max-drawdown OLS trend slope.
     "drawdown_trend_slope",
+    # Task 1 (Round 56, Alpha): sector diversification score — 1 − HHI; higher = more diverse pool.
+    "diversification_score",
+    # Task 2 (Round 56, Beta): score rank IC — Spearman IC between composite score and T+1 return.
+    "rank_ic",
+    # Task 3 (Round 56, Gamma): cross-window mean-IC OLS trend slope.
+    "ic_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -652,6 +658,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "time_seg_session_win_rate_spread": "最佳时段胜率差异",
     # Task 3 (Round 55, Gamma): cross-window max-drawdown OLS trend slope
     "drawdown_trend_slope": "最大回撤跨窗趋势",
+    # Task 1 (Round 56, Alpha): sector diversification score — 1 − HHI
+    "diversification_score": "行业多样化评分",
+    # Task 2 (Round 56, Beta): score rank IC — Spearman IC of composite score vs T+1 return
+    "rank_ic": "评分排名IC",
+    # Task 3 (Round 56, Gamma): cross-window mean-IC OLS trend slope
+    "ic_trend_slope": "多因子IC跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -980,6 +992,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "time_seg_session_win_rate_spread",
     # Task 3 (Round 55, Gamma): cross-window drawdown trend slope — optional; pre-Round-55 outputs omit it.
     "drawdown_trend_slope",
+    # Task 1 (Round 56, Alpha): sector diversification score — optional; pre-Round-56 outputs omit it.
+    "diversification_score",
+    # Task 2 (Round 56, Beta): score rank IC — optional; pre-Round-56 outputs omit it.
+    "rank_ic",
+    # Task 3 (Round 56, Gamma): cross-window mean-IC trend slope — optional; pre-Round-56 outputs omit it.
+    "ic_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2799,6 +2817,60 @@ def compute_cross_window_drawdown_trend(all_windows_summaries: list[dict]) -> di
 
 
 # ---------------------------------------------------------------------------
+# Round 56, Task 3 (Gamma): Cross-window mean-IC OLS trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_ic_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track OLS trend of ``decay_mean_ic`` across replay windows.
+
+    A positive slope means the factor set's average Information Coefficient is improving over time;
+    a negative slope signals factor predictive-power decay.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (ordered chronologically).
+            Each dict should carry a ``decay_mean_ic`` value produced by ``compute_factor_decay_analysis``
+            via ``build_surface_summary``.
+
+    Returns:
+        Dict with keys: ``ic_trend_slope``, ``ic_trend_mean``, ``ic_trend_min``,
+        ``ic_trend_max``, ``ic_positive_windows_pct``, ``ic_trend_grade``, ``ic_trend_valid``.
+    """
+    _null: dict = {"ic_trend_slope": None, "ic_trend_mean": None, "ic_trend_min": None, "ic_trend_max": None, "ic_positive_windows_pct": None, "ic_trend_grade": None, "ic_trend_valid": False}
+    if not all_windows_summaries:
+        return _null
+    ic_series: list[float] = []
+    for surf in all_windows_summaries:
+        v = surf.get("decay_mean_ic")
+        if v is not None:
+            try:
+                ic_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(ic_series) < 3:
+        return _null
+    n = len(ic_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(ic_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, ic_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+    mean_val = sum_y / n
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.005:
+        grade = "C"
+    else:
+        grade = "D"
+    ic_positive_windows_pct = round(sum(1 for v in ic_series if v > 0) / n, 6)
+    return {"ic_trend_slope": round(slope, 8), "ic_trend_mean": round(mean_val, 6), "ic_trend_min": round(min(ic_series), 6), "ic_trend_max": round(max(ic_series), 6), "ic_positive_windows_pct": ic_positive_windows_pct, "ic_trend_grade": grade, "ic_trend_valid": True}
+
+
+# ---------------------------------------------------------------------------
 
 
 def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
@@ -3535,6 +3607,20 @@ def _build_replay_evaluator(
         _clt: dict[str, Any] = compute_cross_window_conditional_trend(all_primary_surfaces)
         # Task 3 (Round 55, Gamma): cross-window max-drawdown trend.
         _ddt: dict[str, Any] = compute_cross_window_drawdown_trend(all_primary_surfaces)
+        # Task 1 (Round 55, Alpha): average decay_mean_ic across replay windows.
+        _dmi_vals = [float(s["decay_mean_ic"]) for s in all_primary_surfaces if s.get("decay_mean_ic") is not None]
+        avg_decay_mean_ic: "float | None" = round(sum(_dmi_vals) / len(_dmi_vals), 8) if _dmi_vals else None
+        # Task 2 (Round 55, Beta): average time_seg_session_win_rate_spread across replay windows.
+        _tsws_vals = [float(s["time_seg_session_win_rate_spread"]) for s in all_primary_surfaces if s.get("time_seg_session_win_rate_spread") is not None]
+        avg_time_seg_session_win_rate_spread: "float | None" = round(sum(_tsws_vals) / len(_tsws_vals), 6) if _tsws_vals else None
+        # Task 1 (Round 56, Alpha): average sdiv_diversification_score across replay windows.
+        _ds_vals = [float(s["sdiv_diversification_score"]) for s in all_primary_surfaces if s.get("sdiv_diversification_score") is not None]
+        avg_diversification_score: "float | None" = round(sum(_ds_vals) / len(_ds_vals), 6) if _ds_vals else None
+        # Task 2 (Round 56, Beta): average rnkstab_rank_ic across replay windows.
+        _ri_vals = [float(s["rnkstab_rank_ic"]) for s in all_primary_surfaces if s.get("rnkstab_rank_ic") is not None]
+        avg_rank_ic: "float | None" = round(sum(_ri_vals) / len(_ri_vals), 8) if _ri_vals else None
+        # Task 3 (Round 56, Gamma): cross-window mean-IC trend.
+        _ict: dict[str, Any] = compute_cross_window_ic_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -3843,6 +3929,23 @@ def _build_replay_evaluator(
             "drawdown_improving_windows_pct": _ddt.get("drawdown_improving_windows_pct"),
             "drawdown_trend_grade": _ddt.get("drawdown_trend_grade"),
             "drawdown_trend_valid": _ddt.get("drawdown_trend_valid"),
+            # Task 1 (Round 55, Alpha): multi-factor mean IC averaged across windows.
+            "decay_mean_ic": avg_decay_mean_ic,
+            "mean_ic": avg_decay_mean_ic,
+            # Task 2 (Round 55, Beta): intraday session win-rate spread averaged across windows.
+            "time_seg_session_win_rate_spread": avg_time_seg_session_win_rate_spread,
+            # Task 1 (Round 56, Alpha): sector diversification score averaged across windows.
+            "diversification_score": avg_diversification_score,
+            # Task 2 (Round 56, Beta): score rank IC averaged across windows.
+            "rank_ic": avg_rank_ic,
+            # Task 3 (Round 56, Gamma): cross-window mean-IC trend.
+            "ic_trend_slope": _ict.get("ic_trend_slope"),
+            "ic_trend_mean": _ict.get("ic_trend_mean"),
+            "ic_trend_min": _ict.get("ic_trend_min"),
+            "ic_trend_max": _ict.get("ic_trend_max"),
+            "ic_positive_windows_pct": _ict.get("ic_positive_windows_pct"),
+            "ic_trend_grade": _ict.get("ic_trend_grade"),
+            "ic_trend_valid": _ict.get("ic_trend_valid"),
         }
 
     return evaluator

@@ -67,6 +67,14 @@ _GUARDRAIL_KEYS = (
     # mean_ic = signed average Spearman IC across 7 core BTST factors vs next_day_return.
     # Floor ≥ 0.0 requires the factor set to have net positive predictive power.
     "mean_ic",
+    # Task 1 (Round 56, Alpha): sector diversification score floor guardrail.
+    # diversification_score = 1 − HHI; lower means candidate pool is sector-concentrated.
+    # Floor ≥ 0.0 keeps the metric present; tighten once baseline distributions are known.
+    "diversification_score",
+    # Task 2 (Round 56, Beta): score rank IC floor guardrail.
+    # rank_ic = Spearman IC between composite score and T+1 return.
+    # Floor ≥ 0.0 requires the scoring system to have net positive predictive validity.
+    "rank_ic",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -415,6 +423,14 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # mean_ic = signed average Spearman IC across 7 core BTST factors vs next_day_return.
     # Floor ≥ 0.0 requires that the factor set has net positive predictive power on average.
     "mean_ic": 0.0,
+    # Task 1 (Round 56, Alpha): sector diversification score floor.
+    # diversification_score = 1 − HHI; positive = at least some cross-sector spread.
+    # Floor ≥ 0.0 keeps the metric present; tighten to 0.30 once baselines are established.
+    "diversification_score": 0.0,
+    # Task 2 (Round 56, Beta): score rank IC floor.
+    # rank_ic = Spearman IC between composite score and T+1 return.
+    # Floor ≥ 0.0 requires the scoring system to have net positive predictive validity.
+    "rank_ic": 0.0,
 }
 
 # ---------------------------------------------------------------------------

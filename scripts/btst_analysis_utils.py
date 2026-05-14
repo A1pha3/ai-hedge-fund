@@ -4415,6 +4415,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _its.items():
         _surface_result[f"time_seg_{_k}"] = _v
 
+    # Round 56, Task 1 (Alpha): Sector diversification analysis.
+    _sda: dict[str, Any] = compute_sector_diversification_analysis(rows)
+    for _k, _v in _sda.items():
+        _surface_result[f"sdiv_{_k}"] = _v
+
+    # Round 56, Task 2 (Beta): Score rank stability (Spearman IC).
+    _srs: dict[str, Any] = compute_score_rank_stability(rows)
+    for _k, _v in _srs.items():
+        _surface_result[f"rnkstab_{_k}"] = _v
+
     return _surface_result
 
 
@@ -10696,6 +10706,164 @@ def compute_factor_decay_analysis(rows: list[dict]) -> dict:
     ic_spread: float = round(max(abs(v) for _, v in valid_ics) - min(abs(v) for _, v in valid_ics), 8)
     positive_ic_count: int = sum(1 for _, v in valid_ics if v > 0)
     return {"factor_ic_scores": factor_ic_scores, "mean_ic": mean_ic, "max_ic_factor": max_ic_factor, "min_ic_factor": min_ic_factor, "ic_spread": ic_spread, "positive_ic_count": positive_ic_count, "factor_decay_valid": True}
+
+
+# ---------------------------------------------------------------------------
+# Round 56, Task 1 (Alpha): Sector diversification analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_sector_diversification_analysis(rows: list[dict]) -> dict:
+    """Compute sector HHI-based diversification score for the candidate pool.
+
+    Args:
+        rows: Per-candidate dicts. Requires ≥ 3 rows with a ``sector`` field.
+
+    Returns:
+        Dict with keys:
+
+        - ``sector_diversification_valid``: bool — True when ≥ 3 valid sector entries.
+        - ``sector_count``: int | None — number of distinct sectors in the pool.
+        - ``sector_hhi``: float | None — Herfindahl-Hirschman Index (0–1); higher = more concentrated.
+        - ``top_sector_pct``: float | None — fraction of pool from the dominant sector (0–1).
+        - ``top_sector_name``: str | None — name of the dominant sector.
+        - ``diversification_score``: float | None — 1 − HHI, clamped [0, 1]; higher = more diverse.
+        - ``sector_diversification_grade``: str | None — 'A'/'B'/'C'/'D' based on diversification_score.
+    """
+    _null: dict = {"sector_diversification_valid": False, "sector_count": None, "sector_hhi": None, "top_sector_pct": None, "top_sector_name": None, "diversification_score": None, "sector_diversification_grade": None}
+    if not rows or len(rows) < 3:
+        return _null
+
+    sector_counts: dict[str, int] = {}
+    for row in rows:
+        sec = row.get("sector")
+        if sec is None:
+            continue
+        try:
+            sec_str = str(sec).strip()
+        except Exception:
+            continue
+        if sec_str:
+            sector_counts[sec_str] = sector_counts.get(sec_str, 0) + 1
+
+    total = sum(sector_counts.values())
+    if total < 3:
+        return _null
+
+    fractions = [c / total for c in sector_counts.values()]
+    hhi: float = round(sum(f * f for f in fractions), 8)
+    top_sector_name: str = max(sector_counts, key=lambda k: sector_counts[k])
+    top_sector_pct: float = round(sector_counts[top_sector_name] / total, 6)
+    diversification_score: float = round(max(0.0, min(1.0, 1.0 - hhi)), 6)
+
+    if diversification_score >= 0.70:
+        grade = "A"
+    elif diversification_score >= 0.50:
+        grade = "B"
+    elif diversification_score >= 0.30:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {"sector_diversification_valid": True, "sector_count": len(sector_counts), "sector_hhi": hhi, "top_sector_pct": top_sector_pct, "top_sector_name": top_sector_name, "diversification_score": diversification_score, "sector_diversification_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 56, Task 2 (Beta): Score rank stability (IC)
+# ---------------------------------------------------------------------------
+
+
+def compute_score_rank_stability(rows: list[dict]) -> dict:
+    """Compute Spearman IC between composite score and next-day return to assess scoring validity.
+
+    Score field priority: ``runner_composite_score`` > ``composite_score`` > ``score``.
+
+    Args:
+        rows: Per-candidate dicts. Requires ≥ 10 valid (score, next_day_return) pairs.
+
+    Returns:
+        Dict with keys:
+
+        - ``rank_stab_valid``: bool — True when ≥ 10 valid pairs found.
+        - ``rank_ic``: float | None — Spearman IC between composite score and T+1 return (−1 to 1).
+        - ``rank_ic_grade``: str | None — 'A' (≥ 0.10) / 'B' (≥ 0.05) / 'C' (≥ 0.0) / 'D' (< 0.0).
+        - ``sample_count``: int — number of valid (score, return) pairs used.
+    """
+    _null: dict = {"rank_stab_valid": False, "rank_ic": None, "rank_ic_grade": None, "sample_count": 0}
+
+    def _get_score(row: dict) -> float | None:
+        for key in ("runner_composite_score", "composite_score", "score"):
+            v = row.get(key)
+            if v is not None:
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    def _spearman_ic(xs: list[float], ys: list[float]) -> float | None:
+        n = len(xs)
+        if n < 5:
+            return None
+
+        def _rank(vals: list[float]) -> list[float]:
+            sorted_idx = sorted(range(n), key=lambda i: vals[i])
+            ranks = [0.0] * n
+            i = 0
+            while i < n:
+                j = i
+                while j < n - 1 and vals[sorted_idx[j + 1]] == vals[sorted_idx[j]]:
+                    j += 1
+                avg_r = (i + j) / 2.0
+                for k in range(i, j + 1):
+                    ranks[sorted_idx[k]] = avg_r
+                i = j + 1
+            return ranks
+
+        rx = _rank(xs)
+        ry = _rank(ys)
+        mean_rx = sum(rx) / n
+        mean_ry = sum(ry) / n
+        num = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(n))
+        denom_sq = sum((rx[i] - mean_rx) ** 2 for i in range(n)) * sum((ry[i] - mean_ry) ** 2 for i in range(n))
+        if denom_sq <= 0:
+            return None
+        return num / (denom_sq ** 0.5)
+
+    if not rows or len(rows) < 10:
+        return _null
+
+    pairs: list[tuple[float, float]] = []
+    for row in rows:
+        sc = _get_score(row)
+        rv = row.get("next_day_return")
+        if sc is None or rv is None:
+            continue
+        try:
+            pairs.append((sc, float(rv)))
+        except (TypeError, ValueError):
+            pass
+
+    if len(pairs) < 10:
+        return {"rank_stab_valid": False, "rank_ic": None, "rank_ic_grade": None, "sample_count": len(pairs)}
+
+    xs = [p[0] for p in pairs]
+    ys = [p[1] for p in pairs]
+    ic = _spearman_ic(xs, ys)
+    if ic is None:
+        return {"rank_stab_valid": True, "rank_ic": None, "rank_ic_grade": None, "sample_count": len(pairs)}
+
+    ic_r = round(ic, 8)
+    if ic_r >= 0.10:
+        grade = "A"
+    elif ic_r >= 0.05:
+        grade = "B"
+    elif ic_r >= 0.0:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {"rank_stab_valid": True, "rank_ic": ic_r, "rank_ic_grade": grade, "sample_count": len(pairs)}
 
 
 # ---------------------------------------------------------------------------
