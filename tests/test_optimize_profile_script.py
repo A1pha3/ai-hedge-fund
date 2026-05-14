@@ -19529,3 +19529,416 @@ def test_r69_all_six_new_metrics_have_labels() -> None:
     for key in ("rs_rank_spread", "turnover_filter_effect", "concentration_hhi_slope"):
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Round 70 tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_r70_cs_rows(n: int, *, with_field: bool = True, cs_range: tuple = (0.0, 1.0)) -> list[dict]:
+    import random
+    rng = random.Random(7)
+    rows = []
+    lo, hi = cs_range
+    for i in range(n):
+        r: dict = {"next_day_return": rng.uniform(-0.05, 0.10)}
+        if with_field:
+            r["close_strength"] = lo + (hi - lo) * (i / max(n - 1, 1))
+        rows.append(r)
+    return rows
+
+
+def _make_r70_streak_rows(outcomes: list[bool]) -> list[dict]:
+    return [{"next_day_return": 0.01 if o else -0.01} for o in outcomes]
+
+
+# ── T1: compute_price_position_analysis ──────────────────────────────────────
+
+def test_r70_t1_valid_basic() -> None:
+    """Returns valid=True with ≥8 rows having close_strength."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = _make_r70_cs_rows(24)
+    result = compute_price_position_analysis(rows)
+    assert result["price_position_valid"] is True
+    assert result["cs_win_rate_spread"] is not None
+
+
+def test_r70_t1_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 8 rows."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = _make_r70_cs_rows(7)
+    result = compute_price_position_analysis(rows)
+    assert result["price_position_valid"] is False
+    assert result["cs_win_rate_spread"] is None
+
+
+def test_r70_t1_invalid_missing_close_strength() -> None:
+    """Returns valid=False when close_strength field is absent."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = _make_r70_cs_rows(20, with_field=False)
+    result = compute_price_position_analysis(rows)
+    assert result["price_position_valid"] is False
+
+
+def test_r70_t1_invalid_all_none_cs() -> None:
+    """Returns valid=False when all close_strength values are None."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = [{"close_strength": None, "next_day_return": 0.01} for _ in range(20)]
+    result = compute_price_position_analysis(rows)
+    assert result["price_position_valid"] is False
+
+
+def test_r70_t1_sorted_thirds_split() -> None:
+    """High third wins all, low third loses all → spread = 1.0."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = []
+    for i in range(12):
+        ret = 0.05 if i >= 8 else -0.05  # top third (indices 8-11) wins
+        rows.append({"close_strength": float(i), "next_day_return": ret})
+    result = compute_price_position_analysis(rows)
+    assert result["price_position_valid"] is True
+    assert result["high_cs_win_rate"] == pytest.approx(1.0, abs=1e-5)
+    assert result["low_cs_win_rate"] == pytest.approx(0.0, abs=1e-5)
+    assert result["cs_win_rate_spread"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_r70_t1_cs_win_rate_spread_precision() -> None:
+    """cs_win_rate_spread is rounded to 6 decimal places."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = _make_r70_cs_rows(30)
+    result = compute_price_position_analysis(rows)
+    if result["cs_win_rate_spread"] is not None:
+        assert abs(result["cs_win_rate_spread"] - round(result["cs_win_rate_spread"], 6)) < 1e-9
+
+
+def test_r70_t1_cs_premium_positive_when_high_wins() -> None:
+    """cs_premium > 0 when high close_strength group has higher average return."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = []
+    for i in range(12):
+        ret = 0.10 if i >= 8 else -0.05
+        rows.append({"close_strength": float(i), "next_day_return": ret})
+    result = compute_price_position_analysis(rows)
+    assert result["cs_premium"] is not None
+    assert result["cs_premium"] > 0
+
+
+def test_r70_t1_grade_A() -> None:
+    """price_position_grade=A when spread > 0.12 and premium > 0."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = []
+    for i in range(30):
+        cs = float(i)
+        ret = 0.08 if i >= 20 else -0.04
+        rows.append({"close_strength": cs, "next_day_return": ret})
+    result = compute_price_position_analysis(rows)
+    assert result["price_position_valid"] is True
+    if result["cs_win_rate_spread"] is not None and result["cs_win_rate_spread"] > 0.12 and result["cs_premium"] is not None and result["cs_premium"] > 0:
+        assert result["price_position_grade"] == "A"
+
+
+def test_r70_t1_grade_D() -> None:
+    """price_position_grade=D when spread ≤ 0."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    # Reverse: high close_strength loses, low wins
+    rows = []
+    for i in range(12):
+        ret = -0.05 if i >= 8 else 0.05
+        rows.append({"close_strength": float(i), "next_day_return": ret})
+    result = compute_price_position_analysis(rows)
+    assert result["price_position_valid"] is True
+    assert result["price_position_grade"] == "D"
+
+
+def test_r70_t1_grade_unknown_when_no_spread() -> None:
+    """price_position_grade='unknown' when cs_win_rate_spread is None."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = _make_r70_cs_rows(7)  # too few → invalid → grade unknown
+    result = compute_price_position_analysis(rows)
+    assert result["price_position_grade"] == "unknown"
+
+
+def test_r70_t1_cs_mean_std_median_present() -> None:
+    """Result includes cs_mean, cs_std, cs_median with valid values."""
+    from scripts.btst_analysis_utils import compute_price_position_analysis
+    rows = [{"close_strength": float(i), "next_day_return": 0.01} for i in range(10)]
+    result = compute_price_position_analysis(rows)
+    assert result["price_position_valid"] is True
+    assert result["cs_mean"] is not None
+    assert result["cs_std"] is not None
+    assert result["cs_median"] is not None
+
+
+def test_r70_t1_in_comparison_metrics() -> None:
+    """cs_win_rate_spread is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "cs_win_rate_spread" in COMPARISON_METRICS
+
+
+def test_r70_t1_in_optional_metrics() -> None:
+    """cs_win_rate_spread is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "cs_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r70_t1_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has cs_win_rate_spread floor of 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "cs_win_rate_spread" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["cs_win_rate_spread"] == pytest.approx(0.0)
+
+
+def test_r70_t1_label_in_comparison_labels() -> None:
+    """cs_win_rate_spread has a non-empty label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "cs_win_rate_spread" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["cs_win_rate_spread"]) > 0
+
+
+# ── T2: compute_win_loss_streak_analysis ─────────────────────────────────────
+
+def test_r70_t2_valid_basic() -> None:
+    """Returns valid=True with ≥10 rows having next_day_return."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    rows = _make_r70_streak_rows([True, False] * 10)
+    result = compute_win_loss_streak_analysis(rows)
+    assert result["streak_analysis_valid"] is True
+    assert result["streak_ratio"] is not None
+
+
+def test_r70_t2_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    rows = _make_r70_streak_rows([True, False] * 4)
+    result = compute_win_loss_streak_analysis(rows)
+    assert result["streak_analysis_valid"] is False
+    assert result["streak_ratio"] is None
+
+
+def test_r70_t2_max_win_streak_correct() -> None:
+    """max_win_streak correctly identifies the longest win run."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    # 5 consecutive wins in the middle
+    outcomes = [False, False, True, True, True, True, True, False, False, False, False]
+    rows = _make_r70_streak_rows(outcomes)
+    result = compute_win_loss_streak_analysis(rows)
+    assert result["streak_analysis_valid"] is True
+    assert result["max_win_streak"] == 5
+
+
+def test_r70_t2_max_loss_streak_correct() -> None:
+    """max_loss_streak correctly identifies the longest loss run."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    outcomes = [True, True, False, False, False, False, True, True, True, True, True]
+    rows = _make_r70_streak_rows(outcomes)
+    result = compute_win_loss_streak_analysis(rows)
+    assert result["max_loss_streak"] == 4
+
+
+def test_r70_t2_streak_ratio_formula() -> None:
+    """streak_ratio = max_win_streak / (max_loss_streak + 1)."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    outcomes = [True] * 6 + [False] * 3 + [True] * 2 + [False]
+    rows = _make_r70_streak_rows(outcomes)
+    result = compute_win_loss_streak_analysis(rows)
+    assert result["streak_analysis_valid"] is True
+    expected = result["max_win_streak"] / (result["max_loss_streak"] + 1)
+    assert result["streak_ratio"] == pytest.approx(expected, abs=1e-5)
+
+
+def test_r70_t2_win_after_loss_rate_mean_reversion() -> None:
+    """win_after_loss_rate > 0.5 for alternating sequence (mean-reverting)."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    outcomes = ([True, False] * 10)  # perfectly alternating
+    rows = _make_r70_streak_rows(outcomes)
+    result = compute_win_loss_streak_analysis(rows)
+    assert result["win_after_loss_rate"] is not None
+    assert result["win_after_loss_rate"] == pytest.approx(1.0, abs=1e-5)  # after every loss → win
+
+
+def test_r70_t2_loss_after_win_rate_momentum() -> None:
+    """loss_after_win_rate is low for long win streaks (momentum)."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    outcomes = [True] * 8 + [False] * 2 + [True] * 5 + [False] * 2 + [True] * 3
+    rows = _make_r70_streak_rows(outcomes)
+    result = compute_win_loss_streak_analysis(rows)
+    assert result["loss_after_win_rate"] is not None
+    assert result["loss_after_win_rate"] < 0.5
+
+
+def test_r70_t2_signal_momentum() -> None:
+    """streak_momentum_signal='momentum' for persistent win/loss runs."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    # Long streaks: win_after_loss < 0.4 and loss_after_win < 0.4
+    outcomes = [True] * 7 + [False] * 7 + [True] * 6
+    rows = _make_r70_streak_rows(outcomes)
+    result = compute_win_loss_streak_analysis(rows)
+    if result["win_after_loss_rate"] is not None and result["win_after_loss_rate"] < 0.4 and result["loss_after_win_rate"] is not None and result["loss_after_win_rate"] < 0.4:
+        assert result["streak_momentum_signal"] == "momentum"
+
+
+def test_r70_t2_signal_mean_reversion() -> None:
+    """streak_momentum_signal='mean_reversion' for alternating patterns."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    outcomes = [True, False] * 15  # 30 alternating
+    rows = _make_r70_streak_rows(outcomes)
+    result = compute_win_loss_streak_analysis(rows)
+    assert result["streak_analysis_valid"] is True
+    assert result["streak_momentum_signal"] == "mean_reversion"
+
+
+def test_r70_t2_avg_win_streak_correct() -> None:
+    """avg_win_streak is the average of individual win run lengths."""
+    from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+    # Two win runs: length 3 and length 1 → avg = 2.0
+    outcomes = [True, True, True, False, True, False, False, False, False, False]
+    rows = _make_r70_streak_rows(outcomes)
+    result = compute_win_loss_streak_analysis(rows)
+    assert result["streak_analysis_valid"] is True
+    assert result["avg_win_streak"] == pytest.approx(2.0, abs=1e-5)
+
+
+def test_r70_t2_in_comparison_metrics() -> None:
+    """streak_ratio is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "streak_ratio" in COMPARISON_METRICS
+
+
+def test_r70_t2_in_optional_metrics() -> None:
+    """streak_ratio is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "streak_ratio" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r70_t2_label_in_comparison_labels() -> None:
+    """streak_ratio has a non-empty label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "streak_ratio" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["streak_ratio"]) > 0
+
+
+# ── T3: compute_cross_window_rs_rank_trend ────────────────────────────────────
+
+def _make_r70_rs_rank_summaries(values: list[float]) -> list[dict]:
+    return [{"rs_rank_rs_rank_spread": v} for v in values]
+
+
+def test_r70_t3_valid_increasing_trend() -> None:
+    """Returns valid=True and positive slope for monotonically increasing rs_rank_spread."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    summaries = _make_r70_rs_rank_summaries([0.05, 0.10, 0.15, 0.20, 0.25])
+    result = compute_cross_window_rs_rank_trend(summaries)
+    assert result["rs_rank_trend_valid"] is True
+    assert result["rs_rank_trend_slope"] > 0
+
+
+def test_r70_t3_valid_decreasing_trend() -> None:
+    """Returns negative slope for monotonically decreasing rs_rank_spread."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    summaries = _make_r70_rs_rank_summaries([0.25, 0.20, 0.15, 0.10, 0.05])
+    result = compute_cross_window_rs_rank_trend(summaries)
+    assert result["rs_rank_trend_valid"] is True
+    assert result["rs_rank_trend_slope"] < 0
+
+
+def test_r70_t3_invalid_too_few_windows() -> None:
+    """Returns valid=False when fewer than 3 valid windows."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    summaries = _make_r70_rs_rank_summaries([0.10, 0.15])
+    result = compute_cross_window_rs_rank_trend(summaries)
+    assert result["rs_rank_trend_valid"] is False
+    assert result["rs_rank_trend_slope"] is None
+
+
+def test_r70_t3_invalid_missing_field() -> None:
+    """Returns valid=False when rs_rank_rs_rank_spread key is absent."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    summaries = [{"other_key": 0.1} for _ in range(5)]
+    result = compute_cross_window_rs_rank_trend(summaries)
+    assert result["rs_rank_trend_valid"] is False
+
+
+def test_r70_t3_grade_A() -> None:
+    """rs_rank_trend_grade=A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    summaries = _make_r70_rs_rank_summaries([0.00, 0.01, 0.02, 0.03, 0.04])  # slope = 0.01
+    result = compute_cross_window_rs_rank_trend(summaries)
+    assert result["rs_rank_trend_grade"] == "A"
+
+
+def test_r70_t3_grade_B() -> None:
+    """rs_rank_trend_grade=B when 0 < slope ≤ 0.005."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    summaries = _make_r70_rs_rank_summaries([0.100, 0.101, 0.102, 0.103, 0.104])  # slope ~0.001
+    result = compute_cross_window_rs_rank_trend(summaries)
+    assert result["rs_rank_trend_grade"] == "B"
+
+
+def test_r70_t3_grade_C() -> None:
+    """rs_rank_trend_grade=C when -0.01 < slope ≤ 0."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    summaries = _make_r70_rs_rank_summaries([0.100, 0.099, 0.098, 0.097, 0.096])  # slope ~ -0.001
+    result = compute_cross_window_rs_rank_trend(summaries)
+    assert result["rs_rank_trend_grade"] == "C"
+
+
+def test_r70_t3_grade_D() -> None:
+    """rs_rank_trend_grade=D when slope ≤ -0.01."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    summaries = _make_r70_rs_rank_summaries([0.20, 0.15, 0.10, 0.05, 0.00])  # slope = -0.05
+    result = compute_cross_window_rs_rank_trend(summaries)
+    assert result["rs_rank_trend_grade"] == "D"
+
+
+def test_r70_t3_rs_rank_positive_windows_pct() -> None:
+    """rs_rank_positive_windows_pct = fraction of windows with rs_rank_spread > 0."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    summaries = _make_r70_rs_rank_summaries([0.10, 0.05, -0.02, 0.08, -0.01])
+    result = compute_cross_window_rs_rank_trend(summaries)
+    assert result["rs_rank_trend_valid"] is True
+    assert result["rs_rank_positive_windows_pct"] == pytest.approx(3 / 5, abs=1e-5)
+
+
+def test_r70_t3_slope_ols_manual() -> None:
+    """OLS slope matches manual formula for a simple linear sequence."""
+    from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+    vals = [1.0, 2.0, 3.0, 4.0, 5.0]
+    summaries = _make_r70_rs_rank_summaries(vals)
+    result = compute_cross_window_rs_rank_trend(summaries)
+    # For xs=[0,1,2,3,4], ys=[1,2,3,4,5]: slope should be 1.0
+    assert result["rs_rank_trend_slope"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_r70_t3_in_comparison_metrics() -> None:
+    """rs_rank_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "rs_rank_trend_slope" in COMPARISON_METRICS
+
+
+def test_r70_t3_in_optional_metrics() -> None:
+    """rs_rank_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "rs_rank_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r70_t3_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has rs_rank_trend_slope floor of -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "rs_rank_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["rs_rank_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r70_t3_label_in_comparison_labels() -> None:
+    """rs_rank_trend_slope has a non-empty label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "rs_rank_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["rs_rank_trend_slope"]) > 0
+
+
+def test_r70_all_three_new_metrics_have_labels() -> None:
+    """All 3 new Round 70 metrics have non-empty labels in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for key in ("cs_win_rate_spread", "streak_ratio", "rs_rank_trend_slope"):
+        assert key in COMPARISON_METRIC_LABELS
+        assert len(COMPARISON_METRIC_LABELS[key]) > 0
+

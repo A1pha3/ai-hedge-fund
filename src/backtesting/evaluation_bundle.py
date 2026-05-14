@@ -575,6 +575,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 2 (Round 69, Beta): turnover filter effect floor.
     # turnover_filter_effect < -0.05 means normal-turnover stocks have much lower win rate than all — alarming.
     "turnover_filter_effect": -0.05,
+    # Task 1 (Round 70, Alpha): price position win-rate spread floor.
+    # cs_win_rate_spread < 0.0 means high close_strength stocks do not outperform low close_strength stocks.
+    "cs_win_rate_spread": 0.0,
+    # Task 3 (Round 70, Gamma): RS rank spread cross-window trend slope floor.
+    # rs_rank_trend_slope < -0.01 means RS ranking discriminatory power is declining across windows.
+    "rs_rank_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

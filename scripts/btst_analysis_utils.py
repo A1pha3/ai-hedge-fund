@@ -4561,6 +4561,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _tbf.items():
         _surface_result[f"turnover_beh_{_k}"] = _v
 
+    # Round 70, Task 1 (Alpha): Price position analysis.
+    _ppa: dict = compute_price_position_analysis(rows)
+    for _k, _v in _ppa.items():
+        _surface_result[f"price_pos_{_k}"] = _v
+
+    # Round 70, Task 2 (Beta): Win/loss streak analysis.
+    _wlsa: dict = compute_win_loss_streak_analysis(rows)
+    for _k, _v in _wlsa.items():
+        _surface_result[f"streak_{_k}"] = _v
+
     return _surface_result
 
 
@@ -12627,3 +12637,152 @@ def compute_turnover_behavior_filter(rows: list[dict]) -> dict:
     extreme_high_pct = round(len(extreme_high_rows) / total, 6)
     extreme_low_pct = round(len(extreme_low_rows) / total, 6)
     return {"turnover_behavior_valid": True, "extreme_high_win_rate": extreme_high_win_rate, "extreme_low_win_rate": extreme_low_win_rate, "normal_turnover_win_rate": normal_turnover_win_rate, "turnover_filter_effect": turnover_filter_effect, "extreme_high_pct": extreme_high_pct, "extreme_low_pct": extreme_low_pct}
+
+
+def compute_price_position_analysis(rows: list[dict]) -> dict:
+    """分析价格位置（close_strength）强弱与次日收益的关系。
+
+    Returns:
+        - ``cs_mean``: close_strength 均值
+        - ``cs_std``: close_strength 样本标准差（N-1）
+        - ``cs_median``: close_strength 中位数
+        - ``high_cs_win_rate``: 高位强度组（top 1/3）的胜率
+        - ``mid_cs_win_rate``: 中位强度组（mid 1/3）的胜率
+        - ``low_cs_win_rate``: 低位强度组（bottom 1/3）的胜率
+        - ``cs_win_rate_spread``: high_cs_win_rate − low_cs_win_rate
+        - ``cs_premium``: 高位组均值回报 − 低位组均值回报
+        - ``price_position_grade``: A/B/C/D/unknown
+        - ``price_position_valid``: bool
+    """
+    _null: dict = {"price_position_valid": False, "cs_mean": None, "cs_std": None, "cs_median": None, "high_cs_win_rate": None, "mid_cs_win_rate": None, "low_cs_win_rate": None, "cs_win_rate_spread": None, "cs_premium": None, "price_position_grade": "unknown"}
+    if len(rows) < 8:
+        return _null
+    if not any(r.get("close_strength") is not None for r in rows):
+        return _null
+    valid_rows = [r for r in rows if r.get("close_strength") is not None]
+    if len(valid_rows) < 8:
+        return _null
+    sorted_rows = sorted(valid_rows, key=lambda r: float(r["close_strength"]))
+    n = len(sorted_rows)
+    cs_vals = [float(r["close_strength"]) for r in sorted_rows]
+    cs_mean = sum(cs_vals) / n
+    cs_std = (sum((v - cs_mean) ** 2 for v in cs_vals) / (n - 1)) ** 0.5 if n >= 2 else 0.0
+    mid_idx = n // 2
+    cs_median = cs_vals[mid_idx] if n % 2 == 1 else (cs_vals[mid_idx - 1] + cs_vals[mid_idx]) / 2.0
+    low_cs = sorted_rows[:n // 3]
+    mid_cs = sorted_rows[n // 3:2 * n // 3]
+    high_cs = sorted_rows[2 * n // 3:]
+
+    def _wr(grp: list[dict]) -> "float | None":
+        if len(grp) < 2:
+            return None
+        rets = [r.get("next_day_return") for r in grp if r.get("next_day_return") is not None]
+        if len(rets) < 2:
+            return None
+        return round(sum(1 for v in rets if float(v) > 0) / len(rets), 6)
+
+    def _mr(grp: list[dict]) -> "float | None":
+        if len(grp) < 2:
+            return None
+        rets = [float(r["next_day_return"]) for r in grp if r.get("next_day_return") is not None]
+        if len(rets) < 2:
+            return None
+        return sum(rets) / len(rets)
+
+    high_cs_win_rate = _wr(high_cs)
+    mid_cs_win_rate = _wr(mid_cs)
+    low_cs_win_rate = _wr(low_cs)
+    cs_win_rate_spread: "float | None" = round(high_cs_win_rate - low_cs_win_rate, 6) if (high_cs_win_rate is not None and low_cs_win_rate is not None) else None
+    high_mr = _mr(high_cs)
+    low_mr = _mr(low_cs)
+    cs_premium: "float | None" = round(high_mr - low_mr, 6) if (high_mr is not None and low_mr is not None) else None
+    if cs_win_rate_spread is None:
+        grade = "unknown"
+    elif cs_win_rate_spread > 0.12 and cs_premium is not None and cs_premium > 0:
+        grade = "A"
+    elif cs_win_rate_spread > 0.06:
+        grade = "B"
+    elif cs_win_rate_spread > 0:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"price_position_valid": True, "cs_mean": round(cs_mean, 6), "cs_std": round(cs_std, 6), "cs_median": round(cs_median, 6), "high_cs_win_rate": high_cs_win_rate, "mid_cs_win_rate": mid_cs_win_rate, "low_cs_win_rate": low_cs_win_rate, "cs_win_rate_spread": cs_win_rate_spread, "cs_premium": cs_premium, "price_position_grade": grade}
+
+
+def compute_win_loss_streak_analysis(rows: list[dict]) -> dict:
+    """分析连胜/连败模式，识别策略是否存在序列行为。
+
+    Returns:
+        - ``max_win_streak``: 最长连胜
+        - ``max_loss_streak``: 最长连败
+        - ``avg_win_streak``: 平均连胜长度
+        - ``avg_loss_streak``: 平均连败长度
+        - ``streak_ratio``: max_win_streak / (max_loss_streak + 1)
+        - ``win_after_loss_rate``: 败后赢的比例（均值回归倾向）
+        - ``loss_after_win_rate``: 赢后败的比例
+        - ``streak_momentum_signal``: momentum/mean_reversion/mixed/insufficient_data
+        - ``streak_analysis_valid``: bool
+    """
+    _null: dict = {"streak_analysis_valid": False, "max_win_streak": None, "max_loss_streak": None, "avg_win_streak": None, "avg_loss_streak": None, "streak_ratio": None, "win_after_loss_rate": None, "loss_after_win_rate": None, "streak_momentum_signal": None}
+    if len(rows) < 10:
+        return _null
+    returns_raw = [r.get("next_day_return") for r in rows]
+    outcomes: list[bool] = []
+    for v in returns_raw:
+        if v is not None:
+            outcomes.append(float(v) > 0)
+    if len(outcomes) < 10:
+        return _null
+    m = len(outcomes)
+    max_win_streak = 0
+    max_loss_streak = 0
+    win_streaks: list[int] = []
+    loss_streaks: list[int] = []
+    cur_win = 0
+    cur_loss = 0
+    for i in range(m):
+        if outcomes[i]:
+            cur_win += 1
+            if cur_loss > 0:
+                loss_streaks.append(cur_loss)
+                cur_loss = 0
+            if cur_win > max_win_streak:
+                max_win_streak = cur_win
+        else:
+            cur_loss += 1
+            if cur_win > 0:
+                win_streaks.append(cur_win)
+                cur_win = 0
+            if cur_loss > max_loss_streak:
+                max_loss_streak = cur_loss
+    if cur_win > 0:
+        win_streaks.append(cur_win)
+    if cur_loss > 0:
+        loss_streaks.append(cur_loss)
+    avg_win_streak = round(sum(win_streaks) / len(win_streaks), 6) if win_streaks else 0.0
+    avg_loss_streak = round(sum(loss_streaks) / len(loss_streaks), 6) if loss_streaks else 0.0
+    streak_ratio = round(max_win_streak / (max_loss_streak + 1), 6)
+    win_after_loss_count = 0
+    loss_total = 0
+    loss_after_win_count = 0
+    win_total = 0
+    for i in range(m - 1):
+        if not outcomes[i]:
+            loss_total += 1
+            if outcomes[i + 1]:
+                win_after_loss_count += 1
+        else:
+            win_total += 1
+            if not outcomes[i + 1]:
+                loss_after_win_count += 1
+    win_after_loss_rate: "float | None" = round(win_after_loss_count / loss_total, 6) if loss_total > 0 else None
+    loss_after_win_rate: "float | None" = round(loss_after_win_count / win_total, 6) if win_total > 0 else None
+    if win_after_loss_rate is None or loss_after_win_rate is None:
+        streak_momentum_signal = "insufficient_data"
+    elif win_after_loss_rate < 0.4 and loss_after_win_rate < 0.4:
+        streak_momentum_signal = "momentum"
+    elif win_after_loss_rate > 0.6 and loss_after_win_rate > 0.6:
+        streak_momentum_signal = "mean_reversion"
+    else:
+        streak_momentum_signal = "mixed"
+    return {"streak_analysis_valid": True, "max_win_streak": max_win_streak, "max_loss_streak": max_loss_streak, "avg_win_streak": avg_win_streak, "avg_loss_streak": avg_loss_streak, "streak_ratio": streak_ratio, "win_after_loss_rate": win_after_loss_rate, "loss_after_win_rate": loss_after_win_rate, "streak_momentum_signal": streak_momentum_signal}

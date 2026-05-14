@@ -222,7 +222,10 @@
       "dispersion_trend_slope_delta": null,
       "rs_rank_spread_delta": null,
       "turnover_filter_effect_delta": null,
-      "concentration_hhi_slope_delta": null
+      "concentration_hhi_slope_delta": null,
+      "cs_win_rate_spread_delta": null,
+      "streak_ratio_delta": null,
+      "rs_rank_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -435,7 +438,10 @@
       "dispersion_trend_slope_delta": null,
       "rs_rank_spread_delta": null,
       "turnover_filter_effect_delta": null,
-      "concentration_hhi_slope_delta": null
+      "concentration_hhi_slope_delta": null,
+      "cs_win_rate_spread_delta": null,
+      "streak_ratio_delta": null,
+      "rs_rank_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

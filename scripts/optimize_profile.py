@@ -466,6 +466,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "turnover_filter_effect",
     # Task 3 (Round 69, Gamma): cross-window concentration HHI OLS trend slope.
     "concentration_hhi_slope",
+    # Task 1 (Round 70, Alpha): price position win-rate spread — high CS minus low CS win rate.
+    "cs_win_rate_spread",
+    # Task 2 (Round 70, Beta): win/loss streak ratio — max_win_streak / (max_loss_streak + 1).
+    "streak_ratio",
+    # Task 3 (Round 70, Gamma): cross-window RS rank spread OLS trend slope.
+    "rs_rank_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -820,6 +826,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "turnover_filter_effect": "正常换手胜率优势",
     # Task 3 (Round 69, Gamma): 持仓集中度跨窗趋势
     "concentration_hhi_slope": "持仓集中度跨窗趋势",
+    # Task 1 (Round 70, Alpha): 价格位置强弱胜率差
+    "cs_win_rate_spread": "价格位置强弱胜率差",
+    # Task 2 (Round 70, Beta): 连胜比率
+    "streak_ratio": "连胜比率",
+    # Task 3 (Round 70, Gamma): RS排名区分度跨窗趋势
+    "rs_rank_trend_slope": "RS排名区分度跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1246,6 +1258,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "turnover_filter_effect",
     # Task 3 (Round 69, Gamma): concentration HHI trend slope — optional; pre-Round-69 outputs omit it.
     "concentration_hhi_slope",
+    # Task 1 (Round 70, Alpha): price position win-rate spread — optional; pre-Round-70 outputs omit it.
+    "cs_win_rate_spread",
+    # Task 2 (Round 70, Beta): win/loss streak ratio — optional; pre-Round-70 outputs omit it.
+    "streak_ratio",
+    # Task 3 (Round 70, Gamma): RS rank trend slope — optional; pre-Round-70 outputs omit it.
+    "rs_rank_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3726,6 +3744,48 @@ def compute_cross_window_concentration_trend(all_windows_summaries: list[dict]) 
     return {"concentration_trend_valid": True, "concentration_hhi_slope": round(slope, 8), "concentration_hhi_mean": round(mean_v, 6), "concentration_dispersed_windows_pct": concentration_dispersed_windows_pct, "concentration_trend_grade": grade}
 
 
+def compute_cross_window_rs_rank_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪 RS 排名区分度（rs_rank_spread）趋势。
+
+    从各窗口 summary 收集 ``rs_rank_rs_rank_spread``（Round 69 T1 的输出），需≥3个有效值。
+    Returns:
+        - ``rs_rank_trend_slope``: OLS 斜率（正=区分度提升=越来越好）
+        - ``rs_rank_trend_mean``: 均值
+        - ``rs_rank_positive_windows_pct``: rs_rank_spread > 0 的窗口占比
+        - ``rs_rank_trend_grade``: A/B/C/D
+        - ``rs_rank_trend_valid``: bool
+    """
+    _null: dict = {"rs_rank_trend_valid": False, "rs_rank_trend_slope": None, "rs_rank_trend_mean": None, "rs_rank_positive_windows_pct": None, "rs_rank_trend_grade": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("rs_rank_rs_rank_spread")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    rs_rank_positive_windows_pct = round(sum(1 for v in vals if v > 0) / n, 6)
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"rs_rank_trend_valid": True, "rs_rank_trend_slope": round(slope, 8), "rs_rank_trend_mean": round(mean_v, 6), "rs_rank_positive_windows_pct": rs_rank_positive_windows_pct, "rs_rank_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4466,6 +4526,14 @@ def _build_replay_evaluator(
         _cwdt: dict[str, Any] = compute_cross_window_dispersion_trend(all_primary_surfaces)
         # Task 3 (Round 69, Gamma): cross-window position concentration HHI trend.
         _cwcht: dict[str, Any] = compute_cross_window_concentration_trend(all_primary_surfaces)
+        # Task 3 (Round 70, Gamma): cross-window RS rank spread trend.
+        _cwrrt: dict[str, Any] = compute_cross_window_rs_rank_trend(all_primary_surfaces)
+        # Task 1 (Round 70, Alpha): average price_pos_cs_win_rate_spread across replay windows.
+        _ppa_cwr_vals = [float(s["price_pos_cs_win_rate_spread"]) for s in all_primary_surfaces if s.get("price_pos_cs_win_rate_spread") is not None]
+        avg_cs_win_rate_spread: "float | None" = round(sum(_ppa_cwr_vals) / len(_ppa_cwr_vals), 6) if _ppa_cwr_vals else None
+        # Task 2 (Round 70, Beta): average streak_streak_ratio across replay windows.
+        _wlsa_sr_vals = [float(s["streak_streak_ratio"]) for s in all_primary_surfaces if s.get("streak_streak_ratio") is not None]
+        avg_streak_ratio: "float | None" = round(sum(_wlsa_sr_vals) / len(_wlsa_sr_vals), 6) if _wlsa_sr_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4917,6 +4985,16 @@ def _build_replay_evaluator(
                 "concentration_dispersed_windows_pct": _cwcht.get("concentration_dispersed_windows_pct"),
                 "concentration_trend_grade": _cwcht.get("concentration_trend_grade"),
                 "concentration_trend_valid": _cwcht.get("concentration_trend_valid"),
+                # Task 3 (Round 70, Gamma): cross-window RS rank spread trend.
+                "rs_rank_trend_slope": _cwrrt.get("rs_rank_trend_slope"),
+                "rs_rank_trend_mean": _cwrrt.get("rs_rank_trend_mean"),
+                "rs_rank_positive_windows_pct": _cwrrt.get("rs_rank_positive_windows_pct"),
+                "rs_rank_trend_grade": _cwrrt.get("rs_rank_trend_grade"),
+                "rs_rank_trend_valid": _cwrrt.get("rs_rank_trend_valid"),
+                # Task 1 (Round 70, Alpha): price position win-rate spread averaged across windows.
+                "cs_win_rate_spread": avg_cs_win_rate_spread,
+                # Task 2 (Round 70, Beta): win/loss streak ratio averaged across windows.
+                "streak_ratio": avg_streak_ratio,
         }
 
     return evaluator
