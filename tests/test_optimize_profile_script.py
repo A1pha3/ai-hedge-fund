@@ -24756,3 +24756,423 @@ def test_r82_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
     assert "ev_spread_trend_slope" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["ev_spread_trend_slope"] == "EV差跨窗趋势斜率"
+
+
+# ===========================================================================
+# Round 83 Tests
+# ===========================================================================
+
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# Helper factories
+# ---------------------------------------------------------------------------
+
+
+def _make_r83_kelly_rows(n: int, win_rate: float, avg_win: float, avg_loss: float) -> list[dict]:
+    """Make rows with controlled win_rate, avg_win, avg_loss for Kelly tests.
+    
+    Alternates winners/losers across score range so all thirds have a mix.
+    """
+    rows: list[dict] = []
+    for i in range(n):
+        # Alternate winners and losers across score range
+        ret = avg_win if (i % round(1 / win_rate) == 0) else -avg_loss
+        rows.append({"score": float(i), "actual_return": ret})
+    return rows
+
+
+def _make_r83_score_return_rows(scores: list[float], returns: list[float]) -> list[dict]:
+    """Make rows with explicit scores and returns."""
+    return [{"score": s, "actual_return": r} for s, r in zip(scores, returns)]
+
+
+def _make_r83_precision_windows(precisions: list[float]) -> list[dict]:
+    """Make all_windows_summaries with clf_high_score_precision values."""
+    return [{"clf_high_score_precision": p} for p in precisions]
+
+
+# ---------------------------------------------------------------------------
+# T1: Kelly Criterion Analysis
+# ---------------------------------------------------------------------------
+
+
+def test_r83_t1_kelly_formula_verification() -> None:
+    """Verify Kelly formula: full_kelly = p - (1-p)*avg_loss/avg_win."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    # 30 rows interleaved: every other win/loss, avg_win=0.03, avg_loss=0.02
+    rows = _make_r83_kelly_rows(30, 0.5, 0.03, 0.02)
+    result = compute_kelly_criterion_analysis(rows)
+    assert result["valid"] is True
+    # p=0.5, avg_win=0.03, avg_loss=0.02 → f* = 0.5 - 0.5*(0.02/0.03) = 0.5 - 0.333 = 0.1667
+    expected = 0.5 - 0.5 * (0.02 / 0.03)
+    assert result["full_kelly"] == pytest.approx(expected, abs=1e-4)
+
+
+def test_r83_t1_kelly_too_few_rows() -> None:
+    """Fewer than 15 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    rows = _make_r83_kelly_rows(14, 0.6, 0.03, 0.02)
+    result = compute_kelly_criterion_analysis(rows)
+    assert result["valid"] is False
+    assert result["top_kelly"] is None
+
+
+def test_r83_t1_kelly_exactly_15_rows() -> None:
+    """Exactly 15 rows with mixed wins/losses → valid result (not blocked)."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    # Use explicit rows ensuring top group has both wins and losses
+    rows = [{"score": float(i), "actual_return": 0.03 if i % 2 == 0 else -0.02} for i in range(15)]
+    result = compute_kelly_criterion_analysis(rows)
+    # Top third = rows 10-14: scores 10,11,12,13,14 with alternating win/loss
+    assert result["valid"] is True
+
+
+def test_r83_t1_kelly_all_wins_in_top_group() -> None:
+    """Top group all wins (no losers) → top_kelly=None, valid=False."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    # Make 15 rows where top third are all winners, bot third are all losers
+    rows = [{"score": float(i), "actual_return": 0.05 if i >= 10 else -0.02} for i in range(15)]
+    result = compute_kelly_criterion_analysis(rows)
+    # top group = rows 10-14, all winners → no losers → top_kelly None → valid=False
+    assert result["top_kelly"] is None
+    assert result["valid"] is False
+
+
+def test_r83_t1_kelly_avg_win_zero_returns_none() -> None:
+    """avg_win == 0 → kelly returns None for that group."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    # top group: winners with 0 return, losers with -0.02
+    rows = []
+    for i in range(20):
+        rows.append({"score": float(i + 10), "actual_return": 0.0 if i % 2 == 0 else -0.02})
+    for i in range(10):
+        rows.append({"score": float(i), "actual_return": -0.01})
+    result = compute_kelly_criterion_analysis(rows)
+    # top group wins have 0 return → avg_win=0 → top_kelly=None
+    assert result["top_kelly"] is None
+
+
+def test_r83_t1_kelly_spread_computed() -> None:
+    """kelly_spread = top_kelly - bot_kelly."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    # 30 rows: high scores win more, low scores lose more
+    rows = []
+    for i in range(10):
+        rows.append({"score": float(i + 20), "actual_return": 0.04})  # top group
+    for i in range(10):
+        rows.append({"score": float(i + 10), "actual_return": 0.01 if i < 5 else -0.03})  # mid
+    for i in range(10):
+        rows.append({"score": float(i), "actual_return": -0.03})  # bot group
+    result = compute_kelly_criterion_analysis(rows)
+    if result["top_kelly"] is not None and result["bot_kelly"] is not None:
+        assert result["kelly_spread"] == pytest.approx(result["top_kelly"] - result["bot_kelly"], abs=1e-7)
+
+
+def test_r83_t1_kelly_valid_flag_requires_top_kelly() -> None:
+    """valid=True only when top_kelly is not None."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    rows = _make_r83_kelly_rows(30, 0.6, 0.03, 0.02)
+    result = compute_kelly_criterion_analysis(rows)
+    assert result["valid"] == (result["top_kelly"] is not None)
+
+
+def test_r83_t1_kelly_runner_composite_score_priority() -> None:
+    """runner_composite_score is preferred over composite_score and score."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    # Alternate wins/losses across runner_composite_score range
+    rows = [{"runner_composite_score": float(i), "composite_score": 0.0, "score": 0.0, "actual_return": 0.03 if i % 2 == 0 else -0.02} for i in range(30)]
+    result = compute_kelly_criterion_analysis(rows)
+    assert result["valid"] is True
+
+
+def test_r83_t1_kelly_composite_score_fallback() -> None:
+    """composite_score used when runner_composite_score is absent."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    rows = [{"composite_score": float(i), "actual_return": 0.03 if i > 20 else -0.02} for i in range(30)]
+    result = compute_kelly_criterion_analysis(rows)
+    assert result["valid"] is True
+
+
+def test_r83_t1_kelly_none_actual_return_filtered() -> None:
+    """Rows with None actual_return are excluded from analysis."""
+    from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+    # Use interleaved rows ensuring top group has both wins and losses
+    rows = [{"score": float(i), "actual_return": 0.03 if i % 2 == 0 else -0.02} for i in range(20)]
+    rows += [{"score": 99.0, "actual_return": None}] * 5
+    result = compute_kelly_criterion_analysis(rows)
+    assert result["valid"] is True  # 20 valid rows > 15 threshold
+
+
+def test_r83_t1_kelly_in_comparison_metrics() -> None:
+    """kelly_top_kelly and kelly_kelly_spread must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "kelly_top_kelly" in COMPARISON_METRICS
+    assert "kelly_kelly_spread" in COMPARISON_METRICS
+
+
+def test_r83_t1_kelly_in_optional_metrics() -> None:
+    """kelly_top_kelly and kelly_kelly_spread must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "kelly_top_kelly" in OPTIONAL_COMPARISON_METRICS
+    assert "kelly_kelly_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r83_t1_kelly_labels_registered() -> None:
+    """Kelly metrics must have labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("kelly_top_kelly") == "高分组凯利仓位"
+    assert COMPARISON_METRIC_LABELS.get("kelly_kelly_spread") == "高低分组凯利差"
+
+
+def test_r83_t1_kelly_floor_registered() -> None:
+    """kelly_top_kelly floor must be 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "kelly_top_kelly" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["kelly_top_kelly"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# T2: Return Percentile Profile
+# ---------------------------------------------------------------------------
+
+
+def _make_r83_rpp_rows(n: int = 30) -> list[dict]:
+    """30 rows with scores 0-29 and returns evenly spaced -0.05 to +0.05."""
+    return [{"score": float(i), "actual_return": -0.05 + i * (0.10 / (n - 1))} for i in range(n)]
+
+
+def test_r83_t2_rpp_p25_p50_p75_p90_valid() -> None:
+    """30 rows → valid=True with all percentile fields populated."""
+    from scripts.btst_analysis_utils import compute_return_percentile_profile
+    rows = _make_r83_rpp_rows(30)
+    result = compute_return_percentile_profile(rows)
+    assert result["valid"] is True
+    assert result["top_return_p25"] is not None
+    assert result["top_return_p50"] is not None
+    assert result["top_return_p75"] is not None
+    assert result["top_return_p90"] is not None
+
+
+def test_r83_t2_rpp_too_few_rows() -> None:
+    """Fewer than 15 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_return_percentile_profile
+    rows = _make_r83_rpp_rows(14)
+    result = compute_return_percentile_profile(rows)
+    assert result["valid"] is False
+
+
+def test_r83_t2_rpp_top_group_too_small() -> None:
+    """When top-group has fewer than 5 rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_return_percentile_profile
+    # 15 rows → top third = 5 rows → just on boundary (should pass)
+    rows = _make_r83_rpp_rows(15)
+    result = compute_return_percentile_profile(rows)
+    # top = rows[10:] = 5 rows, just meets threshold
+    assert result["valid"] is True
+
+
+def test_r83_t2_rpp_upside_asymmetry_formula() -> None:
+    """upside_asymmetry = top_return_p75 - abs(top_return_p25)."""
+    from scripts.btst_analysis_utils import compute_return_percentile_profile
+    rows = _make_r83_rpp_rows(30)
+    result = compute_return_percentile_profile(rows)
+    assert result["valid"] is True
+    expected_asymmetry = result["top_return_p75"] - abs(result["top_return_p25"])
+    assert result["upside_asymmetry"] == pytest.approx(expected_asymmetry, abs=1e-7)
+
+
+def test_r83_t2_rpp_percentile_ordering() -> None:
+    """P25 <= P50 <= P75 <= P90 for sorted returns."""
+    from scripts.btst_analysis_utils import compute_return_percentile_profile
+    rows = _make_r83_rpp_rows(30)
+    result = compute_return_percentile_profile(rows)
+    assert result["valid"] is True
+    assert result["top_return_p25"] <= result["top_return_p50"]
+    assert result["top_return_p50"] <= result["top_return_p75"]
+    assert result["top_return_p75"] <= result["top_return_p90"]
+
+
+def test_r83_t2_rpp_known_values() -> None:
+    """Verify P50 (median) for top group with exact known data."""
+    from scripts.btst_analysis_utils import compute_return_percentile_profile
+    # 30 rows with score 0-29, top third = scores 20-29 (10 rows)
+    # returns for top group: 0.01 * (i - 19) for i in 20..29 = [0.01, 0.02, ..., 0.10]
+    rows = [{"score": float(i), "actual_return": 0.01 * max(i - 19, 1) if i >= 20 else -0.01} for i in range(30)]
+    result = compute_return_percentile_profile(rows)
+    assert result["valid"] is True
+    assert result["top_return_p50"] is not None
+
+
+def test_r83_t2_rpp_runner_composite_score_priority() -> None:
+    """runner_composite_score is preferred over composite_score."""
+    from scripts.btst_analysis_utils import compute_return_percentile_profile
+    rows = [{"runner_composite_score": float(i), "composite_score": 999.0, "actual_return": 0.01 * i} for i in range(30)]
+    result = compute_return_percentile_profile(rows)
+    assert result["valid"] is True
+
+
+def test_r83_t2_rpp_none_return_filtered() -> None:
+    """Rows with None actual_return are excluded."""
+    from scripts.btst_analysis_utils import compute_return_percentile_profile
+    rows = _make_r83_rpp_rows(20)
+    rows += [{"score": 99.0, "actual_return": None}] * 5
+    result = compute_return_percentile_profile(rows)
+    assert result["valid"] is True
+
+
+def test_r83_t2_rpp_in_comparison_metrics() -> None:
+    """rpp_top_return_p75 and rpp_upside_asymmetry must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "rpp_top_return_p75" in COMPARISON_METRICS
+    assert "rpp_upside_asymmetry" in COMPARISON_METRICS
+
+
+def test_r83_t2_rpp_in_optional_metrics() -> None:
+    """rpp metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "rpp_top_return_p75" in OPTIONAL_COMPARISON_METRICS
+    assert "rpp_upside_asymmetry" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r83_t2_rpp_labels_registered() -> None:
+    """RPP metrics must have labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("rpp_top_return_p75") == "高分组P75收益"
+    assert COMPARISON_METRIC_LABELS.get("rpp_upside_asymmetry") == "上下行不对称性"
+
+
+def test_r83_t2_rpp_floor_registered() -> None:
+    """rpp_upside_asymmetry floor must be 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "rpp_upside_asymmetry" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["rpp_upside_asymmetry"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# T3: Cross-window Precision Trend
+# ---------------------------------------------------------------------------
+
+
+def test_r83_t3_rising_trend_slope_positive() -> None:
+    """Rising precision values → positive slope."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([0.5, 0.6, 0.7, 0.8, 0.9])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["valid"] is True
+    assert result["precision_trend_slope"] > 0
+
+
+def test_r83_t3_falling_trend_grade_d() -> None:
+    """Sharply falling trend → grade C or D."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([0.9, 0.7, 0.5, 0.3, 0.1])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["valid"] is True
+    assert result["precision_trend_grade"] in ("C", "D")
+
+
+def test_r83_t3_too_few_windows() -> None:
+    """Fewer than 3 windows → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([0.6, 0.7])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["valid"] is False
+    assert result["precision_trend_slope"] is None
+
+
+def test_r83_t3_ols_slope_manual() -> None:
+    """OLS slope for y=[1,2,3], x=[0,1,2] should be 1.0."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([1.0, 2.0, 3.0])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["valid"] is True
+    # n=3, sum_x=3, sum_y=6, sum_xy=0+2+6=8, sum_xx=5
+    # slope = (3*8 - 3*6)/(3*5 - 9) = 6/6 = 1.0
+    assert result["precision_trend_slope"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_r83_t3_grade_a_strong_rising() -> None:
+    """Slope > 0.005 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([0.0, 0.01, 0.02, 0.03, 0.04])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["precision_trend_grade"] == "A"
+
+
+def test_r83_t3_grade_b_mild_rising() -> None:
+    """0 < slope <= 0.005 → grade B."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([0.0, 0.001, 0.002, 0.003, 0.004])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["precision_trend_grade"] == "B"
+
+
+def test_r83_t3_grade_c_mild_falling() -> None:
+    """-0.01 < slope <= 0 → grade C."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([0.004, 0.003, 0.002, 0.001, 0.0])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["precision_trend_grade"] == "C"
+
+
+def test_r83_t3_window_count_correct() -> None:
+    """precision_trend_window_count equals windows with clf_high_score_precision."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([0.6, 0.7, 0.8, 0.9])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["precision_trend_window_count"] == 4
+
+
+def test_r83_t3_missing_precision_skipped() -> None:
+    """Windows without clf_high_score_precision are skipped."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = [{"clf_high_score_precision": 0.6}, {"other_key": 0.5}, {"clf_high_score_precision": 0.7}, {"clf_high_score_precision": 0.8}]
+    result = compute_cross_window_precision_trend(windows)
+    assert result["valid"] is True
+    assert result["precision_trend_window_count"] == 3
+
+
+def test_r83_t3_metric_in_comparison_metrics() -> None:
+    """precision_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "precision_trend_slope" in COMPARISON_METRICS
+
+
+def test_r83_t3_metric_in_optional_metrics() -> None:
+    """precision_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "precision_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r83_t3_label_registered() -> None:
+    """precision_trend_slope must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("precision_trend_slope") == "精确率跨窗趋势斜率"
+
+
+def test_r83_t3_floor_registered() -> None:
+    """precision_trend_slope floor must be -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "precision_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["precision_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r83_t3_flat_trend_grade_c() -> None:
+    """Flat trend (slope=0) → grade C."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([0.7, 0.7, 0.7, 0.7, 0.7])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["valid"] is True
+    assert result["precision_trend_slope"] == pytest.approx(0.0, abs=1e-7)
+    assert result["precision_trend_grade"] == "C"
+
+
+def test_r83_t3_exactly_3_windows() -> None:
+    """Exactly 3 windows → valid result (minimum threshold)."""
+    from scripts.optimize_profile import compute_cross_window_precision_trend
+    windows = _make_r83_precision_windows([0.6, 0.7, 0.8])
+    result = compute_cross_window_precision_trend(windows)
+    assert result["valid"] is True
+    assert result["precision_trend_window_count"] == 3

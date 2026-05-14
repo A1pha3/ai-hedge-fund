@@ -4717,6 +4717,23 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         _surface_result["vpd_price_only_win_rate"] = vpd_result["price_only_win_rate"]
         _surface_result["vpd_divergence_penalty"] = vpd_result["divergence_penalty"]
 
+    # Round 83, Task 1 (Alpha): Kelly criterion analysis.
+    kelly_result: dict = compute_kelly_criterion_analysis(rows)
+    if kelly_result["valid"]:
+        _surface_result["kelly_top_kelly"] = kelly_result["top_kelly"]
+        _surface_result["kelly_bot_kelly"] = kelly_result["bot_kelly"]
+        _surface_result["kelly_kelly_spread"] = kelly_result["kelly_spread"]
+        _surface_result["kelly_full_kelly"] = kelly_result["full_kelly"]
+
+    # Round 83, Task 2 (Beta): Return percentile profile.
+    rpp_result: dict = compute_return_percentile_profile(rows)
+    if rpp_result["valid"]:
+        _surface_result["rpp_top_return_p25"] = rpp_result["top_return_p25"]
+        _surface_result["rpp_top_return_p50"] = rpp_result["top_return_p50"]
+        _surface_result["rpp_top_return_p75"] = rpp_result["top_return_p75"]
+        _surface_result["rpp_top_return_p90"] = rpp_result["top_return_p90"]
+        _surface_result["rpp_upside_asymmetry"] = rpp_result["upside_asymmetry"]
+
     return _surface_result
 
 
@@ -14390,3 +14407,98 @@ def compute_volume_price_divergence_filter(rows: list[dict]) -> dict:
     po_win_rate: "float | None" = round(sum(1 for r in price_only if r["actual_return"] > 0) / len(price_only), 6) if len(price_only) >= 3 else None
     divergence_penalty: "float | None" = round(fc_win_rate - vd_win_rate, 6) if (fc_win_rate is not None and vd_win_rate is not None) else None
     return {"valid": True, "full_confirm_win_rate": fc_win_rate, "vol_diverge_win_rate": vd_win_rate, "price_only_win_rate": po_win_rate, "divergence_penalty": divergence_penalty}
+
+
+# ---------------------------------------------------------------------------
+# Round 83, Task 1 (Alpha): Kelly Criterion Analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_kelly_criterion_analysis(rows: list[dict]) -> dict:
+    """凯利准则分析：高/低分组最优仓位比例，量化系统资金效率。"""
+    EMPTY: dict = {"valid": False, "top_kelly": None, "bot_kelly": None, "kelly_spread": None, "full_kelly": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        sc = r.get("runner_composite_score") if r.get("runner_composite_score") is not None else (r.get("composite_score") if r.get("composite_score") is not None else r.get("score"))
+        ret_val = r.get("actual_return")
+        if sc is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"score": float(sc), "actual_return": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return EMPTY
+    sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
+    n: int = len(sorted_rows)
+    top_rows: list[dict] = sorted_rows[2 * n // 3:]
+    bot_rows: list[dict] = sorted_rows[:n // 3]
+
+    def _calc_kelly(group_rows: list[dict]) -> "float | None":
+        if len(group_rows) == 0:
+            return None
+        winners: list[float] = [r["actual_return"] for r in group_rows if r["actual_return"] > 0]
+        losers: list[float] = [abs(r["actual_return"]) for r in group_rows if r["actual_return"] <= 0]
+        if len(winners) == 0 or len(losers) == 0:
+            return None
+        p: float = len(winners) / len(group_rows)
+        avg_win: float = sum(winners) / len(winners)
+        avg_loss: float = sum(losers) / len(losers)
+        if avg_win == 0:
+            return None
+        return p - (1 - p) * avg_loss / avg_win
+
+    top_kelly: "float | None" = _calc_kelly(top_rows)
+    bot_kelly: "float | None" = _calc_kelly(bot_rows)
+    full_kelly: "float | None" = _calc_kelly(valid_rows)
+    kelly_spread: "float | None" = round(top_kelly - bot_kelly, 8) if (top_kelly is not None and bot_kelly is not None) else None
+    if top_kelly is not None:
+        top_kelly = round(top_kelly, 8)
+    if bot_kelly is not None:
+        bot_kelly = round(bot_kelly, 8)
+    if full_kelly is not None:
+        full_kelly = round(full_kelly, 8)
+    return {"valid": top_kelly is not None, "top_kelly": top_kelly, "bot_kelly": bot_kelly, "kelly_spread": kelly_spread, "full_kelly": full_kelly}
+
+
+# ---------------------------------------------------------------------------
+# Round 83, Task 2 (Beta): Return Percentile Profile
+# ---------------------------------------------------------------------------
+
+
+def compute_return_percentile_profile(rows: list[dict]) -> dict:
+    """收益分位档案：高分组P25/P50/P75/P90及上下行不对称性。"""
+    EMPTY: dict = {"valid": False, "top_return_p25": None, "top_return_p50": None, "top_return_p75": None, "top_return_p90": None, "upside_asymmetry": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        sc = r.get("runner_composite_score") if r.get("runner_composite_score") is not None else (r.get("composite_score") if r.get("composite_score") is not None else r.get("score"))
+        ret_val = r.get("actual_return")
+        if sc is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"score": float(sc), "actual_return": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return EMPTY
+    sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
+    n: int = len(sorted_rows)
+    top_rows: list[dict] = sorted_rows[2 * n // 3:]
+    if len(top_rows) < 5:
+        return EMPTY
+    top_returns: list[float] = sorted(r["actual_return"] for r in top_rows)
+    m: int = len(top_returns)
+
+    def _pct(p: float) -> float:
+        idx: int = int(m * p)
+        if idx >= m:
+            idx = m - 1
+        return top_returns[idx]
+
+    p25: float = _pct(0.25)
+    p50_idx: int = m // 2
+    p50: float = (top_returns[p50_idx - 1] + top_returns[p50_idx]) / 2.0 if m % 2 == 0 else top_returns[p50_idx]
+    p75: float = _pct(0.75)
+    p90: float = _pct(0.90)
+    upside_asymmetry: float = round(p75 - abs(p25), 8)
+    return {"valid": True, "top_return_p25": round(p25, 8), "top_return_p50": round(p50, 8), "top_return_p75": round(p75, 8), "top_return_p90": round(p90, 8), "upside_asymmetry": upside_asymmetry}

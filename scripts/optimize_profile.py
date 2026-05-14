@@ -552,6 +552,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "vpd_divergence_penalty",
     # Task 3 (Round 82, Gamma): cross-window EV spread trend slope.
     "ev_spread_trend_slope",
+    # Task 1 (Round 83, Alpha): Kelly criterion analysis metrics.
+    "kelly_top_kelly",
+    "kelly_kelly_spread",
+    # Task 2 (Round 83, Beta): return percentile profile metrics.
+    "rpp_top_return_p75",
+    "rpp_upside_asymmetry",
+    # Task 3 (Round 83, Gamma): cross-window precision trend slope.
+    "precision_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -992,6 +1000,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "vpd_divergence_penalty": "量价背离惩罚",
     # Task 3 (Round 82, Gamma): EV spread trend label.
     "ev_spread_trend_slope": "EV差跨窗趋势斜率",
+    # Task 1 (Round 83, Alpha): Kelly criterion labels.
+    "kelly_top_kelly": "高分组凯利仓位",
+    "kelly_kelly_spread": "高低分组凯利差",
+    # Task 2 (Round 83, Beta): return percentile profile labels.
+    "rpp_top_return_p75": "高分组P75收益",
+    "rpp_upside_asymmetry": "上下行不对称性",
+    # Task 3 (Round 83, Gamma): precision trend label.
+    "precision_trend_slope": "精确率跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1506,6 +1522,14 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "vpd_divergence_penalty",
     # Task 3 (Round 82, Gamma): EV spread trend slope — optional; pre-Round-82 outputs omit it.
     "ev_spread_trend_slope",
+    # Task 1 (Round 83, Alpha): Kelly criterion metrics — optional; pre-Round-83 surfaces omit these.
+    "kelly_top_kelly",
+    "kelly_kelly_spread",
+    # Task 2 (Round 83, Beta): return percentile profile metrics — optional; pre-Round-83 surfaces omit these.
+    "rpp_top_return_p75",
+    "rpp_upside_asymmetry",
+    # Task 3 (Round 83, Gamma): precision trend slope — optional; pre-Round-83 outputs omit it.
+    "precision_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3262,6 +3286,38 @@ def compute_cross_window_ev_spread_trend(all_windows_summaries: list[dict]) -> d
     slope: float = (n * sum_xy - sum_x * sum_y) / denom
     grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
     return {"valid": True, "ev_spread_trend_slope": round(slope, 8), "ev_spread_trend_grade": grade, "ev_spread_window_count": n}
+
+
+# ---------------------------------------------------------------------------
+# Round 83, Task 3 (Gamma): Cross-window Precision Trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_precision_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口打分精确率趋势：clf_high_score_precision 的 OLS 时序斜率。"""
+    EMPTY: dict = {"valid": False, "precision_trend_slope": None, "precision_trend_grade": None, "precision_trend_window_count": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("clf_high_score_precision")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    n: int = len(vals)
+    if n < 3:
+        return EMPTY
+    xs: list[float] = list(range(n))
+    sum_x: float = sum(xs)
+    sum_y: float = sum(vals)
+    sum_xy: float = sum(xs[i] * vals[i] for i in range(n))
+    sum_xx: float = sum(x * x for x in xs)
+    denom: float = n * sum_xx - sum_x * sum_x
+    if denom == 0:
+        return EMPTY
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom
+    grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
+    return {"valid": True, "precision_trend_slope": round(slope, 8), "precision_trend_grade": grade, "precision_trend_window_count": n}
 
 
 # ---------------------------------------------------------------------------
@@ -5134,6 +5190,8 @@ def _build_replay_evaluator(
         _nht: dict[str, Any] = compute_cross_window_near_high_trend(all_primary_surfaces)
         # Task 3 (Round 82, Gamma): cross-window EV spread OLS trend.
         _evst: dict[str, Any] = compute_cross_window_ev_spread_trend(all_primary_surfaces)
+        # Task 3 (Round 83, Gamma): cross-window precision trend OLS.
+        _pct83: dict[str, Any] = compute_cross_window_precision_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -5870,6 +5928,10 @@ def _build_replay_evaluator(
                 "ev_spread_trend_slope": _evst.get("ev_spread_trend_slope"),
                 "ev_spread_trend_grade": _evst.get("ev_spread_trend_grade"),
                 "ev_spread_trend_window_count": _evst.get("ev_spread_window_count"),
+                # Task 3 (Round 83, Gamma): cross-window precision trend OLS slope.
+                "precision_trend_slope": _pct83.get("precision_trend_slope"),
+                "precision_trend_grade": _pct83.get("precision_trend_grade"),
+                "precision_trend_window_count": _pct83.get("precision_trend_window_count"),
         }
 
     return evaluator

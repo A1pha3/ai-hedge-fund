@@ -683,6 +683,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 82, Gamma): EV spread trend slope floor.
     # ev_spread_trend_slope < -0.01 means the scoring EV differential is deteriorating across windows.
     "ev_spread_trend_slope": -0.01,
+    # Task 1 (Round 83, Alpha): Kelly criterion top-group floor.
+    # kelly_top_kelly < 0.0 means the high-score group has no positive edge — system should not be traded.
+    "kelly_top_kelly": 0.0,
+    # Task 2 (Round 83, Beta): upside asymmetry floor.
+    # rpp_upside_asymmetry < 0.0 means downside risk exceeds upside potential in high-score group.
+    "rpp_upside_asymmetry": 0.0,
+    # Task 3 (Round 83, Gamma): precision trend slope floor.
+    # precision_trend_slope < -0.01 means the scoring precision is deteriorating across windows.
+    "precision_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------
