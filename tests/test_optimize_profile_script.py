@@ -6941,3 +6941,340 @@ def test_r33_t3_factor_ic_mean_key_supported() -> None:
     windows = [{"factor_ic_mean": {"breakout_freshness": 0.10 - i * 0.03}} for i in range(5)]
     result = compute_factor_ic_trend(windows)
     assert result["ic_trend_stability"] is not None
+
+
+# ===========================================================================
+# Round 34 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Helpers for Round 34
+# ---------------------------------------------------------------------------
+
+def _make_cross_factor_rows(n: int, *, win_frac: float = 0.6, high_frac: float = 0.5) -> list[dict]:
+    """Generate rows with 7 cross-factors and next_close_return."""
+    import random
+    random.seed(42)
+    rows = []
+    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank",
+               "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    for i in range(n):
+        ret = 0.02 if i < int(n * win_frac) else -0.01
+        row: dict = {"next_close_return": ret}
+        for f in factors:
+            # First high_frac rows get high values, rest get low values.
+            row[f] = 0.8 if i < int(n * high_frac) else 0.2
+        rows.append(row)
+    return rows
+
+
+def _make_churn_windows(n: int, *, stable: bool = True) -> list[dict]:
+    """Generate n window summaries with candidate_pool_size and top_stocks."""
+    windows = []
+    for i in range(n):
+        size = 10 if stable else max(1, 10 + (i % 3) * 8)
+        stocks = [f"STOCK_{j}" for j in range(i, i + 5)] if stable else [f"STOCK_{j}" for j in range(i * 5, i * 5 + 5)]
+        windows.append({"candidate_pool_size": size, "top_stocks": stocks})
+    return windows
+
+
+# ---------------------------------------------------------------------------
+# Round 34, T1 — compute_cross_factor_conditional
+# ---------------------------------------------------------------------------
+
+def test_r34_t1_basic_returns_expected_keys() -> None:
+    """compute_cross_factor_conditional returns all required keys."""
+    from scripts.btst_analysis_utils import compute_cross_factor_conditional
+
+    rows = _make_cross_factor_rows(40)
+    result = compute_cross_factor_conditional(rows)
+    for key in ("group_win_rates", "group_counts", "multi_factor_lift", "multi_factor_synergy", "optimal_factor_count"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r34_t1_insufficient_rows_returns_empty() -> None:
+    """Fewer than 20 rows with next_close_return → empty / None result."""
+    from scripts.btst_analysis_utils import compute_cross_factor_conditional
+
+    rows = _make_cross_factor_rows(15)
+    result = compute_cross_factor_conditional(rows)
+    assert result["multi_factor_lift"] is None
+    assert result["group_win_rates"] == {}
+
+
+def test_r34_t1_empty_rows_no_error() -> None:
+    """Empty input → graceful empty result."""
+    from scripts.btst_analysis_utils import compute_cross_factor_conditional
+
+    result = compute_cross_factor_conditional([])
+    assert result["multi_factor_lift"] is None
+
+
+def test_r34_t1_none_returns_filtered() -> None:
+    """Rows with next_close_return=None are excluded from analysis."""
+    from scripts.btst_analysis_utils import compute_cross_factor_conditional
+
+    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank",
+               "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    rows = [{"next_close_return": None, **{f: 0.5 for f in factors}}] * 25
+    result = compute_cross_factor_conditional(rows)
+    assert result["multi_factor_lift"] is None
+
+
+def test_r34_t1_group_counts_sum_to_total() -> None:
+    """Sum of group_counts equals number of rows with next_close_return."""
+    from scripts.btst_analysis_utils import compute_cross_factor_conditional
+
+    rows = _make_cross_factor_rows(40)
+    result = compute_cross_factor_conditional(rows)
+    total = sum(result["group_counts"].values())
+    assert total == 40
+
+
+def test_r34_t1_synergy_true_when_lift_positive() -> None:
+    """multi_factor_synergy=True when lift > 0.05."""
+    from scripts.btst_analysis_utils import compute_cross_factor_conditional
+
+    # Force: rows with ALL factors high → all win; rows with none high → all lose.
+    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank",
+               "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    high_rows = [{"next_close_return": 0.03, **{f: 0.95 for f in factors}} for _ in range(20)]
+    low_rows = [{"next_close_return": -0.02, **{f: 0.05 for f in factors}} for _ in range(20)]
+    result = compute_cross_factor_conditional(high_rows + low_rows)
+    if result["multi_factor_lift"] is not None:
+        assert result["multi_factor_synergy"] == (result["multi_factor_lift"] > 0.05)
+
+
+def test_r34_t1_optimal_factor_count_valid_key() -> None:
+    """optimal_factor_count is one of the valid group keys (0,1,2,'3+')."""
+    from scripts.btst_analysis_utils import compute_cross_factor_conditional
+
+    rows = _make_cross_factor_rows(50)
+    result = compute_cross_factor_conditional(rows)
+    if result["optimal_factor_count"] is not None:
+        assert result["optimal_factor_count"] in (0, 1, 2, "3+")
+
+
+def test_r34_t1_floor_registered() -> None:
+    """multi_factor_lift floor = 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "multi_factor_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["multi_factor_lift"] == 0.0
+
+
+def test_r34_t1_in_comparison_metrics() -> None:
+    """multi_factor_lift registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "multi_factor_lift" in COMPARISON_METRICS
+
+
+def test_r34_t1_label_registered() -> None:
+    """multi_factor_lift has Chinese label '多因子联合提升'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("multi_factor_lift") == "多因子联合提升"
+
+
+# ---------------------------------------------------------------------------
+# Round 34, T2 — compute_adaptive_sizing_score
+# ---------------------------------------------------------------------------
+
+def test_r34_t2_basic_returns_required_keys() -> None:
+    """compute_adaptive_sizing_score returns all required keys."""
+    from scripts.btst_analysis_utils import compute_adaptive_sizing_score
+
+    summary = {"expected_value_per_trade": 0.01, "kelly_fraction_half": 0.10, "composite_gate_score": 70.0, "score_tail_separation": 0.05}
+    result = compute_adaptive_sizing_score(summary)
+    for key in ("adaptive_sizing_score", "sizing_multiplier", "sizing_grade", "full_size_recommended"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r34_t2_empty_dict_no_error() -> None:
+    """Empty summary dict → graceful result, score=0, grade D."""
+    from scripts.btst_analysis_utils import compute_adaptive_sizing_score
+
+    result = compute_adaptive_sizing_score({})
+    assert result["adaptive_sizing_score"] == 0.0
+    assert result["sizing_grade"] == "D"
+    assert result["full_size_recommended"] is False
+
+
+def test_r34_t2_all_max_values_grade_a() -> None:
+    """All dimensions at maximum → score=100, grade A, full_size_recommended."""
+    from scripts.btst_analysis_utils import compute_adaptive_sizing_score
+
+    summary = {"expected_value_per_trade": 0.05, "kelly_fraction_half": 0.30, "composite_gate_score": 100.0, "score_tail_separation": 0.10}
+    result = compute_adaptive_sizing_score(summary)
+    assert result["adaptive_sizing_score"] == 100.0
+    assert result["sizing_grade"] == "A"
+    assert result["full_size_recommended"] is True
+
+
+def test_r34_t2_all_min_values_grade_d() -> None:
+    """All dimensions at minimum → score=0, grade D."""
+    from scripts.btst_analysis_utils import compute_adaptive_sizing_score
+
+    summary = {"expected_value_per_trade": -0.05, "kelly_fraction_half": 0.0, "composite_gate_score": 0.0, "score_tail_separation": -0.10}
+    result = compute_adaptive_sizing_score(summary)
+    assert result["adaptive_sizing_score"] == 0.0
+    assert result["sizing_grade"] == "D"
+
+
+def test_r34_t2_sizing_multiplier_range() -> None:
+    """sizing_multiplier is always in [0.5, 1.0]."""
+    from scripts.btst_analysis_utils import compute_adaptive_sizing_score
+
+    for ev in [-0.05, 0.0, 0.02, 0.05]:
+        result = compute_adaptive_sizing_score({"expected_value_per_trade": ev})
+        m = result["sizing_multiplier"]
+        assert 0.5 <= m <= 1.0, f"multiplier {m} out of [0.5, 1.0] for ev={ev}"
+
+
+def test_r34_t2_partial_none_normalises_weights() -> None:
+    """Missing dimensions are skipped; remaining weights normalised to 100."""
+    from scripts.btst_analysis_utils import compute_adaptive_sizing_score
+
+    # Only one dimension present.
+    result = compute_adaptive_sizing_score({"composite_gate_score": 100.0})
+    assert result["adaptive_sizing_score"] == 100.0
+
+
+def test_r34_t2_kelly_half_alias() -> None:
+    """kelly_half key is accepted as alias for kelly_fraction_half."""
+    from scripts.btst_analysis_utils import compute_adaptive_sizing_score
+
+    r1 = compute_adaptive_sizing_score({"kelly_half": 0.15})
+    r2 = compute_adaptive_sizing_score({"kelly_fraction_half": 0.15})
+    assert r1["adaptive_sizing_score"] == r2["adaptive_sizing_score"]
+
+
+def test_r34_t2_floor_registered() -> None:
+    """adaptive_sizing_score floor = 50.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "adaptive_sizing_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["adaptive_sizing_score"] == 50.0
+
+
+def test_r34_t2_in_comparison_metrics() -> None:
+    """adaptive_sizing_score registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "adaptive_sizing_score" in COMPARISON_METRICS
+
+
+def test_r34_t2_label_registered() -> None:
+    """adaptive_sizing_score has Chinese label '自适应仓位评分'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("adaptive_sizing_score") == "自适应仓位评分"
+
+
+# ---------------------------------------------------------------------------
+# Round 34, T3 — compute_signal_churn_metrics
+# ---------------------------------------------------------------------------
+
+def test_r34_t3_basic_returns_required_keys() -> None:
+    """compute_signal_churn_metrics returns required keys."""
+    from scripts.optimize_profile import compute_signal_churn_metrics
+
+    windows = _make_churn_windows(5)
+    result = compute_signal_churn_metrics(windows)
+    for key in ("signal_churn_rate", "avg_signal_persistence", "avg_pool_size_churn", "pool_stable"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r34_t3_too_few_windows_returns_none() -> None:
+    """Fewer than 3 windows → all None."""
+    from scripts.optimize_profile import compute_signal_churn_metrics
+
+    result = compute_signal_churn_metrics([{"candidate_pool_size": 10}] * 2)
+    assert result["signal_churn_rate"] is None
+    assert result["avg_signal_persistence"] is None
+    assert result["pool_stable"] is None
+
+
+def test_r34_t3_empty_returns_none() -> None:
+    """Empty list → all None."""
+    from scripts.optimize_profile import compute_signal_churn_metrics
+
+    result = compute_signal_churn_metrics([])
+    assert result["signal_churn_rate"] is None
+
+
+def test_r34_t3_stable_pool_pool_stable_true() -> None:
+    """Stable pool (same size, same stocks) → pool_stable True."""
+    from scripts.optimize_profile import compute_signal_churn_metrics
+
+    windows = [{"candidate_pool_size": 10, "top_stocks": ["A", "B", "C", "D", "E"]} for _ in range(5)]
+    result = compute_signal_churn_metrics(windows)
+    assert result["pool_stable"] is True
+    assert result["avg_pool_size_churn"] == 0.0
+
+
+def test_r34_t3_completely_churned_stocks() -> None:
+    """Completely different stocks every window → signal_churn_rate = 1.0."""
+    from scripts.optimize_profile import compute_signal_churn_metrics
+
+    windows = [{"candidate_pool_size": 5, "top_stocks": [f"S{i*5+j}" for j in range(5)]} for i in range(5)]
+    result = compute_signal_churn_metrics(windows)
+    if result["avg_signal_persistence"] is not None:
+        assert result["signal_churn_rate"] is not None
+        assert abs(result["signal_churn_rate"] - (1 - result["avg_signal_persistence"])) < 1e-6
+
+
+def test_r34_t3_missing_top_stocks_graceful() -> None:
+    """Missing top_stocks field → avg_signal_persistence None, no error."""
+    from scripts.optimize_profile import compute_signal_churn_metrics
+
+    windows = [{"candidate_pool_size": 10} for _ in range(5)]
+    result = compute_signal_churn_metrics(windows)
+    assert result["avg_signal_persistence"] is None
+    assert result["signal_churn_rate"] is None
+
+
+def test_r34_t3_pool_size_churn_computed() -> None:
+    """avg_pool_size_churn is computed when candidate_pool_size present."""
+    from scripts.optimize_profile import compute_signal_churn_metrics
+
+    windows = [{"candidate_pool_size": 10 + i * 2} for i in range(5)]
+    result = compute_signal_churn_metrics(windows)
+    assert result["avg_pool_size_churn"] is not None
+    assert result["avg_pool_size_churn"] >= 0.0
+
+
+def test_r34_t3_signal_churn_rate_in_comparison_metrics() -> None:
+    """signal_churn_rate in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "signal_churn_rate" in COMPARISON_METRICS
+
+
+def test_r34_t3_signal_churn_lower_is_better() -> None:
+    """signal_churn_rate in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
+    assert "signal_churn_rate" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r34_t3_avg_signal_persistence_in_comparison_metrics() -> None:
+    """avg_signal_persistence in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "avg_signal_persistence" in COMPARISON_METRICS
+
+
+def test_r34_t3_label_registered() -> None:
+    """avg_signal_persistence has Chinese label '信号持续率'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("avg_signal_persistence") == "信号持续率"
+
+
+def test_r34_t3_signal_churn_label_registered() -> None:
+    """signal_churn_rate has Chinese label '信号流失率'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("signal_churn_rate") == "信号流失率"

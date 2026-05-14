@@ -153,6 +153,16 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # A value ≤ 0 means the strategy is expected to lose money on average, making it unprofitable.
     # Floor ≥ 0.0 requires the strategy to have at least a neutral expected return per trade.
     "expected_value_per_trade": 0.0,
+    # Task 1 (Round 34, Alpha): multi-factor conditional lift floor.
+    # multi_factor_lift = win_rate(3+ high-score factors) − win_rate(0 high-score factors).
+    # A value ≤ 0 means simultaneous high-factor ranks provide no additional win-rate benefit,
+    # invalidating the multi-factor synergy thesis.  Floor ≥ 0.0 requires at least neutral lift.
+    "multi_factor_lift": 0.0,
+    # Task 2 (Round 34, Gamma): adaptive sizing score floor.
+    # adaptive_sizing_score is a 0–100 composite index combining EV, Kelly, gate, and tail separation.
+    # A score < 50 (grade D) means fewer than half the sizing dimensions pass their quality thresholds.
+    # Floor ≥ 50 ensures at least C-grade sizing confidence before a profile is considered rollout-ready.
+    "adaptive_sizing_score": 50.0,
 }
 
 # ---------------------------------------------------------------------------

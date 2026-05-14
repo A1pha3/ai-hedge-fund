@@ -3856,6 +3856,26 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["decay_speed"] = _mdc.get("decay_speed")
     _surface_result["decay_curve_valid"] = _mdc.get("decay_curve_valid")
 
+    # -----------------------------------------------------------------------
+    # Round 34, Task 1 (Alpha): Multi-factor conditional joint effect.
+    # -----------------------------------------------------------------------
+    _cfc: dict[str, Any] = compute_cross_factor_conditional(rows)
+    _surface_result["multi_factor_lift"] = _cfc.get("multi_factor_lift")
+    _surface_result["multi_factor_synergy"] = _cfc.get("multi_factor_synergy")
+    _surface_result["optimal_factor_count"] = _cfc.get("optimal_factor_count")
+    _surface_result["cross_factor_group_win_rates"] = _cfc.get("group_win_rates")
+    _surface_result["cross_factor_group_counts"] = _cfc.get("group_counts")
+
+    # -----------------------------------------------------------------------
+    # Round 34, Task 2 (Gamma): Adaptive position-sizing score.
+    # Must be called after composite_gate_score and expected_value_per_trade.
+    # -----------------------------------------------------------------------
+    _asz: dict[str, Any] = compute_adaptive_sizing_score(_surface_result)
+    _surface_result["adaptive_sizing_score"] = _asz.get("adaptive_sizing_score")
+    _surface_result["sizing_multiplier"] = _asz.get("sizing_multiplier")
+    _surface_result["sizing_grade"] = _asz.get("sizing_grade")
+    _surface_result["full_size_recommended"] = _asz.get("full_size_recommended")
+
     return _surface_result
 
 
@@ -5461,4 +5481,205 @@ def compute_momentum_decay_curve(rows: list[dict]) -> dict:
         "momentum_persists": momentum_persists,
         "decay_speed": decay_speed,
         "decay_curve_valid": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 34, Task 1 (Alpha): Multi-factor conditional joint effect
+# ---------------------------------------------------------------------------
+# Analyses whether win rate jumps significantly when multiple factors are
+# simultaneously in high-quantile territory (P67+).  A multi_factor_lift > 0.05
+# indicates genuine multi-factor synergy beyond individual-factor contributions.
+
+
+def compute_cross_factor_conditional(rows: list[dict]) -> dict:
+    """Analyse win-rate uplift when multiple factors are simultaneously high-ranked.
+
+    Uses a fixed set of 7 BTST factors.  For each row counts how many factors
+    are at or above their 67th-percentile threshold, groups rows by that count
+    (0 / 1 / 2 / 3+), and computes group-level win rates.
+
+    Args:
+        rows: Trade-row dicts containing ``next_close_return`` and the factor
+              fields listed in ``_CROSS_FACTORS``.
+
+    Returns:
+        Dict with keys:
+
+        - ``group_win_rates``: dict {0|1|2|"3+"→float|None} — group win rate.
+        - ``group_counts``: dict {0|1|2|"3+"→int} — number of rows per group.
+        - ``multi_factor_lift``: float|None — win_rate[3+] − win_rate[0].
+        - ``multi_factor_synergy``: bool|None — True when lift > 0.05.
+        - ``optimal_factor_count``: int|str|None — group key with highest win rate.
+    """
+    _CROSS_FACTORS: list[str] = [
+        "close_strength",
+        "volume_expansion_quality",
+        "sector_resonance",
+        "rs_sector_rank",
+        "t0_estimated_net_inflow_ratio",
+        "breakout_quality_score",
+        "momentum_slope_20d",
+    ]
+
+    _EMPTY: dict[str, Any] = {
+        "group_win_rates": {},
+        "group_counts": {},
+        "multi_factor_lift": None,
+        "multi_factor_synergy": None,
+        "optimal_factor_count": None,
+    }
+
+    valid_rows = [r for r in rows if r.get("next_close_return") is not None]
+    if len(valid_rows) < 20:
+        return _EMPTY
+
+    # Determine which factors actually exist and have non-None values.
+    active_factors = [f for f in _CROSS_FACTORS if any(r.get(f) is not None for r in valid_rows)]
+    if not active_factors:
+        return _EMPTY
+
+    # Compute P67 threshold per active factor.
+    p67: dict[str, float] = {}
+    for f in active_factors:
+        vals = sorted(float(r[f]) for r in valid_rows if r.get(f) is not None)
+        if not vals:
+            continue
+        idx = max(0, int(len(vals) * 0.67) - 1)
+        p67[f] = vals[idx]
+
+    if not p67:
+        return _EMPTY
+
+    # Build groups: 0, 1, 2, "3+".
+    groups: dict[int | str, list[float]] = {0: [], 1: [], 2: [], "3+": []}
+    for r in valid_rows:
+        cnt = sum(1 for f in p67 if r.get(f) is not None and float(r[f]) >= p67[f])
+        key: int | str = cnt if cnt <= 2 else "3+"
+        groups[key].append(float(r["next_close_return"]))
+
+    group_win_rates: dict[int | str, float | None] = {}
+    group_counts: dict[int | str, int] = {}
+    for k, rets in groups.items():
+        group_counts[k] = len(rets)
+        if len(rets) >= 5:
+            group_win_rates[k] = round(sum(1 for x in rets if x > 0.0) / len(rets), 4)
+        else:
+            group_win_rates[k] = None
+
+    wr_0 = group_win_rates.get(0)
+    wr_3p = group_win_rates.get("3+")
+    multi_factor_lift: float | None = round(wr_3p - wr_0, 4) if (wr_0 is not None and wr_3p is not None) else None
+    multi_factor_synergy: bool | None = (multi_factor_lift > 0.05) if multi_factor_lift is not None else None
+
+    valid_wr_keys = [k for k in [0, 1, 2, "3+"] if group_win_rates.get(k) is not None]
+    optimal_factor_count: int | str | None = max(valid_wr_keys, key=lambda k: group_win_rates[k]) if valid_wr_keys else None  # type: ignore[arg-type]
+
+    return {
+        "group_win_rates": group_win_rates,
+        "group_counts": group_counts,
+        "multi_factor_lift": multi_factor_lift,
+        "multi_factor_synergy": multi_factor_synergy,
+        "optimal_factor_count": optimal_factor_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 34, Task 2 (Gamma): Adaptive sizing score
+# ---------------------------------------------------------------------------
+# Synthesises EV, Kelly, gate score, and tail-separation into a single 0–100
+# position-sizing recommendation.  Higher scores justify larger position sizes.
+
+
+def compute_adaptive_sizing_score(summary_dict: dict) -> dict:
+    """Compute a composite adaptive position-sizing score from surface metrics.
+
+    Combines four dimensions — expected value (EV), half-Kelly fraction, composite
+    gate score, and score-tail separation — into a single 0–100 index.  Each
+    dimension contributes an equal weight of 25 points; missing dimensions are
+    skipped and the remaining weights are normalised so the total is always 100.
+
+    Args:
+        summary_dict: Surface-summary dict as produced by ``build_surface_summary``.
+                      Keys used: ``expected_value_per_trade``, ``kelly_half`` (or
+                      ``kelly_fraction_half``), ``composite_gate_score``, and
+                      ``score_tail_separation``.
+
+    Returns:
+        Dict with keys:
+
+        - ``adaptive_sizing_score``: float — 0–100 composite score (1 d.p.).
+        - ``sizing_multiplier``: float — 0.5–1.0 position-size multiplier.
+        - ``sizing_grade``: str — 'A'(≥80) | 'B'(≥65) | 'C'(≥50) | 'D'(<50).
+        - ``full_size_recommended``: bool — True when adaptive_sizing_score ≥ 75.
+    """
+
+    def _clamp(val: float, lo: float, hi: float) -> float:
+        return max(lo, min(hi, val))
+
+    def _frac(val: float | None, lo: float, hi: float) -> float | None:
+        if val is None:
+            return None
+        return _clamp((val - lo) / max(hi - lo, 1e-8), 0.0, 1.0)
+
+    ev_raw = summary_dict.get("expected_value_per_trade")
+    # Support both kelly_half (T2 naming in T2 task spec) and kelly_fraction_half (production key).
+    kelly_raw = summary_dict.get("kelly_half") if summary_dict.get("kelly_half") is not None else summary_dict.get("kelly_fraction_half")
+    gate_raw = summary_dict.get("composite_gate_score")
+    tail_raw = summary_dict.get("score_tail_separation")
+
+    try:
+        ev_val = float(ev_raw) if ev_raw is not None else None
+    except (TypeError, ValueError):
+        ev_val = None
+    try:
+        kelly_val = float(kelly_raw) if kelly_raw is not None else None
+    except (TypeError, ValueError):
+        kelly_val = None
+    try:
+        gate_val = float(gate_raw) if gate_raw is not None else None
+    except (TypeError, ValueError):
+        gate_val = None
+    try:
+        tail_val = float(tail_raw) if tail_raw is not None else None
+    except (TypeError, ValueError):
+        tail_val = None
+
+    dims: list[tuple[float | None, float]] = [
+        (_frac(ev_val, -0.05, 0.05), 25.0),
+        (_frac(kelly_val, 0.0, 0.30), 25.0),
+        (_frac(gate_val, 0.0, 100.0), 25.0),
+        (_frac(tail_val, -0.10, 0.10), 25.0),
+    ]
+
+    weighted_sum = 0.0
+    active_weight = 0.0
+    for frac, wt in dims:
+        if frac is not None:
+            weighted_sum += frac * wt
+            active_weight += wt
+
+    if active_weight <= 0.0:
+        score = 0.0
+    else:
+        score = round((weighted_sum / active_weight) * 100.0, 1)
+
+    sizing_multiplier = round(min(1.0, 0.5 + score / 200.0), 4)
+
+    if score >= 80:
+        sizing_grade = "A"
+    elif score >= 65:
+        sizing_grade = "B"
+    elif score >= 50:
+        sizing_grade = "C"
+    else:
+        sizing_grade = "D"
+
+    full_size_recommended = score >= 75.0
+
+    return {
+        "adaptive_sizing_score": score,
+        "sizing_multiplier": sizing_multiplier,
+        "sizing_grade": sizing_grade,
+        "full_size_recommended": full_size_recommended,
     }

@@ -245,6 +245,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "ic_trend_stability",
     # Task 3 (Round 33, Beta): IC trend deteriorating flag — True when >50% of factors have declining IC.
     "factor_ic_trend_deteriorating",
+    # Task 1 (Round 34, Alpha): multi-factor conditional lift — win rate gain at 3+ high-score factors.
+    "multi_factor_lift",
+    # Task 2 (Round 34, Gamma): adaptive sizing score — composite 0–100 position-size index.
+    "adaptive_sizing_score",
+    # Task 3 (Round 34, Beta): signal churn rate — fraction of candidate pool replaced between windows.
+    "signal_churn_rate",
+    # Task 3 (Round 34, Beta): signal persistence — average Jaccard similarity of top-stock sets.
+    "avg_signal_persistence",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -377,6 +385,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "ic_trend_stability": "IC Trend Stability",
     # Task 3 (Round 33, Beta): IC trend deteriorating
     "factor_ic_trend_deteriorating": "IC Trend Deteriorating",
+    # Task 1 (Round 34, Alpha): multi-factor conditional lift
+    "multi_factor_lift": "多因子联合提升",
+    # Task 2 (Round 34, Gamma): adaptive sizing score
+    "adaptive_sizing_score": "自适应仓位评分",
+    # Task 3 (Round 34, Beta): signal churn rate
+    "signal_churn_rate": "信号流失率",
+    # Task 3 (Round 34, Beta): signal persistence
+    "avg_signal_persistence": "信号持续率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -421,6 +437,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     # Instead score_tail_separation (higher = better) drives the direction.
     # Task 2 (Round 33, Gamma): momentum half-life — shorter = faster decay = more BTST-friendly = lower-is-better.
     "momentum_half_life_days",
+    # Task 3 (Round 34, Beta): signal churn rate — higher = more pool turnover = less stable = lower-is-better.
+    "signal_churn_rate",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -547,6 +565,13 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 3 (Round 33, Beta): IC trend metrics — optional; pre-Round-33 outputs omit these.
     "ic_trend_stability",
     "factor_ic_trend_deteriorating",
+    # Task 1 (Round 34, Alpha): multi-factor conditional lift — optional; pre-Round-34 outputs omit it.
+    "multi_factor_lift",
+    # Task 2 (Round 34, Gamma): adaptive sizing score — optional; pre-Round-34 outputs omit it.
+    "adaptive_sizing_score",
+    # Task 3 (Round 34, Beta): signal churn metrics — optional; pre-Round-34 outputs omit these.
+    "signal_churn_rate",
+    "avg_signal_persistence",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1031,6 +1056,97 @@ def compute_factor_ic_trend(all_windows_summaries: list[dict]) -> dict:
         "factor_ic_trend_deteriorating": factor_ic_trend_deteriorating,
         "declining_factors": declining_factors,
         "ic_trend_slopes": ic_trend_slopes,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 34, Task 3 (Beta): Signal churn metrics — cross-window candidate-pool stability
+# ---------------------------------------------------------------------------
+# Tracks how much the candidate pool changes between consecutive replay windows.
+# High churn rate signals an unstable selection system with high real-money friction.
+
+
+def compute_signal_churn_metrics(all_windows_summaries: list[dict]) -> dict:
+    """Compute candidate-pool turnover and top-stock persistence across windows.
+
+    Measures stability of the BTST candidate pool over time by comparing
+    consecutive window snapshots.  Two complementary metrics are computed:
+
+    1. **Pool-size churn**: mean absolute fractional change in ``candidate_pool_size``
+       between adjacent windows.
+    2. **Signal persistence (Jaccard)**: mean Jaccard similarity of ``top_stocks``
+       sets between adjacent windows.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts, one entry
+            per replay window in chronological order.
+
+    Returns:
+        Dict with keys:
+
+        - ``signal_churn_rate``: float|None — 1 − avg Jaccard similarity.
+        - ``avg_signal_persistence``: float|None — mean Jaccard similarity.
+        - ``avg_pool_size_churn``: float|None — mean fractional pool-size change.
+        - ``pool_stable``: bool|None — True when pool is reliably stable.
+
+        Returns all-None dict when fewer than 3 windows are provided.
+    """
+    _EMPTY: dict[str, Any] = {
+        "signal_churn_rate": None,
+        "avg_signal_persistence": None,
+        "avg_pool_size_churn": None,
+        "pool_stable": None,
+    }
+
+    if len(all_windows_summaries) < 3:
+        return _EMPTY
+
+    # Pool-size churn.
+    size_changes: list[float] = []
+    for i in range(1, len(all_windows_summaries)):
+        prev_size = all_windows_summaries[i - 1].get("candidate_pool_size")
+        curr_size = all_windows_summaries[i].get("candidate_pool_size")
+        if prev_size is None or curr_size is None:
+            continue
+        try:
+            change = abs(float(curr_size) - float(prev_size)) / max(float(prev_size), 1.0)
+            size_changes.append(change)
+        except (TypeError, ValueError):
+            continue
+
+    avg_pool_size_churn: float | None = round(sum(size_changes) / len(size_changes), 4) if size_changes else None
+
+    # Jaccard similarity of top-stocks sets.
+    jaccard_vals: list[float] = []
+    for i in range(1, len(all_windows_summaries)):
+        prev_stocks = all_windows_summaries[i - 1].get("top_stocks")
+        curr_stocks = all_windows_summaries[i].get("top_stocks")
+        if not prev_stocks or not curr_stocks:
+            continue
+        try:
+            set_prev = set(prev_stocks)
+            set_curr = set(curr_stocks)
+            union_size = len(set_prev | set_curr)
+            if union_size == 0:
+                continue
+            jaccard_vals.append(len(set_prev & set_curr) / union_size)
+        except (TypeError, ValueError):
+            continue
+
+    avg_signal_persistence: float | None = round(sum(jaccard_vals) / len(jaccard_vals), 4) if len(jaccard_vals) >= 1 else None
+    signal_churn_rate: float | None = round(1.0 - avg_signal_persistence, 4) if avg_signal_persistence is not None else None
+
+    pool_stable: bool | None
+    if avg_pool_size_churn is None:
+        pool_stable = None
+    else:
+        pool_stable = avg_pool_size_churn < 0.30 and (avg_signal_persistence is None or avg_signal_persistence > 0.40)
+
+    return {
+        "signal_churn_rate": signal_churn_rate,
+        "avg_signal_persistence": avg_signal_persistence,
+        "avg_pool_size_churn": avg_pool_size_churn,
+        "pool_stable": pool_stable,
     }
 
 
@@ -1564,6 +1680,14 @@ def _build_replay_evaluator(
         # Task 2 (Round 33, Gamma): average momentum_half_life_days across replay windows.
         _hl_vals = [float(s["momentum_half_life_days"]) for s in all_primary_surfaces if s.get("momentum_half_life_days") is not None]
         avg_momentum_half_life_days: float | None = round(sum(_hl_vals) / len(_hl_vals), 4) if _hl_vals else None
+        # Task 1 (Round 34, Alpha): average multi_factor_lift across replay windows.
+        _mfl_vals = [float(s["multi_factor_lift"]) for s in all_primary_surfaces if s.get("multi_factor_lift") is not None]
+        avg_multi_factor_lift: float | None = round(sum(_mfl_vals) / len(_mfl_vals), 4) if _mfl_vals else None
+        # Task 2 (Round 34, Gamma): average adaptive_sizing_score across replay windows.
+        _asz_vals = [float(s["adaptive_sizing_score"]) for s in all_primary_surfaces if s.get("adaptive_sizing_score") is not None]
+        avg_adaptive_sizing_score: float | None = round(sum(_asz_vals) / len(_asz_vals), 2) if _asz_vals else None
+        # Task 3 (Round 34, Beta): signal churn metrics — cross-window candidate pool stability.
+        _signal_churn: dict[str, Any] = compute_signal_churn_metrics(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1692,6 +1816,16 @@ def _build_replay_evaluator(
             "ic_trend_stability": _ic_trend.get("ic_trend_stability"),
             "factor_ic_trend_deteriorating": _ic_trend.get("factor_ic_trend_deteriorating"),
             "declining_ic_factors": _ic_trend.get("declining_factors"),
+            # Task 1 (Round 34, Alpha): multi-factor conditional lift — average across replay windows.
+            "multi_factor_lift": avg_multi_factor_lift,
+            # Task 2 (Round 34, Gamma): adaptive sizing score — average across replay windows.
+            "adaptive_sizing_score": avg_adaptive_sizing_score,
+            # Task 3 (Round 34, Beta): signal churn metrics — cross-window candidate pool stability.
+            "signal_churn_metrics": _signal_churn,
+            "signal_churn_rate": _signal_churn.get("signal_churn_rate"),
+            "avg_signal_persistence": _signal_churn.get("avg_signal_persistence"),
+            "avg_pool_size_churn": _signal_churn.get("avg_pool_size_churn"),
+            "pool_stable": _signal_churn.get("pool_stable"),
         }
 
     return evaluator
