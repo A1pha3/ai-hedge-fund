@@ -132,7 +132,10 @@
       "recency_win_rate_gap_delta": null,
       "optimal_threshold_lift_delta": null,
       "recovery_factor_delta": null,
-      "max_drawdown_simulated_delta": null
+      "max_drawdown_simulated_delta": null,
+      "max_synergy_lift_delta": null,
+      "high_vs_low_lift_delta": null,
+      "factor_drift_score_delta": null
     },
     "default": {
       "candidate": {
@@ -255,7 +258,10 @@
       "recency_win_rate_gap_delta": null,
       "optimal_threshold_lift_delta": null,
       "recovery_factor_delta": null,
-      "max_drawdown_simulated_delta": null
+      "max_drawdown_simulated_delta": null,
+      "max_synergy_lift_delta": null,
+      "high_vs_low_lift_delta": null,
+      "factor_drift_score_delta": null
     }
   },
   "rollout_recommendation": "hold",

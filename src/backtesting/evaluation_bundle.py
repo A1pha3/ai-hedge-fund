@@ -225,6 +225,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # with a net loss after simulating all trades — total return is negative.
     # Floor ≥ 0.0 requires at least break-even cumulative performance.
     "recovery_factor": 0.0,
+    # Task 1 (Round 40, Alpha): factor synergy matrix max lift floor.
+    # max_synergy_lift = best pairwise win-rate lift when both factors are above P67.
+    # A value < 0.0 means no factor pair produces a win-rate improvement when co-activated —
+    # the 7 core factors show zero synergy, invalidating multi-factor combination rationale.
+    # Floor ≥ 0.0 requires at least one factor pair to show a non-negative synergy lift.
+    "max_synergy_lift": 0.0,
 }
 
 # ---------------------------------------------------------------------------
@@ -267,6 +273,12 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # win rate — the observed win rate could plausibly range over a 30 %-point band.
     # Profiles above this cap carry high estimation uncertainty and should not be promoted.
     "win_rate_ci_width": 0.30,
+    # Task 3 (Round 40, Gamma): cross-window factor exposure drift score cap.
+    # factor_drift_score = mean CV (std/|mean|) of 4 core surface metrics across replay windows.
+    # A score above 0.50 means the strategy's key metrics vary by more than 50 % relative to
+    # their mean across walk-forward windows — a sign of serious regime sensitivity or over-fitting.
+    # Profiles with factor_drift_score > 0.50 carry high out-of-sample instability risk.
+    "factor_drift_score": 0.50,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

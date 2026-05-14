@@ -8786,3 +8786,312 @@ def test_r39_t3_label_registered() -> None:
 
     assert "权益" in COMPARISON_METRIC_LABELS.get("recovery_factor", "")
     assert "回撤" in COMPARISON_METRIC_LABELS.get("max_drawdown_simulated", "")
+
+
+# ===========================================================================
+# Round 40 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: compute_factor_synergy_matrix
+# ---------------------------------------------------------------------------
+
+def _make_synergy_rows(n: int = 40, seed: int = 0) -> list[dict]:
+    """Return n synthetic rows with core factor fields and next_close_return."""
+    import random
+    rng = random.Random(seed)
+    factors = [
+        "close_strength", "volume_expansion_quality", "sector_resonance",
+        "rs_sector_rank", "t0_estimated_net_inflow_ratio",
+        "breakout_quality_score", "momentum_slope_20d",
+    ]
+    rows = []
+    for i in range(n):
+        row: dict = {"next_close_return": rng.uniform(-0.05, 0.10)}
+        for f in factors:
+            row[f] = rng.uniform(0.0, 1.0)
+        rows.append(row)
+    return rows
+
+
+def test_r40_t1_basic_returns_result() -> None:
+    """compute_factor_synergy_matrix returns a valid result dict for sufficient data."""
+    from scripts.btst_analysis_utils import compute_factor_synergy_matrix
+
+    rows = _make_synergy_rows(60)
+    result = compute_factor_synergy_matrix(rows)
+    assert isinstance(result, dict)
+    assert "max_synergy_lift" in result
+    assert "best_factor_pair" in result
+    assert "synergy_pair_count" in result
+    assert "synergy_matrix_valid" in result
+
+
+def test_r40_t1_insufficient_rows_returns_null() -> None:
+    """compute_factor_synergy_matrix returns None fields when fewer than 15 valid rows."""
+    from scripts.btst_analysis_utils import compute_factor_synergy_matrix
+
+    rows = _make_synergy_rows(10)
+    result = compute_factor_synergy_matrix(rows)
+    assert result["synergy_matrix_valid"] is False
+    assert result["max_synergy_lift"] is None
+    assert result["best_factor_pair"] is None
+
+
+def test_r40_t1_empty_rows_graceful() -> None:
+    """compute_factor_synergy_matrix handles empty list gracefully."""
+    from scripts.btst_analysis_utils import compute_factor_synergy_matrix
+
+    result = compute_factor_synergy_matrix([])
+    assert result["synergy_matrix_valid"] is False
+    assert result["max_synergy_lift"] is None
+
+
+def test_r40_t1_none_returns_filtered() -> None:
+    """Rows with next_close_return=None are excluded from computation."""
+    from scripts.btst_analysis_utils import compute_factor_synergy_matrix
+
+    rows = _make_synergy_rows(50)
+    for row in rows[:25]:
+        row["next_close_return"] = None
+    result = compute_factor_synergy_matrix(rows)
+    # Only 25 valid rows remain, still ≥ 15 so should succeed.
+    assert result["synergy_matrix_valid"] is True
+
+
+def test_r40_t1_lift_clamped() -> None:
+    """max_synergy_lift is clamped to [-0.3, 0.5]."""
+    from scripts.btst_analysis_utils import compute_factor_synergy_matrix
+
+    rows = _make_synergy_rows(80, seed=7)
+    result = compute_factor_synergy_matrix(rows)
+    if result["max_synergy_lift"] is not None:
+        assert -0.3 <= result["max_synergy_lift"] <= 0.5
+
+
+def test_r40_t1_best_pair_is_tuple() -> None:
+    """best_factor_pair is a tuple of two factor name strings."""
+    from scripts.btst_analysis_utils import compute_factor_synergy_matrix
+
+    rows = _make_synergy_rows(80, seed=42)
+    result = compute_factor_synergy_matrix(rows)
+    if result["synergy_matrix_valid"]:
+        bp = result["best_factor_pair"]
+        assert isinstance(bp, (tuple, list))
+        assert len(bp) == 2
+        assert all(isinstance(f, str) for f in bp)
+
+
+def test_r40_t1_floor_registered() -> None:
+    """max_synergy_lift floor is 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "max_synergy_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["max_synergy_lift"] == 0.0
+
+
+def test_r40_t1_metric_registered() -> None:
+    """max_synergy_lift is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "max_synergy_lift" in COMPARISON_METRICS
+    assert "max_synergy_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r40_t1_label_registered() -> None:
+    """max_synergy_lift has a Chinese label containing '协同'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "协同" in COMPARISON_METRIC_LABELS.get("max_synergy_lift", "")
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_float_turnover_analysis
+# ---------------------------------------------------------------------------
+
+def _make_turnover_rows(n: int = 40, seed: int = 0, include_turnover: bool = True) -> list[dict]:
+    """Return n synthetic rows with float_turnover_rate and next_close_return."""
+    import random
+    rng = random.Random(seed)
+    rows = []
+    for _ in range(n):
+        row: dict = {"next_close_return": rng.uniform(-0.05, 0.10)}
+        if include_turnover:
+            row["float_turnover_rate"] = rng.uniform(0.01, 0.20)
+        else:
+            row["float_turnover_rate"] = None
+        rows.append(row)
+    return rows
+
+
+def test_r40_t2_basic_returns_result() -> None:
+    """compute_float_turnover_analysis returns valid dict for sufficient data."""
+    from scripts.btst_analysis_utils import compute_float_turnover_analysis
+
+    rows = _make_turnover_rows(60)
+    result = compute_float_turnover_analysis(rows)
+    assert isinstance(result, dict)
+    assert result["turnover_analysis_valid"] is True
+    assert "turnover_low_win_rate" in result
+    assert "high_vs_low_lift" in result
+    assert "optimal_turnover_bucket" in result
+
+
+def test_r40_t2_empty_rows_graceful() -> None:
+    """compute_float_turnover_analysis handles empty list gracefully."""
+    from scripts.btst_analysis_utils import compute_float_turnover_analysis
+
+    result = compute_float_turnover_analysis([])
+    assert result["turnover_analysis_valid"] is False
+
+
+def test_r40_t2_all_none_turnover_returns_invalid() -> None:
+    """Returns turnover_analysis_valid=False when float_turnover_rate is all None."""
+    from scripts.btst_analysis_utils import compute_float_turnover_analysis
+
+    rows = _make_turnover_rows(30, include_turnover=False)
+    result = compute_float_turnover_analysis(rows)
+    assert result["turnover_analysis_valid"] is False
+    assert result["high_vs_low_lift"] is None
+
+
+def test_r40_t2_insufficient_rows_returns_invalid() -> None:
+    """Returns turnover_analysis_valid=False when fewer than 10 valid rows."""
+    from scripts.btst_analysis_utils import compute_float_turnover_analysis
+
+    rows = _make_turnover_rows(8)
+    result = compute_float_turnover_analysis(rows)
+    assert result["turnover_analysis_valid"] is False
+
+
+def test_r40_t2_optimal_bucket_valid_value() -> None:
+    """optimal_turnover_bucket is one of 'low', 'mid', 'high' or None."""
+    from scripts.btst_analysis_utils import compute_float_turnover_analysis
+
+    rows = _make_turnover_rows(60)
+    result = compute_float_turnover_analysis(rows)
+    if result["optimal_turnover_bucket"] is not None:
+        assert result["optimal_turnover_bucket"] in ("low", "mid", "high")
+
+
+def test_r40_t2_thresholds_present() -> None:
+    """p33_turnover and p67_turnover are returned as non-None floats."""
+    from scripts.btst_analysis_utils import compute_float_turnover_analysis
+
+    rows = _make_turnover_rows(60)
+    result = compute_float_turnover_analysis(rows)
+    assert result["turnover_analysis_valid"] is True
+    assert result["p33_turnover"] is not None
+    assert result["p67_turnover"] is not None
+    assert result["p33_turnover"] <= result["p67_turnover"]
+
+
+def test_r40_t2_metric_registered() -> None:
+    """high_vs_low_lift is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "high_vs_low_lift" in COMPARISON_METRICS
+    assert "high_vs_low_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r40_t2_label_registered() -> None:
+    """high_vs_low_lift has a Chinese label containing '换手'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "换手" in COMPARISON_METRIC_LABELS.get("high_vs_low_lift", "")
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_factor_exposure
+# ---------------------------------------------------------------------------
+
+def _make_window_summaries(n: int = 5, seed: int = 0) -> list[dict]:
+    """Return n synthetic window summary dicts with core metric fields."""
+    import random
+    rng = random.Random(seed)
+    summaries = []
+    for _ in range(n):
+        summaries.append({
+            "win_rate": rng.uniform(0.45, 0.70),
+            "composite_gate_score": rng.uniform(40.0, 80.0),
+            "sortino_ratio": rng.uniform(-0.5, 3.0),
+            "expected_value_per_trade": rng.uniform(-0.01, 0.03),
+        })
+    return summaries
+
+
+def test_r40_t3_basic_returns_result() -> None:
+    """compute_cross_window_factor_exposure returns valid dict for 5+ windows."""
+    from scripts.optimize_profile import compute_cross_window_factor_exposure
+
+    summaries = _make_window_summaries(5)
+    result = compute_cross_window_factor_exposure(summaries)
+    assert isinstance(result, dict)
+    assert "factor_drift_score" in result
+    assert "factor_exposure_stable" in result
+    assert result["factor_drift_score"] is not None
+
+
+def test_r40_t3_insufficient_windows_returns_null() -> None:
+    """Returns None fields when fewer than 3 windows."""
+    from scripts.optimize_profile import compute_cross_window_factor_exposure
+
+    for n in (0, 1, 2):
+        result = compute_cross_window_factor_exposure(_make_window_summaries(n))
+        assert result["factor_drift_score"] is None
+        assert result["factor_exposure_stable"] is None
+
+
+def test_r40_t3_stable_metrics_flag_true() -> None:
+    """factor_exposure_stable is True when all metrics have very low CV."""
+    from scripts.optimize_profile import compute_cross_window_factor_exposure
+
+    # All windows with nearly identical values → very low CV.
+    summaries = [{"win_rate": 0.60, "composite_gate_score": 65.0, "sortino_ratio": 1.5, "expected_value_per_trade": 0.01} for _ in range(5)]
+    result = compute_cross_window_factor_exposure(summaries)
+    assert result["factor_drift_score"] is not None
+    assert result["factor_exposure_stable"] is True
+
+
+def test_r40_t3_drift_score_positive() -> None:
+    """factor_drift_score is a non-negative float."""
+    from scripts.optimize_profile import compute_cross_window_factor_exposure
+
+    summaries = _make_window_summaries(8, seed=99)
+    result = compute_cross_window_factor_exposure(summaries)
+    if result["factor_drift_score"] is not None:
+        assert result["factor_drift_score"] >= 0.0
+
+
+def test_r40_t3_most_and_least_drifting_present() -> None:
+    """most_drifting_metric and least_drifting_metric are returned when data is valid."""
+    from scripts.optimize_profile import compute_cross_window_factor_exposure
+
+    summaries = _make_window_summaries(6)
+    result = compute_cross_window_factor_exposure(summaries)
+    if result["factor_drift_score"] is not None:
+        assert result["most_drifting_metric"] is not None
+        assert result["least_drifting_metric"] is not None
+
+
+def test_r40_t3_cap_registered() -> None:
+    """factor_drift_score cap is 0.50 in BTST_QUALITY_CAPS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
+    assert "factor_drift_score" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["factor_drift_score"] == 0.50
+
+
+def test_r40_t3_metric_registered() -> None:
+    """factor_drift_score is in COMPARISON_METRICS and LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, LOWER_IS_BETTER_COMPARISON_METRICS
+
+    assert "factor_drift_score" in COMPARISON_METRICS
+    assert "factor_drift_score" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r40_t3_label_registered() -> None:
+    """factor_drift_score has a Chinese label containing '漂移'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "漂移" in COMPARISON_METRIC_LABELS.get("factor_drift_score", "")

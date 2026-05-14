@@ -4050,6 +4050,31 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["equity_rising"] = _sec.get("equity_rising")
     _surface_result["equity_curve_grade"] = _sec.get("equity_curve_grade")
 
+    # -----------------------------------------------------------------------
+    # Round 40, Task 1 (Alpha): Factor synergy matrix — pairwise co-activation lift.
+    # -----------------------------------------------------------------------
+    _fsm: dict[str, Any] = compute_factor_synergy_matrix(next_day_rows)
+    _surface_result["best_factor_pair"] = _fsm.get("best_factor_pair")
+    _surface_result["best_pair_lift"] = _fsm.get("best_pair_lift")
+    _surface_result["best_pair_win_rate"] = _fsm.get("best_pair_win_rate")
+    _surface_result["synergy_pair_count"] = _fsm.get("synergy_pair_count")
+    _surface_result["max_synergy_lift"] = _fsm.get("max_synergy_lift")
+    _surface_result["synergy_matrix_valid"] = _fsm.get("synergy_matrix_valid")
+
+    # -----------------------------------------------------------------------
+    # Round 40, Task 2 (Beta): Float turnover analysis —换手率 bucket win rates.
+    # -----------------------------------------------------------------------
+    _fta: dict[str, Any] = compute_float_turnover_analysis(next_day_rows)
+    _surface_result["turnover_analysis_valid"] = _fta.get("turnover_analysis_valid")
+    _surface_result["turnover_low_win_rate"] = _fta.get("turnover_low_win_rate")
+    _surface_result["turnover_mid_win_rate"] = _fta.get("turnover_mid_win_rate")
+    _surface_result["turnover_high_win_rate"] = _fta.get("turnover_high_win_rate")
+    _surface_result["optimal_turnover_bucket"] = _fta.get("optimal_turnover_bucket")
+    _surface_result["turnover_monotone_win_rate"] = _fta.get("turnover_monotone_win_rate")
+    _surface_result["high_vs_low_lift"] = _fta.get("high_vs_low_lift")
+    _surface_result["p33_turnover"] = _fta.get("p33_turnover")
+    _surface_result["p67_turnover"] = _fta.get("p67_turnover")
+
     return _surface_result
 
 
@@ -7112,4 +7137,213 @@ def compute_simulated_equity_curve(rows: list[dict]) -> dict:
         "equity_curve_slope": equity_curve_slope,
         "equity_rising": equity_rising,
         "equity_curve_grade": grade,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 40, Task 1 (Alpha): Factor synergy matrix — pairwise factor co-activation lift
+# ---------------------------------------------------------------------------
+# For every C(7,2)=21 pair of the 7 core BTST factors, compute the win-rate lift when
+# BOTH factors are simultaneously above their P67 threshold.  The pair with the highest
+# lift is the «best_factor_pair».  Also counts pairs with lift > 5% as synergy pairs.
+#
+# Guardrail floor: max_synergy_lift ≥ 0.0 — at least one pair must show positive synergy.
+
+_SYNERGY_FACTORS: list[str] = [
+    "close_strength",
+    "volume_expansion_quality",
+    "sector_resonance",
+    "rs_sector_rank",
+    "t0_estimated_net_inflow_ratio",
+    "breakout_quality_score",
+    "momentum_slope_20d",
+]
+
+
+def compute_factor_synergy_matrix(rows: list[dict]) -> dict:
+    """Compute pairwise factor co-activation win-rate lift for the 7 core BTST factors.
+
+    For each C(7,2)=21 factor pair (f1, f2) the function identifies rows where both
+    factors exceed their individual P67 threshold and measures the resulting win-rate
+    lift over the global base win rate.
+
+    Args:
+        rows: Per-trade row dicts.  Each row must contain ``next_close_return``
+            (float | None) and optionally the 7 core factor fields.
+
+    Returns:
+        Dict with keys:
+
+        - ``best_factor_pair`` (tuple[str,str] | None): pair with the largest lift.
+        - ``best_pair_lift`` (float | None): win-rate lift of the best pair, clamped [-0.3, 0.5].
+        - ``best_pair_win_rate`` (float | None): absolute win rate for the best pair.
+        - ``synergy_pair_count`` (int): number of pairs with lift > 0.05.
+        - ``max_synergy_lift`` (float | None): alias of best_pair_lift (registered metric).
+        - ``synergy_matrix_valid`` (bool): True when computation succeeded.
+    """
+    _null: dict = {
+        "best_factor_pair": None,
+        "best_pair_lift": None,
+        "best_pair_win_rate": None,
+        "synergy_pair_count": 0,
+        "max_synergy_lift": None,
+        "synergy_matrix_valid": False,
+    }
+    valid_rows = [r for r in rows if r.get("next_close_return") is not None]
+    if len(valid_rows) < 15:
+        return _null
+
+    all_returns = [float(r["next_close_return"]) for r in valid_rows]
+    base_win_rate = sum(1 for rv in all_returns if rv > 0) / max(len(all_returns), 1)
+
+    # Precompute P67 thresholds for each factor.
+    p67_map: dict[str, float | None] = {}
+    for f in _SYNERGY_FACTORS:
+        vals = sorted(float(r[f]) for r in valid_rows if r.get(f) is not None)
+        if not vals:
+            p67_map[f] = None
+            continue
+        idx = max(0, int(len(vals) * 0.67) - 1)
+        p67_map[f] = vals[min(idx, len(vals) - 1)]
+
+    best_pair: tuple[str, str] | None = None
+    best_lift: float = float("-inf")
+    best_win_rate: float | None = None
+    synergy_pair_count = 0
+
+    from itertools import combinations as _combinations
+    for f1, f2 in _combinations(_SYNERGY_FACTORS, 2):
+        p67_f1 = p67_map.get(f1)
+        p67_f2 = p67_map.get(f2)
+        if p67_f1 is None or p67_f2 is None:
+            continue
+        both_high = [
+            r for r in valid_rows
+            if r.get(f1) is not None and r.get(f2) is not None
+            and float(r[f1]) >= p67_f1 and float(r[f2]) >= p67_f2
+        ]
+        if len(both_high) < 5:
+            continue
+        pair_win_rate = sum(1 for r in both_high if float(r["next_close_return"]) > 0) / max(len(both_high), 1)
+        pair_lift = pair_win_rate - base_win_rate
+        if pair_lift > best_lift:
+            best_lift = pair_lift
+            best_pair = (f1, f2)
+            best_win_rate = pair_win_rate
+        if pair_lift > 0.05:
+            synergy_pair_count += 1
+
+    if best_pair is None:
+        return _null
+
+    clamped_lift = round(max(-0.3, min(0.5, best_lift)), 6)
+    return {
+        "best_factor_pair": best_pair,
+        "best_pair_lift": clamped_lift,
+        "best_pair_win_rate": round(best_win_rate, 6) if best_win_rate is not None else None,
+        "synergy_pair_count": synergy_pair_count,
+        "max_synergy_lift": clamped_lift,
+        "synergy_matrix_valid": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 40, Task 2 (Beta): Float turnover analysis — optimal换手率 bucket for BTST
+# ---------------------------------------------------------------------------
+# Splits rows into low/mid/high turnover thirds by P33/P67 and computes per-bucket
+# win rate.  Identifies optimal bucket and whether turnover monotonically predicts
+# win rate.  Registers high_vs_low_lift as a diagnostic COMPARISON_METRIC.
+
+
+def compute_float_turnover_analysis(rows: list[dict]) -> dict:
+    """Analyse ``float_turnover_rate`` vs BTST next-day win rate across three buckets.
+
+    Splits all rows with valid (non-None) turnover and return data into low/mid/high
+    thirds using P33 and P67 thresholds of ``float_turnover_rate``.
+
+    Args:
+        rows: Per-trade row dicts with ``next_close_return`` (float | None) and
+            ``float_turnover_rate`` (float | None).
+
+    Returns:
+        Dict with keys:
+
+        - ``turnover_analysis_valid`` (bool): True when computation succeeded.
+        - ``turnover_low_win_rate`` / ``turnover_mid_win_rate`` / ``turnover_high_win_rate``
+          (float | None): win rate per bucket; None when bucket has fewer than 3 rows.
+        - ``optimal_turnover_bucket`` (str | None): 'low'/'mid'/'high' with highest win rate.
+        - ``turnover_monotone_win_rate`` (bool | None): True when low < mid < high.
+        - ``high_vs_low_lift`` (float | None): high_win_rate − low_win_rate (diagnostic metric).
+        - ``p33_turnover`` / ``p67_turnover`` (float | None): bucket boundary thresholds.
+    """
+    _null: dict = {
+        "turnover_analysis_valid": False,
+        "turnover_low_win_rate": None,
+        "turnover_mid_win_rate": None,
+        "turnover_high_win_rate": None,
+        "optimal_turnover_bucket": None,
+        "turnover_monotone_win_rate": None,
+        "high_vs_low_lift": None,
+        "p33_turnover": None,
+        "p67_turnover": None,
+    }
+    if not rows:
+        return _null
+    # Check if float_turnover_rate is entirely None.
+    if all(r.get("float_turnover_rate") is None for r in rows):
+        return _null
+
+    valid = [
+        r for r in rows
+        if r.get("next_close_return") is not None and r.get("float_turnover_rate") is not None
+    ]
+    if len(valid) < 10:
+        return _null
+
+    turnover_sorted = sorted(float(r["float_turnover_rate"]) for r in valid)
+    n = len(turnover_sorted)
+    p33 = turnover_sorted[max(0, int(n * 0.33) - 1)]
+    p67 = turnover_sorted[max(0, int(n * 0.67) - 1)]
+
+    low_rows = [r for r in valid if float(r["float_turnover_rate"]) < p33]
+    mid_rows = [r for r in valid if p33 <= float(r["float_turnover_rate"]) < p67]
+    high_rows = [r for r in valid if float(r["float_turnover_rate"]) >= p67]
+
+    def _bucket_wr(bucket: list[dict]) -> float | None:
+        if len(bucket) < 3:
+            return None
+        return round(sum(1 for r in bucket if float(r["next_close_return"]) > 0) / max(len(bucket), 1), 6)
+
+    low_wr = _bucket_wr(low_rows)
+    mid_wr = _bucket_wr(mid_rows)
+    high_wr = _bucket_wr(high_rows)
+
+    bucket_wrs: dict[str, float] = {}
+    if low_wr is not None:
+        bucket_wrs["low"] = low_wr
+    if mid_wr is not None:
+        bucket_wrs["mid"] = mid_wr
+    if high_wr is not None:
+        bucket_wrs["high"] = high_wr
+
+    optimal_bucket: str | None = max(bucket_wrs, key=lambda k: bucket_wrs[k]) if bucket_wrs else None
+
+    monotone: bool | None = None
+    if low_wr is not None and mid_wr is not None and high_wr is not None:
+        monotone = bool(low_wr < mid_wr < high_wr)
+
+    high_vs_low: float | None = None
+    if high_wr is not None and low_wr is not None:
+        high_vs_low = round(high_wr - low_wr, 6)
+
+    return {
+        "turnover_analysis_valid": True,
+        "turnover_low_win_rate": low_wr,
+        "turnover_mid_win_rate": mid_wr,
+        "turnover_high_win_rate": high_wr,
+        "optimal_turnover_bucket": optimal_bucket,
+        "turnover_monotone_win_rate": monotone,
+        "high_vs_low_lift": high_vs_low,
+        "p33_turnover": round(p33, 6),
+        "p67_turnover": round(p67, 6),
     }

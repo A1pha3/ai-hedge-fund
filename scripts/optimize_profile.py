@@ -284,6 +284,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     # Task 3 (Round 39, Gamma): simulated equity curve — recovery factor and max drawdown.
     "recovery_factor",
     "max_drawdown_simulated",
+    # Task 1 (Round 40, Alpha): factor synergy matrix — max pairwise co-activation win-rate lift.
+    "max_synergy_lift",
+    # Task 2 (Round 40, Beta): float turnover analysis — high vs low turnover win-rate lift.
+    "high_vs_low_lift",
+    # Task 3 (Round 40, Gamma): cross-window factor exposure drift — mean CV (lower = more stable).
+    "factor_drift_score",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -456,6 +462,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "recovery_factor": "权益恢复系数",
     # Task 3 (Round 39, Gamma): simulated equity curve — max drawdown
     "max_drawdown_simulated": "最大回撤",
+    # Task 1 (Round 40, Alpha): factor synergy matrix — max pairwise co-activation lift
+    "max_synergy_lift": "最强因子对协同提升",
+    # Task 2 (Round 40, Beta): float turnover analysis — high vs low turnover win-rate lift
+    "high_vs_low_lift": "高低换手胜率差",
+    # Task 3 (Round 40, Gamma): cross-window factor exposure drift score
+    "factor_drift_score": "因子暴露漂移度",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -508,6 +520,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     # (intentionally not added — higher strength is better, default higher-is-better)
     # Task 3 (Round 39, Gamma): max drawdown simulated — higher drawdown = worse = lower-is-better.
     "max_drawdown_simulated",
+    # Task 3 (Round 40, Gamma): factor drift score — higher = more unstable factor exposure = lower-is-better.
+    "factor_drift_score",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -672,6 +686,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     # Task 3 (Round 39, Gamma): equity curve metrics — optional; pre-Round-39 outputs omit these.
     "recovery_factor",
     "max_drawdown_simulated",
+    # Task 1 (Round 40, Alpha): factor synergy lift — optional; pre-Round-40 outputs omit it.
+    "max_synergy_lift",
+    # Task 2 (Round 40, Beta): float turnover lift — optional; pre-Round-40 outputs omit it.
+    "high_vs_low_lift",
+    # Task 3 (Round 40, Gamma): cross-window factor drift score — optional; pre-Round-40 outputs omit it.
+    "factor_drift_score",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1314,6 +1334,73 @@ def compute_signal_churn_metrics(all_windows_summaries: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 40, Task 3 (Gamma): Cross-window factor exposure drift analysis
+# ---------------------------------------------------------------------------
+# Tracks how much the key per-window metrics drift across replay windows.
+# A high mean coefficient-of-variation (CV) signals regime-sensitive factors or
+# an unstable strategy surface.  Registers factor_drift_score with a cap of 0.50.
+
+
+def compute_cross_window_factor_exposure(all_windows_summaries: list[dict]) -> dict:
+    """Measure cross-window stability of key surface metrics via mean coefficient-of-variation.
+
+    Extracts 4 core metrics (win_rate / composite_gate_score / sortino_ratio /
+    expected_value_per_trade) from each per-window summary and computes the CV
+    (std / |mean|) for each series across windows.  The mean CV is reported as
+    ``factor_drift_score`` — lower is more stable.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (one per
+            replay window, as appended to ``all_primary_surfaces``).
+
+    Returns:
+        Dict with keys:
+
+        - ``factor_exposure_stable`` (bool | None): True when mean CV < 0.30.
+        - ``factor_drift_score`` (float | None): mean CV across valid metric series.
+        - ``most_drifting_metric`` (str | None): metric with highest CV.
+        - ``least_drifting_metric`` (str | None): metric with lowest CV.
+        - ``metric_cv_map`` (dict[str, float]): per-metric CV values.
+
+        Returns ``{"factor_exposure_stable": None, "factor_drift_score": None}``
+        when fewer than 3 windows are available.
+    """
+    _null: dict = {"factor_exposure_stable": None, "factor_drift_score": None, "most_drifting_metric": None, "least_drifting_metric": None, "metric_cv_map": {}}
+    if len(all_windows_summaries) < 3:
+        return _null
+
+    _TRACKED_METRICS = ["win_rate", "composite_gate_score", "sortino_ratio", "expected_value_per_trade"]
+
+    metric_cv_map: dict[str, float] = {}
+    for key in _TRACKED_METRICS:
+        vals = [float(s[key]) for s in all_windows_summaries if s.get(key) is not None]
+        if len(vals) < 3:
+            continue
+        n = len(vals)
+        mean_val = sum(vals) / n
+        variance = sum((v - mean_val) ** 2 for v in vals) / max(n - 1, 1)
+        std_val = variance ** 0.5
+        cv = std_val / max(abs(mean_val), 1e-8)
+        metric_cv_map[key] = round(cv, 6)
+
+    if not metric_cv_map:
+        return _null
+
+    factor_drift_score = round(sum(metric_cv_map.values()) / max(len(metric_cv_map), 1), 6)
+    factor_exposure_stable = factor_drift_score < 0.30
+    most_drifting_metric = max(metric_cv_map, key=lambda k: metric_cv_map[k])
+    least_drifting_metric = min(metric_cv_map, key=lambda k: metric_cv_map[k])
+
+    return {
+        "factor_exposure_stable": factor_exposure_stable,
+        "factor_drift_score": factor_drift_score,
+        "most_drifting_metric": most_drifting_metric,
+        "least_drifting_metric": least_drifting_metric,
+        "metric_cv_map": metric_cv_map,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -1903,6 +1990,15 @@ def _build_replay_evaluator(
         avg_recovery_factor: float | None = round(sum(_rf_vals) / len(_rf_vals), 4) if _rf_vals else None
         _mds_vals = [float(s["max_drawdown_simulated"]) for s in all_primary_surfaces if s.get("max_drawdown_simulated") is not None]
         avg_max_drawdown_simulated: float | None = round(sum(_mds_vals) / len(_mds_vals), 4) if _mds_vals else None
+        # Task 1 (Round 40, Alpha): average max_synergy_lift across replay windows.
+        _msl_vals = [float(s["max_synergy_lift"]) for s in all_primary_surfaces if s.get("max_synergy_lift") is not None]
+        avg_max_synergy_lift: float | None = round(sum(_msl_vals) / len(_msl_vals), 6) if _msl_vals else None
+        # Task 2 (Round 40, Beta): average high_vs_low_lift across replay windows.
+        _hvl_vals = [float(s["high_vs_low_lift"]) for s in all_primary_surfaces if s.get("high_vs_low_lift") is not None]
+        avg_high_vs_low_lift: float | None = round(sum(_hvl_vals) / len(_hvl_vals), 6) if _hvl_vals else None
+        # Task 3 (Round 40, Gamma): cross-window factor exposure drift — computed over all window summaries.
+        _cfe: dict[str, Any] = compute_cross_window_factor_exposure(all_primary_surfaces)
+        avg_factor_drift_score: float | None = _cfe.get("factor_drift_score")
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -2075,6 +2171,15 @@ def _build_replay_evaluator(
             "recovery_factor": avg_recovery_factor,
             # Task 3 (Round 39, Gamma): average max drawdown simulated across replay windows.
             "max_drawdown_simulated": avg_max_drawdown_simulated,
+            # Task 1 (Round 40, Alpha): average max_synergy_lift across replay windows.
+            "max_synergy_lift": avg_max_synergy_lift,
+            # Task 2 (Round 40, Beta): average high_vs_low_lift across replay windows.
+            "high_vs_low_lift": avg_high_vs_low_lift,
+            # Task 3 (Round 40, Gamma): cross-window factor drift score.
+            "factor_drift_score": avg_factor_drift_score,
+            "factor_exposure_stable": _cfe.get("factor_exposure_stable"),
+            "most_drifting_metric": _cfe.get("most_drifting_metric"),
+            "least_drifting_metric": _cfe.get("least_drifting_metric"),
         }
 
     return evaluator
