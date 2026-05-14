@@ -4181,6 +4181,28 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["bq_monotone"] = _bqs.get("bq_monotone")
     _surface_result["bq_effective"] = _bqs.get("bq_effective")
 
+    # Round 45, Task 1 (Alpha): Market-Cap Tercile Stratification.
+    # -----------------------------------------------------------------------
+    _mcs: dict[str, Any] = compute_market_cap_stratification(next_day_rows)
+    _surface_result["mc_stratification_valid"] = _mcs.get("mc_stratification_valid")
+    _surface_result["mc_low_win_rate"] = _mcs.get("mc_low_win_rate")
+    _surface_result["mc_mid_win_rate"] = _mcs.get("mc_mid_win_rate")
+    _surface_result["mc_high_win_rate"] = _mcs.get("mc_high_win_rate")
+    _surface_result["mc_high_vs_low_lift"] = _mcs.get("mc_high_vs_low_lift")
+    _surface_result["mc_monotone"] = _mcs.get("mc_monotone")
+    _surface_result["mc_effective"] = _mcs.get("mc_effective")
+
+    # Round 45, Task 2 (Beta): Catalyst-Theme-Score Quartile Stratification.
+    # -----------------------------------------------------------------------
+    _cats: dict[str, Any] = compute_catalyst_score_stratification(next_day_rows)
+    _surface_result["catalyst_stratification_valid"] = _cats.get("catalyst_stratification_valid")
+    _surface_result["catalyst_q1_win_rate"] = _cats.get("catalyst_q1_win_rate")
+    _surface_result["catalyst_q2_win_rate"] = _cats.get("catalyst_q2_win_rate")
+    _surface_result["catalyst_q3_win_rate"] = _cats.get("catalyst_q3_win_rate")
+    _surface_result["catalyst_q4_win_rate"] = _cats.get("catalyst_q4_win_rate")
+    _surface_result["catalyst_top_quartile_premium"] = _cats.get("catalyst_top_quartile_premium")
+    _surface_result["catalyst_monotone"] = _cats.get("catalyst_monotone")
+
     return _surface_result
 
 
@@ -8392,4 +8414,220 @@ def compute_breakout_quality_stratification(rows: list[dict]) -> dict:
         "bq_high_vs_low_lift": lift,
         "bq_monotone": monotone,
         "bq_effective": effective,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Round 45, Alpha): Market-Cap Tercile Stratification
+# ---------------------------------------------------------------------------
+# Splits rows into three market-cap terciles (low/mid/high) based on P33/P67
+# of market_cap_score and reports next-day win rate per tier.
+
+
+def compute_market_cap_stratification(rows: list[dict]) -> dict:
+    """Stratify next-day win rates across three market-cap terciles.
+
+    Args:
+        rows: Per-row dicts containing ``market_cap_score`` and ``next_day_return``.
+
+    Returns:
+        Dict with keys:
+
+        - ``mc_stratification_valid`` (bool): True when ≥ 2 terciles have ≥ 3 rows.
+        - ``mc_low_win_rate`` (float | None): Win rate for lowest market-cap tercile.
+        - ``mc_mid_win_rate`` (float | None): Win rate for middle market-cap tercile.
+        - ``mc_high_win_rate`` (float | None): Win rate for highest market-cap tercile.
+        - ``mc_high_vs_low_lift`` (float | None): mc_high_win_rate − mc_low_win_rate.
+        - ``mc_monotone`` (bool | None): True when low < mid < high win rates.
+        - ``mc_effective`` (bool | None): True when mc_high_vs_low_lift > 0.05.
+    """
+    _null: dict = {
+        "mc_stratification_valid": False,
+        "mc_low_win_rate": None,
+        "mc_mid_win_rate": None,
+        "mc_high_win_rate": None,
+        "mc_high_vs_low_lift": None,
+        "mc_monotone": None,
+        "mc_effective": None,
+    }
+    if not rows:
+        return _null
+
+    has_mc = any(row.get("market_cap_score") is not None for row in rows)
+    if not has_mc:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        mc = row.get("market_cap_score")
+        ret = row.get("next_day_return")
+        if mc is None or ret is None:
+            continue
+        try:
+            paired.append((float(mc), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if not paired:
+        return _null
+
+    paired.sort(key=lambda x: x[0])
+    n = len(paired)
+    p33_idx = int(n / 3)
+    p67_idx = int(2 * n / 3)
+    p33_val = paired[min(p33_idx, n - 1)][0]
+    p67_val = paired[min(p67_idx, n - 1)][0]
+
+    low_rets: list[float] = []
+    mid_rets: list[float] = []
+    high_rets: list[float] = []
+    for mc_val, ret_val in paired:
+        if mc_val <= p33_val:
+            low_rets.append(ret_val)
+        elif mc_val <= p67_val:
+            mid_rets.append(ret_val)
+        else:
+            high_rets.append(ret_val)
+
+    def _wr(rets: list[float]) -> float | None:
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_low = _wr(low_rets)
+    wr_mid = _wr(mid_rets)
+    wr_high = _wr(high_rets)
+
+    valid_count = sum(1 for w in (wr_low, wr_mid, wr_high) if w is not None)
+    stratification_valid = valid_count >= 2
+
+    lift: float | None = None
+    if wr_high is not None and wr_low is not None:
+        lift = round(wr_high - wr_low, 6)
+
+    monotone: bool | None = None
+    if wr_low is not None and wr_mid is not None and wr_high is not None:
+        monotone = wr_low < wr_mid < wr_high
+
+    effective: bool | None = None
+    if lift is not None:
+        effective = lift > 0.05
+
+    return {
+        "mc_stratification_valid": stratification_valid,
+        "mc_low_win_rate": wr_low,
+        "mc_mid_win_rate": wr_mid,
+        "mc_high_win_rate": wr_high,
+        "mc_high_vs_low_lift": lift,
+        "mc_monotone": monotone,
+        "mc_effective": effective,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Round 45, Beta): Catalyst-Theme-Score Quartile Stratification
+# ---------------------------------------------------------------------------
+# Splits rows into four quartiles (Q1–Q4) based on P25/P50/P75 of
+# catalyst_theme_score and reports next-day win rate per quartile.
+
+
+def compute_catalyst_score_stratification(rows: list[dict]) -> dict:
+    """Stratify next-day win rates across four catalyst-theme-score quartiles.
+
+    Args:
+        rows: Per-row dicts containing ``catalyst_theme_score`` and ``next_day_return``.
+
+    Returns:
+        Dict with keys:
+
+        - ``catalyst_stratification_valid`` (bool): True when ≥ 2 quartiles have ≥ 3 rows.
+        - ``catalyst_q1_win_rate`` (float | None): Win rate for Q1 (lowest).
+        - ``catalyst_q2_win_rate`` (float | None): Win rate for Q2.
+        - ``catalyst_q3_win_rate`` (float | None): Win rate for Q3.
+        - ``catalyst_q4_win_rate`` (float | None): Win rate for Q4 (highest).
+        - ``catalyst_top_quartile_premium`` (float | None): Q4 win rate − Q1 win rate.
+        - ``catalyst_monotone`` (bool | None): True when Q1 < Q2 < Q3 < Q4.
+    """
+    _null: dict = {
+        "catalyst_stratification_valid": False,
+        "catalyst_q1_win_rate": None,
+        "catalyst_q2_win_rate": None,
+        "catalyst_q3_win_rate": None,
+        "catalyst_q4_win_rate": None,
+        "catalyst_top_quartile_premium": None,
+        "catalyst_monotone": None,
+    }
+    if not rows:
+        return _null
+
+    has_cat = any(row.get("catalyst_theme_score") is not None for row in rows)
+    if not has_cat:
+        return _null
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        cat = row.get("catalyst_theme_score")
+        ret = row.get("next_day_return")
+        if cat is None or ret is None:
+            continue
+        try:
+            paired.append((float(cat), float(ret)))
+        except (TypeError, ValueError):
+            continue
+
+    if not paired:
+        return _null
+
+    paired.sort(key=lambda x: x[0])
+    n = len(paired)
+    p25_idx = int(n / 4)
+    p50_idx = int(n / 2)
+    p75_idx = int(3 * n / 4)
+    p25_val = paired[min(p25_idx, n - 1)][0]
+    p50_val = paired[min(p50_idx, n - 1)][0]
+    p75_val = paired[min(p75_idx, n - 1)][0]
+
+    q1_rets: list[float] = []
+    q2_rets: list[float] = []
+    q3_rets: list[float] = []
+    q4_rets: list[float] = []
+    for cat_val, ret_val in paired:
+        if cat_val <= p25_val:
+            q1_rets.append(ret_val)
+        elif cat_val <= p50_val:
+            q2_rets.append(ret_val)
+        elif cat_val <= p75_val:
+            q3_rets.append(ret_val)
+        else:
+            q4_rets.append(ret_val)
+
+    def _wr(rets: list[float]) -> float | None:
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    wr_q1 = _wr(q1_rets)
+    wr_q2 = _wr(q2_rets)
+    wr_q3 = _wr(q3_rets)
+    wr_q4 = _wr(q4_rets)
+
+    valid_count = sum(1 for w in (wr_q1, wr_q2, wr_q3, wr_q4) if w is not None)
+    stratification_valid = valid_count >= 2
+
+    premium: float | None = None
+    if wr_q4 is not None and wr_q1 is not None:
+        premium = round(wr_q4 - wr_q1, 6)
+
+    monotone: bool | None = None
+    if wr_q1 is not None and wr_q2 is not None and wr_q3 is not None and wr_q4 is not None:
+        monotone = wr_q1 < wr_q2 < wr_q3 < wr_q4
+
+    return {
+        "catalyst_stratification_valid": stratification_valid,
+        "catalyst_q1_win_rate": wr_q1,
+        "catalyst_q2_win_rate": wr_q2,
+        "catalyst_q3_win_rate": wr_q3,
+        "catalyst_q4_win_rate": wr_q4,
+        "catalyst_top_quartile_premium": premium,
+        "catalyst_monotone": monotone,
     }

@@ -285,6 +285,18 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # indicating the relative-strength factor provides no positive selection edge.
     # Floor ≥ 0.0 requires the RS factor to deliver at least a neutral (non-negative) premium.
     "rs_top_quartile_premium": 0.0,
+    # Task 2 (Round 45, Beta): catalyst-theme top-quartile win-rate premium floor.
+    # catalyst_top_quartile_premium = win_rate(Q4) − win_rate(Q1) stratified by catalyst_theme_score.
+    # A value < 0.0 means the highest catalyst-scoring candidates do not outperform the lowest —
+    # the catalyst_theme_score factor provides zero monotone discriminative power.
+    # Floor ≥ 0.0 requires at least neutral positive premium for rollout eligibility.
+    "catalyst_top_quartile_premium": 0.0,
+    # Task 3 (Round 45, Gamma): top-candidate cross-window consistency rate floor.
+    # top_candidate_consistency_rate = fraction of windows where top-quintile win rate ≥ 0.60.
+    # A rate < 0.40 means fewer than 40 % of windows achieve the ≥ 60 % win-rate target for
+    # top-scored candidates — the strategy is not reliably selecting high-conviction winners.
+    # Floor ≥ 0.40 requires the top candidates to consistently beat 60 % win rate in ≥ 40 % of windows.
+    "top_candidate_consistency_rate": 0.40,
 }
 
 # ---------------------------------------------------------------------------

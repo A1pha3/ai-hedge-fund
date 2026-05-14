@@ -314,6 +314,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "bq_high_vs_low_lift",
     # Task 3 (Round 44, Gamma): cross-window win-rate coefficient of variation.
     "win_rate_cv",
+    # Task 1 (Round 45, Alpha): market-cap high-vs-low win-rate lift (diagnostic).
+    "mc_high_vs_low_lift",
+    # Task 2 (Round 45, Beta): catalyst-theme top-quartile premium over bottom quartile.
+    "catalyst_top_quartile_premium",
+    # Task 3 (Round 45, Gamma): top-candidate cross-window win-rate consistency rate.
+    "top_candidate_consistency_rate",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -516,6 +522,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "bq_high_vs_low_lift": "突破质量高低胜率差",
     # Task 3 (Round 44, Gamma): cross-window win-rate CV
     "win_rate_cv": "跨窗胜率变异系数",
+    # Task 1 (Round 45, Alpha): market-cap high-vs-low win-rate lift
+    "mc_high_vs_low_lift": "市值高低胜率差",
+    # Task 2 (Round 45, Beta): catalyst-theme top-quartile premium
+    "catalyst_top_quartile_premium": "催化主题高分位溢价",
+    # Task 3 (Round 45, Gamma): top-candidate cross-window consistency rate
+    "top_candidate_consistency_rate": "顶候选胜率一致性",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -766,6 +778,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "bq_high_vs_low_lift",
     # Task 3 (Round 44, Gamma): cross-window win-rate CV — optional; pre-Round-44 outputs omit it.
     "win_rate_cv",
+    # Task 1 (Round 45, Alpha): market-cap high-vs-low lift — optional; pre-Round-45 outputs omit it.
+    "mc_high_vs_low_lift",
+    # Task 2 (Round 45, Beta): catalyst-theme top-quartile premium — optional; pre-Round-45 outputs omit it.
+    "catalyst_top_quartile_premium",
+    # Task 3 (Round 45, Gamma): top-candidate consistency rate — optional; pre-Round-45 outputs omit it.
+    "top_candidate_consistency_rate",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1814,6 +1832,87 @@ def compute_win_rate_stability_analysis(all_windows_summaries: list[dict]) -> di
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 3 (Round 45, Gamma): Top-Candidate Cross-Window Consistency
+# ---------------------------------------------------------------------------
+# Measures how consistently the top-quintile (highest-score) candidates achieve
+# a win rate ≥ 60 % across all replay windows.  A high consistency rate indicates
+# the strategy reliably selects high-conviction winners regardless of market regime.
+
+
+def compute_top_candidate_consistency(all_windows_summaries: list[dict]) -> dict:
+    """Compute cross-window consistency of top-quintile candidate win rates.
+
+    For each window summary, the top-quintile win rate is resolved in priority order:
+    1. ``score_bucket_win_rates["Q5"]`` — highest score bucket win rate (preferred).
+    2. ``win_rate`` — overall window win rate (fallback).
+    Windows providing neither field are skipped.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts ordered by
+            window index (oldest → newest).
+
+    Returns:
+        Dict with keys:
+
+        - ``top_candidate_consistency_rate`` (float | None): Fraction of windows
+          where top win rate ≥ 0.60.  None when < 3 valid windows.
+        - ``top_candidate_mean_win_rate`` (float | None): Mean top win rate across windows.
+        - ``top_candidate_best_win_rate`` (float | None): Best (max) top win rate seen.
+        - ``top_candidate_consistency_grade`` (str | None):
+          A(≥0.70) / B(≥0.50) / C(≥0.40) / D(<0.40).  None when < 3 valid windows.
+    """
+    _null: dict = {
+        "top_candidate_consistency_rate": None,
+        "top_candidate_mean_win_rate": None,
+        "top_candidate_best_win_rate": None,
+        "top_candidate_consistency_grade": None,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    top_win_rates: list[float] = []
+    for summary in all_windows_summaries:
+        sbwr = summary.get("score_bucket_win_rates")
+        if isinstance(sbwr, dict) and sbwr.get("Q5") is not None:
+            try:
+                top_win_rates.append(float(sbwr["Q5"]))
+                continue
+            except (TypeError, ValueError):
+                pass
+        wr = summary.get("win_rate")
+        if wr is not None:
+            try:
+                top_win_rates.append(float(wr))
+            except (TypeError, ValueError):
+                pass
+
+    if len(top_win_rates) < 3:
+        return _null
+
+    threshold = 0.60
+    above = sum(1 for v in top_win_rates if v >= threshold)
+    consistency_rate = round(above / len(top_win_rates), 6)
+    mean_wr = round(sum(top_win_rates) / len(top_win_rates), 6)
+    best_wr = round(max(top_win_rates), 6)
+
+    if consistency_rate >= 0.70:
+        grade = "A"
+    elif consistency_rate >= 0.50:
+        grade = "B"
+    elif consistency_rate >= 0.40:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {
+        "top_candidate_consistency_rate": consistency_rate,
+        "top_candidate_mean_win_rate": mean_wr,
+        "top_candidate_best_win_rate": best_wr,
+        "top_candidate_consistency_grade": grade,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -2439,6 +2538,8 @@ def _build_replay_evaluator(
         _smt: dict[str, Any] = compute_score_momentum_trend(all_primary_surfaces)
         # Task 3 (Round 44, Gamma): win-rate stability across replay windows.
         _wrst: dict[str, Any] = compute_win_rate_stability_analysis(all_primary_surfaces)
+        # Task 3 (Round 45, Gamma): top-candidate cross-window win-rate consistency.
+        _tccs: dict[str, Any] = compute_top_candidate_consistency(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -2657,6 +2758,11 @@ def _build_replay_evaluator(
             "win_rate_range": _wrst.get("win_rate_range"),
             "win_rate_stability_grade": _wrst.get("win_rate_stability_grade"),
             "win_rate_stability_valid": _wrst.get("win_rate_stability_valid"),
+            # Task 3 (Round 45, Gamma): top-candidate cross-window consistency.
+            "top_candidate_consistency_rate": _tccs.get("top_candidate_consistency_rate"),
+            "top_candidate_mean_win_rate": _tccs.get("top_candidate_mean_win_rate"),
+            "top_candidate_best_win_rate": _tccs.get("top_candidate_best_win_rate"),
+            "top_candidate_consistency_grade": _tccs.get("top_candidate_consistency_grade"),
         }
 
     return evaluator

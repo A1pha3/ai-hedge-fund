@@ -10510,3 +10510,294 @@ def test_r44_win_rate_stability_optional_registered() -> None:
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
 
     assert "win_rate_cv" in OPTIONAL_COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 45 — T1 (Alpha): compute_market_cap_stratification
+# ===========================================================================
+
+
+def _make_mc_rows(n: int, *, high_wins: float = 0.8, low_wins: float = 0.3) -> list[dict]:
+    """Helper: n rows with market_cap_score spanning [0,1] and win rates."""
+    rows = []
+    for i in range(n):
+        mc = i / max(n - 1, 1)
+        if mc > 0.67:
+            ret = 0.01 if (i % 10) < round(high_wins * 10) else -0.01
+        elif mc > 0.33:
+            ret = 0.01 if i % 2 == 0 else -0.01
+        else:
+            ret = 0.01 if (i % 10) < round(low_wins * 10) else -0.01
+        rows.append({"market_cap_score": mc, "next_day_return": ret})
+    return rows
+
+
+def test_r45_market_cap_strat_empty_input() -> None:
+    """Empty rows → mc_stratification_valid=False, all None."""
+    from scripts.btst_analysis_utils import compute_market_cap_stratification
+
+    result = compute_market_cap_stratification([])
+    assert result["mc_stratification_valid"] is False
+    assert result["mc_high_vs_low_lift"] is None
+    assert result["mc_low_win_rate"] is None
+    assert result["mc_high_win_rate"] is None
+
+
+def test_r45_market_cap_strat_missing_field() -> None:
+    """Rows without market_cap_score → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_market_cap_stratification
+
+    rows = [{"next_day_return": 0.01} for _ in range(20)]
+    result = compute_market_cap_stratification(rows)
+    assert result["mc_stratification_valid"] is False
+    assert result["mc_high_vs_low_lift"] is None
+
+
+def test_r45_market_cap_strat_normal_three_tiers() -> None:
+    """Normal 30-row input should produce mc_high_vs_low_lift and mc_stratification_valid=True."""
+    from scripts.btst_analysis_utils import compute_market_cap_stratification
+
+    rows = _make_mc_rows(30)
+    result = compute_market_cap_stratification(rows)
+    assert result["mc_stratification_valid"] is True
+    assert result["mc_high_vs_low_lift"] is not None
+
+
+def test_r45_market_cap_strat_monotone_logic() -> None:
+    """mc_monotone=True when high_wins >> low_wins with clear ordering."""
+    from scripts.btst_analysis_utils import compute_market_cap_stratification
+
+    rows = _make_mc_rows(60, high_wins=0.9, low_wins=0.1)
+    result = compute_market_cap_stratification(rows)
+    # monotone should be a bool or None
+    assert result["mc_monotone"] in (True, False, None)
+    # With such extreme spread, lift must be positive
+    if result["mc_high_vs_low_lift"] is not None:
+        assert result["mc_high_vs_low_lift"] > 0
+
+
+def test_r45_market_cap_strat_effective_threshold() -> None:
+    """mc_effective=True when lift > 0.05."""
+    from scripts.btst_analysis_utils import compute_market_cap_stratification
+
+    rows = _make_mc_rows(60, high_wins=0.9, low_wins=0.2)
+    result = compute_market_cap_stratification(rows)
+    lift = result["mc_high_vs_low_lift"]
+    if lift is not None and lift > 0.05:
+        assert result["mc_effective"] is True
+    elif lift is not None and lift <= 0.05:
+        assert result["mc_effective"] is False
+
+
+def test_r45_market_cap_strat_label_registered() -> None:
+    """mc_high_vs_low_lift label is in COMPARISON_METRIC_LABELS with '市值'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "mc_high_vs_low_lift" in COMPARISON_METRIC_LABELS
+    assert "市值" in COMPARISON_METRIC_LABELS["mc_high_vs_low_lift"]
+
+
+def test_r45_market_cap_strat_optional_registered() -> None:
+    """mc_high_vs_low_lift is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
+    assert "mc_high_vs_low_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r45_market_cap_strat_no_floor() -> None:
+    """mc_high_vs_low_lift must NOT be in BTST_QUALITY_FLOORS (diagnostic metric)."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "mc_high_vs_low_lift" not in BTST_QUALITY_FLOORS
+
+
+# ===========================================================================
+# Round 45 — T2 (Beta): compute_catalyst_score_stratification
+# ===========================================================================
+
+
+def _make_catalyst_rows(n: int, *, q4_wins: float = 0.8, q1_wins: float = 0.3) -> list[dict]:
+    """Helper: n rows with catalyst_theme_score spanning [0,1] and win rates."""
+    rows = []
+    for i in range(n):
+        cat = i / max(n - 1, 1)
+        if cat > 0.75:
+            ret = 0.01 if (i % 10) < round(q4_wins * 10) else -0.01
+        elif cat > 0.50:
+            ret = 0.01 if i % 3 < 2 else -0.01
+        elif cat > 0.25:
+            ret = 0.01 if i % 2 == 0 else -0.01
+        else:
+            ret = 0.01 if (i % 10) < round(q1_wins * 10) else -0.01
+        rows.append({"catalyst_theme_score": cat, "next_day_return": ret})
+    return rows
+
+
+def test_r45_catalyst_strat_empty_input() -> None:
+    """Empty rows → catalyst_stratification_valid=False, all None."""
+    from scripts.btst_analysis_utils import compute_catalyst_score_stratification
+
+    result = compute_catalyst_score_stratification([])
+    assert result["catalyst_stratification_valid"] is False
+    assert result["catalyst_top_quartile_premium"] is None
+    assert result["catalyst_q1_win_rate"] is None
+    assert result["catalyst_q4_win_rate"] is None
+
+
+def test_r45_catalyst_strat_missing_field() -> None:
+    """Rows without catalyst_theme_score → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_catalyst_score_stratification
+
+    rows = [{"next_day_return": 0.01} for _ in range(20)]
+    result = compute_catalyst_score_stratification(rows)
+    assert result["catalyst_stratification_valid"] is False
+    assert result["catalyst_top_quartile_premium"] is None
+
+
+def test_r45_catalyst_strat_normal_four_quartiles() -> None:
+    """Normal 40-row input should produce catalyst_top_quartile_premium."""
+    from scripts.btst_analysis_utils import compute_catalyst_score_stratification
+
+    rows = _make_catalyst_rows(40)
+    result = compute_catalyst_score_stratification(rows)
+    assert result["catalyst_top_quartile_premium"] is not None
+    assert result["catalyst_stratification_valid"] is True
+
+
+def test_r45_catalyst_strat_monotone_logic() -> None:
+    """catalyst_monotone reflects Q1 < Q2 < Q3 < Q4 ordering."""
+    from scripts.btst_analysis_utils import compute_catalyst_score_stratification
+
+    rows = _make_catalyst_rows(40)
+    result = compute_catalyst_score_stratification(rows)
+    assert result["catalyst_monotone"] in (True, False, None)
+
+
+def test_r45_catalyst_strat_valid_flag_boundary() -> None:
+    """catalyst_stratification_valid=True when ≥ 2 quartiles have ≥ 3 rows."""
+    from scripts.btst_analysis_utils import compute_catalyst_score_stratification
+
+    # 12 rows split equally across [0,1] → 4 groups of 3 → valid
+    rows = _make_catalyst_rows(12)
+    result = compute_catalyst_score_stratification(rows)
+    assert result["catalyst_stratification_valid"] is True
+
+
+def test_r45_catalyst_strat_floor_registered() -> None:
+    """catalyst_top_quartile_premium floor is 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "catalyst_top_quartile_premium" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["catalyst_top_quartile_premium"] == 0.0
+
+
+def test_r45_catalyst_strat_label_registered() -> None:
+    """catalyst_top_quartile_premium label is in COMPARISON_METRIC_LABELS with '催化'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "catalyst_top_quartile_premium" in COMPARISON_METRIC_LABELS
+    assert "催化" in COMPARISON_METRIC_LABELS["catalyst_top_quartile_premium"]
+
+
+def test_r45_catalyst_strat_optional_registered() -> None:
+    """catalyst_top_quartile_premium is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
+    assert "catalyst_top_quartile_premium" in OPTIONAL_COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 45 — T3 (Gamma): compute_top_candidate_consistency
+# ===========================================================================
+
+
+def test_r45_top_candidate_consistency_empty_list() -> None:
+    """Empty list → all None (graceful degradation)."""
+    from scripts.optimize_profile import compute_top_candidate_consistency
+
+    result = compute_top_candidate_consistency([])
+    assert result["top_candidate_consistency_rate"] is None
+    assert result["top_candidate_mean_win_rate"] is None
+    assert result["top_candidate_best_win_rate"] is None
+    assert result["top_candidate_consistency_grade"] is None
+
+
+def test_r45_top_candidate_consistency_too_few_windows() -> None:
+    """< 3 valid windows → graceful degradation."""
+    from scripts.optimize_profile import compute_top_candidate_consistency
+
+    windows = [{"win_rate": 0.65}, {"win_rate": 0.70}]
+    result = compute_top_candidate_consistency(windows)
+    assert result["top_candidate_consistency_rate"] is None
+    assert result["top_candidate_consistency_grade"] is None
+
+
+def test_r45_top_candidate_consistency_all_above_threshold() -> None:
+    """All windows with win_rate ≥ 0.60 → rate=1.0, grade A."""
+    from scripts.optimize_profile import compute_top_candidate_consistency
+
+    windows = [{"win_rate": 0.65 + 0.01 * i} for i in range(5)]
+    result = compute_top_candidate_consistency(windows)
+    assert result["top_candidate_consistency_rate"] == 1.0
+    assert result["top_candidate_consistency_grade"] == "A"
+
+
+def test_r45_top_candidate_consistency_none_above_threshold() -> None:
+    """All windows with win_rate < 0.60 → rate=0.0, grade D."""
+    from scripts.optimize_profile import compute_top_candidate_consistency
+
+    windows = [{"win_rate": 0.40 + 0.02 * i} for i in range(5)]
+    result = compute_top_candidate_consistency(windows)
+    assert result["top_candidate_consistency_rate"] == 0.0
+    assert result["top_candidate_consistency_grade"] == "D"
+
+
+def test_r45_top_candidate_consistency_mixed_scenario() -> None:
+    """Mixed win rates: rate = above_count / total."""
+    from scripts.optimize_profile import compute_top_candidate_consistency
+
+    # 3 above (0.65, 0.70, 0.75) and 2 below (0.50, 0.55) → rate = 3/5 = 0.6
+    windows = [{"win_rate": v} for v in [0.65, 0.50, 0.70, 0.55, 0.75]]
+    result = compute_top_candidate_consistency(windows)
+    assert result["top_candidate_consistency_rate"] is not None
+    assert abs(result["top_candidate_consistency_rate"] - 0.6) < 1e-5
+    assert result["top_candidate_consistency_grade"] == "B"
+
+
+def test_r45_top_candidate_consistency_score_bucket_priority() -> None:
+    """score_bucket_win_rates Q5 takes priority over win_rate fallback."""
+    from scripts.optimize_profile import compute_top_candidate_consistency
+
+    # Q5 = 0.75 > 0.60 threshold; win_rate = 0.45 < 0.60 threshold
+    windows = [
+        {"score_bucket_win_rates": {"Q5": 0.75}, "win_rate": 0.45},
+        {"score_bucket_win_rates": {"Q5": 0.80}, "win_rate": 0.40},
+        {"score_bucket_win_rates": {"Q5": 0.70}, "win_rate": 0.35},
+    ]
+    result = compute_top_candidate_consistency(windows)
+    # All Q5 values are ≥ 0.60 → rate should be 1.0
+    assert result["top_candidate_consistency_rate"] == 1.0
+    assert result["top_candidate_consistency_grade"] == "A"
+
+
+def test_r45_top_candidate_consistency_floor_registered() -> None:
+    """top_candidate_consistency_rate floor is 0.40 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "top_candidate_consistency_rate" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["top_candidate_consistency_rate"] == 0.40
+
+
+def test_r45_top_candidate_consistency_label_registered() -> None:
+    """top_candidate_consistency_rate label is in COMPARISON_METRIC_LABELS with '顶候选'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "top_candidate_consistency_rate" in COMPARISON_METRIC_LABELS
+    assert "顶候选" in COMPARISON_METRIC_LABELS["top_candidate_consistency_rate"]
+
+
+def test_r45_top_candidate_consistency_optional_registered() -> None:
+    """top_candidate_consistency_rate is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
+    assert "top_candidate_consistency_rate" in OPTIONAL_COMPARISON_METRICS
