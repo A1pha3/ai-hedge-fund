@@ -4075,6 +4075,33 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["p33_turnover"] = _fta.get("p33_turnover")
     _surface_result["p67_turnover"] = _fta.get("p67_turnover")
 
+    # -----------------------------------------------------------------------
+    # Round 41, Task 2 (Beta): Volume-price alignment — 量价方向对齐率.
+    # -----------------------------------------------------------------------
+    _vpa: dict[str, Any] = compute_volume_price_alignment(next_day_rows)
+    _surface_result["vol_price_signal_valid"] = _vpa.get("vol_price_signal_valid")
+    _surface_result["vol_price_alignment_rate"] = _vpa.get("vol_price_alignment_rate")
+    _surface_result["vol_price_alignment_strong"] = _vpa.get("vol_price_alignment_strong")
+    _surface_result["aligned_win_rate"] = _vpa.get("aligned_win_rate")
+    _surface_result["misaligned_win_rate"] = _vpa.get("misaligned_win_rate")
+    _surface_result["inflow_win_rate"] = _vpa.get("inflow_win_rate")
+    _surface_result["outflow_win_rate"] = _vpa.get("outflow_win_rate")
+    _surface_result["inflow_vs_outflow_lift"] = _vpa.get("inflow_vs_outflow_lift")
+
+    # -----------------------------------------------------------------------
+    # Round 41, Task 3 (Gamma): Statistical significance tests — 综合统计显著性.
+    # -----------------------------------------------------------------------
+    _sst: dict[str, Any] = compute_statistical_significance_tests(next_day_rows)
+    _surface_result["win_rate_p_value"] = _sst.get("win_rate_p_value")
+    _surface_result["z_win_rate"] = _sst.get("z_win_rate")
+    _surface_result["t_stat_return"] = _sst.get("t_stat_return")
+    _surface_result["win_rate_significant_90"] = _sst.get("win_rate_significant_90")
+    _surface_result["win_rate_significant_95"] = _sst.get("win_rate_significant_95")
+    _surface_result["return_significant_90"] = _sst.get("return_significant_90")
+    _surface_result["return_significant_95"] = _sst.get("return_significant_95")
+    _surface_result["combined_significance_score"] = _sst.get("combined_significance_score")
+    _surface_result["strategy_statistically_valid"] = _sst.get("strategy_statistically_valid")
+
     return _surface_result
 
 
@@ -7346,4 +7373,226 @@ def compute_float_turnover_analysis(rows: list[dict]) -> dict:
         "high_vs_low_lift": high_vs_low,
         "p33_turnover": round(p33, 6),
         "p67_turnover": round(p67, 6),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 41, Task 2 (Beta): Volume-price direction alignment
+# ---------------------------------------------------------------------------
+# Detects whether volume-expansion direction and price-movement direction are
+# consistent (量价共振) — a key BTST confirmation signal.
+
+
+def compute_volume_price_alignment(rows: list[dict]) -> dict:
+    """Measure alignment between volume-expansion direction and next-day price direction.
+
+    Evaluates two complementary scenarios:
+
+    - **Scenario 1 (VEQ)**: splits rows by ``volume_expansion_quality`` median (P50).
+      High-VEQ rows should have higher win rates than low-VEQ rows.
+    - **Scenario 2 (ENIR)**: splits rows by ``t0_estimated_net_inflow_ratio`` >= 0
+      (net inflow) vs < 0 (net outflow).  Inflow rows should show higher win rates.
+
+    Args:
+        rows: Per-trade row dicts with ``next_close_return`` (float | None),
+            ``volume_expansion_quality`` (float | None), and
+            ``t0_estimated_net_inflow_ratio`` (float | None).
+
+    Returns:
+        Dict with keys:
+
+        - ``vol_price_signal_valid`` (bool): True when at least one scenario is computable.
+        - ``vol_price_alignment_rate`` (float | None): fraction of rows where volume direction
+          matches return direction (Scenario 1).
+        - ``vol_price_alignment_strong`` (bool | None): True when alignment rate > 0.55.
+        - ``aligned_win_rate`` (float | None): win rate of high-VEQ rows (Scenario 1, ≥5 rows).
+        - ``misaligned_win_rate`` (float | None): win rate of low-VEQ rows (Scenario 1, ≥5 rows).
+        - ``inflow_win_rate`` (float | None): win rate when net inflow ≥ 0 (Scenario 2).
+        - ``outflow_win_rate`` (float | None): win rate when net inflow < 0 (Scenario 2).
+        - ``inflow_vs_outflow_lift`` (float | None): inflow_win_rate − outflow_win_rate.
+    """
+    _null: dict = {
+        "vol_price_signal_valid": False,
+        "vol_price_alignment_rate": None,
+        "vol_price_alignment_strong": None,
+        "aligned_win_rate": None,
+        "misaligned_win_rate": None,
+        "inflow_win_rate": None,
+        "outflow_win_rate": None,
+        "inflow_vs_outflow_lift": None,
+    }
+    if not rows:
+        return _null
+
+    valid = [r for r in rows if r.get("next_close_return") is not None]
+    if len(valid) < 10:
+        return _null
+
+    has_veq = any(r.get("volume_expansion_quality") is not None for r in valid)
+    has_enir = any(r.get("t0_estimated_net_inflow_ratio") is not None for r in valid)
+
+    if not has_veq and not has_enir:
+        return _null
+
+    result: dict = {
+        "vol_price_signal_valid": True,
+        "vol_price_alignment_rate": None,
+        "vol_price_alignment_strong": None,
+        "aligned_win_rate": None,
+        "misaligned_win_rate": None,
+        "inflow_win_rate": None,
+        "outflow_win_rate": None,
+        "inflow_vs_outflow_lift": None,
+    }
+
+    # ------------------------------------------------------------------
+    # Scenario 1: volume_expansion_quality split by median
+    # ------------------------------------------------------------------
+    if has_veq:
+        veq_valid = [r for r in valid if r.get("volume_expansion_quality") is not None]
+        if len(veq_valid) >= 10:
+            veq_vals = sorted(float(r["volume_expansion_quality"]) for r in veq_valid)
+            mid_idx = len(veq_vals) // 2
+            p50_veq = veq_vals[mid_idx]
+
+            high_vq_rows = [r for r in veq_valid if float(r["volume_expansion_quality"]) >= p50_veq]
+            low_vq_rows = [r for r in veq_valid if float(r["volume_expansion_quality"]) < p50_veq]
+
+            # aligned: high VEQ AND return>0  OR  low VEQ AND return<0
+            aligned_count = sum(
+                1 for r in veq_valid
+                if (float(r["volume_expansion_quality"]) >= p50_veq and float(r["next_close_return"]) > 0)
+                or (float(r["volume_expansion_quality"]) < p50_veq and float(r["next_close_return"]) < 0)
+            )
+            alignment_rate = round(aligned_count / max(len(veq_valid), 1), 6)
+            result["vol_price_alignment_rate"] = alignment_rate
+            result["vol_price_alignment_strong"] = alignment_rate > 0.55
+
+            if len(high_vq_rows) >= 5:
+                result["aligned_win_rate"] = round(
+                    sum(1 for r in high_vq_rows if float(r["next_close_return"]) > 0) / max(len(high_vq_rows), 1), 6
+                )
+            if len(low_vq_rows) >= 5:
+                result["misaligned_win_rate"] = round(
+                    sum(1 for r in low_vq_rows if float(r["next_close_return"]) > 0) / max(len(low_vq_rows), 1), 6
+                )
+
+    # ------------------------------------------------------------------
+    # Scenario 2: t0_estimated_net_inflow_ratio >= 0 vs < 0
+    # ------------------------------------------------------------------
+    if has_enir:
+        enir_valid = [r for r in valid if r.get("t0_estimated_net_inflow_ratio") is not None]
+        if len(enir_valid) >= 10:
+            inflow_rows = [r for r in enir_valid if float(r["t0_estimated_net_inflow_ratio"]) >= 0.0]
+            outflow_rows = [r for r in enir_valid if float(r["t0_estimated_net_inflow_ratio"]) < 0.0]
+
+            inflow_wr: float | None = None
+            outflow_wr: float | None = None
+            if len(inflow_rows) >= 5:
+                inflow_wr = round(
+                    sum(1 for r in inflow_rows if float(r["next_close_return"]) > 0) / max(len(inflow_rows), 1), 6
+                )
+            if len(outflow_rows) >= 5:
+                outflow_wr = round(
+                    sum(1 for r in outflow_rows if float(r["next_close_return"]) > 0) / max(len(outflow_rows), 1), 6
+                )
+            result["inflow_win_rate"] = inflow_wr
+            result["outflow_win_rate"] = outflow_wr
+            if inflow_wr is not None and outflow_wr is not None:
+                result["inflow_vs_outflow_lift"] = round(inflow_wr - outflow_wr, 6)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Round 41, Task 3 (Gamma): Statistical significance tests
+# ---------------------------------------------------------------------------
+# Uses classical statistics (binomial normal approximation + t-test) to verify
+# whether the strategy's win rate is significantly above 50% and whether mean
+# return is significantly above 0.
+
+
+def compute_statistical_significance_tests(rows: list[dict]) -> dict:
+    """Apply binomial and t-test statistical significance tests to BTST returns.
+
+    Runs two independent hypothesis tests:
+
+    1. **Binomial (win rate > 50 %)**: Normal approximation z-test.
+       ``z_winrate = (p_hat − 0.5) / sqrt(0.25 / n)``; one-sided.
+    2. **t-test (mean return > 0)**: Student-t with df → ∞.
+       ``t_stat = mean_r / (std_r / sqrt(n))``; one-sided.
+
+    Args:
+        rows: Per-trade row dicts with ``next_close_return`` (float | None).
+
+    Returns:
+        Dict with keys:
+
+        - ``win_rate_p_value`` (float | None): two-sided p-value from z-test.
+        - ``z_win_rate`` (float | None): z-statistic for win-rate test.
+        - ``t_stat_return`` (float | None): t-statistic for mean-return test.
+        - ``win_rate_significant_90`` (bool | None): True when z > 1.282 (one-sided 90 %).
+        - ``win_rate_significant_95`` (bool | None): True when z > 1.645 (one-sided 95 %).
+        - ``return_significant_90`` (bool | None): True when t > 1.282.
+        - ``return_significant_95`` (bool | None): True when t > 1.645.
+        - ``combined_significance_score`` (float | None): mean of four significance flags (0–1).
+        - ``strategy_statistically_valid`` (bool | None): True when both 90% tests pass.
+    """
+    import math
+
+    _null: dict = {
+        "win_rate_p_value": None,
+        "z_win_rate": None,
+        "t_stat_return": None,
+        "win_rate_significant_90": None,
+        "win_rate_significant_95": None,
+        "return_significant_90": None,
+        "return_significant_95": None,
+        "combined_significance_score": None,
+        "strategy_statistically_valid": None,
+    }
+    if not rows:
+        return _null
+
+    returns: list[float] = [float(r["next_close_return"]) for r in rows if r.get("next_close_return") is not None]
+    if len(returns) < 10:
+        return _null
+
+    n = len(returns)
+    k = sum(1 for r in returns if r > 0)
+    p_hat = k / n
+
+    # Binomial z-test (normal approximation)
+    z_wr = (p_hat - 0.5) / max((0.25 / n) ** 0.5, 1e-8)
+    # Two-sided p-value using normal CDF approximation via math.erf
+    def _normal_cdf(z: float) -> float:
+        return 0.5 * (1.0 + math.erf(z / (2.0 ** 0.5)))
+
+    win_rate_p_value = round(2.0 * (1.0 - _normal_cdf(abs(z_wr))), 8)
+    wr_sig90 = z_wr > 1.282
+    wr_sig95 = z_wr > 1.645
+
+    # One-sample t-test (mean > 0)
+    mean_r = sum(returns) / n
+    variance_r = sum((r - mean_r) ** 2 for r in returns) / max(n - 1, 1)
+    std_r = variance_r ** 0.5
+    t_stat = mean_r / max(std_r / max(n ** 0.5, 1e-8), 1e-8)
+    ret_sig90 = t_stat > 1.282
+    ret_sig95 = t_stat > 1.645
+
+    combined_score = round(
+        (int(wr_sig90) + int(wr_sig95) + int(ret_sig90) + int(ret_sig95)) / 4.0, 6
+    )
+    strategy_valid = wr_sig90 and ret_sig90
+
+    return {
+        "win_rate_p_value": win_rate_p_value,
+        "z_win_rate": round(z_wr, 6),
+        "t_stat_return": round(t_stat, 6),
+        "win_rate_significant_90": wr_sig90,
+        "win_rate_significant_95": wr_sig95,
+        "return_significant_90": ret_sig90,
+        "return_significant_95": ret_sig95,
+        "combined_significance_score": combined_score,
+        "strategy_statistically_valid": strategy_valid,
     }

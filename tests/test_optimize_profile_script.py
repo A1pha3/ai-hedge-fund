@@ -9095,3 +9095,381 @@ def test_r40_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
 
     assert "漂移" in COMPARISON_METRIC_LABELS.get("factor_drift_score", "")
+
+
+# ===========================================================================
+# Round 41 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_r41_windows(n: int = 5, seed: int = 0, include_ranking: bool = True) -> list[dict]:
+    """Return n synthetic window summary dicts with factor_ic_ranking."""
+    import random
+    rng = random.Random(seed)
+    factors = ["momentum_score", "volume_expansion_quality", "price_strength_score",
+               "t0_estimated_net_inflow_ratio", "t0_tail_strength", "gap_body_ratio",
+               "float_turnover_rate"]
+    summaries = []
+    for _ in range(n):
+        if include_ranking:
+            shuffled = factors[:]
+            rng.shuffle(shuffled)
+            ranking = [(f, round(rng.uniform(-0.3, 0.5), 4)) for f in shuffled]
+            ranking.sort(key=lambda x: x[1], reverse=True)
+        else:
+            ranking = []
+        summaries.append({"factor_ic_ranking": ranking if include_ranking else None})
+    return summaries
+
+
+def _make_r41_vpa_rows(n: int = 40, seed: int = 0, include_veq: bool = True, include_enir: bool = True) -> list[dict]:
+    """Return n rows with next_close_return, volume_expansion_quality, t0_estimated_net_inflow_ratio."""
+    import random
+    rng = random.Random(seed)
+    rows = []
+    for _ in range(n):
+        row: dict = {"next_close_return": rng.uniform(-0.06, 0.10)}
+        if include_veq:
+            row["volume_expansion_quality"] = rng.uniform(0.0, 1.0)
+        if include_enir:
+            row["t0_estimated_net_inflow_ratio"] = rng.uniform(-1.0, 1.0)
+        rows.append(row)
+    return rows
+
+
+def _make_r41_stat_rows(n: int = 50, seed: int = 0, positive_bias: float = 0.02) -> list[dict]:
+    """Return n rows with next_close_return having a slight positive bias."""
+    import random
+    rng = random.Random(seed)
+    rows = []
+    for _ in range(n):
+        rows.append({"next_close_return": rng.gauss(positive_bias, 0.03)})
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# T1: compute_factor_rank_consistency
+# ---------------------------------------------------------------------------
+
+def test_r41_t1_basic_returns_result() -> None:
+    """compute_factor_rank_consistency returns a dict with expected keys for sufficient windows."""
+    from scripts.optimize_profile import compute_factor_rank_consistency
+
+    summaries = _make_r41_windows(5, seed=1)
+    result = compute_factor_rank_consistency(summaries)
+    assert "factor_rank_consistency_score" in result
+    assert "top_factor_stable" in result
+    assert "most_consistent_factor" in result
+    assert "most_volatile_rank_factor" in result
+
+
+def test_r41_t1_insufficient_windows_returns_null() -> None:
+    """Returns all-None when fewer than 3 windows have valid ranking data."""
+    from scripts.optimize_profile import compute_factor_rank_consistency
+
+    result = compute_factor_rank_consistency(_make_r41_windows(2))
+    assert result["factor_rank_consistency_score"] is None
+    assert result["top_factor_stable"] is None
+
+
+def test_r41_t1_empty_summaries_returns_null() -> None:
+    """Returns all-None for empty input."""
+    from scripts.optimize_profile import compute_factor_rank_consistency
+
+    result = compute_factor_rank_consistency([])
+    assert result["factor_rank_consistency_score"] is None
+
+
+def test_r41_t1_no_ranking_field_returns_null() -> None:
+    """Returns all-None when no window contains factor_ic_ranking data."""
+    from scripts.optimize_profile import compute_factor_rank_consistency
+
+    summaries = [{"factor_ic_ranking": None}, {"factor_ic_ranking": None}, {"factor_ic_ranking": None}]
+    result = compute_factor_rank_consistency(summaries)
+    assert result["factor_rank_consistency_score"] is None
+
+
+def test_r41_t1_score_clamped_to_unit_interval() -> None:
+    """factor_rank_consistency_score is clamped to [0, 1]."""
+    from scripts.optimize_profile import compute_factor_rank_consistency
+
+    summaries = _make_r41_windows(8, seed=42)
+    result = compute_factor_rank_consistency(summaries)
+    score = result["factor_rank_consistency_score"]
+    if score is not None:
+        assert 0.0 <= score <= 1.0
+
+
+def test_r41_t1_stable_ranking_gives_high_score() -> None:
+    """A perfectly stable ranking (same order every window) should give score near 1."""
+    from scripts.optimize_profile import compute_factor_rank_consistency
+
+    factors = ["f1", "f2", "f3"]
+    fixed_ranking = [("f1", 0.5), ("f2", 0.3), ("f3", 0.1)]
+    summaries = [{"factor_ic_ranking": fixed_ranking} for _ in range(6)]
+    result = compute_factor_rank_consistency(summaries)
+    score = result["factor_rank_consistency_score"]
+    assert score is not None
+    assert score >= 0.90  # Very stable → high consistency score
+
+
+def test_r41_t1_consistent_factor_name_is_string() -> None:
+    """most_consistent_factor and most_volatile_rank_factor are strings when computable."""
+    from scripts.optimize_profile import compute_factor_rank_consistency
+
+    summaries = _make_r41_windows(5, seed=7)
+    result = compute_factor_rank_consistency(summaries)
+    if result["most_consistent_factor"] is not None:
+        assert isinstance(result["most_consistent_factor"], str)
+    if result["most_volatile_rank_factor"] is not None:
+        assert isinstance(result["most_volatile_rank_factor"], str)
+
+
+def test_r41_t1_floor_registered() -> None:
+    """factor_rank_consistency_score floor is 0.30 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "factor_rank_consistency_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["factor_rank_consistency_score"] == 0.30
+
+
+def test_r41_t1_metric_registered() -> None:
+    """factor_rank_consistency_score is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "factor_rank_consistency_score" in COMPARISON_METRICS
+    assert "factor_rank_consistency_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r41_t1_label_registered() -> None:
+    """factor_rank_consistency_score label contains '一致性'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "一致性" in COMPARISON_METRIC_LABELS.get("factor_rank_consistency_score", "")
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_volume_price_alignment
+# ---------------------------------------------------------------------------
+
+def test_r41_t2_basic_returns_result() -> None:
+    """compute_volume_price_alignment returns valid dict for sufficient data."""
+    from scripts.btst_analysis_utils import compute_volume_price_alignment
+
+    rows = _make_r41_vpa_rows(40, seed=1)
+    result = compute_volume_price_alignment(rows)
+    assert result["vol_price_signal_valid"] is True
+    assert "vol_price_alignment_rate" in result
+
+
+def test_r41_t2_empty_rows_returns_invalid() -> None:
+    """Returns vol_price_signal_valid=False for empty input."""
+    from scripts.btst_analysis_utils import compute_volume_price_alignment
+
+    result = compute_volume_price_alignment([])
+    assert result["vol_price_signal_valid"] is False
+    assert result["vol_price_alignment_rate"] is None
+
+
+def test_r41_t2_insufficient_rows_returns_invalid() -> None:
+    """Returns invalid when fewer than 10 rows have non-None next_close_return."""
+    from scripts.btst_analysis_utils import compute_volume_price_alignment
+
+    rows = _make_r41_vpa_rows(5)
+    result = compute_volume_price_alignment(rows)
+    assert result["vol_price_signal_valid"] is False
+
+
+def test_r41_t2_both_none_fields_returns_invalid() -> None:
+    """Returns invalid when both VEQ and ENIR are absent."""
+    from scripts.btst_analysis_utils import compute_volume_price_alignment
+
+    rows = [{"next_close_return": 0.01} for _ in range(20)]
+    result = compute_volume_price_alignment(rows)
+    assert result["vol_price_signal_valid"] is False
+    assert result["vol_price_alignment_rate"] is None
+
+
+def test_r41_t2_alignment_rate_in_unit_interval() -> None:
+    """vol_price_alignment_rate is between 0 and 1 when computable."""
+    from scripts.btst_analysis_utils import compute_volume_price_alignment
+
+    rows = _make_r41_vpa_rows(50, seed=99)
+    result = compute_volume_price_alignment(rows)
+    rate = result.get("vol_price_alignment_rate")
+    if rate is not None:
+        assert 0.0 <= rate <= 1.0
+
+
+def test_r41_t2_alignment_strong_flag_correct() -> None:
+    """vol_price_alignment_strong is True iff alignment_rate > 0.55."""
+    from scripts.btst_analysis_utils import compute_volume_price_alignment
+
+    rows = _make_r41_vpa_rows(60, seed=5)
+    result = compute_volume_price_alignment(rows)
+    rate = result.get("vol_price_alignment_rate")
+    flag = result.get("vol_price_alignment_strong")
+    if rate is not None and flag is not None:
+        assert flag == (rate > 0.55)
+
+
+def test_r41_t2_enir_only_scenario() -> None:
+    """When only ENIR is provided (no VEQ), scenario 2 still runs."""
+    from scripts.btst_analysis_utils import compute_volume_price_alignment
+
+    rows = [
+        {"next_close_return": 0.02, "t0_estimated_net_inflow_ratio": 0.5}
+        for _ in range(25)
+    ] + [
+        {"next_close_return": -0.01, "t0_estimated_net_inflow_ratio": -0.3}
+        for _ in range(15)
+    ]
+    result = compute_volume_price_alignment(rows)
+    assert result["vol_price_signal_valid"] is True
+    # VEQ not provided so alignment_rate may be None; but ENIR rates may be set
+    assert result.get("inflow_win_rate") is not None or result.get("outflow_win_rate") is not None
+
+
+def test_r41_t2_floor_registered() -> None:
+    """vol_price_alignment_rate floor is 0.45 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "vol_price_alignment_rate" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["vol_price_alignment_rate"] == 0.45
+
+
+def test_r41_t2_metric_registered() -> None:
+    """vol_price_alignment_rate is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "vol_price_alignment_rate" in COMPARISON_METRICS
+    assert "vol_price_alignment_rate" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r41_t2_label_registered() -> None:
+    """vol_price_alignment_rate label contains '量价'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "量价" in COMPARISON_METRIC_LABELS.get("vol_price_alignment_rate", "")
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_statistical_significance_tests
+# ---------------------------------------------------------------------------
+
+def test_r41_t3_basic_returns_result() -> None:
+    """compute_statistical_significance_tests returns dict with expected keys."""
+    from scripts.btst_analysis_utils import compute_statistical_significance_tests
+
+    rows = _make_r41_stat_rows(50, seed=1, positive_bias=0.02)
+    result = compute_statistical_significance_tests(rows)
+    assert "combined_significance_score" in result
+    assert "win_rate_p_value" in result
+    assert "z_win_rate" in result
+    assert "t_stat_return" in result
+
+
+def test_r41_t3_empty_returns_null() -> None:
+    """Returns all-None for empty input."""
+    from scripts.btst_analysis_utils import compute_statistical_significance_tests
+
+    result = compute_statistical_significance_tests([])
+    assert result["combined_significance_score"] is None
+    assert result["strategy_statistically_valid"] is None
+
+
+def test_r41_t3_insufficient_rows_returns_null() -> None:
+    """Returns all-None when fewer than 10 rows have valid returns."""
+    from scripts.btst_analysis_utils import compute_statistical_significance_tests
+
+    rows = _make_r41_stat_rows(5, seed=0)
+    result = compute_statistical_significance_tests(rows)
+    assert result["combined_significance_score"] is None
+
+
+def test_r41_t3_high_positive_bias_is_significant() -> None:
+    """Large positive-bias returns should pass at least the 90% significance tests."""
+    from scripts.btst_analysis_utils import compute_statistical_significance_tests
+
+    rows = _make_r41_stat_rows(200, seed=42, positive_bias=0.05)
+    result = compute_statistical_significance_tests(rows)
+    assert result["win_rate_significant_90"] is True
+    assert result["return_significant_90"] is True
+    assert result["strategy_statistically_valid"] is True
+
+
+def test_r41_t3_combined_score_in_unit_interval() -> None:
+    """combined_significance_score is between 0 and 1."""
+    from scripts.btst_analysis_utils import compute_statistical_significance_tests
+
+    rows = _make_r41_stat_rows(40, seed=10, positive_bias=0.01)
+    result = compute_statistical_significance_tests(rows)
+    score = result["combined_significance_score"]
+    if score is not None:
+        assert 0.0 <= score <= 1.0
+
+
+def test_r41_t3_negative_bias_not_significant() -> None:
+    """Negative-bias returns should fail significance tests."""
+    from scripts.btst_analysis_utils import compute_statistical_significance_tests
+
+    rows = _make_r41_stat_rows(100, seed=99, positive_bias=-0.03)
+    result = compute_statistical_significance_tests(rows)
+    assert result["win_rate_significant_90"] is False
+    assert result["return_significant_90"] is False
+
+
+def test_r41_t3_strategy_valid_requires_both_90() -> None:
+    """strategy_statistically_valid is True iff both 90% tests pass."""
+    from scripts.btst_analysis_utils import compute_statistical_significance_tests
+
+    rows = _make_r41_stat_rows(100, seed=42, positive_bias=0.04)
+    result = compute_statistical_significance_tests(rows)
+    expected = result["win_rate_significant_90"] and result["return_significant_90"]
+    assert result["strategy_statistically_valid"] == expected
+
+
+def test_r41_t3_p_value_in_unit_interval() -> None:
+    """win_rate_p_value is between 0 and 1."""
+    from scripts.btst_analysis_utils import compute_statistical_significance_tests
+
+    rows = _make_r41_stat_rows(50, seed=3)
+    result = compute_statistical_significance_tests(rows)
+    p = result["win_rate_p_value"]
+    if p is not None:
+        assert 0.0 <= p <= 1.0
+
+
+def test_r41_t3_none_returns_skipped_gracefully() -> None:
+    """Rows with None next_close_return are silently skipped."""
+    from scripts.btst_analysis_utils import compute_statistical_significance_tests
+
+    rows = [{"next_close_return": None} for _ in range(5)] + _make_r41_stat_rows(20, seed=5)
+    result = compute_statistical_significance_tests(rows)
+    assert result["combined_significance_score"] is not None
+
+
+def test_r41_t3_floor_registered() -> None:
+    """combined_significance_score floor is 0.25 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "combined_significance_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["combined_significance_score"] == 0.25
+
+
+def test_r41_t3_metric_registered() -> None:
+    """combined_significance_score is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "combined_significance_score" in COMPARISON_METRICS
+    assert "combined_significance_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r41_t3_label_registered() -> None:
+    """combined_significance_score label contains '显著性'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "显著性" in COMPARISON_METRIC_LABELS.get("combined_significance_score", "")

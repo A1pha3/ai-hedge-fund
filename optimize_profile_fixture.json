@@ -135,7 +135,10 @@
       "max_drawdown_simulated_delta": null,
       "max_synergy_lift_delta": null,
       "high_vs_low_lift_delta": null,
-      "factor_drift_score_delta": null
+      "factor_drift_score_delta": null,
+      "factor_rank_consistency_score_delta": null,
+      "vol_price_alignment_rate_delta": null,
+      "combined_significance_score_delta": null
     },
     "default": {
       "candidate": {
@@ -261,7 +264,10 @@
       "max_drawdown_simulated_delta": null,
       "max_synergy_lift_delta": null,
       "high_vs_low_lift_delta": null,
-      "factor_drift_score_delta": null
+      "factor_drift_score_delta": null,
+      "factor_rank_consistency_score_delta": null,
+      "vol_price_alignment_rate_delta": null,
+      "combined_significance_score_delta": null
     }
   },
   "rollout_recommendation": "hold",

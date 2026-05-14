@@ -231,6 +231,24 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # the 7 core factors show zero synergy, invalidating multi-factor combination rationale.
     # Floor ≥ 0.0 requires at least one factor pair to show a non-negative synergy lift.
     "max_synergy_lift": 0.0,
+    # Task 1 (Round 41, Alpha): factor IC rank consistency score floor.
+    # factor_rank_consistency_score = 1 − mean(CV of factor rank positions across windows).
+    # A score < 0.30 means the factor hierarchy shuffles wildly between replay windows —
+    # the factor system is unstable and cannot provide reliable signal ordering.
+    # Floor ≥ 0.30 requires at least moderate consistency in factor ranking across windows.
+    "factor_rank_consistency_score": 0.30,
+    # Task 2 (Round 41, Beta): volume-price alignment rate floor.
+    # vol_price_alignment_rate = fraction of rows where volume direction matches price direction.
+    # A rate < 0.45 means volume expansion is more often misleading than confirming —
+    # the volume signal is either inverted or uninformative for this strategy.
+    # Floor ≥ 0.45 requires volume to align with price direction at least 45 % of the time.
+    "vol_price_alignment_rate": 0.45,
+    # Task 3 (Round 41, Gamma): combined statistical significance score floor.
+    # combined_significance_score = mean of 4 binary significance flags (z90/z95/t90/t95).
+    # A score < 0.25 means the strategy passes fewer than 1 of 4 significance tests —
+    # it cannot be statistically distinguished from random chance at even 90 % confidence.
+    # Floor ≥ 0.25 requires at least 1 of 4 significance tests to pass before rollout.
+    "combined_significance_score": 0.25,
 }
 
 # ---------------------------------------------------------------------------

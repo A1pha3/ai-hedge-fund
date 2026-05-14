@@ -290,6 +290,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "high_vs_low_lift",
     # Task 3 (Round 40, Gamma): cross-window factor exposure drift — mean CV (lower = more stable).
     "factor_drift_score",
+    # Task 1 (Round 41, Alpha): factor IC rank consistency across replay windows.
+    "factor_rank_consistency_score",
+    # Task 2 (Round 41, Beta): volume-price direction alignment rate.
+    "vol_price_alignment_rate",
+    # Task 3 (Round 41, Gamma): combined statistical significance score.
+    "combined_significance_score",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -468,6 +474,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "high_vs_low_lift": "高低换手胜率差",
     # Task 3 (Round 40, Gamma): cross-window factor exposure drift score
     "factor_drift_score": "因子暴露漂移度",
+    # Task 1 (Round 41, Alpha): factor IC rank consistency across replay windows
+    "factor_rank_consistency_score": "因子排序一致性",
+    # Task 2 (Round 41, Beta): volume-price direction alignment rate
+    "vol_price_alignment_rate": "量价方向对齐率",
+    # Task 3 (Round 41, Gamma): combined statistical significance score
+    "combined_significance_score": "综合统计显著性",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -692,6 +704,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "high_vs_low_lift",
     # Task 3 (Round 40, Gamma): cross-window factor drift score — optional; pre-Round-40 outputs omit it.
     "factor_drift_score",
+    # Task 1 (Round 41, Alpha): factor rank consistency score — optional; pre-Round-41 outputs omit it.
+    "factor_rank_consistency_score",
+    # Task 2 (Round 41, Beta): volume-price alignment rate — optional; pre-Round-41 outputs omit it.
+    "vol_price_alignment_rate",
+    # Task 3 (Round 41, Gamma): combined statistical significance score — optional; pre-Round-41 outputs omit it.
+    "combined_significance_score",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1401,6 +1419,103 @@ def compute_cross_window_factor_exposure(all_windows_summaries: list[dict]) -> d
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 41, Task 1 (Alpha): Factor IC rank consistency across replay windows
+# ---------------------------------------------------------------------------
+# Tracks whether the same factors persistently rank at the top across windows —
+# a healthy factor system shows stable factor rankings over time.
+
+
+def compute_factor_rank_consistency(all_windows_summaries: list[dict]) -> dict:
+    """Measure how consistently the same factors rank at the top across replay windows.
+
+    Extracts the ``factor_ic_ranking`` field from each window summary and computes
+    the coefficient of variation (CV) of each factor's rank position across windows.
+    A low mean CV indicates the factor hierarchy is stable; persistent top-3 occupants
+    signal a healthy, non-degenerate factor system.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (one per
+            replay window, as appended to ``all_primary_surfaces``).  Each dict may
+            contain ``factor_ic_ranking``: list of (factor_name, ic_value) pairs,
+            sorted highest-IC first.
+
+    Returns:
+        Dict with keys:
+
+        - ``factor_rank_consistency_score`` (float | None): 1 − mean(CV) clamped [0, 1];
+          higher = more consistent ranking.
+        - ``top_factor_stable`` (bool | None): True when ≥ 2 factors appear in the top-3
+          in more than 50 % of valid windows.
+        - ``most_consistent_factor`` (str | None): factor with lowest rank CV.
+        - ``most_volatile_rank_factor`` (str | None): factor with highest rank CV.
+
+        Returns all-None when fewer than 3 windows have valid ``factor_ic_ranking`` data.
+    """
+    _null: dict = {
+        "factor_rank_consistency_score": None,
+        "top_factor_stable": None,
+        "most_consistent_factor": None,
+        "most_volatile_rank_factor": None,
+    }
+    if len(all_windows_summaries) < 3:
+        return _null
+
+    # Collect per-factor rank lists across valid windows
+    factor_ranks: dict[str, list[int]] = {}
+    top3_window_counts: dict[str, int] = {}
+    valid_window_count = 0
+
+    for surf in all_windows_summaries:
+        ranking_raw = surf.get("factor_ic_ranking")
+        if not ranking_raw:
+            continue
+        # Accept both list-of-list and list-of-tuple
+        ranking: list[tuple[str, float]] = [(str(item[0]), float(item[1])) for item in ranking_raw if len(item) >= 2]
+        if not ranking:
+            continue
+        valid_window_count += 1
+        for rank_pos, (factor, _ic) in enumerate(ranking):
+            if factor not in factor_ranks:
+                factor_ranks[factor] = []
+            factor_ranks[factor].append(rank_pos)  # 0-indexed; lower = better
+            if rank_pos < 3:
+                top3_window_counts[factor] = top3_window_counts.get(factor, 0) + 1
+
+    if valid_window_count < 3:
+        return _null
+
+    # Compute rank CV for each factor seen in ≥ 2 windows
+    factor_rank_cv: dict[str, float] = {}
+    for factor, ranks in factor_ranks.items():
+        if len(ranks) < 2:
+            continue
+        n_r = len(ranks)
+        mean_r = sum(ranks) / n_r
+        std_r = (sum((r - mean_r) ** 2 for r in ranks) / max(n_r - 1, 1)) ** 0.5
+        factor_rank_cv[factor] = std_r / max(mean_r, 1e-8)
+
+    if not factor_rank_cv:
+        return _null
+
+    mean_cv = sum(factor_rank_cv.values()) / max(len(factor_rank_cv), 1)
+    score = max(0.0, min(1.0, 1.0 - mean_cv))
+
+    # Top-3 stable factors: appear in top-3 in >50% of valid windows
+    top_factor_set = {f for f, cnt in top3_window_counts.items() if cnt > valid_window_count * 0.5}
+    top_factor_stable = len(top_factor_set) >= 2
+
+    most_consistent = min(factor_rank_cv, key=lambda f: factor_rank_cv[f])
+    most_volatile = max(factor_rank_cv, key=lambda f: factor_rank_cv[f])
+
+    return {
+        "factor_rank_consistency_score": round(score, 6),
+        "top_factor_stable": top_factor_stable,
+        "most_consistent_factor": most_consistent,
+        "most_volatile_rank_factor": most_volatile,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -1999,6 +2114,15 @@ def _build_replay_evaluator(
         # Task 3 (Round 40, Gamma): cross-window factor exposure drift — computed over all window summaries.
         _cfe: dict[str, Any] = compute_cross_window_factor_exposure(all_primary_surfaces)
         avg_factor_drift_score: float | None = _cfe.get("factor_drift_score")
+        # Task 1 (Round 41, Alpha): factor IC rank consistency across replay windows.
+        _frc: dict[str, Any] = compute_factor_rank_consistency(all_primary_surfaces)
+        avg_factor_rank_consistency_score: float | None = _frc.get("factor_rank_consistency_score")
+        # Task 2 (Round 41, Beta): average vol_price_alignment_rate across replay windows.
+        _vpa_vals = [float(s["vol_price_alignment_rate"]) for s in all_primary_surfaces if s.get("vol_price_alignment_rate") is not None]
+        avg_vol_price_alignment_rate: float | None = round(sum(_vpa_vals) / len(_vpa_vals), 6) if _vpa_vals else None
+        # Task 3 (Round 41, Gamma): average combined_significance_score across replay windows.
+        _css_vals = [float(s["combined_significance_score"]) for s in all_primary_surfaces if s.get("combined_significance_score") is not None]
+        avg_combined_significance_score: float | None = round(sum(_css_vals) / len(_css_vals), 6) if _css_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -2180,6 +2304,15 @@ def _build_replay_evaluator(
             "factor_exposure_stable": _cfe.get("factor_exposure_stable"),
             "most_drifting_metric": _cfe.get("most_drifting_metric"),
             "least_drifting_metric": _cfe.get("least_drifting_metric"),
+            # Task 1 (Round 41, Alpha): factor IC rank consistency score across windows.
+            "factor_rank_consistency_score": avg_factor_rank_consistency_score,
+            "top_factor_stable": _frc.get("top_factor_stable"),
+            "most_consistent_factor": _frc.get("most_consistent_factor"),
+            "most_volatile_rank_factor": _frc.get("most_volatile_rank_factor"),
+            # Task 2 (Round 41, Beta): average vol_price_alignment_rate across replay windows.
+            "vol_price_alignment_rate": avg_vol_price_alignment_rate,
+            # Task 3 (Round 41, Gamma): average combined_significance_score across replay windows.
+            "combined_significance_score": avg_combined_significance_score,
         }
 
     return evaluator
