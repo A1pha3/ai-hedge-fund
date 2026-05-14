@@ -148,6 +148,11 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # A score < 50 (grade D) means fewer than half the quality checks pass adequately.
     # Floor ≥ 50 ensures the profile reaches at least C-grade tradability before rollout.
     "composite_gate_score": 50.0,
+    # Task 1 (Round 33, Alpha): expected value per trade floor.
+    # expected_value_per_trade = win_rate × avg_win + loss_rate × avg_loss (E[R] per trade).
+    # A value ≤ 0 means the strategy is expected to lose money on average, making it unprofitable.
+    # Floor ≥ 0.0 requires the strategy to have at least a neutral expected return per trade.
+    "expected_value_per_trade": 0.0,
 }
 
 # ---------------------------------------------------------------------------

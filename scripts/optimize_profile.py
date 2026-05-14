@@ -237,6 +237,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "inflow_win_rate_premium",
     # Task 3 (Round 32, Beta): composite gate score — overall 0–100 tradability index.
     "composite_gate_score",
+    # Task 1 (Round 33, Alpha): expected value per trade — E[R] = wr×avg_win + lr×avg_loss.
+    "expected_value_per_trade",
+    # Task 2 (Round 33, Gamma): momentum decay half-life — days until amplitude halves (lower = faster decay = BTST-friendly).
+    "momentum_half_life_days",
+    # Task 3 (Round 33, Beta): IC trend stability across windows — fraction of factors NOT in IC decline.
+    "ic_trend_stability",
+    # Task 3 (Round 33, Beta): IC trend deteriorating flag — True when >50% of factors have declining IC.
+    "factor_ic_trend_deteriorating",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -361,6 +369,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "inflow_win_rate_premium": "Inflow WR Premium",
     # Task 3 (Round 32, Beta): composite gate score
     "composite_gate_score": "Composite Gate Score",
+    # Task 1 (Round 33, Alpha): expected value per trade
+    "expected_value_per_trade": "期望收益/笔",
+    # Task 2 (Round 33, Gamma): momentum decay half-life
+    "momentum_half_life_days": "Momentum Half-Life d",
+    # Task 3 (Round 33, Beta): IC trend stability
+    "ic_trend_stability": "IC Trend Stability",
+    # Task 3 (Round 33, Beta): IC trend deteriorating
+    "factor_ic_trend_deteriorating": "IC Trend Deteriorating",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -403,6 +419,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     # Task 1 (Round 32, Gamma): high-score group CVaR — more negative = worse = lower-is-better (more negative).
     # NOTE: stored as a negative number; "lower" here means more negative (worse), so NOT in this set.
     # Instead score_tail_separation (higher = better) drives the direction.
+    # Task 2 (Round 33, Gamma): momentum half-life — shorter = faster decay = more BTST-friendly = lower-is-better.
+    "momentum_half_life_days",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -522,6 +540,13 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "inflow_win_rate_premium",
     # Task 3 (Round 32, Beta): composite gate score — optional; pre-Round-32 outputs omit it.
     "composite_gate_score",
+    # Task 1 (Round 33, Alpha): expected value per trade — optional; pre-Round-33 outputs omit it.
+    "expected_value_per_trade",
+    # Task 2 (Round 33, Gamma): momentum decay half-life — optional; pre-Round-33 outputs omit it.
+    "momentum_half_life_days",
+    # Task 3 (Round 33, Beta): IC trend metrics — optional; pre-Round-33 outputs omit these.
+    "ic_trend_stability",
+    "factor_ic_trend_deteriorating",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -918,6 +943,95 @@ def _compute_source_coverage_pass_ratio(source_coverage_summaries: list[dict[str
     if grand_total == 0:
         return 0.0
     return float(strong_total) / float(grand_total)
+
+
+# ---------------------------------------------------------------------------
+# Round 33, Task 3 (Beta): Factor IC trend — cross-window analysis
+# ---------------------------------------------------------------------------
+# Tracks the OLS slope of each factor's IC series across replay windows to
+# detect systematic IC decay.  A high fraction of declining ICs signals that
+# the scoring factors are losing predictive power over time.
+
+
+def compute_factor_ic_trend(all_windows_summaries: list[dict]) -> dict:
+    """Compute per-factor IC trend slopes across replay windows.
+
+    Accepts the list of per-window surface summaries collected during an
+    evaluator run.  For each factor whose IC appears in ≥ 3 windows the
+    function fits a linear (OLS) slope of IC vs window index, normalised by
+    the maximum absolute IC value so that slopes from different factors are
+    comparable.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (one
+            per replay window, as appended to ``all_primary_surfaces``).  Each
+            dict may contain ``factor_ic_mean`` **or** ``factor_ic_next_close``
+            (the production key written by ``build_surface_summary``).
+
+    Returns:
+        Dict with keys:
+
+        - ``ic_trend_stability``: float | None — fraction of factors NOT in IC
+          decline; 1.0 = all stable, 0.0 = all declining.
+        - ``factor_ic_trend_deteriorating``: bool | None — True when > 50 % of
+          factors have a declining IC trend.
+        - ``declining_factors``: list[str] — names of factors with slope < −0.05.
+        - ``ic_trend_slopes``: dict[str, float] — per-factor normalised OLS slope.
+
+        Returns ``{"ic_trend_stability": None, "factor_ic_trend_deteriorating": None}``
+        when fewer than 3 windows are available or no IC data is found.
+    """
+    _EMPTY_IC_TREND: dict[str, Any] = {"ic_trend_stability": None, "factor_ic_trend_deteriorating": None}
+    if len(all_windows_summaries) < 3:
+        return _EMPTY_IC_TREND
+
+    # Collect (window_index, ic_value) per factor across all windows.
+    factor_series: dict[str, list[tuple[int, float]]] = {}
+    for idx, surf in enumerate(all_windows_summaries):
+        ic_mean: dict = surf.get("factor_ic_mean") or surf.get("factor_ic_next_close") or {}
+        for factor, val in ic_mean.items():
+            if val is None:
+                continue
+            try:
+                factor_series.setdefault(factor, []).append((idx, float(val)))
+            except (TypeError, ValueError):
+                pass
+
+    if not factor_series:
+        return _EMPTY_IC_TREND
+
+    ic_trend_slopes: dict[str, float] = {}
+    for factor, data_pts in factor_series.items():
+        if len(data_pts) < 3:
+            continue
+        xs = [x for x, _ in data_pts]
+        ys = [y for _, y in data_pts]
+        n = len(xs)
+        x_mean = sum(xs) / n
+        y_mean = sum(ys) / n
+        ss_xy = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys))
+        ss_xx = sum((x - x_mean) ** 2 for x in xs)
+        if ss_xx == 0.0:
+            continue
+        raw_slope = ss_xy / ss_xx
+        max_abs = max(abs(y) for y in ys)
+        normalised_slope = raw_slope / max(max_abs, 1e-6)
+        ic_trend_slopes[factor] = round(normalised_slope, 6)
+
+    if not ic_trend_slopes:
+        return _EMPTY_IC_TREND
+
+    total_factors = len(ic_trend_slopes)
+    declining_factors = [f for f, s in ic_trend_slopes.items() if s < -0.05]
+    ic_trend_stability = round(1.0 - len(declining_factors) / total_factors, 4)
+    factor_ic_trend_deteriorating = len(declining_factors) / total_factors > 0.5
+
+    return {
+        "ic_trend_stability": ic_trend_stability,
+        "factor_ic_trend_deteriorating": factor_ic_trend_deteriorating,
+        "declining_factors": declining_factors,
+        "ic_trend_slopes": ic_trend_slopes,
+    }
 
 
 def _build_replay_evaluator(
@@ -1442,6 +1556,14 @@ def _build_replay_evaluator(
         # Task 1 (Round 31, Alpha): average autocorr_lag1 across replay windows.
         _autocorr_lag1_vals = [float(s["autocorr_lag1"]) for s in all_primary_surfaces if s.get("autocorr_lag1") is not None]
         avg_autocorr_lag1: float | None = round(sum(_autocorr_lag1_vals) / len(_autocorr_lag1_vals), 4) if _autocorr_lag1_vals else None
+        # Task 3 (Round 33, Beta): IC trend across replay windows — OLS slope of IC vs window index per factor.
+        _ic_trend: dict[str, Any] = compute_factor_ic_trend(all_primary_surfaces)
+        # Task 1 (Round 33, Alpha): average expected_value_per_trade across replay windows.
+        _ev_vals = [float(s["expected_value_per_trade"]) for s in all_primary_surfaces if s.get("expected_value_per_trade") is not None]
+        avg_expected_value_per_trade: float | None = round(sum(_ev_vals) / len(_ev_vals), 6) if _ev_vals else None
+        # Task 2 (Round 33, Gamma): average momentum_half_life_days across replay windows.
+        _hl_vals = [float(s["momentum_half_life_days"]) for s in all_primary_surfaces if s.get("momentum_half_life_days") is not None]
+        avg_momentum_half_life_days: float | None = round(sum(_hl_vals) / len(_hl_vals), 4) if _hl_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1561,6 +1683,15 @@ def _build_replay_evaluator(
             "score_mean_across_windows": _score_stability.get("score_mean_across_windows"),
             "score_trend_across_windows": _score_stability.get("score_trend_across_windows"),
             "score_system_stable": _score_stability.get("score_system_stable"),
+            # Task 1 (Round 33, Alpha): expected value per trade — average across replay windows.
+            "expected_value_per_trade": avg_expected_value_per_trade,
+            # Task 2 (Round 33, Gamma): momentum decay half-life — average across replay windows.
+            "momentum_half_life_days": avg_momentum_half_life_days,
+            # Task 3 (Round 33, Beta): IC trend across replay windows.
+            "factor_ic_trend": _ic_trend,
+            "ic_trend_stability": _ic_trend.get("ic_trend_stability"),
+            "factor_ic_trend_deteriorating": _ic_trend.get("factor_ic_trend_deteriorating"),
+            "declining_ic_factors": _ic_trend.get("declining_factors"),
         }
 
     return evaluator

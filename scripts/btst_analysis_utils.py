@@ -3832,6 +3832,30 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["trade_recommended"] = _gate.get("trade_recommended")
     _surface_result["gate_score_components"] = _gate.get("gate_score_components")
 
+    # -----------------------------------------------------------------------
+    # Round 33, Task 1 (Alpha): Expected value per trade.
+    # -----------------------------------------------------------------------
+    _ev: dict[str, Any] = compute_expected_value_metrics(next_day_rows)
+    _surface_result["expected_value_per_trade"] = _ev.get("expected_value_per_trade")
+    _surface_result["win_rate_ev"] = _ev.get("win_rate_ev")
+    _surface_result["avg_win_return_ev"] = _ev.get("avg_win_return")
+    _surface_result["avg_loss_return_ev"] = _ev.get("avg_loss_return")
+    _surface_result["payoff_ratio_ev"] = _ev.get("payoff_ratio_ev")
+    _surface_result["ev_positive"] = _ev.get("ev_positive")
+    _surface_result["ev_grade"] = _ev.get("ev_grade")
+
+    # -----------------------------------------------------------------------
+    # Round 33, Task 2 (Gamma): Momentum decay curve.
+    # -----------------------------------------------------------------------
+    _mdc: dict[str, Any] = compute_momentum_decay_curve(rows)
+    _surface_result["momentum_half_life_days"] = _mdc.get("momentum_half_life_days")
+    _surface_result["avg_t1_abs"] = _mdc.get("avg_t1_abs")
+    _surface_result["avg_t2_abs"] = _mdc.get("avg_t2_abs")
+    _surface_result["avg_t3_abs"] = _mdc.get("avg_t3_abs")
+    _surface_result["momentum_persists"] = _mdc.get("momentum_persists")
+    _surface_result["decay_speed"] = _mdc.get("decay_speed")
+    _surface_result["decay_curve_valid"] = _mdc.get("decay_curve_valid")
+
     return _surface_result
 
 
@@ -5269,4 +5293,172 @@ def compute_composite_gate_score(surface_summary: dict) -> dict:
         "gate_score_grade": grade,
         "trade_recommended": bool(gate_score >= 65.0),
         "gate_score_components": components,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 33, Task 1 (Alpha): Expected value per trade
+# ---------------------------------------------------------------------------
+# Directly optimises E[R] = win_rate × avg_win − loss_rate × avg_loss.
+# Requires at least 10 rows with a valid next_close_return to produce estimates.
+
+
+def compute_expected_value_metrics(rows: list[dict]) -> dict:
+    """Compute expected-value metrics from T+1 next-close return column.
+
+    Args:
+        rows: List of trade-row dicts, each expected to carry a
+              ``next_close_return`` float (or ``None`` to skip).
+
+    Returns:
+        Dict with keys:
+
+        - ``expected_value_per_trade``: float — E[R] = wr×avg_win + lr×avg_loss.
+        - ``win_rate_ev``: float — fraction of positive-return rows.
+        - ``avg_win_return``: float — mean return of winning rows (≥ 0).
+        - ``avg_loss_return``: float — mean return of losing rows (≤ 0).
+        - ``payoff_ratio_ev``: float | None — avg_win / |avg_loss|; None when no losses.
+        - ``ev_positive``: bool — True when expected_value_per_trade > 0.
+        - ``ev_grade``: str — "A"(>0.015) / "B"(>0.005) / "C"(>0) / "D"(≤0).
+
+        All values are ``None`` when fewer than 10 valid rows are available.
+    """
+    _EMPTY: dict[str, Any] = {
+        "expected_value_per_trade": None,
+        "win_rate_ev": None,
+        "avg_win_return": None,
+        "avg_loss_return": None,
+        "payoff_ratio_ev": None,
+        "ev_positive": None,
+        "ev_grade": None,
+    }
+    returns = [float(row["next_close_return"]) for row in rows if row.get("next_close_return") is not None]
+    if len(returns) < 10:
+        return _EMPTY
+    win_rows = [r for r in returns if r > 0]
+    loss_rows = [r for r in returns if r <= 0]
+    win_rate_ev = len(win_rows) / len(returns)
+    avg_win_return = round(mean(win_rows), 6) if win_rows else 0.0
+    avg_loss_return = round(mean(loss_rows), 6) if loss_rows else 0.0
+    loss_rate = 1.0 - win_rate_ev
+    ev = round(win_rate_ev * avg_win_return + loss_rate * avg_loss_return, 6)
+    payoff_ratio_ev = round(avg_win_return / abs(avg_loss_return), 4) if avg_loss_return != 0 else None
+    ev_positive = ev > 0
+    if ev > 0.015:
+        ev_grade: str = "A"
+    elif ev > 0.005:
+        ev_grade = "B"
+    elif ev > 0:
+        ev_grade = "C"
+    else:
+        ev_grade = "D"
+    return {
+        "expected_value_per_trade": ev,
+        "win_rate_ev": round(win_rate_ev, 4),
+        "avg_win_return": avg_win_return,
+        "avg_loss_return": avg_loss_return,
+        "payoff_ratio_ev": payoff_ratio_ev,
+        "ev_positive": ev_positive,
+        "ev_grade": ev_grade,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 33, Task 2 (Gamma): Momentum decay curve
+# ---------------------------------------------------------------------------
+# Fits the T+1 / T+2 / T+3 absolute-return amplitude decay and derives a
+# half-life that captures how quickly post-selection momentum fades.  A short
+# half-life (< 1.5 days) confirms that BTST fast-exit is optimal; a long
+# half-life (≥ 3 days) suggests wider holding horizons could add value.
+
+
+def compute_momentum_decay_curve(rows: list[dict]) -> dict:
+    """Fit a momentum-amplitude decay curve across T+1, T+2, T+3 horizons.
+
+    Supports two sets of field-name conventions for the multi-day return columns:
+
+    - ``t2_return`` / ``t3_return`` (test-friendly short names), **or**
+    - ``t_plus_2_close_return`` / ``t_plus_3_close_return`` (production field names).
+
+    The function uses whichever is present, preferring the short names.
+
+    Args:
+        rows: Trade-row dicts.  Must contain ``next_close_return`` (T+1); T+2 and
+              T+3 columns are optional — their absence triggers a graceful empty result.
+
+    Returns:
+        Dict with keys:
+
+        - ``momentum_half_life_days``: float | None — days until amplitude halves (clamped [0.5, 10]).
+        - ``decay_curve_valid``: bool — True when sufficient data existed to fit the curve.
+        - ``avg_t1_abs`` / ``avg_t2_abs`` / ``avg_t3_abs``: mean absolute returns per horizon.
+        - ``momentum_persists``: bool — True when avg_t2_abs > 0.5 × avg_t1_abs.
+        - ``decay_speed``: str — "fast"(<1.5d) / "medium"(<3d) / "slow"(≥3d).
+    """
+    import math as _math
+
+    _EMPTY_DECAY: dict[str, Any] = {"momentum_half_life_days": None, "decay_curve_valid": False}
+
+    def _get_t2(row: dict) -> float | None:
+        v = row.get("t2_return")
+        if v is None:
+            v = row.get("t_plus_2_close_return")
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _get_t3(row: dict) -> float | None:
+        v = row.get("t3_return")
+        if v is None:
+            v = row.get("t_plus_3_close_return")
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    t2_vals = [_get_t2(r) for r in rows]
+    t3_vals = [_get_t3(r) for r in rows]
+    t2_valid = [v for v in t2_vals if v is not None]
+    t3_valid = [v for v in t3_vals if v is not None]
+
+    # Graceful exit when T+2 / T+3 columns are wholly absent or undersized.
+    if not t2_valid and not t3_valid:
+        return _EMPTY_DECAY
+
+    t1_vals = [float(r["next_close_return"]) for r in rows if r.get("next_close_return") is not None]
+    if len(t1_vals) < 5 or len(t2_valid) < 5:
+        return _EMPTY_DECAY
+
+    avg_t1 = abs(mean(t1_vals))
+    avg_t2 = abs(mean(t2_valid))
+    avg_t3: float | None = abs(mean(t3_valid)) if len(t3_valid) >= 5 else None
+
+    if avg_t1 <= 0.0:
+        return _EMPTY_DECAY
+
+    ratio = avg_t1 / max(avg_t2, 1e-6)
+    if ratio <= 1.0:
+        half_life = 10.0
+    else:
+        half_life = round(1.0 / _math.log2(ratio), 4)
+    half_life = max(0.5, min(10.0, half_life))
+
+    momentum_persists = avg_t2 > avg_t1 * 0.5
+
+    if half_life < 1.5:
+        decay_speed: str = "fast"
+    elif half_life < 3.0:
+        decay_speed = "medium"
+    else:
+        decay_speed = "slow"
+
+    return {
+        "momentum_half_life_days": half_life,
+        "avg_t1_abs": round(avg_t1, 6),
+        "avg_t2_abs": round(avg_t2, 6),
+        "avg_t3_abs": round(avg_t3, 6) if avg_t3 is not None else None,
+        "momentum_persists": momentum_persists,
+        "decay_speed": decay_speed,
+        "decay_curve_valid": True,
     }

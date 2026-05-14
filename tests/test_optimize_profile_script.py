@@ -6593,3 +6593,351 @@ def test_r32_t3_floor_registered() -> None:
 
     assert "composite_gate_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["composite_gate_score"] == 50.0
+
+
+# ===========================================================================
+# Round 33 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Task 1 (Alpha): compute_expected_value_metrics
+# ---------------------------------------------------------------------------
+
+
+def _make_ev_rows(n: int = 20, win_frac: float = 0.6, avg_win: float = 0.03, avg_loss: float = -0.02) -> list[dict]:
+    """Make synthetic rows for EV metric tests."""
+    rows = []
+    for i in range(n):
+        ret = avg_win if i < int(n * win_frac) else avg_loss
+        rows.append({"next_close_return": round(ret, 4)})
+    return rows
+
+
+def test_r33_t1_ev_basic_calculation() -> None:
+    """expected_value_per_trade matches manual E[R] formula."""
+    from scripts.btst_analysis_utils import compute_expected_value_metrics
+
+    rows = _make_ev_rows(20, win_frac=0.6, avg_win=0.03, avg_loss=-0.02)
+    result = compute_expected_value_metrics(rows)
+    assert result["expected_value_per_trade"] is not None
+    ev = result["expected_value_per_trade"]
+    expected = 0.6 * 0.03 + 0.4 * (-0.02)
+    assert abs(ev - expected) < 1e-5, f"EV mismatch: {ev} vs {expected}"
+
+
+def test_r33_t1_win_rate_ev_fraction() -> None:
+    """win_rate_ev equals fraction of positive-return rows."""
+    from scripts.btst_analysis_utils import compute_expected_value_metrics
+
+    rows = _make_ev_rows(20, win_frac=0.5)
+    result = compute_expected_value_metrics(rows)
+    assert result["win_rate_ev"] is not None
+    assert abs(result["win_rate_ev"] - 0.5) < 1e-4
+
+
+def test_r33_t1_payoff_ratio_ev() -> None:
+    """payoff_ratio_ev = avg_win / abs(avg_loss)."""
+    from scripts.btst_analysis_utils import compute_expected_value_metrics
+
+    rows = _make_ev_rows(20, avg_win=0.04, avg_loss=-0.02)
+    result = compute_expected_value_metrics(rows)
+    assert result["payoff_ratio_ev"] is not None
+    assert abs(result["payoff_ratio_ev"] - 2.0) < 0.01
+
+
+def test_r33_t1_grade_a_high_ev() -> None:
+    """ev > 0.015 → grade A."""
+    from scripts.btst_analysis_utils import compute_expected_value_metrics
+
+    rows = [{"next_close_return": 0.04}] * 12 + [{"next_close_return": -0.01}] * 8
+    result = compute_expected_value_metrics(rows)
+    assert result["ev_grade"] == "A", f"Expected A, got {result['ev_grade']}"
+
+
+def test_r33_t1_grade_d_negative_ev() -> None:
+    """ev ≤ 0 → grade D."""
+    from scripts.btst_analysis_utils import compute_expected_value_metrics
+
+    rows = [{"next_close_return": 0.01}] * 8 + [{"next_close_return": -0.05}] * 12
+    result = compute_expected_value_metrics(rows)
+    assert result["ev_grade"] == "D", f"Expected D, got {result['ev_grade']}"
+    assert result["ev_positive"] is False
+
+
+def test_r33_t1_ev_positive_flag() -> None:
+    """ev_positive=True when E[R] > 0."""
+    from scripts.btst_analysis_utils import compute_expected_value_metrics
+
+    rows = _make_ev_rows(20, win_frac=0.7, avg_win=0.03, avg_loss=-0.01)
+    result = compute_expected_value_metrics(rows)
+    assert result["ev_positive"] is True
+
+
+def test_r33_t1_insufficient_rows_returns_none() -> None:
+    """Fewer than 10 rows → all values are None."""
+    from scripts.btst_analysis_utils import compute_expected_value_metrics
+
+    rows = [{"next_close_return": 0.02}] * 9
+    result = compute_expected_value_metrics(rows)
+    assert result["expected_value_per_trade"] is None
+    assert result["win_rate_ev"] is None
+    assert result["ev_grade"] is None
+
+
+def test_r33_t1_empty_rows_returns_none() -> None:
+    """Empty input → all values are None, no exception."""
+    from scripts.btst_analysis_utils import compute_expected_value_metrics
+
+    result = compute_expected_value_metrics([])
+    assert result["expected_value_per_trade"] is None
+
+
+def test_r33_t1_none_returns_filtered() -> None:
+    """Rows with next_close_return=None are excluded from calculation."""
+    from scripts.btst_analysis_utils import compute_expected_value_metrics
+
+    rows = [{"next_close_return": None}] * 5 + [{"next_close_return": 0.02}] * 12
+    result = compute_expected_value_metrics(rows)
+    assert result["expected_value_per_trade"] is not None
+    assert result["win_rate_ev"] == 1.0
+
+
+def test_r33_t1_floor_registered() -> None:
+    """expected_value_per_trade floor must be 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "expected_value_per_trade" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["expected_value_per_trade"] == 0.0
+
+
+def test_r33_t1_in_comparison_metrics() -> None:
+    """expected_value_per_trade must be registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "expected_value_per_trade" in COMPARISON_METRICS
+
+
+def test_r33_t1_label_registered() -> None:
+    """COMPARISON_METRIC_LABELS must contain the Chinese label for expected_value_per_trade."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "expected_value_per_trade" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["expected_value_per_trade"] == "期望收益/笔"
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (Gamma): compute_momentum_decay_curve
+# ---------------------------------------------------------------------------
+
+
+def _make_decay_rows(n: int = 20, t1: float = 0.03, t2: float = 0.02, t3: float = 0.01) -> list[dict]:
+    """Make rows with explicit t2/t3 returns for decay curve tests."""
+    return [{"next_close_return": t1, "t2_return": t2, "t3_return": t3} for _ in range(n)]
+
+
+def test_r33_t2_half_life_fast_decay() -> None:
+    """When t2 << t1, half_life < 1.5 → decay_speed='fast'."""
+    from scripts.btst_analysis_utils import compute_momentum_decay_curve
+
+    rows = _make_decay_rows(20, t1=0.04, t2=0.005, t3=0.001)
+    result = compute_momentum_decay_curve(rows)
+    assert result["decay_curve_valid"] is True
+    assert result["momentum_half_life_days"] is not None
+    assert result["decay_speed"] == "fast", f"Expected fast, got {result['decay_speed']}"
+
+
+def test_r33_t2_half_life_slow_decay() -> None:
+    """When t2 ≈ t1, half_life is clamped to 10 and decay_speed='slow'."""
+    from scripts.btst_analysis_utils import compute_momentum_decay_curve
+
+    rows = _make_decay_rows(20, t1=0.03, t2=0.03, t3=0.03)
+    result = compute_momentum_decay_curve(rows)
+    assert result["decay_curve_valid"] is True
+    assert result["decay_speed"] == "slow"
+
+
+def test_r33_t2_momentum_persists_true() -> None:
+    """avg_t2 > 0.5 × avg_t1 → momentum_persists=True."""
+    from scripts.btst_analysis_utils import compute_momentum_decay_curve
+
+    rows = _make_decay_rows(20, t1=0.02, t2=0.015, t3=0.01)
+    result = compute_momentum_decay_curve(rows)
+    assert result["momentum_persists"] is True
+
+
+def test_r33_t2_momentum_persists_false() -> None:
+    """avg_t2 < 0.5 × avg_t1 → momentum_persists=False."""
+    from scripts.btst_analysis_utils import compute_momentum_decay_curve
+
+    rows = _make_decay_rows(20, t1=0.04, t2=0.01, t3=0.005)
+    result = compute_momentum_decay_curve(rows)
+    assert result["momentum_persists"] is False
+
+
+def test_r33_t2_graceful_no_t2_column() -> None:
+    """When t2_return and t_plus_2_close_return both absent → decay_curve_valid=False, no error."""
+    from scripts.btst_analysis_utils import compute_momentum_decay_curve
+
+    rows = [{"next_close_return": 0.02} for _ in range(20)]
+    result = compute_momentum_decay_curve(rows)
+    assert result["decay_curve_valid"] is False
+    assert result["momentum_half_life_days"] is None
+
+
+def test_r33_t2_fallback_production_field_names() -> None:
+    """Accepts t_plus_2_close_return and t_plus_3_close_return production field names."""
+    from scripts.btst_analysis_utils import compute_momentum_decay_curve
+
+    rows = [{"next_close_return": 0.03, "t_plus_2_close_return": 0.02, "t_plus_3_close_return": 0.01} for _ in range(20)]
+    result = compute_momentum_decay_curve(rows)
+    assert result["decay_curve_valid"] is True
+    assert result["avg_t2_abs"] is not None
+
+
+def test_r33_t2_half_life_clamped() -> None:
+    """momentum_half_life_days is always clamped to [0.5, 10.0]."""
+    from scripts.btst_analysis_utils import compute_momentum_decay_curve
+
+    # Extreme scenario: t1 >> t2 → very short half-life, but clamped to 0.5
+    rows = _make_decay_rows(20, t1=0.10, t2=0.0001, t3=0.0)
+    result = compute_momentum_decay_curve(rows)
+    assert result["decay_curve_valid"] is True
+    hl = result["momentum_half_life_days"]
+    assert hl is not None
+    assert 0.5 <= hl <= 10.0
+
+
+def test_r33_t2_in_comparison_metrics() -> None:
+    """momentum_half_life_days must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "momentum_half_life_days" in COMPARISON_METRICS
+
+
+def test_r33_t2_lower_is_better_registered() -> None:
+    """momentum_half_life_days must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
+    assert "momentum_half_life_days" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r33_t2_empty_rows_no_error() -> None:
+    """Empty row list → decay_curve_valid=False, no exception."""
+    from scripts.btst_analysis_utils import compute_momentum_decay_curve
+
+    result = compute_momentum_decay_curve([])
+    assert result["decay_curve_valid"] is False
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (Beta): compute_factor_ic_trend (cross-window)
+# ---------------------------------------------------------------------------
+
+
+def _make_ic_windows(n_windows: int = 5, factors: list[str] | None = None, trend: str = "stable") -> list[dict]:
+    """Make synthetic all_primary_surfaces for IC trend tests."""
+    if factors is None:
+        factors = ["breakout_freshness", "trend_acceleration", "volume_expansion_quality"]
+    windows = []
+    for i in range(n_windows):
+        if trend == "declining":
+            ic_vals = {f: round(0.10 - i * 0.03, 4) for f in factors}
+        elif trend == "improving":
+            ic_vals = {f: round(-0.05 + i * 0.03, 4) for f in factors}
+        else:  # stable
+            ic_vals = {f: round(0.05 + (i % 2) * 0.01, 4) for f in factors}
+        windows.append({"factor_ic_next_close": ic_vals, "next_close_positive_rate": 0.55})
+    return windows
+
+
+def test_r33_t3_stable_ic_high_stability() -> None:
+    """Stable IC across windows → ic_trend_stability close to 1.0."""
+    from scripts.optimize_profile import compute_factor_ic_trend
+
+    windows = _make_ic_windows(6, trend="stable")
+    result = compute_factor_ic_trend(windows)
+    assert result["ic_trend_stability"] is not None
+    assert result["ic_trend_stability"] >= 0.5
+
+
+def test_r33_t3_all_declining_ic() -> None:
+    """When all factors have strongly declining IC → factor_ic_trend_deteriorating=True."""
+    from scripts.optimize_profile import compute_factor_ic_trend
+
+    windows = _make_ic_windows(6, trend="declining")
+    result = compute_factor_ic_trend(windows)
+    assert result["factor_ic_trend_deteriorating"] is True
+
+
+def test_r33_t3_all_improving_ic() -> None:
+    """Improving IC → factor_ic_trend_deteriorating=False."""
+    from scripts.optimize_profile import compute_factor_ic_trend
+
+    windows = _make_ic_windows(6, trend="improving")
+    result = compute_factor_ic_trend(windows)
+    assert result["factor_ic_trend_deteriorating"] is False
+
+
+def test_r33_t3_too_few_windows_returns_none() -> None:
+    """Fewer than 3 windows → ic_trend_stability=None."""
+    from scripts.optimize_profile import compute_factor_ic_trend
+
+    windows = _make_ic_windows(2)
+    result = compute_factor_ic_trend(windows)
+    assert result["ic_trend_stability"] is None
+    assert result["factor_ic_trend_deteriorating"] is None
+
+
+def test_r33_t3_empty_windows_returns_none() -> None:
+    """Empty window list → graceful None result, no exception."""
+    from scripts.optimize_profile import compute_factor_ic_trend
+
+    result = compute_factor_ic_trend([])
+    assert result["ic_trend_stability"] is None
+
+
+def test_r33_t3_missing_ic_field_graceful() -> None:
+    """Windows without factor_ic_next_close or factor_ic_mean don't crash."""
+    from scripts.optimize_profile import compute_factor_ic_trend
+
+    windows = [{"next_close_positive_rate": 0.55} for _ in range(5)]
+    result = compute_factor_ic_trend(windows)
+    assert isinstance(result, dict)
+    assert result["ic_trend_stability"] is None
+
+
+def test_r33_t3_ic_trend_stability_in_0_1() -> None:
+    """ic_trend_stability is always in [0, 1]."""
+    from scripts.optimize_profile import compute_factor_ic_trend
+
+    windows = _make_ic_windows(5, trend="declining")
+    result = compute_factor_ic_trend(windows)
+    if result["ic_trend_stability"] is not None:
+        assert 0.0 <= result["ic_trend_stability"] <= 1.0
+
+
+def test_r33_t3_declining_factors_list_populated() -> None:
+    """declining_factors key is populated when IC is declining."""
+    from scripts.optimize_profile import compute_factor_ic_trend
+
+    windows = _make_ic_windows(6, factors=["breakout_freshness"], trend="declining")
+    result = compute_factor_ic_trend(windows)
+    assert "declining_factors" in result
+    assert len(result["declining_factors"]) >= 1
+
+
+def test_r33_t3_in_comparison_metrics() -> None:
+    """ic_trend_stability and factor_ic_trend_deteriorating in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "ic_trend_stability" in COMPARISON_METRICS
+    assert "factor_ic_trend_deteriorating" in COMPARISON_METRICS
+
+
+def test_r33_t3_factor_ic_mean_key_supported() -> None:
+    """compute_factor_ic_trend reads factor_ic_mean key as well as factor_ic_next_close."""
+    from scripts.optimize_profile import compute_factor_ic_trend
+
+    windows = [{"factor_ic_mean": {"breakout_freshness": 0.10 - i * 0.03}} for i in range(5)]
+    result = compute_factor_ic_trend(windows)
+    assert result["ic_trend_stability"] is not None
