@@ -448,6 +448,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "interact_mean_interaction_effect",
     # Task 3 (Round 66, Gamma): cross-window total attribution OLS trend slope.
     "attribution_trend_slope",
+    # Task 1 (Round 67, Alpha): score dispersion win-rate spread — high vs low score group win-rate gap.
+    "score_win_rate_spread",
+    # Task 2 (Round 67, Beta): fund flow / breakout synergy win rate — high-flow + high-breakout quadrant.
+    "flow_breakout_synergy",
+    # Task 3 (Round 67, Gamma): cross-window nonlinear interaction OLS trend slope.
+    "interaction_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -784,6 +790,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "interact_mean_interaction_effect": "最强非线性交互效应",
     # Task 3 (Round 66, Gamma): cross-window total attribution trend slope
     "attribution_trend_slope": "因子归因力跨窗趋势",
+    # Task 1 (Round 67, Alpha): score dispersion win-rate spread
+    "score_win_rate_spread": "得分离散区分度",
+    # Task 2 (Round 67, Beta): fund flow breakout synergy win rate
+    "flow_breakout_synergy": "资金突破协同胜率",
+    # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend slope
+    "interaction_trend_slope": "非线性交互跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1188,6 +1200,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "interact_mean_interaction_effect",
     # Task 3 (Round 66, Gamma): attribution trend slope — optional; pre-Round-66 outputs omit it.
     "attribution_trend_slope",
+    # Task 1 (Round 67, Alpha): score dispersion win-rate spread — optional; pre-Round-67 outputs omit it.
+    "score_win_rate_spread",
+    # Task 2 (Round 67, Beta): fund flow breakout synergy — optional; pre-Round-67 outputs omit it.
+    "flow_breakout_synergy",
+    # Task 3 (Round 67, Gamma): interaction trend slope — optional; pre-Round-67 outputs omit it.
+    "interaction_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3532,6 +3550,53 @@ def compute_cross_window_attribution_trend(all_windows_summaries: list[dict]) ->
     return {"attribution_trend_valid": True, "attribution_trend_slope": round(slope, 8), "attribution_trend_mean": round(mean_v, 6), "attribution_trend_min": round(min_v, 6), "attribution_trend_max": round(max_v, 6), "attribution_above_floor_pct": attribution_above_floor_pct, "attribution_trend_grade": grade}
 
 
+# ---------------------------------------------------------------------------
+# Round 67, Task 3 (Gamma): Cross-window nonlinear interaction trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_interaction_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪非线性因子交互效应（mean_interaction_effect）OLS趋势。
+
+    从各窗口 summary 收集 ``interact_mean_interaction_effect``（Round 66 T2 输出），需≥3个有效值。
+    Returns:
+        - ``interaction_trend_slope``: OLS 斜率
+        - ``interaction_trend_mean``: 均值
+        - ``interaction_positive_windows_pct``: mean_interaction_effect > 0 的窗口占比
+        - ``interaction_trend_grade``: A/B/C/D
+        - ``interaction_trend_valid``: bool
+    """
+    _null: dict = {"interaction_trend_valid": False, "interaction_trend_slope": None, "interaction_trend_mean": None, "interaction_positive_windows_pct": None, "interaction_trend_grade": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("interact_mean_interaction_effect")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    interaction_positive_windows_pct = round(sum(1 for v in vals if v > 0) / n, 6)
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"interaction_trend_valid": True, "interaction_trend_slope": round(slope, 8), "interaction_trend_mean": round(mean_v, 6), "interaction_positive_windows_pct": interaction_positive_windows_pct, "interaction_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4266,6 +4331,8 @@ def _build_replay_evaluator(
         avg_interact_mean_interaction_effect: "float | None" = round(sum(_imie_vals) / len(_imie_vals), 8) if _imie_vals else None
         # Task 3 (Round 66, Gamma): cross-window total attribution trend.
         _cat: dict[str, Any] = compute_cross_window_attribution_trend(all_primary_surfaces)
+        # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend.
+        _cwit: dict[str, Any] = compute_cross_window_interaction_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4699,6 +4766,12 @@ def _build_replay_evaluator(
                 "attribution_above_floor_pct": _cat.get("attribution_above_floor_pct"),
                 "attribution_trend_grade": _cat.get("attribution_trend_grade"),
                 "attribution_trend_valid": _cat.get("attribution_trend_valid"),
+                # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend.
+                "interaction_trend_slope": _cwit.get("interaction_trend_slope"),
+                "interaction_trend_mean": _cwit.get("interaction_trend_mean"),
+                "interaction_positive_windows_pct": _cwit.get("interaction_positive_windows_pct"),
+                "interaction_trend_grade": _cwit.get("interaction_trend_grade"),
+                "interaction_trend_valid": _cwit.get("interaction_trend_valid"),
         }
 
     return evaluator

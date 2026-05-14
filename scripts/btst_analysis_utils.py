@@ -4531,6 +4531,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _nfi.items():
         _surface_result[f"interact_{_k}"] = _v
 
+    # Round 67, Task 1 (Alpha): Score dispersion analysis.
+    _sda: dict = compute_score_dispersion_analysis(rows)
+    for _k, _v in _sda.items():
+        _surface_result[f"dispersion_{_k}"] = _v
+
+    # Round 67, Task 2 (Beta): Fund flow / breakout consistency analysis.
+    _ffc: dict = compute_fund_flow_consistency(rows)
+    for _k, _v in _ffc.items():
+        _surface_result[f"flow_{_k}"] = _v
+
     return _surface_result
 
 
@@ -12217,3 +12227,141 @@ def compute_nonlinear_factor_interaction(rows: list[dict]) -> dict:
     mean_interaction_effect = round(sum(abs_ics.values()) / len(abs_ics), 8)
     top_interaction_pair = max(abs_ics, key=lambda k: abs_ics[k])
     return {"valid": True, "mean_interaction_effect": mean_interaction_effect, "top_interaction_pair": top_interaction_pair, "interaction_count": len(ics)}
+
+
+# ---------------------------------------------------------------------------
+# Round 67, Task 1 (Alpha): Score dispersion analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_score_dispersion_analysis(rows: list[dict]) -> dict:
+    """分析候选股票得分离散度对选股效果的影响。
+
+    Returns:
+        - ``score_mean``: 得分算术均值
+        - ``score_std``: 得分 N-1 标准差
+        - ``score_cv``: 变异系数（std/mean，mean=0时=None）
+        - ``score_range``: 最大值 - 最小值
+        - ``score_iqr``: P75 - P25（手动分位数）
+        - ``high_score_win_rate``: 高得分组（>= 中位数）胜率
+        - ``low_score_win_rate``: 低得分组（< 中位数）胜率
+        - ``score_win_rate_spread``: 高低组胜率之差
+        - ``score_dispersion_grade``: A/B/C/D 或 "unknown"
+        - ``score_dispersion_valid``: bool
+    """
+    _null: dict = {"score_dispersion_valid": False, "score_mean": None, "score_std": None, "score_cv": None, "score_range": None, "score_iqr": None, "high_score_win_rate": None, "low_score_win_rate": None, "score_win_rate_spread": None, "score_dispersion_grade": None}
+    if len(rows) < 8:
+        return _null
+    scored_rows = []
+    for r in rows:
+        for field in ("runner_composite_score", "composite_score", "score"):
+            val = r.get(field)
+            if val is not None:
+                try:
+                    scored_rows.append((float(val), r))
+                except (TypeError, ValueError):
+                    pass
+                break
+    if len(scored_rows) < 8:
+        return _null
+    scores = [s for s, _ in scored_rows]
+    n = len(scores)
+    score_mean = sum(scores) / n
+    score_std = (sum((v - score_mean) ** 2 for v in scores) / (n - 1)) ** 0.5 if n > 1 else 0.0
+    score_cv = (score_std / score_mean) if score_mean != 0 else None
+    score_range = max(scores) - min(scores)
+    sorted_scores = sorted(scores)
+    p25 = sorted_scores[int(n * 0.25)]
+    p75 = sorted_scores[int(n * 0.75)]
+    score_iqr = p75 - p25
+    sorted_by_score = sorted(scored_rows, key=lambda x: x[0])
+    sorted_vals = [s for s, _ in sorted_by_score]
+    mid_idx = n // 2
+    median_score = (sorted_vals[mid_idx - 1] + sorted_vals[mid_idx]) / 2.0 if n % 2 == 0 else sorted_vals[mid_idx]
+    high_rows = [r for s, r in scored_rows if s >= median_score]
+    low_rows = [r for s, r in scored_rows if s < median_score]
+    def _win_rate(group: list) -> "float | None":
+        rets = [r.get("next_day_return") for r in group if r.get("next_day_return") is not None]
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for v in rets if float(v) > 0) / len(rets), 6)
+    high_score_win_rate = _win_rate(high_rows)
+    low_score_win_rate = _win_rate(low_rows)
+    if high_score_win_rate is not None and low_score_win_rate is not None:
+        score_win_rate_spread = round(high_score_win_rate - low_score_win_rate, 6)
+    else:
+        score_win_rate_spread = None
+    if score_win_rate_spread is None:
+        grade = "unknown"
+    elif score_cv is not None and score_cv > 0.3 and score_win_rate_spread > 0.1:
+        grade = "A"
+    elif score_win_rate_spread > 0.1:
+        grade = "B"
+    elif score_win_rate_spread > 0:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"score_dispersion_valid": True, "score_mean": round(score_mean, 6), "score_std": round(score_std, 6), "score_cv": round(score_cv, 6) if score_cv is not None else None, "score_range": round(score_range, 6), "score_iqr": round(score_iqr, 6), "high_score_win_rate": high_score_win_rate, "low_score_win_rate": low_score_win_rate, "score_win_rate_spread": score_win_rate_spread, "score_dispersion_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 67, Task 2 (Beta): Fund flow / breakout consistency analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_fund_flow_consistency(rows: list[dict]) -> dict:
+    """分析资金流向因子与价格突破信号的一致性（四象限分析）。
+
+    Returns:
+        - ``high_flow_high_breakout_win_rate``: 高流入+高突破象限胜率
+        - ``high_flow_low_breakout_win_rate``: 高流入+低突破象限胜率
+        - ``low_flow_high_breakout_win_rate``: 低流入+高突破象限胜率
+        - ``low_flow_low_breakout_win_rate``: 低流入+低突破象限胜率
+        - ``best_quadrant_win_rate``: 最佳象限胜率
+        - ``worst_quadrant_win_rate``: 最差象限胜率
+        - ``quadrant_spread``: best - worst
+        - ``flow_breakout_synergy``: 高流入+高突破象限胜率（协同效应代理）
+        - ``fund_flow_consistency_valid``: bool
+    """
+    _null: dict = {"fund_flow_consistency_valid": False, "high_flow_high_breakout_win_rate": None, "high_flow_low_breakout_win_rate": None, "low_flow_high_breakout_win_rate": None, "low_flow_low_breakout_win_rate": None, "best_quadrant_win_rate": None, "worst_quadrant_win_rate": None, "quadrant_spread": None, "flow_breakout_synergy": None}
+    if len(rows) < 10:
+        return _null
+    valid_rows = [r for r in rows if r.get("t0_estimated_net_inflow_ratio") is not None and r.get("breakout_quality_score") is not None]
+    if len(valid_rows) < 8:
+        return _null
+    flow_vals = sorted(float(r["t0_estimated_net_inflow_ratio"]) for r in valid_rows)
+    breakout_vals = sorted(float(r["breakout_quality_score"]) for r in valid_rows)
+    nv = len(valid_rows)
+    flow_median = (flow_vals[nv // 2 - 1] + flow_vals[nv // 2]) / 2.0 if nv % 2 == 0 else flow_vals[nv // 2]
+    breakout_median = (breakout_vals[nv // 2 - 1] + breakout_vals[nv // 2]) / 2.0 if nv % 2 == 0 else breakout_vals[nv // 2]
+    q_hfhb: list = []
+    q_hflb: list = []
+    q_lfhb: list = []
+    q_lflb: list = []
+    for r in valid_rows:
+        flow = float(r["t0_estimated_net_inflow_ratio"])
+        bq = float(r["breakout_quality_score"])
+        ret = r.get("next_day_return")
+        if flow >= flow_median and bq >= breakout_median:
+            q_hfhb.append(ret)
+        elif flow >= flow_median and bq < breakout_median:
+            q_hflb.append(ret)
+        elif flow < flow_median and bq >= breakout_median:
+            q_lfhb.append(ret)
+        else:
+            q_lflb.append(ret)
+    def _qwr(group: list) -> "float | None":
+        rets = [float(v) for v in group if v is not None]
+        if len(rets) < 2:
+            return None
+        return round(sum(1 for v in rets if v > 0) / len(rets), 6)
+    hfhb_wr = _qwr(q_hfhb)
+    hflb_wr = _qwr(q_hflb)
+    lfhb_wr = _qwr(q_lfhb)
+    lflb_wr = _qwr(q_lflb)
+    valid_wrs = [v for v in [hfhb_wr, hflb_wr, lfhb_wr, lflb_wr] if v is not None]
+    best_wr = round(max(valid_wrs), 6) if valid_wrs else None
+    worst_wr = round(min(valid_wrs), 6) if valid_wrs else None
+    quadrant_spread = round(best_wr - worst_wr, 6) if best_wr is not None and worst_wr is not None else None
+    flow_breakout_synergy = hfhb_wr
+    return {"fund_flow_consistency_valid": True, "high_flow_high_breakout_win_rate": hfhb_wr, "high_flow_low_breakout_win_rate": hflb_wr, "low_flow_high_breakout_win_rate": lfhb_wr, "low_flow_low_breakout_win_rate": lflb_wr, "best_quadrant_win_rate": best_wr, "worst_quadrant_win_rate": worst_wr, "quadrant_spread": quadrant_spread, "flow_breakout_synergy": flow_breakout_synergy}

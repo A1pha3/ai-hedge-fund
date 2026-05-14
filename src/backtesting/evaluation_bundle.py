@@ -128,6 +128,12 @@ _GUARDRAIL_KEYS = (
     # Task 3 (Round 66, Gamma): cross-window attribution trend slope floor guardrail.
     # attribution_trend_slope < -0.02 means factor attribution explanatory power is declining across windows.
     "attribution_trend_slope",
+    # Task 1 (Round 67, Alpha): score dispersion win-rate spread floor guardrail.
+    "score_win_rate_spread",
+    # Task 2 (Round 67, Beta): fund flow breakout synergy win rate floor guardrail.
+    "flow_breakout_synergy",
+    # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend slope floor guardrail.
+    "interaction_trend_slope",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -548,6 +554,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 66, Gamma): cross-window total attribution trend slope floor.
     # attribution_trend_slope < -0.02 means factor attribution explanatory power is deteriorating significantly across windows.
     "attribution_trend_slope": -0.02,
+    # Task 1 (Round 67, Alpha): score dispersion win-rate spread floor.
+    # score_win_rate_spread < 0.0 means high-score group performs worse than low-score group — no discriminatory power.
+    "score_win_rate_spread": 0.0,
+    # Task 2 (Round 67, Beta): fund flow breakout synergy win rate floor.
+    # flow_breakout_synergy < 0.5 means the high-flow+high-breakout quadrant fails to achieve baseline win rate.
+    "flow_breakout_synergy": 0.5,
+    # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend slope floor.
+    # interaction_trend_slope < -0.01 means nonlinear interaction effect is declining across windows.
+    "interaction_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

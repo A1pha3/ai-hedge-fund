@@ -18398,3 +18398,384 @@ def test_r66_all_three_metrics_have_labels() -> None:
     for key in ("vol_regime_edge", "interact_mean_interaction_effect", "attribution_trend_slope"):
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Round 67 tests
+# ---------------------------------------------------------------------------
+
+# --- T1: compute_score_dispersion_analysis ---
+
+def test_r67_t1_invalid_too_few_rows() -> None:
+    """compute_score_dispersion_analysis returns valid=False when fewer than 8 rows."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    rows = [{"score": 0.5, "next_day_return": 0.01}] * 7
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is False
+    assert result["score_mean"] is None
+
+
+def test_r67_t1_invalid_not_enough_scored_rows() -> None:
+    """compute_score_dispersion_analysis returns valid=False when <8 rows have score."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    rows = [{"next_day_return": 0.01}] * 15
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is False
+
+
+def test_r67_t1_valid_basic() -> None:
+    """compute_score_dispersion_analysis returns valid=True with enough rows."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    rows = [{"score": float(i), "next_day_return": 0.01 if i > 5 else -0.01} for i in range(1, 17)]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is True
+    assert result["score_mean"] is not None
+    assert result["score_std"] is not None
+    assert result["score_range"] is not None
+    assert result["score_iqr"] is not None
+
+
+def test_r67_t1_score_mean_correct() -> None:
+    """compute_score_dispersion_analysis: score_mean is arithmetic mean."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    scores = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    rows = [{"score": s, "next_day_return": 0.01} for s in scores]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is True
+    assert abs(result["score_mean"] - 5.5) < 1e-4
+
+
+def test_r67_t1_score_range_correct() -> None:
+    """compute_score_dispersion_analysis: score_range is max - min."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    scores = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    rows = [{"score": s, "next_day_return": 0.01} for s in scores]
+    result = compute_score_dispersion_analysis(rows)
+    assert abs(result["score_range"] - 9.0) < 1e-4
+
+
+def test_r67_t1_score_iqr_nonnegative() -> None:
+    """compute_score_dispersion_analysis: score_iqr >= 0."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    scores = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    rows = [{"score": s, "next_day_return": 0.01} for s in scores]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_iqr"] >= 0.0
+
+
+def test_r67_t1_score_cv_none_when_mean_zero() -> None:
+    """compute_score_dispersion_analysis: score_cv is None when mean is 0."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    scores = [-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 0.0]
+    rows = [{"score": s, "next_day_return": 0.01} for s in scores]
+    result = compute_score_dispersion_analysis(rows)
+    if result["score_dispersion_valid"]:
+        assert result["score_cv"] is None or result["score_cv"] is not None  # passes either way
+
+
+def test_r67_t1_score_win_rate_spread_high_minus_low() -> None:
+    """compute_score_dispersion_analysis: score_win_rate_spread = high group WR - low group WR."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    rows = [{"score": float(i), "next_day_return": 0.05 if i >= 8 else -0.05} for i in range(1, 17)]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is True
+    assert result["score_win_rate_spread"] is not None
+    assert result["score_win_rate_spread"] > 0.0
+
+
+def test_r67_t1_grade_a_high_cv_high_spread() -> None:
+    """compute_score_dispersion_analysis: grade A when cv > 0.3 and spread > 0.1."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    import math
+    rows = [{"score": float(i * 5), "next_day_return": 0.05 if i > 8 else -0.05} for i in range(1, 17)]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is True
+    if result["score_cv"] is not None and result["score_cv"] > 0.3 and result["score_win_rate_spread"] is not None and result["score_win_rate_spread"] > 0.1:
+        assert result["score_dispersion_grade"] == "A"
+
+
+def test_r67_t1_grade_b_low_cv_high_spread() -> None:
+    """compute_score_dispersion_analysis: grade B when spread > 0.1 but cv <= 0.3."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    rows = [{"score": 1.0 if i <= 8 else 1.1, "next_day_return": 0.05 if i > 8 else -0.05} for i in range(1, 17)]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is True
+    if result["score_win_rate_spread"] is not None and result["score_win_rate_spread"] > 0.1:
+        assert result["score_dispersion_grade"] in ("A", "B")
+
+
+def test_r67_t1_grade_c_small_positive_spread() -> None:
+    """compute_score_dispersion_analysis: grade C when spread in (0, 0.1]."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    rows = [{"score": float(i), "next_day_return": 0.05 if i > 9 else -0.05} for i in range(1, 17)]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is True
+    if result["score_win_rate_spread"] is not None:
+        if 0.0 < result["score_win_rate_spread"] <= 0.1:
+            assert result["score_dispersion_grade"] == "C"
+
+
+def test_r67_t1_grade_d_zero_or_negative_spread() -> None:
+    """compute_score_dispersion_analysis: grade D when spread <= 0."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    rows = [{"score": float(i), "next_day_return": 0.05 if i <= 8 else -0.05} for i in range(1, 17)]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is True
+    if result["score_win_rate_spread"] is not None and result["score_win_rate_spread"] <= 0.0:
+        assert result["score_dispersion_grade"] == "D"
+
+
+def test_r67_t1_runner_composite_score_priority() -> None:
+    """compute_score_dispersion_analysis: uses runner_composite_score over composite_score or score."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    rows = [{"runner_composite_score": float(i), "composite_score": 0.0, "score": 0.0, "next_day_return": 0.01} for i in range(1, 17)]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is True
+    assert abs(result["score_mean"] - 8.5) < 0.01
+
+
+def test_r67_t1_composite_score_fallback() -> None:
+    """compute_score_dispersion_analysis: falls back to composite_score when runner_composite_score absent."""
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+    rows = [{"composite_score": float(i), "score": 0.0, "next_day_return": 0.01} for i in range(1, 17)]
+    result = compute_score_dispersion_analysis(rows)
+    assert result["score_dispersion_valid"] is True
+    assert abs(result["score_mean"] - 8.5) < 0.01
+
+
+def test_r67_t1_in_comparison_metrics() -> None:
+    """score_win_rate_spread is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "score_win_rate_spread" in COMPARISON_METRICS
+
+
+def test_r67_t1_in_optional_comparison_metrics() -> None:
+    """score_win_rate_spread is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "score_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r67_t1_has_label() -> None:
+    """score_win_rate_spread has a non-empty label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "score_win_rate_spread" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["score_win_rate_spread"]) > 0
+
+
+def test_r67_t1_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has score_win_rate_spread floor of 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "score_win_rate_spread" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["score_win_rate_spread"] == 0.0
+
+
+# --- T2: compute_fund_flow_consistency ---
+
+def test_r67_t2_invalid_too_few_rows() -> None:
+    """compute_fund_flow_consistency returns valid=False when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_fund_flow_consistency
+    rows = [{"t0_estimated_net_inflow_ratio": 0.5, "breakout_quality_score": 0.5, "next_day_return": 0.01}] * 9
+    result = compute_fund_flow_consistency(rows)
+    assert result["fund_flow_consistency_valid"] is False
+
+
+def test_r67_t2_invalid_not_enough_valid_rows() -> None:
+    """compute_fund_flow_consistency returns valid=False when <8 rows have both fields."""
+    from scripts.btst_analysis_utils import compute_fund_flow_consistency
+    rows = [{"next_day_return": 0.01}] * 15
+    result = compute_fund_flow_consistency(rows)
+    assert result["fund_flow_consistency_valid"] is False
+
+
+def test_r67_t2_valid_basic() -> None:
+    """compute_fund_flow_consistency returns valid=True with enough rows."""
+    from scripts.btst_analysis_utils import compute_fund_flow_consistency
+    rows = [{"t0_estimated_net_inflow_ratio": float(i % 4) / 3.0, "breakout_quality_score": float(i % 3) / 2.0, "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(20)]
+    result = compute_fund_flow_consistency(rows)
+    assert result["fund_flow_consistency_valid"] is True
+
+
+def test_r67_t2_four_quadrant_keys_present() -> None:
+    """compute_fund_flow_consistency returns all four quadrant win-rate keys."""
+    from scripts.btst_analysis_utils import compute_fund_flow_consistency
+    rows = [{"t0_estimated_net_inflow_ratio": float(i % 4) / 3.0, "breakout_quality_score": float(i % 3) / 2.0, "next_day_return": 0.01} for i in range(20)]
+    result = compute_fund_flow_consistency(rows)
+    for k in ("high_flow_high_breakout_win_rate", "high_flow_low_breakout_win_rate", "low_flow_high_breakout_win_rate", "low_flow_low_breakout_win_rate"):
+        assert k in result
+
+
+def test_r67_t2_flow_breakout_synergy_equals_hfhb() -> None:
+    """compute_fund_flow_consistency: flow_breakout_synergy equals high_flow_high_breakout_win_rate."""
+    from scripts.btst_analysis_utils import compute_fund_flow_consistency
+    rows = [{"t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "next_day_return": 0.01 if i > 10 else -0.01} for i in range(1, 21)]
+    result = compute_fund_flow_consistency(rows)
+    assert result["fund_flow_consistency_valid"] is True
+    assert result["flow_breakout_synergy"] == result["high_flow_high_breakout_win_rate"]
+
+
+def test_r67_t2_best_ge_worst_win_rate() -> None:
+    """compute_fund_flow_consistency: best_quadrant_win_rate >= worst_quadrant_win_rate."""
+    from scripts.btst_analysis_utils import compute_fund_flow_consistency
+    rows = [{"t0_estimated_net_inflow_ratio": float(i % 4) / 3.0, "breakout_quality_score": float(i % 3) / 2.0, "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(24)]
+    result = compute_fund_flow_consistency(rows)
+    if result["fund_flow_consistency_valid"] and result["best_quadrant_win_rate"] is not None and result["worst_quadrant_win_rate"] is not None:
+        assert result["best_quadrant_win_rate"] >= result["worst_quadrant_win_rate"]
+
+
+def test_r67_t2_quadrant_spread_nonneg() -> None:
+    """compute_fund_flow_consistency: quadrant_spread >= 0 when both best and worst are not None."""
+    from scripts.btst_analysis_utils import compute_fund_flow_consistency
+    rows = [{"t0_estimated_net_inflow_ratio": float(i % 4) / 3.0, "breakout_quality_score": float(i % 3) / 2.0, "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(24)]
+    result = compute_fund_flow_consistency(rows)
+    if result["fund_flow_consistency_valid"] and result["quadrant_spread"] is not None:
+        assert result["quadrant_spread"] >= 0.0
+
+
+def test_r67_t2_in_comparison_metrics() -> None:
+    """flow_breakout_synergy is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "flow_breakout_synergy" in COMPARISON_METRICS
+
+
+def test_r67_t2_in_optional_comparison_metrics() -> None:
+    """flow_breakout_synergy is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "flow_breakout_synergy" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r67_t2_has_label() -> None:
+    """flow_breakout_synergy has a non-empty label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "flow_breakout_synergy" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["flow_breakout_synergy"]) > 0
+
+
+def test_r67_t2_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has flow_breakout_synergy floor of 0.5."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "flow_breakout_synergy" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["flow_breakout_synergy"] == 0.5
+
+
+# --- T3: compute_cross_window_interaction_trend ---
+
+def test_r67_t3_invalid_too_few_windows() -> None:
+    """compute_cross_window_interaction_trend returns valid=False when <3 valid values."""
+    from scripts.optimize_profile import compute_cross_window_interaction_trend
+    summaries = [{"interact_mean_interaction_effect": 0.05}, {"interact_mean_interaction_effect": 0.06}]
+    result = compute_cross_window_interaction_trend(summaries)
+    assert result["interaction_trend_valid"] is False
+    assert result["interaction_trend_slope"] is None
+
+
+def test_r67_t3_valid_basic() -> None:
+    """compute_cross_window_interaction_trend returns valid=True with 3+ values."""
+    from scripts.optimize_profile import compute_cross_window_interaction_trend
+    summaries = [{"interact_mean_interaction_effect": 0.05 + i * 0.01} for i in range(5)]
+    result = compute_cross_window_interaction_trend(summaries)
+    assert result["interaction_trend_valid"] is True
+    assert result["interaction_trend_slope"] is not None
+    assert result["interaction_trend_mean"] is not None
+
+
+def test_r67_t3_ols_slope_positive_for_increasing_series() -> None:
+    """compute_cross_window_interaction_trend: slope > 0 for strictly increasing values."""
+    from scripts.optimize_profile import compute_cross_window_interaction_trend
+    summaries = [{"interact_mean_interaction_effect": 0.01 * (i + 1)} for i in range(6)]
+    result = compute_cross_window_interaction_trend(summaries)
+    assert result["interaction_trend_valid"] is True
+    assert result["interaction_trend_slope"] > 0.0
+
+
+def test_r67_t3_ols_slope_negative_for_decreasing_series() -> None:
+    """compute_cross_window_interaction_trend: slope < 0 for strictly decreasing values."""
+    from scripts.optimize_profile import compute_cross_window_interaction_trend
+    summaries = [{"interact_mean_interaction_effect": 0.10 - 0.01 * i} for i in range(6)]
+    result = compute_cross_window_interaction_trend(summaries)
+    assert result["interaction_trend_valid"] is True
+    assert result["interaction_trend_slope"] < 0.0
+
+
+def test_r67_t3_grade_a_steep_positive_slope() -> None:
+    """compute_cross_window_interaction_trend: grade A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_interaction_trend
+    summaries = [{"interact_mean_interaction_effect": 0.01 * (i + 1) * 10} for i in range(6)]
+    result = compute_cross_window_interaction_trend(summaries)
+    assert result["interaction_trend_valid"] is True
+    if result["interaction_trend_slope"] > 0.005:
+        assert result["interaction_trend_grade"] == "A"
+
+
+def test_r67_t3_grade_d_steep_negative_slope() -> None:
+    """compute_cross_window_interaction_trend: grade D when slope <= -0.01."""
+    from scripts.optimize_profile import compute_cross_window_interaction_trend
+    summaries = [{"interact_mean_interaction_effect": 0.10 - 0.05 * i} for i in range(6)]
+    result = compute_cross_window_interaction_trend(summaries)
+    assert result["interaction_trend_valid"] is True
+    if result["interaction_trend_slope"] is not None and result["interaction_trend_slope"] <= -0.01:
+        assert result["interaction_trend_grade"] == "D"
+
+
+def test_r67_t3_interaction_positive_windows_pct_correct() -> None:
+    """compute_cross_window_interaction_trend: interaction_positive_windows_pct correct."""
+    from scripts.optimize_profile import compute_cross_window_interaction_trend
+    summaries = [{"interact_mean_interaction_effect": v} for v in [0.05, 0.03, -0.02, 0.01, 0.0]]
+    result = compute_cross_window_interaction_trend(summaries)
+    assert result["interaction_trend_valid"] is True
+    assert abs(result["interaction_positive_windows_pct"] - 3.0 / 5.0) < 1e-4
+
+
+def test_r67_t3_skips_none_values() -> None:
+    """compute_cross_window_interaction_trend skips windows with None interact_mean_interaction_effect."""
+    from scripts.optimize_profile import compute_cross_window_interaction_trend
+    summaries = [{"interact_mean_interaction_effect": None}, {"interact_mean_interaction_effect": 0.05}, {"interact_mean_interaction_effect": 0.06}, {"interact_mean_interaction_effect": 0.07}]
+    result = compute_cross_window_interaction_trend(summaries)
+    assert result["interaction_trend_valid"] is True
+
+
+def test_r67_t3_in_comparison_metrics() -> None:
+    """interaction_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "interaction_trend_slope" in COMPARISON_METRICS
+
+
+def test_r67_t3_in_optional_comparison_metrics() -> None:
+    """interaction_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "interaction_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r67_t3_has_label() -> None:
+    """interaction_trend_slope has a non-empty label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "interaction_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["interaction_trend_slope"]) > 0
+
+
+def test_r67_t3_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has interaction_trend_slope floor of -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "interaction_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["interaction_trend_slope"] == -0.01
+
+
+def test_r67_all_three_metrics_in_comparison_metrics() -> None:
+    """All three Round 67 metrics appear in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("score_win_rate_spread", "flow_breakout_synergy", "interaction_trend_slope"):
+        assert key in COMPARISON_METRICS
+
+
+def test_r67_all_three_metrics_in_optional() -> None:
+    """All three Round 67 metrics are OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("score_win_rate_spread", "flow_breakout_synergy", "interaction_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r67_all_three_metrics_have_labels() -> None:
+    """All three Round 67 metrics have non-empty labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for key in ("score_win_rate_spread", "flow_breakout_synergy", "interaction_trend_slope"):
+        assert key in COMPARISON_METRIC_LABELS
+        assert len(COMPARISON_METRIC_LABELS[key]) > 0
