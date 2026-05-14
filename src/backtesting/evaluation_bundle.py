@@ -590,6 +590,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 71, Gamma): price position cross-window trend slope floor.
     # price_pos_trend_slope < -0.01 means price position discriminatory power is declining across windows.
     "price_pos_trend_slope": -0.01,
+    # Task 1 (Round 72, Alpha): multi-factor composite Z-score win-rate spread floor.
+    # zscore_win_spread < 0.0 means composite Z-score has no discriminatory power over next-day return.
+    "zscore_win_spread": 0.0,
+    # Task 2 (Round 72, Beta): return persistence score floor.
+    # persistence_score < 0.4 means win-rate is highly unstable across rolling periods.
+    "persistence_score": 0.4,
+    # Task 3 (Round 72, Gamma): momentum rank trend slope floor.
+    # momentum_rank_trend_slope < -0.01 means momentum discriminatory power is declining across windows.
+    "momentum_rank_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

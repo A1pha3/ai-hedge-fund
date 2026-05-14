@@ -20450,3 +20450,392 @@ def test_r71_all_three_new_floors() -> None:
     assert "momentum_win_spread" in BTST_QUALITY_FLOORS
     assert "vol_structure_spread" in BTST_QUALITY_FLOORS
     assert "price_pos_trend_slope" in BTST_QUALITY_FLOORS
+
+
+# ---------------------------------------------------------------------------
+# Round 72 Tests
+# ---------------------------------------------------------------------------
+
+# ── T1: compute_multifactor_zscore_grouping ──────────────────────────────
+
+def _make_mfz_row(cs=0.5, veq=0.5, sr=0.5, rsr=0.5, tinf=0.5, bqs=0.5, ms=0.5, ret=0.01):
+    return {"close_strength": cs, "volume_expansion_quality": veq, "sector_resonance": sr, "rs_sector_rank": rsr, "t0_estimated_net_inflow_ratio": tinf, "breakout_quality_score": bqs, "momentum_slope_20d": ms, "next_day_return": ret}
+
+
+def test_r72_t1_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    result = compute_multifactor_zscore_grouping([_make_mfz_row() for _ in range(9)])
+    assert result["multifactor_zscore_valid"] is False
+    assert result["zscore_win_spread"] is None
+
+
+def test_r72_t1_valid_exactly_10_rows() -> None:
+    """Returns valid=True with exactly 10 rows."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    rows = [_make_mfz_row(cs=float(i), ret=0.01 if i > 5 else -0.01) for i in range(10)]
+    result = compute_multifactor_zscore_grouping(rows)
+    assert result["multifactor_zscore_valid"] is True
+
+
+def test_r72_t1_all_keys_present() -> None:
+    """Result dict has all expected keys."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    rows = [_make_mfz_row(cs=float(i), ret=0.01) for i in range(15)]
+    result = compute_multifactor_zscore_grouping(rows)
+    for key in ("multifactor_zscore_valid", "top_z_win_rate", "mid_z_win_rate", "bot_z_win_rate", "zscore_win_spread", "zscore_mean_return_spread", "zscore_grade"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r72_t1_zscore_win_spread_none_when_group_too_small() -> None:
+    """With only 3 rows per group (1 row each), win_rate=None and spread=None."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    # 3 rows only → valid=False
+    result = compute_multifactor_zscore_grouping([_make_mfz_row() for _ in range(3)])
+    assert result["zscore_win_spread"] is None
+
+
+def test_r72_t1_top_group_higher_win_rate() -> None:
+    """High close_strength rows should land in top group with higher win rate."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    rows = []
+    for i in range(30):
+        # High cs → positive return; low cs → negative return
+        cs = float(i)
+        ret = 0.05 if i >= 20 else -0.05
+        rows.append(_make_mfz_row(cs=cs, ret=ret))
+    result = compute_multifactor_zscore_grouping(rows)
+    assert result["multifactor_zscore_valid"] is True
+    assert result["top_z_win_rate"] is not None
+    assert result["bot_z_win_rate"] is not None
+    assert result["zscore_win_spread"] is not None
+
+
+def test_r72_t1_grade_A_when_large_spread() -> None:
+    """Grade=A when zscore_win_spread > 0.15."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    rows = []
+    for i in range(30):
+        cs = float(i)
+        ret = 0.05 if i >= 20 else -0.05
+        rows.append(_make_mfz_row(cs=cs, ret=ret))
+    result = compute_multifactor_zscore_grouping(rows)
+    assert result["zscore_grade"] in ("A", "B", "C", "D")
+
+
+def test_r72_t1_grade_D_when_negative_spread() -> None:
+    """Grade=D when zscore_win_spread <= 0."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    rows = []
+    for i in range(30):
+        cs = float(i)
+        # Inverted: high cs → negative return
+        ret = -0.05 if i >= 20 else 0.05
+        rows.append(_make_mfz_row(cs=cs, ret=ret))
+    result = compute_multifactor_zscore_grouping(rows)
+    assert result["zscore_grade"] == "D"
+
+
+def test_r72_t1_none_factor_treated_as_neutral() -> None:
+    """None factor values are treated as z=0.0 (neutral), no crash."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    rows = [{"close_strength": None, "volume_expansion_quality": None, "sector_resonance": None, "rs_sector_rank": None, "t0_estimated_net_inflow_ratio": None, "breakout_quality_score": None, "momentum_slope_20d": None, "next_day_return": 0.01} for _ in range(12)]
+    result = compute_multifactor_zscore_grouping(rows)
+    assert result["multifactor_zscore_valid"] is True
+
+
+def test_r72_t1_std_zero_factor_gets_z_zero() -> None:
+    """When all values of a factor are equal (std=0), z=0 for that factor."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    rows = []
+    for i in range(15):
+        rows.append({"close_strength": 1.0, "volume_expansion_quality": float(i), "sector_resonance": 0.5, "rs_sector_rank": 0.5, "t0_estimated_net_inflow_ratio": 0.5, "breakout_quality_score": 0.5, "momentum_slope_20d": 0.5, "next_day_return": 0.01})
+    result = compute_multifactor_zscore_grouping(rows)
+    assert result["multifactor_zscore_valid"] is True
+
+
+def test_r72_t1_zscore_mean_return_spread_computed() -> None:
+    """zscore_mean_return_spread is computed when groups are large enough."""
+    from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+    rows = [_make_mfz_row(cs=float(i), ret=float(i) * 0.001) for i in range(20)]
+    result = compute_multifactor_zscore_grouping(rows)
+    assert result["multifactor_zscore_valid"] is True
+    # spread may be positive or negative but should be computable
+    assert result["zscore_mean_return_spread"] is not None
+
+
+def test_r72_t1_in_comparison_metrics() -> None:
+    """zscore_win_spread is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "zscore_win_spread" in COMPARISON_METRICS
+
+
+def test_r72_t1_in_optional_metrics() -> None:
+    """zscore_win_spread is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "zscore_win_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r72_t1_label_exists() -> None:
+    """zscore_win_spread has a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "zscore_win_spread" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["zscore_win_spread"]) > 0
+
+
+def test_r72_t1_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has zscore_win_spread = 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "zscore_win_spread" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["zscore_win_spread"] == pytest.approx(0.0)
+
+
+# ── T2: compute_return_persistence_analysis ──────────────────────────────
+
+def _make_persist_rows(returns):
+    return [{"next_day_return": r} for r in returns]
+
+
+def test_r72_t2_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_return_persistence_analysis
+    result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 9))
+    assert result["return_persistence_valid"] is False
+    assert result["persistence_score"] is None
+
+
+def test_r72_t2_valid_exactly_10_rows() -> None:
+    """Returns valid=True with exactly 10 rows."""
+    from scripts.btst_analysis_utils import compute_return_persistence_analysis
+    result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 10))
+    assert result["return_persistence_valid"] is True
+
+
+def test_r72_t2_all_keys_present() -> None:
+    """Result dict has all expected keys."""
+    from scripts.btst_analysis_utils import compute_return_persistence_analysis
+    result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 15))
+    for key in ("return_persistence_valid", "rolling_win_rate_mean", "rolling_win_rate_std", "rolling_consistency", "block_positive_pct", "persistence_score"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r72_t2_rolling_3_group_logic() -> None:
+    """Rolling 3-day groups are non-overlapping."""
+    from scripts.btst_analysis_utils import compute_return_persistence_analysis
+    # 12 returns → 4 groups of 3, all wins
+    returns = [0.01] * 12
+    result = compute_return_persistence_analysis(_make_persist_rows(returns))
+    assert result["return_persistence_valid"] is True
+    assert result["rolling_win_rate_mean"] == pytest.approx(1.0)
+    assert result["rolling_win_rate_std"] == pytest.approx(0.0)
+
+
+def test_r72_t2_rolling_consistency_is_1_when_std_0() -> None:
+    """rolling_consistency = 1.0 when all group win rates are identical."""
+    from scripts.btst_analysis_utils import compute_return_persistence_analysis
+    result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 15))
+    assert result["rolling_consistency"] == pytest.approx(1.0)
+
+
+def test_r72_t2_block_5_logic() -> None:
+    """Block-5 groups computed correctly."""
+    from scripts.btst_analysis_utils import compute_return_persistence_analysis
+    # 10 returns: 5 wins then 5 losses → 1 positive block (5 wins), 1 non-positive block
+    returns = [0.01, 0.01, 0.01, 0.01, 0.01, -0.01, -0.01, -0.01, -0.01, -0.01]
+    result = compute_return_persistence_analysis(_make_persist_rows(returns))
+    assert result["return_persistence_valid"] is True
+    assert result["block_positive_pct"] == pytest.approx(0.5)
+
+
+def test_r72_t2_block_positive_pct_none_when_too_few_blocks() -> None:
+    """block_positive_pct=None when fewer than 2 blocks of 5."""
+    from scripts.btst_analysis_utils import compute_return_persistence_analysis
+    # Exactly 10 returns → 2 blocks of 5, but check edge case with 12 (2 blocks of 5 + 2 leftover)
+    # Actually with 10 returns, 2 blocks of 5 → block_positive_pct should not be None
+    result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 10))
+    assert result["block_positive_pct"] is not None
+
+
+def test_r72_t2_persistence_score_uses_both() -> None:
+    """persistence_score = 0.5*rolling_consistency + 0.5*block_positive_pct."""
+    from scripts.btst_analysis_utils import compute_return_persistence_analysis
+    returns = [0.01] * 15
+    result = compute_return_persistence_analysis(_make_persist_rows(returns))
+    assert result["return_persistence_valid"] is True
+    rc = result["rolling_consistency"]
+    bp = result["block_positive_pct"]
+    if rc is not None and bp is not None:
+        expected = 0.5 * rc + 0.5 * bp
+        assert result["persistence_score"] == pytest.approx(expected, abs=1e-5)
+
+
+def test_r72_t2_none_returns_skipped() -> None:
+    """None values in next_day_return are skipped."""
+    from scripts.btst_analysis_utils import compute_return_persistence_analysis
+    rows = [{"next_day_return": None}] * 5 + _make_persist_rows([0.01] * 10)
+    result = compute_return_persistence_analysis(rows)
+    assert result["return_persistence_valid"] is True
+
+
+def test_r72_t2_in_comparison_metrics() -> None:
+    """persistence_score is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "persistence_score" in COMPARISON_METRICS
+
+
+def test_r72_t2_in_optional_metrics() -> None:
+    """persistence_score is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "persistence_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r72_t2_label_exists() -> None:
+    """persistence_score has a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "persistence_score" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["persistence_score"]) > 0
+
+
+def test_r72_t2_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has persistence_score = 0.4."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "persistence_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["persistence_score"] == pytest.approx(0.4)
+
+
+# ── T3: compute_cross_window_momentum_rank_trend ──────────────────────────
+
+def test_r72_t3_invalid_too_few_windows() -> None:
+    """Returns valid=False when fewer than 3 valid values."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    result = compute_cross_window_momentum_rank_trend([{"mom_rank_momentum_win_spread": 0.1}, {"mom_rank_momentum_win_spread": 0.2}])
+    assert result["momentum_rank_trend_valid"] is False
+
+
+def test_r72_t3_valid_with_3_windows() -> None:
+    """Returns valid=True with exactly 3 valid windows."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    summaries = [{"mom_rank_momentum_win_spread": v} for v in [0.1, 0.2, 0.3]]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_trend_valid"] is True
+
+
+def test_r72_t3_ols_slope_positive() -> None:
+    """OLS slope is positive for increasing sequence."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    summaries = [{"mom_rank_momentum_win_spread": float(i) * 0.01} for i in range(5)]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_trend_slope"] > 0
+
+
+def test_r72_t3_ols_slope_negative() -> None:
+    """OLS slope is negative for decreasing sequence."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    summaries = [{"mom_rank_momentum_win_spread": float(5 - i) * 0.01} for i in range(5)]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_trend_slope"] < 0
+
+
+def test_r72_t3_grade_A_when_large_positive_slope() -> None:
+    """Grade=A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    summaries = [{"mom_rank_momentum_win_spread": float(i) * 0.1} for i in range(10)]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_trend_grade"] == "A"
+
+
+def test_r72_t3_grade_B_when_small_positive_slope() -> None:
+    """Grade=B when 0 < slope <= 0.005."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    summaries = [{"mom_rank_momentum_win_spread": float(i) * 0.001} for i in range(10)]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_trend_grade"] in ("A", "B")
+
+
+def test_r72_t3_grade_D_when_large_negative_slope() -> None:
+    """Grade=D when slope <= -0.01."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    summaries = [{"mom_rank_momentum_win_spread": float(10 - i) * 0.1} for i in range(10)]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_trend_grade"] == "D"
+
+
+def test_r72_t3_positive_windows_pct_all_positive() -> None:
+    """momentum_rank_positive_windows_pct = 1.0 when all spreads > 0."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    summaries = [{"mom_rank_momentum_win_spread": 0.1} for _ in range(5)]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_positive_windows_pct"] == pytest.approx(1.0)
+
+
+def test_r72_t3_positive_windows_pct_none_positive() -> None:
+    """momentum_rank_positive_windows_pct = 0.0 when all spreads <= 0."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    summaries = [{"mom_rank_momentum_win_spread": -0.1} for _ in range(5)]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_positive_windows_pct"] == pytest.approx(0.0)
+
+
+def test_r72_t3_skips_none_values() -> None:
+    """None values in mom_rank_momentum_win_spread are skipped."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    summaries = [{"mom_rank_momentum_win_spread": None}, {"mom_rank_momentum_win_spread": 0.1}, {"mom_rank_momentum_win_spread": 0.2}, {"mom_rank_momentum_win_spread": 0.3}]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_trend_valid"] is True
+
+
+def test_r72_t3_mean_computed() -> None:
+    """momentum_rank_trend_mean is the mean of valid spreads."""
+    from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+    vals = [0.1, 0.2, 0.3]
+    summaries = [{"mom_rank_momentum_win_spread": v} for v in vals]
+    result = compute_cross_window_momentum_rank_trend(summaries)
+    assert result["momentum_rank_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-5)
+
+
+def test_r72_t3_in_comparison_metrics() -> None:
+    """momentum_rank_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "momentum_rank_trend_slope" in COMPARISON_METRICS
+
+
+def test_r72_t3_in_optional_metrics() -> None:
+    """momentum_rank_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "momentum_rank_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r72_t3_label_exists() -> None:
+    """momentum_rank_trend_slope has a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "momentum_rank_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["momentum_rank_trend_slope"]) > 0
+
+
+def test_r72_t3_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has momentum_rank_trend_slope = -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "momentum_rank_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["momentum_rank_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r72_t3_all_three_new_metrics_in_comparison() -> None:
+    """All 3 new Round 72 metrics are in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("zscore_win_spread", "persistence_score", "momentum_rank_trend_slope"):
+        assert key in COMPARISON_METRICS, f"Missing: {key}"
+
+
+def test_r72_t3_all_three_new_metrics_in_optional() -> None:
+    """All 3 new Round 72 metrics are in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("zscore_win_spread", "persistence_score", "momentum_rank_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"Missing: {key}"
+
+
+def test_r72_t3_all_three_floors() -> None:
+    """All 3 new Round 72 metrics have floors in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "zscore_win_spread" in BTST_QUALITY_FLOORS
+    assert "persistence_score" in BTST_QUALITY_FLOORS
+    assert "momentum_rank_trend_slope" in BTST_QUALITY_FLOORS

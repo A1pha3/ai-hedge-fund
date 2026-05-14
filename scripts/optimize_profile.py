@@ -478,6 +478,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "vol_structure_spread",
     # Task 3 (Round 71, Gamma): cross-window price position cs_win_rate_spread OLS trend slope.
     "price_pos_trend_slope",
+    # Task 1 (Round 72, Alpha): multi-factor composite Z-score win-rate spread — top-Z minus bottom-Z win rate.
+    "zscore_win_spread",
+    # Task 2 (Round 72, Beta): return persistence stability score — rolling + block consistency combined.
+    "persistence_score",
+    # Task 3 (Round 72, Gamma): cross-window momentum rank win-spread OLS trend slope.
+    "momentum_rank_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -844,6 +850,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "vol_structure_spread": "量能结构胜率差",
     # Task 3 (Round 71, Gamma): 价格位置区分度跨窗趋势
     "price_pos_trend_slope": "价格位置区分度跨窗趋势",
+    # Task 1 (Round 72, Alpha): 多因子Z综合胜率差
+    "zscore_win_spread": "多因子Z综合胜率差",
+    # Task 2 (Round 72, Beta): 收益持续稳定性
+    "persistence_score": "收益持续稳定性",
+    # Task 3 (Round 72, Gamma): 动量区分度跨窗趋势
+    "momentum_rank_trend_slope": "动量区分度跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1282,6 +1294,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "vol_structure_spread",
     # Task 3 (Round 71, Gamma): price position trend slope — optional; pre-Round-71 outputs omit it.
     "price_pos_trend_slope",
+    # Task 1 (Round 72, Alpha): multi-factor Z-score win-rate spread — optional; pre-Round-72 outputs omit it.
+    "zscore_win_spread",
+    # Task 2 (Round 72, Beta): return persistence score — optional; pre-Round-72 outputs omit it.
+    "persistence_score",
+    # Task 3 (Round 72, Gamma): momentum rank trend slope — optional; pre-Round-72 outputs omit it.
+    "momentum_rank_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3847,6 +3865,53 @@ def compute_cross_window_price_pos_trend(all_windows_summaries: list[dict]) -> d
     return {"price_pos_trend_valid": True, "price_pos_trend_slope": round(slope, 8), "price_pos_trend_mean": round(mean_v, 6), "price_pos_positive_windows_pct": price_pos_positive_windows_pct, "price_pos_trend_grade": grade}
 
 
+# ---------------------------------------------------------------------------
+# Round 72, Task 3 (Gamma): Cross-window momentum rank win-spread trend
+# ---------------------------------------------------------------------------
+
+def compute_cross_window_momentum_rank_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪动量强弱胜率差（momentum_win_spread）趋势。
+
+    从各窗口 summary 收集 ``mom_rank_momentum_win_spread``（Round 71 T1 的输出），需≥3个有效值（非None）。
+
+    Returns:
+        - ``momentum_rank_trend_slope``: OLS 斜率（正=区分度提升=越来越好）
+        - ``momentum_rank_trend_mean``: 均值
+        - ``momentum_rank_positive_windows_pct``: momentum_win_spread > 0 的窗口占比
+        - ``momentum_rank_trend_grade``: A/B/C/D
+        - ``momentum_rank_trend_valid``: bool
+    """
+    _null: dict = {"momentum_rank_trend_valid": False, "momentum_rank_trend_slope": None, "momentum_rank_trend_mean": None, "momentum_rank_positive_windows_pct": None, "momentum_rank_trend_grade": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("mom_rank_momentum_win_spread")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    momentum_rank_positive_windows_pct = round(sum(1 for v in vals if v > 0) / n, 6)
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"momentum_rank_trend_valid": True, "momentum_rank_trend_slope": round(slope, 8), "momentum_rank_trend_mean": round(mean_v, 6), "momentum_rank_positive_windows_pct": momentum_rank_positive_windows_pct, "momentum_rank_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4603,6 +4668,14 @@ def _build_replay_evaluator(
         # Task 2 (Round 71, Beta): average vol_struct_vol_structure_spread across replay windows.
         _vsa_vss_vals = [float(s["vol_struct_vol_structure_spread"]) for s in all_primary_surfaces if s.get("vol_struct_vol_structure_spread") is not None]
         avg_vol_structure_spread: "float | None" = round(sum(_vsa_vss_vals) / len(_vsa_vss_vals), 6) if _vsa_vss_vals else None
+        # Task 1 (Round 72, Alpha): average mfz_zscore_win_spread across replay windows.
+        _mfz_zws_vals = [float(s["mfz_zscore_win_spread"]) for s in all_primary_surfaces if s.get("mfz_zscore_win_spread") is not None]
+        avg_zscore_win_spread: "float | None" = round(sum(_mfz_zws_vals) / len(_mfz_zws_vals), 6) if _mfz_zws_vals else None
+        # Task 2 (Round 72, Beta): average persist_persistence_score across replay windows.
+        _persist_ps_vals = [float(s["persist_persistence_score"]) for s in all_primary_surfaces if s.get("persist_persistence_score") is not None]
+        avg_persistence_score: "float | None" = round(sum(_persist_ps_vals) / len(_persist_ps_vals), 6) if _persist_ps_vals else None
+        # Task 3 (Round 72, Gamma): cross-window momentum rank win-spread trend.
+        _cwmrt: dict[str, Any] = compute_cross_window_momentum_rank_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -5074,6 +5147,16 @@ def _build_replay_evaluator(
                 "price_pos_positive_windows_pct": _cwppt.get("price_pos_positive_windows_pct"),
                 "price_pos_trend_grade": _cwppt.get("price_pos_trend_grade"),
                 "price_pos_trend_valid": _cwppt.get("price_pos_trend_valid"),
+                # Task 1 (Round 72, Alpha): multi-factor composite Z-score win-rate spread averaged across windows.
+                "zscore_win_spread": avg_zscore_win_spread,
+                # Task 2 (Round 72, Beta): return persistence score averaged across windows.
+                "persistence_score": avg_persistence_score,
+                # Task 3 (Round 72, Gamma): cross-window momentum rank win-spread trend.
+                "momentum_rank_trend_slope": _cwmrt.get("momentum_rank_trend_slope"),
+                "momentum_rank_trend_mean": _cwmrt.get("momentum_rank_trend_mean"),
+                "momentum_rank_positive_windows_pct": _cwmrt.get("momentum_rank_positive_windows_pct"),
+                "momentum_rank_trend_grade": _cwmrt.get("momentum_rank_trend_grade"),
+                "momentum_rank_trend_valid": _cwmrt.get("momentum_rank_trend_valid"),
         }
 
     return evaluator

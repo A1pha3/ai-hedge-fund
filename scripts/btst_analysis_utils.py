@@ -4581,6 +4581,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _vsa.items():
         _surface_result[f"vol_struct_{_k}"] = _v
 
+    # Round 72, Task 1 (Alpha): Multi-factor composite Z-score grouping analysis.
+    _mfz: dict = compute_multifactor_zscore_grouping(rows)
+    for _k, _v in _mfz.items():
+        _surface_result[f"mfz_{_k}"] = _v
+
+    # Round 72, Task 2 (Beta): Return persistence analysis.
+    _rpa: dict = compute_return_persistence_analysis(rows)
+    for _k, _v in _rpa.items():
+        _surface_result[f"persist_{_k}"] = _v
+
     return _surface_result
 
 
@@ -12923,3 +12933,162 @@ def compute_volume_structure_analysis(rows: list[dict]) -> dict:
     else:
         grade = "D"
     return {"volume_structure_valid": True, "vol_mean": round(vol_mean, 6), "vol_std": round(vol_std, 6), "vol_skewness": vol_skewness, "vol_positive_pct": vol_positive_pct, "high_vol_exp_win_rate": high_wr, "mid_vol_exp_win_rate": mid_wr, "low_vol_exp_win_rate": low_wr, "vol_structure_spread": vol_structure_spread, "vol_structure_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 72, Task 1 (Alpha): Multi-factor composite Z-score grouping analysis
+# ---------------------------------------------------------------------------
+
+def compute_multifactor_zscore_grouping(rows: list[dict]) -> dict:
+    """将7个核心因子标准化为Z分数后加总，形成综合Z分数排名，分析其与次日收益的关系。
+
+    7个核心因子：close_strength、volume_expansion_quality、sector_resonance、
+    rs_sector_rank、t0_estimated_net_inflow_ratio、breakout_quality_score、momentum_slope_20d。
+    对每个因子只用非None值计算 mean/std，None→z=0.0，std=0→z=0.0。
+    按 composite_z 三等分后比较胜率差异。
+
+    Args:
+        rows: 行列表，每行含7个核心因子字段和 ``next_day_return``。
+
+    Returns:
+        Dict containing: ``multifactor_zscore_valid``, ``top_z_win_rate``,
+        ``mid_z_win_rate``, ``bot_z_win_rate``, ``zscore_win_spread``,
+        ``zscore_mean_return_spread``, ``zscore_grade``.
+    """
+    _FACTORS = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    _null: dict = {"multifactor_zscore_valid": False, "top_z_win_rate": None, "mid_z_win_rate": None, "bot_z_win_rate": None, "zscore_win_spread": None, "zscore_mean_return_spread": None, "zscore_grade": "D"}
+    if len(rows) < 10:
+        return _null
+    factor_stats: dict = {}
+    for f in _FACTORS:
+        vals = []
+        for r in rows:
+            v = r.get(f)
+            if v is not None:
+                try:
+                    vals.append(float(v))
+                except (TypeError, ValueError):
+                    pass
+        if len(vals) < 2:
+            factor_stats[f] = (0.0, 0.0)
+        else:
+            m = sum(vals) / len(vals)
+            variance = sum((x - m) ** 2 for x in vals) / (len(vals) - 1)
+            factor_stats[f] = (m, variance ** 0.5)
+    composite_z_rows: list[tuple[float, dict]] = []
+    for r in rows:
+        cz = 0.0
+        for f in _FACTORS:
+            v = r.get(f)
+            mean_f, std_f = factor_stats[f]
+            if v is None or std_f == 0.0:
+                z = 0.0
+            else:
+                try:
+                    z = (float(v) - mean_f) / std_f
+                except (TypeError, ValueError):
+                    z = 0.0
+            cz += z
+        composite_z_rows.append((cz, r))
+    composite_z_rows.sort(key=lambda x: x[0])
+    n = len(composite_z_rows)
+    bot_rows = [x[1] for x in composite_z_rows[: n // 3]]
+    mid_rows = [x[1] for x in composite_z_rows[n // 3 : 2 * n // 3]]
+    top_rows = [x[1] for x in composite_z_rows[2 * n // 3 :]]
+    def _win_rate(group: list[dict]) -> "float | None":
+        if len(group) < 2:
+            return None
+        wins = sum(1 for r in group if r.get("next_day_return") is not None and float(r["next_day_return"]) > 0)
+        return round(wins / len(group), 6)
+    def _mean_return(group: list[dict]) -> "float | None":
+        vals2 = [float(r["next_day_return"]) for r in group if r.get("next_day_return") is not None]
+        if len(vals2) < 2:
+            return None
+        return round(sum(vals2) / len(vals2), 6)
+    top_z_wr = _win_rate(top_rows)
+    mid_z_wr = _win_rate(mid_rows)
+    bot_z_wr = _win_rate(bot_rows)
+    zscore_win_spread: "float | None" = round(top_z_wr - bot_z_wr, 6) if top_z_wr is not None and bot_z_wr is not None else None
+    top_ret = _mean_return(top_rows)
+    bot_ret = _mean_return(bot_rows)
+    zscore_mean_return_spread: "float | None" = round(top_ret - bot_ret, 6) if top_ret is not None and bot_ret is not None else None
+    if zscore_win_spread is None:
+        grade = "D"
+    elif zscore_win_spread > 0.15:
+        grade = "A"
+    elif zscore_win_spread > 0.08:
+        grade = "B"
+    elif zscore_win_spread > 0:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"multifactor_zscore_valid": True, "top_z_win_rate": top_z_wr, "mid_z_win_rate": mid_z_wr, "bot_z_win_rate": bot_z_wr, "zscore_win_spread": zscore_win_spread, "zscore_mean_return_spread": zscore_mean_return_spread, "zscore_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 72, Task 2 (Beta): Return persistence analysis
+# ---------------------------------------------------------------------------
+
+def compute_return_persistence_analysis(rows: list[dict]) -> dict:
+    """分析BTST策略在不同市场日期/周期中的收益持续性（consecutive win consistency）。
+
+    基于 next_day_return 序列（按行顺序，只保留非None值），计算滚动3日胜率稳定性和
+    月度/块级持续性（每5行），输出 persistence_score。
+
+    Args:
+        rows: 行列表，每行含 ``next_day_return`` 字段。
+
+    Returns:
+        Dict containing: ``return_persistence_valid``, ``rolling_win_rate_mean``,
+        ``rolling_win_rate_std``, ``rolling_consistency``, ``block_positive_pct``,
+        ``persistence_score``.
+    """
+    _null: dict = {"return_persistence_valid": False, "rolling_win_rate_mean": None, "rolling_win_rate_std": None, "rolling_consistency": None, "block_positive_pct": None, "persistence_score": None}
+    if len(rows) < 10:
+        return _null
+    returns = []
+    for r in rows:
+        v = r.get("next_day_return")
+        if v is not None:
+            try:
+                returns.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(returns) < 10:
+        return _null
+    rolling_consistency: "float | None" = None
+    rolling_win_rate_mean: "float | None" = None
+    rolling_win_rate_std: "float | None" = None
+    block_win_rates_3 = []
+    i = 0
+    while i + 3 <= len(returns):
+        grp = returns[i : i + 3]
+        block_win_rates_3.append(sum(1 for x in grp if x > 0) / len(grp))
+        i += 3
+    if len(block_win_rates_3) >= 3:
+        rolling_win_rate_mean = round(sum(block_win_rates_3) / len(block_win_rates_3), 6)
+        if len(block_win_rates_3) >= 2:
+            m3 = sum(block_win_rates_3) / len(block_win_rates_3)
+            var3 = sum((x - m3) ** 2 for x in block_win_rates_3) / (len(block_win_rates_3) - 1)
+            rolling_win_rate_std = round(var3 ** 0.5, 6)
+        else:
+            rolling_win_rate_std = 0.0
+        rolling_consistency = round(1.0 - rolling_win_rate_std, 6) if rolling_win_rate_std is not None else None
+    block_positive_pct: "float | None" = None
+    block_win_rates_5 = []
+    j = 0
+    while j + 5 <= len(returns):
+        grp5 = returns[j : j + 5]
+        block_win_rates_5.append(sum(1 for x in grp5 if x > 0) / len(grp5))
+        j += 5
+    if len(block_win_rates_5) >= 2:
+        block_positive_pct = round(sum(1 for w in block_win_rates_5 if w > 0.5) / len(block_win_rates_5), 6)
+    if rolling_consistency is not None and block_positive_pct is not None:
+        persistence_score: "float | None" = round(0.5 * rolling_consistency + 0.5 * block_positive_pct, 6)
+    elif rolling_consistency is not None:
+        persistence_score = rolling_consistency
+    elif block_positive_pct is not None:
+        persistence_score = block_positive_pct
+    else:
+        persistence_score = None
+    return {"return_persistence_valid": True, "rolling_win_rate_mean": rolling_win_rate_mean, "rolling_win_rate_std": rolling_win_rate_std, "rolling_consistency": rolling_consistency, "block_positive_pct": block_positive_pct, "persistence_score": persistence_score}
