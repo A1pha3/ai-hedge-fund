@@ -277,6 +277,13 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "positive_ic_factor_count",
     # Task 3 (Round 38, Gamma): score bucket win rates — top-quintile vs bottom-quintile premium.
     "top_quintile_premium",
+    # Task 1 (Round 39, Alpha): recency vs history — win-rate gap (near period minus historical).
+    "recency_win_rate_gap",
+    # Task 2 (Round 39, Beta): optimal score threshold — win-rate lift above optimal threshold.
+    "optimal_threshold_lift",
+    # Task 3 (Round 39, Gamma): simulated equity curve — recovery factor and max drawdown.
+    "recovery_factor",
+    "max_drawdown_simulated",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -441,6 +448,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "positive_ic_factor_count": "正IC因子数",
     # Task 3 (Round 38, Gamma): score bucket win rates — top quintile premium
     "top_quintile_premium": "顶分位胜率溢价",
+    # Task 1 (Round 39, Alpha): recency vs history — win-rate gap (recent minus historical)
+    "recency_win_rate_gap": "近期vs历史胜率差",
+    # Task 2 (Round 39, Beta): optimal score threshold — win-rate lift above optimal threshold
+    "optimal_threshold_lift": "最优阈值胜率提升",
+    # Task 3 (Round 39, Gamma): simulated equity curve — recovery factor
+    "recovery_factor": "权益恢复系数",
+    # Task 3 (Round 39, Gamma): simulated equity curve — max drawdown
+    "max_drawdown_simulated": "最大回撤",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -491,6 +506,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "win_rate_ci_width",
     # Task 2 (Round 37, Beta): loss signature strength — higher = better factor discrimination = NOT lower-is-better.
     # (intentionally not added — higher strength is better, default higher-is-better)
+    # Task 3 (Round 39, Gamma): max drawdown simulated — higher drawdown = worse = lower-is-better.
+    "max_drawdown_simulated",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -648,6 +665,13 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "positive_ic_factor_count",
     # Task 3 (Round 38, Gamma): score bucket win rates — optional; pre-Round-38 outputs omit it.
     "top_quintile_premium",
+    # Task 1 (Round 39, Alpha): recency vs history win-rate gap — optional; pre-Round-39 outputs omit it.
+    "recency_win_rate_gap",
+    # Task 2 (Round 39, Beta): optimal threshold lift — optional; pre-Round-39 outputs omit it.
+    "optimal_threshold_lift",
+    # Task 3 (Round 39, Gamma): equity curve metrics — optional; pre-Round-39 outputs omit these.
+    "recovery_factor",
+    "max_drawdown_simulated",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1868,6 +1892,17 @@ def _build_replay_evaluator(
         # Task 3 (Round 38, Gamma): average top_quintile_premium across replay windows.
         _tqp_vals = [float(s["top_quintile_premium"]) for s in all_primary_surfaces if s.get("top_quintile_premium") is not None]
         avg_top_quintile_premium: float | None = round(sum(_tqp_vals) / len(_tqp_vals), 4) if _tqp_vals else None
+        # Task 1 (Round 39, Alpha): average recency_win_rate_gap across replay windows.
+        _rwg_vals = [float(s["recency_win_rate_gap"]) for s in all_primary_surfaces if s.get("recency_win_rate_gap") is not None]
+        avg_recency_win_rate_gap: float | None = round(sum(_rwg_vals) / len(_rwg_vals), 4) if _rwg_vals else None
+        # Task 2 (Round 39, Beta): average optimal_threshold_lift across replay windows.
+        _otl_vals = [float(s["optimal_threshold_lift"]) for s in all_primary_surfaces if s.get("optimal_threshold_lift") is not None]
+        avg_optimal_threshold_lift: float | None = round(sum(_otl_vals) / len(_otl_vals), 4) if _otl_vals else None
+        # Task 3 (Round 39, Gamma): average recovery_factor and max_drawdown_simulated across replay windows.
+        _rf_vals = [float(s["recovery_factor"]) for s in all_primary_surfaces if s.get("recovery_factor") is not None]
+        avg_recovery_factor: float | None = round(sum(_rf_vals) / len(_rf_vals), 4) if _rf_vals else None
+        _mds_vals = [float(s["max_drawdown_simulated"]) for s in all_primary_surfaces if s.get("max_drawdown_simulated") is not None]
+        avg_max_drawdown_simulated: float | None = round(sum(_mds_vals) / len(_mds_vals), 4) if _mds_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -2032,6 +2067,14 @@ def _build_replay_evaluator(
             "positive_ic_factor_count": avg_positive_ic_factor_count,
             # Task 3 (Round 38, Gamma): average top quintile premium across replay windows.
             "top_quintile_premium": avg_top_quintile_premium,
+            # Task 1 (Round 39, Alpha): average recency win-rate gap across replay windows.
+            "recency_win_rate_gap": avg_recency_win_rate_gap,
+            # Task 2 (Round 39, Beta): average optimal threshold lift across replay windows.
+            "optimal_threshold_lift": avg_optimal_threshold_lift,
+            # Task 3 (Round 39, Gamma): average recovery factor across replay windows.
+            "recovery_factor": avg_recovery_factor,
+            # Task 3 (Round 39, Gamma): average max drawdown simulated across replay windows.
+            "max_drawdown_simulated": avg_max_drawdown_simulated,
         }
 
     return evaluator

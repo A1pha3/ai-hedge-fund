@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_3532cd0a356e_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_7f7fc32e96a2_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -138,7 +138,20 @@
       "avg_signal_persistence_delta": null,
       "sortino_ratio_delta": null,
       "quality_trend_score_delta": null,
-      "diversity_score_delta": null
+      "diversity_score_delta": null,
+      "right_tail_dominance_delta": null,
+      "composite_ic_delta": null,
+      "win_rate_ci_width_delta": null,
+      "optimal_holding_days_delta": null,
+      "loss_signature_strength_delta": null,
+      "score_gini_delta": null,
+      "env_win_rate_gap_delta": null,
+      "positive_ic_factor_count_delta": null,
+      "top_quintile_premium_delta": null,
+      "recency_win_rate_gap_delta": null,
+      "optimal_threshold_lift_delta": null,
+      "recovery_factor_delta": null,
+      "max_drawdown_simulated_delta": null
     },
     "default": {
       "candidate": {
@@ -272,7 +285,20 @@
       "avg_signal_persistence_delta": null,
       "sortino_ratio_delta": null,
       "quality_trend_score_delta": null,
-      "diversity_score_delta": null
+      "diversity_score_delta": null,
+      "right_tail_dominance_delta": null,
+      "composite_ic_delta": null,
+      "win_rate_ci_width_delta": null,
+      "optimal_holding_days_delta": null,
+      "loss_signature_strength_delta": null,
+      "score_gini_delta": null,
+      "env_win_rate_gap_delta": null,
+      "positive_ic_factor_count_delta": null,
+      "top_quintile_premium_delta": null,
+      "recency_win_rate_gap_delta": null,
+      "optimal_threshold_lift_delta": null,
+      "recovery_factor_delta": null,
+      "max_drawdown_simulated_delta": null
     }
   },
   "rollout_recommendation": "hold",

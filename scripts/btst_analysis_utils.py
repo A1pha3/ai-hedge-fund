@@ -4015,6 +4015,41 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["score_rank_ic"] = _sbw.get("score_rank_ic")
     _surface_result["score_discriminates_well"] = _sbw.get("score_discriminates_well")
 
+    # -----------------------------------------------------------------------
+    # Round 39, Task 1 (Alpha): Recency vs history — overfitting warning.
+    # -----------------------------------------------------------------------
+    _rha: dict[str, Any] = compute_recency_vs_history_analysis(next_day_rows)
+    _surface_result["historical_win_rate"] = _rha.get("historical_win_rate")
+    _surface_result["recent_win_rate"] = _rha.get("recent_win_rate")
+    _surface_result["recency_win_rate_gap"] = _rha.get("recency_win_rate_gap")
+    _surface_result["recency_return_gap"] = _rha.get("recency_return_gap")
+    _surface_result["recency_degraded"] = _rha.get("recency_degraded")
+    _surface_result["recency_improved"] = _rha.get("recency_improved")
+    _surface_result["recency_stable"] = _rha.get("recency_stable")
+
+    # -----------------------------------------------------------------------
+    # Round 39, Task 2 (Beta): Optimal score threshold — entry filter search.
+    # -----------------------------------------------------------------------
+    _ost: dict[str, Any] = compute_optimal_score_threshold(next_day_rows)
+    _surface_result["optimal_threshold_pct"] = _ost.get("optimal_threshold_pct")
+    _surface_result["optimal_score_threshold"] = _ost.get("optimal_score_threshold")
+    _surface_result["optimal_above_win_rate"] = _ost.get("optimal_above_win_rate")
+    _surface_result["optimal_threshold_lift"] = _ost.get("optimal_threshold_lift")
+    _surface_result["above_threshold_count"] = _ost.get("above_threshold_count")
+    _surface_result["threshold_coverage"] = _ost.get("threshold_coverage")
+
+    # -----------------------------------------------------------------------
+    # Round 39, Task 3 (Gamma): Simulated equity curve — drawdown / recovery.
+    # -----------------------------------------------------------------------
+    _sec: dict[str, Any] = compute_simulated_equity_curve(next_day_rows)
+    _surface_result["total_return_simulated"] = _sec.get("total_return")
+    _surface_result["max_drawdown_simulated"] = _sec.get("max_drawdown")
+    _surface_result["max_consecutive_losses"] = _sec.get("max_consecutive_losses")
+    _surface_result["recovery_factor"] = _sec.get("recovery_factor")
+    _surface_result["equity_curve_slope"] = _sec.get("equity_curve_slope")
+    _surface_result["equity_rising"] = _sec.get("equity_rising")
+    _surface_result["equity_curve_grade"] = _sec.get("equity_curve_grade")
+
     return _surface_result
 
 
@@ -6816,4 +6851,265 @@ def compute_score_bucket_win_rates(rows: list[dict]) -> dict:
         "top_quintile_premium": top_quintile_premium,
         "score_rank_ic": score_rank_ic,
         "score_discriminates_well": score_discriminates_well,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 39, Task 1 (Alpha): Recency vs history performance analysis
+# ---------------------------------------------------------------------------
+# Detects whether the strategy's recent performance has degraded relative to
+# its historical baseline — the most important overfitting warning signal.
+# Splits rows (assumed time-ordered) into historical (first 70 %) and
+# recent (last 30 %) cohorts and compares win-rate and average return.
+
+
+def compute_recency_vs_history_analysis(rows: list[dict]) -> dict:
+    """Compare recent (last 30 %) vs historical (first 70 %) BTST performance.
+
+    Args:
+        rows: Time-ordered list of trade rows.  Each row must contain
+              ``next_close_return`` (float | None).
+
+    Returns:
+        Dict with recency gap metrics and degradation flags.
+    """
+    _null: dict = {
+        "historical_win_rate": None,
+        "historical_avg_return": None,
+        "historical_ev": None,
+        "recent_win_rate": None,
+        "recent_avg_return": None,
+        "recent_ev": None,
+        "recency_win_rate_gap": None,
+        "recency_return_gap": None,
+        "recency_degraded": None,
+        "recency_improved": None,
+        "recency_stable": None,
+    }
+
+    valid = [r for r in rows if r.get("next_close_return") is not None]
+    n = len(valid)
+    if n < 15:
+        return _null
+
+    split = int(n * 0.70)
+    historical_rows = valid[:split]
+    recent_rows = valid[split:]
+
+    def _segment_stats(seg: list[dict]) -> tuple[float | None, float | None, float | None]:
+        if len(seg) < 5:
+            return None, None, None
+        rets = [float(r.get("next_close_return", 0.0)) for r in seg]
+        wins = [r for r in rets if r > 0]
+        losses = [r for r in rets if r <= 0]
+        m = len(rets)
+        win_rate = len(wins) / max(m, 1)
+        avg_return = sum(rets) / max(m, 1)
+        avg_win = sum(wins) / max(len(wins), 1) if wins else 0.0
+        avg_loss = sum(losses) / max(len(losses), 1) if losses else 0.0
+        ev = win_rate * avg_win + (1 - win_rate) * avg_loss
+        return round(win_rate, 4), round(avg_return, 4), round(ev, 4)
+
+    h_wr, h_ar, h_ev = _segment_stats(historical_rows)
+    r_wr, r_ar, r_ev = _segment_stats(recent_rows)
+
+    recency_win_rate_gap: float | None = None
+    recency_return_gap: float | None = None
+    recency_degraded: bool | None = None
+    recency_improved: bool | None = None
+    recency_stable: bool | None = None
+
+    if h_wr is not None and r_wr is not None:
+        recency_win_rate_gap = round(r_wr - h_wr, 4)
+        recency_return_gap = round((r_ar or 0.0) - (h_ar or 0.0), 4)
+        recency_degraded = recency_win_rate_gap < -0.05
+        recency_improved = recency_win_rate_gap > 0.05
+        recency_stable = abs(recency_win_rate_gap) <= 0.05
+
+    return {
+        "historical_win_rate": h_wr,
+        "historical_avg_return": h_ar,
+        "historical_ev": h_ev,
+        "recent_win_rate": r_wr,
+        "recent_avg_return": r_ar,
+        "recent_ev": r_ev,
+        "recency_win_rate_gap": recency_win_rate_gap,
+        "recency_return_gap": recency_return_gap,
+        "recency_degraded": recency_degraded,
+        "recency_improved": recency_improved,
+        "recency_stable": recency_stable,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 39, Task 2 (Beta): Optimal score threshold search
+# ---------------------------------------------------------------------------
+# Scans candidate entry thresholds (P30–P80) in score space and identifies
+# the percentile cutoff that maximises win-rate lift over the overall baseline.
+
+
+def compute_optimal_score_threshold(rows: list[dict]) -> dict:
+    """Find the score percentile threshold that maximises win-rate lift.
+
+    Args:
+        rows: List of trade rows.  Each row must contain ``next_close_return``
+              (float | None) and a score field (``runner_composite_score`` >
+              ``composite_score`` > ``score``).
+
+    Returns:
+        Dict with optimal threshold metrics.
+    """
+    import numpy as np
+
+    _null: dict = {
+        "optimal_threshold_pct": None,
+        "optimal_score_threshold": None,
+        "optimal_above_win_rate": None,
+        "optimal_threshold_lift": None,
+        "above_threshold_count": None,
+        "threshold_coverage": None,
+    }
+
+    score_field: str | None = None
+    for candidate_field in ("runner_composite_score", "composite_score", "score"):
+        if any(r.get(candidate_field) is not None for r in rows):
+            score_field = candidate_field
+            break
+
+    if score_field is None:
+        return _null
+
+    valid = [r for r in rows if r.get("next_close_return") is not None and r.get(score_field) is not None]
+    total_count = len(valid)
+    if total_count < 20:
+        return _null
+
+    rets = [float(r.get("next_close_return", 0.0)) for r in valid]
+    scores = [float(r.get(score_field, 0.0)) for r in valid]
+    overall_win_rate = sum(1 for rv in rets if rv > 0) / max(total_count, 1)
+
+    pct_labels = ["P30", "P40", "P50", "P60", "P70", "P80"]
+    pct_values = [float(np.percentile(scores, p)) for p in (30, 40, 50, 60, 70, 80)]
+
+    best_label: str | None = None
+    best_thr: float | None = None
+    best_above_wr: float | None = None
+    best_lift: float | None = None
+    best_above_count: int | None = None
+
+    for label, thr in zip(pct_labels, pct_values):
+        above = [rv for rv, sc in zip(rets, scores) if sc >= thr]
+        below = [rv for rv, sc in zip(rets, scores) if sc < thr]
+        if len(above) < 5 or len(below) < 5:
+            continue
+        above_wr = sum(1 for rv in above if rv > 0) / max(len(above), 1)
+        lift = above_wr - overall_win_rate
+        if best_lift is None or lift > best_lift:
+            best_lift = lift
+            best_label = label
+            best_thr = thr
+            best_above_wr = above_wr
+            best_above_count = len(above)
+
+    if best_lift is None:
+        return _null
+
+    return {
+        "optimal_threshold_pct": best_label,
+        "optimal_score_threshold": round(best_thr, 4) if best_thr is not None else None,
+        "optimal_above_win_rate": round(best_above_wr, 4) if best_above_wr is not None else None,
+        "optimal_threshold_lift": round(best_lift, 4),
+        "above_threshold_count": best_above_count,
+        "threshold_coverage": round(best_above_count / max(total_count, 1), 4) if best_above_count is not None else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 39, Task 3 (Gamma): Simulated equity curve analysis
+# ---------------------------------------------------------------------------
+# Simulates sequential equal-weight BTST trades and computes max drawdown,
+# consecutive losses, recovery factor, and equity curve slope.
+
+
+def compute_simulated_equity_curve(rows: list[dict]) -> dict:
+    """Simulate a sequential BTST equity curve and compute drawdown / recovery metrics.
+
+    Args:
+        rows: Time-ordered list of trade rows.  Each row must contain
+              ``next_close_return`` (float | None).
+
+    Returns:
+        Dict with equity curve metrics.
+    """
+    _null: dict = {
+        "total_return": None,
+        "max_drawdown": None,
+        "max_consecutive_losses": None,
+        "recovery_factor": None,
+        "equity_curve_slope": None,
+        "equity_rising": None,
+        "equity_curve_grade": None,
+    }
+
+    valid_rets = [float(r.get("next_close_return", 0.0)) for r in rows if r.get("next_close_return") is not None]
+    n = len(valid_rets)
+    if n < 10:
+        return _null
+
+    equity: list[float] = [1.0]
+    for rv in valid_rets:
+        equity.append(equity[-1] * (1.0 + rv))
+
+    total_return = round(equity[-1] - 1.0, 6)
+
+    peak = equity[0]
+    drawdowns: list[float] = []
+    for eq in equity:
+        if eq > peak:
+            peak = eq
+        dd = (peak - eq) / max(peak, 1e-8)
+        drawdowns.append(dd)
+    max_drawdown = round(max(drawdowns), 6)
+
+    max_consec = 0
+    current_consec = 0
+    for rv in valid_rets:
+        if rv < 0:
+            current_consec += 1
+            max_consec = max(max_consec, current_consec)
+        else:
+            current_consec = 0
+    max_consecutive_losses = max_consec
+
+    raw_recovery = total_return / max(max_drawdown, 1e-6)
+    recovery_factor = round(max(-10.0, min(10.0, raw_recovery)), 4)
+
+    t_vals = list(range(len(equity)))
+    m = len(t_vals)
+    mean_t = sum(t_vals) / m
+    mean_eq = sum(equity) / m
+    num_slope = sum((t_vals[i] - mean_t) * (equity[i] - mean_eq) for i in range(m))
+    den_slope = sum((t_vals[i] - mean_t) ** 2 for i in range(m))
+    raw_slope = num_slope / max(den_slope, 1e-8)
+    equity_curve_slope = round(raw_slope / max(equity[0], 1e-8), 6)
+
+    equity_rising = equity_curve_slope > 0
+
+    if recovery_factor > 2:
+        grade = "A"
+    elif recovery_factor > 1:
+        grade = "B"
+    elif recovery_factor > 0:
+        grade = "C"
+    else:
+        grade = "D"
+
+    return {
+        "total_return": total_return,
+        "max_drawdown": max_drawdown,
+        "max_consecutive_losses": max_consecutive_losses,
+        "recovery_factor": recovery_factor,
+        "equity_curve_slope": equity_curve_slope,
+        "equity_rising": equity_rising,
+        "equity_curve_grade": grade,
     }

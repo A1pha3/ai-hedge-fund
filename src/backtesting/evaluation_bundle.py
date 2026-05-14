@@ -209,6 +209,22 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # system has zero monotone discriminative power.
     # Floor ≥ 0.0 requires at least a neutral positive premium for rollout eligibility.
     "top_quintile_premium": 0.0,
+    # Task 1 (Round 39, Alpha): recency vs history win-rate gap floor.
+    # recency_win_rate_gap = recent_win_rate − historical_win_rate.  A value < −0.15 means the
+    # strategy's recent win rate is more than 15 % below its historical baseline — a strong signal
+    # of overfitting or regime change that invalidates historical performance claims.
+    # Floor ≥ −0.15 ensures the strategy has not substantially decayed in recent periods.
+    "recency_win_rate_gap": -0.15,
+    # Task 2 (Round 39, Beta): optimal score threshold win-rate lift floor.
+    # optimal_threshold_lift = above_win_rate − overall_win_rate at the best percentile cutoff.
+    # A value ≤ 0 means no score threshold can improve over the baseline win rate — the score
+    # has zero entry-filtering value.  Floor ≥ 0.0 requires at least neutral improvement.
+    "optimal_threshold_lift": 0.0,
+    # Task 3 (Round 39, Gamma): simulated equity curve recovery factor floor.
+    # recovery_factor = total_return / max_drawdown.  A value ≤ 0 means the strategy ends
+    # with a net loss after simulating all trades — total return is negative.
+    # Floor ≥ 0.0 requires at least break-even cumulative performance.
+    "recovery_factor": 0.0,
 }
 
 # ---------------------------------------------------------------------------

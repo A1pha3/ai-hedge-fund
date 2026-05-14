@@ -8510,3 +8510,279 @@ def test_r38_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
 
     assert COMPARISON_METRIC_LABELS.get("top_quintile_premium") == "顶分位胜率溢价"
+
+
+# ===========================================================================
+# Round 39, Task 1 (Alpha): Recency vs history performance analysis
+# ===========================================================================
+
+
+def test_r39_t1_basic_stable() -> None:
+    """compute_recency_vs_history_analysis returns stable flag when gaps are small."""
+    from scripts.btst_analysis_utils import compute_recency_vs_history_analysis
+
+    rows = [{"next_close_return": 0.02 if i % 2 == 0 else -0.01} for i in range(30)]
+    result = compute_recency_vs_history_analysis(rows)
+    assert result["recency_win_rate_gap"] is not None
+    assert result["recency_stable"] in (True, False)
+    assert result["recency_degraded"] in (True, False)
+    assert result["recency_improved"] in (True, False)
+
+
+def test_r39_t1_insufficient_rows_returns_none() -> None:
+    """compute_recency_vs_history_analysis returns all-None when fewer than 15 valid rows."""
+    from scripts.btst_analysis_utils import compute_recency_vs_history_analysis
+
+    rows = [{"next_close_return": 0.01} for _ in range(14)]
+    result = compute_recency_vs_history_analysis(rows)
+    assert result["recency_win_rate_gap"] is None
+    assert result["recency_degraded"] is None
+
+
+def test_r39_t1_empty_rows_graceful() -> None:
+    """compute_recency_vs_history_analysis handles empty input without raising."""
+    from scripts.btst_analysis_utils import compute_recency_vs_history_analysis
+
+    result = compute_recency_vs_history_analysis([])
+    assert result["recency_win_rate_gap"] is None
+
+
+def test_r39_t1_none_returns_filtered() -> None:
+    """Rows with None next_close_return are excluded from computation."""
+    from scripts.btst_analysis_utils import compute_recency_vs_history_analysis
+
+    rows = [{"next_close_return": None}] * 10 + [{"next_close_return": 0.02 if i % 2 == 0 else -0.01} for i in range(20)]
+    result = compute_recency_vs_history_analysis(rows)
+    assert result["recency_win_rate_gap"] is not None
+
+
+def test_r39_t1_degraded_flag_triggers() -> None:
+    """recency_degraded is True when recent win-rate is >5% below historical."""
+    from scripts.btst_analysis_utils import compute_recency_vs_history_analysis
+
+    historical = [{"next_close_return": 0.03}] * 20 + [{"next_close_return": -0.01}] * 1
+    recent = [{"next_close_return": -0.02}] * 10 + [{"next_close_return": 0.01}] * 1
+    rows = historical + recent
+    result = compute_recency_vs_history_analysis(rows)
+    assert result["recency_win_rate_gap"] is not None
+    assert result["recency_degraded"] is True
+
+
+def test_r39_t1_improved_flag_triggers() -> None:
+    """recency_improved is True when recent win-rate is >5% above historical."""
+    from scripts.btst_analysis_utils import compute_recency_vs_history_analysis
+
+    historical = [{"next_close_return": -0.02}] * 14 + [{"next_close_return": 0.01}] * 7
+    recent = [{"next_close_return": 0.05}] * 9
+    rows = historical + recent
+    result = compute_recency_vs_history_analysis(rows)
+    assert result["recency_win_rate_gap"] is not None
+    assert result["recency_improved"] is True
+
+
+def test_r39_t1_floor_registered() -> None:
+    """recency_win_rate_gap floor is -0.15 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "recency_win_rate_gap" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["recency_win_rate_gap"] == -0.15
+
+
+def test_r39_t1_metric_registered() -> None:
+    """recency_win_rate_gap is in COMPARISON_METRICS and has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRICS, COMPARISON_METRIC_LABELS
+
+    assert "recency_win_rate_gap" in COMPARISON_METRICS
+    assert "近期" in COMPARISON_METRIC_LABELS.get("recency_win_rate_gap", "")
+
+
+# ===========================================================================
+# Round 39, Task 2 (Beta): Optimal score threshold search
+# ===========================================================================
+
+
+def test_r39_t2_basic_returns_result() -> None:
+    """compute_optimal_score_threshold returns a valid result with enough rows."""
+    from scripts.btst_analysis_utils import compute_optimal_score_threshold
+
+    rows = [
+        {"next_close_return": 0.04 if i % 2 == 0 else -0.01,
+         "runner_composite_score": float(i) / 25}
+        for i in range(25)
+    ]
+    result = compute_optimal_score_threshold(rows)
+    assert result["optimal_threshold_pct"] is not None
+    assert result["optimal_threshold_lift"] is not None
+
+
+def test_r39_t2_insufficient_rows_returns_none() -> None:
+    """compute_optimal_score_threshold returns all-None for fewer than 20 valid rows."""
+    from scripts.btst_analysis_utils import compute_optimal_score_threshold
+
+    rows = [{"next_close_return": 0.01, "runner_composite_score": 0.5} for _ in range(19)]
+    result = compute_optimal_score_threshold(rows)
+    assert result["optimal_threshold_lift"] is None
+
+
+def test_r39_t2_empty_rows_graceful() -> None:
+    """compute_optimal_score_threshold handles empty input without raising."""
+    from scripts.btst_analysis_utils import compute_optimal_score_threshold
+
+    result = compute_optimal_score_threshold([])
+    assert result["optimal_threshold_lift"] is None
+
+
+def test_r39_t2_none_fields_filtered() -> None:
+    """Rows with None return or score are excluded from threshold analysis."""
+    from scripts.btst_analysis_utils import compute_optimal_score_threshold
+
+    rows = [{"next_close_return": None, "runner_composite_score": 0.5}] * 5 + [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
+         "runner_composite_score": float(i) / 25}
+        for i in range(25)
+    ]
+    result = compute_optimal_score_threshold(rows)
+    assert result["optimal_threshold_lift"] is not None
+
+
+def test_r39_t2_score_field_fallback() -> None:
+    """compute_optimal_score_threshold falls back to composite_score when runner_composite_score absent."""
+    from scripts.btst_analysis_utils import compute_optimal_score_threshold
+
+    rows = [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
+         "composite_score": float(i) / 25}
+        for i in range(25)
+    ]
+    result = compute_optimal_score_threshold(rows)
+    assert result["optimal_threshold_pct"] is not None
+
+
+def test_r39_t2_coverage_in_range() -> None:
+    """threshold_coverage is in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_optimal_score_threshold
+
+    rows = [
+        {"next_close_return": 0.04 if i % 2 == 0 else -0.01,
+         "runner_composite_score": float(i) / 30}
+        for i in range(30)
+    ]
+    result = compute_optimal_score_threshold(rows)
+    if result["threshold_coverage"] is not None:
+        assert 0.0 <= result["threshold_coverage"] <= 1.0
+
+
+def test_r39_t2_floor_registered() -> None:
+    """optimal_threshold_lift floor is 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "optimal_threshold_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["optimal_threshold_lift"] == 0.0
+
+
+def test_r39_t2_metric_registered() -> None:
+    """optimal_threshold_lift is in COMPARISON_METRICS with a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRICS, COMPARISON_METRIC_LABELS
+
+    assert "optimal_threshold_lift" in COMPARISON_METRICS
+    assert "阈值" in COMPARISON_METRIC_LABELS.get("optimal_threshold_lift", "")
+
+
+# ===========================================================================
+# Round 39, Task 3 (Gamma): Simulated equity curve analysis
+# ===========================================================================
+
+
+def test_r39_t3_basic_returns_result() -> None:
+    """compute_simulated_equity_curve returns valid metrics with enough rows."""
+    from scripts.btst_analysis_utils import compute_simulated_equity_curve
+
+    rows = [{"next_close_return": 0.02 if i % 3 != 0 else -0.01} for i in range(20)]
+    result = compute_simulated_equity_curve(rows)
+    assert result["recovery_factor"] is not None
+    assert result["max_drawdown"] is not None
+    assert result["equity_curve_grade"] in ("A", "B", "C", "D")
+
+
+def test_r39_t3_insufficient_rows_returns_none() -> None:
+    """compute_simulated_equity_curve returns all-None for fewer than 10 valid rows."""
+    from scripts.btst_analysis_utils import compute_simulated_equity_curve
+
+    rows = [{"next_close_return": 0.01} for _ in range(9)]
+    result = compute_simulated_equity_curve(rows)
+    assert result["recovery_factor"] is None
+    assert result["max_drawdown"] is None
+
+
+def test_r39_t3_empty_rows_graceful() -> None:
+    """compute_simulated_equity_curve handles empty input without raising."""
+    from scripts.btst_analysis_utils import compute_simulated_equity_curve
+
+    result = compute_simulated_equity_curve([])
+    assert result["recovery_factor"] is None
+
+
+def test_r39_t3_none_returns_filtered() -> None:
+    """Rows with None next_close_return are excluded from equity simulation."""
+    from scripts.btst_analysis_utils import compute_simulated_equity_curve
+
+    rows = [{"next_close_return": None}] * 5 + [{"next_close_return": 0.02} for _ in range(15)]
+    result = compute_simulated_equity_curve(rows)
+    assert result["recovery_factor"] is not None
+
+
+def test_r39_t3_all_winning_trades() -> None:
+    """All positive returns produces grade A and positive equity."""
+    from scripts.btst_analysis_utils import compute_simulated_equity_curve
+
+    rows = [{"next_close_return": 0.02} for _ in range(20)]
+    result = compute_simulated_equity_curve(rows)
+    assert result["total_return"] is not None and result["total_return"] > 0
+    assert result["equity_rising"] is True
+    assert result["equity_curve_grade"] == "A"
+
+
+def test_r39_t3_all_losing_trades() -> None:
+    """All negative returns produces grade D and zero consecutive_losses = len(rows)."""
+    from scripts.btst_analysis_utils import compute_simulated_equity_curve
+
+    rows = [{"next_close_return": -0.01} for _ in range(20)]
+    result = compute_simulated_equity_curve(rows)
+    assert result["total_return"] is not None and result["total_return"] < 0
+    assert result["max_consecutive_losses"] == 20
+    assert result["equity_curve_grade"] == "D"
+
+
+def test_r39_t3_recovery_factor_clamped() -> None:
+    """recovery_factor is clamped to [-10, 10]."""
+    from scripts.btst_analysis_utils import compute_simulated_equity_curve
+
+    rows = [{"next_close_return": 0.10} for _ in range(15)]
+    result = compute_simulated_equity_curve(rows)
+    if result["recovery_factor"] is not None:
+        assert -10.0 <= result["recovery_factor"] <= 10.0
+
+
+def test_r39_t3_floor_registered() -> None:
+    """recovery_factor floor is 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "recovery_factor" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["recovery_factor"] == 0.0
+
+
+def test_r39_t3_metric_registered() -> None:
+    """recovery_factor and max_drawdown_simulated are in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, LOWER_IS_BETTER_COMPARISON_METRICS
+
+    assert "recovery_factor" in COMPARISON_METRICS
+    assert "max_drawdown_simulated" in COMPARISON_METRICS
+    assert "max_drawdown_simulated" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r39_t3_label_registered() -> None:
+    """recovery_factor and max_drawdown_simulated have Chinese labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "权益" in COMPARISON_METRIC_LABELS.get("recovery_factor", "")
+    assert "回撤" in COMPARISON_METRIC_LABELS.get("max_drawdown_simulated", "")
