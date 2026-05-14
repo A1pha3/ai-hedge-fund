@@ -502,6 +502,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "max_collinearity",
     # Task 3 (Round 75, Gamma): cross-window stratification spread OLS trend slope.
     "stratification_trend_slope",
+    # Task 1 (Round 76, Alpha): gain/loss ratio of skew-quality analysis.
+    "gain_loss_ratio",
+    # Task 1 (Round 76, Alpha): tail asymmetry score (right_tail_pct − left_tail_pct).
+    "tail_asymmetry_score",
+    # Task 2 (Round 76, Beta): factor orthogonality score (1 − mean_abs_correlation).
+    "orthogonality_score",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -892,6 +898,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "max_collinearity": "最大因子共线性",
     # Task 3 (Round 75, Gamma): 分层区分度跨窗趋势
     "stratification_trend_slope": "分层区分度跨窗趋势",
+    # Task 1 (Round 76, Alpha): 收益偏斜质量增益损失比
+    "gain_loss_ratio": "收益偏斜质量增益损失比",
+    # Task 1 (Round 76, Alpha): 收益尾部不对称分数
+    "tail_asymmetry_score": "收益尾部不对称分数",
+    # Task 2 (Round 76, Beta): 因子正交性分数
+    "orthogonality_score": "因子正交性分数",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1356,6 +1368,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "max_collinearity",
     # Task 3 (Round 75, Gamma): stratification spread cross-window trend slope — optional; pre-Round-75 outputs omit it.
     "stratification_trend_slope",
+    # Task 1 (Round 76, Alpha): gain/loss ratio — optional; pre-Round-76 outputs omit it.
+    "gain_loss_ratio",
+    # Task 1 (Round 76, Alpha): tail asymmetry score — optional; pre-Round-76 outputs omit it.
+    "tail_asymmetry_score",
+    # Task 2 (Round 76, Beta): factor orthogonality score — optional; pre-Round-76 outputs omit it.
+    "orthogonality_score",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2829,17 +2847,21 @@ def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict
     volatility while Sortino only penalises downside.  A declining Sharpe trend
     (negative slope) indicates total risk-adjusted returns are deteriorating.
 
+    Round 76 update: collects ``sharpe_sharpe_ratio`` (R75 T1 output) first, then
+    falls back to ``sharpe_ratio`` for backward compatibility.
+
     Args:
         all_windows_summaries: List of per-window surface summary dicts, each
-            expected to contain a ``sharpe_ratio`` key.
+            expected to contain a ``sharpe_sharpe_ratio`` or ``sharpe_ratio`` key.
 
     Returns:
-        Dict with keys: ``sharpe_trend_slope``, ``sharpe_mean``, ``sharpe_std``,
-        ``sharpe_min``, ``sharpe_max``, ``sharpe_trend_grade`` (A/B/C/D),
+        Dict with keys: ``sharpe_trend_slope``, ``sharpe_trend_mean``, ``sharpe_mean``,
+        ``sharpe_std``, ``sharpe_min``, ``sharpe_max``, ``sharpe_trend_grade`` (A/B/C/D),
         ``sharpe_positive_windows_pct``, ``sharpe_trend_valid``.
     """
     _null: dict = {
         "sharpe_trend_slope": None,
+        "sharpe_trend_mean": None,
         "sharpe_mean": None,
         "sharpe_std": None,
         "sharpe_min": None,
@@ -2853,7 +2875,9 @@ def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict
 
     sharpe_series: list[float] = []
     for s in all_windows_summaries:
-        v = s.get("sharpe_ratio")
+        v = s.get("sharpe_sharpe_ratio")
+        if v is None:
+            v = s.get("sharpe_ratio")
         if v is not None:
             try:
                 sharpe_series.append(float(v))
@@ -2876,11 +2900,11 @@ def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict
     variance = sum((v - mean_val) ** 2 for v in sharpe_series) / (n - 1) if n > 1 else 0.0
     std_val = variance ** 0.5
 
-    if slope > 0.10:
+    if slope > 0.01:
         grade = "A"
     elif slope > 0:
         grade = "B"
-    elif slope > -0.10:
+    elif slope > -0.02:
         grade = "C"
     else:
         grade = "D"
@@ -2889,6 +2913,7 @@ def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict
 
     return {
         "sharpe_trend_slope": round(slope, 8),
+        "sharpe_trend_mean": round(mean_val, 6),
         "sharpe_mean": round(mean_val, 6),
         "sharpe_std": round(std_val, 6),
         "sharpe_min": round(min(sharpe_series), 6),
@@ -4900,6 +4925,16 @@ def _build_replay_evaluator(
         avg_max_collinearity: "float | None" = round(sum(_colin_mc_vals) / len(_colin_mc_vals), 6) if _colin_mc_vals else None
         # Task 3 (Round 75, Gamma): cross-window stratification spread trend.
         _cwsst: dict[str, Any] = compute_cross_window_stratification_trend(all_primary_surfaces)
+        # Task 1 (Round 76, Alpha): average skew_qual_gain_loss_ratio across replay windows.
+        _skq_glr_vals = [float(s["skew_qual_gain_loss_ratio"]) for s in all_primary_surfaces if s.get("skew_qual_gain_loss_ratio") is not None]
+        avg_gain_loss_ratio: "float | None" = round(sum(_skq_glr_vals) / len(_skq_glr_vals), 6) if _skq_glr_vals else None
+        # Task 1 (Round 76, Alpha): average skew_qual_tail_asymmetry_score across replay windows.
+        _skq_tas_vals = [float(s["skew_qual_tail_asymmetry_score"]) for s in all_primary_surfaces if s.get("skew_qual_tail_asymmetry_score") is not None]
+        avg_tail_asymmetry_score: "float | None" = round(sum(_skq_tas_vals) / len(_skq_tas_vals), 6) if _skq_tas_vals else None
+        # Task 2 (Round 76, Beta): average ortho_orthogonality_score across replay windows.
+        _ortho_os_vals = [float(s["ortho_orthogonality_score"]) for s in all_primary_surfaces if s.get("ortho_orthogonality_score") is not None]
+        avg_orthogonality_score: "float | None" = round(sum(_ortho_os_vals) / len(_ortho_os_vals), 6) if _ortho_os_vals else None
+        # Task 3 (Round 76, Gamma): cross-window Sharpe trend (updated to use sharpe_sharpe_ratio from R75 T1 output).
 
         return {
             "sharpe_ratio": avg_sharpe_r75 if avg_sharpe_r75 is not None else avg_sharpe,
@@ -5409,6 +5444,12 @@ def _build_replay_evaluator(
                 "stratification_positive_windows_pct": _cwsst.get("stratification_positive_windows_pct"),
                 "stratification_trend_grade": _cwsst.get("stratification_trend_grade"),
                 "stratification_trend_valid": _cwsst.get("stratification_trend_valid"),
+                # Task 1 (Round 76, Alpha): gain/loss ratio averaged across windows.
+                "gain_loss_ratio": avg_gain_loss_ratio,
+                # Task 1 (Round 76, Alpha): tail asymmetry score averaged across windows.
+                "tail_asymmetry_score": avg_tail_asymmetry_score,
+                # Task 2 (Round 76, Beta): factor orthogonality score averaged across windows.
+                "orthogonality_score": avg_orthogonality_score,
         }
 
     return evaluator

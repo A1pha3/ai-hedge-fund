@@ -12358,10 +12358,10 @@ def test_r50_sharpe_trend_positive_windows_pct_all_positive() -> None:
 
 
 def test_r50_sharpe_trend_floor_registered() -> None:
-    """sharpe_trend_slope: -0.10 must be in BTST_QUALITY_FLOORS."""
+    """sharpe_trend_slope: -0.02 must be in BTST_QUALITY_FLOORS (tightened in Round 76)."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "sharpe_trend_slope" in BTST_QUALITY_FLOORS
-    assert BTST_QUALITY_FLOORS["sharpe_trend_slope"] == pytest.approx(-0.10)
+    assert BTST_QUALITY_FLOORS["sharpe_trend_slope"] == pytest.approx(-0.02)
 
 
 def test_r50_sharpe_trend_label_registered() -> None:
@@ -22099,3 +22099,329 @@ def test_r75_caps_max_collinearity() -> None:
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
     assert "max_collinearity" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["max_collinearity"] == 0.85
+
+
+
+# ===========================================================================
+# Round 76 tests
+# ===========================================================================
+
+# --- T1 (Alpha): compute_return_skew_quality ---
+
+
+def test_r76_t1_empty_returns() -> None:
+    """compute_return_skew_quality returns valid=False when rows is empty."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    result = compute_return_skew_quality([])
+    assert result["return_skew_quality_valid"] is False
+    assert result["gain_loss_ratio"] is None
+    assert result["tail_asymmetry_score"] is None
+
+
+def test_r76_t1_too_few_rows() -> None:
+    """compute_return_skew_quality needs >=10 rows to compute."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    rows = [{"next_day_return": 0.01}] * 9
+    result = compute_return_skew_quality(rows)
+    assert result["return_skew_quality_valid"] is False
+
+
+def test_r76_t1_valid_with_ten_rows() -> None:
+    """compute_return_skew_quality returns valid=True with >=10 valid rows."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    rows = [{"next_day_return": 0.01 * (i - 5)} for i in range(10)]
+    result = compute_return_skew_quality(rows)
+    assert result["return_skew_quality_valid"] is True
+    assert result["skewness"] is not None
+    assert result["tail_asymmetry_score"] is not None
+
+
+def test_r76_t1_grade_a_positive_skew_high_glr() -> None:
+    """Grade A when skewness>0.3 AND gain_loss_ratio>1.2."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    # Strongly right-skewed: many small negatives, a few large positives
+    rows = [{"next_day_return": -0.01}] * 14 + [{"next_day_return": 0.30}] * 6
+    result = compute_return_skew_quality(rows)
+    assert result["return_skew_quality_valid"] is True
+    if result["skewness"] is not None and result["skewness"] > 0.3 and result["gain_loss_ratio"] is not None and result["gain_loss_ratio"] > 1.2:
+        assert result["skew_quality_grade"] == "A"
+
+
+def test_r76_t1_grade_b_positive_skew() -> None:
+    """Grade B when skewness>0 and gain_loss_ratio>1.0 but not grade-A threshold."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    rows = [{"next_day_return": v} for v in [0.01, 0.02, 0.03, 0.04, 0.05, -0.01, -0.01, -0.01, -0.01, -0.01, 0.01, 0.02]]
+    result = compute_return_skew_quality(rows)
+    assert result["return_skew_quality_valid"] is True
+    assert result["skew_quality_grade"] in ("A", "B")
+
+
+def test_r76_t1_grade_d_strongly_negative_skew() -> None:
+    """Grade D when skewness <= -0.3."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    rows = [{"next_day_return": v} for v in [0.001, 0.001, 0.001] + [-0.5] * 7]
+    result = compute_return_skew_quality(rows)
+    assert result["return_skew_quality_valid"] is True
+    if result["skewness"] is not None and result["skewness"] <= -0.3:
+        assert result["skew_quality_grade"] == "D"
+
+
+def test_r76_t1_gain_loss_ratio_formula() -> None:
+    """gain_loss_ratio = abs(positive_mean) / (abs(negative_mean) + 0.001)."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    rows = [{"next_day_return": 0.06}] * 6 + [{"next_day_return": -0.03}] * 6
+    result = compute_return_skew_quality(rows)
+    assert result["return_skew_quality_valid"] is True
+    assert result["gain_loss_ratio"] is not None
+    expected = abs(0.06) / (abs(0.03) + 0.001)
+    assert abs(result["gain_loss_ratio"] - expected) < 0.01
+
+
+def test_r76_t1_tail_asymmetry_score_equals_right_minus_left() -> None:
+    """tail_asymmetry_score = right_tail_pct - left_tail_pct."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    rows = [{"next_day_return": v} for v in [0.01, 0.02, 0.01, -0.01, -0.01, 0.01, 0.02, -0.02, 0.01, 0.01, 0.03, -0.01]]
+    result = compute_return_skew_quality(rows)
+    assert result["return_skew_quality_valid"] is True
+    expected_score = result["right_tail_pct"] - result["left_tail_pct"]
+    assert abs(result["tail_asymmetry_score"] - expected_score) < 1e-9
+
+
+def test_r76_t1_all_positive_returns_high_glr() -> None:
+    """When no negative returns exist, gain_loss_ratio is None (no divisor available)."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    rows = [{"next_day_return": 0.01 + i * 0.005} for i in range(10)]
+    result = compute_return_skew_quality(rows)
+    assert result["return_skew_quality_valid"] is True
+    # All positive returns → negative_return_mean is None → gain_loss_ratio is None per spec
+    assert result["negative_return_mean"] is None
+    assert result["gain_loss_ratio"] is None
+
+
+def test_r76_t1_missing_return_key_rows_skipped() -> None:
+    """Rows missing 'next_day_return' or with None should be skipped gracefully."""
+    from scripts.btst_analysis_utils import compute_return_skew_quality
+    rows = [{"next_day_return": 0.01}] * 5 + [{"other": 123}] * 3 + [{"next_day_return": None}] * 2 + [{"next_day_return": -0.01}] * 5
+    result = compute_return_skew_quality(rows)
+    assert isinstance(result, dict)
+    assert "return_skew_quality_valid" in result
+
+
+def test_r76_t1_metrics_in_comparison_metrics() -> None:
+    """gain_loss_ratio and tail_asymmetry_score must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "gain_loss_ratio" in COMPARISON_METRICS
+    assert "tail_asymmetry_score" in COMPARISON_METRICS
+
+
+def test_r76_t1_metrics_in_optional_comparison_metrics() -> None:
+    """gain_loss_ratio and tail_asymmetry_score must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "gain_loss_ratio" in OPTIONAL_COMPARISON_METRICS
+    assert "tail_asymmetry_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r76_t1_gain_loss_ratio_floor_registered() -> None:
+    """gain_loss_ratio must have floor 1.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "gain_loss_ratio" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["gain_loss_ratio"] == pytest.approx(1.0)
+
+
+def test_r76_t1_tail_asymmetry_floor_registered() -> None:
+    """tail_asymmetry_score must have floor -0.05 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "tail_asymmetry_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["tail_asymmetry_score"] == pytest.approx(-0.05)
+
+
+# --- T2 (Beta): compute_factor_orthogonality_score ---
+
+
+def test_r76_t2_empty_rows() -> None:
+    """compute_factor_orthogonality_score returns valid=False when rows is empty."""
+    from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+    result = compute_factor_orthogonality_score([])
+    assert result["factor_orthogonality_valid"] is False
+    assert result["orthogonality_score"] is None
+
+
+def test_r76_t2_too_few_rows() -> None:
+    """compute_factor_orthogonality_score needs >=10 rows to compute."""
+    from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+    rows = [{"close_strength": 1.0}] * 9
+    result = compute_factor_orthogonality_score(rows)
+    assert result["factor_orthogonality_valid"] is False
+
+
+def test_r76_t2_identical_factors_low_orthogonality() -> None:
+    """When all factors move identically, orthogonality_score is near 0."""
+    from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+    rows = [{"close_strength": v, "volume_expansion_quality": v, "sector_resonance": v, "rs_sector_rank": v, "t0_estimated_net_inflow_ratio": v, "breakout_quality_score": v, "momentum_slope_20d": v} for v in range(1, 21)]
+    result = compute_factor_orthogonality_score(rows)
+    assert result["factor_orthogonality_valid"] is True
+    assert result["orthogonality_score"] is not None
+    assert result["orthogonality_score"] < 0.1
+
+
+def test_r76_t2_grade_d_below_threshold() -> None:
+    """When orthogonality_score <= 0.5, grade should be D."""
+    from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+    rows = [{"close_strength": v, "volume_expansion_quality": v + 0.01, "sector_resonance": v - 0.01, "rs_sector_rank": v, "t0_estimated_net_inflow_ratio": v + 0.02, "breakout_quality_score": v, "momentum_slope_20d": v + 0.03} for v in range(1, 21)]
+    result = compute_factor_orthogonality_score(rows)
+    assert result["factor_orthogonality_valid"] is True
+    if result["orthogonality_score"] is not None and result["orthogonality_score"] <= 0.5:
+        assert result["orthogonality_grade"] == "D"
+
+
+def test_r76_t2_orthogonality_score_range_01() -> None:
+    """orthogonality_score must be in [0.0, 1.0]."""
+    from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(-i), "sector_resonance": float(i * 2), "rs_sector_rank": float(i * 0.5), "t0_estimated_net_inflow_ratio": float(i + 1), "breakout_quality_score": float(-i * 2), "momentum_slope_20d": float(i * 3)} for i in range(1, 20)]
+    result = compute_factor_orthogonality_score(rows)
+    assert result["factor_orthogonality_valid"] is True
+    score = result["orthogonality_score"]
+    assert score is not None
+    assert 0.0 <= score <= 1.0
+
+
+def test_r76_t2_orthogonality_score_formula() -> None:
+    """orthogonality_score = 1.0 - mean_abs_correlation."""
+    from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i * 2), "sector_resonance": float(i * 0.5), "rs_sector_rank": float(i + 1), "t0_estimated_net_inflow_ratio": float(i * 3), "breakout_quality_score": float(i * 1.5), "momentum_slope_20d": float(i + 0.1)} for i in range(1, 16)]
+    result = compute_factor_orthogonality_score(rows)
+    assert result["factor_orthogonality_valid"] is True
+    if result["mean_abs_correlation"] is not None and result["orthogonality_score"] is not None:
+        expected = 1.0 - result["mean_abs_correlation"]
+        assert abs(result["orthogonality_score"] - expected) < 1e-6
+
+
+def test_r76_t2_orthogonality_metric_in_comparison_metrics() -> None:
+    """orthogonality_score must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "orthogonality_score" in COMPARISON_METRICS
+
+
+def test_r76_t2_orthogonality_metric_in_optional_comparison_metrics() -> None:
+    """orthogonality_score must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "orthogonality_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r76_t2_orthogonality_floor_registered() -> None:
+    """orthogonality_score must have floor 0.5 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "orthogonality_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["orthogonality_score"] == pytest.approx(0.5)
+
+
+def test_r76_t2_orthogonality_grade_a_high_independence() -> None:
+    """Grade A when orthogonality_score > 0.75."""
+    from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+    import random
+    rng = random.Random(42)
+    n = 30
+    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    vals = {f: [rng.gauss(0, 1) for _ in range(n)] for f in factors}
+    rows = [{f: vals[f][i] for f in factors} for i in range(n)]
+    result = compute_factor_orthogonality_score(rows)
+    assert result["factor_orthogonality_valid"] is True
+    if result["orthogonality_score"] is not None and result["orthogonality_score"] > 0.75:
+        assert result["orthogonality_grade"] == "A"
+
+
+# --- T3 (Gamma): updated compute_cross_window_sharpe_trend ---
+
+
+def test_r76_t3_sharpe_trend_collects_sharpe_sharpe_ratio() -> None:
+    """Updated function collects sharpe_sharpe_ratio key (R75 T1 output)."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_sharpe_ratio": 0.5 + i * 0.02} for i in range(5)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    assert result["sharpe_trend_slope"] is not None
+
+
+def test_r76_t3_sharpe_trend_falls_back_to_legacy_key() -> None:
+    """Updated function falls back to sharpe_ratio key for backward compatibility."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_ratio": 0.3 + i * 0.01} for i in range(5)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    assert result["sharpe_trend_slope"] is not None
+
+
+def test_r76_t3_sharpe_trend_grade_a_slope_above_001() -> None:
+    """Grade A when OLS slope > 0.01."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_sharpe_ratio": float(i) * 0.1} for i in range(10)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    assert result["sharpe_trend_slope"] > 0.01
+    assert result["sharpe_trend_grade"] == "A"
+
+
+def test_r76_t3_sharpe_trend_grade_b_slope_between_0_and_001() -> None:
+    """Grade B when 0 < OLS slope <= 0.01."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_sharpe_ratio": 1.0 + i * 0.001} for i in range(10)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    assert 0 < result["sharpe_trend_slope"] <= 0.01
+    assert result["sharpe_trend_grade"] == "B"
+
+
+def test_r76_t3_sharpe_trend_grade_c_mild_decline() -> None:
+    """Grade C when -0.02 < OLS slope <= 0."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_sharpe_ratio": 2.0 - i * 0.001} for i in range(10)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    assert -0.02 < result["sharpe_trend_slope"] <= 0
+    assert result["sharpe_trend_grade"] == "C"
+
+
+def test_r76_t3_sharpe_trend_grade_d_steep_decline() -> None:
+    """Grade D when OLS slope <= -0.02."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_sharpe_ratio": 2.0 - i * 0.05} for i in range(10)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    assert result["sharpe_trend_slope"] <= -0.02
+    assert result["sharpe_trend_grade"] == "D"
+
+
+def test_r76_t3_sharpe_trend_mean_key_present() -> None:
+    """Updated function returns sharpe_trend_mean alongside legacy sharpe_mean."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_sharpe_ratio": float(i) * 0.1} for i in range(5)]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert "sharpe_trend_mean" in result
+    assert "sharpe_mean" in result
+    assert result["sharpe_trend_mean"] == pytest.approx(result["sharpe_mean"])
+
+
+def test_r76_t3_sharpe_trend_floor_updated_to_minus002() -> None:
+    """sharpe_trend_slope floor must be -0.02 (tightened from -0.10 in Round 76)."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "sharpe_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["sharpe_trend_slope"] == pytest.approx(-0.02)
+
+
+def test_r76_t3_sharpe_positive_windows_pct_correct() -> None:
+    """sharpe_positive_windows_pct is fraction of windows where sharpe > 0."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    values = [0.5, -0.1, 0.3, -0.2, 0.4, -0.05, 0.6, -0.3, 0.1, 0.2]
+    summaries = [{"sharpe_sharpe_ratio": v} for v in values]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is True
+    expected_pct = sum(1 for v in values if v > 0) / len(values)
+    assert result["sharpe_positive_windows_pct"] == pytest.approx(expected_pct)
+
+
+def test_r76_t3_sharpe_trend_too_few_windows() -> None:
+    """sharpe_trend_valid=False when fewer than 3 windows provide a sharpe value."""
+    from scripts.optimize_profile import compute_cross_window_sharpe_trend
+    summaries = [{"sharpe_sharpe_ratio": 0.5}, {"sharpe_sharpe_ratio": 0.6}]
+    result = compute_cross_window_sharpe_trend(summaries)
+    assert result["sharpe_trend_valid"] is False

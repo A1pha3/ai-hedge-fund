@@ -436,8 +436,8 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     "sortino_trend_slope": -0.10,
     # Task 3 (Round 50, Gamma): cross-window Sharpe trend slope floor.
     # sharpe_trend_slope = OLS slope of sharpe_ratio across replay windows.
-    # Floor ≥ -0.10 prevents strategies with rapidly deteriorating Sharpe from passing.
-    "sharpe_trend_slope": -0.10,
+    # Floor ≥ -0.02 prevents strategies with rapidly deteriorating Sharpe from passing (tightened in Round 76).
+    "sharpe_trend_slope": -0.02,
     # Task 1 (Round 51, Alpha): win/loss magnitude ratio floor.
     # win_loss_magnitude_ratio = avg_win / avg_loss magnitude; floor ≥ 1.0 ensures wins
     # exceed losses on average — a necessary condition for positive expectancy.
@@ -623,6 +623,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 75, Gamma): stratification spread cross-window trend slope floor.
     # stratification_trend_slope < -0.01 means signal stratification discriminatory power is declining.
     "stratification_trend_slope": -0.01,
+    # Task 1 (Round 76, Alpha): gain/loss ratio floor.
+    # gain_loss_ratio < 1.0 means average losses exceed average gains — negative edge.
+    "gain_loss_ratio": 1.0,
+    # Task 1 (Round 76, Alpha): tail asymmetry score floor.
+    # tail_asymmetry_score < -0.05 means left fat tail significantly dominates right tail — high tail risk.
+    "tail_asymmetry_score": -0.05,
+    # Task 2 (Round 76, Beta): factor orthogonality score floor.
+    # orthogonality_score < 0.5 means mean factor correlation > 0.5 — highly redundant factor set.
+    "orthogonality_score": 0.5,
 }
 
 # ---------------------------------------------------------------------------

@@ -4621,6 +4621,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _fcc.items():
         _surface_result[f"colin_{_k}"] = _v
 
+    # Round 76, Task 1 (Alpha): Return skew quality analysis.
+    _rsq: dict = compute_return_skew_quality(rows)
+    for _k, _v in _rsq.items():
+        _surface_result[f"skew_qual_{_k}"] = _v
+
+    # Round 76, Task 2 (Beta): Factor orthogonality score.
+    _fos: dict = compute_factor_orthogonality_score(rows)
+    for _k, _v in _fos.items():
+        _surface_result[f"ortho_{_k}"] = _v
+
     return _surface_result
 
 
@@ -13555,3 +13565,136 @@ def compute_factor_collinearity_check(rows: list[dict]) -> dict:
     else:
         collinearity_grade = "D"
     return {"factor_collinearity_valid": True, "pair_correlations": pair_correlations, "max_collinearity": max_collinearity, "high_collinearity_pairs": high_collinearity_pairs, "effective_factor_count": effective_factor_count, "collinearity_grade": collinearity_grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 76, Task 1 (Alpha): Return skew quality analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_return_skew_quality(rows: list[dict]) -> dict:
+    """深度分析收益分布偏斜质量（右偏=好，左偏=差），通过尾部比率评估胜率质量。
+
+    Args:
+        rows: BTST candidate rows, each containing ``next_day_return``.
+
+    Returns:
+        Dict containing: ``return_skew_quality_valid``, ``skewness``, ``excess_kurtosis``,
+        ``positive_return_mean``, ``negative_return_mean``, ``gain_loss_ratio``,
+        ``right_tail_pct``, ``left_tail_pct``, ``tail_asymmetry_score``,
+        ``skew_quality_grade``.
+    """
+    import math as _math
+    _null: dict = {"return_skew_quality_valid": False, "skewness": None, "excess_kurtosis": None, "positive_return_mean": None, "negative_return_mean": None, "gain_loss_ratio": None, "right_tail_pct": None, "left_tail_pct": None, "tail_asymmetry_score": None, "skew_quality_grade": "D"}
+    if len(rows) < 10:
+        return _null
+    rets = [_safe_float(r.get("next_day_return")) for r in rows]
+    rets = [v for v in rets if v is not None]
+    if len(rets) < 10:
+        return _null
+    n = len(rets)
+    mean_r = sum(rets) / n
+    variance = sum((r - mean_r) ** 2 for r in rets) / n
+    std_r = _math.sqrt(variance) if variance > 0 else 0.0
+    if std_r == 0.0:
+        skewness = 0.0
+        excess_kurtosis = 0.0
+    else:
+        skewness = round(sum((r - mean_r) ** 3 for r in rets) / n / (std_r ** 3), 8)
+        excess_kurtosis = round(sum((r - mean_r) ** 4 for r in rets) / n / (std_r ** 4) - 3.0, 8)
+    pos_rets = [r for r in rets if r > 0]
+    neg_rets = [r for r in rets if r < 0]
+    positive_return_mean = round(sum(pos_rets) / len(pos_rets), 8) if pos_rets else None
+    negative_return_mean = round(sum(neg_rets) / len(neg_rets), 8) if neg_rets else None
+    if positive_return_mean is None or negative_return_mean is None:
+        gain_loss_ratio = None
+    else:
+        gain_loss_ratio = round(abs(positive_return_mean) / (abs(negative_return_mean) + 0.001), 8)
+    right_tail_pct = round(sum(1 for r in rets if r > 2 * std_r) / n, 8)
+    left_tail_pct = round(sum(1 for r in rets if r < -2 * std_r) / n, 8)
+    tail_asymmetry_score = round(right_tail_pct - left_tail_pct, 8)
+    if skewness > 0.3 and gain_loss_ratio is not None and gain_loss_ratio > 1.2:
+        grade = "A"
+    elif skewness > 0 and gain_loss_ratio is not None and gain_loss_ratio > 1.0:
+        grade = "B"
+    elif skewness > -0.3:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"return_skew_quality_valid": True, "skewness": skewness, "excess_kurtosis": excess_kurtosis, "positive_return_mean": positive_return_mean, "negative_return_mean": negative_return_mean, "gain_loss_ratio": gain_loss_ratio, "right_tail_pct": right_tail_pct, "left_tail_pct": left_tail_pct, "tail_asymmetry_score": tail_asymmetry_score, "skew_quality_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 76, Task 2 (Beta): Factor orthogonality score
+# ---------------------------------------------------------------------------
+
+_FACTORS_R76 = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+
+
+def compute_factor_orthogonality_score(rows: list[dict]) -> dict:
+    """评估因子组合正交性（多样性），通过因子相关矩阵平均绝对相关性来衡量。
+
+    计算7个核心因子的所有C(7,2)=21对Pearson相关性，均值越低代表因子越独立。
+
+    Args:
+        rows: BTST candidate rows.
+
+    Returns:
+        Dict containing: ``factor_orthogonality_valid``, ``mean_abs_correlation``,
+        ``max_abs_correlation``, ``low_corr_pair_pct``, ``orthogonality_score``,
+        ``orthogonality_grade``.
+    """
+    import math as _math
+    _null: dict = {"factor_orthogonality_valid": False, "mean_abs_correlation": None, "max_abs_correlation": None, "low_corr_pair_pct": None, "orthogonality_score": None, "orthogonality_grade": "D"}
+    if len(rows) < 10:
+        return _null
+
+    def _pearson_r76(xs, ys):
+        n = len(xs)
+        if n < 5:
+            return None
+        mx = sum(xs) / n
+        my = sum(ys) / n
+        num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+        denom_x = sum((xs[i] - mx) ** 2 for i in range(n))
+        denom_y = sum((ys[i] - my) ** 2 for i in range(n))
+        denom = _math.sqrt(denom_x * denom_y)
+        if denom == 0.0:
+            return None
+        return num / denom
+
+    all_corrs: list[float] = []
+    total_pairs = 0
+    low_corr_pairs = 0
+    for i in range(7):
+        for j in range(i + 1, 7):
+            total_pairs += 1
+            fa = _FACTORS_R76[i]
+            fb = _FACTORS_R76[j]
+            va_list, vb_list = [], []
+            for r in rows:
+                va = _safe_float(r.get(fa))
+                vb = _safe_float(r.get(fb))
+                if va is not None and vb is not None:
+                    va_list.append(va)
+                    vb_list.append(vb)
+            corr = _pearson_r76(va_list, vb_list)
+            if corr is not None:
+                all_corrs.append(abs(corr))
+                if abs(corr) < 0.3:
+                    low_corr_pairs += 1
+    if not all_corrs:
+        return _null
+    mean_abs_correlation = round(sum(all_corrs) / len(all_corrs), 8)
+    max_abs_correlation = round(max(all_corrs), 8)
+    low_corr_pair_pct = round(low_corr_pairs / len(all_corrs), 8)
+    orthogonality_score = round(1.0 - mean_abs_correlation, 8)
+    if orthogonality_score > 0.75:
+        grade = "A"
+    elif orthogonality_score > 0.6:
+        grade = "B"
+    elif orthogonality_score > 0.5:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"factor_orthogonality_valid": True, "mean_abs_correlation": mean_abs_correlation, "max_abs_correlation": max_abs_correlation, "low_corr_pair_pct": low_corr_pair_pct, "orthogonality_score": orthogonality_score, "orthogonality_grade": grade}
