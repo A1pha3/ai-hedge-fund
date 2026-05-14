@@ -65,6 +65,9 @@ class ShortTradeTargetProfile:
     short_term_reversal_weight: float = 0.0
     intraday_strength_weight: float = 0.0
     reversal_2d_weight: float = 0.0
+    # Round 89: 翻转方向因子（IC=-0.34的反转因子取反，获得+0.34的趋势延续因子）
+    trend_continuation_weight: float = 0.0
+    trend_continuation_2d_weight: float = 0.0
     stale_penalty_block_threshold: float = 0.72
     overhead_penalty_block_threshold: float = 0.68
     extension_penalty_block_threshold: float = 0.74

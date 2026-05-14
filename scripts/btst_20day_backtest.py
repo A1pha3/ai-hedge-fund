@@ -291,10 +291,26 @@ def compute_factors(hist_group, trade_date_price):
         "intraday_strength": intraday_strength,
         "daily_return": daily_return,
         "vol_ratio": vol_ratio,
+        # === Round 89: 修正反转因子方向（IC=-0.34 → 翻转为正向趋势延续因子）===
+        # reversal IC=-0.34 意味着高反转（超卖）对应次日差表现，翻转后为正向信号
+        "trend_continuation": min(max(1.0 - reversal, 0), 1),
+        "trend_continuation_2d": min(max(1.0 - reversal_2d, 0), 1),
     }
 
 
-def summarize_return_stats(returns: pd.Series, *, big_win_threshold: float = 3.0) -> dict[str, float | None]:
+def summarize_return_stats(
+    returns: pd.Series,
+    *,
+    big_win_threshold: float = 3.0,
+    open_to_close_returns: pd.Series | None = None,
+    next_high_pcts: pd.Series | None = None,
+) -> dict[str, float | None]:
+    """汇总次日收益统计。
+    
+    Round 89 新增:
+    - open_to_close_returns: 次日开盘买入→收盘卖出收益（更准确的BTST成本基准）
+    - next_high_pcts: 次日最高点相对前收盘涨幅（宽标签：最高点能否触发2%止盈）
+    """
     values = pd.Series(returns, dtype=float).dropna()
     if values.empty:
         return {
@@ -306,6 +322,10 @@ def summarize_return_stats(returns: pd.Series, *, big_win_threshold: float = 3.0
             "payoff_ratio": None,
             "expectancy": 0.0,
             "downside_p10": 0.0,
+            "open_win_rate": None,
+            "open_avg_ret": None,
+            "high_win_rate_2pct": None,
+            "high_win_rate_3pct": None,
         }
 
     wins = values[values > 0]
@@ -320,6 +340,25 @@ def summarize_return_stats(returns: pd.Series, *, big_win_threshold: float = 3.0
         payoff_ratio = float(avg_win_ret / abs(avg_loss_ret))
     expectancy = float((win_rate * avg_win_ret) + ((1.0 - win_rate) * avg_loss_ret))
     downside_p10 = float(values.quantile(0.10))
+
+    # === Round 89 新增：开盘买入统计（真实BTST成本基准）===
+    open_win_rate: float | None = None
+    open_avg_ret: float | None = None
+    if open_to_close_returns is not None:
+        otc = pd.Series(open_to_close_returns, dtype=float).dropna()
+        if not otc.empty:
+            open_win_rate = float((otc > 0).mean())
+            open_avg_ret = float(otc.mean())
+
+    # === Round 89 新增：宽标签统计（次日最高点≥2%/3%）===
+    high_win_rate_2pct: float | None = None
+    high_win_rate_3pct: float | None = None
+    if next_high_pcts is not None:
+        nhp = pd.Series(next_high_pcts, dtype=float).dropna()
+        if not nhp.empty:
+            high_win_rate_2pct = float((nhp >= 2.0).mean())
+            high_win_rate_3pct = float((nhp >= 3.0).mean())
+
     return {
         "win_rate": win_rate,
         "avg_ret": avg_ret,
@@ -329,6 +368,10 @@ def summarize_return_stats(returns: pd.Series, *, big_win_threshold: float = 3.0
         "payoff_ratio": payoff_ratio,
         "expectancy": expectancy,
         "downside_p10": downside_p10,
+        "open_win_rate": open_win_rate,
+        "open_avg_ret": open_avg_ret,
+        "high_win_rate_2pct": high_win_rate_2pct,
+        "high_win_rate_3pct": high_win_rate_3pct,
     }
 
 
@@ -366,6 +409,11 @@ PROFILE_WEIGHT_FIELDS = {
     "reversal": "short_term_reversal_weight",
     "intraday_strength": "intraday_strength_weight",
     "reversal_2d": "reversal_2d_weight",
+    # === Round 89 新增：翻转方向的趋势延续因子 ===
+    # trend_continuation = 1 - reversal，IC方向从-0.34翻转为+0.34
+    # trend_continuation_2d = 1 - reversal_2d，消除2日反转误导
+    "trend_continuation": "trend_continuation_weight",
+    "trend_continuation_2d": "trend_continuation_2d_weight",
 }
 
 SUPPORTED_PROFILE_OVERRIDE_FIELDS = {
@@ -392,7 +440,7 @@ SUPPORTED_PROFILE_OVERRIDE_FIELDS = {
     "selected_close_retention_penalty_weight",
     *PROFILE_WEIGHT_FIELDS.values(),
 }
-DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "momentum_tuned", "btst_precision_v1", "btst_precision_v2", "btst_precision_v3", "ic_v3", "ic_v4", "ic_v5")
+DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "momentum_tuned", "btst_precision_v1", "btst_precision_v2", "btst_precision_v3", "ic_v3", "ic_v4", "ic_v5", "trend_corrected_v1")
 
 
 def _parse_profile_names(raw: str | None) -> tuple[str, ...]:
@@ -765,9 +813,24 @@ def main():
         df = df[~build_beijing_exchange_mask(df["ts_code"])]
         df = df[df["pct_chg"].between(-9.5, 9.5)]
 
-        # 获取次日收益
+        # 获取次日收益 + 开盘/最高价（Round 89：用于开盘买入基准和宽标签统计）
         try:
-            dfn = pro.daily(trade_date=next_date)[["ts_code", "pct_chg"]].rename(columns={"pct_chg": "next_ret"})
+            dfn_full = pro.daily(trade_date=next_date)[["ts_code", "pct_chg", "open", "close", "high", "pre_close"]]
+            # next_ret: 收盘→收盘（原始标签，保持兼容）
+            # open_to_close_ret: 次日开盘→次日收盘（BTST真实成本基准）
+            # next_high_pct: 次日最高价相对前收涨幅（宽标签上限）
+            dfn_full = dfn_full.rename(columns={"pct_chg": "next_ret"})
+            dfn_full["open_to_close_ret"] = np.where(
+                dfn_full["open"] > 0,
+                (dfn_full["close"] - dfn_full["open"]) / dfn_full["open"] * 100,
+                np.nan,
+            )
+            dfn_full["next_high_pct"] = np.where(
+                dfn_full["pre_close"] > 0,
+                (dfn_full["high"] - dfn_full["pre_close"]) / dfn_full["pre_close"] * 100,
+                np.nan,
+            )
+            dfn = dfn_full[["ts_code", "next_ret", "open_to_close_ret", "next_high_pct"]]
         except:
             continue
         df = df.merge(dfn, on="ts_code")
@@ -880,7 +943,14 @@ def main():
             for group_name, group_df in [("selected", sel), ("near_miss", nm)]:
                 if len(group_df) < 1:
                     continue
-                return_stats = summarize_return_stats(group_df["next_ret"])
+                # Round 89: 加入开盘买入收益和宽标签统计
+                otc_col = group_df["open_to_close_ret"] if "open_to_close_ret" in group_df.columns else None
+                nhp_col = group_df["next_high_pct"] if "next_high_pct" in group_df.columns else None
+                return_stats = summarize_return_stats(
+                    group_df["next_ret"],
+                    open_to_close_returns=otc_col,
+                    next_high_pcts=nhp_col,
+                )
                 tplus2_stats = summarize_horizon_return_stats(group_df["tplus2_ret"])
                 tplus3_stats = summarize_horizon_return_stats(group_df["tplus3_ret"])
                 all_daily[pname][group_name].append(
@@ -896,6 +966,11 @@ def main():
                         "payoff_ratio": return_stats["payoff_ratio"],
                         "expectancy": return_stats["expectancy"],
                         "downside_p10": return_stats["downside_p10"],
+                        # Round 89 新增指标
+                        "open_win_rate": return_stats.get("open_win_rate"),
+                        "open_avg_ret": return_stats.get("open_avg_ret"),
+                        "high_win_rate_2pct": return_stats.get("high_win_rate_2pct"),
+                        "high_win_rate_3pct": return_stats.get("high_win_rate_3pct"),
                         "tplus2_available_count": tplus2_stats["available_count"],
                         "tplus2_win_rate": tplus2_stats["win_rate"],
                         "tplus2_avg_ret": tplus2_stats["avg_ret"],
@@ -949,6 +1024,18 @@ def main():
             print(f"  {group}: {len(entries)}天有数据, 总计{total_n}只")
             payoff_text = f"{float(avg_payoff):.2f}" if avg_payoff is not None and np.isfinite(float(avg_payoff)) else "N/A"
             print(f"    日均胜率={avg_wr:.0%} 日均收益={avg_ret:+.2f}% 大涨率={avg_big:.0%} " f"赔率={payoff_text} 期望={avg_expectancy:+.2f}% 下行P10={avg_downside_p10:+.2f}% " f"正收益天数={n_days_positive}/{len(entries)}")
+            # Round 89: 显示开盘买入和宽标签统计
+            open_wr_vals = [float(e["open_win_rate"]) for e in entries if e.get("open_win_rate") is not None]
+            open_ret_vals = [float(e["open_avg_ret"]) for e in entries if e.get("open_avg_ret") is not None]
+            high2_vals = [float(e["high_win_rate_2pct"]) for e in entries if e.get("high_win_rate_2pct") is not None]
+            high3_vals = [float(e["high_win_rate_3pct"]) for e in entries if e.get("high_win_rate_3pct") is not None]
+            if open_wr_vals:
+                avg_open_wr = float(np.mean(open_wr_vals))
+                avg_open_ret = float(np.mean(open_ret_vals)) if open_ret_vals else 0.0
+                avg_high2 = float(np.mean(high2_vals)) if high2_vals else 0.0
+                avg_high3 = float(np.mean(high3_vals)) if high3_vals else 0.0
+                print(f"    [R89] 开盘买入胜率={avg_open_wr:.0%} 开盘收益={avg_open_ret:+.2f}% "
+                      f"最高≥2%胜率={avg_high2:.0%} 最高≥3%胜率={avg_high3:.0%}")
             tplus2_entries = [e for e in entries if int(e.get("tplus2_available_count", 0)) > 0]
             if tplus2_entries:
                 tplus2_avg_ret = float(np.mean([float(e.get("tplus2_avg_ret", 0.0)) for e in tplus2_entries]))

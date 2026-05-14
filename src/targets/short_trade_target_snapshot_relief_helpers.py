@@ -308,7 +308,18 @@ def _resolve_market_state_threshold_adjustment(
 
     adjusted_select_threshold = min(0.95, float(effective_select_threshold) + select_lift)
     adjusted_near_miss_threshold = min(adjusted_select_threshold, float(effective_near_miss_threshold) + near_miss_lift)
-    execution_hard_gate = risk_level in {"risk_off", "crisis"}
+
+    # Round 89 Task 3: 分级仓位 — 温和危机豁免执行封锁
+    # 数据支持: HALT 日 near_miss 股票胜率=56%(+2.31%); Breadth≥25% 危机日 near_miss 胜率=68%(+3.29%)
+    # Breadth≥25% 说明超过1/4股票上涨，不是真正的系统性崩溃，允许执行但保持危机仓位压缩(12%/5%)
+    # Breadth<25% 危机: 保持全封锁; risk_off: 仍封锁(历史数据不足，保守处理)
+    _MILD_CRISIS_BREADTH_THRESHOLD = 0.25
+    mild_crisis_override = (
+        risk_level == "crisis"
+        and breadth_ratio is not None
+        and breadth_ratio >= _MILD_CRISIS_BREADTH_THRESHOLD
+    )
+    execution_hard_gate = risk_level in {"risk_off", "crisis"} and not mild_crisis_override
     return _build_market_state_threshold_adjustment(
         enabled=select_lift > 0.0 or near_miss_lift > 0.0,
         risk_level=risk_level,

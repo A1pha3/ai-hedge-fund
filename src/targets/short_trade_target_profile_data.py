@@ -1274,3 +1274,127 @@ SHORT_TRADE_TARGET_PROFILES["btst_runner_probe"] = ShortTradeTargetProfile(
     runner_escape_projected_theme_exposure_max=0.28,
     runner_escape_candidate_pool_avg_amount_share_of_cutoff_min=1.0,
 )
+
+# ============================================================
+# Round 89 - trend_corrected_v1
+# 
+# 核心改进：修正反转因子方向性错误
+# 
+# 问题背景：
+#   - 短期反转因子（reversal）IC = -0.34（显著负向）
+#   - 但原有 profile 都用正权重（0.14-0.50），相当于奖励超卖/下跌股
+#   - normalize_weights 会将所有权重 clip 到 ≥0，负权重无效
+#   - 正确做法：用 trend_continuation = 1 - reversal（趋势延续）
+#     作为正向因子，IC 从 -0.34 翻转为 +0.34
+#
+# 设计思路：
+#   - 基于 ic_v5 基础（最优 walk_forward profile 之一）
+#   - 将 short_term_reversal_weight 归零
+#   - 将 reversal_2d_weight 归零  
+#   - 引入 trend_continuation_weight = 0.20（IC+0.34 强正向）
+#   - 引入 trend_continuation_2d_weight = 0.12（IC+0.20 中等正向）
+#   - 保留 intraday_strength_weight = 0.20（确认尾盘强度）
+#   - 适当提高 momentum_strength_weight（趋势延续强化）
+#
+# 预期：胜率从 0.537 → 0.56+，sharpe 从 0.92 → 1.1+
+# ============================================================
+SHORT_TRADE_TARGET_PROFILES["trend_corrected_v1"] = ShortTradeTargetProfile(
+    name="trend_corrected_v1",
+    select_threshold=0.46,
+    near_miss_threshold=0.34,
+    selected_rank_cap_ratio=0.14,
+    near_miss_rank_cap_ratio=0.28,
+    selected_rank_cap_relief_rank_buffer_ratio=0.003,
+    selected_rank_cap_relief_require_confirmed_breakout=True,
+    selected_rank_cap_relief_allow_risk_off=True,
+    selected_rank_cap_relief_allow_crisis=False,
+    # 核心因子权重（动量+突破优先，彻底放弃反转误导）
+    breakout_freshness_weight=0.12,           # 突破鲜度：IC最高，保留
+    trend_acceleration_weight=0.18,           # 趋势加速：IC第二，保留
+    volume_expansion_quality_weight=0.16,     # 量能扩张：IC正向，保留
+    close_strength_weight=0.08,               # 收盘强度：正向，适当降低
+    momentum_strength_weight=0.10,            # 动量强度：增加
+    catalyst_freshness_weight=0.10,           # 催化鲜度：保留
+    layer_c_alignment_weight=0.16,            # LLM共识：保留
+    sector_resonance_weight=0.03,             # 板块共振：保留少量
+    historical_continuation_score_weight=0.0,
+    # === 核心修正：反转因子归零，改用翻转后的趋势延续因子 ===
+    short_term_reversal_weight=0.0,           # 原IC=-0.34正向权重 → 归零！
+    reversal_2d_weight=0.0,                   # 2日反转因子 → 归零！
+    intraday_strength_weight=0.20,            # 盘内强度（尾盘买入确认）
+    trend_continuation_weight=0.20,           # 1-reversal，IC=+0.34 ← 核心新增
+    trend_continuation_2d_weight=0.12,        # 1-reversal_2d，IC=+0.20 ← 新增
+    # 质量门槛（与 ic_v5 保持一致）
+    selected_breakout_freshness_min=0.10,
+    selected_trend_acceleration_min=0.16,
+    near_miss_breakout_freshness_min=0.0,
+    near_miss_trend_acceleration_min=0.0,
+    # 惩罚系数
+    stale_score_penalty_weight=0.06,
+    overhead_score_penalty_weight=0.05,
+    extension_score_penalty_weight=0.04,
+    layer_c_avoid_penalty=0.06,
+    stale_penalty_block_threshold=0.82,
+    overhead_penalty_block_threshold=0.78,
+    extension_penalty_block_threshold=0.84,
+    # 救援逻辑
+    profitability_relief_enabled=True,
+    profitability_relief_breakout_freshness_min=0.12,
+    profitability_relief_catalyst_freshness_min=0.18,
+    profitability_relief_sector_resonance_min=0.18,
+    profitability_relief_avoid_penalty=0.03,
+    profitability_hard_cliff_boundary_relief_enabled=True,
+    profitability_hard_cliff_boundary_relief_breakout_freshness_min=0.12,
+    profitability_hard_cliff_boundary_relief_trend_acceleration_min=0.28,
+    profitability_hard_cliff_boundary_relief_catalyst_freshness_min=0.05,
+    profitability_hard_cliff_boundary_relief_sector_resonance_min=0.05,
+    profitability_hard_cliff_boundary_relief_close_strength_min=0.28,
+    profitability_hard_cliff_boundary_relief_stale_penalty_max=0.60,
+    profitability_hard_cliff_boundary_relief_extension_penalty_max=0.60,
+    profitability_hard_cliff_boundary_relief_near_miss_threshold=0.22,
+    prepared_breakout_penalty_relief_enabled=True,
+    prepared_breakout_catalyst_relief_enabled=True,
+    prepared_breakout_volume_relief_enabled=True,
+    prepared_breakout_continuation_relief_enabled=True,
+    prepared_breakout_selected_catalyst_relief_enabled=True,
+    visibility_gap_continuation_relief_enabled=True,
+    visibility_gap_continuation_breakout_freshness_min=0.10,
+    visibility_gap_continuation_trend_acceleration_min=0.32,
+    visibility_gap_continuation_close_strength_min=0.48,
+    visibility_gap_continuation_catalyst_freshness_floor=0.14,
+    visibility_gap_continuation_near_miss_threshold=0.24,
+    visibility_gap_continuation_require_relaxed_band=True,
+    merge_approved_continuation_relief_enabled=True,
+    merge_approved_continuation_select_threshold=0.34,
+    merge_approved_continuation_near_miss_threshold=0.26,
+    merge_approved_continuation_breakout_freshness_min=0.08,
+    merge_approved_continuation_trend_acceleration_min=0.14,
+    merge_approved_continuation_close_strength_min=0.32,
+    merge_approved_continuation_require_no_profitability_hard_cliff=True,
+    historical_execution_relief_near_miss_threshold=0.24,
+    historical_execution_relief_select_threshold=0.30,
+    historical_execution_relief_strong_close_continuation_select_threshold=0.28,
+    historical_execution_relief_allow_strong_close_continuation_without_profitability_hard_cliff=True,
+    hard_block_bearish_conflicts=frozenset({"b_strong_buy_c_negative"}),
+    overhead_conflict_penalty_conflicts=frozenset({"b_positive_c_strong_bearish", "b_strong_buy_c_negative"}),
+)
+
+# ============================================================
+# Round 89 Task 2: trend_continuation 权重网格变体
+# 基于 trend_corrected_v1，系统搜索最优 tc_w × tc2d_w 组合
+# 共 18 个变体（6 × 3），覆盖 tc_w=[0.10,0.15,0.20,0.25,0.30,0.35]
+#                                tc2d_w=[0.08,0.14,0.20]
+# ============================================================
+_TC_BASE = SHORT_TRADE_TARGET_PROFILES["trend_corrected_v1"]
+
+for _tc_w in [0.10, 0.15, 0.20, 0.25, 0.30, 0.35]:
+    for _tc2d_w in [0.08, 0.14, 0.20]:
+        _pname = f"tcg_{_tc_w:.2f}_{_tc2d_w:.2f}"
+        SHORT_TRADE_TARGET_PROFILES[_pname] = replace(
+            _TC_BASE,
+            name=_pname,
+            trend_continuation_weight=_tc_w,
+            trend_continuation_2d_weight=_tc2d_w,
+        )
+
+del _TC_BASE, _tc_w, _tc2d_w, _pname
