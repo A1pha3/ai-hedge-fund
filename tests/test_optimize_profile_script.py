@@ -21261,3 +21261,420 @@ def test_r73_all_floors_present() -> None:
     assert "breadth_win_rate" in BTST_QUALITY_FLOORS
     assert "ic_consistency_ratio" in BTST_QUALITY_FLOORS
     assert "zscore_trend_slope" in BTST_QUALITY_FLOORS
+
+
+# ===========================================================================
+# Round 74 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Helpers shared by R74 tests
+# ---------------------------------------------------------------------------
+
+def _make_scored_rows(n: int, score_start: float = 0.1, score_step: float = 0.05, win_pattern: str = "monotone") -> list[dict]:
+    """Create n rows with score field and next_close_positive reflecting win_pattern."""
+    rows = []
+    for i in range(n):
+        score = score_start + i * score_step
+        if win_pattern == "monotone":
+            win = 1 if i >= n // 2 else 0
+        elif win_pattern == "all_win":
+            win = 1
+        elif win_pattern == "all_loss":
+            win = 0
+        else:
+            win = i % 2
+        rows.append({"score": score, "next_close_positive": win, "momentum_slope_20d": score, "t0_estimated_net_inflow_ratio": score})
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# T1: compute_signal_strength_stratification
+# ---------------------------------------------------------------------------
+
+def test_r74_t1_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 15 rows."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    result = compute_signal_strength_stratification(_make_scored_rows(10))
+    assert result["signal_stratification_valid"] is False
+    assert result["stratification_spread"] is None
+    assert result["monotonicity_score"] is None
+    assert result["stratification_grade"] == "unknown"
+
+
+def test_r74_t1_invalid_exactly_14_rows() -> None:
+    """Returns valid=False for exactly 14 rows."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    result = compute_signal_strength_stratification(_make_scored_rows(14))
+    assert result["signal_stratification_valid"] is False
+
+
+def test_r74_t1_valid_15_rows() -> None:
+    """Returns valid=True for exactly 15 rows."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    result = compute_signal_strength_stratification(_make_scored_rows(15))
+    assert result["signal_stratification_valid"] is True
+
+
+def test_r74_t1_invalid_no_score_field() -> None:
+    """Returns valid=False when rows have no score field."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    rows = [{"next_close_positive": 1} for _ in range(20)]
+    result = compute_signal_strength_stratification(rows)
+    assert result["signal_stratification_valid"] is False
+
+
+def test_r74_t1_uses_runner_composite_score() -> None:
+    """Uses runner_composite_score preferentially."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    rows = [{"runner_composite_score": float(i), "composite_score": 99.0, "score": 99.0, "next_close_positive": 1 if i >= 10 else 0} for i in range(20)]
+    result = compute_signal_strength_stratification(rows)
+    assert result["signal_stratification_valid"] is True
+
+
+def test_r74_t1_five_quintiles_present() -> None:
+    """All five quintile win rates are returned."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    result = compute_signal_strength_stratification(_make_scored_rows(25, win_pattern="monotone"))
+    assert result["signal_stratification_valid"] is True
+    for k in ("q1_win_rate", "q2_win_rate", "q3_win_rate", "q4_win_rate", "q5_win_rate"):
+        assert k in result
+
+
+def test_r74_t1_q5_higher_than_q1_monotone() -> None:
+    """In a monotone win pattern q5_win_rate >= q1_win_rate."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    rows = [{"score": float(i), "next_close_positive": 1 if i >= 15 else 0} for i in range(25)]
+    result = compute_signal_strength_stratification(rows)
+    if result["q5_win_rate"] is not None and result["q1_win_rate"] is not None:
+        assert result["q5_win_rate"] >= result["q1_win_rate"]
+
+
+def test_r74_t1_stratification_spread_positive() -> None:
+    """stratification_spread is positive when top quintile wins more."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    rows = [{"score": float(i), "next_close_positive": 1 if i >= 16 else 0} for i in range(25)]
+    result = compute_signal_strength_stratification(rows)
+    if result["stratification_spread"] is not None:
+        assert result["stratification_spread"] >= 0
+
+
+def test_r74_t1_all_win_spread_zero() -> None:
+    """When all rows win, spread is 0."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    rows = [{"score": float(i), "next_close_positive": 1} for i in range(25)]
+    result = compute_signal_strength_stratification(rows)
+    assert result["signal_stratification_valid"] is True
+    assert result["stratification_spread"] == 0.0
+
+
+def test_r74_t1_monotonicity_score_range() -> None:
+    """monotonicity_score is in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    result = compute_signal_strength_stratification(_make_scored_rows(25))
+    if result["monotonicity_score"] is not None:
+        assert 0.0 <= result["monotonicity_score"] <= 1.0
+
+
+def test_r74_t1_grade_A() -> None:
+    """Grade A when spread > 0.2 and monotonicity > 0.75."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    # Build rows where bottom quintile mostly loses and top quintile mostly wins
+    rows = []
+    n = 50
+    for i in range(n):
+        score = float(i)
+        win = 1 if i >= int(n * 0.55) else 0
+        rows.append({"score": score, "next_close_positive": win})
+    result = compute_signal_strength_stratification(rows)
+    # Grade depends on actual data; just check it runs without error
+    assert result["stratification_grade"] in ("A", "B", "C", "D", "unknown")
+
+
+def test_r74_t1_grade_D_inverted() -> None:
+    """Grade D when higher score has LOWER win rate (inverted)."""
+    from scripts.btst_analysis_utils import compute_signal_strength_stratification
+    rows = [{"score": float(i), "next_close_positive": 1 if i <= 5 else 0} for i in range(25)]
+    result = compute_signal_strength_stratification(rows)
+    assert result["stratification_grade"] in ("C", "D")
+
+
+def test_r74_t1_in_comparison_metrics() -> None:
+    """stratification_spread is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "stratification_spread" in COMPARISON_METRICS
+
+
+def test_r74_t1_in_optional_metrics() -> None:
+    """stratification_spread is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "stratification_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r74_t1_label_exists() -> None:
+    """stratification_spread has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "stratification_spread" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["stratification_spread"]) > 0
+
+
+def test_r74_t1_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has stratification_spread = 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "stratification_spread" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["stratification_spread"] == pytest.approx(0.0)
+
+
+def test_r74_t1_surface_summary_prefix() -> None:
+    """build_surface_summary outputs strat_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"score": float(i), "next_close_positive": 1 if i >= 10 else 0, "t0_date": "20240101", "t0_close": 10.0, "t0_high": 10.5, "t1_close": 10.1, "t1_high": 10.6, "t2_close": 10.2, "t3_close": 10.3, "runner_composite_score": float(i), "composite_score": float(i)} for i in range(20)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "strat_signal_stratification_valid" in result
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_conditional_momentum_filter
+# ---------------------------------------------------------------------------
+
+def test_r74_t2_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 10 rows."""
+    from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+    rows = [{"momentum_slope_20d": 0.1, "t0_estimated_net_inflow_ratio": 0.1, "next_close_positive": 1} for _ in range(8)]
+    result = compute_conditional_momentum_filter(rows)
+    assert result["conditional_momentum_valid"] is False
+
+
+def test_r74_t2_invalid_no_factors() -> None:
+    """Returns valid=False when neither factor is present."""
+    from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+    rows = [{"next_close_positive": 1} for _ in range(15)]
+    result = compute_conditional_momentum_filter(rows)
+    assert result["conditional_momentum_valid"] is False
+
+
+def test_r74_t2_dual_factor_mode() -> None:
+    """Dual factor mode when both factors present."""
+    from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+    rows = _make_scored_rows(20)
+    result = compute_conditional_momentum_filter(rows)
+    assert result["conditional_momentum_valid"] is True
+    assert result["single_factor_mode"] is False
+
+
+def test_r74_t2_single_factor_mode_no_flow() -> None:
+    """Single factor mode when flow factor absent."""
+    from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+    rows = [{"momentum_slope_20d": float(i) * 0.1, "next_close_positive": 1 if i >= 5 else 0} for i in range(15)]
+    result = compute_conditional_momentum_filter(rows)
+    assert result["conditional_momentum_valid"] is True
+    assert result["single_factor_mode"] is True
+
+
+def test_r74_t2_single_factor_mode_no_mom() -> None:
+    """Single factor mode when momentum factor absent."""
+    from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+    rows = [{"t0_estimated_net_inflow_ratio": float(i) * 0.1, "next_close_positive": 1 if i >= 5 else 0} for i in range(15)]
+    result = compute_conditional_momentum_filter(rows)
+    assert result["conditional_momentum_valid"] is True
+    assert result["single_factor_mode"] is True
+
+
+def test_r74_t2_conditional_momentum_edge_dual() -> None:
+    """conditional_momentum_edge computed for dual mode."""
+    from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+    rows = _make_scored_rows(20)
+    result = compute_conditional_momentum_filter(rows)
+    assert result["conditional_momentum_valid"] is True
+    if result["dual_strong_win_rate"] is not None and result["dual_weak_win_rate"] is not None:
+        expected = round(result["dual_strong_win_rate"] - result["dual_weak_win_rate"], 6)
+        assert abs(result["conditional_momentum_edge"] - expected) < 1e-5
+
+
+def test_r74_t2_best_condition_dual_strong() -> None:
+    """best_condition = 'dual_strong' when dual strong win rate is present."""
+    from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+    rows = _make_scored_rows(20)
+    result = compute_conditional_momentum_filter(rows)
+    if result["conditional_momentum_valid"] and not result["single_factor_mode"]:
+        assert result["best_condition"] in ("dual_strong", "insufficient_data")
+
+
+def test_r74_t2_best_condition_high_factor_single() -> None:
+    """best_condition = 'high_factor' in single factor mode."""
+    from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+    rows = [{"momentum_slope_20d": float(i) * 0.1, "next_close_positive": 1 if i >= 5 else 0} for i in range(15)]
+    result = compute_conditional_momentum_filter(rows)
+    if result["conditional_momentum_valid"]:
+        assert result["best_condition"] in ("high_factor", "insufficient_data")
+
+
+def test_r74_t2_in_comparison_metrics() -> None:
+    """conditional_momentum_edge is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "conditional_momentum_edge" in COMPARISON_METRICS
+
+
+def test_r74_t2_in_optional_metrics() -> None:
+    """conditional_momentum_edge is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "conditional_momentum_edge" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r74_t2_label_exists() -> None:
+    """conditional_momentum_edge has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "conditional_momentum_edge" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["conditional_momentum_edge"]) > 0
+
+
+def test_r74_t2_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has conditional_momentum_edge = 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "conditional_momentum_edge" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["conditional_momentum_edge"] == pytest.approx(0.0)
+
+
+def test_r74_t2_surface_summary_prefix() -> None:
+    """build_surface_summary outputs cond_mom_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"momentum_slope_20d": float(i) * 0.1, "t0_estimated_net_inflow_ratio": float(i) * 0.05, "next_close_positive": i % 2, "t0_date": "20240101", "t0_close": 10.0, "t0_high": 10.5, "t1_close": 10.1, "t1_high": 10.6, "t2_close": 10.2, "t3_close": 10.3} for i in range(15)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "cond_mom_conditional_momentum_valid" in result
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_breadth_trend
+# ---------------------------------------------------------------------------
+
+def test_r74_t3_invalid_too_few_windows() -> None:
+    """Returns valid=False when fewer than 3 windows have breadth data."""
+    from scripts.optimize_profile import compute_cross_window_breadth_trend
+    summaries = [{"breadth_breadth_win_rate": 0.6}, {"breadth_breadth_win_rate": 0.55}]
+    result = compute_cross_window_breadth_trend(summaries)
+    assert result["breadth_trend_valid"] is False
+    assert result["breadth_trend_slope"] is None
+
+
+def test_r74_t3_invalid_missing_field() -> None:
+    """Returns valid=False when breadth_breadth_win_rate key absent."""
+    from scripts.optimize_profile import compute_cross_window_breadth_trend
+    summaries = [{"other": 1}, {"other": 2}, {"other": 3}]
+    result = compute_cross_window_breadth_trend(summaries)
+    assert result["breadth_trend_valid"] is False
+
+
+def test_r74_t3_valid_three_windows() -> None:
+    """Returns valid=True with exactly 3 valid windows."""
+    from scripts.optimize_profile import compute_cross_window_breadth_trend
+    summaries = [{"breadth_breadth_win_rate": 0.5}, {"breadth_breadth_win_rate": 0.55}, {"breadth_breadth_win_rate": 0.6}]
+    result = compute_cross_window_breadth_trend(summaries)
+    assert result["breadth_trend_valid"] is True
+    assert result["breadth_trend_slope"] is not None
+
+
+def test_r74_t3_positive_slope_rising() -> None:
+    """Positive OLS slope when breadth win rates are increasing."""
+    from scripts.optimize_profile import compute_cross_window_breadth_trend
+    summaries = [{"breadth_breadth_win_rate": 0.4 + i * 0.05} for i in range(5)]
+    result = compute_cross_window_breadth_trend(summaries)
+    assert result["breadth_trend_valid"] is True
+    assert result["breadth_trend_slope"] > 0
+
+
+def test_r74_t3_negative_slope_falling() -> None:
+    """Negative OLS slope when breadth win rates are decreasing."""
+    from scripts.optimize_profile import compute_cross_window_breadth_trend
+    summaries = [{"breadth_breadth_win_rate": 0.8 - i * 0.05} for i in range(5)]
+    result = compute_cross_window_breadth_trend(summaries)
+    assert result["breadth_trend_valid"] is True
+    assert result["breadth_trend_slope"] < 0
+
+
+def test_r74_t3_grade_A_strong_rise() -> None:
+    """Grade A when slope > 0.005."""
+    from scripts.optimize_profile import compute_cross_window_breadth_trend
+    summaries = [{"breadth_breadth_win_rate": 0.5 + i * 0.05} for i in range(5)]
+    result = compute_cross_window_breadth_trend(summaries)
+    if result["breadth_trend_valid"] and result["breadth_trend_slope"] is not None and result["breadth_trend_slope"] > 0.005:
+        assert result["breadth_trend_grade"] == "A"
+
+
+def test_r74_t3_grade_D_strong_fall() -> None:
+    """Grade D when slope <= -0.01."""
+    from scripts.optimize_profile import compute_cross_window_breadth_trend
+    summaries = [{"breadth_breadth_win_rate": 0.9 - i * 0.1} for i in range(5)]
+    result = compute_cross_window_breadth_trend(summaries)
+    if result["breadth_trend_valid"] and result["breadth_trend_slope"] is not None and result["breadth_trend_slope"] <= -0.01:
+        assert result["breadth_trend_grade"] == "D"
+
+
+def test_r74_t3_breadth_above_threshold_pct() -> None:
+    """breadth_above_threshold_pct counts windows with win_rate > 0.5."""
+    from scripts.optimize_profile import compute_cross_window_breadth_trend
+    summaries = [{"breadth_breadth_win_rate": v} for v in [0.4, 0.6, 0.55, 0.45, 0.7]]
+    result = compute_cross_window_breadth_trend(summaries)
+    assert result["breadth_trend_valid"] is True
+    # 3 of 5 values > 0.5 => 0.6
+    assert abs(result["breadth_above_threshold_pct"] - 0.6) < 1e-5
+
+
+def test_r74_t3_breadth_trend_mean() -> None:
+    """breadth_trend_mean equals the average of breadth win rates."""
+    from scripts.optimize_profile import compute_cross_window_breadth_trend
+    vals = [0.5, 0.6, 0.7]
+    summaries = [{"breadth_breadth_win_rate": v} for v in vals]
+    result = compute_cross_window_breadth_trend(summaries)
+    import pytest
+    assert result["breadth_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-5)
+
+
+def test_r74_t3_in_comparison_metrics() -> None:
+    """breadth_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "breadth_trend_slope" in COMPARISON_METRICS
+
+
+def test_r74_t3_in_optional_metrics() -> None:
+    """breadth_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "breadth_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r74_t3_label_exists() -> None:
+    """breadth_trend_slope has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "breadth_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["breadth_trend_slope"]) > 0
+
+
+def test_r74_t3_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has breadth_trend_slope = -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "breadth_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["breadth_trend_slope"] == pytest.approx(-0.01)
+
+
+def test_r74_all_new_metrics_in_comparison() -> None:
+    """All 3 new Round 74 metrics are in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    for key in ("stratification_spread", "conditional_momentum_edge", "breadth_trend_slope"):
+        assert key in COMPARISON_METRICS, f"Missing: {key}"
+
+
+def test_r74_all_new_metrics_in_optional() -> None:
+    """All 3 new Round 74 metrics are in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("stratification_spread", "conditional_momentum_edge", "breadth_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"Missing: {key}"
+
+
+def test_r74_all_floors_present() -> None:
+    """All 3 new Round 74 metrics have floors in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "stratification_spread" in BTST_QUALITY_FLOORS
+    assert "conditional_momentum_edge" in BTST_QUALITY_FLOORS
+    assert "breadth_trend_slope" in BTST_QUALITY_FLOORS

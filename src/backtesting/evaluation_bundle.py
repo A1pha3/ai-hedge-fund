@@ -608,6 +608,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 73, Gamma): Z-score win-spread cross-window trend slope floor.
     # zscore_trend_slope < -0.01 means multi-factor Z-score discriminatory power is declining across windows.
     "zscore_trend_slope": -0.01,
+    # Task 1 (Round 74, Alpha): signal strength stratification spread floor.
+    # stratification_spread < 0.0 means the highest-score quintile does NOT outperform the lowest-score quintile.
+    "stratification_spread": 0.0,
+    # Task 2 (Round 74, Beta): conditional momentum synergy edge floor.
+    # conditional_momentum_edge < 0.0 means dual-strong (high momentum + high flow) fails to beat dual-weak.
+    "conditional_momentum_edge": 0.0,
+    # Task 3 (Round 74, Gamma): market breadth win-rate cross-window trend slope floor.
+    # breadth_trend_slope < -0.01 means market breadth quality is declining across walk-forward windows.
+    "breadth_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------

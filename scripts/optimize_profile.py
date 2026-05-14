@@ -490,6 +490,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "ic_consistency_ratio",
     # Task 3 (Round 73, Gamma): cross-window Z-score win-spread OLS trend slope.
     "zscore_trend_slope",
+    # Task 1 (Round 74, Alpha): signal strength stratification spread (Q5−Q1 win-rate).
+    "stratification_spread",
+    # Task 2 (Round 74, Beta): conditional momentum synergy edge (dual-strong vs dual-weak).
+    "conditional_momentum_edge",
+    # Task 3 (Round 74, Gamma): market breadth win-rate cross-window OLS trend slope.
+    "breadth_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -868,6 +874,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "ic_consistency_ratio": "因子IC一致性比",
     # Task 3 (Round 73, Gamma): Z综合分组跨窗趋势
     "zscore_trend_slope": "Z综合分组跨窗趋势",
+    # Task 1 (Round 74, Alpha): 信号强度分层胜率差
+    "stratification_spread": "信号强度分层胜率差",
+    # Task 2 (Round 74, Beta): 条件动量协同优势
+    "conditional_momentum_edge": "条件动量协同优势",
+    # Task 3 (Round 74, Gamma): 市场宽度跨窗趋势
+    "breadth_trend_slope": "市场宽度跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1318,6 +1330,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "ic_consistency_ratio",
     # Task 3 (Round 73, Gamma): Z-score win-spread cross-window trend slope — optional; pre-Round-73 outputs omit it.
     "zscore_trend_slope",
+    # Task 1 (Round 74, Alpha): signal strength stratification spread — optional; pre-Round-74 outputs omit it.
+    "stratification_spread",
+    # Task 2 (Round 74, Beta): conditional momentum synergy edge — optional; pre-Round-74 outputs omit it.
+    "conditional_momentum_edge",
+    # Task 3 (Round 74, Gamma): market breadth win-rate cross-window trend slope — optional; pre-Round-74 outputs omit it.
+    "breadth_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3978,6 +3996,54 @@ def compute_cross_window_zscore_trend(all_windows_summaries: list[dict]) -> dict
     return {"zscore_trend_valid": True, "zscore_trend_slope": round(slope, 8), "zscore_trend_mean": round(mean_v, 6), "zscore_positive_windows_pct": zscore_positive_windows_pct, "zscore_trend_grade": grade}
 
 
+# ---------------------------------------------------------------------------
+# Round 74, Task 3 (Gamma): Cross-window market breadth win-rate trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_breadth_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪市场宽度胜率（breadth_win_rate）趋势。
+
+    从各窗口 summary 收集 ``breadth_breadth_win_rate``（Round 73 T1 的输出），需≥3个有效值（非None）。
+
+    Returns:
+        - ``breadth_trend_slope``: OLS 斜率
+        - ``breadth_trend_mean``: 均值
+        - ``breadth_above_threshold_pct``: breadth_win_rate > 0.5 的窗口占比
+        - ``breadth_trend_grade``: A/B/C/D
+        - ``breadth_trend_valid``: bool
+    """
+    _null: dict = {"breadth_trend_valid": False, "breadth_trend_slope": None, "breadth_trend_mean": None, "breadth_above_threshold_pct": None, "breadth_trend_grade": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("breadth_breadth_win_rate")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    breadth_above_threshold_pct = round(sum(1 for v in vals if v > 0.5) / n, 6)
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"breadth_trend_valid": True, "breadth_trend_slope": round(slope, 8), "breadth_trend_mean": round(mean_v, 6), "breadth_above_threshold_pct": breadth_above_threshold_pct, "breadth_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4750,6 +4816,14 @@ def _build_replay_evaluator(
         avg_ic_consistency_ratio: "float | None" = round(sum(_ic_stab_cr_vals) / len(_ic_stab_cr_vals), 6) if _ic_stab_cr_vals else None
         # Task 3 (Round 73, Gamma): cross-window Z-score win-spread trend.
         _cwzt: dict[str, Any] = compute_cross_window_zscore_trend(all_primary_surfaces)
+        # Task 3 (Round 74, Gamma): cross-window market breadth win-rate trend.
+        _cwbt: dict[str, Any] = compute_cross_window_breadth_trend(all_primary_surfaces)
+        # Task 1 (Round 74, Alpha): average strat_stratification_spread across replay windows.
+        _strat_ss_vals = [float(s["strat_stratification_spread"]) for s in all_primary_surfaces if s.get("strat_stratification_spread") is not None]
+        avg_stratification_spread: "float | None" = round(sum(_strat_ss_vals) / len(_strat_ss_vals), 6) if _strat_ss_vals else None
+        # Task 2 (Round 74, Beta): average cond_mom_conditional_momentum_edge across replay windows.
+        _cme_vals = [float(s["cond_mom_conditional_momentum_edge"]) for s in all_primary_surfaces if s.get("cond_mom_conditional_momentum_edge") is not None]
+        avg_conditional_momentum_edge: "float | None" = round(sum(_cme_vals) / len(_cme_vals), 6) if _cme_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -5241,6 +5315,16 @@ def _build_replay_evaluator(
                 "zscore_positive_windows_pct": _cwzt.get("zscore_positive_windows_pct"),
                 "zscore_trend_grade": _cwzt.get("zscore_trend_grade"),
                 "zscore_trend_valid": _cwzt.get("zscore_trend_valid"),
+                # Task 1 (Round 74, Alpha): signal strength stratification spread averaged across windows.
+                "stratification_spread": avg_stratification_spread,
+                # Task 2 (Round 74, Beta): conditional momentum edge averaged across windows.
+                "conditional_momentum_edge": avg_conditional_momentum_edge,
+                # Task 3 (Round 74, Gamma): cross-window market breadth win-rate trend.
+                "breadth_trend_slope": _cwbt.get("breadth_trend_slope"),
+                "breadth_trend_mean": _cwbt.get("breadth_trend_mean"),
+                "breadth_above_threshold_pct": _cwbt.get("breadth_above_threshold_pct"),
+                "breadth_trend_grade": _cwbt.get("breadth_trend_grade"),
+                "breadth_trend_valid": _cwbt.get("breadth_trend_valid"),
         }
 
     return evaluator

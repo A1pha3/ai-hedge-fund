@@ -4601,6 +4601,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _fiss.items():
         _surface_result[f"ic_stab_{_k}"] = _v
 
+    # Round 74, Task 1 (Alpha): Signal strength stratification.
+    _sss: dict = compute_signal_strength_stratification(rows)
+    for _k, _v in _sss.items():
+        _surface_result[f"strat_{_k}"] = _v
+
+    # Round 74, Task 2 (Beta): Conditional momentum filter.
+    _cmf: dict = compute_conditional_momentum_filter(rows)
+    for _k, _v in _cmf.items():
+        _surface_result[f"cond_mom_{_k}"] = _v
+
     return _surface_result
 
 
@@ -13261,3 +13271,145 @@ def compute_factor_ic_stability_score(rows: list[dict]) -> dict:
     for f in _FACTORS_R73:
         result[f"half_ic_{f}"] = half_ics.get(f)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Round 74, Task 1 (Alpha): Signal strength stratification (five-quantile win-rate monotonicity)
+# ---------------------------------------------------------------------------
+
+
+def compute_signal_strength_stratification(rows: list[dict]) -> dict:
+    """按综合信号强度做5层分组，分析信号强度与胜率的单调递增关系。
+
+    Args:
+        rows: BTST candidate rows. Fields used: ``runner_composite_score`` / ``composite_score`` / ``score``
+              and ``next_close_positive`` (1=win, 0=loss).
+
+    Returns:
+        Dict containing: ``signal_stratification_valid``, ``q1_win_rate`` ~ ``q5_win_rate``,
+        ``stratification_spread``, ``monotonicity_score``, ``stratification_grade``.
+    """
+    _null: dict = {"signal_stratification_valid": False, "q1_win_rate": None, "q2_win_rate": None, "q3_win_rate": None, "q4_win_rate": None, "q5_win_rate": None, "stratification_spread": None, "monotonicity_score": None, "stratification_grade": "unknown"}
+    if len(rows) < 15:
+        return _null
+    scored_rows = []
+    for r in rows:
+        sv = r.get("runner_composite_score")
+        if sv is None:
+            sv = r.get("composite_score")
+        if sv is None:
+            sv = r.get("score")
+        if sv is None:
+            continue
+        try:
+            scored_rows.append((float(sv), r))
+        except (TypeError, ValueError):
+            pass
+    if len(scored_rows) < 15:
+        return _null
+    scored_rows.sort(key=lambda x: x[0])
+    n = len(scored_rows)
+    groups = [scored_rows[i * n // 5:(i + 1) * n // 5] for i in range(5)]
+    qwr: list = []
+    for g in groups:
+        if len(g) < 2:
+            qwr.append(None)
+            continue
+        wins = sum(1 for _, r in g if r.get("next_close_positive") == 1 or r.get("next_close_positive") is True)
+        qwr.append(round(wins / len(g), 6))
+    q1_wr, q2_wr, q3_wr, q4_wr, q5_wr = qwr[0], qwr[1], qwr[2], qwr[3], qwr[4]
+    spread = round(q5_wr - q1_wr, 6) if q5_wr is not None and q1_wr is not None else None
+    pairs = [(q1_wr, q2_wr), (q2_wr, q3_wr), (q3_wr, q4_wr), (q4_wr, q5_wr)]
+    valid_pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
+    if not valid_pairs:
+        mono = None
+    else:
+        mono = round(sum(1 for a, b in valid_pairs if b > a) / len(valid_pairs), 6)
+    if spread is None or mono is None:
+        grade = "unknown"
+    elif spread > 0.2 and mono > 0.75:
+        grade = "A"
+    elif spread > 0.1 or mono > 0.75:
+        grade = "B"
+    elif spread > 0:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"signal_stratification_valid": True, "q1_win_rate": q1_wr, "q2_win_rate": q2_wr, "q3_win_rate": q3_wr, "q4_win_rate": q4_wr, "q5_win_rate": q5_wr, "stratification_spread": spread, "monotonicity_score": mono, "stratification_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 74, Task 2 (Beta): Conditional momentum filter (momentum × fund-flow synergy)
+# ---------------------------------------------------------------------------
+
+
+def compute_conditional_momentum_filter(rows: list[dict]) -> dict:
+    """在动量信号和资金流向均强时分析协同胜率提升。
+
+    双因子: ``momentum_slope_20d`` × ``t0_estimated_net_inflow_ratio``。
+
+    Args:
+        rows: BTST candidate rows.
+
+    Returns:
+        Dict containing: ``conditional_momentum_valid``, ``single_factor_mode``,
+        ``dual_strong_win_rate``, ``dual_weak_win_rate``, ``conditional_momentum_edge``,
+        ``best_condition``.
+    """
+    _null: dict = {"conditional_momentum_valid": False, "single_factor_mode": None, "dual_strong_win_rate": None, "dual_weak_win_rate": None, "high_factor_win_rate": None, "low_factor_win_rate": None, "conditional_momentum_edge": None, "best_condition": "insufficient_data"}
+    if len(rows) < 10:
+        return _null
+    mom_key = "momentum_slope_20d"
+    flow_key = "t0_estimated_net_inflow_ratio"
+    mom_vals = [(r, float(r[mom_key])) for r in rows if r.get(mom_key) is not None and _safe_float(r.get(mom_key)) is not None]
+    flow_vals = [(r, float(r[flow_key])) for r in rows if r.get(flow_key) is not None and _safe_float(r.get(flow_key)) is not None]
+    has_mom = len(mom_vals) >= 5
+    has_flow = len(flow_vals) >= 5
+    if not has_mom and not has_flow:
+        return _null
+
+    def _win_rate(rlist):
+        if len(rlist) < 2:
+            return None
+        wins = sum(1 for r in rlist if r.get("next_close_positive") == 1 or r.get("next_close_positive") is True)
+        return round(wins / len(rlist), 6)
+
+    if has_mom and has_flow:
+        mom_valid = [v for _, v in mom_vals]
+        flow_valid = [v for _, v in flow_vals]
+        mom_med = sorted(mom_valid)[len(mom_valid) // 2]
+        flow_med = sorted(flow_valid)[len(flow_valid) // 2]
+        mom_dict = {id(r): v for r, v in mom_vals}
+        flow_dict = {id(r): v for r, v in flow_vals}
+        paired = [r for r in rows if id(r) in mom_dict and id(r) in flow_dict]
+        if len(paired) < 4:
+            return _null
+        hh = [r for r in paired if mom_dict[id(r)] >= mom_med and flow_dict[id(r)] >= flow_med]
+        hl = [r for r in paired if mom_dict[id(r)] >= mom_med and flow_dict[id(r)] < flow_med]
+        lh = [r for r in paired if mom_dict[id(r)] < mom_med and flow_dict[id(r)] >= flow_med]
+        ll = [r for r in paired if mom_dict[id(r)] < mom_med and flow_dict[id(r)] < flow_med]
+        hh_wr = _win_rate(hh)
+        hl_wr = _win_rate(hl)
+        lh_wr = _win_rate(lh)
+        ll_wr = _win_rate(ll)
+        edge = round(hh_wr - ll_wr, 6) if hh_wr is not None and ll_wr is not None else None
+        best = "dual_strong" if hh_wr is not None else "insufficient_data"
+        return {"conditional_momentum_valid": True, "single_factor_mode": False, "dual_strong_win_rate": hh_wr, "dual_weak_win_rate": ll_wr, "high_mom_low_flow_win_rate": hl_wr, "low_mom_high_flow_win_rate": lh_wr, "high_factor_win_rate": None, "low_factor_win_rate": None, "conditional_momentum_edge": edge, "best_condition": best}
+    else:
+        active_pairs = mom_vals if has_mom else flow_vals
+        vals_only = [v for _, v in active_pairs]
+        med = sorted(vals_only)[len(vals_only) // 2]
+        high_rows = [r for r, v in active_pairs if v >= med]
+        low_rows = [r for r, v in active_pairs if v < med]
+        h_wr = _win_rate(high_rows)
+        l_wr = _win_rate(low_rows)
+        edge = round(h_wr - l_wr, 6) if h_wr is not None and l_wr is not None else None
+        best = "high_factor" if h_wr is not None else "insufficient_data"
+        return {"conditional_momentum_valid": True, "single_factor_mode": True, "dual_strong_win_rate": None, "dual_weak_win_rate": None, "high_factor_win_rate": h_wr, "low_factor_win_rate": l_wr, "conditional_momentum_edge": edge, "best_condition": best}
+
+
+def _safe_float(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
