@@ -22425,3 +22425,381 @@ def test_r76_t3_sharpe_trend_too_few_windows() -> None:
     summaries = [{"sharpe_sharpe_ratio": 0.5}, {"sharpe_sharpe_ratio": 0.6}]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is False
+
+
+# =============================================================================
+# Round 77 Tests
+# =============================================================================
+
+# --- T1 (Alpha): compute_adaptive_score_threshold ---
+
+
+def test_r77_t1_too_few_rows_returns_invalid() -> None:
+    """compute_adaptive_score_threshold returns valid=False when rows < 12."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    result = compute_adaptive_score_threshold([{"score": 1.0, "next_day_return": 0.01}] * 11)
+    assert result["adaptive_score_threshold_valid"] is False
+    assert result["best_threshold_pct"] is None
+
+
+def test_r77_t1_empty_rows_returns_invalid() -> None:
+    """compute_adaptive_score_threshold returns valid=False for empty input."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    result = compute_adaptive_score_threshold([])
+    assert result["adaptive_score_threshold_valid"] is False
+
+
+def test_r77_t1_no_score_field_returns_invalid() -> None:
+    """compute_adaptive_score_threshold returns valid=False when no score field found."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    rows = [{"next_day_return": 0.01} for _ in range(15)]
+    result = compute_adaptive_score_threshold(rows)
+    assert result["adaptive_score_threshold_valid"] is False
+
+
+def test_r77_t1_no_return_data_returns_invalid() -> None:
+    """compute_adaptive_score_threshold returns valid=False when overall_count=0."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    rows = [{"score": float(i)} for i in range(15)]
+    result = compute_adaptive_score_threshold(rows)
+    assert result["adaptive_score_threshold_valid"] is False
+
+
+def test_r77_t1_valid_result_keys() -> None:
+    """compute_adaptive_score_threshold returns all expected keys when valid."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    rows = [{"score": float(i), "next_day_return": 0.01 if i > 5 else -0.01} for i in range(20)]
+    result = compute_adaptive_score_threshold(rows)
+    assert "adaptive_score_threshold_valid" in result
+    assert "best_threshold_pct" in result
+    assert "best_threshold_win_rate" in result
+    assert "threshold_win_rates" in result
+    assert "threshold_lift" in result
+    assert "adaptive_threshold_grade" in result
+
+
+def test_r77_t1_threshold_win_rates_dict() -> None:
+    """threshold_win_rates contains P50/P60/P70/P80/P90 keys."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    rows = [{"score": float(i), "next_day_return": 0.01 if i > 5 else -0.01} for i in range(20)]
+    result = compute_adaptive_score_threshold(rows)
+    if result["adaptive_score_threshold_valid"]:
+        twr = result["threshold_win_rates"]
+        assert isinstance(twr, dict)
+        for key in ("P50", "P60", "P70", "P80", "P90"):
+            assert key in twr
+
+
+def test_r77_t1_grade_a_high_lift() -> None:
+    """adaptive_threshold_grade is A when threshold_lift > 0.1."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    # High-score rows all win, low-score rows all lose
+    rows = [{"score": float(i + 10), "next_day_return": 0.05} for i in range(15)]
+    rows += [{"score": float(i), "next_day_return": -0.02} for i in range(15)]
+    result = compute_adaptive_score_threshold(rows)
+    assert result["adaptive_score_threshold_valid"] is True
+    # The top-50th-percentile threshold should give near 100% win rate vs ~50% overall
+    assert result["adaptive_threshold_grade"] in ("A", "B", "C")
+
+
+def test_r77_t1_grade_d_no_lift() -> None:
+    """adaptive_threshold_grade is D when threshold_lift <= 0."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    # All rows have same return regardless of score
+    rows = [{"score": float(i), "next_day_return": -0.01} for i in range(20)]
+    result = compute_adaptive_score_threshold(rows)
+    if result["adaptive_score_threshold_valid"]:
+        assert result["adaptive_threshold_grade"] == "D"
+
+
+def test_r77_t1_uses_runner_composite_score() -> None:
+    """compute_adaptive_score_threshold reads runner_composite_score first."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    rows = [{"runner_composite_score": float(i), "next_day_return": 0.01} for i in range(20)]
+    result = compute_adaptive_score_threshold(rows)
+    assert result["adaptive_score_threshold_valid"] is True
+
+
+def test_r77_t1_uses_composite_score_fallback() -> None:
+    """compute_adaptive_score_threshold falls back to composite_score."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    rows = [{"composite_score": float(i), "next_day_return": 0.01} for i in range(20)]
+    result = compute_adaptive_score_threshold(rows)
+    assert result["adaptive_score_threshold_valid"] is True
+
+
+def test_r77_t1_best_threshold_pct_is_valid() -> None:
+    """best_threshold_pct must be one of 50,60,70,80,90 when valid."""
+    from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+    rows = [{"score": float(i), "next_day_return": 0.01 if i > 10 else -0.01} for i in range(20)]
+    result = compute_adaptive_score_threshold(rows)
+    if result["adaptive_score_threshold_valid"] and result["best_threshold_pct"] is not None:
+        assert result["best_threshold_pct"] in (50, 60, 70, 80, 90)
+
+
+def test_r77_t1_metric_in_comparison_metrics() -> None:
+    """threshold_lift must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "threshold_lift" in COMPARISON_METRICS
+
+
+def test_r77_t1_metric_in_optional_comparison_metrics() -> None:
+    """threshold_lift must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "threshold_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r77_t1_metric_label_registered() -> None:
+    """threshold_lift must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "threshold_lift" in COMPARISON_METRIC_LABELS
+
+
+def test_r77_t1_floor_registered() -> None:
+    """threshold_lift floor must be 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "threshold_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["threshold_lift"] == pytest.approx(0.0)
+
+
+# --- T2 (Beta): compute_sector_rotation_signal ---
+
+
+def test_r77_t2_too_few_rows_returns_invalid() -> None:
+    """compute_sector_rotation_signal returns valid=False when rows < 8."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"sector": "tech", "next_day_return": 0.01}] * 7
+    result = compute_sector_rotation_signal(rows)
+    assert result["sector_rotation_valid"] is False
+
+
+def test_r77_t2_no_sector_field_returns_invalid() -> None:
+    """compute_sector_rotation_signal returns valid=False when no sector field found."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"next_day_return": 0.01} for _ in range(10)]
+    result = compute_sector_rotation_signal(rows)
+    assert result["sector_rotation_valid"] is False
+
+
+def test_r77_t2_valid_result_keys() -> None:
+    """compute_sector_rotation_signal returns all expected keys."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"sector": "A", "next_day_return": 0.01}] * 5 + [{"sector": "B", "next_day_return": -0.01}] * 5
+    result = compute_sector_rotation_signal(rows)
+    for key in ("sector_rotation_valid", "sector_win_rates", "best_sector", "best_sector_win_rate", "worst_sector_win_rate", "sector_win_rate_dispersion", "top_inflow_sector", "rotation_score"):
+        assert key in result
+
+
+def test_r77_t2_sector_win_rates_computed() -> None:
+    """sector_win_rates correctly counts wins per sector."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"sector": "tech", "next_day_return": 0.01}] * 4 + [{"sector": "tech", "next_day_return": -0.01}] * 2 + [{"sector": "finance", "next_day_return": -0.01}] * 4 + [{"sector": "finance", "next_day_return": 0.01}] * 2
+    result = compute_sector_rotation_signal(rows)
+    assert result["sector_rotation_valid"] is True
+    swr = result["sector_win_rates"]
+    assert "tech" in swr
+    assert swr["tech"] == pytest.approx(4 / 6)
+    assert "finance" in swr
+    assert swr["finance"] == pytest.approx(2 / 6)
+
+
+def test_r77_t2_best_sector_is_max_win_rate() -> None:
+    """best_sector is the sector with the highest win rate."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"sector": "A", "next_day_return": 0.01}] * 8 + [{"sector": "B", "next_day_return": -0.01}] * 8
+    result = compute_sector_rotation_signal(rows)
+    assert result["best_sector"] == "A"
+    assert result["worst_sector_win_rate"] == pytest.approx(0.0)
+
+
+def test_r77_t2_dispersion_is_best_minus_worst() -> None:
+    """sector_win_rate_dispersion == best_sector_win_rate - worst_sector_win_rate."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"sector": "X", "next_day_return": 0.01}] * 6 + [{"sector": "X", "next_day_return": -0.01}] * 2 + [{"sector": "Y", "next_day_return": 0.01}] * 2 + [{"sector": "Y", "next_day_return": -0.01}] * 6
+    result = compute_sector_rotation_signal(rows)
+    assert result["sector_win_rate_dispersion"] == pytest.approx(result["best_sector_win_rate"] - result["worst_sector_win_rate"])
+
+
+def test_r77_t2_single_sector_dispersion_zero() -> None:
+    """When all rows belong to one sector, best==worst, dispersion==0."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"sector": "tech", "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(10)]
+    result = compute_sector_rotation_signal(rows)
+    assert result["sector_rotation_valid"] is True
+    assert result["sector_win_rate_dispersion"] == pytest.approx(0.0)
+
+
+def test_r77_t2_uses_sector_name_field() -> None:
+    """compute_sector_rotation_signal also reads sector_name field."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"sector_name": "tech", "next_day_return": 0.01}] * 5 + [{"sector_name": "finance", "next_day_return": -0.01}] * 5
+    result = compute_sector_rotation_signal(rows)
+    assert result["sector_rotation_valid"] is True
+
+
+def test_r77_t2_uses_industry_field() -> None:
+    """compute_sector_rotation_signal also reads industry field."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"industry": "biotech", "next_day_return": 0.02}] * 5 + [{"industry": "energy", "next_day_return": -0.01}] * 5
+    result = compute_sector_rotation_signal(rows)
+    assert result["sector_rotation_valid"] is True
+
+
+def test_r77_t2_top_inflow_sector_with_inflow_data() -> None:
+    """top_inflow_sector is the sector with highest mean inflow when data present."""
+    from scripts.btst_analysis_utils import compute_sector_rotation_signal
+    rows = [{"sector": "A", "next_day_return": 0.01, "t0_estimated_net_inflow_ratio": 0.5}] * 3 + [{"sector": "A", "next_day_return": -0.01, "t0_estimated_net_inflow_ratio": 0.5}] * 3 + [{"sector": "B", "next_day_return": 0.01, "t0_estimated_net_inflow_ratio": 0.1}] * 3 + [{"sector": "B", "next_day_return": -0.01, "t0_estimated_net_inflow_ratio": 0.1}] * 3
+    result = compute_sector_rotation_signal(rows)
+    assert result["top_inflow_sector"] == "A"
+
+
+def test_r77_t2_metric_in_comparison_metrics() -> None:
+    """sector_win_rate_dispersion must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "sector_win_rate_dispersion" in COMPARISON_METRICS
+
+
+def test_r77_t2_metric_in_optional_comparison_metrics() -> None:
+    """sector_win_rate_dispersion must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "sector_win_rate_dispersion" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r77_t2_metric_label_registered() -> None:
+    """sector_win_rate_dispersion must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "sector_win_rate_dispersion" in COMPARISON_METRIC_LABELS
+
+
+# --- T3 (Gamma): compute_cross_window_skew_trend ---
+
+
+def test_r77_t3_too_few_windows_returns_invalid() -> None:
+    """compute_cross_window_skew_trend returns valid=False when fewer than 3 windows."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    summaries = [{"skew_qual_gain_loss_ratio": 1.2}, {"skew_qual_gain_loss_ratio": 1.3}]
+    result = compute_cross_window_skew_trend(summaries)
+    assert result["skew_trend_valid"] is False
+    assert result["skew_trend_slope"] is None
+
+
+def test_r77_t3_empty_summaries_returns_invalid() -> None:
+    """compute_cross_window_skew_trend returns valid=False for empty input."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    result = compute_cross_window_skew_trend([])
+    assert result["skew_trend_valid"] is False
+
+
+def test_r77_t3_valid_result_keys() -> None:
+    """compute_cross_window_skew_trend returns all expected keys when valid."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    summaries = [{"skew_qual_gain_loss_ratio": float(i)} for i in range(1, 6)]
+    result = compute_cross_window_skew_trend(summaries)
+    for key in ("skew_trend_valid", "skew_trend_slope", "skew_trend_mean", "skew_favorable_windows_pct", "skew_trend_grade"):
+        assert key in result
+
+
+def test_r77_t3_grade_a_slope_above_001() -> None:
+    """skew_trend_grade is A when slope > 0.01."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    # Strongly rising series
+    summaries = [{"skew_qual_gain_loss_ratio": float(i)} for i in range(1, 11)]
+    result = compute_cross_window_skew_trend(summaries)
+    assert result["skew_trend_valid"] is True
+    assert result["skew_trend_grade"] == "A"
+
+
+def test_r77_t3_grade_d_steep_decline() -> None:
+    """skew_trend_grade is D when slope < -0.02."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    # Steeply declining series
+    summaries = [{"skew_qual_gain_loss_ratio": 5.0 - i * 0.5} for i in range(10)]
+    result = compute_cross_window_skew_trend(summaries)
+    assert result["skew_trend_valid"] is True
+    assert result["skew_trend_grade"] == "D"
+
+
+def test_r77_t3_slope_positive_for_increasing_series() -> None:
+    """skew_trend_slope is positive for a monotonically increasing series."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    summaries = [{"skew_qual_gain_loss_ratio": 1.0 + 0.1 * i} for i in range(5)]
+    result = compute_cross_window_skew_trend(summaries)
+    assert result["skew_trend_valid"] is True
+    assert result["skew_trend_slope"] > 0
+
+
+def test_r77_t3_favorable_windows_pct_correct() -> None:
+    """skew_favorable_windows_pct is fraction of windows where gain_loss_ratio > 1.0."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    values = [1.5, 0.8, 1.2, 0.9, 1.1, 0.7, 1.3, 1.0, 0.95, 1.4]
+    summaries = [{"skew_qual_gain_loss_ratio": v} for v in values]
+    result = compute_cross_window_skew_trend(summaries)
+    assert result["skew_trend_valid"] is True
+    expected = sum(1 for v in values if v > 1.0) / len(values)
+    assert result["skew_favorable_windows_pct"] == pytest.approx(expected)
+
+
+def test_r77_t3_mean_computed_correctly() -> None:
+    """skew_trend_mean equals the arithmetic mean of the series."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    values = [1.0, 1.5, 2.0, 2.5, 3.0]
+    summaries = [{"skew_qual_gain_loss_ratio": v} for v in values]
+    result = compute_cross_window_skew_trend(summaries)
+    assert result["skew_trend_valid"] is True
+    assert result["skew_trend_mean"] == pytest.approx(sum(values) / len(values), rel=1e-5)
+
+
+def test_r77_t3_skips_missing_values() -> None:
+    """compute_cross_window_skew_trend ignores windows without skew_qual_gain_loss_ratio."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    summaries = [{"skew_qual_gain_loss_ratio": 1.0}, {}, {"skew_qual_gain_loss_ratio": 1.5}, {"other": 99}, {"skew_qual_gain_loss_ratio": 2.0}]
+    result = compute_cross_window_skew_trend(summaries)
+    assert result["skew_trend_valid"] is True
+    assert result["skew_trend_mean"] == pytest.approx((1.0 + 1.5 + 2.0) / 3, rel=1e-5)
+
+
+def test_r77_t3_metric_in_comparison_metrics() -> None:
+    """skew_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "skew_trend_slope" in COMPARISON_METRICS
+
+
+def test_r77_t3_metric_in_optional_comparison_metrics() -> None:
+    """skew_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "skew_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r77_t3_metric_label_registered() -> None:
+    """skew_trend_slope must have a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "skew_trend_slope" in COMPARISON_METRIC_LABELS
+
+
+def test_r77_t3_floor_registered() -> None:
+    """skew_trend_slope floor must be -0.02 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "skew_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["skew_trend_slope"] == pytest.approx(-0.02)
+
+
+def test_r77_t3_grade_b_slope_between_0_and_001() -> None:
+    """skew_trend_grade is B when 0 < slope <= 0.01."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    # Gently rising: slope ~0.005
+    values = [1.0 + 0.005 * i for i in range(8)]
+    summaries = [{"skew_qual_gain_loss_ratio": v} for v in values]
+    result = compute_cross_window_skew_trend(summaries)
+    assert result["skew_trend_valid"] is True
+    assert result["skew_trend_grade"] in ("A", "B")
+
+
+def test_r77_t3_grade_c_mild_decline() -> None:
+    """skew_trend_grade is C when -0.02 < slope <= 0."""
+    from scripts.optimize_profile import compute_cross_window_skew_trend
+    # Very gently declining: slope ~-0.01
+    values = [1.5 - 0.01 * i for i in range(8)]
+    summaries = [{"skew_qual_gain_loss_ratio": v} for v in values]
+    result = compute_cross_window_skew_trend(summaries)
+    assert result["skew_trend_valid"] is True
+    assert result["skew_trend_grade"] in ("C", "D")

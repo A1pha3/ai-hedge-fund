@@ -4631,6 +4631,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _fos.items():
         _surface_result[f"ortho_{_k}"] = _v
 
+    # Round 77, Task 1 (Alpha): Adaptive score threshold analysis.
+    _ast: dict = compute_adaptive_score_threshold(rows)
+    for _k, _v in _ast.items():
+        _surface_result[f"adapt_thr_{_k}"] = _v
+
+    # Round 77, Task 2 (Beta): Sector rotation signal.
+    _srs: dict = compute_sector_rotation_signal(rows)
+    for _k, _v in _srs.items():
+        _surface_result[f"sec_rot_{_k}"] = _v
+
     return _surface_result
 
 
@@ -13698,3 +13708,134 @@ def compute_factor_orthogonality_score(rows: list[dict]) -> dict:
     else:
         grade = "D"
     return {"factor_orthogonality_valid": True, "mean_abs_correlation": mean_abs_correlation, "max_abs_correlation": max_abs_correlation, "low_corr_pair_pct": low_corr_pair_pct, "orthogonality_score": orthogonality_score, "orthogonality_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 77, Task 1 (Alpha): Adaptive score threshold analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_adaptive_score_threshold(rows: list[dict]) -> dict:
+    """自适应寻找最优得分入选阈值，评估不同分位数截断点下的精确率。"""
+    _null: dict = {"adaptive_score_threshold_valid": False, "best_threshold_pct": None, "best_threshold_win_rate": None, "threshold_win_rates": None, "threshold_lift": None, "adaptive_threshold_grade": "D"}
+    if len(rows) < 12:
+        return _null
+    score_vals: list[float] = []
+    for r in rows:
+        v = _safe_float(r.get("runner_composite_score"))
+        if v is None:
+            v = _safe_float(r.get("composite_score"))
+        if v is None:
+            v = _safe_float(r.get("score"))
+        if v is not None:
+            score_vals.append(v)
+    if len(score_vals) < 12:
+        return _null
+    n = len(score_vals)
+    overall_wins = sum(1 for r in rows if _safe_float(r.get("next_day_return")) is not None and (_safe_float(r.get("next_day_return")) or 0.0) > 0)
+    overall_count = sum(1 for r in rows if _safe_float(r.get("next_day_return")) is not None)
+    if overall_count == 0:
+        return _null
+    overall_win_rate = overall_wins / overall_count
+    sorted_scores = sorted(score_vals)
+    pct_list = [50, 60, 70, 80, 90]
+    p_vals = [0.5, 0.6, 0.7, 0.8, 0.9]
+    threshold_win_rates: dict = {}
+    valid_pairs: list = []
+    score_lookup: list[float] = []
+    for r in rows:
+        v = _safe_float(r.get("runner_composite_score"))
+        if v is None:
+            v = _safe_float(r.get("composite_score"))
+        if v is None:
+            v = _safe_float(r.get("score"))
+        score_lookup.append(v if v is not None else float("-inf"))
+    for pct, p in zip(pct_list, p_vals):
+        key = f"P{pct}"
+        idx = int(n * p)
+        if idx >= n:
+            idx = n - 1
+        threshold_val = sorted_scores[idx]
+        subset = [rows[i] for i in range(len(rows)) if score_lookup[i] >= threshold_val]
+        sub_with_ret = [r for r in subset if _safe_float(r.get("next_day_return")) is not None]
+        count = len(sub_with_ret)
+        if count < 3:
+            threshold_win_rates[key] = None
+        else:
+            wins = sum(1 for r in sub_with_ret if (_safe_float(r.get("next_day_return")) or 0.0) > 0)
+            wr = round(wins / count, 8)
+            threshold_win_rates[key] = wr
+            valid_pairs.append((wr, pct))
+    if not valid_pairs:
+        return {"adaptive_score_threshold_valid": True, "best_threshold_pct": None, "best_threshold_win_rate": None, "threshold_win_rates": threshold_win_rates, "threshold_lift": None, "adaptive_threshold_grade": "D"}
+    best_wr, best_pct = max(valid_pairs, key=lambda x: x[0])
+    threshold_lift = round(best_wr - overall_win_rate, 8)
+    if threshold_lift > 0.1:
+        grade = "A"
+    elif threshold_lift > 0.05:
+        grade = "B"
+    elif threshold_lift > 0:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"adaptive_score_threshold_valid": True, "best_threshold_pct": best_pct, "best_threshold_win_rate": round(best_wr, 8), "threshold_win_rates": threshold_win_rates, "threshold_lift": threshold_lift, "adaptive_threshold_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 77, Task 2 (Beta): Sector rotation signal
+# ---------------------------------------------------------------------------
+
+
+def compute_sector_rotation_signal(rows: list[dict]) -> dict:
+    """分析候选股票的板块轮动信号（不同板块的资金流入与胜率变化）。"""
+    _null: dict = {"sector_rotation_valid": False, "sector_win_rates": None, "best_sector": None, "best_sector_win_rate": None, "worst_sector_win_rate": None, "sector_win_rate_dispersion": None, "top_inflow_sector": None, "rotation_score": None}
+    if len(rows) < 8:
+        return _null
+    sector_key: str | None = None
+    for k in ("sector", "sector_name", "industry"):
+        if any(r.get(k) is not None for r in rows):
+            sector_key = k
+            break
+    if sector_key is None:
+        return _null
+    inflow_key: str | None = None
+    if any(r.get("t0_estimated_net_inflow_ratio") is not None for r in rows):
+        inflow_key = "t0_estimated_net_inflow_ratio"
+    single_mode = inflow_key is None
+    sector_map: dict = {}
+    for r in rows:
+        sec = r.get(sector_key)
+        if sec is None:
+            continue
+        sec = str(sec)
+        if sec not in sector_map:
+            sector_map[sec] = {"wins": 0, "count": 0, "inflow_sum": 0.0, "inflow_n": 0}
+        ret = _safe_float(r.get("next_day_return"))
+        if ret is not None:
+            sector_map[sec]["count"] += 1
+            if ret > 0:
+                sector_map[sec]["wins"] += 1
+        if not single_mode:
+            inf_v = _safe_float(r.get(inflow_key))
+            if inf_v is not None:
+                sector_map[sec]["inflow_sum"] += inf_v
+                sector_map[sec]["inflow_n"] += 1
+    sector_win_rates: dict = {}
+    inflow_map: dict = {}
+    for sec, d in sector_map.items():
+        if d["count"] < 2:
+            continue
+        sector_win_rates[sec] = round(d["wins"] / d["count"], 8)
+        if not single_mode and d["inflow_n"] > 0:
+            inflow_map[sec] = d["inflow_sum"] / d["inflow_n"]
+    if not sector_win_rates:
+        return {"sector_rotation_valid": True, "sector_win_rates": {}, "best_sector": None, "best_sector_win_rate": None, "worst_sector_win_rate": None, "sector_win_rate_dispersion": None, "top_inflow_sector": None, "rotation_score": None}
+    best_sector = max(sector_win_rates, key=lambda s: sector_win_rates[s])
+    worst_sector = min(sector_win_rates, key=lambda s: sector_win_rates[s])
+    best_sector_win_rate = sector_win_rates[best_sector]
+    worst_sector_win_rate = sector_win_rates[worst_sector]
+    sector_win_rate_dispersion = round(best_sector_win_rate - worst_sector_win_rate, 8)
+    top_inflow_sector = max(inflow_map, key=lambda s: inflow_map[s]) if inflow_map else None
+    board_count = len(sector_win_rates)
+    rotation_score = round(board_count * sector_win_rate_dispersion, 8)
+    return {"sector_rotation_valid": True, "sector_win_rates": sector_win_rates, "best_sector": best_sector, "best_sector_win_rate": best_sector_win_rate, "worst_sector_win_rate": worst_sector_win_rate, "sector_win_rate_dispersion": sector_win_rate_dispersion, "top_inflow_sector": top_inflow_sector, "rotation_score": rotation_score}

@@ -632,6 +632,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 2 (Round 76, Beta): factor orthogonality score floor.
     # orthogonality_score < 0.5 means mean factor correlation > 0.5 — highly redundant factor set.
     "orthogonality_score": 0.5,
+    # Task 1 (Round 77, Alpha): adaptive threshold lift floor.
+    # threshold_lift < 0.0 means higher-score subset performs worse than the full pool.
+    "threshold_lift": 0.0,
+    # Task 3 (Round 77, Gamma): skew quality cross-window trend slope floor.
+    # skew_trend_slope < -0.02 means gain/loss ratio declining meaningfully across windows.
+    "skew_trend_slope": -0.02,
 }
 
 # ---------------------------------------------------------------------------

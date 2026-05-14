@@ -508,6 +508,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "tail_asymmetry_score",
     # Task 2 (Round 76, Beta): factor orthogonality score (1 − mean_abs_correlation).
     "orthogonality_score",
+    # Task 1 (Round 77, Alpha): adaptive score threshold lift.
+    "threshold_lift",
+    # Task 2 (Round 77, Beta): sector win-rate dispersion across sectors.
+    "sector_win_rate_dispersion",
+    # Task 3 (Round 77, Gamma): cross-window skew quality OLS trend slope.
+    "skew_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -904,6 +910,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "tail_asymmetry_score": "收益尾部不对称分数",
     # Task 2 (Round 76, Beta): 因子正交性分数
     "orthogonality_score": "因子正交性分数",
+    # Task 1 (Round 77, Alpha): 自适应阈值提升效果
+    "threshold_lift": "自适应阈值提升效果",
+    # Task 2 (Round 77, Beta): 板块轮动分散度
+    "sector_win_rate_dispersion": "板块轮动分散度",
+    # Task 3 (Round 77, Gamma): 偏斜质量跨窗趋势
+    "skew_trend_slope": "偏斜质量跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1374,6 +1386,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "tail_asymmetry_score",
     # Task 2 (Round 76, Beta): factor orthogonality score — optional; pre-Round-76 outputs omit it.
     "orthogonality_score",
+    # Task 1 (Round 77, Alpha): adaptive threshold lift — optional; pre-Round-77 outputs omit it.
+    "threshold_lift",
+    # Task 2 (Round 77, Beta): sector win-rate dispersion — optional; pre-Round-77 outputs omit it.
+    "sector_win_rate_dispersion",
+    # Task 3 (Round 77, Gamma): cross-window skew trend slope — optional; pre-Round-77 outputs omit it.
+    "skew_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2922,6 +2940,42 @@ def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict
         "sharpe_positive_windows_pct": round(positive_pct, 6),
         "sharpe_trend_valid": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# Round 77, Task 3 (Gamma): Cross-window skew quality gain/loss ratio trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_skew_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪收益偏斜质量得分（gain_loss_ratio）趋势。"""
+    _null: dict = {"skew_trend_valid": False, "skew_trend_slope": None, "skew_trend_mean": None, "skew_favorable_windows_pct": None, "skew_trend_grade": "D"}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("skew_qual_gain_loss_ratio")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    mean_x = (n - 1) / 2.0
+    mean_y = sum(vals) / n
+    ss_xx = sum((i - mean_x) ** 2 for i in range(n))
+    ss_xy = sum((i - mean_x) * (vals[i] - mean_y) for i in range(n))
+    slope = ss_xy / ss_xx if ss_xx != 0.0 else 0.0
+    skew_favorable_windows_pct = round(sum(1 for v in vals if v > 1.0) / n, 8)
+    if slope > 0.01:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.02:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"skew_trend_valid": True, "skew_trend_slope": round(slope, 8), "skew_trend_mean": round(mean_y, 6), "skew_favorable_windows_pct": skew_favorable_windows_pct, "skew_trend_grade": grade}
 
 
 # ---------------------------------------------------------------------------
@@ -4782,6 +4836,8 @@ def _build_replay_evaluator(
         _sortino_trend: dict[str, Any] = compute_cross_window_sortino_trend(all_primary_surfaces)
         # Task 3 (Round 50, Gamma): cross-window Sharpe trend.
         _sharpe_trend: dict[str, Any] = compute_cross_window_sharpe_trend(all_primary_surfaces)
+        # Task 3 (Round 77, Gamma): cross-window skew quality gain/loss ratio trend.
+        _skew_trend: dict[str, Any] = compute_cross_window_skew_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -4935,6 +4991,12 @@ def _build_replay_evaluator(
         _ortho_os_vals = [float(s["ortho_orthogonality_score"]) for s in all_primary_surfaces if s.get("ortho_orthogonality_score") is not None]
         avg_orthogonality_score: "float | None" = round(sum(_ortho_os_vals) / len(_ortho_os_vals), 6) if _ortho_os_vals else None
         # Task 3 (Round 76, Gamma): cross-window Sharpe trend (updated to use sharpe_sharpe_ratio from R75 T1 output).
+        # Task 1 (Round 77, Alpha): average adapt_thr_threshold_lift across replay windows.
+        _adapt_thr_lift_vals = [float(s["adapt_thr_threshold_lift"]) for s in all_primary_surfaces if s.get("adapt_thr_threshold_lift") is not None]
+        avg_threshold_lift: "float | None" = round(sum(_adapt_thr_lift_vals) / len(_adapt_thr_lift_vals), 6) if _adapt_thr_lift_vals else None
+        # Task 2 (Round 77, Beta): average sec_rot_sector_win_rate_dispersion across replay windows.
+        _sec_rot_disp_vals = [float(s["sec_rot_sector_win_rate_dispersion"]) for s in all_primary_surfaces if s.get("sec_rot_sector_win_rate_dispersion") is not None]
+        avg_sector_win_rate_dispersion: "float | None" = round(sum(_sec_rot_disp_vals) / len(_sec_rot_disp_vals), 6) if _sec_rot_disp_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe_r75 if avg_sharpe_r75 is not None else avg_sharpe,
@@ -5450,6 +5512,16 @@ def _build_replay_evaluator(
                 "tail_asymmetry_score": avg_tail_asymmetry_score,
                 # Task 2 (Round 76, Beta): factor orthogonality score averaged across windows.
                 "orthogonality_score": avg_orthogonality_score,
+                # Task 1 (Round 77, Alpha): adaptive threshold lift averaged across windows.
+                "threshold_lift": avg_threshold_lift,
+                # Task 2 (Round 77, Beta): sector win-rate dispersion averaged across windows.
+                "sector_win_rate_dispersion": avg_sector_win_rate_dispersion,
+                # Task 3 (Round 77, Gamma): cross-window skew quality trend.
+                "skew_trend_slope": _skew_trend.get("skew_trend_slope"),
+                "skew_trend_mean": _skew_trend.get("skew_trend_mean"),
+                "skew_favorable_windows_pct": _skew_trend.get("skew_favorable_windows_pct"),
+                "skew_trend_grade": _skew_trend.get("skew_trend_grade"),
+                "skew_trend_valid": _skew_trend.get("skew_trend_valid"),
         }
 
     return evaluator
