@@ -4102,6 +4102,33 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["combined_significance_score"] = _sst.get("combined_significance_score")
     _surface_result["strategy_statistically_valid"] = _sst.get("strategy_statistically_valid")
 
+    # -----------------------------------------------------------------------
+    # Round 42, Task 1 (Alpha): Score calibration curve — 评分校准曲线.
+    # -----------------------------------------------------------------------
+    _scc: dict[str, Any] = compute_score_calibration_curve(next_day_rows)
+    _surface_result["calibration_slope"] = _scc.get("calibration_slope")
+    _surface_result["calibration_mse"] = _scc.get("calibration_mse")
+    _surface_result["calibration_monotone"] = _scc.get("calibration_monotone")
+    _surface_result["well_calibrated"] = _scc.get("well_calibrated")
+    _surface_result["calibration_bin_count"] = _scc.get("calibration_bin_count")
+    _surface_result["calibration_valid"] = _scc.get("calibration_valid")
+
+    # -----------------------------------------------------------------------
+    # Round 42, Task 2 (Beta): Close-strength quartile stratification — 收盘强度分层.
+    # -----------------------------------------------------------------------
+    _css: dict[str, Any] = compute_close_strength_stratification(next_day_rows)
+    _surface_result["close_strength_valid"] = _css.get("close_strength_valid")
+    _surface_result["cs_win_rate_q1"] = _css.get("cs_win_rate_q1")
+    _surface_result["cs_win_rate_q2"] = _css.get("cs_win_rate_q2")
+    _surface_result["cs_win_rate_q3"] = _css.get("cs_win_rate_q3")
+    _surface_result["cs_win_rate_q4"] = _css.get("cs_win_rate_q4")
+    _surface_result["cs_monotone"] = _css.get("cs_monotone")
+    _surface_result["cs_top_quartile_premium"] = _css.get("cs_top_quartile_premium")
+    _surface_result["cs_top_quartile_avg_return"] = _css.get("cs_top_quartile_avg_return")
+    _surface_result["cs_bottom_quartile_avg_return"] = _css.get("cs_bottom_quartile_avg_return")
+    _surface_result["cs_return_spread"] = _css.get("cs_return_spread")
+    _surface_result["cs_effective"] = _css.get("cs_effective")
+
     return _surface_result
 
 
@@ -7595,4 +7622,266 @@ def compute_statistical_significance_tests(rows: list[dict]) -> dict:
         "return_significant_95": ret_sig95,
         "combined_significance_score": combined_score,
         "strategy_statistically_valid": strategy_valid,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 42, Task 1 (Alpha): Score calibration curve
+# ---------------------------------------------------------------------------
+# Checks whether the composite scoring system is well-calibrated: do higher
+# scores actually correspond to higher win rates?  Splits candidates into 5
+# equal-frequency bins and fits a linear calibration model (OLS slope).
+
+
+def compute_score_calibration_curve(rows: list[dict]) -> dict:
+    """Assess scoring-system calibration: do high scores predict high win rates?
+
+    Splits rows into 5 equal-frequency bins (by P20/P40/P60/P80 score quantiles)
+    and checks whether per-bin win rate increases monotonically with score.
+
+    Args:
+        rows: Per-trade row dicts.  Required fields per row:
+
+            - Score field (first found wins): ``runner_composite_score``,
+              ``composite_score``, or ``score`` (float | None).
+            - ``next_close_return`` (float | None).
+
+    Returns:
+        Dict with keys:
+
+        - ``calibration_slope`` (float | None): OLS slope of bin_win_rate on
+          bin_avg_score across valid bins.  Positive = correctly ordered.
+        - ``calibration_mse`` (float | None): Mean-squared deviation of each
+          bin win-rate from the overall win rate (distribution width proxy).
+        - ``calibration_monotone`` (bool | None): True when bin win rates are
+          non-decreasing across all consecutive valid bins.
+        - ``well_calibrated`` (bool | None): True when slope > 0 *and* monotone.
+        - ``calibration_bin_count`` (int | None): Number of bins with ≥ 3 rows.
+        - ``calibration_valid`` (bool): True when ≥ 15 paired rows and ≥ 3 valid bins.
+    """
+    _null: dict = {
+        "calibration_slope": None,
+        "calibration_mse": None,
+        "calibration_monotone": None,
+        "well_calibrated": None,
+        "calibration_bin_count": None,
+        "calibration_valid": False,
+    }
+    if not rows:
+        return _null
+
+    # Resolve score field by priority
+    def _get_score(row: dict) -> float | None:
+        for key in ("runner_composite_score", "composite_score", "score"):
+            val = row.get(key)
+            if val is not None:
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        s = _get_score(row)
+        r = row.get("next_close_return")
+        if s is not None and r is not None:
+            try:
+                paired.append((float(s), float(r)))
+            except (TypeError, ValueError):
+                continue
+
+    if len(paired) < 15:
+        return _null
+
+    paired.sort(key=lambda x: x[0])
+    n = len(paired)
+    # Compute P20/P40/P60/P80 boundaries by index
+    boundaries: list[float] = []
+    for pct in (0.20, 0.40, 0.60, 0.80):
+        idx = int(pct * n)
+        boundaries.append(paired[min(idx, n - 1)][0])
+
+    # Assign bins
+    def _bin_idx(score: float) -> int:
+        for i, b in enumerate(boundaries):
+            if score <= b:
+                return i
+        return 4
+
+    bin_scores: list[list[float]] = [[] for _ in range(5)]
+    bin_returns: list[list[float]] = [[] for _ in range(5)]
+    for s, r in paired:
+        b = _bin_idx(s)
+        bin_scores[b].append(s)
+        bin_returns[b].append(r)
+
+    overall_wr = sum(1 for _, r in paired if r > 0) / max(len(paired), 1)
+
+    calibration_points: list[tuple[float, float]] = []
+    for i in range(5):
+        if len(bin_returns[i]) >= 3:
+            avg_s = sum(bin_scores[i]) / len(bin_scores[i])
+            win_r = sum(1 for r in bin_returns[i] if r > 0) / len(bin_returns[i])
+            calibration_points.append((avg_s, win_r))
+
+    if len(calibration_points) < 3:
+        return {**_null, "calibration_valid": False}
+
+    xs = [p[0] for p in calibration_points]
+    ys = [p[1] for p in calibration_points]
+    m = len(xs)
+    mean_x = sum(xs) / m
+    mean_y = sum(ys) / m
+    cov_xy = sum((xs[i] - mean_x) * (ys[i] - mean_y) for i in range(m)) / max(m, 1)
+    var_x = sum((x - mean_x) ** 2 for x in xs) / max(m, 1)
+    slope = cov_xy / max(var_x, 1e-8)
+
+    mse = sum((y - overall_wr) ** 2 for y in ys) / max(m, 1)
+
+    monotone = all(ys[i] <= ys[i + 1] for i in range(m - 1))
+    well_cal = slope > 0 and monotone
+
+    return {
+        "calibration_slope": round(slope, 6),
+        "calibration_mse": round(mse, 8),
+        "calibration_monotone": monotone,
+        "well_calibrated": well_cal,
+        "calibration_bin_count": m,
+        "calibration_valid": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 42, Task 2 (Beta): Close-strength quartile stratification
+# ---------------------------------------------------------------------------
+# Checks whether close_strength factor creates a monotone win-rate ladder
+# across four quartiles.  Top-quartile premium > 5 % is the key signal.
+
+
+def compute_close_strength_stratification(rows: list[dict]) -> dict:
+    """Stratify BTST win rate and returns by close_strength quartile.
+
+    Splits rows into four equal-frequency quartiles (Q1–Q4) by close_strength
+    and computes per-quartile win rate, average return, and key spread metrics.
+
+    Args:
+        rows: Per-trade row dicts.  Required fields per row:
+
+            - ``close_strength`` (float | None): close-strength factor value.
+            - ``next_close_return`` (float | None): T+1 close return.
+
+    Returns:
+        Dict with keys:
+
+        - ``close_strength_valid`` (bool): False when all close_strength are None
+          or fewer than 10 rows are available.
+        - ``cs_win_rate_q1/q2/q3/q4`` (float | None): Win rate per quartile.
+        - ``cs_monotone`` (bool | None): True when Q1 < Q2 < Q3 < Q4 win rates.
+        - ``cs_top_quartile_premium`` (float | None): Q4 win rate − Q1 win rate.
+        - ``cs_top_quartile_avg_return`` (float | None): Mean T+1 return in Q4.
+        - ``cs_bottom_quartile_avg_return`` (float | None): Mean T+1 return in Q1.
+        - ``cs_return_spread`` (float | None): Top-quartile minus bottom-quartile avg return.
+        - ``cs_effective`` (bool | None): True when premium > 0.05.
+    """
+    _null_full: dict = {
+        "close_strength_valid": False,
+        "cs_win_rate_q1": None,
+        "cs_win_rate_q2": None,
+        "cs_win_rate_q3": None,
+        "cs_win_rate_q4": None,
+        "cs_monotone": None,
+        "cs_top_quartile_premium": None,
+        "cs_top_quartile_avg_return": None,
+        "cs_bottom_quartile_avg_return": None,
+        "cs_return_spread": None,
+        "cs_effective": None,
+    }
+    if not rows:
+        return _null_full
+
+    # Check if all close_strength are None
+    has_cs = any(row.get("close_strength") is not None for row in rows)
+    if not has_cs:
+        return _null_full
+
+    paired: list[tuple[float, float]] = []
+    for row in rows:
+        cs = row.get("close_strength")
+        ret = row.get("next_close_return")
+        if cs is not None and ret is not None:
+            try:
+                paired.append((float(cs), float(ret)))
+            except (TypeError, ValueError):
+                continue
+
+    if len(paired) < 10:
+        return _null_full
+
+    paired.sort(key=lambda x: x[0])
+    n = len(paired)
+    # P25/P50/P75 boundaries
+    b25 = paired[int(0.25 * n)][0]
+    b50 = paired[int(0.50 * n)][0]
+    b75 = paired[int(0.75 * n)][0]
+
+    def _quartile(cs: float) -> int:
+        if cs <= b25:
+            return 0
+        if cs <= b50:
+            return 1
+        if cs <= b75:
+            return 2
+        return 3
+
+    q_returns: list[list[float]] = [[], [], [], []]
+    for cs, ret in paired:
+        q_returns[_quartile(cs)].append(ret)
+
+    def _win_rate(rets: list[float]) -> float | None:
+        if len(rets) < 3:
+            return None
+        return sum(1 for r in rets if r > 0) / len(rets)
+
+    def _avg_ret(rets: list[float]) -> float | None:
+        if not rets:
+            return None
+        return sum(rets) / len(rets)
+
+    wr1 = _win_rate(q_returns[0])
+    wr2 = _win_rate(q_returns[1])
+    wr3 = _win_rate(q_returns[2])
+    wr4 = _win_rate(q_returns[3])
+
+    if wr1 is not None and wr2 is not None and wr3 is not None and wr4 is not None:
+        monotone: bool | None = wr1 < wr2 < wr3 < wr4
+    else:
+        monotone = None
+
+    premium: float | None = None
+    if wr4 is not None and wr1 is not None:
+        premium = round(wr4 - wr1, 6)
+
+    top_avg = _avg_ret(q_returns[3])
+    bot_avg = _avg_ret(q_returns[0])
+    spread: float | None = None
+    if top_avg is not None and bot_avg is not None:
+        spread = round(top_avg - bot_avg, 6)
+
+    cs_effective: bool | None = None
+    if premium is not None:
+        cs_effective = premium > 0.05
+
+    return {
+        "close_strength_valid": True,
+        "cs_win_rate_q1": round(wr1, 6) if wr1 is not None else None,
+        "cs_win_rate_q2": round(wr2, 6) if wr2 is not None else None,
+        "cs_win_rate_q3": round(wr3, 6) if wr3 is not None else None,
+        "cs_win_rate_q4": round(wr4, 6) if wr4 is not None else None,
+        "cs_monotone": monotone,
+        "cs_top_quartile_premium": premium,
+        "cs_top_quartile_avg_return": round(top_avg, 6) if top_avg is not None else None,
+        "cs_bottom_quartile_avg_return": round(bot_avg, 6) if bot_avg is not None else None,
+        "cs_return_spread": spread,
+        "cs_effective": cs_effective,
     }

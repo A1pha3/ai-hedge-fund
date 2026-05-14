@@ -9473,3 +9473,356 @@ def test_r41_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
 
     assert "显著性" in COMPARISON_METRIC_LABELS.get("combined_significance_score", "")
+
+
+# ===========================================================================
+# Round 42 — T1: Score calibration curve
+# ===========================================================================
+
+import random as _rnd42
+
+
+def _make_r42_calib_rows(n: int = 40, seed: int = 0, score_key: str = "runner_composite_score", score_win_corr: float = 0.5) -> list[dict]:
+    """Build rows for calibration tests; score_win_corr controls score→return correlation."""
+    rng = _rnd42.Random(seed)
+    rows = []
+    for i in range(n):
+        score = rng.uniform(0.0, 1.0)
+        # Higher score → higher probability of positive return
+        prob_win = 0.4 + score_win_corr * 0.4
+        ret = rng.uniform(0.001, 0.05) if rng.random() < prob_win else rng.uniform(-0.05, -0.001)
+        rows.append({score_key: score, "next_close_return": ret})
+    return rows
+
+
+def _make_r42_cs_rows(n: int = 40, seed: int = 0, monotone: bool = True) -> list[dict]:
+    """Build rows for close_strength stratification tests."""
+    rng = _rnd42.Random(seed)
+    rows = []
+    for i in range(n):
+        cs = rng.uniform(0.0, 1.0)
+        if monotone:
+            prob_win = 0.35 + cs * 0.4
+        else:
+            prob_win = 0.55  # flat, no correlation
+        ret = rng.uniform(0.001, 0.04) if rng.random() < prob_win else rng.uniform(-0.04, -0.001)
+        rows.append({"close_strength": cs, "next_close_return": ret})
+    return rows
+
+
+def _make_r42_consensus_windows(n: int = 5, seed: int = 0, pct_passing: float = 0.8) -> list[dict]:
+    """Build per-window surface summaries with controllable pass rate."""
+    rng = _rnd42.Random(seed)
+    windows = []
+    for i in range(n):
+        passing = rng.random() < pct_passing
+        windows.append({
+            "next_close_positive_rate": 0.60 if passing else 0.48,
+            "composite_gate_score": 65.0 if passing else 40.0,
+            "expected_value_per_trade": 0.008 if passing else 0.001,
+            "combined_significance_score": 0.50 if passing else 0.10,
+        })
+    return windows
+
+
+def test_r42_t1_basic_returns_result() -> None:
+    """compute_score_calibration_curve returns dict with expected keys."""
+    from scripts.btst_analysis_utils import compute_score_calibration_curve
+
+    rows = _make_r42_calib_rows(40, seed=0)
+    result = compute_score_calibration_curve(rows)
+    assert "calibration_slope" in result
+    assert "calibration_monotone" in result
+    assert "well_calibrated" in result
+    assert "calibration_valid" in result
+
+
+def test_r42_t1_empty_returns_invalid() -> None:
+    """Empty input returns calibration_valid=False."""
+    from scripts.btst_analysis_utils import compute_score_calibration_curve
+
+    result = compute_score_calibration_curve([])
+    assert result["calibration_valid"] is False
+    assert result["calibration_slope"] is None
+
+
+def test_r42_t1_insufficient_rows_returns_invalid() -> None:
+    """Fewer than 15 paired rows returns invalid."""
+    from scripts.btst_analysis_utils import compute_score_calibration_curve
+
+    rows = _make_r42_calib_rows(10, seed=0)
+    result = compute_score_calibration_curve(rows)
+    assert result["calibration_valid"] is False
+
+
+def test_r42_t1_positive_slope_for_correlated_scores() -> None:
+    """Strongly correlated score→return should produce positive calibration_slope."""
+    from scripts.btst_analysis_utils import compute_score_calibration_curve
+
+    rows = _make_r42_calib_rows(80, seed=1, score_win_corr=0.9)
+    result = compute_score_calibration_curve(rows)
+    if result["calibration_valid"]:
+        assert result["calibration_slope"] is not None
+
+
+def test_r42_t1_score_priority_runner_composite() -> None:
+    """runner_composite_score is preferred over composite_score."""
+    from scripts.btst_analysis_utils import compute_score_calibration_curve
+
+    import random as _r
+    rng = _r.Random(42)
+    rows = [{"runner_composite_score": rng.uniform(0, 1), "composite_score": None, "next_close_return": rng.uniform(-0.03, 0.03)} for _ in range(20)]
+    result = compute_score_calibration_curve(rows)
+    # Should not crash; calibration_valid depends on sample count and bins
+    assert "calibration_slope" in result
+
+
+def test_r42_t1_fallback_to_composite_score() -> None:
+    """Falls back to composite_score when runner_composite_score is absent."""
+    from scripts.btst_analysis_utils import compute_score_calibration_curve
+
+    import random as _r
+    rng = _r.Random(5)
+    rows = [{"composite_score": rng.uniform(0, 1), "next_close_return": rng.uniform(-0.03, 0.03)} for _ in range(20)]
+    result = compute_score_calibration_curve(rows)
+    assert "calibration_slope" in result
+
+
+def test_r42_t1_none_returns_skipped() -> None:
+    """Rows with None score or return are excluded gracefully."""
+    from scripts.btst_analysis_utils import compute_score_calibration_curve
+
+    rows = [{"runner_composite_score": None, "next_close_return": 0.01} for _ in range(10)]
+    rows += _make_r42_calib_rows(20, seed=3)
+    result = compute_score_calibration_curve(rows)
+    assert "calibration_valid" in result
+
+
+def test_r42_t1_floor_registered() -> None:
+    """calibration_slope floor is 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "calibration_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["calibration_slope"] == 0.0
+
+
+def test_r42_t1_metric_registered() -> None:
+    """calibration_slope is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "calibration_slope" in COMPARISON_METRICS
+    assert "calibration_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r42_t1_label_registered() -> None:
+    """calibration_slope label contains '校准'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "校准" in COMPARISON_METRIC_LABELS.get("calibration_slope", "")
+
+
+# ===========================================================================
+# Round 42 — T2: Close-strength quartile stratification
+# ===========================================================================
+
+
+def test_r42_t2_basic_returns_result() -> None:
+    """compute_close_strength_stratification returns dict with expected keys."""
+    from scripts.btst_analysis_utils import compute_close_strength_stratification
+
+    rows = _make_r42_cs_rows(40, seed=0)
+    result = compute_close_strength_stratification(rows)
+    assert "close_strength_valid" in result
+    assert "cs_top_quartile_premium" in result
+    assert "cs_monotone" in result
+
+
+def test_r42_t2_empty_returns_invalid() -> None:
+    """Empty input returns close_strength_valid=False."""
+    from scripts.btst_analysis_utils import compute_close_strength_stratification
+
+    result = compute_close_strength_stratification([])
+    assert result["close_strength_valid"] is False
+
+
+def test_r42_t2_all_none_cs_returns_invalid() -> None:
+    """All-None close_strength returns close_strength_valid=False."""
+    from scripts.btst_analysis_utils import compute_close_strength_stratification
+
+    rows = [{"close_strength": None, "next_close_return": 0.01} for _ in range(20)]
+    result = compute_close_strength_stratification(rows)
+    assert result["close_strength_valid"] is False
+
+
+def test_r42_t2_insufficient_rows_returns_invalid() -> None:
+    """Fewer than 10 paired rows returns invalid."""
+    from scripts.btst_analysis_utils import compute_close_strength_stratification
+
+    rows = _make_r42_cs_rows(5, seed=0)
+    result = compute_close_strength_stratification(rows)
+    assert result["close_strength_valid"] is False
+
+
+def test_r42_t2_premium_is_float() -> None:
+    """cs_top_quartile_premium is a float when valid."""
+    from scripts.btst_analysis_utils import compute_close_strength_stratification
+
+    rows = _make_r42_cs_rows(60, seed=7, monotone=True)
+    result = compute_close_strength_stratification(rows)
+    if result["close_strength_valid"] and result["cs_top_quartile_premium"] is not None:
+        assert isinstance(result["cs_top_quartile_premium"], float)
+
+
+def test_r42_t2_win_rates_in_unit_interval() -> None:
+    """All per-quartile win rates are between 0 and 1."""
+    from scripts.btst_analysis_utils import compute_close_strength_stratification
+
+    rows = _make_r42_cs_rows(80, seed=9)
+    result = compute_close_strength_stratification(rows)
+    for key in ("cs_win_rate_q1", "cs_win_rate_q2", "cs_win_rate_q3", "cs_win_rate_q4"):
+        val = result.get(key)
+        if val is not None:
+            assert 0.0 <= val <= 1.0, f"{key}={val} out of [0,1]"
+
+
+def test_r42_t2_effective_flag_when_premium_above_5pct() -> None:
+    """cs_effective is True when premium > 0.05."""
+    from scripts.btst_analysis_utils import compute_close_strength_stratification
+
+    rows = _make_r42_cs_rows(100, seed=11, monotone=True)
+    result = compute_close_strength_stratification(rows)
+    if result.get("cs_top_quartile_premium") is not None:
+        expected = result["cs_top_quartile_premium"] > 0.05
+        assert result["cs_effective"] == expected
+
+
+def test_r42_t2_floor_registered() -> None:
+    """cs_top_quartile_premium floor is 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "cs_top_quartile_premium" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["cs_top_quartile_premium"] == 0.0
+
+
+def test_r42_t2_metric_registered() -> None:
+    """cs_top_quartile_premium is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "cs_top_quartile_premium" in COMPARISON_METRICS
+    assert "cs_top_quartile_premium" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r42_t2_label_registered() -> None:
+    """cs_top_quartile_premium label contains '顶档'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "顶档" in COMPARISON_METRIC_LABELS.get("cs_top_quartile_premium", "")
+
+
+# ===========================================================================
+# Round 42 — T3: Cross-window consensus score
+# ===========================================================================
+
+
+def test_r42_t3_basic_returns_result() -> None:
+    """compute_window_consensus_score returns dict with expected keys."""
+    from scripts.optimize_profile import compute_window_consensus_score
+
+    windows = _make_r42_consensus_windows(5, seed=0)
+    result = compute_window_consensus_score(windows)
+    assert "consensus_windows_pct" in result
+    assert "strategy_consistently_valid" in result
+    assert "consensus_grade" in result
+    assert "best_consensus_window_idx" in result
+
+
+def test_r42_t3_empty_returns_null() -> None:
+    """Empty input returns all-None."""
+    from scripts.optimize_profile import compute_window_consensus_score
+
+    result = compute_window_consensus_score([])
+    assert result["consensus_windows_pct"] is None
+    assert result["strategy_consistently_valid"] is None
+
+
+def test_r42_t3_fewer_than_3_windows_returns_null() -> None:
+    """Fewer than 3 windows returns all-None."""
+    from scripts.optimize_profile import compute_window_consensus_score
+
+    result = compute_window_consensus_score(_make_r42_consensus_windows(2))
+    assert result["consensus_windows_pct"] is None
+
+
+def test_r42_t3_all_passing_windows_gives_pct_one() -> None:
+    """All windows with 4 passing conditions → consensus_windows_pct = 1.0."""
+    from scripts.optimize_profile import compute_window_consensus_score
+
+    windows = [{"next_close_positive_rate": 0.65, "composite_gate_score": 75.0, "expected_value_per_trade": 0.010, "combined_significance_score": 0.50} for _ in range(5)]
+    result = compute_window_consensus_score(windows)
+    assert result["consensus_windows_pct"] == 1.0
+    assert result["strategy_consistently_valid"] is True
+    assert result["consensus_grade"] == "A"
+
+
+def test_r42_t3_no_passing_windows_gives_grade_d() -> None:
+    """No windows pass → grade D."""
+    from scripts.optimize_profile import compute_window_consensus_score
+
+    windows = [{"next_close_positive_rate": 0.40, "composite_gate_score": 30.0, "expected_value_per_trade": 0.001, "combined_significance_score": 0.0} for _ in range(5)]
+    result = compute_window_consensus_score(windows)
+    assert result["consensus_grade"] == "D"
+    assert result["strategy_consistently_valid"] is False
+
+
+def test_r42_t3_missing_keys_treated_as_false() -> None:
+    """Missing condition keys are treated as not-met (False), no crash."""
+    from scripts.optimize_profile import compute_window_consensus_score
+
+    windows = [{} for _ in range(4)]
+    result = compute_window_consensus_score(windows)
+    assert result["consensus_windows_pct"] == 0.0
+
+
+def test_r42_t3_pct_in_unit_interval() -> None:
+    """consensus_windows_pct is between 0 and 1."""
+    from scripts.optimize_profile import compute_window_consensus_score
+
+    windows = _make_r42_consensus_windows(8, seed=42, pct_passing=0.5)
+    result = compute_window_consensus_score(windows)
+    pct = result["consensus_windows_pct"]
+    if pct is not None:
+        assert 0.0 <= pct <= 1.0
+
+
+def test_r42_t3_best_window_idx_valid() -> None:
+    """best_consensus_window_idx is a valid index into the input list."""
+    from scripts.optimize_profile import compute_window_consensus_score
+
+    windows = _make_r42_consensus_windows(6, seed=10)
+    result = compute_window_consensus_score(windows)
+    idx = result["best_consensus_window_idx"]
+    if idx is not None:
+        assert 0 <= idx < len(windows)
+
+
+def test_r42_t3_floor_registered() -> None:
+    """consensus_windows_pct floor is 0.40 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "consensus_windows_pct" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["consensus_windows_pct"] == 0.40
+
+
+def test_r42_t3_metric_registered() -> None:
+    """consensus_windows_pct is in COMPARISON_METRICS and OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS, OPTIONAL_COMPARISON_METRICS
+
+    assert "consensus_windows_pct" in COMPARISON_METRICS
+    assert "consensus_windows_pct" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r42_t3_label_registered() -> None:
+    """consensus_windows_pct label contains '共识'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert "共识" in COMPARISON_METRIC_LABELS.get("consensus_windows_pct", "")

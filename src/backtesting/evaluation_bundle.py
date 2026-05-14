@@ -249,6 +249,24 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # it cannot be statistically distinguished from random chance at even 90 % confidence.
     # Floor ≥ 0.25 requires at least 1 of 4 significance tests to pass before rollout.
     "combined_significance_score": 0.25,
+    # Task 1 (Round 42, Alpha): composite score calibration slope floor.
+    # calibration_slope = OLS slope of bin win rate on bin avg score across 5 equal-freq bins.
+    # A value ≤ 0 means higher composite scores do NOT correlate with higher win rates —
+    # the scoring system provides no directional guidance and is purely decorative.
+    # Floor ≥ 0.0 requires the calibration slope to be at least non-negative.
+    "calibration_slope": 0.0,
+    # Task 2 (Round 42, Beta): close-strength top-quartile win-rate premium floor.
+    # cs_top_quartile_premium = win_rate(Q4) − win_rate(Q1) stratified by close_strength.
+    # A value ≤ 0 means the top close-strength quartile does not achieve a higher win rate
+    # than the bottom quartile — close_strength provides zero monotone discriminative power.
+    # Floor ≥ 0.0 requires at least neutral positive premium for rollout eligibility.
+    "cs_top_quartile_premium": 0.0,
+    # Task 3 (Round 42, Gamma): cross-window consensus pass rate floor.
+    # consensus_windows_pct = fraction of replay windows satisfying ≥ 3 of 4 quality conditions.
+    # A rate < 0.40 means fewer than 40 % of windows pass multi-metric quality checks —
+    # the strategy is not consistently tradeable across market regimes.
+    # Floor ≥ 0.40 requires at least 40 % of windows to satisfy ≥ 3 quality conditions.
+    "consensus_windows_pct": 0.40,
 }
 
 # ---------------------------------------------------------------------------

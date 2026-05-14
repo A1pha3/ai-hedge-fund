@@ -296,6 +296,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "vol_price_alignment_rate",
     # Task 3 (Round 41, Gamma): combined statistical significance score.
     "combined_significance_score",
+    # Task 1 (Round 42, Alpha): composite score calibration slope.
+    "calibration_slope",
+    # Task 2 (Round 42, Beta): close-strength top-quartile win-rate premium.
+    "cs_top_quartile_premium",
+    # Task 3 (Round 42, Gamma): cross-window consensus pass rate.
+    "consensus_windows_pct",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -480,6 +486,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "vol_price_alignment_rate": "量价方向对齐率",
     # Task 3 (Round 41, Gamma): combined statistical significance score
     "combined_significance_score": "综合统计显著性",
+    # Task 1 (Round 42, Alpha): composite score calibration slope
+    "calibration_slope": "评分校准斜率",
+    # Task 2 (Round 42, Beta): close-strength top-quartile premium
+    "cs_top_quartile_premium": "收盘强度顶档溢价",
+    # Task 3 (Round 42, Gamma): cross-window consensus pass rate
+    "consensus_windows_pct": "跨窗共识通过率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -710,6 +722,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "vol_price_alignment_rate",
     # Task 3 (Round 41, Gamma): combined statistical significance score — optional; pre-Round-41 outputs omit it.
     "combined_significance_score",
+    # Task 1 (Round 42, Alpha): calibration slope — optional; pre-Round-42 outputs omit it.
+    "calibration_slope",
+    # Task 2 (Round 42, Beta): close-strength top-quartile premium — optional; pre-Round-42 outputs omit it.
+    "cs_top_quartile_premium",
+    # Task 3 (Round 42, Gamma): cross-window consensus pass rate — optional; pre-Round-42 outputs omit it.
+    "consensus_windows_pct",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1516,6 +1534,81 @@ def compute_factor_rank_consistency(all_windows_summaries: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 42, Task 3 (Gamma): Cross-window consensus score
+# ---------------------------------------------------------------------------
+# Counts the fraction of replay windows that simultaneously satisfy ≥ 3 of 4
+# core quality conditions.  Multi-window consensus is the strongest signal of
+# strategy robustness: a strategy that looks good only in isolated windows is
+# likely overfitting.
+
+
+def compute_window_consensus_score(all_windows_summaries: list[dict]) -> dict:
+    """Compute what fraction of replay windows satisfy ≥ 3 of 4 quality conditions.
+
+    For each window checks:
+
+    1. ``win_rate >= 0.55``
+    2. ``composite_gate_score >= 60.0``
+    3. ``expected_value_per_trade >= 0.005``
+    4. ``combined_significance_score >= 0.25``
+
+    A window *passes* when it meets at least 3 of these 4 conditions.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (one per
+            replay window, as appended to ``all_primary_surfaces``).
+
+    Returns:
+        Dict with keys:
+
+        - ``consensus_windows_pct`` (float | None): Fraction of windows that pass
+          [0, 1].  None when fewer than 3 windows are available.
+        - ``strategy_consistently_valid`` (bool | None): True when pct ≥ 0.60.
+        - ``consensus_grade`` (str | None): 'A'(≥0.80)/'B'(≥0.60)/'C'(≥0.40)/'D'(<0.40).
+        - ``best_consensus_window_idx`` (int | None): Index of the window satisfying
+          the most conditions (ties broken by first occurrence).
+    """
+    _null: dict = {"consensus_windows_pct": None, "strategy_consistently_valid": None, "consensus_grade": None, "best_consensus_window_idx": None}
+    if len(all_windows_summaries) < 3:
+        return _null
+
+    window_passes: list[bool] = []
+    window_condition_counts: list[int] = []
+    for surf in all_windows_summaries:
+        wr = surf.get("next_close_positive_rate")
+        gate = surf.get("composite_gate_score")
+        ev = surf.get("expected_value_per_trade")
+        sig = surf.get("combined_significance_score")
+        cond_wr = (wr is not None and float(wr) >= 0.55)
+        cond_gate = (gate is not None and float(gate) >= 60.0)
+        cond_ev = (ev is not None and float(ev) >= 0.005)
+        cond_sig = (sig is not None and float(sig) >= 0.25)
+        count = int(cond_wr) + int(cond_gate) + int(cond_ev) + int(cond_sig)
+        window_passes.append(count >= 3)
+        window_condition_counts.append(count)
+
+    total = len(window_passes)
+    pct = round(sum(window_passes) / max(total, 1), 6)
+    valid = pct >= 0.60
+    if pct >= 0.80:
+        grade = "A"
+    elif pct >= 0.60:
+        grade = "B"
+    elif pct >= 0.40:
+        grade = "C"
+    else:
+        grade = "D"
+    best_idx = window_condition_counts.index(max(window_condition_counts))
+
+    return {
+        "consensus_windows_pct": pct,
+        "strategy_consistently_valid": valid,
+        "consensus_grade": grade,
+        "best_consensus_window_idx": best_idx,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -2123,6 +2216,14 @@ def _build_replay_evaluator(
         # Task 3 (Round 41, Gamma): average combined_significance_score across replay windows.
         _css_vals = [float(s["combined_significance_score"]) for s in all_primary_surfaces if s.get("combined_significance_score") is not None]
         avg_combined_significance_score: float | None = round(sum(_css_vals) / len(_css_vals), 6) if _css_vals else None
+        # Task 1 (Round 42, Alpha): average calibration_slope across replay windows.
+        _csl_vals = [float(s["calibration_slope"]) for s in all_primary_surfaces if s.get("calibration_slope") is not None]
+        avg_calibration_slope: float | None = round(sum(_csl_vals) / len(_csl_vals), 6) if _csl_vals else None
+        # Task 2 (Round 42, Beta): average cs_top_quartile_premium across replay windows.
+        _csp_vals = [float(s["cs_top_quartile_premium"]) for s in all_primary_surfaces if s.get("cs_top_quartile_premium") is not None]
+        avg_cs_top_quartile_premium: float | None = round(sum(_csp_vals) / len(_csp_vals), 6) if _csp_vals else None
+        # Task 3 (Round 42, Gamma): cross-window consensus score — computed over all window summaries.
+        _wconsensus: dict[str, Any] = compute_window_consensus_score(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -2313,6 +2414,15 @@ def _build_replay_evaluator(
             "vol_price_alignment_rate": avg_vol_price_alignment_rate,
             # Task 3 (Round 41, Gamma): average combined_significance_score across replay windows.
             "combined_significance_score": avg_combined_significance_score,
+            # Task 1 (Round 42, Alpha): average calibration slope across replay windows.
+            "calibration_slope": avg_calibration_slope,
+            # Task 2 (Round 42, Beta): average close-strength top-quartile premium across replay windows.
+            "cs_top_quartile_premium": avg_cs_top_quartile_premium,
+            # Task 3 (Round 42, Gamma): cross-window consensus score.
+            "consensus_windows_pct": _wconsensus.get("consensus_windows_pct"),
+            "strategy_consistently_valid": _wconsensus.get("strategy_consistently_valid"),
+            "consensus_grade": _wconsensus.get("consensus_grade"),
+            "best_consensus_window_idx": _wconsensus.get("best_consensus_window_idx"),
         }
 
     return evaluator
