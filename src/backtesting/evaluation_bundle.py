@@ -94,6 +94,12 @@ _GUARDRAIL_KEYS = (
     # Task 1 (Round 60, Alpha): multi-signal consistency win-rate lift floor guardrail.
     # signal_consistency_lift < 0.0 means high-consistency rows don't outperform low-consistency rows.
     "signal_consistency_lift",
+    # Task 1 (Round 61, Alpha): concentration risk cap guardrail.
+    # concentration_risk > 0.7 means P&L is concentrated in ≤5 top/bottom trades — high overfitting risk.
+    "concentration_risk",
+    # Task 2 (Round 61, Beta): extreme market resilience score floor guardrail.
+    # resilience_score < 0.3 means the strategy wins less than 30% of the time under extreme down conditions.
+    "resilience_score",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -481,6 +487,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 60, Gamma): cross-window quality score trend slope floor.
     # quality_score_trend_slope < -1.0 signals severe consistent deterioration of quality score.
     "quality_score_trend_slope": -1.0,
+    # Task 2 (Round 61, Beta): extreme market resilience score floor.
+    # resilience_score < 0.3 means the strategy fails to win under extreme down conditions.
+    "resilience_score": 0.3,
+    # Task 3 (Round 61, Gamma): signal consistency trend slope floor.
+    # consistency_trend_slope < -0.01 means the signal consistency is deteriorating meaningfully.
+    "consistency_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------
@@ -557,6 +569,9 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # drawdown_trend_slope > 0.005 means drawdown is growing faster than 0.5 %/window — deteriorating risk.
     # Profiles above this cap carry unacceptable risk escalation and should be penalised.
     "drawdown_trend_slope": 0.005,
+    # Task 1 (Round 61, Alpha): concentration risk cap.
+    # concentration_risk > 0.7 means P&L is driven by ≤5 extreme trades — overfit risk.
+    "concentration_risk": 0.7,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

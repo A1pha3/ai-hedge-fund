@@ -189,7 +189,16 @@
       "rank_ic_trend_slope_delta": null,
       "optimal_win_rate_delta": null,
       "total_explained_variance_delta": null,
-      "regime_trend_slope_delta": null
+      "regime_trend_slope_delta": null,
+      "skewness_delta": null,
+      "composite_quality_score_delta": null,
+      "threshold_win_rate_trend_slope_delta": null,
+      "signal_consistency_lift_delta": null,
+      "t1_win_rate_delta": null,
+      "quality_score_trend_slope_delta": null,
+      "concentration_risk_delta": null,
+      "resilience_score_delta": null,
+      "consistency_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -369,7 +378,16 @@
       "rank_ic_trend_slope_delta": null,
       "optimal_win_rate_delta": null,
       "total_explained_variance_delta": null,
-      "regime_trend_slope_delta": null
+      "regime_trend_slope_delta": null,
+      "skewness_delta": null,
+      "composite_quality_score_delta": null,
+      "threshold_win_rate_trend_slope_delta": null,
+      "signal_consistency_lift_delta": null,
+      "t1_win_rate_delta": null,
+      "quality_score_trend_slope_delta": null,
+      "concentration_risk_delta": null,
+      "resilience_score_delta": null,
+      "consistency_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

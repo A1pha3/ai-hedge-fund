@@ -412,6 +412,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "t1_win_rate",
     # Task 3 (Round 60, Gamma): cross-window composite quality score trend slope.
     "quality_score_trend_slope",
+    # Task 1 (Round 61, Alpha): concentration risk — fraction of P&L driven by top-5 wins or bottom-5 losses.
+    "concentration_risk",
+    # Task 2 (Round 61, Beta): extreme market resilience score — win rate under extreme down conditions.
+    "resilience_score",
+    # Task 3 (Round 61, Gamma): cross-window signal consistency OLS trend slope.
+    "consistency_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -712,6 +718,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "t1_win_rate": "最优持仓期胜率",
     # Task 3 (Round 60, Gamma): composite quality score cross-window trend slope
     "quality_score_trend_slope": "综合质量评分跨窗趋势",
+    # Task 1 (Round 61, Alpha): concentration risk
+    "concentration_risk": "收益集中风险度",
+    # Task 2 (Round 61, Beta): extreme market resilience score
+    "resilience_score": "极端行情韧性评分",
+    # Task 3 (Round 61, Gamma): signal consistency cross-window trend slope
+    "consistency_trend_slope": "信号一致性跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -778,6 +790,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "drawdown_max_drawdown",
     # Task 3 (Round 55, Gamma): cross-window drawdown trend slope — negative slope = improving risk = lower is better.
     "drawdown_trend_slope",
+    # Task 1 (Round 61, Alpha): concentration risk — higher = more P&L concentrated in few trades = lower-is-better.
+    "concentration_risk",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -1070,6 +1084,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "t1_win_rate",
     # Task 3 (Round 60, Gamma): composite quality score cross-window trend slope — optional; pre-Round-60 outputs omit it.
     "quality_score_trend_slope",
+    # Task 1 (Round 61, Alpha): concentration risk — optional; pre-Round-61 surfaces omit it.
+    "concentration_risk",
+    # Task 2 (Round 61, Beta): extreme market resilience score — optional; pre-Round-61 surfaces omit it.
+    "resilience_score",
+    # Task 3 (Round 61, Gamma): signal consistency trend slope — optional; pre-Round-61 outputs omit it.
+    "consistency_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3197,6 +3217,40 @@ def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) 
     }
 
 
+def compute_cross_window_consistency_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪多信号一致性提升（signal_consistency_lift）趋势"""
+    invalid = {"consistency_trend_valid": False, "consistency_trend_slope": None, "consistency_trend_mean": None, "consistency_trend_min": None, "consistency_trend_max": None, "consistency_positive_windows_pct": None, "consistency_trend_grade": None}
+    if not all_windows_summaries:
+        return invalid
+    values: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("sig_consist_signal_consistency_lift")
+        if v is not None:
+            try:
+                values.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(values) < 3:
+        return invalid
+    n = len(values)
+    xs = list(range(n))
+    mean_x = sum(xs) / n
+    mean_y = sum(values) / n
+    ss_xx = sum((x - mean_x) ** 2 for x in xs)
+    ss_xy = sum((xs[i] - mean_x) * (values[i] - mean_y) for i in range(n))
+    slope = round(ss_xy / ss_xx, 8) if ss_xx > 0 else 0.0
+    positive_pct = round(sum(1 for v in values if v > 0) / n, 6)
+    if slope > 0.005:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"consistency_trend_valid": True, "consistency_trend_slope": slope, "consistency_trend_mean": round(mean_y, 6), "consistency_trend_min": round(min(values), 6), "consistency_trend_max": round(max(values), 6), "consistency_positive_windows_pct": positive_pct, "consistency_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -3883,6 +3937,14 @@ def _build_replay_evaluator(
         _ttt: dict[str, Any] = compute_cross_window_threshold_trend(all_primary_surfaces)
         # Task 3 (Round 60, Gamma): cross-window composite quality score trend.
         _cqt: dict[str, Any] = compute_cross_window_quality_trend(all_primary_surfaces)
+        # Task 3 (Round 61, Gamma): cross-window signal consistency trend.
+        _ccst: dict[str, Any] = compute_cross_window_consistency_trend(all_primary_surfaces)
+        # Task 1 (Round 61, Alpha): average overfit_concentration_risk across replay windows.
+        _ocr_vals = [float(s["overfit_concentration_risk"]) for s in all_primary_surfaces if s.get("overfit_concentration_risk") is not None]
+        avg_concentration_risk: "float | None" = round(sum(_ocr_vals) / len(_ocr_vals), 6) if _ocr_vals else None
+        # Task 2 (Round 61, Beta): average extreme_resilience_score across replay windows.
+        _ers_vals = [float(s["extreme_resilience_score"]) for s in all_primary_surfaces if s.get("extreme_resilience_score") is not None]
+        avg_resilience_score: "float | None" = round(sum(_ers_vals) / len(_ers_vals), 6) if _ers_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4244,6 +4306,18 @@ def _build_replay_evaluator(
             "quality_above_floor_pct": _cqt.get("quality_above_floor_pct"),
             "quality_trend_grade": _cqt.get("quality_trend_grade"),
             "quality_trend_valid": _cqt.get("quality_trend_valid"),
+            # Task 1 (Round 61, Alpha): concentration_risk averaged across windows.
+            "concentration_risk": avg_concentration_risk,
+            # Task 2 (Round 61, Beta): resilience_score averaged across windows.
+            "resilience_score": avg_resilience_score,
+            # Task 3 (Round 61, Gamma): cross-window signal consistency trend.
+            "consistency_trend_slope": _ccst.get("consistency_trend_slope"),
+            "consistency_trend_mean": _ccst.get("consistency_trend_mean"),
+            "consistency_trend_min": _ccst.get("consistency_trend_min"),
+            "consistency_trend_max": _ccst.get("consistency_trend_max"),
+            "consistency_positive_windows_pct": _ccst.get("consistency_positive_windows_pct"),
+            "consistency_trend_grade": _ccst.get("consistency_trend_grade"),
+            "consistency_trend_valid": _ccst.get("consistency_trend_valid"),
         }
 
     return evaluator

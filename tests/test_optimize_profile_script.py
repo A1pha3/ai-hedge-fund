@@ -16054,3 +16054,354 @@ def test_r60_t3_constant_quality_slope_zero() -> None:
     result = compute_cross_window_quality_trend(summaries)
     assert result["quality_score_trend_slope"] == pytest.approx(0.0, abs=1e-8)
     assert result["quality_trend_grade"] in ("B", "C")
+
+
+# ---------------------------------------------------------------------------
+# Round 61 tests
+# ---------------------------------------------------------------------------
+
+def _make_rows_r61(n: int = 20, win_frac: float = 0.6) -> list[dict]:
+    import random
+    random.seed(42)
+    rows = []
+    for i in range(n):
+        ret = 0.03 if i < int(n * win_frac) else -0.02
+        rows.append({"next_day_return": ret})
+    return rows
+
+
+# --- T1: compute_overfitting_risk_indicators ---
+
+def test_r61_t1_import() -> None:
+    """compute_overfitting_risk_indicators is importable."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    assert callable(compute_overfitting_risk_indicators)
+
+
+def test_r61_t1_invalid_empty() -> None:
+    """Empty rows returns invalid result."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    result = compute_overfitting_risk_indicators([])
+    assert result["overfitting_risk_valid"] is False
+    assert result["sample_size"] is None
+
+
+def test_r61_t1_invalid_too_few() -> None:
+    """Fewer than 15 rows returns invalid."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = [{"next_day_return": 0.01}] * 10
+    result = compute_overfitting_risk_indicators(rows)
+    assert result["overfitting_risk_valid"] is False
+
+
+def test_r61_t1_valid_result_keys() -> None:
+    """Valid input returns all expected keys."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = _make_rows_r61(20)
+    result = compute_overfitting_risk_indicators(rows)
+    assert result["overfitting_risk_valid"] is True
+    for k in ["sample_size", "effective_trades", "top5_contribution", "bottom5_contribution", "concentration_risk", "win_streak_max", "loss_streak_max", "streak_ratio", "overfitting_risk_grade"]:
+        assert k in result, f"Missing key: {k}"
+
+
+def test_r61_t1_sample_size() -> None:
+    """sample_size equals number of rows with next_day_return."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = _make_rows_r61(25)
+    result = compute_overfitting_risk_indicators(rows)
+    assert result["sample_size"] == 25
+
+
+def test_r61_t1_top5_contribution_range() -> None:
+    """top5_contribution is between 0 and 1."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = _make_rows_r61(20)
+    result = compute_overfitting_risk_indicators(rows)
+    if result["top5_contribution"] is not None:
+        assert 0.0 <= result["top5_contribution"] <= 1.0
+
+
+def test_r61_t1_concentration_risk_range() -> None:
+    """concentration_risk is between 0 and 1."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = _make_rows_r61(20)
+    result = compute_overfitting_risk_indicators(rows)
+    if result["concentration_risk"] is not None:
+        assert 0.0 <= result["concentration_risk"] <= 1.0
+
+
+def test_r61_t1_grade_values() -> None:
+    """overfitting_risk_grade is one of A, B, C, D."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = _make_rows_r61(20)
+    result = compute_overfitting_risk_indicators(rows)
+    assert result["overfitting_risk_grade"] in ("A", "B", "C", "D")
+
+
+def test_r61_t1_streak_ratio_nonneg() -> None:
+    """streak_ratio is non-negative."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = _make_rows_r61(20)
+    result = compute_overfitting_risk_indicators(rows)
+    assert result["streak_ratio"] >= 0.0
+
+
+def test_r61_t1_all_wins_streak() -> None:
+    """All winning rows gives loss_streak_max=0 and high streak_ratio."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = [{"next_day_return": 0.02}] * 20
+    result = compute_overfitting_risk_indicators(rows)
+    assert result["overfitting_risk_valid"] is True
+    assert result["loss_streak_max"] == 0
+    assert result["win_streak_max"] == 20
+
+
+def test_r61_t1_high_concentration_grade_d() -> None:
+    """Very concentrated returns (5 big wins, rest small) gives grade C or D."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = [{"next_day_return": 1.0}] * 5 + [{"next_day_return": 0.001}] * 15
+    result = compute_overfitting_risk_indicators(rows)
+    assert result["overfitting_risk_valid"] is True
+    assert result["overfitting_risk_grade"] in ("C", "D")
+
+
+def test_r61_t1_effective_trades_count() -> None:
+    """effective_trades counts non-zero returns."""
+    from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+    rows = [{"next_day_return": 0.01}] * 10 + [{"next_day_return": 0.0}] * 5 + [{"next_day_return": -0.01}] * 5
+    result = compute_overfitting_risk_indicators(rows)
+    assert result["effective_trades"] == 15
+
+
+def test_r61_t1_wired_into_surface_summary() -> None:
+    """build_surface_summary includes overfit_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = _make_rows_r61(20)
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "overfit_overfitting_risk_valid" in summary
+    assert "overfit_concentration_risk" in summary
+
+
+# --- T2: compute_extreme_market_resilience ---
+
+def test_r61_t2_import() -> None:
+    """compute_extreme_market_resilience is importable."""
+    from scripts.btst_analysis_utils import compute_extreme_market_resilience
+    assert callable(compute_extreme_market_resilience)
+
+
+def test_r61_t2_invalid_empty() -> None:
+    """Empty rows returns invalid result."""
+    from scripts.btst_analysis_utils import compute_extreme_market_resilience
+    result = compute_extreme_market_resilience([])
+    assert result["extreme_market_valid"] is False
+
+
+def test_r61_t2_invalid_too_few() -> None:
+    """Fewer than 10 rows returns invalid."""
+    from scripts.btst_analysis_utils import compute_extreme_market_resilience
+    rows = [{"next_day_return": 0.01}] * 5
+    result = compute_extreme_market_resilience(rows)
+    assert result["extreme_market_valid"] is False
+
+
+def test_r61_t2_valid_result_keys() -> None:
+    """Valid input returns all expected keys."""
+    from scripts.btst_analysis_utils import compute_extreme_market_resilience
+    rows = _make_rows_r61(30)
+    result = compute_extreme_market_resilience(rows)
+    assert result["extreme_market_valid"] is True
+    for k in ["extreme_up_threshold", "extreme_down_threshold", "extreme_up_win_rate", "extreme_down_win_rate", "normal_win_rate", "resilience_score", "extreme_divergence"]:
+        assert k in result, f"Missing key: {k}"
+
+
+def test_r61_t2_p10_p90_ordering() -> None:
+    """extreme_down_threshold <= extreme_up_threshold."""
+    from scripts.btst_analysis_utils import compute_extreme_market_resilience
+    rows = [{"next_day_return": float(i) / 100} for i in range(-10, 20)]
+    result = compute_extreme_market_resilience(rows)
+    assert result["extreme_market_valid"] is True
+    assert result["extreme_down_threshold"] <= result["extreme_up_threshold"]
+
+
+def test_r61_t2_resilience_score_nonneg_floor() -> None:
+    """resilience_score (win rate) is between 0 and 1."""
+    from scripts.btst_analysis_utils import compute_extreme_market_resilience
+    rows = _make_rows_r61(30)
+    result = compute_extreme_market_resilience(rows)
+    if result["resilience_score"] is not None:
+        assert 0.0 <= result["resilience_score"] <= 1.0
+
+
+def test_r61_t2_wired_into_surface_summary() -> None:
+    """build_surface_summary includes extreme_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = _make_rows_r61(30)
+    summary = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "extreme_extreme_market_valid" in summary
+    assert "extreme_resilience_score" in summary
+
+
+# --- T3: compute_cross_window_consistency_trend ---
+
+def test_r61_t3_import() -> None:
+    """compute_cross_window_consistency_trend is importable."""
+    from scripts.optimize_profile import compute_cross_window_consistency_trend
+    assert callable(compute_cross_window_consistency_trend)
+
+
+def test_r61_t3_invalid_empty() -> None:
+    """Empty summaries returns invalid."""
+    from scripts.optimize_profile import compute_cross_window_consistency_trend
+    result = compute_cross_window_consistency_trend([])
+    assert result["consistency_trend_valid"] is False
+
+
+def test_r61_t3_invalid_too_few() -> None:
+    """Fewer than 3 valid values returns invalid."""
+    from scripts.optimize_profile import compute_cross_window_consistency_trend
+    summaries = [{"sig_consist_signal_consistency_lift": 0.1}] * 2
+    result = compute_cross_window_consistency_trend(summaries)
+    assert result["consistency_trend_valid"] is False
+
+
+def test_r61_t3_valid_keys() -> None:
+    """Valid summaries produce all expected keys."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_consistency_trend
+    summaries = [{"sig_consist_signal_consistency_lift": float(i) * 0.01} for i in range(5)]
+    result = compute_cross_window_consistency_trend(summaries)
+    assert result["consistency_trend_valid"] is True
+    for k in ["consistency_trend_slope", "consistency_trend_mean", "consistency_trend_min", "consistency_trend_max", "consistency_positive_windows_pct", "consistency_trend_grade"]:
+        assert k in result
+
+
+def test_r61_t3_increasing_series_grade_a() -> None:
+    """Steeply increasing series gives grade A."""
+    from scripts.optimize_profile import compute_cross_window_consistency_trend
+    summaries = [{"sig_consist_signal_consistency_lift": float(i) * 0.1} for i in range(10)]
+    result = compute_cross_window_consistency_trend(summaries)
+    assert result["consistency_trend_grade"] == "A"
+    assert result["consistency_trend_slope"] > 0.005
+
+
+def test_r61_t3_decreasing_series_grade_d() -> None:
+    """Steeply decreasing series gives grade D."""
+    from scripts.optimize_profile import compute_cross_window_consistency_trend
+    summaries = [{"sig_consist_signal_consistency_lift": 1.0 - float(i) * 0.2} for i in range(10)]
+    result = compute_cross_window_consistency_trend(summaries)
+    assert result["consistency_trend_grade"] == "D"
+
+
+def test_r61_t3_constant_series_slope_zero() -> None:
+    """Constant series gives slope of 0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_consistency_trend
+    summaries = [{"sig_consist_signal_consistency_lift": 0.05}] * 6
+    result = compute_cross_window_consistency_trend(summaries)
+    assert result["consistency_trend_slope"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_r61_t3_missing_field_skipped() -> None:
+    """Summaries without the field are skipped."""
+    from scripts.optimize_profile import compute_cross_window_consistency_trend
+    summaries = [{"sig_consist_signal_consistency_lift": 0.1}] * 3 + [{"other_key": 99}] * 3
+    result = compute_cross_window_consistency_trend(summaries)
+    assert result["consistency_trend_valid"] is True
+    assert result["consistency_trend_mean"] is not None
+
+
+# --- Metric registration tests ---
+
+def test_r61_concentration_risk_in_comparison_metrics() -> None:
+    """concentration_risk is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "concentration_risk" in COMPARISON_METRICS
+
+
+def test_r61_resilience_score_in_comparison_metrics() -> None:
+    """resilience_score is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "resilience_score" in COMPARISON_METRICS
+
+
+def test_r61_consistency_trend_slope_in_comparison_metrics() -> None:
+    """consistency_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "consistency_trend_slope" in COMPARISON_METRICS
+
+
+def test_r61_concentration_risk_in_optional_metrics() -> None:
+    """concentration_risk is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "concentration_risk" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r61_resilience_score_in_optional_metrics() -> None:
+    """resilience_score is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "resilience_score" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r61_consistency_trend_slope_in_optional_metrics() -> None:
+    """consistency_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "consistency_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r61_concentration_risk_lower_is_better() -> None:
+    """concentration_risk is in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "concentration_risk" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r61_labels_concentration_risk() -> None:
+    """concentration_risk has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "concentration_risk" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["concentration_risk"]) > 0
+
+
+def test_r61_labels_resilience_score() -> None:
+    """resilience_score has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "resilience_score" in COMPARISON_METRIC_LABELS
+
+
+def test_r61_labels_consistency_trend_slope() -> None:
+    """consistency_trend_slope has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "consistency_trend_slope" in COMPARISON_METRIC_LABELS
+
+
+def test_r61_guardrail_keys_concentration_risk() -> None:
+    """concentration_risk is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "concentration_risk" in _GUARDRAIL_KEYS
+
+
+def test_r61_guardrail_keys_resilience_score() -> None:
+    """resilience_score is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "resilience_score" in _GUARDRAIL_KEYS
+
+
+def test_r61_quality_floors_resilience_score() -> None:
+    """BTST_QUALITY_FLOORS has resilience_score floor of 0.3."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "resilience_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["resilience_score"] == 0.3
+
+
+def test_r61_quality_floors_consistency_trend_slope() -> None:
+    """BTST_QUALITY_FLOORS has consistency_trend_slope floor of -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "consistency_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["consistency_trend_slope"] == -0.01
+
+
+def test_r61_quality_caps_concentration_risk() -> None:
+    """BTST_QUALITY_CAPS has concentration_risk cap of 0.7."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "concentration_risk" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["concentration_risk"] == 0.7

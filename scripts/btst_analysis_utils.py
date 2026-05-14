@@ -4465,6 +4465,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _hpo.items():
         _surface_result[f"hold_{_k}"] = _v
 
+    # Round 61, Task 1 (Alpha): Overfitting risk indicators.
+    _ori: dict[str, Any] = compute_overfitting_risk_indicators(rows)
+    for _k, _v in _ori.items():
+        _surface_result[f"overfit_{_k}"] = _v
+
+    # Round 61, Task 2 (Beta): Extreme market resilience.
+    _emr: dict[str, Any] = compute_extreme_market_resilience(rows)
+    for _k, _v in _emr.items():
+        _surface_result[f"extreme_{_k}"] = _v
+
     return _surface_result
 
 
@@ -11513,3 +11523,108 @@ def compute_holding_period_optimization(rows: list[dict]) -> dict:
         else:
             consistency = 0.5
     return {"holding_period_valid": True, "t1_win_rate": t1_wr, "t2_win_rate": t2_wr, "t3_win_rate": t3_wr, "t1_mean_return": t1_mean, "t2_mean_return": t2_mean, "t3_mean_return": t3_mean, "t1_sharpe": t1_sharpe, "optimal_holding_period": optimal, "holding_period_consistency": consistency}
+
+
+# ---------------------------------------------------------------------------
+# Round 61, Task 1 (Alpha): Overfitting risk indicators
+# ---------------------------------------------------------------------------
+
+def compute_overfitting_risk_indicators(rows: list[dict]) -> dict:
+    """量化策略过拟合风险指标（信号是否依赖少数幸运样本）"""
+    invalid = {"overfitting_risk_valid": False, "sample_size": None, "effective_trades": None, "top5_contribution": None, "bottom5_contribution": None, "concentration_risk": None, "win_streak_max": None, "loss_streak_max": None, "streak_ratio": None, "overfitting_risk_grade": None}
+    if not rows or len(rows) < 15:
+        return invalid
+    rets = [float(r["next_day_return"]) for r in rows if r.get("next_day_return") is not None]
+    if len(rets) < 15:
+        return invalid
+    sample_size = len(rets)
+    effective_trades = sum(1 for r in rets if r != 0)
+    pos_rets = sorted([r for r in rets if r > 0], reverse=True)
+    neg_rets = sorted([r for r in rets if r < 0])
+    top5 = pos_rets[:5]
+    bottom5 = neg_rets[:5]
+    top5_contribution = round(sum(top5) / sum(pos_rets), 6) if pos_rets else None
+    bottom5_contribution = round(sum(abs(r) for r in bottom5) / sum(abs(r) for r in neg_rets), 6) if neg_rets else None
+    if top5_contribution is not None and bottom5_contribution is not None:
+        concentration_risk = round(max(top5_contribution, bottom5_contribution), 6)
+    elif top5_contribution is not None:
+        concentration_risk = top5_contribution
+    elif bottom5_contribution is not None:
+        concentration_risk = bottom5_contribution
+    else:
+        concentration_risk = None
+    win_streak_max = 0
+    loss_streak_max = 0
+    cur_win = 0
+    cur_loss = 0
+    for r in rets:
+        if r > 0:
+            cur_win += 1
+            cur_loss = 0
+            win_streak_max = max(win_streak_max, cur_win)
+        elif r < 0:
+            cur_loss += 1
+            cur_win = 0
+            loss_streak_max = max(loss_streak_max, cur_loss)
+        else:
+            cur_win = 0
+            cur_loss = 0
+    streak_ratio = round(win_streak_max / max(loss_streak_max, 1), 6)
+    if concentration_risk is not None:
+        if concentration_risk < 0.3 and streak_ratio > 1.5:
+            grade = "A"
+        elif concentration_risk < 0.5:
+            grade = "B"
+        elif concentration_risk < 0.7:
+            grade = "C"
+        else:
+            grade = "D"
+    else:
+        if streak_ratio > 1.5:
+            grade = "A"
+        elif streak_ratio > 1.0:
+            grade = "B"
+        elif streak_ratio > 0.5:
+            grade = "C"
+        else:
+            grade = "D"
+    return {"overfitting_risk_valid": True, "sample_size": sample_size, "effective_trades": effective_trades, "top5_contribution": top5_contribution, "bottom5_contribution": bottom5_contribution, "concentration_risk": concentration_risk, "win_streak_max": win_streak_max, "loss_streak_max": loss_streak_max, "streak_ratio": streak_ratio, "overfitting_risk_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 61, Task 2 (Beta): Extreme market resilience
+# ---------------------------------------------------------------------------
+
+def compute_extreme_market_resilience(rows: list[dict]) -> dict:
+    """分析极端行情（大涨/大跌日）下策略的抗压能力"""
+    invalid = {"extreme_market_valid": False, "extreme_up_threshold": None, "extreme_down_threshold": None, "extreme_up_win_rate": None, "extreme_down_win_rate": None, "normal_win_rate": None, "resilience_score": None, "extreme_divergence": None}
+    if not rows or len(rows) < 10:
+        return invalid
+    rets = [float(r["next_day_return"]) for r in rows if r.get("next_day_return") is not None]
+    if len(rets) < 10:
+        return invalid
+    n = len(rets)
+    sorted_rets = sorted(rets)
+    p90 = sorted_rets[int(0.90 * (n - 1))]
+    p10 = sorted_rets[int(0.10 * (n - 1))]
+    extreme_up = [r for r in rets if r >= p90]
+    extreme_down = [r for r in rets if r <= p10]
+    normal = [r for r in rets if r < p90 and r > p10]
+    def _wr(group: list) -> "float | None":
+        if len(group) < 3:
+            return None
+        return round(sum(1 for r in group if r > 0) / len(group), 6)
+    extreme_up_win_rate = _wr(extreme_up)
+    extreme_down_win_rate = _wr(extreme_down)
+    normal_win_rate = _wr(normal)
+    if extreme_down_win_rate is not None:
+        resilience_score = extreme_down_win_rate
+    elif normal_win_rate is not None:
+        resilience_score = normal_win_rate
+    else:
+        resilience_score = None
+    if extreme_up_win_rate is not None and extreme_down_win_rate is not None:
+        extreme_divergence = round(extreme_up_win_rate - extreme_down_win_rate, 6)
+    else:
+        extreme_divergence = None
+    return {"extreme_market_valid": True, "extreme_up_threshold": round(p90, 6), "extreme_down_threshold": round(p10, 6), "extreme_up_win_rate": extreme_up_win_rate, "extreme_down_win_rate": extreme_down_win_rate, "normal_win_rate": normal_win_rate, "resilience_score": resilience_score, "extreme_divergence": extreme_divergence}
