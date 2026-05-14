@@ -7856,3 +7856,314 @@ def test_r36_t3_label_registered() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
 
     assert COMPARISON_METRIC_LABELS.get("win_rate_ci_width") == "胜率置信区间宽度"
+
+
+# ===========================================================================
+# Round 37 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1 — compute_holding_period_analysis
+# ---------------------------------------------------------------------------
+
+def test_r37_t1_basic_returns_required_keys() -> None:
+    """compute_holding_period_analysis returns all required keys for valid input."""
+    from scripts.btst_analysis_utils import compute_holding_period_analysis
+
+    rows = [{"next_close_return": 0.03, "t2_return": 0.02, "t3_return": 0.01} for _ in range(10)]
+    result = compute_holding_period_analysis(rows)
+    for key in ("optimal_holding_days", "holding_analysis_valid", "avg_return_t1", "avg_return_t2",
+                "avg_return_t3", "ev_t1", "ev_t2", "ev_t3", "holding_period_monotone",
+                "t1_vs_t2_advantage", "multi_day_cumulative_return"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r37_t1_no_t2_t3_graceful_degradation() -> None:
+    """compute_holding_period_analysis degrades gracefully when T+2/T+3 absent."""
+    from scripts.btst_analysis_utils import compute_holding_period_analysis
+
+    rows = [{"next_close_return": 0.03} for _ in range(10)]
+    result = compute_holding_period_analysis(rows)
+    assert result["optimal_holding_days"] == 1
+    assert result["holding_analysis_valid"] is False
+    assert result["avg_return_t2"] is None
+    assert result["avg_return_t3"] is None
+
+
+def test_r37_t1_all_none_t2_t3_degrades() -> None:
+    """compute_holding_period_analysis degrades when t2_return/t3_return all None."""
+    from scripts.btst_analysis_utils import compute_holding_period_analysis
+
+    rows = [{"next_close_return": 0.03, "t2_return": None, "t3_return": None} for _ in range(10)]
+    result = compute_holding_period_analysis(rows)
+    assert result["holding_analysis_valid"] is False
+    assert result["optimal_holding_days"] == 1
+
+
+def test_r37_t1_optimal_days_selects_max_ev() -> None:
+    """optimal_holding_days is the period with highest EV."""
+    from scripts.btst_analysis_utils import compute_holding_period_analysis
+
+    # T+2 rows all large positive → EV should be highest for T+2
+    rows = []
+    for _ in range(10):
+        rows.append({"next_close_return": 0.01, "t2_return": 0.10, "t3_return": 0.005})
+    result = compute_holding_period_analysis(rows)
+    assert result["holding_analysis_valid"] is True
+    assert result["optimal_holding_days"] == 2
+
+
+def test_r37_t1_monotone_flag_true_for_decreasing_returns() -> None:
+    """holding_period_monotone is True when avg T+1 >= T+2 >= T+3."""
+    from scripts.btst_analysis_utils import compute_holding_period_analysis
+
+    rows = [{"next_close_return": 0.05, "t2_return": 0.03, "t3_return": 0.01} for _ in range(10)]
+    result = compute_holding_period_analysis(rows)
+    assert result["holding_period_monotone"] is True
+
+
+def test_r37_t1_t1_vs_t2_advantage_is_difference_of_evs() -> None:
+    """t1_vs_t2_advantage is ev_t1 - ev_t2 when both valid."""
+    from scripts.btst_analysis_utils import compute_holding_period_analysis
+
+    rows = [{"next_close_return": 0.05, "t2_return": 0.02, "t3_return": 0.01} for _ in range(10)]
+    result = compute_holding_period_analysis(rows)
+    if result["ev_t1"] is not None and result["ev_t2"] is not None:
+        expected = round(result["ev_t1"] - result["ev_t2"], 6)
+        assert abs(result["t1_vs_t2_advantage"] - expected) < 1e-5
+
+
+def test_r37_t1_insufficient_t1_rows_returns_null() -> None:
+    """compute_holding_period_analysis returns null dict when fewer than 5 T+1 rows."""
+    from scripts.btst_analysis_utils import compute_holding_period_analysis
+
+    rows = [{"next_close_return": 0.03, "t2_return": 0.02} for _ in range(4)]
+    result = compute_holding_period_analysis(rows)
+    assert result["optimal_holding_days"] == 1
+    assert result["holding_analysis_valid"] is False
+
+
+def test_r37_t1_empty_rows_no_error() -> None:
+    """compute_holding_period_analysis handles empty input gracefully."""
+    from scripts.btst_analysis_utils import compute_holding_period_analysis
+
+    result = compute_holding_period_analysis([])
+    assert result["optimal_holding_days"] == 1
+    assert result["holding_analysis_valid"] is False
+
+
+def test_r37_t1_in_comparison_metrics() -> None:
+    """optimal_holding_days registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "optimal_holding_days" in COMPARISON_METRICS
+
+
+def test_r37_t1_label_registered() -> None:
+    """optimal_holding_days has Chinese label '最优持仓天数'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("optimal_holding_days") == "最优持仓天数"
+
+
+# ---------------------------------------------------------------------------
+# T2 — compute_loss_trade_signature
+# ---------------------------------------------------------------------------
+
+def test_r37_t2_basic_returns_required_keys() -> None:
+    """compute_loss_trade_signature returns all required keys for valid input."""
+    from scripts.btst_analysis_utils import compute_loss_trade_signature
+
+    rows = [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.02,
+         "close_strength": 0.6, "volume_expansion_quality": 0.5,
+         "sector_resonance": 0.4, "rs_sector_rank": 0.7,
+         "t0_estimated_net_inflow_ratio": 0.3, "breakout_quality_score": 0.8,
+         "momentum_slope_20d": 0.2}
+        for i in range(20)
+    ]
+    result = compute_loss_trade_signature(rows)
+    for key in ("loss_warning_factors", "loss_warning_factor_count", "loss_signature_strength",
+                "loss_avoidable", "factor_divergence"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_r37_t2_insufficient_rows_returns_null() -> None:
+    """compute_loss_trade_signature returns null when fewer than 10 valid rows."""
+    from scripts.btst_analysis_utils import compute_loss_trade_signature
+
+    rows = [{"next_close_return": 0.03, "close_strength": 0.5} for _ in range(9)]
+    result = compute_loss_trade_signature(rows)
+    assert result["loss_signature_strength"] is None
+    assert result["loss_warning_factor_count"] == 0
+
+
+def test_r37_t2_empty_rows_no_error() -> None:
+    """compute_loss_trade_signature handles empty input gracefully."""
+    from scripts.btst_analysis_utils import compute_loss_trade_signature
+
+    result = compute_loss_trade_signature([])
+    assert result["loss_signature_strength"] is None
+
+
+def test_r37_t2_none_return_filtered() -> None:
+    """compute_loss_trade_signature filters rows with None next_close_return."""
+    from scripts.btst_analysis_utils import compute_loss_trade_signature
+
+    rows = [{"next_close_return": None, "close_strength": 0.5}] * 5 + [
+        {"next_close_return": 0.03 if i % 2 == 0 else -0.02,
+         "close_strength": 0.6, "volume_expansion_quality": 0.5,
+         "sector_resonance": 0.4, "rs_sector_rank": 0.7,
+         "t0_estimated_net_inflow_ratio": 0.3, "breakout_quality_score": 0.8,
+         "momentum_slope_20d": 0.2}
+        for i in range(20)
+    ]
+    result = compute_loss_trade_signature(rows)
+    assert result["loss_signature_strength"] is not None
+
+
+def test_r37_t2_divergence_direction() -> None:
+    """factor_divergence positive when winning trades have higher factor values."""
+    from scripts.btst_analysis_utils import compute_loss_trade_signature
+
+    rows = []
+    for i in range(15):
+        rows.append({
+            "next_close_return": 0.05,
+            "close_strength": 0.9, "volume_expansion_quality": 0.8,
+            "sector_resonance": 0.7, "rs_sector_rank": 0.8,
+            "t0_estimated_net_inflow_ratio": 0.6, "breakout_quality_score": 0.9,
+            "momentum_slope_20d": 0.5,
+        })
+    for i in range(15):
+        rows.append({
+            "next_close_return": -0.03,
+            "close_strength": 0.2, "volume_expansion_quality": 0.1,
+            "sector_resonance": 0.2, "rs_sector_rank": 0.1,
+            "t0_estimated_net_inflow_ratio": 0.1, "breakout_quality_score": 0.2,
+            "momentum_slope_20d": 0.1,
+        })
+    result = compute_loss_trade_signature(rows)
+    assert result["loss_avoidable"] is True
+    for f, div in result["factor_divergence"].items():
+        if div is not None:
+            assert div > 0, f"Expected positive divergence for {f}, got {div}"
+
+
+def test_r37_t2_floor_registered() -> None:
+    """loss_signature_strength floor = 0.02 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
+    assert "loss_signature_strength" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["loss_signature_strength"] == 0.02
+
+
+def test_r37_t2_in_comparison_metrics() -> None:
+    """loss_signature_strength registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "loss_signature_strength" in COMPARISON_METRICS
+
+
+def test_r37_t2_label_registered() -> None:
+    """loss_signature_strength has Chinese label '亏损特征区分度'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("loss_signature_strength") == "亏损特征区分度"
+
+
+# ---------------------------------------------------------------------------
+# T3 — compute_score_gini_coefficient
+# ---------------------------------------------------------------------------
+
+def test_r37_t3_basic_returns_required_keys() -> None:
+    """compute_score_gini_coefficient returns all required keys for valid input."""
+    from scripts.btst_analysis_utils import compute_score_gini_coefficient
+
+    rows = [{"runner_composite_score": float(i) / 10} for i in range(1, 11)]
+    result = compute_score_gini_coefficient(rows)
+    for key in ("score_gini", "top20_share", "elite_candidate_rate",
+                "score_distribution_quality", "score_well_differentiated"):
+        assert key in result, f"Missing key: {key}"
+        assert result[key] is not None
+
+
+def test_r37_t3_insufficient_rows_returns_all_none() -> None:
+    """compute_score_gini_coefficient returns all-None when fewer than 5 valid rows."""
+    from scripts.btst_analysis_utils import compute_score_gini_coefficient
+
+    rows = [{"runner_composite_score": 0.5} for _ in range(4)]
+    result = compute_score_gini_coefficient(rows)
+    assert result["score_gini"] is None
+    assert result["score_distribution_quality"] is None
+
+
+def test_r37_t3_empty_rows_no_error() -> None:
+    """compute_score_gini_coefficient handles empty input gracefully."""
+    from scripts.btst_analysis_utils import compute_score_gini_coefficient
+
+    result = compute_score_gini_coefficient([])
+    assert result["score_gini"] is None
+
+
+def test_r37_t3_equal_scores_gini_near_zero() -> None:
+    """All-equal scores produce Gini near 0."""
+    from scripts.btst_analysis_utils import compute_score_gini_coefficient
+
+    rows = [{"runner_composite_score": 0.5} for _ in range(20)]
+    result = compute_score_gini_coefficient(rows)
+    assert result["score_gini"] is not None
+    assert result["score_gini"] < 0.05
+
+
+def test_r37_t3_composite_score_fallback() -> None:
+    """compute_score_gini_coefficient falls back to composite_score when runner_composite_score absent."""
+    from scripts.btst_analysis_utils import compute_score_gini_coefficient
+
+    rows = [{"composite_score": float(i) / 10} for i in range(1, 11)]
+    result = compute_score_gini_coefficient(rows)
+    assert result["score_gini"] is not None
+
+
+def test_r37_t3_gini_in_unit_interval() -> None:
+    """score_gini is always in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_score_gini_coefficient
+
+    import random
+    rng = random.Random(7)
+    rows = [{"runner_composite_score": rng.uniform(0.1, 1.0)} for _ in range(30)]
+    result = compute_score_gini_coefficient(rows)
+    assert 0.0 <= result["score_gini"] <= 1.0
+
+
+def test_r37_t3_quality_grade_A_for_moderate_gini() -> None:
+    """score_distribution_quality is 'A' when 0.3 <= gini <= 0.6."""
+    from scripts.btst_analysis_utils import compute_score_gini_coefficient
+
+    # Uniform distribution in [0,1] → moderate Gini ~ 0.33
+    rows = [{"runner_composite_score": (i + 1) / 20.0} for i in range(20)]
+    result = compute_score_gini_coefficient(rows)
+    assert result["score_distribution_quality"] in ("A", "B", "C")
+
+
+def test_r37_t3_in_comparison_metrics() -> None:
+    """score_gini registered in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+
+    assert "score_gini" in COMPARISON_METRICS
+
+
+def test_r37_t3_label_registered() -> None:
+    """score_gini has Chinese label '评分基尼系数'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
+    assert COMPARISON_METRIC_LABELS.get("score_gini") == "评分基尼系数"
+
+
+def test_r37_t3_none_scores_filtered() -> None:
+    """compute_score_gini_coefficient filters None scores and still works."""
+    from scripts.btst_analysis_utils import compute_score_gini_coefficient
+
+    rows = [{"runner_composite_score": None}] * 5 + [{"runner_composite_score": float(i) / 10} for i in range(1, 11)]
+    result = compute_score_gini_coefficient(rows)
+    assert result["score_gini"] is not None

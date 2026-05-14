@@ -185,6 +185,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # candidates ranked higher by the score do not achieve better returns on average.
     # Floor ≥ 0.0 requires at least a neutral positive IC before rollout.
     "composite_ic": 0.0,
+    # Task 2 (Round 37, Beta): loss trade signature strength floor.
+    # loss_signature_strength = mean |factor divergence| between win and loss groups across 7 factors.
+    # A value < 0.02 means the 7 canonical BTST factors cannot distinguish winners from losers —
+    # losses appear structurally random and cannot be avoided with the current factor set.
+    # Floor ≥ 0.02 requires at least a 2 % average factor divergence for rollout eligibility.
+    "loss_signature_strength": 0.02,
 }
 
 # ---------------------------------------------------------------------------

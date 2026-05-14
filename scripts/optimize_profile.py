@@ -265,6 +265,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "composite_ic",
     # Task 3 (Round 36, Gamma): win-rate bootstrap CI width — lower = more reliable estimate.
     "win_rate_ci_width",
+    # Task 1 (Round 37, Alpha): optimal holding days — argmax EV across T+1/T+2/T+3.
+    "optimal_holding_days",
+    # Task 2 (Round 37, Beta): loss trade signature strength — mean |factor divergence| win vs loss.
+    "loss_signature_strength",
+    # Task 3 (Round 37, Gamma): score Gini coefficient — concentration of composite score distribution.
+    "score_gini",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -417,6 +423,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "composite_ic": "综合评分IC",
     # Task 3 (Round 36, Gamma): win-rate bootstrap CI width
     "win_rate_ci_width": "胜率置信区间宽度",
+    # Task 1 (Round 37, Alpha): optimal holding days
+    "optimal_holding_days": "最优持仓天数",
+    # Task 2 (Round 37, Beta): loss trade signature strength
+    "loss_signature_strength": "亏损特征区分度",
+    # Task 3 (Round 37, Gamma): score Gini coefficient
+    "score_gini": "评分基尼系数",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -465,6 +477,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "signal_churn_rate",
     # Task 3 (Round 36, Gamma): win-rate CI width — wider = less reliable estimate = lower-is-better.
     "win_rate_ci_width",
+    # Task 2 (Round 37, Beta): loss signature strength — higher = better factor discrimination = NOT lower-is-better.
+    # (intentionally not added — higher strength is better, default higher-is-better)
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -610,6 +624,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "composite_ic",
     # Task 3 (Round 36, Gamma): win-rate CI width — optional; pre-Round-36 outputs omit it.
     "win_rate_ci_width",
+    # Task 1 (Round 37, Alpha): optimal holding days — optional; pre-Round-37 outputs omit it.
+    "optimal_holding_days",
+    # Task 2 (Round 37, Beta): loss signature strength — optional; pre-Round-37 outputs omit it.
+    "loss_signature_strength",
+    # Task 3 (Round 37, Gamma): score Gini — optional; pre-Round-37 outputs omit it.
+    "score_gini",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -1807,6 +1827,20 @@ def _build_replay_evaluator(
         # Task 3 (Round 36, Gamma): average win_rate_ci_width across replay windows.
         _wrci_vals = [float(s["win_rate_ci_width"]) for s in all_primary_surfaces if s.get("win_rate_ci_width") is not None]
         avg_win_rate_ci_width: float | None = round(sum(_wrci_vals) / len(_wrci_vals), 4) if _wrci_vals else None
+        # Task 1 (Round 37, Alpha): mode of optimal_holding_days across replay windows.
+        _ohd_vals = [int(s["optimal_holding_days"]) for s in all_primary_surfaces if s.get("optimal_holding_days") is not None]
+        if _ohd_vals:
+            from collections import Counter as _Counter
+            _ohd_mode = _Counter(_ohd_vals).most_common(1)[0][0]
+            avg_optimal_holding_days: int | None = _ohd_mode
+        else:
+            avg_optimal_holding_days = None
+        # Task 2 (Round 37, Beta): average loss_signature_strength across replay windows.
+        _lss_vals = [float(s["loss_signature_strength"]) for s in all_primary_surfaces if s.get("loss_signature_strength") is not None]
+        avg_loss_signature_strength: float | None = round(sum(_lss_vals) / len(_lss_vals), 6) if _lss_vals else None
+        # Task 3 (Round 37, Gamma): average score_gini across replay windows.
+        _sgini_vals = [float(s["score_gini"]) for s in all_primary_surfaces if s.get("score_gini") is not None]
+        avg_score_gini: float | None = round(sum(_sgini_vals) / len(_sgini_vals), 4) if _sgini_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -1959,6 +1993,12 @@ def _build_replay_evaluator(
             "composite_ic": avg_composite_ic,
             # Task 3 (Round 36, Gamma): average win-rate bootstrap CI width across replay windows.
             "win_rate_ci_width": avg_win_rate_ci_width,
+            # Task 1 (Round 37, Alpha): mode optimal holding days across replay windows.
+            "optimal_holding_days": avg_optimal_holding_days,
+            # Task 2 (Round 37, Beta): average loss signature strength across replay windows.
+            "loss_signature_strength": avg_loss_signature_strength,
+            # Task 3 (Round 37, Gamma): average score Gini coefficient across replay windows.
+            "score_gini": avg_score_gini,
         }
 
     return evaluator

@@ -3941,6 +3941,41 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["win_rate_reliable"] = _wrci.get("win_rate_reliable")
     _surface_result["win_rate_ci_grade"] = _wrci.get("win_rate_ci_grade")
 
+    # -----------------------------------------------------------------------
+    # Round 37, Task 1 (Alpha): Optimal holding period analysis — T+1/T+2/T+3.
+    # -----------------------------------------------------------------------
+    _hpa: dict[str, Any] = compute_holding_period_analysis(next_day_rows)
+    _surface_result["optimal_holding_days"] = _hpa.get("optimal_holding_days")
+    _surface_result["holding_analysis_valid"] = _hpa.get("holding_analysis_valid")
+    _surface_result["avg_return_t1"] = _hpa.get("avg_return_t1")
+    _surface_result["avg_return_t2"] = _hpa.get("avg_return_t2")
+    _surface_result["avg_return_t3"] = _hpa.get("avg_return_t3")
+    _surface_result["ev_t1"] = _hpa.get("ev_t1")
+    _surface_result["ev_t2"] = _hpa.get("ev_t2")
+    _surface_result["ev_t3"] = _hpa.get("ev_t3")
+    _surface_result["holding_period_monotone"] = _hpa.get("holding_period_monotone")
+    _surface_result["t1_vs_t2_advantage"] = _hpa.get("t1_vs_t2_advantage")
+    _surface_result["multi_day_cumulative_return"] = _hpa.get("multi_day_cumulative_return")
+
+    # -----------------------------------------------------------------------
+    # Round 37, Task 2 (Beta): Loss trade factor signature — loss-warning signal.
+    # -----------------------------------------------------------------------
+    _lts: dict[str, Any] = compute_loss_trade_signature(next_day_rows)
+    _surface_result["loss_warning_factors"] = _lts.get("loss_warning_factors")
+    _surface_result["loss_warning_factor_count"] = _lts.get("loss_warning_factor_count")
+    _surface_result["loss_signature_strength"] = _lts.get("loss_signature_strength")
+    _surface_result["loss_avoidable"] = _lts.get("loss_avoidable")
+
+    # -----------------------------------------------------------------------
+    # Round 37, Task 3 (Gamma): Score Gini coefficient — distribution quality.
+    # -----------------------------------------------------------------------
+    _sgc: dict[str, Any] = compute_score_gini_coefficient(next_day_rows)
+    _surface_result["score_gini"] = _sgc.get("score_gini")
+    _surface_result["top20_share"] = _sgc.get("top20_share")
+    _surface_result["elite_candidate_rate"] = _sgc.get("elite_candidate_rate")
+    _surface_result["score_distribution_quality"] = _sgc.get("score_distribution_quality")
+    _surface_result["score_well_differentiated"] = _sgc.get("score_well_differentiated")
+
     return _surface_result
 
 
@@ -6127,4 +6162,282 @@ def compute_win_rate_confidence_interval(rows: list[dict]) -> dict:
         "ci_width": round(ci_width, 4),
         "win_rate_reliable": ci_width < 0.20,
         "win_rate_ci_grade": grade,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 37, Task 1 (Alpha): Optimal holding period analysis — T+1 / T+2 / T+3
+# ---------------------------------------------------------------------------
+def compute_holding_period_analysis(rows: list[dict]) -> dict:
+    """Compare T+1, T+2, T+3 exit strategies and determine optimal holding period.
+
+    For each available holding period (T+1 always present; T+2/T+3 conditional),
+    computes average return, win rate, and expected value (EV).  Selects the
+    holding period with the highest EV as ``optimal_holding_days``.
+
+    Args:
+        rows: Per-row dicts containing ``next_close_return`` (T+1, required),
+            ``t2_return`` (T+2, optional), ``t3_return`` (T+3, optional).
+
+    Returns:
+        Dict with keys:
+
+        - ``optimal_holding_days``: int — 1/2/3, argmax of EV across valid periods.
+        - ``holding_analysis_valid``: bool — False when T+2/T+3 data fully absent.
+        - ``avg_return_t1``: float|None — mean T+1 next_close_return.
+        - ``avg_return_t2``: float|None — mean T+2 return (None if unavailable).
+        - ``avg_return_t3``: float|None — mean T+3 return (None if unavailable).
+        - ``ev_t1``: float|None — T+1 expected value.
+        - ``ev_t2``: float|None — T+2 expected value.
+        - ``ev_t3``: float|None — T+3 expected value.
+        - ``holding_period_monotone``: bool|None — True when avg T+1≥T+2≥T+3 (only when all 3 valid).
+        - ``t1_vs_t2_advantage``: float|None — ev_t1 − ev_t2 (positive = T+1 better).
+        - ``multi_day_cumulative_return``: float|None — simple sum of available avg returns.
+    """
+    _null: dict = {
+        "optimal_holding_days": 1,
+        "holding_analysis_valid": False,
+        "avg_return_t1": None,
+        "avg_return_t2": None,
+        "avg_return_t3": None,
+        "ev_t1": None,
+        "ev_t2": None,
+        "ev_t3": None,
+        "holding_period_monotone": None,
+        "t1_vs_t2_advantage": None,
+        "multi_day_cumulative_return": None,
+    }
+
+    def _compute_ev(vals: list[float]) -> float | None:
+        if len(vals) < 5:
+            return None
+        wins = [v for v in vals if v > 0]
+        losses = [v for v in vals if v <= 0]
+        n = len(vals)
+        if n == 0:
+            return None
+        win_rate = len(wins) / n
+        loss_rate = len(losses) / n
+        avg_win = sum(wins) / max(len(wins), 1) if wins else 0.0
+        avg_loss = abs(sum(losses) / max(len(losses), 1)) if losses else 0.0
+        return round(win_rate * avg_win - loss_rate * avg_loss, 6)
+
+    def _extract(field: str) -> list[float]:
+        return [float(r[field]) for r in rows if r.get(field) is not None]
+
+    t1_vals = _extract("next_close_return")
+    t2_vals = _extract("t2_return")
+    t3_vals = _extract("t3_return")
+
+    if len(t1_vals) < 5:
+        return _null
+
+    has_t2 = len(t2_vals) >= 5
+    has_t3 = len(t3_vals) >= 5
+
+    if not has_t2 and not has_t3:
+        ev_t1 = _compute_ev(t1_vals)
+        avg_t1 = round(sum(t1_vals) / max(len(t1_vals), 1), 6)
+        return {
+            **_null,
+            "avg_return_t1": avg_t1,
+            "ev_t1": ev_t1,
+            "multi_day_cumulative_return": avg_t1,
+        }
+
+    avg_t1 = round(sum(t1_vals) / max(len(t1_vals), 1), 6)
+    avg_t2 = round(sum(t2_vals) / max(len(t2_vals), 1), 6) if has_t2 else None
+    avg_t3 = round(sum(t3_vals) / max(len(t3_vals), 1), 6) if has_t3 else None
+    ev_t1 = _compute_ev(t1_vals)
+    ev_t2 = _compute_ev(t2_vals) if has_t2 else None
+    ev_t3 = _compute_ev(t3_vals) if has_t3 else None
+
+    ev_map: dict[int, float] = {}
+    if ev_t1 is not None:
+        ev_map[1] = ev_t1
+    if ev_t2 is not None:
+        ev_map[2] = ev_t2
+    if ev_t3 is not None:
+        ev_map[3] = ev_t3
+    optimal_holding_days = max(ev_map, key=lambda d: ev_map[d]) if ev_map else 1
+
+    monotone: bool | None = None
+    if has_t2 and has_t3 and avg_t2 is not None and avg_t3 is not None:
+        monotone = avg_t1 >= avg_t2 >= avg_t3
+
+    t1_vs_t2_adv: float | None = None
+    if ev_t2 is not None and ev_t1 is not None:
+        t1_vs_t2_adv = round(ev_t1 - ev_t2, 6)
+
+    cumulative = round(avg_t1 + (avg_t2 if avg_t2 is not None else 0.0) + (avg_t3 if avg_t3 is not None else 0.0), 6)
+
+    return {
+        "optimal_holding_days": optimal_holding_days,
+        "holding_analysis_valid": True,
+        "avg_return_t1": avg_t1,
+        "avg_return_t2": avg_t2,
+        "avg_return_t3": avg_t3,
+        "ev_t1": ev_t1,
+        "ev_t2": ev_t2,
+        "ev_t3": ev_t3,
+        "holding_period_monotone": monotone,
+        "t1_vs_t2_advantage": t1_vs_t2_adv,
+        "multi_day_cumulative_return": cumulative,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 37, Task 2 (Beta): Loss trade factor signature — divergence-based warning
+# ---------------------------------------------------------------------------
+def compute_loss_trade_signature(rows: list[dict]) -> dict:
+    """Analyse factor characteristics of losing trades to build a loss-warning signal.
+
+    For each of the 7 canonical BTST factors, computes the mean value in the
+    win group vs. the loss group.  Large divergences indicate that the factor
+    reliably separates winners from losers and can serve as a pre-entry warning.
+
+    Args:
+        rows: Per-row dicts with ``next_close_return`` (float|None) and factor fields.
+
+    Returns:
+        Dict with keys:
+
+        - ``loss_warning_factors``: list[str] — factors with divergence > 0.05.
+        - ``loss_warning_factor_count``: int — len(loss_warning_factors).
+        - ``loss_signature_strength``: float|None — mean |divergence| across all factors.
+        - ``loss_avoidable``: bool|None — True when loss_signature_strength > 0.03.
+        - ``factor_divergence``: dict[str, float|None] — per-factor win−loss mean diff.
+
+        Returns all-None/empty dict when fewer than 10 valid rows are available.
+    """
+    _factors = [
+        "close_strength",
+        "volume_expansion_quality",
+        "sector_resonance",
+        "rs_sector_rank",
+        "t0_estimated_net_inflow_ratio",
+        "breakout_quality_score",
+        "momentum_slope_20d",
+    ]
+    _null: dict = {
+        "loss_warning_factors": [],
+        "loss_warning_factor_count": 0,
+        "loss_signature_strength": None,
+        "loss_avoidable": None,
+        "factor_divergence": {f: None for f in _factors},
+    }
+
+    valid = [r for r in rows if r.get("next_close_return") is not None]
+    if len(valid) < 10:
+        return _null
+
+    win_rows = [r for r in valid if float(r["next_close_return"]) > 0]
+    loss_rows = [r for r in valid if float(r["next_close_return"]) <= 0]
+
+    factor_divergence: dict[str, float | None] = {}
+    for f in _factors:
+        w_vals = [float(r[f]) for r in win_rows if r.get(f) is not None]
+        l_vals = [float(r[f]) for r in loss_rows if r.get(f) is not None]
+        if len(w_vals) < 3 or len(l_vals) < 3:
+            factor_divergence[f] = None
+            continue
+        win_avg = sum(w_vals) / max(len(w_vals), 1)
+        loss_avg = sum(l_vals) / max(len(l_vals), 1)
+        factor_divergence[f] = round(win_avg - loss_avg, 6)
+
+    loss_warning_factors = [f for f in _factors if factor_divergence.get(f) is not None and factor_divergence[f] > 0.05]  # type: ignore[operator]
+    abs_divs = [abs(d) for d in factor_divergence.values() if d is not None]
+    loss_signature_strength: float | None = None
+    loss_avoidable: bool | None = None
+    if abs_divs:
+        loss_signature_strength = round(sum(abs_divs) / max(len(abs_divs), 1), 6)
+        loss_avoidable = loss_signature_strength > 0.03
+
+    return {
+        "loss_warning_factors": loss_warning_factors,
+        "loss_warning_factor_count": len(loss_warning_factors),
+        "loss_signature_strength": loss_signature_strength,
+        "loss_avoidable": loss_avoidable,
+        "factor_divergence": factor_divergence,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 37, Task 3 (Gamma): Score Gini coefficient — evaluation distribution quality
+# ---------------------------------------------------------------------------
+def compute_score_gini_coefficient(rows: list[dict]) -> dict:
+    """Measure score distribution concentration via Gini coefficient (Lorenz-curve area method).
+
+    A Gini of 0 means all candidates share identical scores (no discrimination power).
+    A Gini of 1 means a single candidate holds all score mass (excessive concentration).
+    The ideal range 0.30–0.60 provides meaningful differentiation without extreme elitism.
+
+    Args:
+        rows: Per-row dicts with ``runner_composite_score`` (float|None) or
+            ``composite_score`` (float|None) as fallback.
+
+    Returns:
+        Dict with keys:
+
+        - ``score_gini``: float|None — Gini coefficient in [0, 1].
+        - ``top20_share``: float|None — fraction of total score mass held by top 20 % rows.
+        - ``elite_candidate_rate``: float|None — fraction of rows at or above P80.
+        - ``score_distribution_quality``: str|None — 'A'(0.3–0.6)/'B'(0.2–0.7 excl A)/'C' otherwise.
+        - ``score_well_differentiated``: bool|None — True when 0.20 ≤ gini ≤ 0.65.
+
+        Returns all-None dict when fewer than 5 valid rows are available.
+    """
+    _null: dict = {
+        "score_gini": None,
+        "top20_share": None,
+        "elite_candidate_rate": None,
+        "score_distribution_quality": None,
+        "score_well_differentiated": None,
+    }
+
+    raw_scores: list[float] = []
+    for r in rows:
+        v = r.get("runner_composite_score")
+        if v is None:
+            v = r.get("composite_score")
+        if v is not None:
+            raw_scores.append(float(v))
+
+    if len(raw_scores) < 5:
+        return _null
+
+    min_s = min(raw_scores)
+    scores = [s - min_s + 1e-6 for s in raw_scores]
+    n = len(scores)
+    scores_sorted = sorted(scores)
+    total = sum(scores_sorted)
+    cumsum = 0.0
+    lorenz_sum = 0.0
+    for s in scores_sorted:
+        cumsum += s
+        lorenz_sum += cumsum
+    gini = 1.0 - 2.0 * lorenz_sum / max(n * total, 1e-8) + 1.0 / n
+    gini = max(0.0, min(1.0, round(gini, 4)))
+
+    total_sum = sum(scores_sorted)
+    top20_count = max(1, int(0.20 * n))
+    top20_share = round(sum(scores_sorted[-top20_count:]) / max(total_sum, 1e-8), 4)
+
+    p80_idx = int(0.80 * n)
+    p80_val = scores_sorted[p80_idx] if p80_idx < n else scores_sorted[-1]
+    elite_candidate_rate = round(len([s for s in scores if s >= p80_val]) / max(n, 1), 4)
+
+    if 0.3 <= gini <= 0.6:
+        quality = "A"
+    elif 0.2 <= gini < 0.3 or 0.6 < gini <= 0.7:
+        quality = "B"
+    else:
+        quality = "C"
+
+    return {
+        "score_gini": gini,
+        "top20_share": top20_share,
+        "elite_candidate_rate": elite_candidate_rate,
+        "score_distribution_quality": quality,
+        "score_well_differentiated": 0.20 <= gini <= 0.65,
     }
