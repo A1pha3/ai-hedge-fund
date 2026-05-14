@@ -560,6 +560,14 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "rpp_upside_asymmetry",
     # Task 3 (Round 83, Gamma): cross-window precision trend slope.
     "precision_trend_slope",
+    # Task 1 (Round 84, Alpha): momentum reversal analysis metrics.
+    "mom_rev_extreme_momentum_win_rate",
+    "mom_rev_momentum_breadth_effect",
+    # Task 2 (Round 84, Beta): sector tailwind protection metrics.
+    "tailwind_protected_win_rate",
+    "tailwind_gap_protection_effect",
+    # Task 3 (Round 84, Gamma): cross-window upside asymmetry trend slope.
+    "upside_asymmetry_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -1008,6 +1016,14 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "rpp_upside_asymmetry": "上下行不对称性",
     # Task 3 (Round 83, Gamma): precision trend label.
     "precision_trend_slope": "精确率跨窗趋势斜率",
+    # Task 1 (Round 84, Alpha): momentum reversal labels.
+    "mom_rev_extreme_momentum_win_rate": "极端动量胜率",
+    "mom_rev_momentum_breadth_effect": "动量广度效应",
+    # Task 2 (Round 84, Beta): sector tailwind protection labels.
+    "tailwind_protected_win_rate": "顺风高强度胜率",
+    "tailwind_gap_protection_effect": "板块保护效应",
+    # Task 3 (Round 84, Gamma): upside asymmetry trend label.
+    "upside_asymmetry_trend_slope": "上行不对称跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1530,6 +1546,14 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "rpp_upside_asymmetry",
     # Task 3 (Round 83, Gamma): precision trend slope — optional; pre-Round-83 outputs omit it.
     "precision_trend_slope",
+    # Task 1 (Round 84, Alpha): momentum reversal metrics — optional; pre-Round-84 surfaces omit these.
+    "mom_rev_extreme_momentum_win_rate",
+    "mom_rev_momentum_breadth_effect",
+    # Task 2 (Round 84, Beta): sector tailwind protection metrics — optional; pre-Round-84 surfaces omit these.
+    "tailwind_protected_win_rate",
+    "tailwind_gap_protection_effect",
+    # Task 3 (Round 84, Gamma): upside asymmetry trend slope — optional; pre-Round-84 outputs omit it.
+    "upside_asymmetry_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3318,6 +3342,38 @@ def compute_cross_window_precision_trend(all_windows_summaries: list[dict]) -> d
     slope: float = (n * sum_xy - sum_x * sum_y) / denom
     grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
     return {"valid": True, "precision_trend_slope": round(slope, 8), "precision_trend_grade": grade, "precision_trend_window_count": n}
+
+
+# ---------------------------------------------------------------------------
+# Round 84, Task 3 (Gamma): Cross-window Upside Asymmetry Trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_upside_asymmetry_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口上行不对称性趋势：rpp_upside_asymmetry 的 OLS 时序斜率。"""
+    EMPTY: dict = {"valid": False, "upside_asymmetry_trend_slope": None, "upside_asymmetry_trend_grade": None, "upside_asymmetry_window_count": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("rpp_upside_asymmetry")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    n: int = len(vals)
+    if n < 3:
+        return EMPTY
+    xs: list[float] = list(range(n))
+    sum_x: float = sum(xs)
+    sum_y: float = sum(vals)
+    sum_xy: float = sum(xs[i] * vals[i] for i in range(n))
+    sum_xx: float = sum(x * x for x in xs)
+    denom: float = n * sum_xx - sum_x * sum_x
+    if denom == 0:
+        return EMPTY
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom
+    grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
+    return {"valid": True, "upside_asymmetry_trend_slope": round(slope, 8), "upside_asymmetry_trend_grade": grade, "upside_asymmetry_window_count": n}
 
 
 # ---------------------------------------------------------------------------
@@ -5192,6 +5248,8 @@ def _build_replay_evaluator(
         _evst: dict[str, Any] = compute_cross_window_ev_spread_trend(all_primary_surfaces)
         # Task 3 (Round 83, Gamma): cross-window precision trend OLS.
         _pct83: dict[str, Any] = compute_cross_window_precision_trend(all_primary_surfaces)
+        # Task 3 (Round 84, Gamma): cross-window upside asymmetry OLS trend.
+        _uat84: dict[str, Any] = compute_cross_window_upside_asymmetry_trend(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -5932,6 +5990,10 @@ def _build_replay_evaluator(
                 "precision_trend_slope": _pct83.get("precision_trend_slope"),
                 "precision_trend_grade": _pct83.get("precision_trend_grade"),
                 "precision_trend_window_count": _pct83.get("precision_trend_window_count"),
+                # Task 3 (Round 84, Gamma): cross-window upside asymmetry OLS trend slope.
+                "upside_asymmetry_trend_slope": _uat84.get("upside_asymmetry_trend_slope"),
+                "upside_asymmetry_trend_grade": _uat84.get("upside_asymmetry_trend_grade"),
+                "upside_asymmetry_trend_window_count": _uat84.get("upside_asymmetry_window_count"),
         }
 
     return evaluator

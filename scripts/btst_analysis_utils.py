@@ -4734,6 +4734,22 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         _surface_result["rpp_top_return_p90"] = rpp_result["top_return_p90"]
         _surface_result["rpp_upside_asymmetry"] = rpp_result["upside_asymmetry"]
 
+    # Round 84, Task 1 (Alpha): Momentum reversal analysis.
+    mom_rev_result: dict = compute_momentum_reversal_analysis(rows)
+    if mom_rev_result["valid"]:
+        _surface_result["mom_rev_extreme_momentum_win_rate"] = mom_rev_result["extreme_momentum_win_rate"]
+        _surface_result["mom_rev_moderate_momentum_win_rate"] = mom_rev_result["moderate_momentum_win_rate"]
+        _surface_result["mom_rev_momentum_breadth_effect"] = mom_rev_result["momentum_breadth_effect"]
+        _surface_result["mom_rev_extreme_momentum_count"] = mom_rev_result["extreme_momentum_count"]
+
+    # Round 84, Task 2 (Beta): Sector tailwind protection.
+    tailwind_result: dict = compute_sector_tailwind_protection(rows)
+    if tailwind_result["valid"]:
+        _surface_result["tailwind_protected_win_rate"] = tailwind_result["protected_win_rate"]
+        _surface_result["tailwind_exposed_win_rate"] = tailwind_result["exposed_win_rate"]
+        _surface_result["tailwind_gap_protection_effect"] = tailwind_result["gap_protection_effect"]
+        _surface_result["tailwind_protected_count"] = tailwind_result["protected_count"]
+
     return _surface_result
 
 
@@ -14502,3 +14518,77 @@ def compute_return_percentile_profile(rows: list[dict]) -> dict:
     p90: float = _pct(0.90)
     upside_asymmetry: float = round(p75 - abs(p25), 8)
     return {"valid": True, "top_return_p25": round(p25, 8), "top_return_p50": round(p50, 8), "top_return_p75": round(p75, 8), "top_return_p90": round(p90, 8), "upside_asymmetry": upside_asymmetry}
+
+
+# ---------------------------------------------------------------------------
+# Round 84, Task 1 (Alpha): Momentum Reversal Analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_momentum_reversal_analysis(rows: list[dict]) -> dict:
+    """动量反转分析：极端动量是否导致T+1反转（耗竭信号检验）。"""
+    EMPTY: dict = {"valid": False, "extreme_momentum_win_rate": None, "moderate_momentum_win_rate": None, "momentum_breadth_effect": None, "extreme_momentum_count": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        ret_val = r.get("actual_return")
+        mom_val = r.get("momentum_slope_20d")
+        if ret_val is None or mom_val is None:
+            continue
+        try:
+            valid_rows.append({"actual_return": float(ret_val), "momentum_slope_20d": float(mom_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 20:
+        return EMPTY
+    n: int = len(valid_rows)
+    sorted_mom: list[float] = sorted(r["momentum_slope_20d"] for r in valid_rows)
+    p80_threshold: float = sorted_mom[int(n * 0.80)]
+    p40_threshold: float = sorted_mom[int(n * 0.40)]
+    extreme_rows: list[dict] = [r for r in valid_rows if r["momentum_slope_20d"] >= p80_threshold]
+    moderate_rows: list[dict] = [r for r in valid_rows if p40_threshold <= r["momentum_slope_20d"] < p80_threshold]
+    if len(extreme_rows) < 3 or len(moderate_rows) < 3:
+        return EMPTY
+    extreme_momentum_win_rate: float = round(sum(1 for r in extreme_rows if r["actual_return"] > 0) / len(extreme_rows), 8)
+    moderate_momentum_win_rate: float = round(sum(1 for r in moderate_rows if r["actual_return"] > 0) / len(moderate_rows), 8)
+    momentum_breadth_effect: float = round(extreme_momentum_win_rate - moderate_momentum_win_rate, 8)
+    return {"valid": True, "extreme_momentum_win_rate": extreme_momentum_win_rate, "moderate_momentum_win_rate": moderate_momentum_win_rate, "momentum_breadth_effect": momentum_breadth_effect, "extreme_momentum_count": len(extreme_rows)}
+
+
+# ---------------------------------------------------------------------------
+# Round 84, Task 2 (Beta): Sector Tailwind Protection
+# ---------------------------------------------------------------------------
+
+
+def compute_sector_tailwind_protection(rows: list[dict]) -> dict:
+    """板块顺风保护：sector_resonance 对高收盘强度股票的隔夜保护效果。"""
+    EMPTY: dict = {"valid": False, "protected_win_rate": None, "exposed_win_rate": None, "gap_protection_effect": None, "protected_count": None}
+    valid_rows: list[dict] = []
+    for r in rows:
+        ret_val = r.get("actual_return")
+        cs_val = r.get("close_strength")
+        sr_val = r.get("sector_resonance")
+        if ret_val is None or cs_val is None or sr_val is None:
+            continue
+        try:
+            valid_rows.append({"actual_return": float(ret_val), "close_strength": float(cs_val), "sector_resonance": float(sr_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 20:
+        return EMPTY
+    n: int = len(valid_rows)
+    sorted_cs: list[float] = sorted(r["close_strength"] for r in valid_rows)
+    cs_p75: float = sorted_cs[int(n * 0.75)]
+    high_cs_rows: list[dict] = [r for r in valid_rows if r["close_strength"] >= cs_p75]
+    if len(high_cs_rows) < 6:
+        return EMPTY
+    sr_vals: list[float] = sorted(r["sector_resonance"] for r in high_cs_rows)
+    m: int = len(sr_vals)
+    sr_median: float = (sr_vals[m // 2 - 1] + sr_vals[m // 2]) / 2.0 if m % 2 == 0 else sr_vals[m // 2]
+    protected_rows: list[dict] = [r for r in high_cs_rows if r["sector_resonance"] >= sr_median]
+    exposed_rows: list[dict] = [r for r in high_cs_rows if r["sector_resonance"] < sr_median]
+    if len(protected_rows) < 3 or len(exposed_rows) < 3:
+        return EMPTY
+    protected_win_rate: float = round(sum(1 for r in protected_rows if r["actual_return"] > 0) / len(protected_rows), 8)
+    exposed_win_rate: float = round(sum(1 for r in exposed_rows if r["actual_return"] > 0) / len(exposed_rows), 8)
+    gap_protection_effect: float = round(protected_win_rate - exposed_win_rate, 8)
+    return {"valid": True, "protected_win_rate": protected_win_rate, "exposed_win_rate": exposed_win_rate, "gap_protection_effect": gap_protection_effect, "protected_count": len(protected_rows)}

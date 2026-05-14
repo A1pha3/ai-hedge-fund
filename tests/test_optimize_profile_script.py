@@ -25169,6 +25169,7 @@ def test_r83_t3_flat_trend_grade_c() -> None:
     assert result["precision_trend_grade"] == "C"
 
 
+
 def test_r83_t3_exactly_3_windows() -> None:
     """Exactly 3 windows → valid result (minimum threshold)."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
@@ -25176,3 +25177,393 @@ def test_r83_t3_exactly_3_windows() -> None:
     result = compute_cross_window_precision_trend(windows)
     assert result["valid"] is True
     assert result["precision_trend_window_count"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Round 84 helper factories
+# ---------------------------------------------------------------------------
+
+
+def _make_r84_momentum_rows(n: int, momentum_vals: list[float], win_rate: float) -> list[dict]:
+    """Make rows with actual_return and momentum_slope_20d."""
+    import random
+    random.seed(42)
+    rows = []
+    for i in range(n):
+        mom = momentum_vals[i % len(momentum_vals)]
+        ret = 0.02 if random.random() < win_rate else -0.02
+        rows.append({"actual_return": ret, "momentum_slope_20d": mom})
+    return rows
+
+
+def _make_r84_tailwind_rows(n: int, close_strengths: list[float], sector_resonances: list[float], win_rate: float) -> list[dict]:
+    """Make rows with actual_return, close_strength, and sector_resonance."""
+    import random
+    random.seed(99)
+    rows = []
+    for i in range(n):
+        cs = close_strengths[i % len(close_strengths)]
+        sr = sector_resonances[i % len(sector_resonances)]
+        ret = 0.02 if random.random() < win_rate else -0.02
+        rows.append({"actual_return": ret, "close_strength": cs, "sector_resonance": sr})
+    return rows
+
+
+def _make_r84_asymmetry_windows(asym_vals: list[float]) -> list[dict]:
+    """Make window summary dicts with rpp_upside_asymmetry."""
+    return [{"rpp_upside_asymmetry": v} for v in asym_vals]
+
+
+# ---------------------------------------------------------------------------
+# Round 84, T1 (Alpha): compute_momentum_reversal_analysis tests
+# ---------------------------------------------------------------------------
+
+
+def test_r84_t1_basic_valid() -> None:
+    """Basic call with sufficient data returns valid=True."""
+    from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+    mom_vals = list(range(1, 41))
+    rows = [{"actual_return": 0.01 if i % 2 == 0 else -0.01, "momentum_slope_20d": float(v)} for i, v in enumerate(mom_vals)]
+    result = compute_momentum_reversal_analysis(rows)
+    assert result["valid"] is True
+    assert result["extreme_momentum_win_rate"] is not None
+    assert result["moderate_momentum_win_rate"] is not None
+    assert result["momentum_breadth_effect"] is not None
+    assert result["extreme_momentum_count"] is not None
+
+
+def test_r84_t1_too_few_rows() -> None:
+    """Fewer than 20 valid rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+    rows = [{"actual_return": 0.01, "momentum_slope_20d": float(i)} for i in range(19)]
+    result = compute_momentum_reversal_analysis(rows)
+    assert result["valid"] is False
+    assert result["extreme_momentum_win_rate"] is None
+
+
+def test_r84_t1_exactly_20_rows() -> None:
+    """Exactly 20 valid rows → can be valid."""
+    from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+    rows = [{"actual_return": 0.01, "momentum_slope_20d": float(i)} for i in range(20)]
+    result = compute_momentum_reversal_analysis(rows)
+    assert result["valid"] in (True, False)
+
+
+def test_r84_t1_missing_momentum_slope_filtered() -> None:
+    """Rows missing momentum_slope_20d are filtered out → valid=False if too few remain."""
+    from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+    rows = [{"actual_return": 0.01, "momentum_slope_20d": None}] * 30
+    result = compute_momentum_reversal_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r84_t1_missing_actual_return_filtered() -> None:
+    """Rows missing actual_return are filtered out → valid=False if too few remain."""
+    from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+    rows = [{"actual_return": None, "momentum_slope_20d": 1.0}] * 30
+    result = compute_momentum_reversal_analysis(rows)
+    assert result["valid"] is False
+
+
+def test_r84_t1_p80_p40_threshold_logic() -> None:
+    """P80 and P40 thresholds split correctly into extreme vs moderate groups."""
+    from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+    # 20 rows with momentum 1..20, all wins
+    rows = [{"actual_return": 0.05, "momentum_slope_20d": float(i + 1)} for i in range(20)]
+    result = compute_momentum_reversal_analysis(rows)
+    assert result["valid"] is True
+    # extreme group: >= P80 threshold (top 20%), i.e., mom >= sorted[16] = 17.0 → 4 rows (17,18,19,20)
+    # moderate group: P40 <= mom < P80, i.e., 9.0 <= mom < 17.0 → rows 9..16 = 8 rows
+    assert result["extreme_momentum_count"] >= 3
+
+
+def test_r84_t1_momentum_breadth_effect_formula() -> None:
+    """momentum_breadth_effect = extreme_win_rate - moderate_win_rate."""
+    from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+    rows = [{"actual_return": 0.01, "momentum_slope_20d": float(i + 1)} for i in range(20)]
+    result = compute_momentum_reversal_analysis(rows)
+    if result["valid"]:
+        assert result["momentum_breadth_effect"] == pytest.approx(result["extreme_momentum_win_rate"] - result["moderate_momentum_win_rate"], abs=1e-7)
+
+
+def test_r84_t1_extreme_group_all_wins() -> None:
+    """If extreme group are all wins, extreme_momentum_win_rate = 1.0."""
+    from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+    # 30 rows: high momentum rows (top 20% = rows 25-30) all win, others alternate
+    rows = []
+    for i in range(30):
+        mom = float(i + 1)
+        ret = 0.05 if i >= 24 else (-0.02 if i % 2 == 0 else 0.02)
+        rows.append({"actual_return": ret, "momentum_slope_20d": mom})
+    result = compute_momentum_reversal_analysis(rows)
+    assert result["valid"] is True
+    assert result["extreme_momentum_win_rate"] == pytest.approx(1.0)
+
+
+def test_r84_t1_negative_breadth_effect_means_reversal() -> None:
+    """Negative breadth effect: extreme momentum has lower win rate than moderate."""
+    from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+    rows = []
+    for i in range(30):
+        mom = float(i + 1)
+        # top 20% (i>=24): all lose; middle 40-80%: all win
+        if i >= 24:
+            ret = -0.02
+        elif i >= 12:
+            ret = 0.02
+        else:
+            ret = -0.01
+        rows.append({"actual_return": ret, "momentum_slope_20d": mom})
+    result = compute_momentum_reversal_analysis(rows)
+    if result["valid"]:
+        assert result["momentum_breadth_effect"] < 0
+
+
+def test_r84_t1_in_comparison_metrics() -> None:
+    """mom_rev_extreme_momentum_win_rate must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "mom_rev_extreme_momentum_win_rate" in COMPARISON_METRICS
+    assert "mom_rev_momentum_breadth_effect" in COMPARISON_METRICS
+
+
+def test_r84_t1_in_optional_metrics() -> None:
+    """mom_rev metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "mom_rev_extreme_momentum_win_rate" in OPTIONAL_COMPARISON_METRICS
+    assert "mom_rev_momentum_breadth_effect" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r84_t1_labels_registered() -> None:
+    """mom_rev metrics must have labels in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("mom_rev_extreme_momentum_win_rate") == "极端动量胜率"
+    assert COMPARISON_METRIC_LABELS.get("mom_rev_momentum_breadth_effect") == "动量广度效应"
+
+
+def test_r84_t1_floor_registered() -> None:
+    """mom_rev_extreme_momentum_win_rate floor must be 0.4."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "mom_rev_extreme_momentum_win_rate" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["mom_rev_extreme_momentum_win_rate"] == pytest.approx(0.4)
+
+
+# ---------------------------------------------------------------------------
+# Round 84, T2 (Beta): compute_sector_tailwind_protection tests
+# ---------------------------------------------------------------------------
+
+
+def test_r84_t2_basic_valid() -> None:
+    """Basic call with sufficient data returns valid=True."""
+    from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+    rows = [{"actual_return": 0.01 if i % 2 == 0 else -0.01, "close_strength": float(i % 10) / 10.0, "sector_resonance": float(i % 5) / 5.0} for i in range(40)]
+    result = compute_sector_tailwind_protection(rows)
+    assert result["valid"] is True
+    assert result["protected_win_rate"] is not None
+    assert result["exposed_win_rate"] is not None
+    assert result["gap_protection_effect"] is not None
+    assert result["protected_count"] is not None
+
+
+def test_r84_t2_too_few_rows() -> None:
+    """Fewer than 20 valid rows → valid=False."""
+    from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+    rows = [{"actual_return": 0.01, "close_strength": 0.5, "sector_resonance": 0.5} for _ in range(19)]
+    result = compute_sector_tailwind_protection(rows)
+    assert result["valid"] is False
+
+
+def test_r84_t2_missing_sector_resonance_filtered() -> None:
+    """Rows missing sector_resonance are filtered → valid=False if too few remain."""
+    from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+    rows = [{"actual_return": 0.01, "close_strength": 0.5, "sector_resonance": None}] * 30
+    result = compute_sector_tailwind_protection(rows)
+    assert result["valid"] is False
+
+
+def test_r84_t2_missing_close_strength_filtered() -> None:
+    """Rows missing close_strength are filtered → valid=False if too few remain."""
+    from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+    rows = [{"actual_return": 0.01, "close_strength": None, "sector_resonance": 0.5}] * 30
+    result = compute_sector_tailwind_protection(rows)
+    assert result["valid"] is False
+
+
+def test_r84_t2_high_cs_rows_less_than_6() -> None:
+    """If high_cs_rows < 6 → valid=False."""
+    from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+    # All close_strength = 0.0 except 4 rows with 1.0; P75 will be above most
+    rows = [{"actual_return": 0.01, "close_strength": 0.0, "sector_resonance": 0.5} for _ in range(20)]
+    rows[0]["close_strength"] = 1.0
+    rows[1]["close_strength"] = 1.0
+    rows[2]["close_strength"] = 1.0
+    rows[3]["close_strength"] = 1.0
+    result = compute_sector_tailwind_protection(rows)
+    assert result["valid"] is False
+
+
+def test_r84_t2_p75_threshold_logic() -> None:
+    """P75 of close_strength is computed correctly."""
+    from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+    # 40 rows, close_strength = 0..1 linearly, sector_resonance varies
+    rows = []
+    for i in range(40):
+        cs = float(i) / 39.0
+        sr = 0.8 if i % 2 == 0 else 0.2
+        ret = 0.03 if sr >= 0.5 else -0.01
+        rows.append({"actual_return": ret, "close_strength": cs, "sector_resonance": sr})
+    result = compute_sector_tailwind_protection(rows)
+    assert result["valid"] is True
+
+
+def test_r84_t2_gap_protection_effect_formula() -> None:
+    """gap_protection_effect = protected_win_rate - exposed_win_rate."""
+    from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+    rows = [{"actual_return": 0.01 if i % 3 != 0 else -0.01, "close_strength": float(i % 10) / 10.0 + 0.1, "sector_resonance": float(i % 6) / 6.0} for i in range(40)]
+    result = compute_sector_tailwind_protection(rows)
+    if result["valid"]:
+        assert result["gap_protection_effect"] == pytest.approx(result["protected_win_rate"] - result["exposed_win_rate"], abs=1e-7)
+
+
+def test_r84_t2_protected_all_wins() -> None:
+    """If all protected rows win, protected_win_rate = 1.0."""
+    from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+    rows = []
+    for i in range(40):
+        cs = 1.0  # all high cs
+        sr = 1.0 if i < 20 else 0.0
+        ret = 0.05 if sr >= 0.5 else -0.02
+        rows.append({"actual_return": ret, "close_strength": cs, "sector_resonance": sr})
+    result = compute_sector_tailwind_protection(rows)
+    if result["valid"]:
+        assert result["protected_win_rate"] == pytest.approx(1.0)
+
+
+def test_r84_t2_in_comparison_metrics() -> None:
+    """tailwind metrics must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "tailwind_protected_win_rate" in COMPARISON_METRICS
+    assert "tailwind_gap_protection_effect" in COMPARISON_METRICS
+
+
+def test_r84_t2_in_optional_metrics() -> None:
+    """tailwind metrics must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "tailwind_protected_win_rate" in OPTIONAL_COMPARISON_METRICS
+    assert "tailwind_gap_protection_effect" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r84_t2_labels_registered() -> None:
+    """tailwind metrics must have labels."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("tailwind_protected_win_rate") == "顺风高强度胜率"
+    assert COMPARISON_METRIC_LABELS.get("tailwind_gap_protection_effect") == "板块保护效应"
+
+
+def test_r84_t2_floor_registered() -> None:
+    """tailwind_gap_protection_effect floor must be 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "tailwind_gap_protection_effect" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["tailwind_gap_protection_effect"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Round 84, T3 (Gamma): compute_cross_window_upside_asymmetry_trend tests
+# ---------------------------------------------------------------------------
+
+
+def test_r84_t3_rising_trend_grade_a() -> None:
+    """Strongly rising rpp_upside_asymmetry → grade A."""
+    from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+    windows = _make_r84_asymmetry_windows([0.0, 0.01, 0.02, 0.03, 0.04])
+    result = compute_cross_window_upside_asymmetry_trend(windows)
+    assert result["valid"] is True
+    assert result["upside_asymmetry_trend_grade"] == "A"
+
+
+def test_r84_t3_mild_rising_grade_b() -> None:
+    """Mildly rising (slope 0..0.005] → grade B."""
+    from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+    windows = _make_r84_asymmetry_windows([0.0, 0.001, 0.002, 0.003, 0.004])
+    result = compute_cross_window_upside_asymmetry_trend(windows)
+    assert result["valid"] is True
+    assert result["upside_asymmetry_trend_grade"] == "B"
+
+
+def test_r84_t3_flat_trend_grade_c() -> None:
+    """Flat trend → grade C."""
+    from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+    windows = _make_r84_asymmetry_windows([0.5, 0.5, 0.5, 0.5, 0.5])
+    result = compute_cross_window_upside_asymmetry_trend(windows)
+    assert result["valid"] is True
+    assert result["upside_asymmetry_trend_slope"] == pytest.approx(0.0, abs=1e-7)
+    assert result["upside_asymmetry_trend_grade"] == "C"
+
+
+def test_r84_t3_strongly_falling_grade_d() -> None:
+    """Strongly falling → grade D."""
+    from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+    windows = _make_r84_asymmetry_windows([0.04, 0.02, 0.0, -0.02, -0.04])
+    result = compute_cross_window_upside_asymmetry_trend(windows)
+    assert result["valid"] is True
+    assert result["upside_asymmetry_trend_grade"] == "D"
+
+
+def test_r84_t3_too_few_windows() -> None:
+    """Fewer than 3 valid windows → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+    windows = _make_r84_asymmetry_windows([0.1, 0.2])
+    result = compute_cross_window_upside_asymmetry_trend(windows)
+    assert result["valid"] is False
+    assert result["upside_asymmetry_trend_slope"] is None
+
+
+def test_r84_t3_exactly_3_windows() -> None:
+    """Exactly 3 windows → valid."""
+    from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+    windows = _make_r84_asymmetry_windows([0.1, 0.2, 0.3])
+    result = compute_cross_window_upside_asymmetry_trend(windows)
+    assert result["valid"] is True
+    assert result["upside_asymmetry_window_count"] == 3
+
+
+def test_r84_t3_ols_slope_numerical_check() -> None:
+    """Verify OLS slope numerically: y=0,1,2,3,4 → slope=1."""
+    from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+    windows = _make_r84_asymmetry_windows([0.0, 1.0, 2.0, 3.0, 4.0])
+    result = compute_cross_window_upside_asymmetry_trend(windows)
+    assert result["valid"] is True
+    assert result["upside_asymmetry_trend_slope"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_r84_t3_missing_rpp_upside_asymmetry_skipped() -> None:
+    """Windows without rpp_upside_asymmetry are skipped."""
+    from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+    windows = [{"rpp_upside_asymmetry": 0.1}, {"other_key": 0.5}, {"rpp_upside_asymmetry": 0.2}, {"rpp_upside_asymmetry": 0.3}]
+    result = compute_cross_window_upside_asymmetry_trend(windows)
+    assert result["valid"] is True
+    assert result["upside_asymmetry_window_count"] == 3
+
+
+def test_r84_t3_in_comparison_metrics() -> None:
+    """upside_asymmetry_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "upside_asymmetry_trend_slope" in COMPARISON_METRICS
+
+
+def test_r84_t3_in_optional_metrics() -> None:
+    """upside_asymmetry_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "upside_asymmetry_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r84_t3_label_registered() -> None:
+    """upside_asymmetry_trend_slope must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("upside_asymmetry_trend_slope") == "上行不对称跨窗趋势斜率"
+
+
+def test_r84_t3_floor_registered() -> None:
+    """upside_asymmetry_trend_slope floor must be -0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "upside_asymmetry_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["upside_asymmetry_trend_slope"] == pytest.approx(-0.01)

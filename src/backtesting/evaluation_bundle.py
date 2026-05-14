@@ -692,6 +692,15 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 83, Gamma): precision trend slope floor.
     # precision_trend_slope < -0.01 means the scoring precision is deteriorating across windows.
     "precision_trend_slope": -0.01,
+    # Task 1 (Round 84, Alpha): extreme momentum win rate floor.
+    # mom_rev_extreme_momentum_win_rate < 0.4 means extreme momentum stocks win less than 40 % of the time next day.
+    "mom_rev_extreme_momentum_win_rate": 0.4,
+    # Task 2 (Round 84, Beta): sector tailwind gap protection effect floor.
+    # tailwind_gap_protection_effect < 0.0 means sector resonance offers no protection vs. exposed high-strength stocks.
+    "tailwind_gap_protection_effect": 0.0,
+    # Task 3 (Round 84, Gamma): upside asymmetry trend slope floor.
+    # upside_asymmetry_trend_slope < -0.01 means the return upside asymmetry is deteriorating across windows.
+    "upside_asymmetry_trend_slope": -0.01,
 }
 
 # ---------------------------------------------------------------------------
