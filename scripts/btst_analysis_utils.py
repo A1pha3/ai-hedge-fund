@@ -4425,6 +4425,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _srs.items():
         _surface_result[f"rnkstab_{_k}"] = _v
 
+    # Round 57, Task 1 (Alpha): Market regime adaptation analysis.
+    _mra: dict[str, Any] = compute_market_regime_adaptation(rows)
+    for _k, _v in _mra.items():
+        _surface_result[f"regime_{_k}"] = _v
+
+    # Round 57, Task 2 (Beta): Turnover efficiency analysis.
+    _tea: dict[str, Any] = compute_turnover_efficiency_analysis(rows)
+    for _k, _v in _tea.items():
+        _surface_result[f"turnover_eff_{_k}"] = _v
+
     return _surface_result
 
 
@@ -10964,3 +10974,162 @@ def compute_intraday_time_segmentation(rows: list[dict]) -> dict:
         session_win_rate_spread = None
 
     return {"early_session_win_rate": early_wr, "mid_session_win_rate": mid_wr, "late_session_win_rate": late_wr, "early_session_mean_return": early_mr, "mid_session_mean_return": mid_mr, "late_session_mean_return": late_mr, "best_session": best_session, "session_win_rate_spread": session_win_rate_spread, "intraday_time_valid": True}
+
+
+# ---------------------------------------------------------------------------
+# Round 57, Task 1 (Alpha): Market regime adaptation analysis
+# ---------------------------------------------------------------------------
+# Splits rows into bull/bear groups by comparing next_day_return to full-period
+# median.  Computes per-regime win rate and mean return, a regime_adaptability
+# score (minimum of the two win rates) and a bull_bear_spread.
+# ---------------------------------------------------------------------------
+
+
+def compute_market_regime_adaptation(rows: list[dict]) -> dict:
+    """Analyse strategy performance across bull and bear market regimes.
+
+    Args:
+        rows: Per-candidate dicts.  Requires ≥ 12 valid rows.
+
+    Returns:
+        Dict with keys:
+
+        - ``bull_win_rate``, ``bear_win_rate``: float | None — win rate within each regime.
+        - ``bull_mean_return``, ``bear_mean_return``: float | None — mean return within each regime.
+        - ``regime_adaptability``: float | None — min(bull_win_rate, bear_win_rate); if one is None, returns the valid one.
+        - ``bull_bear_spread``: float | None — bull_win_rate − bear_win_rate.
+        - ``market_regime_valid``: bool — True when ≥ 12 rows are available.
+    """
+    _null: dict = {"bull_win_rate": None, "bear_win_rate": None, "bull_mean_return": None, "bear_mean_return": None, "regime_adaptability": None, "bull_bear_spread": None, "market_regime_valid": False}
+    if not rows or len(rows) < 12:
+        return _null
+    rets: list[float] = []
+    for row in rows:
+        rv = row.get("next_day_return")
+        if rv is None:
+            continue
+        try:
+            rets.append(float(rv))
+        except (TypeError, ValueError):
+            pass
+    if len(rets) < 12:
+        return _null
+    sorted_rets = sorted(rets)
+    n_all = len(sorted_rets)
+    if n_all % 2 == 0:
+        global_median = (sorted_rets[n_all // 2 - 1] + sorted_rets[n_all // 2]) / 2.0
+    else:
+        global_median = sorted_rets[n_all // 2]
+    bull_rets: list[float] = [r for r in rets if r > global_median]
+    bear_rets: list[float] = [r for r in rets if r <= global_median]
+    bull_win_rate: "float | None" = None
+    bull_mean_return: "float | None" = None
+    if len(bull_rets) >= 3:
+        bull_win_rate = round(sum(1 for r in bull_rets if r > 0) / len(bull_rets), 6)
+        bull_mean_return = round(sum(bull_rets) / len(bull_rets), 8)
+    bear_win_rate: "float | None" = None
+    bear_mean_return: "float | None" = None
+    if len(bear_rets) >= 3:
+        bear_win_rate = round(sum(1 for r in bear_rets if r > 0) / len(bear_rets), 6)
+        bear_mean_return = round(sum(bear_rets) / len(bear_rets), 8)
+    if bull_win_rate is not None and bear_win_rate is not None:
+        regime_adaptability: "float | None" = round(min(bull_win_rate, bear_win_rate), 6)
+    elif bull_win_rate is not None:
+        regime_adaptability = bull_win_rate
+    elif bear_win_rate is not None:
+        regime_adaptability = bear_win_rate
+    else:
+        regime_adaptability = None
+    bull_bear_spread: "float | None" = round(bull_win_rate - bear_win_rate, 6) if bull_win_rate is not None and bear_win_rate is not None else None
+    return {"bull_win_rate": bull_win_rate, "bear_win_rate": bear_win_rate, "bull_mean_return": bull_mean_return, "bear_mean_return": bear_mean_return, "regime_adaptability": regime_adaptability, "bull_bear_spread": bull_bear_spread, "market_regime_valid": True}
+
+
+# ---------------------------------------------------------------------------
+# Round 57, Task 2 (Beta): Turnover efficiency analysis
+# ---------------------------------------------------------------------------
+# Splits rows into high/low float_turnover_rate groups and computes per-group
+# win rate and mean return.  Also computes a Spearman IC between
+# float_turnover_rate and next_day_return (manually, without scipy).
+# ---------------------------------------------------------------------------
+
+
+def compute_turnover_efficiency_analysis(rows: list[dict]) -> dict:
+    """Analyse relationship between float turnover rate and next-day return.
+
+    Args:
+        rows: Per-candidate dicts.  Requires ≥ 8 rows with valid ``float_turnover_rate``.
+
+    Returns:
+        Dict with keys:
+
+        - ``high_turnover_win_rate``, ``low_turnover_win_rate``: float | None.
+        - ``high_turnover_mean_return``, ``low_turnover_mean_return``: float | None.
+        - ``turnover_efficiency``: float | None — high_turnover_win_rate − low_turnover_win_rate.
+        - ``optimal_turnover_regime``: str | None — "high" or "low".
+        - ``turnover_ic``: float | None — Spearman IC between float_turnover_rate and next_day_return.
+        - ``turnover_efficiency_valid``: bool — True when ≥ 8 valid rows are available.
+    """
+    _null: dict = {"high_turnover_win_rate": None, "low_turnover_win_rate": None, "high_turnover_mean_return": None, "low_turnover_mean_return": None, "turnover_efficiency": None, "optimal_turnover_regime": None, "turnover_ic": None, "turnover_efficiency_valid": False}
+    if not rows:
+        return _null
+    has_field = any("float_turnover_rate" in row for row in rows)
+    if not has_field:
+        return _null
+    valid_pairs: list[tuple[float, float]] = []
+    for row in rows:
+        tr = row.get("float_turnover_rate")
+        rv = row.get("next_day_return")
+        if tr is None or rv is None:
+            continue
+        try:
+            valid_pairs.append((float(tr), float(rv)))
+        except (TypeError, ValueError):
+            pass
+    if len(valid_pairs) < 8:
+        return _null
+    turnover_vals = [p[0] for p in valid_pairs]
+    return_vals = [p[1] for p in valid_pairs]
+    sorted_tv = sorted(turnover_vals)
+    n_v = len(sorted_tv)
+    if n_v % 2 == 0:
+        turnover_median = (sorted_tv[n_v // 2 - 1] + sorted_tv[n_v // 2]) / 2.0
+    else:
+        turnover_median = sorted_tv[n_v // 2]
+    high_rets: list[float] = [p[1] for p in valid_pairs if p[0] > turnover_median]
+    low_rets: list[float] = [p[1] for p in valid_pairs if p[0] <= turnover_median]
+    high_turnover_win_rate: "float | None" = round(sum(1 for r in high_rets if r > 0) / len(high_rets), 6) if high_rets else None
+    high_turnover_mean_return: "float | None" = round(sum(high_rets) / len(high_rets), 8) if high_rets else None
+    low_turnover_win_rate: "float | None" = round(sum(1 for r in low_rets if r > 0) / len(low_rets), 6) if low_rets else None
+    low_turnover_mean_return: "float | None" = round(sum(low_rets) / len(low_rets), 8) if low_rets else None
+    turnover_efficiency: "float | None" = round(high_turnover_win_rate - low_turnover_win_rate, 6) if high_turnover_win_rate is not None and low_turnover_win_rate is not None else None
+    optimal_turnover_regime: "str | None" = ("high" if turnover_efficiency > 0 else "low") if turnover_efficiency is not None else None
+
+    def _rank_list(vals: list[float]) -> list[float]:
+        n = len(vals)
+        indexed = sorted(range(n), key=lambda i: vals[i])
+        ranks = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j < n - 1 and vals[indexed[j + 1]] == vals[indexed[j]]:
+                j += 1
+            avg_rank = (i + j) / 2.0 + 1.0
+            for k in range(i, j + 1):
+                ranks[indexed[k]] = avg_rank
+            i = j + 1
+        return ranks
+
+    turnover_ic: "float | None" = None
+    if len(valid_pairs) >= 3:
+        tr_ranks = _rank_list(turnover_vals)
+        ret_ranks = _rank_list(return_vals)
+        n_ic = len(tr_ranks)
+        mean_tr = sum(tr_ranks) / n_ic
+        mean_ret = sum(ret_ranks) / n_ic
+        cov = sum((tr_ranks[i] - mean_tr) * (ret_ranks[i] - mean_ret) for i in range(n_ic))
+        std_tr = (sum((r - mean_tr) ** 2 for r in tr_ranks)) ** 0.5
+        std_ret = (sum((r - mean_ret) ** 2 for r in ret_ranks)) ** 0.5
+        if std_tr > 0 and std_ret > 0:
+            turnover_ic = round(cov / (std_tr * std_ret), 8)
+
+    return {"high_turnover_win_rate": high_turnover_win_rate, "low_turnover_win_rate": low_turnover_win_rate, "high_turnover_mean_return": high_turnover_mean_return, "low_turnover_mean_return": low_turnover_mean_return, "turnover_efficiency": turnover_efficiency, "optimal_turnover_regime": optimal_turnover_regime, "turnover_ic": turnover_ic, "turnover_efficiency_valid": True}

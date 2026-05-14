@@ -75,6 +75,10 @@ _GUARDRAIL_KEYS = (
     # rank_ic = Spearman IC between composite score and T+1 return.
     # Floor ≥ 0.0 requires the scoring system to have net positive predictive validity.
     "rank_ic",
+    # Task 1 (Round 57, Alpha): market regime adaptability floor guardrail.
+    # regime_adaptability = min(bull_win_rate, bear_win_rate); measures ability to profit in both regimes.
+    # Floor ≥ 0.4 ensures the strategy has at least 40% win rate in the weaker market regime.
+    "regime_adaptability",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -431,6 +435,13 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # rank_ic = Spearman IC between composite score and T+1 return.
     # Floor ≥ 0.0 requires the scoring system to have net positive predictive validity.
     "rank_ic": 0.0,
+    # Task 1 (Round 57, Alpha): market regime adaptability floor.
+    # regime_adaptability = min(bull_win_rate, bear_win_rate).
+    # Floor ≥ 0.4 ensures the strategy retains at least 40% win rate in the weaker regime.
+    "regime_adaptability": 0.4,
+    # Task 3 (Round 57, Gamma): cross-window rank-IC OLS trend slope floor.
+    # rank_ic_trend_slope < -0.02 signals rapid predictive-validity deterioration across windows.
+    "rank_ic_trend_slope": -0.02,
 }
 
 # ---------------------------------------------------------------------------

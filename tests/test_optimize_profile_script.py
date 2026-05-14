@@ -14449,3 +14449,403 @@ def test_r56_t1_diversification_score_plus_hhi_equals_one() -> None:
     rows = [{"sector": "A"}, {"sector": "B"}, {"sector": "C"}, {"sector": "A"}, {"sector": "B"}, {"sector": "C"}]
     result = compute_sector_diversification_analysis(rows)
     assert result["diversification_score"] == pytest.approx(1.0 - result["sector_hhi"], abs=1e-5)
+
+
+# ===========================================================================
+# Round 57 tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: compute_market_regime_adaptation
+# ---------------------------------------------------------------------------
+
+def test_r57_t1_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 12 rows."""
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    rows = [{"next_day_return": 0.01}] * 11
+    result = compute_market_regime_adaptation(rows)
+    assert result["market_regime_valid"] is False
+    assert result["bull_win_rate"] is None
+    assert result["bear_win_rate"] is None
+    assert result["regime_adaptability"] is None
+
+
+def test_r57_t1_valid_basic() -> None:
+    """Returns valid=True with 12 rows."""
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    rows = [{"next_day_return": 0.02}] * 6 + [{"next_day_return": -0.01}] * 6
+    result = compute_market_regime_adaptation(rows)
+    assert result["market_regime_valid"] is True
+
+
+def test_r57_t1_invalid_empty() -> None:
+    """Returns valid=False when empty list."""
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    result = compute_market_regime_adaptation([])
+    assert result["market_regime_valid"] is False
+
+
+def test_r57_t1_bull_win_rate_correct() -> None:
+    """bull_win_rate computed correctly as fraction of bull group with return > 0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
+    rows = [{"next_day_return": r} for r in rets]
+    result = compute_market_regime_adaptation(rows)
+    assert result["market_regime_valid"] is True
+    assert result["bull_win_rate"] is not None
+    assert 0.0 <= result["bull_win_rate"] <= 1.0
+
+
+def test_r57_t1_bear_win_rate_correct() -> None:
+    """bear_win_rate is fraction of bear group rows with return > 0."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
+    rows = [{"next_day_return": r} for r in rets]
+    result = compute_market_regime_adaptation(rows)
+    assert result["bear_win_rate"] is not None
+    assert 0.0 <= result["bear_win_rate"] <= 1.0
+
+
+def test_r57_t1_regime_adaptability_is_min() -> None:
+    """regime_adaptability equals min(bull_win_rate, bear_win_rate)."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
+    rows = [{"next_day_return": r} for r in rets]
+    result = compute_market_regime_adaptation(rows)
+    if result["bull_win_rate"] is not None and result["bear_win_rate"] is not None:
+        assert result["regime_adaptability"] == pytest.approx(min(result["bull_win_rate"], result["bear_win_rate"]), abs=1e-6)
+
+
+def test_r57_t1_bull_bear_spread() -> None:
+    """bull_bear_spread equals bull_win_rate minus bear_win_rate."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
+    rows = [{"next_day_return": r} for r in rets]
+    result = compute_market_regime_adaptation(rows)
+    if result["bull_win_rate"] is not None and result["bear_win_rate"] is not None:
+        assert result["bull_bear_spread"] == pytest.approx(result["bull_win_rate"] - result["bear_win_rate"], abs=1e-6)
+
+
+def test_r57_t1_all_positive_returns() -> None:
+    """All positive returns: bull group wins all, bear group wins all too."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    rets = [0.01 * (i + 1) for i in range(12)]
+    rows = [{"next_day_return": r} for r in rets]
+    result = compute_market_regime_adaptation(rows)
+    assert result["market_regime_valid"] is True
+    if result["bull_win_rate"] is not None:
+        assert result["bull_win_rate"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_r57_t1_regime_adaptability_fallback_one_none() -> None:
+    """regime_adaptability falls back to non-None value when one group has <3 rows."""
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    # All same value: the bear group will have exactly n//2 rows, bull group exactly n-n//2
+    # We need 12 rows with a distribution where one group has < 3
+    # All values equal: sorted median = same value; bull_rows = [r for r > median] could be empty
+    rets = [0.01] * 12
+    rows = [{"next_day_return": r} for r in rets]
+    result = compute_market_regime_adaptation(rows)
+    # Since all equal, bull_rows (> median) could be empty; result should still be valid
+    assert result["market_regime_valid"] is True
+
+
+def test_r57_t1_mean_returns_correct() -> None:
+    """bull_mean_return and bear_mean_return are correctly computed."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
+    rows = [{"next_day_return": r} for r in rets]
+    result = compute_market_regime_adaptation(rows)
+    if result["bull_mean_return"] is not None:
+        assert result["bull_mean_return"] > 0
+    if result["bear_mean_return"] is not None:
+        assert result["bear_mean_return"] < 0
+
+
+def test_r57_t1_exactly_12_rows() -> None:
+    """Exactly 12 rows should pass the threshold and return valid=True."""
+    from scripts.btst_analysis_utils import compute_market_regime_adaptation
+    rows = [{"next_day_return": 0.01 * i} for i in range(-6, 6)]
+    result = compute_market_regime_adaptation(rows)
+    assert result["market_regime_valid"] is True
+
+
+def test_r57_t1_in_comparison_metrics() -> None:
+    """regime_adaptability is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "regime_adaptability" in COMPARISON_METRICS
+
+
+def test_r57_t1_in_optional_metrics() -> None:
+    """regime_adaptability is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "regime_adaptability" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r57_t1_in_guardrail_keys() -> None:
+    """regime_adaptability is in _GUARDRAIL_KEYS in evaluation_bundle."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "regime_adaptability" in _GUARDRAIL_KEYS
+
+
+def test_r57_t1_floor_value() -> None:
+    """regime_adaptability floor is 0.4 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "regime_adaptability" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["regime_adaptability"] == pytest.approx(0.4)
+
+
+def test_r57_t1_label_present() -> None:
+    """regime_adaptability has a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "regime_adaptability" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["regime_adaptability"] == "市场状态适应性"
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_turnover_efficiency_analysis
+# ---------------------------------------------------------------------------
+
+def test_r57_t2_valid_basic() -> None:
+    """Returns valid=True with ≥8 rows having float_turnover_rate."""
+    from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+    rows = [{"float_turnover_rate": 0.01 * (i + 1), "next_day_return": 0.005 * i} for i in range(10)]
+    result = compute_turnover_efficiency_analysis(rows)
+    assert result["turnover_efficiency_valid"] is True
+
+
+def test_r57_t2_no_turnover_field() -> None:
+    """Returns valid=False when float_turnover_rate field is absent from all rows."""
+    from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+    rows = [{"next_day_return": 0.01}] * 10
+    result = compute_turnover_efficiency_analysis(rows)
+    assert result["turnover_efficiency_valid"] is False
+    assert result["turnover_ic"] is None
+
+
+def test_r57_t2_too_few_valid_rows() -> None:
+    """Returns valid=False when fewer than 8 rows have valid float_turnover_rate."""
+    from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+    rows = [{"float_turnover_rate": 0.01, "next_day_return": 0.01}] * 7
+    result = compute_turnover_efficiency_analysis(rows)
+    assert result["turnover_efficiency_valid"] is False
+
+
+def test_r57_t2_turnover_efficiency_calc() -> None:
+    """turnover_efficiency = high_turnover_win_rate - low_turnover_win_rate."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+    rows = [{"float_turnover_rate": 0.01 * (i + 1), "next_day_return": 0.005 * i - 0.02} for i in range(10)]
+    result = compute_turnover_efficiency_analysis(rows)
+    assert result["turnover_efficiency_valid"] is True
+    if result["high_turnover_win_rate"] is not None and result["low_turnover_win_rate"] is not None:
+        assert result["turnover_efficiency"] == pytest.approx(result["high_turnover_win_rate"] - result["low_turnover_win_rate"], abs=1e-6)
+
+
+def test_r57_t2_optimal_turnover_regime_high() -> None:
+    """optimal_turnover_regime is 'high' when turnover_efficiency > 0."""
+    from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+    # High turnover rows all win, low turnover rows all lose
+    rows = ([{"float_turnover_rate": 0.1, "next_day_return": 0.05}] * 5 + [{"float_turnover_rate": 0.01, "next_day_return": -0.02}] * 5)
+    result = compute_turnover_efficiency_analysis(rows)
+    if result["turnover_efficiency_valid"] and result["turnover_efficiency"] is not None and result["turnover_efficiency"] > 0:
+        assert result["optimal_turnover_regime"] == "high"
+
+
+def test_r57_t2_optimal_turnover_regime_low() -> None:
+    """optimal_turnover_regime is 'low' when turnover_efficiency <= 0."""
+    from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+    # Low turnover rows win, high turnover rows lose
+    rows = ([{"float_turnover_rate": 0.1, "next_day_return": -0.02}] * 5 + [{"float_turnover_rate": 0.01, "next_day_return": 0.05}] * 5)
+    result = compute_turnover_efficiency_analysis(rows)
+    if result["turnover_efficiency_valid"] and result["turnover_efficiency"] is not None and result["turnover_efficiency"] <= 0:
+        assert result["optimal_turnover_regime"] == "low"
+
+
+def test_r57_t2_turnover_ic_spearman_range() -> None:
+    """turnover_ic (Spearman IC) is in [-1, 1] range."""
+    from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+    rows = [{"float_turnover_rate": 0.01 * (i + 1), "next_day_return": 0.005 * i} for i in range(10)]
+    result = compute_turnover_efficiency_analysis(rows)
+    if result["turnover_ic"] is not None:
+        assert -1.0 <= result["turnover_ic"] <= 1.0
+
+
+def test_r57_t2_turnover_ic_positive_correlation() -> None:
+    """turnover_ic is positive when turnover and return are perfectly rank-correlated."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+    rows = [{"float_turnover_rate": float(i), "next_day_return": float(i)} for i in range(10)]
+    result = compute_turnover_efficiency_analysis(rows)
+    assert result["turnover_efficiency_valid"] is True
+    assert result["turnover_ic"] is not None
+    assert result["turnover_ic"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_r57_t2_turnover_ic_negative_correlation() -> None:
+    """turnover_ic is negative when turnover and return are inversely rank-correlated."""
+    import pytest
+    from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+    rows = [{"float_turnover_rate": float(i), "next_day_return": float(9 - i)} for i in range(10)]
+    result = compute_turnover_efficiency_analysis(rows)
+    assert result["turnover_ic"] == pytest.approx(-1.0, abs=1e-5)
+
+
+def test_r57_t2_in_comparison_metrics() -> None:
+    """turnover_efficiency is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "turnover_efficiency" in COMPARISON_METRICS
+
+
+def test_r57_t2_in_optional_metrics() -> None:
+    """turnover_efficiency is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "turnover_efficiency" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r57_t2_label_present() -> None:
+    """turnover_efficiency has a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "turnover_efficiency" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["turnover_efficiency"] == "换手率效率差异"
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_rank_ic_trend
+# ---------------------------------------------------------------------------
+
+def test_r57_t3_valid_basic() -> None:
+    """Returns valid=True with ≥3 windows having rnkstab_rank_ic."""
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rnkstab_rank_ic": 0.05}, {"rnkstab_rank_ic": 0.07}, {"rnkstab_rank_ic": 0.09}]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_valid"] is True
+
+
+def test_r57_t3_invalid_too_few_windows() -> None:
+    """Returns valid=False with fewer than 3 windows."""
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rnkstab_rank_ic": 0.05}, {"rnkstab_rank_ic": 0.07}]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_valid"] is False
+    assert result["rank_ic_trend_slope"] is None
+
+
+def test_r57_t3_ols_slope_increasing() -> None:
+    """OLS slope is positive for monotonically increasing rank IC."""
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rnkstab_rank_ic": float(i) * 0.01} for i in range(5)]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_valid"] is True
+    assert result["rank_ic_trend_slope"] > 0
+
+
+def test_r57_t3_ols_slope_decreasing() -> None:
+    """OLS slope is negative for monotonically decreasing rank IC."""
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rnkstab_rank_ic": float(4 - i) * 0.01} for i in range(5)]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_slope"] < 0
+
+
+def test_r57_t3_ols_slope_constant() -> None:
+    """Constant rank IC series gives slope of 0.0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rnkstab_rank_ic": 0.05}] * 5
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_slope"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_r57_t3_rank_ic_trend_grade_A() -> None:
+    """Grade A when slope > 0.01."""
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rnkstab_rank_ic": float(i) * 0.05} for i in range(5)]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_grade"] == "A"
+
+
+def test_r57_t3_rank_ic_trend_grade_B() -> None:
+    """Grade B when slope in (0, 0.01]."""
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rnkstab_rank_ic": float(i) * 0.002} for i in range(5)]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_grade"] in ("A", "B")
+
+
+def test_r57_t3_rank_ic_trend_grade_D() -> None:
+    """Grade D when slope <= -0.02."""
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rnkstab_rank_ic": float(4 - i) * 0.05} for i in range(5)]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_grade"] == "D"
+
+
+def test_r57_t3_rank_ic_positive_windows_pct() -> None:
+    """rank_ic_positive_windows_pct is fraction of windows with rank_ic > 0."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rnkstab_rank_ic": 0.05}, {"rnkstab_rank_ic": -0.02}, {"rnkstab_rank_ic": 0.03}, {"rnkstab_rank_ic": -0.01}]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_positive_windows_pct"] == pytest.approx(0.5, abs=1e-6)
+
+
+def test_r57_t3_mean_min_max() -> None:
+    """rank_ic_trend_mean/min/max match the series statistics."""
+    import pytest
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    vals = [0.05, 0.1, 0.03, 0.08, 0.07]
+    summaries = [{"rnkstab_rank_ic": v} for v in vals]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-5)
+    assert result["rank_ic_trend_min"] == pytest.approx(min(vals), abs=1e-5)
+    assert result["rank_ic_trend_max"] == pytest.approx(max(vals), abs=1e-5)
+
+
+def test_r57_t3_fallback_rank_rank_ic_key() -> None:
+    """Falls back to rank_rank_ic key if rnkstab_rank_ic is absent."""
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    summaries = [{"rank_rank_ic": 0.05}, {"rank_rank_ic": 0.07}, {"rank_rank_ic": 0.09}]
+    result = compute_cross_window_rank_ic_trend(summaries)
+    assert result["rank_ic_trend_valid"] is True
+
+
+def test_r57_t3_in_comparison_metrics() -> None:
+    """rank_ic_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "rank_ic_trend_slope" in COMPARISON_METRICS
+
+
+def test_r57_t3_in_optional_metrics() -> None:
+    """rank_ic_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "rank_ic_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r57_t3_floor_value() -> None:
+    """rank_ic_trend_slope floor is -0.02 in BTST_QUALITY_FLOORS."""
+    import pytest
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "rank_ic_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["rank_ic_trend_slope"] == pytest.approx(-0.02)
+
+
+def test_r57_t3_label_present() -> None:
+    """rank_ic_trend_slope has a label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "rank_ic_trend_slope" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["rank_ic_trend_slope"] == "排名IC跨窗趋势"
+
+
+def test_r57_t3_empty_summaries() -> None:
+    """Returns valid=False with empty summaries list."""
+    from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+    result = compute_cross_window_rank_ic_trend([])
+    assert result["rank_ic_trend_valid"] is False

@@ -388,6 +388,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "rank_ic",
     # Task 3 (Round 56, Gamma): cross-window mean-IC OLS trend slope.
     "ic_trend_slope",
+    # Task 1 (Round 57, Alpha): market regime adaptability score — min(bull_win_rate, bear_win_rate).
+    "regime_adaptability",
+    # Task 2 (Round 57, Beta): turnover efficiency — high_turnover_win_rate − low_turnover_win_rate.
+    "turnover_efficiency",
+    # Task 3 (Round 57, Gamma): cross-window rank-IC OLS trend slope.
+    "rank_ic_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -664,6 +670,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "rank_ic": "评分排名IC",
     # Task 3 (Round 56, Gamma): cross-window mean-IC OLS trend slope
     "ic_trend_slope": "多因子IC跨窗趋势",
+    # Task 1 (Round 57, Alpha): market regime adaptability score
+    "regime_adaptability": "市场状态适应性",
+    # Task 2 (Round 57, Beta): turnover efficiency difference
+    "turnover_efficiency": "换手率效率差异",
+    # Task 3 (Round 57, Gamma): cross-window rank-IC OLS trend slope
+    "rank_ic_trend_slope": "排名IC跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -998,6 +1010,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "rank_ic",
     # Task 3 (Round 56, Gamma): cross-window mean-IC trend slope — optional; pre-Round-56 outputs omit it.
     "ic_trend_slope",
+    # Task 1 (Round 57, Alpha): market regime adaptability — optional; pre-Round-57 outputs omit it.
+    "regime_adaptability",
+    # Task 2 (Round 57, Beta): turnover efficiency — optional; field absent when float_turnover_rate missing.
+    "turnover_efficiency",
+    # Task 3 (Round 57, Gamma): cross-window rank-IC trend slope — optional; pre-Round-57 outputs omit it.
+    "rank_ic_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2871,6 +2889,63 @@ def compute_cross_window_ic_trend(all_windows_summaries: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Round 57, Task 3 (Gamma): Cross-window rank-IC trend
+# ---------------------------------------------------------------------------
+# Tracks OLS trend of ``rank_ic`` (Spearman IC between composite score and
+# T+1 return) across replay windows.  A positive slope indicates the scoring
+# system's predictive validity is improving over time.
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_rank_ic_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track OLS trend of ``rnkstab_rank_ic`` (rank IC) across replay windows.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (ordered chronologically).
+            Each dict should carry a ``rnkstab_rank_ic`` value produced by ``compute_score_rank_stability``
+            via ``build_surface_summary``.
+
+    Returns:
+        Dict with keys: ``rank_ic_trend_slope``, ``rank_ic_trend_mean``, ``rank_ic_trend_min``,
+        ``rank_ic_trend_max``, ``rank_ic_positive_windows_pct``, ``rank_ic_trend_grade``, ``rank_ic_trend_valid``.
+    """
+    _null: dict = {"rank_ic_trend_slope": None, "rank_ic_trend_mean": None, "rank_ic_trend_min": None, "rank_ic_trend_max": None, "rank_ic_positive_windows_pct": None, "rank_ic_trend_grade": None, "rank_ic_trend_valid": False}
+    if not all_windows_summaries:
+        return _null
+    rank_ic_series: list[float] = []
+    for surf in all_windows_summaries:
+        v = surf.get("rnkstab_rank_ic")
+        if v is None:
+            v = surf.get("rank_rank_ic")
+        if v is not None:
+            try:
+                rank_ic_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(rank_ic_series) < 3:
+        return _null
+    n = len(rank_ic_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(rank_ic_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, rank_ic_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+    mean_val = sum_y / n
+    if slope > 0.01:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.02:
+        grade = "C"
+    else:
+        grade = "D"
+    rank_ic_positive_windows_pct = round(sum(1 for v in rank_ic_series if v > 0) / n, 6)
+    return {"rank_ic_trend_slope": round(slope, 8), "rank_ic_trend_mean": round(mean_val, 6), "rank_ic_trend_min": round(min(rank_ic_series), 6), "rank_ic_trend_max": round(max(rank_ic_series), 6), "rank_ic_positive_windows_pct": rank_ic_positive_windows_pct, "rank_ic_trend_grade": grade, "rank_ic_trend_valid": True}
+
+
+# ---------------------------------------------------------------------------
 
 
 def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
@@ -3621,6 +3696,8 @@ def _build_replay_evaluator(
         avg_rank_ic: "float | None" = round(sum(_ri_vals) / len(_ri_vals), 8) if _ri_vals else None
         # Task 3 (Round 56, Gamma): cross-window mean-IC trend.
         _ict: dict[str, Any] = compute_cross_window_ic_trend(all_primary_surfaces)
+        # Task 3 (Round 57, Gamma): cross-window rank-IC trend.
+        _rict: dict[str, Any] = compute_cross_window_rank_ic_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -3946,6 +4023,14 @@ def _build_replay_evaluator(
             "ic_positive_windows_pct": _ict.get("ic_positive_windows_pct"),
             "ic_trend_grade": _ict.get("ic_trend_grade"),
             "ic_trend_valid": _ict.get("ic_trend_valid"),
+            # Task 3 (Round 57, Gamma): cross-window rank-IC trend.
+            "rank_ic_trend_slope": _rict.get("rank_ic_trend_slope"),
+            "rank_ic_trend_mean": _rict.get("rank_ic_trend_mean"),
+            "rank_ic_trend_min": _rict.get("rank_ic_trend_min"),
+            "rank_ic_trend_max": _rict.get("rank_ic_trend_max"),
+            "rank_ic_positive_windows_pct": _rict.get("rank_ic_positive_windows_pct"),
+            "rank_ic_trend_grade": _rict.get("rank_ic_trend_grade"),
+            "rank_ic_trend_valid": _rict.get("rank_ic_trend_valid"),
         }
 
     return evaluator
