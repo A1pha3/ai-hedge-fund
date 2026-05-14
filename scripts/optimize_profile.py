@@ -366,6 +366,10 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "score_concentration_index",
     # Task 3 (Round 52, Gamma): cross-window Kelly fraction OLS trend slope.
     "kelly_trend_slope",
+    # Task 1 (Round 53, Alpha): conditional factor-synergy win-rate lift (high − low signal tier).
+    "conditional_lift",
+    # Task 3 (Round 53, Gamma): cross-window Information Ratio OLS trend slope.
+    "ir_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -478,7 +482,7 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     # Task 3 (Round 30, Beta): nonlinear factor count
     "nonlinear_factor_count": "Nonlinear Factor Count",
     # Task 1 (Round 31, Alpha): return autocorrelation lag-1
-    "autocorr_lag1": "Return Autocorr Lag1",
+    "autocorr_lag1": "收益序列Lag1自相关",
     # Task 2 (Round 31, Gamma): score CV across windows
     "score_cv_across_windows": "Score CV Across Windows",
     # Task 1 (Round 32, Gamma): conditional tail-risk metrics
@@ -620,6 +624,10 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "score_concentration_index": "高分候选集中度",
     # Task 3 (Round 52, Gamma): cross-window Kelly fraction trend slope
     "kelly_trend_slope": "Kelly分数跨窗趋势",
+    # Task 1 (Round 53, Alpha): conditional factor-synergy win-rate lift
+    "conditional_lift": "条件因子高信号胜率提升",
+    # Task 3 (Round 53, Gamma): cross-window Information Ratio trend slope
+    "ir_trend_slope": "IR信号跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -928,6 +936,10 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "score_concentration_index",
     # Task 3 (Round 52, Gamma): Kelly trend slope — optional; pre-Round-52 outputs omit it.
     "kelly_trend_slope",
+    # Task 1 (Round 53, Alpha): conditional lift — optional; pre-Round-53 outputs omit it.
+    "conditional_lift",
+    # Task 3 (Round 53, Gamma): IR trend slope — optional; pre-Round-53 outputs omit it.
+    "ir_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2559,6 +2571,88 @@ def compute_cross_window_kelly_trend(all_windows_summaries: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Round 53, Task 3 (Gamma): cross-window Information Ratio trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_ir_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track OLS trend of ``information_ratio`` across replay windows.
+
+    A positive slope means the strategy's annualised IR is improving over successive
+    replay windows; a negative slope signals regime deterioration.
+
+    Args:
+        all_windows_summaries: List of per-window surface-summary dicts (one per
+            replay window, ordered chronologically).  Each dict should carry an
+            ``information_ratio`` value produced by ``compute_information_ratio_analysis``.
+
+    Returns:
+        Dict with keys: ``ir_trend_slope``, ``ir_trend_mean``, ``ir_trend_std``,
+        ``ir_trend_min``, ``ir_trend_max``, ``ir_trend_grade``,
+        ``ir_positive_windows_pct``, ``ir_trend_valid``.
+    """
+    _null: dict = {
+        "ir_trend_slope": None,
+        "ir_trend_mean": None,
+        "ir_trend_std": None,
+        "ir_trend_min": None,
+        "ir_trend_max": None,
+        "ir_trend_grade": None,
+        "ir_positive_windows_pct": None,
+        "ir_trend_valid": False,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    ir_series: list[float] = []
+    for surf in all_windows_summaries:
+        v = surf.get("information_ratio")
+        if v is not None:
+            try:
+                ir_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(ir_series) < 3:
+        return _null
+
+    n = len(ir_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(ir_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, ir_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+
+    mean_val = sum_y / n
+    variance = sum((v - mean_val) ** 2 for v in ir_series) / (n - 1) if n > 1 else 0.0
+    std_val = variance ** 0.5
+
+    if slope > 0.01:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.05:
+        grade = "C"
+    else:
+        grade = "D"
+
+    ir_positive_pct = round(sum(1 for v in ir_series if v > 0) / n, 6)
+
+    return {
+        "ir_trend_slope": round(slope, 8),
+        "ir_trend_mean": round(mean_val, 6),
+        "ir_trend_std": round(std_val, 6),
+        "ir_trend_min": round(min(ir_series), 6),
+        "ir_trend_max": round(max(ir_series), 6),
+        "ir_trend_grade": grade,
+        "ir_positive_windows_pct": ir_positive_pct,
+        "ir_trend_valid": True,
+    }
+
+
+# ---------------------------------------------------------------------------
 
 
 def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) -> dict:
@@ -3288,6 +3382,9 @@ def _build_replay_evaluator(
         # Task 3 (Round 52, Gamma): cross-window Kelly fraction trend.
         _kelly_trend: dict[str, Any] = compute_cross_window_kelly_trend(all_primary_surfaces)
 
+        # Task 3 (Round 53, Gamma): cross-window Information Ratio trend.
+        _ir_trend: dict[str, Any] = compute_cross_window_ir_trend(all_primary_surfaces)
+
         return {
             "sharpe_ratio": avg_sharpe,
             "sortino_ratio": avg_sortino_r35 if avg_sortino_r35 is not None else avg_sortino,
@@ -3570,6 +3667,15 @@ def _build_replay_evaluator(
             "kelly_trend_grade": _kelly_trend.get("kelly_trend_grade"),
             "kelly_positive_windows_pct": _kelly_trend.get("kelly_positive_windows_pct"),
             "kelly_trend_valid": _kelly_trend.get("kelly_trend_valid"),
+            # Task 3 (Round 53, Gamma): cross-window Information Ratio trend.
+            "ir_trend_slope": _ir_trend.get("ir_trend_slope"),
+            "ir_trend_mean": _ir_trend.get("ir_trend_mean"),
+            "ir_trend_std": _ir_trend.get("ir_trend_std"),
+            "ir_trend_min": _ir_trend.get("ir_trend_min"),
+            "ir_trend_max": _ir_trend.get("ir_trend_max"),
+            "ir_trend_grade": _ir_trend.get("ir_trend_grade"),
+            "ir_positive_windows_pct": _ir_trend.get("ir_positive_windows_pct"),
+            "ir_trend_valid": _ir_trend.get("ir_trend_valid"),
         }
 
     return evaluator

@@ -55,6 +55,10 @@ _GUARDRAIL_KEYS = (
     # Task 2 (Round 29, Gamma): IS/OOS overfit score cap guardrail.
     # overfit_score > 0.30 means IS performance is materially better than OOS — overfit risk.
     "overfit_score",
+    # Task 1 (Round 53, Alpha): conditional factor-synergy win-rate lift floor guardrail.
+    # conditional_lift = high_signal_win_rate − low_signal_win_rate.
+    # A negative lift means the scoring system does not differentiate high-signal from low-signal rows.
+    "conditional_lift",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -383,6 +387,14 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # kelly_trend_slope = OLS slope of kelly_fraction across replay windows.
     # Floor ≥ -0.05 prevents strategies whose Kelly fraction is in severe decline from passing.
     "kelly_trend_slope": -0.05,
+    # Task 1 (Round 53, Alpha): conditional factor-synergy win-rate lift floor.
+    # conditional_lift = high_signal_win_rate − low_signal_win_rate.
+    # Floor ≥ 0.0 requires the high-signal tier to win at least as often as the low-signal tier.
+    "conditional_lift": 0.0,
+    # Task 3 (Round 53, Gamma): cross-window Information Ratio trend slope floor.
+    # ir_trend_slope = OLS slope of information_ratio across replay windows.
+    # Floor ≥ -0.05 prevents strategies whose IR is in severe decline from passing.
+    "ir_trend_slope": -0.05,
 }
 
 # ---------------------------------------------------------------------------

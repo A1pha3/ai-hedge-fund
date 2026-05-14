@@ -12930,3 +12930,402 @@ def test_r52_kelly_trend_skips_missing_kelly_fraction() -> None:
     result = compute_cross_window_kelly_trend(summaries)
     assert result["kelly_trend_valid"] is True
     assert result["kelly_trend_slope"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Round 53, Task 1 (Alpha): Conditional factor-synergy win-rate tests
+# ---------------------------------------------------------------------------
+
+
+def test_r53_conditional_factor_invalid_too_few_rows() -> None:
+    """Fewer than 10 rows → valid=False, all metrics None."""
+    from scripts.btst_analysis_utils import compute_conditional_factor_performance
+    rows = [{"close_strength": 0.8, "next_day_return": 0.02} for _ in range(9)]
+    result = compute_conditional_factor_performance(rows)
+    assert result["conditional_factor_valid"] is False
+    assert result["conditional_lift"] is None
+    assert result["high_signal_win_rate"] is None
+    assert result["low_signal_win_rate"] is None
+    assert result["mid_signal_win_rate"] is None
+
+
+def test_r53_conditional_factor_empty_rows() -> None:
+    """Empty list → valid=False."""
+    from scripts.btst_analysis_utils import compute_conditional_factor_performance
+    result = compute_conditional_factor_performance([])
+    assert result["conditional_factor_valid"] is False
+
+
+def test_r53_conditional_factor_valid_basic() -> None:
+    """10 rows with valid factor data → valid=True, metrics are numeric."""
+    from scripts.btst_analysis_utils import compute_conditional_factor_performance
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": 0.01 if i >= 5 else -0.01} for i in range(10)]
+    result = compute_conditional_factor_performance(rows)
+    assert result["conditional_factor_valid"] is True
+    assert result["conditional_lift"] is not None
+
+
+def test_r53_conditional_factor_lift_is_high_minus_low() -> None:
+    """conditional_lift = high_signal_win_rate - low_signal_win_rate."""
+    from scripts.btst_analysis_utils import compute_conditional_factor_performance
+    import pytest
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": 0.03 if i >= 5 else -0.03} for i in range(10)]
+    result = compute_conditional_factor_performance(rows)
+    assert result["conditional_factor_valid"] is True
+    if result["high_signal_win_rate"] is not None and result["low_signal_win_rate"] is not None:
+        assert result["conditional_lift"] == pytest.approx(result["high_signal_win_rate"] - result["low_signal_win_rate"], abs=1e-5)
+
+
+def test_r53_conditional_factor_win_rate_between_0_and_1() -> None:
+    """Win rates are fractions in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_conditional_factor_performance
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "momentum_slope_20d": float(i), "next_day_return": 0.02 if i % 2 == 0 else -0.02} for i in range(14)]
+    result = compute_conditional_factor_performance(rows)
+    assert result["conditional_factor_valid"] is True
+    for key in ("high_signal_win_rate", "low_signal_win_rate", "mid_signal_win_rate"):
+        val = result[key]
+        if val is not None:
+            assert 0.0 <= val <= 1.0
+
+
+def test_r53_conditional_factor_all_high_returns_high_win_rate() -> None:
+    """Rows with all-high-factor scores and positive returns → high_signal_win_rate=1.0."""
+    from scripts.btst_analysis_utils import compute_conditional_factor_performance
+    rows = []
+    for i in range(10):
+        score = 1.0 if i < 6 else 0.0
+        rows.append({"close_strength": score, "volume_expansion_quality": score, "sector_resonance": score, "rs_sector_rank": score, "t0_estimated_net_inflow_ratio": score, "breakout_quality_score": score, "momentum_slope_20d": score, "next_day_return": 0.05 if i < 6 else -0.05})
+    result = compute_conditional_factor_performance(rows)
+    assert result["conditional_factor_valid"] is True
+    if result["high_signal_win_rate"] is not None:
+        assert result["high_signal_win_rate"] == 1.0
+
+
+def test_r53_conditional_factor_no_factor_fields_returns_null() -> None:
+    """Rows without any recognised factor fields → valid=False (no factor medians)."""
+    from scripts.btst_analysis_utils import compute_conditional_factor_performance
+    rows = [{"next_day_return": 0.01} for _ in range(10)]
+    result = compute_conditional_factor_performance(rows)
+    assert result["conditional_factor_valid"] is False
+
+
+def test_r53_conditional_factor_floor_registered() -> None:
+    """conditional_lift must have floor 0.0 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "conditional_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["conditional_lift"] == pytest.approx(0.0)
+
+
+def test_r53_conditional_factor_label_registered() -> None:
+    """conditional_lift must have label '条件因子高信号胜率提升' in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("conditional_lift") == "条件因子高信号胜率提升"
+
+
+def test_r53_conditional_factor_optional_registered() -> None:
+    """conditional_lift must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "conditional_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r53_conditional_factor_in_comparison_metrics() -> None:
+    """conditional_lift must appear in COMPARISON_METRICS tuple."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "conditional_lift" in COMPARISON_METRICS
+
+
+def test_r53_conditional_factor_in_guardrail_keys() -> None:
+    """conditional_lift must be in _GUARDRAIL_KEYS so it acts as a rollout guardrail."""
+    import importlib
+    eb = importlib.import_module("src.backtesting.evaluation_bundle")
+    guardrail_keys = getattr(eb, "_GUARDRAIL_KEYS", ())
+    assert "conditional_lift" in guardrail_keys
+
+
+# ---------------------------------------------------------------------------
+# Round 53, Task 2 (Beta): Return series autocorrelation tests
+# ---------------------------------------------------------------------------
+
+
+def test_r53_autocorr_invalid_too_few_rows() -> None:
+    """Fewer than 8 rows → valid=False, all metrics None."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    rows = [{"next_day_return": 0.01 * i} for i in range(7)]
+    result = compute_return_autocorrelation(rows)
+    assert result["return_autocorrelation_valid"] is False
+    assert result["autocorr_lag1"] is None
+    assert result["autocorr_lag2"] is None
+    assert result["autocorr_interpretation"] is None
+    assert result["autocorr_persistence"] is None
+
+
+def test_r53_autocorr_empty_rows() -> None:
+    """Empty list → valid=False."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    result = compute_return_autocorrelation([])
+    assert result["return_autocorrelation_valid"] is False
+
+
+def test_r53_autocorr_valid_with_8_rows() -> None:
+    """Exactly 8 valid rows → valid=True."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    rows = [{"next_day_return": 0.01 * i} for i in range(8)]
+    result = compute_return_autocorrelation(rows)
+    assert result["return_autocorrelation_valid"] is True
+    assert result["autocorr_lag1"] is not None
+    assert result["autocorr_interpretation"] is not None
+
+
+def test_r53_autocorr_lag1_perfect_momentum() -> None:
+    """Monotonically increasing series → lag1 should be close to 1.0 (momentum)."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    import pytest
+    rows = [{"next_day_return": float(i)} for i in range(1, 12)]
+    result = compute_return_autocorrelation(rows)
+    assert result["return_autocorrelation_valid"] is True
+    assert result["autocorr_lag1"] == pytest.approx(1.0, abs=1e-4)
+    assert result["autocorr_interpretation"] == "momentum"
+
+
+def test_r53_autocorr_lag1_mean_reversion() -> None:
+    """Alternating +/- series → lag1 should be close to -1.0 (mean_reversion)."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    rows = [{"next_day_return": 0.1 if i % 2 == 0 else -0.1} for i in range(10)]
+    result = compute_return_autocorrelation(rows)
+    assert result["return_autocorrelation_valid"] is True
+    assert result["autocorr_lag1"] is not None
+    assert result["autocorr_lag1"] < -0.1
+    assert result["autocorr_interpretation"] == "mean_reversion"
+
+
+def test_r53_autocorr_lag2_requires_10_rows() -> None:
+    """lag2 is None when fewer than 10 valid rows are present."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    rows = [{"next_day_return": 0.01 * i} for i in range(9)]
+    result = compute_return_autocorrelation(rows)
+    assert result["return_autocorrelation_valid"] is True
+    assert result["autocorr_lag2"] is None
+
+
+def test_r53_autocorr_lag2_present_with_10_rows() -> None:
+    """lag2 is numeric when ≥ 10 valid rows are present."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    rows = [{"next_day_return": float(i)} for i in range(10)]
+    result = compute_return_autocorrelation(rows)
+    assert result["return_autocorrelation_valid"] is True
+    assert result["autocorr_lag2"] is not None
+
+
+def test_r53_autocorr_interpretation_random_walk() -> None:
+    """lag1 near zero → 'random_walk' interpretation."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    import math
+    rows = [{"next_day_return": math.cos(i * 1.2)} for i in range(12)]
+    result = compute_return_autocorrelation(rows)
+    assert result["return_autocorrelation_valid"] is True
+    if result["autocorr_lag1"] is not None and -0.1 <= result["autocorr_lag1"] <= 0.1:
+        assert result["autocorr_interpretation"] == "random_walk"
+
+
+def test_r53_autocorr_persistence_is_abs_lag1_when_no_lag2() -> None:
+    """autocorr_persistence = abs(lag1) when lag2 is None (8-9 rows)."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    import pytest
+    rows = [{"next_day_return": float(i)} for i in range(9)]
+    result = compute_return_autocorrelation(rows)
+    assert result["return_autocorrelation_valid"] is True
+    assert result["autocorr_lag2"] is None
+    assert result["autocorr_persistence"] is not None
+    assert result["autocorr_persistence"] == pytest.approx(abs(result["autocorr_lag1"]), abs=1e-4)
+
+
+def test_r53_autocorr_persistence_avg_abs_when_lag2_present() -> None:
+    """autocorr_persistence = (|lag1| + |lag2|) / 2 when both lags present."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    import pytest
+    rows = [{"next_day_return": float(i)} for i in range(12)]
+    result = compute_return_autocorrelation(rows)
+    assert result["return_autocorrelation_valid"] is True
+    if result["autocorr_lag1"] is not None and result["autocorr_lag2"] is not None:
+        expected = (abs(result["autocorr_lag1"]) + abs(result["autocorr_lag2"])) / 2.0
+        assert result["autocorr_persistence"] == pytest.approx(expected, abs=1e-4)
+
+
+def test_r53_autocorr_lag1_clamped_to_minus1_plus1() -> None:
+    """lag1 must be within [-1, 1] regardless of input."""
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
+    rows = [{"next_day_return": 1000.0 if i % 2 == 0 else -1000.0} for i in range(10)]
+    result = compute_return_autocorrelation(rows)
+    if result["autocorr_lag1"] is not None:
+        assert -1.0 <= result["autocorr_lag1"] <= 1.0
+
+
+def test_r53_autocorr_optional_registered() -> None:
+    """autocorr_lag1 must be in OPTIONAL_COMPARISON_METRICS (set by Round 31, reused in Round 53)."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "autocorr_lag1" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r53_autocorr_in_comparison_metrics() -> None:
+    """autocorr_lag1 must appear in COMPARISON_METRICS tuple."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "autocorr_lag1" in COMPARISON_METRICS
+
+
+def test_r53_autocorr_label_registered() -> None:
+    """autocorr_lag1 must have Chinese label in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "autocorr_lag1" in COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS["autocorr_lag1"] == "收益序列Lag1自相关"
+
+
+# ---------------------------------------------------------------------------
+# Round 53, Task 3 (Gamma): Cross-window IR trend tests
+# ---------------------------------------------------------------------------
+
+
+def test_r53_ir_trend_empty_list() -> None:
+    """Empty list → valid=False, all metrics None."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    result = compute_cross_window_ir_trend([])
+    assert result["ir_trend_valid"] is False
+    assert result["ir_trend_slope"] is None
+    assert result["ir_trend_grade"] is None
+
+
+def test_r53_ir_trend_fewer_than_3_windows() -> None:
+    """Fewer than 3 valid information_ratio values → valid=False."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    summaries = [{"information_ratio": 0.5}, {"information_ratio": 0.6}]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is False
+    assert result["ir_trend_slope"] is None
+
+
+def test_r53_ir_trend_rising_positive_slope() -> None:
+    """Increasing IR values → slope > 0, valid=True."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    summaries = [{"information_ratio": 0.1 * i} for i in range(1, 6)]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    assert result["ir_trend_slope"] is not None
+    assert result["ir_trend_slope"] > 0
+
+
+def test_r53_ir_trend_falling_negative_slope() -> None:
+    """Decreasing IR values → slope < 0."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    summaries = [{"information_ratio": 0.5 - 0.1 * i} for i in range(5)]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    assert result["ir_trend_slope"] is not None
+    assert result["ir_trend_slope"] < 0
+
+
+def test_r53_ir_trend_grade_a_steep_rise() -> None:
+    """slope > 0.01 → grade A."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    summaries = [{"information_ratio": 0.05 * i} for i in range(5)]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    if result["ir_trend_slope"] is not None and result["ir_trend_slope"] > 0.01:
+        assert result["ir_trend_grade"] == "A"
+
+
+def test_r53_ir_trend_grade_d_steep_decline() -> None:
+    """slope <= -0.05 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    summaries = [{"information_ratio": 0.5 - 0.2 * i} for i in range(5)]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    if result["ir_trend_slope"] is not None and result["ir_trend_slope"] <= -0.05:
+        assert result["ir_trend_grade"] == "D"
+
+
+def test_r53_ir_trend_positive_windows_pct_correct() -> None:
+    """ir_positive_windows_pct = fraction of windows with IR > 0."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    import pytest
+    summaries = [{"information_ratio": 0.3}, {"information_ratio": -0.1}, {"information_ratio": 0.5}, {"information_ratio": -0.2}, {"information_ratio": 0.1}]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    assert result["ir_positive_windows_pct"] == pytest.approx(3 / 5, rel=1e-4)
+
+
+def test_r53_ir_trend_mean_correct() -> None:
+    """ir_trend_mean equals the arithmetic mean of information_ratio values."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    import pytest
+    vals = [0.2, 0.4, 0.6, 0.8, 1.0]
+    summaries = [{"information_ratio": v} for v in vals]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    assert result["ir_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-4)
+
+
+def test_r53_ir_trend_skips_missing_information_ratio() -> None:
+    """Windows without information_ratio are skipped gracefully."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    summaries = [{"information_ratio": 0.3}, {"other_key": 99}, {"information_ratio": 0.5}, {"information_ratio": 0.1}]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    assert result["ir_trend_slope"] is not None
+
+
+def test_r53_ir_trend_floor_registered() -> None:
+    """ir_trend_slope must have floor -0.05 in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    import pytest
+    assert "ir_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["ir_trend_slope"] == pytest.approx(-0.05)
+
+
+def test_r53_ir_trend_label_registered() -> None:
+    """ir_trend_slope must have label 'IR信号跨窗趋势斜率'."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert COMPARISON_METRIC_LABELS.get("ir_trend_slope") == "IR信号跨窗趋势斜率"
+
+
+def test_r53_ir_trend_optional_registered() -> None:
+    """ir_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "ir_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r53_ir_trend_in_comparison_metrics() -> None:
+    """ir_trend_slope must appear in COMPARISON_METRICS tuple."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ir_trend_slope" in COMPARISON_METRICS
+
+
+def test_r53_ir_trend_grade_b_small_positive_slope() -> None:
+    """0 < slope <= 0.01 → grade B."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    summaries = [{"information_ratio": 0.1 + 0.002 * i} for i in range(5)]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    if result["ir_trend_slope"] is not None and 0 < result["ir_trend_slope"] <= 0.01:
+        assert result["ir_trend_grade"] == "B"
+
+
+def test_r53_ir_trend_grade_c_mild_decline() -> None:
+    """-0.05 < slope <= 0 → grade C."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    summaries = [{"information_ratio": 0.5 - 0.005 * i} for i in range(5)]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    if result["ir_trend_slope"] is not None and -0.05 < result["ir_trend_slope"] <= 0:
+        assert result["ir_trend_grade"] == "C"
+
+
+def test_r53_ir_trend_min_max_correct() -> None:
+    """ir_trend_min and ir_trend_max match the series extremes."""
+    from scripts.optimize_profile import compute_cross_window_ir_trend
+    import pytest
+    vals = [0.2, -0.1, 0.8, 0.4, 0.6]
+    summaries = [{"information_ratio": v} for v in vals]
+    result = compute_cross_window_ir_trend(summaries)
+    assert result["ir_trend_valid"] is True
+    assert result["ir_trend_min"] == pytest.approx(min(vals), abs=1e-4)
+    assert result["ir_trend_max"] == pytest.approx(max(vals), abs=1e-4)

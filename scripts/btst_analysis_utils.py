@@ -4364,6 +4364,26 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["score_tier_balance"] = _sca.get("score_tier_balance")
     _surface_result["dominant_tier"] = _sca.get("dominant_tier")
 
+    # Round 53, Task 1 (Alpha): Conditional factor-synergy win rate.
+    # Measures if high-signal (≥ 60 % of factors above median) candidates have materially
+    # better win rates than low-signal (≤ 40 %) ones.  conditional_lift is the delta.
+    _cfp: dict[str, Any] = compute_conditional_factor_performance(next_day_rows)
+    _surface_result["conditional_high_signal_win_rate"] = _cfp.get("high_signal_win_rate")
+    _surface_result["conditional_mid_signal_win_rate"] = _cfp.get("mid_signal_win_rate")
+    _surface_result["conditional_low_signal_win_rate"] = _cfp.get("low_signal_win_rate")
+    _surface_result["conditional_lift"] = _cfp.get("conditional_lift")
+    _surface_result["conditional_factor_valid"] = _cfp.get("conditional_factor_valid")
+
+    # Round 53, Task 2 (Beta): Return series autocorrelation — manual Pearson lag-1 and lag-2.
+    # Interprets serial dependency as momentum / mean_reversion / random_walk and summarises
+    # both lags into autocorr_persistence = (|lag1| + |lag2|) / 2.
+    _rac: dict[str, Any] = compute_return_autocorrelation(next_day_rows)
+    _surface_result["autocorr_lag1"] = _rac.get("autocorr_lag1")
+    _surface_result["autocorr_lag2"] = _rac.get("autocorr_lag2")
+    _surface_result["autocorr_interpretation"] = _rac.get("autocorr_interpretation")
+    _surface_result["autocorr_persistence"] = _rac.get("autocorr_persistence")
+    _surface_result["return_autocorrelation_valid"] = _rac.get("return_autocorrelation_valid")
+
     return _surface_result
 
 
@@ -10210,4 +10230,202 @@ def compute_score_concentration_analysis(rows: list[dict]) -> dict:
         "score_concentration_index": sci,
         "score_tier_balance": balance,
         "dominant_tier": dominant,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 53, Task 1 (Alpha): Conditional factor-synergy win rate
+# ---------------------------------------------------------------------------
+# Measures whether win rate improves when multiple strong factor signals coincide.
+# Rows are scored against per-factor medians; high/mid/low tiers are based on
+# the fraction of factors above the median.  conditional_lift = high_wr − low_wr.
+# ---------------------------------------------------------------------------
+
+
+def compute_conditional_factor_performance(rows: list[dict]) -> dict:
+    """Analyze win-rate improvement when multiple strong factor signals coincide.
+
+    Args:
+        rows: Per-candidate dicts containing factor score fields and ``next_day_return``.
+              Rows missing ``next_day_return`` are skipped when computing tier win rates.
+
+    Returns:
+        Dict with keys:
+
+        - ``high_signal_win_rate``: float | None — win rate when ≥60 % of factors above median.
+        - ``mid_signal_win_rate``: float | None — win rate when 40 %–60 % of factors above median.
+        - ``low_signal_win_rate``: float | None — win rate when ≤40 % of factors above median.
+        - ``conditional_lift``: float | None — high_signal_win_rate − low_signal_win_rate.
+        - ``conditional_factor_valid``: bool — True when ≥ 10 rows are present.
+    """
+    _null: dict = {
+        "high_signal_win_rate": None,
+        "mid_signal_win_rate": None,
+        "low_signal_win_rate": None,
+        "conditional_lift": None,
+        "conditional_factor_valid": False,
+    }
+    if not rows or len(rows) < 10:
+        return _null
+
+    _FACTOR_FIELDS: tuple[str, ...] = ("close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d")
+
+    # Collect all valid numeric values per factor to compute per-factor medians.
+    factor_values: dict[str, list[float]] = {f: [] for f in _FACTOR_FIELDS}
+    for row in rows:
+        for f in _FACTOR_FIELDS:
+            v = row.get(f)
+            if v is not None:
+                try:
+                    factor_values[f].append(float(v))
+                except (TypeError, ValueError):
+                    pass
+
+    factor_medians: dict[str, float] = {}
+    for f in _FACTOR_FIELDS:
+        vals = factor_values[f]
+        if len(vals) >= 2:
+            s = sorted(vals)
+            n_v = len(s)
+            mid_v = n_v // 2
+            factor_medians[f] = (s[mid_v - 1] + s[mid_v]) / 2.0 if n_v % 2 == 0 else s[mid_v]
+
+    if not factor_medians:
+        return _null
+
+    # Score each row: combined_signal_score = fraction of valid factors above their median.
+    scored_rows: list[tuple[float, float]] = []
+    for row in rows:
+        ret_val = row.get("next_day_return")
+        if ret_val is None:
+            continue
+        try:
+            ret = float(ret_val)
+        except (TypeError, ValueError):
+            continue
+        valid_count = 0
+        high_count = 0
+        for f in _FACTOR_FIELDS:
+            if f not in factor_medians:
+                continue
+            v = row.get(f)
+            if v is None:
+                continue
+            try:
+                fval = float(v)
+            except (TypeError, ValueError):
+                continue
+            valid_count += 1
+            if fval > factor_medians[f]:
+                high_count += 1
+        combined = high_count / valid_count if valid_count > 0 else 0.0
+        scored_rows.append((combined, ret))
+
+    if not scored_rows:
+        return _null
+
+    high_rets = [r for s, r in scored_rows if s >= 0.6]
+    low_rets = [r for s, r in scored_rows if s <= 0.4]
+    mid_rets = [r for s, r in scored_rows if 0.4 < s < 0.6]
+
+    high_wr: float | None = round(sum(1 for r in high_rets if r > 0) / len(high_rets), 6) if high_rets else None
+    low_wr: float | None = round(sum(1 for r in low_rets if r > 0) / len(low_rets), 6) if low_rets else None
+    mid_wr: float | None = round(sum(1 for r in mid_rets if r > 0) / len(mid_rets), 6) if mid_rets else None
+    lift: float | None = round(high_wr - low_wr, 6) if high_wr is not None and low_wr is not None else None
+
+    return {
+        "high_signal_win_rate": high_wr,
+        "mid_signal_win_rate": mid_wr,
+        "low_signal_win_rate": low_wr,
+        "conditional_lift": lift,
+        "conditional_factor_valid": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 53, Task 2 (Beta): Return series autocorrelation (manual Pearson)
+# ---------------------------------------------------------------------------
+# Detects serial dependency in next_day_return to distinguish momentum, mean-
+# reversion, and random-walk regimes.  autocorr_persistence summarises both lags.
+# ---------------------------------------------------------------------------
+
+
+def compute_return_autocorrelation(rows: list[dict]) -> dict:
+    """Detect serial autocorrelation in the return series (no scipy).
+
+    Rows are processed in their original order — no date-based sorting is applied —
+    so the caller is responsible for passing rows in the desired temporal sequence.
+
+    Args:
+        rows: Per-candidate dicts containing ``next_day_return``.  Rows missing the
+              field are skipped.  Requires ≥ 8 valid numeric values.
+
+    Returns:
+        Dict with keys:
+
+        - ``autocorr_lag1``: float | None — Pearson correlation of r[t] and r[t+1].
+        - ``autocorr_lag2``: float | None — Pearson correlation of r[t] and r[t+2] (≥10 rows).
+        - ``autocorr_interpretation``: str | None — "momentum" | "mean_reversion" | "random_walk".
+        - ``autocorr_persistence``: float | None — (|lag1| + |lag2|) / 2 or |lag1| when lag2 is None.
+        - ``return_autocorrelation_valid``: bool — True when ≥ 8 valid rows are present.
+    """
+    _null: dict = {
+        "autocorr_lag1": None,
+        "autocorr_lag2": None,
+        "autocorr_interpretation": None,
+        "autocorr_persistence": None,
+        "return_autocorrelation_valid": False,
+    }
+    if not rows or len(rows) < 8:
+        return _null
+
+    rets: list[float] = []
+    for row in rows:
+        v = row.get("next_day_return")
+        if v is not None:
+            try:
+                rets.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(rets) < 8:
+        return _null
+
+    def _pearson(xs: list[float], ys: list[float]) -> float | None:
+        m = len(xs)
+        if m < 4 or m != len(ys):
+            return None
+        mx = sum(xs) / m
+        my = sum(ys) / m
+        num = sum((xs[i] - mx) * (ys[i] - my) for i in range(m))
+        dx = sum((v - mx) ** 2 for v in xs) ** 0.5
+        dy = sum((v - my) ** 2 for v in ys) ** 0.5
+        if dx == 0.0 or dy == 0.0:
+            return None
+        return max(-1.0, min(1.0, num / (dx * dy)))
+
+    lag1 = _pearson(rets[:-1], rets[1:])
+    lag2 = _pearson(rets[:-2], rets[2:]) if len(rets) >= 10 else None
+
+    if lag1 is None:
+        return _null
+
+    if lag1 > 0.1:
+        interpretation: str = "momentum"
+    elif lag1 < -0.1:
+        interpretation = "mean_reversion"
+    else:
+        interpretation = "random_walk"
+
+    if lag2 is not None:
+        persistence: float | None = round((abs(lag1) + abs(lag2)) / 2.0, 6)
+    else:
+        persistence = round(abs(lag1), 6)
+
+    return {
+        "autocorr_lag1": round(lag1, 6),
+        "autocorr_lag2": round(lag2, 6) if lag2 is not None else None,
+        "autocorr_interpretation": interpretation,
+        "autocorr_persistence": persistence,
+        "return_autocorrelation_valid": True,
     }
