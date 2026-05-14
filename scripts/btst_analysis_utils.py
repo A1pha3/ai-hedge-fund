@@ -4551,6 +4551,16 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _pcr.items():
         _surface_result[f"conc_{_k}"] = _v
 
+    # Round 69, Task 1 (Alpha): Relative strength ranking analysis.
+    _rsr: dict = compute_relative_strength_ranking(rows)
+    for _k, _v in _rsr.items():
+        _surface_result[f"rs_rank_{_k}"] = _v
+
+    # Round 69, Task 2 (Beta): Turnover behavior filter analysis.
+    _tbf: dict = compute_turnover_behavior_filter(rows)
+    for _k, _v in _tbf.items():
+        _surface_result[f"turnover_beh_{_k}"] = _v
+
     return _surface_result
 
 
@@ -12495,3 +12505,125 @@ def compute_position_concentration_risk(rows: list[dict]) -> dict:
     else:
         grade = "D"
     return {"position_concentration_valid": True, "sector_hhi": sector_hhi, "dominant_sector": dominant_sector, "dominant_sector_pct": dominant_sector_pct, "sector_count": sector_count, "concentration_grade": grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 69, Task 1 (Alpha): Relative strength ranking analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_relative_strength_ranking(rows: list[dict]) -> dict:
+    """分析候选股票相对强度因子排名分布与下一日收益的关系。
+
+    Returns:
+        - ``top_win_rate``: rs_sector_rank 最高1/3的胜率
+        - ``mid_win_rate``: 中间1/3的胜率
+        - ``bottom_win_rate``: 最低1/3的胜率
+        - ``rs_rank_spread``: top_win_rate - bottom_win_rate（正值=强势股胜率更高）
+        - ``rs_monotonicity``: top > mid > bottom 是否成立
+        - ``rs_rank_grade``: A/B/C/D/"unknown"
+        - ``rs_ranking_valid``: bool
+    """
+    _null: dict = {"rs_ranking_valid": False, "top_win_rate": None, "mid_win_rate": None, "bottom_win_rate": None, "rs_rank_spread": None, "rs_monotonicity": None, "rs_rank_grade": "unknown"}
+    if len(rows) < 8:
+        return _null
+    valid_rows = [r for r in rows if r.get("rs_sector_rank") is not None]
+    if len(valid_rows) < 8:
+        return _null
+    sorted_rows = sorted(valid_rows, key=lambda r: float(r["rs_sector_rank"]))
+    n = len(sorted_rows)
+    bot_third = sorted_rows[:n // 3]
+    mid_third = sorted_rows[n // 3:2 * n // 3]
+    top_third = sorted_rows[2 * n // 3:]
+
+    def _win_rate(grp: list[dict]) -> "float | None":
+        if len(grp) < 2:
+            return None
+        rets = [r.get("next_day_return") for r in grp if r.get("next_day_return") is not None]
+        if len(rets) < 2:
+            return None
+        return round(sum(1 for v in rets if float(v) > 0) / len(rets), 6)
+
+    top_win_rate = _win_rate(top_third)
+    mid_win_rate = _win_rate(mid_third)
+    bottom_win_rate = _win_rate(bot_third)
+    rs_rank_spread: "float | None" = round(top_win_rate - bottom_win_rate, 6) if (top_win_rate is not None and bottom_win_rate is not None) else None
+    rs_monotonicity: "bool | None" = (top_win_rate > mid_win_rate > bottom_win_rate) if (top_win_rate is not None and mid_win_rate is not None and bottom_win_rate is not None) else None
+    if rs_rank_spread is None:
+        rs_rank_grade = "unknown"
+    elif rs_rank_spread > 0.15 and rs_monotonicity is True:
+        rs_rank_grade = "A"
+    elif rs_rank_spread > 0.08:
+        rs_rank_grade = "B"
+    elif rs_rank_spread > 0:
+        rs_rank_grade = "C"
+    else:
+        rs_rank_grade = "D"
+    return {"rs_ranking_valid": True, "top_win_rate": top_win_rate, "mid_win_rate": mid_win_rate, "bottom_win_rate": bottom_win_rate, "rs_rank_spread": rs_rank_spread, "rs_monotonicity": rs_monotonicity, "rs_rank_grade": rs_rank_grade}
+
+
+# ---------------------------------------------------------------------------
+# Round 69, Task 2 (Beta): Turnover behavior filter analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_turnover_behavior_filter(rows: list[dict]) -> dict:
+    """识别异常换手行为股票，分析其剔除后的策略净效果。
+
+    Returns:
+        - ``extreme_high_win_rate``: volume_expansion_quality > P90 组的胜率
+        - ``extreme_low_win_rate``: volume_expansion_quality < P10 组的胜率
+        - ``normal_turnover_win_rate``: 正常换手组的胜率
+        - ``turnover_filter_effect``: normal_turnover_win_rate - 全量胜率（正值=剔除后提升）
+        - ``extreme_high_pct``: 极高换手占比
+        - ``extreme_low_pct``: 极低换手占比
+        - ``turnover_behavior_valid``: bool
+    """
+    _null: dict = {"turnover_behavior_valid": False, "extreme_high_win_rate": None, "extreme_low_win_rate": None, "normal_turnover_win_rate": None, "turnover_filter_effect": None, "extreme_high_pct": None, "extreme_low_pct": None}
+    if len(rows) < 8:
+        return _null
+    if not any(r.get("volume_expansion_quality") is not None for r in rows):
+        return _null
+    valid_rows = [r for r in rows if r.get("volume_expansion_quality") is not None]
+    if len(valid_rows) < 8:
+        return _null
+    veq_vals = sorted([float(r["volume_expansion_quality"]) for r in valid_rows])
+    n_veq = len(veq_vals)
+    p90_idx = int(n_veq * 0.90)
+    p10_idx = int(n_veq * 0.10)
+    if p90_idx >= n_veq:
+        p90_idx = n_veq - 1
+    if p10_idx >= n_veq:
+        p10_idx = n_veq - 1
+    p90 = veq_vals[p90_idx]
+    p10 = veq_vals[p10_idx]
+    extreme_high_rows: list[dict] = []
+    extreme_low_rows: list[dict] = []
+    normal_rows: list[dict] = []
+    for r in valid_rows:
+        veq = float(r["volume_expansion_quality"])
+        if veq > p90:
+            extreme_high_rows.append(r)
+        elif veq < p10:
+            extreme_low_rows.append(r)
+        else:
+            normal_rows.append(r)
+    total = len(valid_rows)
+
+    def _wr(grp: list[dict]) -> "float | None":
+        if len(grp) < 2:
+            return None
+        rets = [r.get("next_day_return") for r in grp if r.get("next_day_return") is not None]
+        if len(rets) < 2:
+            return None
+        return round(sum(1 for v in rets if float(v) > 0) / len(rets), 6)
+
+    extreme_high_win_rate = _wr(extreme_high_rows)
+    extreme_low_win_rate = _wr(extreme_low_rows)
+    normal_turnover_win_rate = _wr(normal_rows)
+    all_rets = [r.get("next_day_return") for r in valid_rows if r.get("next_day_return") is not None]
+    full_win_rate: "float | None" = round(sum(1 for v in all_rets if float(v) > 0) / len(all_rets), 6) if all_rets else None
+    turnover_filter_effect: "float | None" = round(normal_turnover_win_rate - full_win_rate, 6) if (normal_turnover_win_rate is not None and full_win_rate is not None) else None
+    extreme_high_pct = round(len(extreme_high_rows) / total, 6)
+    extreme_low_pct = round(len(extreme_low_rows) / total, 6)
+    return {"turnover_behavior_valid": True, "extreme_high_win_rate": extreme_high_win_rate, "extreme_low_win_rate": extreme_low_win_rate, "normal_turnover_win_rate": normal_turnover_win_rate, "turnover_filter_effect": turnover_filter_effect, "extreme_high_pct": extreme_high_pct, "extreme_low_pct": extreme_low_pct}

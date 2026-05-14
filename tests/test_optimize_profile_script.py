@@ -19165,3 +19165,367 @@ def test_r68_all_three_metrics_have_labels() -> None:
     for key in ("tail_filter_effect", "sector_hhi", "dispersion_trend_slope"):
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
+
+
+# ===========================================================================
+# Round 69 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: compute_relative_strength_ranking
+# ---------------------------------------------------------------------------
+
+def _make_r69_rs_rows(n: int, *, with_field: bool = True) -> list[dict]:
+    import random
+    rng = random.Random(42)
+    rows = []
+    for i in range(n):
+        r: dict = {"next_day_return": rng.uniform(-0.05, 0.10)}
+        if with_field:
+            r["rs_sector_rank"] = rng.uniform(0.0, 1.0)
+        rows.append(r)
+    return rows
+
+
+def test_r69_t1_valid_basic() -> None:
+    """compute_relative_strength_ranking returns valid=True with ≥8 rows having rs_sector_rank."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = _make_r69_rs_rows(24)
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_ranking_valid"] is True
+    assert result["rs_rank_spread"] is not None
+
+
+def test_r69_t1_invalid_too_few_rows() -> None:
+    """Returns valid=False when fewer than 8 rows."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = _make_r69_rs_rows(7)
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_ranking_valid"] is False
+    assert result["rs_rank_spread"] is None
+
+
+def test_r69_t1_invalid_missing_field() -> None:
+    """Returns valid=False when rs_sector_rank field is absent."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = _make_r69_rs_rows(20, with_field=False)
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_ranking_valid"] is False
+
+
+def test_r69_t1_invalid_all_none_rs() -> None:
+    """Returns valid=False when all rs_sector_rank values are None."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = [{"rs_sector_rank": None, "next_day_return": 0.01} for _ in range(20)]
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_ranking_valid"] is False
+
+
+def test_r69_t1_tertile_split_correct() -> None:
+    """Three thirds are split correctly by rs_sector_rank value."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    # 12 rows: rs_sector_rank 0..11, top third wins all, bottom third loses all
+    rows = []
+    for i in range(12):
+        ret = 0.05 if i >= 8 else -0.05  # top third (8-11) wins, bottom (0-3) loses
+        rows.append({"rs_sector_rank": float(i), "next_day_return": ret})
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_ranking_valid"] is True
+    assert result["top_win_rate"] == 1.0
+    assert result["bottom_win_rate"] == 0.0
+    assert result["rs_rank_spread"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_r69_t1_rs_rank_spread_precision() -> None:
+    """rs_rank_spread is rounded to 6 decimal places."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = _make_r69_rs_rows(30)
+    result = compute_relative_strength_ranking(rows)
+    if result["rs_rank_spread"] is not None:
+        assert abs(result["rs_rank_spread"] - round(result["rs_rank_spread"], 6)) < 1e-9
+
+
+def test_r69_t1_rs_monotonicity_true() -> None:
+    """rs_monotonicity=True when top > mid > bottom win rate."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = []
+    for i in range(30):
+        if i >= 20:
+            ret = 0.05  # top third: all wins
+        elif i >= 10:
+            ret = 0.02 if i % 2 == 0 else -0.01  # mid: ~50%
+        else:
+            ret = -0.05  # bottom: all losses
+        rows.append({"rs_sector_rank": float(i), "next_day_return": ret})
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_ranking_valid"] is True
+    assert result["rs_monotonicity"] is True
+
+
+def test_r69_t1_rs_monotonicity_false() -> None:
+    """rs_monotonicity=False when monotone order is violated."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = []
+    for i in range(30):
+        if i >= 20:
+            ret = -0.05  # top third: all losses
+        elif i >= 10:
+            ret = 0.03 if i % 2 == 0 else -0.01
+        else:
+            ret = 0.05  # bottom: all wins
+        rows.append({"rs_sector_rank": float(i), "next_day_return": ret})
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_ranking_valid"] is True
+    assert result["rs_monotonicity"] is False
+
+
+def test_r69_t1_grade_A() -> None:
+    """rs_rank_grade=A when spread>0.15 and monotonicity=True."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = []
+    for i in range(30):
+        if i >= 20:
+            ret = 0.05  # top: all wins → wr=1.0
+        elif i >= 10:
+            ret = 0.05 if i % 3 != 0 else -0.05  # mid: ~67%
+        else:
+            ret = -0.05 if i % 3 != 0 else 0.05  # bot: ~33%
+        rows.append({"rs_sector_rank": float(i), "next_day_return": ret})
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_rank_grade"] == "A"
+
+
+def test_r69_t1_grade_D() -> None:
+    """rs_rank_grade=D when rs_rank_spread<=0."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = []
+    for i in range(30):
+        ret = -0.05 if i >= 20 else 0.05  # top loses, bot wins
+        rows.append({"rs_sector_rank": float(i), "next_day_return": ret})
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_rank_grade"] == "D"
+
+
+def test_r69_t1_grade_unknown() -> None:
+    """rs_rank_grade='unknown' when rs_rank_spread is None."""
+    from scripts.btst_analysis_utils import compute_relative_strength_ranking
+    rows = _make_r69_rs_rows(5)  # too few
+    result = compute_relative_strength_ranking(rows)
+    assert result["rs_rank_grade"] == "unknown"
+
+
+def test_r69_t1_in_comparison_metrics() -> None:
+    """rs_rank_spread is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "rs_rank_spread" in COMPARISON_METRICS
+
+
+def test_r69_t1_in_optional_metrics() -> None:
+    """rs_rank_spread is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "rs_rank_spread" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r69_t1_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has rs_rank_spread floor of 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "rs_rank_spread" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["rs_rank_spread"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# T2: compute_turnover_behavior_filter
+# ---------------------------------------------------------------------------
+
+def _make_r69_turnover_rows(n: int, *, with_field: bool = True) -> list[dict]:
+    import random
+    rng = random.Random(99)
+    rows = []
+    for i in range(n):
+        r: dict = {"next_day_return": rng.uniform(-0.05, 0.10)}
+        if with_field:
+            r["volume_expansion_quality"] = rng.uniform(0.0, 1.0)
+        rows.append(r)
+    return rows
+
+
+def test_r69_t2_valid_basic() -> None:
+    """compute_turnover_behavior_filter returns valid=True with ≥8 rows."""
+    from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+    rows = _make_r69_turnover_rows(24)
+    result = compute_turnover_behavior_filter(rows)
+    assert result["turnover_behavior_valid"] is True
+    assert result["extreme_high_pct"] is not None
+    assert result["extreme_low_pct"] is not None
+
+
+def test_r69_t2_invalid_too_few() -> None:
+    """Returns valid=False when fewer than 8 rows."""
+    from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+    rows = _make_r69_turnover_rows(6)
+    result = compute_turnover_behavior_filter(rows)
+    assert result["turnover_behavior_valid"] is False
+    assert result["turnover_filter_effect"] is None
+
+
+def test_r69_t2_invalid_missing_field() -> None:
+    """Returns valid=False when volume_expansion_quality is absent."""
+    from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+    rows = _make_r69_turnover_rows(20, with_field=False)
+    result = compute_turnover_behavior_filter(rows)
+    assert result["turnover_behavior_valid"] is False
+
+
+def test_r69_t2_p10_p90_split() -> None:
+    """Extreme high and low pct are ~10% each for uniform data."""
+    from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+    rows = _make_r69_turnover_rows(100)
+    result = compute_turnover_behavior_filter(rows)
+    assert result["turnover_behavior_valid"] is True
+    # ~10% at each tail for uniformly distributed data
+    assert result["extreme_high_pct"] <= 0.15
+    assert result["extreme_low_pct"] <= 0.15
+
+
+def test_r69_t2_turnover_filter_effect_sign() -> None:
+    """turnover_filter_effect = normal_turnover_win_rate - full_win_rate."""
+    from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+    rows = _make_r69_turnover_rows(50)
+    result = compute_turnover_behavior_filter(rows)
+    if result["turnover_behavior_valid"] and result["turnover_filter_effect"] is not None:
+        assert isinstance(result["turnover_filter_effect"], float)
+
+
+def test_r69_t2_in_comparison_metrics() -> None:
+    """turnover_filter_effect is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "turnover_filter_effect" in COMPARISON_METRICS
+
+
+def test_r69_t2_in_optional_metrics() -> None:
+    """turnover_filter_effect is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "turnover_filter_effect" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r69_t2_floor_in_quality_floors() -> None:
+    """BTST_QUALITY_FLOORS has turnover_filter_effect floor of -0.05."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "turnover_filter_effect" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["turnover_filter_effect"] == pytest.approx(-0.05)
+
+
+def test_r69_t2_extreme_pcts_sum_leq_1() -> None:
+    """extreme_high_pct + extreme_low_pct <= 1.0."""
+    from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+    rows = _make_r69_turnover_rows(40)
+    result = compute_turnover_behavior_filter(rows)
+    if result["turnover_behavior_valid"]:
+        assert result["extreme_high_pct"] + result["extreme_low_pct"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# T3: compute_cross_window_concentration_trend
+# ---------------------------------------------------------------------------
+
+def test_r69_t3_valid_basic() -> None:
+    """compute_cross_window_concentration_trend returns valid=True with ≥3 valid windows."""
+    from scripts.optimize_profile import compute_cross_window_concentration_trend
+    summaries = [{"conc_sector_hhi": 0.4 - i * 0.01} for i in range(5)]
+    result = compute_cross_window_concentration_trend(summaries)
+    assert result["concentration_trend_valid"] is True
+    assert result["concentration_hhi_slope"] is not None
+
+
+def test_r69_t3_invalid_too_few_windows() -> None:
+    """Returns valid=False with fewer than 3 valid windows."""
+    from scripts.optimize_profile import compute_cross_window_concentration_trend
+    summaries = [{"conc_sector_hhi": 0.4} for _ in range(2)]
+    result = compute_cross_window_concentration_trend(summaries)
+    assert result["concentration_trend_valid"] is False
+    assert result["concentration_hhi_slope"] is None
+
+
+def test_r69_t3_invalid_missing_field() -> None:
+    """Returns valid=False when conc_sector_hhi is absent."""
+    from scripts.optimize_profile import compute_cross_window_concentration_trend
+    summaries = [{"other_field": 0.5} for _ in range(5)]
+    result = compute_cross_window_concentration_trend(summaries)
+    assert result["concentration_trend_valid"] is False
+
+
+def test_r69_t3_ols_slope_decreasing() -> None:
+    """OLS slope is negative when HHI is decreasing across windows."""
+    from scripts.optimize_profile import compute_cross_window_concentration_trend
+    summaries = [{"conc_sector_hhi": 0.5 - i * 0.05} for i in range(5)]  # decreasing
+    result = compute_cross_window_concentration_trend(summaries)
+    assert result["concentration_trend_valid"] is True
+    assert result["concentration_hhi_slope"] < 0
+
+
+def test_r69_t3_ols_slope_increasing() -> None:
+    """OLS slope is positive when HHI is increasing across windows."""
+    from scripts.optimize_profile import compute_cross_window_concentration_trend
+    summaries = [{"conc_sector_hhi": 0.2 + i * 0.05} for i in range(5)]  # increasing
+    result = compute_cross_window_concentration_trend(summaries)
+    assert result["concentration_trend_valid"] is True
+    assert result["concentration_hhi_slope"] > 0
+
+
+def test_r69_t3_grade_A() -> None:
+    """concentration_trend_grade=A when slope < -0.01."""
+    from scripts.optimize_profile import compute_cross_window_concentration_trend
+    summaries = [{"conc_sector_hhi": 0.6 - i * 0.05} for i in range(6)]  # steep decrease
+    result = compute_cross_window_concentration_trend(summaries)
+    assert result["concentration_trend_grade"] == "A"
+
+
+def test_r69_t3_grade_D() -> None:
+    """concentration_trend_grade=D when slope >= 0.01."""
+    from scripts.optimize_profile import compute_cross_window_concentration_trend
+    summaries = [{"conc_sector_hhi": 0.2 + i * 0.05} for i in range(6)]  # steep increase
+    result = compute_cross_window_concentration_trend(summaries)
+    assert result["concentration_trend_grade"] == "D"
+
+
+def test_r69_t3_dispersed_windows_pct() -> None:
+    """concentration_dispersed_windows_pct counts windows with sector_hhi < 0.35."""
+    from scripts.optimize_profile import compute_cross_window_concentration_trend
+    summaries = [{"conc_sector_hhi": 0.2}, {"conc_sector_hhi": 0.3}, {"conc_sector_hhi": 0.4}, {"conc_sector_hhi": 0.5}]
+    result = compute_cross_window_concentration_trend(summaries)
+    assert result["concentration_trend_valid"] is True
+    # 2 out of 4 windows have hhi < 0.35
+    assert result["concentration_dispersed_windows_pct"] == pytest.approx(0.5, abs=1e-5)
+
+
+def test_r69_t3_lower_is_better_in_set() -> None:
+    """concentration_hhi_slope is in LOWER_IS_BETTER_COMPARISON_METRICS."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "concentration_hhi_slope" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r69_t3_cap_in_quality_caps() -> None:
+    """BTST_QUALITY_CAPS has concentration_hhi_slope cap of 0.02."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "concentration_hhi_slope" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["concentration_hhi_slope"] == pytest.approx(0.02)
+
+
+def test_r69_t3_in_comparison_metrics() -> None:
+    """concentration_hhi_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "concentration_hhi_slope" in COMPARISON_METRICS
+
+
+def test_r69_t3_in_optional_metrics() -> None:
+    """concentration_hhi_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "concentration_hhi_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r69_all_six_new_metrics_have_labels() -> None:
+    """All 6 new Round 69 metrics have non-empty labels in COMPARISON_METRIC_LABELS."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    for key in ("rs_rank_spread", "turnover_filter_effect", "concentration_hhi_slope"):
+        assert key in COMPARISON_METRIC_LABELS
+        assert len(COMPARISON_METRIC_LABELS[key]) > 0

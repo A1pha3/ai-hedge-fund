@@ -569,6 +569,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 68, Gamma): cross-window score dispersion trend slope floor.
     # dispersion_trend_slope < -0.01 means score discrimination power is declining across windows.
     "dispersion_trend_slope": -0.01,
+    # Task 1 (Round 69, Alpha): RS ranking spread floor.
+    # rs_rank_spread < 0.0 means top RS stocks have no win-rate advantage over bottom RS stocks.
+    "rs_rank_spread": 0.0,
+    # Task 2 (Round 69, Beta): turnover filter effect floor.
+    # turnover_filter_effect < -0.05 means normal-turnover stocks have much lower win rate than all — alarming.
+    "turnover_filter_effect": -0.05,
 }
 
 # ---------------------------------------------------------------------------
@@ -663,6 +669,9 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # Task 2 (Round 68, Beta): position concentration HHI cap.
     # sector_hhi > 0.5 means portfolio is highly concentrated in one sector — concentration risk too high.
     "sector_hhi": 0.5,
+    # Task 3 (Round 69, Gamma): concentration HHI trend slope cap.
+    # concentration_hhi_slope > 0.02 means HHI rising faster than 0.02/window — concentration worsening too fast.
+    "concentration_hhi_slope": 0.02,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

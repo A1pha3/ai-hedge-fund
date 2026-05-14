@@ -460,6 +460,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "sector_hhi",
     # Task 3 (Round 68, Gamma): cross-window score dispersion OLS trend slope.
     "dispersion_trend_slope",
+    # Task 1 (Round 69, Alpha): RS ranking strength spread — top-third minus bottom-third win rate.
+    "rs_rank_spread",
+    # Task 2 (Round 69, Beta): turnover behavior filter effect — normal-turnover minus full win rate.
+    "turnover_filter_effect",
+    # Task 3 (Round 69, Gamma): cross-window concentration HHI OLS trend slope.
+    "concentration_hhi_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -808,6 +814,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "sector_hhi": "持仓HHI集中度",
     # Task 3 (Round 68, Gamma): cross-window score dispersion trend slope
     "dispersion_trend_slope": "得分区分度跨窗趋势",
+    # Task 1 (Round 69, Alpha): RS排名强弱胜率差
+    "rs_rank_spread": "RS排名强弱胜率差",
+    # Task 2 (Round 69, Beta): 正常换手胜率优势
+    "turnover_filter_effect": "正常换手胜率优势",
+    # Task 3 (Round 69, Gamma): 持仓集中度跨窗趋势
+    "concentration_hhi_slope": "持仓集中度跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -886,6 +898,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "attribution_trend_slope",
     # Task 2 (Round 68, Beta): position concentration HHI — higher = more concentrated sector pool = lower-is-better.
     "sector_hhi",
+    # Task 3 (Round 69, Gamma): concentration HHI trend slope — positive = HHI rising = concentration worsening = lower-is-better.
+    "concentration_hhi_slope",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -1226,6 +1240,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "sector_hhi",
     # Task 3 (Round 68, Gamma): score dispersion trend slope — optional; pre-Round-68 outputs omit it.
     "dispersion_trend_slope",
+    # Task 1 (Round 69, Alpha): RS ranking spread — optional; pre-Round-69 outputs omit it.
+    "rs_rank_spread",
+    # Task 2 (Round 69, Beta): turnover filter effect — optional; pre-Round-69 outputs omit it.
+    "turnover_filter_effect",
+    # Task 3 (Round 69, Gamma): concentration HHI trend slope — optional; pre-Round-69 outputs omit it.
+    "concentration_hhi_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3664,6 +3684,48 @@ def compute_cross_window_dispersion_trend(all_windows_summaries: list[dict]) -> 
     return {"dispersion_trend_valid": True, "dispersion_trend_slope": round(slope, 8), "dispersion_trend_mean": round(mean_v, 6), "dispersion_positive_windows_pct": dispersion_positive_windows_pct, "dispersion_trend_grade": grade}
 
 
+def compute_cross_window_concentration_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口追踪持仓集中度（sector_hhi）趋势，HHI 越低越好。
+
+    从各窗口 summary 收集 ``conc_sector_hhi``（Round 68 T2 的输出），需≥3个有效值。
+    Returns:
+        - ``concentration_hhi_slope``: OLS 斜率（LOWER_IS_BETTER，正=集中度上升=变差）
+        - ``concentration_hhi_mean``: 均值
+        - ``concentration_dispersed_windows_pct``: sector_hhi < 0.35 的窗口占比
+        - ``concentration_trend_grade``: A/B/C/D
+        - ``concentration_trend_valid``: bool
+    """
+    _null: dict = {"concentration_trend_valid": False, "concentration_hhi_slope": None, "concentration_hhi_mean": None, "concentration_dispersed_windows_pct": None, "concentration_trend_grade": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("conc_sector_hhi")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if len(vals) < 3:
+        return _null
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    concentration_dispersed_windows_pct = round(sum(1 for v in vals if v < 0.35) / n, 6)
+    if slope < -0.01:
+        grade = "A"
+    elif slope < 0:
+        grade = "B"
+    elif slope < 0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"concentration_trend_valid": True, "concentration_hhi_slope": round(slope, 8), "concentration_hhi_mean": round(mean_v, 6), "concentration_dispersed_windows_pct": concentration_dispersed_windows_pct, "concentration_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4402,6 +4464,8 @@ def _build_replay_evaluator(
         _cwit: dict[str, Any] = compute_cross_window_interaction_trend(all_primary_surfaces)
         # Task 3 (Round 68, Gamma): cross-window score dispersion trend.
         _cwdt: dict[str, Any] = compute_cross_window_dispersion_trend(all_primary_surfaces)
+        # Task 3 (Round 69, Gamma): cross-window position concentration HHI trend.
+        _cwcht: dict[str, Any] = compute_cross_window_concentration_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4847,6 +4911,12 @@ def _build_replay_evaluator(
                 "dispersion_positive_windows_pct": _cwdt.get("dispersion_positive_windows_pct"),
                 "dispersion_trend_grade": _cwdt.get("dispersion_trend_grade"),
                 "dispersion_trend_valid": _cwdt.get("dispersion_trend_valid"),
+                # Task 3 (Round 69, Gamma): cross-window position concentration HHI trend.
+                "concentration_hhi_slope": _cwcht.get("concentration_hhi_slope"),
+                "concentration_hhi_mean": _cwcht.get("concentration_hhi_mean"),
+                "concentration_dispersed_windows_pct": _cwcht.get("concentration_dispersed_windows_pct"),
+                "concentration_trend_grade": _cwcht.get("concentration_trend_grade"),
+                "concentration_trend_valid": _cwcht.get("concentration_trend_valid"),
         }
 
     return evaluator
