@@ -17594,3 +17594,482 @@ def test_r64_ic_stability_label() -> None:
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
     assert "ic_stability" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["ic_stability"]) > 0
+
+
+# ===========================================================================
+# Round 65 Tests
+# ===========================================================================
+
+# ── T1: compute_return_attribution ──────────────────────────────────────────
+
+def _make_attribution_rows(n: int = 20) -> list[dict]:
+    """Helper: build rows with all 7 factors + next_day_return."""
+    rows = []
+    for i in range(n):
+        rows.append({
+            "composite_score": 0.5 + i * 0.01,
+            "momentum_score": 0.4 + i * 0.02,
+            "volume_score": 0.3 + i * 0.015,
+            "technical_score": 0.6 - i * 0.01,
+            "sentiment_score": 0.5 + i * 0.005,
+            "breakout_score": 0.4 + i * 0.008,
+            "risk_score": 0.6 - i * 0.005,
+            "next_day_return": 0.01 * (i - n / 2),
+        })
+    return rows
+
+
+def test_r65_return_attribution_too_few_rows_invalid() -> None:
+    """compute_return_attribution returns invalid when fewer than 15 rows."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    result = compute_return_attribution(_make_attribution_rows(10))
+    assert result["return_attribution_valid"] is False
+    assert result["total_attribution"] is None
+
+
+def test_r65_return_attribution_exact_15_rows_valid() -> None:
+    """compute_return_attribution is valid with exactly 15 complete rows."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    result = compute_return_attribution(_make_attribution_rows(15))
+    assert result["return_attribution_valid"] is True
+
+
+def test_r65_return_attribution_empty_rows_invalid() -> None:
+    """compute_return_attribution returns invalid on empty input."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    result = compute_return_attribution([])
+    assert result["return_attribution_valid"] is False
+
+
+def test_r65_return_attribution_total_attribution_nonnegative() -> None:
+    """total_attribution is always non-negative (sum of absolute values)."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    result = compute_return_attribution(_make_attribution_rows(25))
+    assert result["return_attribution_valid"] is True
+    assert result["total_attribution"] >= 0.0
+
+
+def test_r65_return_attribution_7_factors_in_dict() -> None:
+    """factor_contributions has exactly 7 keys."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    result = compute_return_attribution(_make_attribution_rows(25))
+    assert result["return_attribution_valid"] is True
+    assert set(result["factor_contributions"].keys()) == {"composite_score", "momentum_score", "volume_score", "technical_score", "sentiment_score", "breakout_score", "risk_score"}
+
+
+def test_r65_return_attribution_positive_count_valid_range() -> None:
+    """positive_attribution_count is between 0 and 7."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    result = compute_return_attribution(_make_attribution_rows(25))
+    assert result["return_attribution_valid"] is True
+    assert 0 <= result["positive_attribution_count"] <= 7
+
+
+def test_r65_return_attribution_balance_in_01() -> None:
+    """attribution_balance is in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    result = compute_return_attribution(_make_attribution_rows(25))
+    assert result["return_attribution_valid"] is True
+    assert 0.0 <= result["attribution_balance"] <= 1.0
+
+
+def test_r65_return_attribution_balance_neutral_when_zero_total() -> None:
+    """attribution_balance is 0.5 when total_attribution is 0 (flat returns)."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    rows = []
+    for i in range(20):
+        rows.append({"composite_score": 0.5, "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5, "next_day_return": 0.0})
+    result = compute_return_attribution(rows)
+    if result["return_attribution_valid"]:
+        assert result["attribution_balance"] == 0.5
+
+
+def test_r65_return_attribution_top_positive_factor_in_factors() -> None:
+    """top_positive_factor is one of the 7 factor names (or None)."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    _FACTORS = {"composite_score", "momentum_score", "volume_score", "technical_score", "sentiment_score", "breakout_score", "risk_score"}
+    result = compute_return_attribution(_make_attribution_rows(25))
+    assert result["return_attribution_valid"] is True
+    if result["top_positive_factor"] is not None:
+        assert result["top_positive_factor"] in _FACTORS
+
+
+def test_r65_return_attribution_top_negative_factor_in_factors() -> None:
+    """top_negative_factor is one of the 7 factor names (or None)."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    _FACTORS = {"composite_score", "momentum_score", "volume_score", "technical_score", "sentiment_score", "breakout_score", "risk_score"}
+    result = compute_return_attribution(_make_attribution_rows(25))
+    assert result["return_attribution_valid"] is True
+    if result["top_negative_factor"] is not None:
+        assert result["top_negative_factor"] in _FACTORS
+
+
+def test_r65_return_attribution_uses_runner_composite_score_fallback() -> None:
+    """compute_return_attribution uses runner_composite_score when composite_score absent."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    rows = []
+    for i in range(20):
+        rows.append({"runner_composite_score": 0.5 + i * 0.01, "momentum_score": 0.4 + i * 0.02, "volume_score": 0.3, "technical_score": 0.6, "sentiment_score": 0.5, "breakout_score": 0.4, "risk_score": 0.6, "next_day_return": 0.01 * (i - 10)})
+    result = compute_return_attribution(rows)
+    assert result["return_attribution_valid"] is True
+
+
+def test_r65_return_attribution_insufficient_complete_rows_invalid() -> None:
+    """compute_return_attribution returns invalid when fewer than 10 complete rows."""
+    from scripts.btst_analysis_utils import compute_return_attribution
+    rows = _make_attribution_rows(20)
+    for r in rows[:12]:
+        r["momentum_score"] = None
+    result = compute_return_attribution(rows)
+    assert result["return_attribution_valid"] is False
+
+
+# ── T2: compute_multi_timeframe_consistency ──────────────────────────────────
+
+def _make_mtf_rows(n: int = 20, score_trend: str = "up", wr_trend: str = "up") -> list[dict]:
+    """Build rows simulating score/win-rate trends."""
+    rows = []
+    mid = n // 2
+    for i in range(n):
+        in_late = i >= mid
+        score = (0.5 + i * 0.01) if score_trend == "up" else (0.7 - i * 0.01)
+        ret = 0.02 if (in_late and wr_trend == "up") else -0.01 if in_late else 0.01
+        rows.append({"runner_composite_score": score, "next_day_return": ret})
+    return rows
+
+
+def test_r65_mtf_too_few_rows_invalid() -> None:
+    """compute_multi_timeframe_consistency returns invalid with fewer than 12 rows."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    result = compute_multi_timeframe_consistency(_make_mtf_rows(8))
+    assert result["multi_timeframe_valid"] is False
+
+
+def test_r65_mtf_exact_12_rows_valid() -> None:
+    """compute_multi_timeframe_consistency is valid with exactly 12 rows."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    result = compute_multi_timeframe_consistency(_make_mtf_rows(12))
+    assert result["multi_timeframe_valid"] is True
+
+
+def test_r65_mtf_empty_rows_invalid() -> None:
+    """compute_multi_timeframe_consistency returns invalid on empty input."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    result = compute_multi_timeframe_consistency([])
+    assert result["multi_timeframe_valid"] is False
+
+
+def test_r65_mtf_grade_A_both_improving() -> None:
+    """Grade A when both score_trend > 0 and win_rate_trend > 0."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    rows = []
+    for i in range(20):
+        score = 0.5 + i * 0.05
+        ret = 0.03 if i >= 10 else -0.01
+        rows.append({"runner_composite_score": score, "next_day_return": ret})
+    result = compute_multi_timeframe_consistency(rows)
+    assert result["multi_timeframe_valid"] is True
+    assert result["timeframe_consistency"] == 1.0
+    assert result["consistency_grade"] == "A"
+
+
+def test_r65_mtf_grade_D_both_deteriorating() -> None:
+    """Grade D when both score_trend < 0 and win_rate_trend < 0."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    rows = []
+    for i in range(20):
+        score = 0.9 - i * 0.05
+        ret = -0.03 if i >= 10 else 0.02
+        rows.append({"runner_composite_score": score, "next_day_return": ret})
+    result = compute_multi_timeframe_consistency(rows)
+    assert result["multi_timeframe_valid"] is True
+    assert result["timeframe_consistency"] == 0.0
+    assert result["consistency_grade"] == "D"
+
+
+def test_r65_mtf_grade_B_inconsistent_win_rate_up() -> None:
+    """Grade B when consistency=0.5 and win_rate_trend > 0."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    rows = []
+    for i in range(20):
+        score = 0.9 - i * 0.05
+        ret = 0.03 if i >= 10 else -0.01
+        rows.append({"runner_composite_score": score, "next_day_return": ret})
+    result = compute_multi_timeframe_consistency(rows)
+    assert result["multi_timeframe_valid"] is True
+    if result["timeframe_consistency"] == 0.5:
+        assert result["consistency_grade"] in ("B", "C")
+
+
+def test_r65_mtf_win_rates_in_01() -> None:
+    """early_win_rate and late_win_rate are both in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    result = compute_multi_timeframe_consistency(_make_mtf_rows(20))
+    assert result["multi_timeframe_valid"] is True
+    assert 0.0 <= result["early_win_rate"] <= 1.0
+    assert 0.0 <= result["late_win_rate"] <= 1.0
+
+
+def test_r65_mtf_consistency_values_are_valid() -> None:
+    """timeframe_consistency is one of 0.0, 0.5, or 1.0."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    result = compute_multi_timeframe_consistency(_make_mtf_rows(20))
+    assert result["multi_timeframe_valid"] is True
+    assert result["timeframe_consistency"] in (0.0, 0.5, 1.0)
+
+
+def test_r65_mtf_consistency_grade_values_valid() -> None:
+    """consistency_grade is one of A, B, C, D."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    result = compute_multi_timeframe_consistency(_make_mtf_rows(20))
+    assert result["multi_timeframe_valid"] is True
+    assert result["consistency_grade"] in ("A", "B", "C", "D")
+
+
+def test_r65_mtf_score_trend_direction_correct() -> None:
+    """score_trend = late_mean_score - early_mean_score, should be positive for increasing scores."""
+    from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+    rows = [{"runner_composite_score": float(i), "next_day_return": 0.01} for i in range(20)]
+    result = compute_multi_timeframe_consistency(rows)
+    assert result["multi_timeframe_valid"] is True
+    assert result["score_trend"] > 0
+
+
+def test_r65_mtf_build_surface_summary_includes_mtf_prefix() -> None:
+    """build_surface_summary includes mtf_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"composite_score": 0.5, "runner_composite_score": 0.5, "next_close": 10.2, "prev_close": 10.0, "next_day_return": 0.02, "date": f"2024-01-{i+1:02d}", "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5} for i in range(15)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "mtf_multi_timeframe_valid" in result
+
+
+# ── T3: compute_cross_window_validity_trend ──────────────────────────────────
+
+def _make_validity_summaries(vals: list[float]) -> list[dict]:
+    """Build window summaries with validity_ic_stability values."""
+    return [{"validity_ic_stability": v} for v in vals]
+
+
+def test_r65_cvt_too_few_windows_invalid() -> None:
+    """compute_cross_window_validity_trend returns invalid with fewer than 3 windows."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    result = compute_cross_window_validity_trend(_make_validity_summaries([0.1, 0.15]))
+    assert result["ic_stability_trend_valid"] is False
+    assert result["ic_stability_trend_slope"] is None
+
+
+def test_r65_cvt_empty_windows_invalid() -> None:
+    """compute_cross_window_validity_trend returns invalid on empty input."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    result = compute_cross_window_validity_trend([])
+    assert result["ic_stability_trend_valid"] is False
+
+
+def test_r65_cvt_exact_3_windows_valid() -> None:
+    """compute_cross_window_validity_trend is valid with exactly 3 windows."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    result = compute_cross_window_validity_trend(_make_validity_summaries([0.3, 0.2, 0.1]))
+    assert result["ic_stability_trend_valid"] is True
+
+
+def test_r65_cvt_negative_slope_grade_A() -> None:
+    """Grade A when slope < -0.005 (rapidly improving stability)."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    vals = [0.30, 0.20, 0.10, 0.05, 0.01]
+    result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
+    assert result["ic_stability_trend_valid"] is True
+    assert result["ic_stability_trend_slope"] < -0.005
+    assert result["ic_stability_trend_grade"] == "A"
+
+
+def test_r65_cvt_slight_negative_slope_grade_B() -> None:
+    """Grade B when slope < 0 but > -0.005."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    vals = [0.150, 0.148, 0.146, 0.144, 0.142]
+    result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
+    assert result["ic_stability_trend_valid"] is True
+    assert -0.005 < result["ic_stability_trend_slope"] < 0
+    assert result["ic_stability_trend_grade"] == "B"
+
+
+def test_r65_cvt_mild_positive_slope_grade_C() -> None:
+    """Grade C when 0 <= slope < 0.01."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    vals = [0.10, 0.105, 0.11, 0.115, 0.12]
+    result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
+    assert result["ic_stability_trend_valid"] is True
+    assert result["ic_stability_trend_slope"] >= 0
+    assert result["ic_stability_trend_grade"] in ("C", "D")
+
+
+def test_r65_cvt_steep_positive_slope_grade_D() -> None:
+    """Grade D when slope >= 0.01 (rapidly worsening stability)."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    vals = [0.05, 0.15, 0.25, 0.35, 0.45]
+    result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
+    assert result["ic_stability_trend_valid"] is True
+    assert result["ic_stability_trend_slope"] >= 0.01
+    assert result["ic_stability_trend_grade"] == "D"
+
+
+def test_r65_cvt_below_cap_pct_correct() -> None:
+    """ic_stability_below_cap_pct counts windows where ic_stability <= 0.2."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    vals = [0.10, 0.15, 0.20, 0.25, 0.30]
+    result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
+    assert result["ic_stability_trend_valid"] is True
+    assert abs(result["ic_stability_below_cap_pct"] - 3 / 5) < 1e-8
+
+
+def test_r65_cvt_mean_min_max_correct() -> None:
+    """ic_stability_trend_mean/min/max are calculated correctly."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    vals = [0.10, 0.20, 0.30]
+    result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
+    assert result["ic_stability_trend_valid"] is True
+    assert abs(result["ic_stability_trend_mean"] - 0.20) < 1e-8
+    assert abs(result["ic_stability_trend_min"] - 0.10) < 1e-8
+    assert abs(result["ic_stability_trend_max"] - 0.30) < 1e-8
+
+
+def test_r65_cvt_ignores_none_values() -> None:
+    """compute_cross_window_validity_trend skips windows with no validity_ic_stability."""
+    from scripts.optimize_profile import compute_cross_window_validity_trend
+    summaries = [{"validity_ic_stability": 0.3}, {"other_key": 0.1}, {"validity_ic_stability": 0.2}, {"validity_ic_stability": 0.1}]
+    result = compute_cross_window_validity_trend(summaries)
+    assert result["ic_stability_trend_valid"] is True
+    assert result["ic_stability_trend_slope"] < 0
+
+
+# ── Metric registration tests ────────────────────────────────────────────────
+
+def test_r65_total_attribution_in_comparison_metrics() -> None:
+    """total_attribution is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "total_attribution" in COMPARISON_METRICS
+
+
+def test_r65_total_attribution_in_optional_metrics() -> None:
+    """total_attribution is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "total_attribution" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r65_total_attribution_not_in_lower_is_better() -> None:
+    """total_attribution is NOT in LOWER_IS_BETTER (higher = more explanatory power)."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "total_attribution" not in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r65_total_attribution_floor_value() -> None:
+    """BTST_QUALITY_FLOORS has total_attribution floor of 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "total_attribution" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["total_attribution"] == 0.0
+
+
+def test_r65_total_attribution_in_guardrail_keys() -> None:
+    """total_attribution is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "total_attribution" in _GUARDRAIL_KEYS
+
+
+def test_r65_total_attribution_label() -> None:
+    """total_attribution has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "total_attribution" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["total_attribution"]) > 0
+
+
+def test_r65_timeframe_consistency_in_comparison_metrics() -> None:
+    """timeframe_consistency is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "timeframe_consistency" in COMPARISON_METRICS
+
+
+def test_r65_timeframe_consistency_in_optional_metrics() -> None:
+    """timeframe_consistency is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "timeframe_consistency" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r65_timeframe_consistency_not_in_lower_is_better() -> None:
+    """timeframe_consistency is NOT in LOWER_IS_BETTER (higher = more consistent)."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "timeframe_consistency" not in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r65_timeframe_consistency_floor_value() -> None:
+    """BTST_QUALITY_FLOORS has timeframe_consistency floor of 0.5."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "timeframe_consistency" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["timeframe_consistency"] == 0.5
+
+
+def test_r65_timeframe_consistency_in_guardrail_keys() -> None:
+    """timeframe_consistency is in _GUARDRAIL_KEYS."""
+    from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+    assert "timeframe_consistency" in _GUARDRAIL_KEYS
+
+
+def test_r65_timeframe_consistency_label() -> None:
+    """timeframe_consistency has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "timeframe_consistency" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["timeframe_consistency"]) > 0
+
+
+def test_r65_ic_stability_trend_slope_in_comparison_metrics() -> None:
+    """ic_stability_trend_slope is in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ic_stability_trend_slope" in COMPARISON_METRICS
+
+
+def test_r65_ic_stability_trend_slope_in_optional_metrics() -> None:
+    """ic_stability_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "ic_stability_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r65_ic_stability_trend_slope_in_lower_is_better() -> None:
+    """ic_stability_trend_slope IS in LOWER_IS_BETTER (negative slope = improving stability)."""
+    from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+    assert "ic_stability_trend_slope" in LOWER_IS_BETTER_COMPARISON_METRICS
+
+
+def test_r65_ic_stability_trend_slope_cap_value() -> None:
+    """BTST_QUALITY_CAPS has ic_stability_trend_slope cap of 0.01."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+    assert "ic_stability_trend_slope" in BTST_QUALITY_CAPS
+    assert BTST_QUALITY_CAPS["ic_stability_trend_slope"] == 0.01
+
+
+def test_r65_ic_stability_trend_slope_label() -> None:
+    """ic_stability_trend_slope has a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "ic_stability_trend_slope" in COMPARISON_METRIC_LABELS
+    assert len(COMPARISON_METRIC_LABELS["ic_stability_trend_slope"]) > 0
+
+
+def test_r65_build_surface_summary_includes_attr_prefix() -> None:
+    """build_surface_summary includes attr_ prefixed keys."""
+    from scripts.btst_analysis_utils import build_surface_summary
+    rows = [{"composite_score": 0.5, "runner_composite_score": 0.5, "next_close": 10.2, "prev_close": 10.0, "next_day_return": 0.02, "date": f"2024-01-{i+1:02d}", "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5} for i in range(15)]
+    result = build_surface_summary(rows, next_high_hit_threshold=0.02)
+    assert "attr_return_attribution_valid" in result
+
+
+def test_r65_cap_breach_blockers_triggered_for_high_ic_stability_trend() -> None:
+    """build_btst_quality_cap_blockers fires for ic_stability_trend_slope above 0.01."""
+    from src.backtesting.evaluation_bundle import build_btst_quality_cap_blockers
+    metrics = {"ic_stability_trend_slope": 0.05}
+    blockers = build_btst_quality_cap_blockers(metrics)
+    assert any("ic_stability_trend_slope" in b for b in blockers)
+
+
+def test_r65_floor_breach_blockers_triggered_for_low_timeframe_consistency() -> None:
+    """build_btst_quality_floor_blockers fires for timeframe_consistency below 0.5."""
+    from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+    metrics = {"timeframe_consistency": 0.0}
+    blockers = build_btst_quality_floor_blockers(metrics)
+    assert any("timeframe_consistency" in b for b in blockers)

@@ -4508,6 +4508,19 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     for _k, _v in _fv.items():
         _surface_result[f"validity_{_k}"] = _v
 
+    # Round 65, Task 1 (Alpha): Return attribution.
+    _ra: dict = compute_return_attribution(rows)
+    for _k, _v in _ra.items():
+        if _k != "factor_contributions":
+            _surface_result[f"attr_{_k}"] = _v
+        else:
+            _surface_result["attr_factor_contributions"] = _v
+
+    # Round 65, Task 2 (Beta): Multi-timeframe consistency.
+    _mtf: dict = compute_multi_timeframe_consistency(rows)
+    for _k, _v in _mtf.items():
+        _surface_result[f"mtf_{_k}"] = _v
+
     return _surface_result
 
 
@@ -11955,3 +11968,146 @@ def compute_factor_validity_window(rows):
     else:
         ic_trend_direction = "stable"
     return {"factor_validity_valid": True, "early_ic": early_ic, "mid_ic": mid_ic, "late_ic": late_ic, "ic_stability": ic_stability, "ic_trend_direction": ic_trend_direction}
+
+
+# ---------------------------------------------------------------------------
+# Round 65, Task 1 (Alpha): Return attribution (multi-linear regression approximation)
+# ---------------------------------------------------------------------------
+
+def compute_return_attribution(rows: list[dict]) -> dict:
+    """Decompose total return into standardized partial-correlation factor contributions.
+
+    Uses Pearson correlation × std(factor)/std(return) as a standardized partial-contribution
+    approximation for each of the 7 core BTST factors.  No scipy dependency — all statistics
+    are computed manually.
+    """
+    _FACTORS = ["composite_score", "momentum_score", "volume_score", "technical_score", "sentiment_score", "breakout_score", "risk_score"]
+    _empty = {"return_attribution_valid": False, "factor_contributions": None, "total_attribution": None, "positive_attribution_count": None, "top_positive_factor": None, "top_negative_factor": None, "attribution_balance": None}
+    if len(rows) < 15:
+        return _empty
+
+    def _get_composite(r: dict):
+        for k in ("composite_score", "runner_composite_score", "score"):
+            if r.get(k) is not None:
+                return r[k]
+        return None
+
+    def _get_factor(r: dict, f: str):
+        if f == "composite_score":
+            return _get_composite(r)
+        return r.get(f)
+
+    complete = [r for r in rows if all(_get_factor(r, f) is not None for f in _FACTORS) and r.get("next_day_return") is not None]
+    if len(complete) < 10:
+        return _empty
+
+    rets = [float(r["next_day_return"]) for r in complete]
+    n = len(rets)
+    my = sum(rets) / n
+    dy = (sum((y - my) ** 2 for y in rets)) ** 0.5
+
+    def _pearson(xs, ys):
+        nx = len(xs)
+        mx2 = sum(xs) / nx
+        my2 = sum(ys) / nx
+        num = sum((x - mx2) * (y - my2) for x, y in zip(xs, ys))
+        dx2 = (sum((x - mx2) ** 2 for x in xs)) ** 0.5
+        dy2 = (sum((y - my2) ** 2 for y in ys)) ** 0.5
+        if dx2 == 0 or dy2 == 0:
+            return 0.0
+        return num / (dx2 * dy2)
+
+    factor_contributions: dict[str, float] = {}
+    for f in _FACTORS:
+        xs = [float(_get_factor(r, f)) for r in complete]  # type: ignore[arg-type]
+        mx_f = sum(xs) / n
+        std_f = (sum((x - mx_f) ** 2 for x in xs)) ** 0.5
+        if std_f == 0 or dy == 0:
+            factor_contributions[f] = 0.0
+        else:
+            r_pear = _pearson(xs, rets)
+            factor_contributions[f] = r_pear * std_f / dy
+
+    total_attribution = sum(abs(v) for v in factor_contributions.values())
+    positive_attribution_count = sum(1 for v in factor_contributions.values() if v > 0)
+
+    pos_items = {f: v for f, v in factor_contributions.items() if v > 0}
+    neg_items = {f: v for f, v in factor_contributions.items() if v < 0}
+    top_positive_factor = max(pos_items, key=lambda k: pos_items[k]) if pos_items else None
+    top_negative_factor = min(neg_items, key=lambda k: neg_items[k]) if neg_items else None
+
+    sum_pos = sum(pos_items.values()) if pos_items else 0.0
+    sum_abs_neg = sum(abs(v) for v in neg_items.values()) if neg_items else 0.0
+    if total_attribution == 0:
+        attribution_balance = 0.5
+    else:
+        attribution_balance = sum_pos / (sum_pos + sum_abs_neg) if (sum_pos + sum_abs_neg) > 0 else 0.5
+
+    return {"return_attribution_valid": True, "factor_contributions": factor_contributions, "total_attribution": total_attribution, "positive_attribution_count": positive_attribution_count, "top_positive_factor": top_positive_factor, "top_negative_factor": top_negative_factor, "attribution_balance": attribution_balance}
+
+
+# ---------------------------------------------------------------------------
+# Round 65, Task 2 (Beta): Multi-timeframe consistency
+# ---------------------------------------------------------------------------
+
+def compute_multi_timeframe_consistency(rows: list[dict]) -> dict:
+    """Check signal consistency across early/late halves of the data sample.
+
+    Splits rows into two chronological halves and computes win rates and mean composite
+    scores for each half.  A consistent strategy shows both score and win-rate trends
+    pointing in the same direction.
+    """
+    _empty = {"multi_timeframe_valid": False, "early_win_rate": None, "late_win_rate": None, "early_mean_score": None, "late_mean_score": None, "score_trend": None, "win_rate_trend": None, "timeframe_consistency": None, "consistency_grade": None}
+    if len(rows) < 12:
+        return _empty
+
+    def _get_score(r: dict):
+        for k in ("runner_composite_score", "composite_score", "score"):
+            if r.get(k) is not None:
+                return r[k]
+        return None
+
+    mid = len(rows) // 2
+    early_rows = rows[:mid]
+    late_rows = rows[mid:]
+
+    def _win_rate(subset):
+        rets = [r.get("next_day_return") for r in subset if r.get("next_day_return") is not None]
+        if not rets:
+            return None
+        return sum(1 for r in rets if r > 0) / len(rets)
+
+    def _mean_score(subset):
+        scores = [_get_score(r) for r in subset if _get_score(r) is not None]
+        if not scores:
+            return None
+        return sum(float(s) for s in scores) / len(scores)
+
+    early_win_rate = _win_rate(early_rows)
+    late_win_rate = _win_rate(late_rows)
+    early_mean_score = _mean_score(early_rows)
+    late_mean_score = _mean_score(late_rows)
+
+    if early_mean_score is None or late_mean_score is None or early_win_rate is None or late_win_rate is None:
+        return _empty
+
+    score_trend = late_mean_score - early_mean_score
+    win_rate_trend = late_win_rate - early_win_rate
+
+    if score_trend > 0 and win_rate_trend > 0:
+        timeframe_consistency = 1.0
+    elif score_trend < 0 and win_rate_trend < 0:
+        timeframe_consistency = 0.0
+    else:
+        timeframe_consistency = 0.5
+
+    if timeframe_consistency == 1.0:
+        consistency_grade = "A"
+    elif timeframe_consistency == 0.5 and win_rate_trend > 0:
+        consistency_grade = "B"
+    elif timeframe_consistency == 0.5:
+        consistency_grade = "C"
+    else:
+        consistency_grade = "D"
+
+    return {"multi_timeframe_valid": True, "early_win_rate": early_win_rate, "late_win_rate": late_win_rate, "early_mean_score": early_mean_score, "late_mean_score": late_mean_score, "score_trend": score_trend, "win_rate_trend": win_rate_trend, "timeframe_consistency": timeframe_consistency, "consistency_grade": consistency_grade}

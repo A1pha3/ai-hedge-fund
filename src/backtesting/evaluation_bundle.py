@@ -115,6 +115,16 @@ _GUARDRAIL_KEYS = (
     # Task 2 (Round 64, Beta): factor validity window IC stability guardrail.
     # ic_stability > 0.2 means the IC across time segments is too volatile to trust factor signals.
     "ic_stability",
+    # Task 1 (Round 65, Alpha): total return attribution floor guardrail.
+    # total_attribution = sum of |partial contributions| across 7 factors vs next_day_return.
+    # Floor ≥ 0.0 ensures the metric is present; positive values indicate factors explain some return variance.
+    "total_attribution",
+    # Task 2 (Round 65, Beta): multi-timeframe consistency score floor guardrail.
+    # timeframe_consistency ∈ {0.0, 0.5, 1.0}; Floor ≥ 0.5 requires at least partial consistency.
+    "timeframe_consistency",
+    # Task 3 (Round 65, Gamma): IC stability trend slope cap guardrail.
+    # ic_stability_trend_slope > 0.01 means factor validity is deteriorating across windows.
+    "ic_stability_trend_slope",
 )
 _CONTEXT_KEYS = (
     "projected_theme_exposure",
@@ -526,6 +536,12 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 64, Gamma): cross-window best combo win rate trend slope floor.
     # combo_win_rate_trend_slope < -0.02 means best combo win rate is declining meaningfully.
     "combo_win_rate_trend_slope": -0.02,
+    # Task 1 (Round 65, Alpha): total return attribution floor.
+    # total_attribution < 0.0 is impossible (sum of absolute values), floor = 0.0 ensures metric is present.
+    "total_attribution": 0.0,
+    # Task 2 (Round 65, Beta): multi-timeframe consistency score floor.
+    # timeframe_consistency < 0.5 means score and win-rate trends are both deteriorating — signal degradation.
+    "timeframe_consistency": 0.5,
 }
 
 # ---------------------------------------------------------------------------
@@ -611,6 +627,9 @@ BTST_QUALITY_CAPS: dict[str, float] = {
     # Task 2 (Round 64, Beta): factor validity IC stability cap.
     # ic_stability > 0.2 means IC variation across time segments is too large to trust factor signals.
     "ic_stability": 0.2,
+    # Task 3 (Round 65, Gamma): IC stability trend slope cap.
+    # ic_stability_trend_slope > 0.01 means factor validity is becoming less stable across windows — worsening.
+    "ic_stability_trend_slope": 0.01,
 }
 BTST_EXECUTION_GUARDRAILS: dict[str, dict[str, float]] = {
     "liquidity_capacity_raw_100": {"min": 50.0},

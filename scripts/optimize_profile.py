@@ -436,6 +436,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "adaptive_weight_effective_factor_count",
     # Task 2 (Round 64, Beta): factor validity window IC stability.
     "ic_stability",
+    # Task 1 (Round 65, Alpha): total factor return attribution explanatory power.
+    "total_attribution",
+    # Task 2 (Round 65, Beta): multi-timeframe consistency score.
+    "timeframe_consistency",
+    # Task 3 (Round 65, Gamma): cross-window IC stability OLS trend slope.
+    "ic_stability_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -760,6 +766,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "adaptive_weight_effective_factor_count": "自适应权重有效因子数",
     # Task 2 (Round 64, Beta): factor validity window IC stability
     "ic_stability": "因子有效性稳定度",
+    # Task 1 (Round 65, Alpha): total factor return attribution explanatory power
+    "total_attribution": "因子归因总解释力",
+    # Task 2 (Round 65, Beta): multi-timeframe consistency score
+    "timeframe_consistency": "多时框一致性评分",
+    # Task 3 (Round 65, Gamma): cross-window IC stability OLS trend slope
+    "ic_stability_trend_slope": "因子有效稳定性跨窗趋势",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -832,6 +844,8 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
     "low_liquidity_pct",
     # Task 2 (Round 64, Beta): IC stability — higher std = more unstable factor validity = lower-is-better.
     "ic_stability",
+    # Task 3 (Round 65, Gamma): IC stability trend slope — negative slope = validity becoming more stable = lower-is-better.
+    "ic_stability_trend_slope",
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
@@ -1148,6 +1162,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "adaptive_weight_effective_factor_count",
     # Task 2 (Round 64, Beta): IC stability — optional; pre-Round-64 outputs omit it.
     "ic_stability",
+    # Task 1 (Round 65, Alpha): total return attribution — optional; pre-Round-65 outputs omit it.
+    "total_attribution",
+    # Task 2 (Round 65, Beta): multi-timeframe consistency score — optional; pre-Round-65 outputs omit it.
+    "timeframe_consistency",
+    # Task 3 (Round 65, Gamma): IC stability trend slope — optional; pre-Round-65 outputs omit it.
+    "ic_stability_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3412,6 +3432,42 @@ def compute_cross_window_combo_trend(all_windows_summaries: list[dict]) -> dict:
     return {"combo_trend_valid": True, "combo_win_rate_trend_slope": slope, "combo_win_rate_trend_mean": mean_v, "combo_win_rate_trend_min": min_v, "combo_win_rate_trend_max": max_v, "combo_above_floor_pct": above_floor_pct, "combo_trend_grade": grade}
 
 
+# ---------------------------------------------------------------------------
+# Round 65, Task 3 (Gamma): IC stability validity trend across windows
+# ---------------------------------------------------------------------------
+
+def compute_cross_window_validity_trend(all_windows_summaries: list[dict]) -> dict:
+    """Track factor validity stability (ic_stability) trend across replay windows.
+
+    Collects ``validity_ic_stability`` from each window summary and fits an OLS slope.
+    A more-negative slope indicates ic_stability is *decreasing* over time, meaning the
+    factor validity is becoming more stable — which is good (hence LOWER_IS_BETTER).
+    """
+    vals = [s.get("validity_ic_stability") for s in all_windows_summaries if s.get("validity_ic_stability") is not None]
+    if len(vals) < 3:
+        return {"ic_stability_trend_valid": False, "ic_stability_trend_slope": None, "ic_stability_trend_mean": None, "ic_stability_trend_min": None, "ic_stability_trend_max": None, "ic_stability_below_cap_pct": None, "ic_stability_trend_grade": None}
+    n = len(vals)
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(vals) / n
+    num = sum((xs[i] - mx) * (vals[i] - my) for i in range(n))
+    denom = sum((xs[i] - mx) ** 2 for i in range(n))
+    slope = num / denom if denom != 0 else 0.0
+    mean_v = sum(vals) / n
+    min_v = min(vals)
+    max_v = max(vals)
+    ic_stability_below_cap_pct = sum(1 for v in vals if v <= 0.2) / n
+    if slope < -0.005:
+        grade = "A"
+    elif slope < 0:
+        grade = "B"
+    elif slope < 0.01:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"ic_stability_trend_valid": True, "ic_stability_trend_slope": slope, "ic_stability_trend_mean": mean_v, "ic_stability_trend_min": min_v, "ic_stability_trend_max": max_v, "ic_stability_below_cap_pct": ic_stability_below_cap_pct, "ic_stability_trend_grade": grade}
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -4130,6 +4186,14 @@ def _build_replay_evaluator(
         # Task 2 (Round 64, Beta): average ic_stability across replay windows.
         _ics_vals = [float(s["validity_ic_stability"]) for s in all_primary_surfaces if s.get("validity_ic_stability") is not None]
         avg_ic_stability: "float | None" = round(sum(_ics_vals) / len(_ics_vals), 8) if _ics_vals else None
+        # Task 3 (Round 65, Gamma): cross-window IC stability validity trend.
+        _cvt: dict[str, Any] = compute_cross_window_validity_trend(all_primary_surfaces)
+        # Task 1 (Round 65, Alpha): average attr_total_attribution across replay windows.
+        _ata_vals = [float(s["attr_total_attribution"]) for s in all_primary_surfaces if s.get("attr_total_attribution") is not None]
+        avg_total_attribution: "float | None" = round(sum(_ata_vals) / len(_ata_vals), 8) if _ata_vals else None
+        # Task 2 (Round 65, Beta): average mtf_timeframe_consistency across replay windows.
+        _mtfc_vals = [float(s["mtf_timeframe_consistency"]) for s in all_primary_surfaces if s.get("mtf_timeframe_consistency") is not None]
+        avg_timeframe_consistency: "float | None" = round(sum(_mtfc_vals) / len(_mtfc_vals), 8) if _mtfc_vals else None
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -4539,6 +4603,18 @@ def _build_replay_evaluator(
                 "adaptive_weight_effective_factor_count": avg_adaptive_weight_effective_factor_count,
                 # Task 2 (Round 64, Beta): IC stability averaged across windows.
                 "ic_stability": avg_ic_stability,
+                # Task 1 (Round 65, Alpha): total attribution averaged across windows.
+                "total_attribution": avg_total_attribution,
+                # Task 2 (Round 65, Beta): multi-timeframe consistency averaged across windows.
+                "timeframe_consistency": avg_timeframe_consistency,
+                # Task 3 (Round 65, Gamma): cross-window IC stability trend.
+                "ic_stability_trend_slope": _cvt.get("ic_stability_trend_slope"),
+                "ic_stability_trend_mean": _cvt.get("ic_stability_trend_mean"),
+                "ic_stability_trend_min": _cvt.get("ic_stability_trend_min"),
+                "ic_stability_trend_max": _cvt.get("ic_stability_trend_max"),
+                "ic_stability_below_cap_pct": _cvt.get("ic_stability_below_cap_pct"),
+                "ic_stability_trend_grade": _cvt.get("ic_stability_trend_grade"),
+                "ic_stability_trend_valid": _cvt.get("ic_stability_trend_valid"),
         }
 
     return evaluator
