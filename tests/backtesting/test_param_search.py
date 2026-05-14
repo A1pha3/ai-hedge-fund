@@ -433,6 +433,58 @@ def test_check_guardrails_detects_mixed_min_and_max_bound_violations():
     assert violations == ["next_close_positive_rate", "projected_theme_exposure"]
 
 
+def test_check_guardrails_skip_if_null_suppresses_none_violation():
+    """skip_if_null=True on a dict spec must not count a None metric as a violation."""
+    violations = check_guardrails(
+        {"projected_theme_exposure": None},
+        {"projected_theme_exposure": {"max": 0.35, "skip_if_null": True}},
+    )
+    assert violations == []
+
+
+def test_check_guardrails_skip_if_null_still_catches_bound_breach_when_value_present():
+    """skip_if_null=True must not suppress a violation when a real value breaches the bound."""
+    violations = check_guardrails(
+        {"projected_theme_exposure": 0.40},
+        {"projected_theme_exposure": {"max": 0.35, "skip_if_null": True}},
+    )
+    assert "projected_theme_exposure" in violations
+
+
+def test_check_guardrails_skip_if_null_false_still_treats_none_as_violation():
+    """Explicit skip_if_null=False must preserve the original violation-on-null behaviour."""
+    violations = check_guardrails(
+        {"projected_theme_exposure": None},
+        {"projected_theme_exposure": {"max": 0.35, "skip_if_null": False}},
+    )
+    assert "projected_theme_exposure" in violations
+
+
+def test_check_guardrails_default_btst_replay_guardrails_skip_theme_exposure_when_null():
+    """DEFAULT_BTST_REPLAY_GUARDRAILS theme-exposure entries must not violate when None.
+
+    This validates the fix for the 4-day sparse-window scenario where
+    projected_theme_exposure and incremental_theme_exposure cannot be computed.
+    """
+    from scripts.optimize_profile import DEFAULT_BTST_REPLAY_GUARDRAILS
+
+    metrics = {
+        "next_close_positive_rate": 0.56,
+        "next_high_hit_rate": 0.58,
+        "downside_p10": -0.04,
+        "window_coverage": 0.80,
+        "projected_theme_exposure": None,
+        "incremental_theme_exposure": None,
+        "liquidity_capacity_raw_100": 50.0,
+        "crowding_risk_raw_100": 30.0,
+        "gap_risk_raw_100": 20.0,
+    }
+
+    violations = check_guardrails(metrics, DEFAULT_BTST_REPLAY_GUARDRAILS)
+    assert "projected_theme_exposure" not in violations
+    assert "incremental_theme_exposure" not in violations
+
+
 def test_run_param_search_guardrail_failing_trials_ranked_last():
     """Trials that violate guardrails must appear after all passing trials."""
     space = ParamSpace(grid={"x": [1, 2, 3]})

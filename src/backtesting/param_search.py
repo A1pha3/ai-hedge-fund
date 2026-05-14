@@ -19,7 +19,7 @@ from src.utils.numeric import clip
 
 _logger = logging.getLogger(__name__)
 
-GuardrailSpec = float | int | dict[str, float]
+GuardrailSpec = float | int | dict[str, float | bool]
 
 
 class SearchObjective(StrEnum):
@@ -201,15 +201,21 @@ def check_guardrails(
 
     A guardrail maps a metric key to either:
     - a legacy minimum acceptable value, or
-    - a dict with ``min`` and/or ``max`` bounds.
+    - a dict with ``min`` and/or ``max`` bounds and an optional ``skip_if_null``
+      flag (bool, default False).
 
     A violation occurs when the metric is absent (None), below the minimum, or
-    above the maximum.
+    above the maximum.  When ``skip_if_null`` is True on a dict spec and the
+    metric evaluates to None, the guardrail is skipped (not violated).  This is
+    intended for governance metrics (e.g. theme-exposure) that are legitimately
+    unavailable in sparse-window replays.
 
     Args:
         metrics: Evaluated metrics dict from the evaluator.
         guardrails: Mapping of metric name → legacy minimum float value or a
-            bound dict with ``min`` and/or ``max`` values.
+            bound dict with ``min`` and/or ``max`` values.  Dict specs may also
+            include ``skip_if_null: true`` to suppress violations when the
+            metric is None.
 
     Returns:
         List of violated guardrail names (empty when all pass).
@@ -218,9 +224,9 @@ def check_guardrails(
         if isinstance(spec, dict):
             bounds: dict[str, float] = {}
             if spec.get("min") is not None:
-                bounds["min"] = float(spec["min"])
+                bounds["min"] = float(spec["min"])  # type: ignore[arg-type]
             if spec.get("max") is not None:
-                bounds["max"] = float(spec["max"])
+                bounds["max"] = float(spec["max"])  # type: ignore[arg-type]
             if not bounds:
                 raise ValueError("guardrail dict must contain min and/or max")
             return bounds
@@ -229,12 +235,14 @@ def check_guardrails(
     bundle = build_canonical_btst_evaluation_bundle(metrics)
     violations: list[str] = []
     for key, spec in guardrails.items():
+        skip_if_null = isinstance(spec, dict) and bool(spec.get("skip_if_null", False))
         value = bundle.lookup(key)
         if value is None and key not in bundle.objective_metrics and key not in bundle.guardrail_metrics and key not in bundle.context_metrics:
             value = coerce_numeric_metric_value(metrics.get(key))
         bounds = _normalize_guardrail_bounds(spec)
         if value is None:
-            violations.append(key)
+            if not skip_if_null:
+                violations.append(key)
             continue
         if ("min" in bounds and value < bounds["min"]) or ("max" in bounds and value > bounds["max"]):
             violations.append(key)
