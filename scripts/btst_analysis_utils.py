@@ -4811,6 +4811,32 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["et_inflow_timing_edge"] = _et88["et_inflow_timing_edge"] if _et88["valid"] else 0.0
     _surface_result["et_high_inflow_avg_return"] = _et88["et_high_inflow_avg_return"] if _et88["valid"] else 0.0
 
+    # Round 89, Task 1 (Alpha): Open-gap intraday persistence.
+    _ogp89 = compute_open_gap_intraday_persistence(rows)
+    _surface_result["ogp_gap_vs_full_day_ic"] = _ogp89["ogp_gap_vs_full_day_ic"] if _ogp89["valid"] else 0.0
+    _surface_result["ogp_high_gap_win_rate"] = _ogp89["ogp_high_gap_win_rate"] if _ogp89["valid"] else 0.0
+    _surface_result["ogp_low_gap_win_rate"] = _ogp89["ogp_low_gap_win_rate"] if _ogp89["valid"] else 0.0
+    _surface_result["ogp_gap_win_rate_premium"] = _ogp89["ogp_gap_win_rate_premium"] if _ogp89["valid"] else 0.0
+    _surface_result["ogp_high_gap_avg_return"] = _ogp89["ogp_high_gap_avg_return"] if _ogp89["valid"] else 0.0
+    _surface_result["ogp_high_gap_count"] = _ogp89["ogp_high_gap_count"] if _ogp89["valid"] else 0
+
+    # Round 89, Task 2 (Beta): Tail flow quality score.
+    _tf89 = compute_tail_flow_quality_score(rows)
+    _surface_result["tf_composite_win_rate_premium"] = _tf89["tf_composite_win_rate_premium"] if _tf89["valid"] else 0.0
+    _surface_result["tf_high_flow_win_rate"] = _tf89["tf_high_flow_win_rate"] if _tf89["valid"] else 0.0
+    _surface_result["tf_low_flow_win_rate"] = _tf89["tf_low_flow_win_rate"] if _tf89["valid"] else 0.0
+    _surface_result["tf_high_flow_avg_return"] = _tf89["tf_high_flow_avg_return"] if _tf89["valid"] else 0.0
+    _surface_result["tf_high_flow_count"] = _tf89["tf_high_flow_count"] if _tf89["valid"] else 0
+
+    # Round 89, Task 3 (Gamma): Momentum IC consistency (per-window snapshot).
+    _mc89 = compute_momentum_ic_consistency(rows)
+    _surface_result["mc_momentum_ic"] = _mc89["mc_momentum_ic"] if _mc89["valid"] else 0.0
+    _surface_result["mc_high_mom_win_rate"] = _mc89["mc_high_mom_win_rate"] if _mc89["valid"] else 0.0
+    _surface_result["mc_low_mom_win_rate"] = _mc89["mc_low_mom_win_rate"] if _mc89["valid"] else 0.0
+    _surface_result["mc_momentum_win_rate_premium"] = _mc89["mc_momentum_win_rate_premium"] if _mc89["valid"] else 0.0
+    _surface_result["mc_high_mom_avg_return"] = _mc89["mc_high_mom_avg_return"] if _mc89["valid"] else 0.0
+    _surface_result["mc_sample_count"] = _mc89["mc_sample_count"] if _mc89["valid"] else 0
+
     return _surface_result
 
 
@@ -15041,4 +15067,283 @@ def compute_entry_timing_quality(rows: list[dict]) -> dict:
         "et_low_inflow_win_rate": et_low_inflow_win_rate,
         "et_inflow_timing_edge": et_inflow_timing_edge,
         "et_high_inflow_avg_return": et_high_inflow_avg_return,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 89, Task 1 (Alpha): Open-gap intraday persistence
+# ---------------------------------------------------------------------------
+
+
+def compute_open_gap_intraday_persistence(rows: list[dict]) -> dict:
+    """开盘跳空延续性因子——衡量T+1开盘跳空幅度对全天涨幅的预测力。
+
+    Splits candidates into a **high-gap** group (``next_open_return`` ≥ P75)
+    and a **low-gap** group (< P25), then computes per-group T+1 full-day win
+    rates and their premium.  Also computes the Pearson correlation between
+    ``next_open_return`` and ``actual_return`` as an information-coefficient
+    proxy (``ogp_gap_vs_full_day_ic``).
+
+    The key hypotheses tested are:
+    * Larger open gaps → higher probability that the full day also closes
+      positive (continuation, not mean-reversion).
+    * A positive IC confirms gap momentum is informative for BTST selection.
+
+    Args:
+        rows: Per-window candidate rows; each must contain ``next_open_return``
+            and ``actual_return``.
+
+    Returns:
+        Dict with keys ``valid``, ``ogp_gap_vs_full_day_ic``,
+        ``ogp_high_gap_win_rate``, ``ogp_low_gap_win_rate``,
+        ``ogp_gap_win_rate_premium``, ``ogp_high_gap_avg_return``,
+        ``ogp_high_gap_count``.
+    """
+    _INVALID: dict = {
+        "valid": False,
+        "ogp_gap_vs_full_day_ic": 0.0,
+        "ogp_high_gap_win_rate": 0.0,
+        "ogp_low_gap_win_rate": 0.0,
+        "ogp_gap_win_rate_premium": 0.0,
+        "ogp_high_gap_avg_return": 0.0,
+        "ogp_high_gap_count": 0,
+    }
+    valid_rows: list[dict] = []
+    for r in rows:
+        gap_val = r.get("next_open_return")
+        ret_val = r.get("actual_return")
+        if gap_val is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"gap": float(gap_val), "ret": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return _INVALID
+    n: int = len(valid_rows)
+    gap_vals: list[float] = [r["gap"] for r in valid_rows]
+    ret_vals: list[float] = [r["ret"] for r in valid_rows]
+    # Pearson IC between next_open_return and actual_return
+    sum_x: float = sum(gap_vals)
+    sum_y: float = sum(ret_vals)
+    sum_xy: float = sum(gap_vals[i] * ret_vals[i] for i in range(n))
+    sum_xx: float = sum(v * v for v in gap_vals)
+    sum_yy: float = sum(v * v for v in ret_vals)
+    ic_denom: float = ((n * sum_xx - sum_x * sum_x) * (n * sum_yy - sum_y * sum_y)) ** 0.5
+    ogp_gap_vs_full_day_ic: float = 0.0
+    if ic_denom != 0:
+        ogp_gap_vs_full_day_ic = round((n * sum_xy - sum_x * sum_y) / ic_denom, 8)
+    # P75/P25 split by next_open_return
+    sorted_gaps: list[float] = sorted(gap_vals)
+    p75_idx: int = int(n * 0.75)
+    p25_idx: int = int(n * 0.25)
+    p75_threshold: float = sorted_gaps[p75_idx]
+    p25_threshold: float = sorted_gaps[p25_idx]
+    high_gap_rows: list[dict] = [r for r in valid_rows if r["gap"] >= p75_threshold]
+    low_gap_rows: list[dict] = [r for r in valid_rows if r["gap"] < p25_threshold]
+    if len(high_gap_rows) < 5 or len(low_gap_rows) < 5:
+        return _INVALID
+    ogp_high_gap_count: int = len(high_gap_rows)
+    ogp_high_gap_win_rate: float = round(sum(1 for r in high_gap_rows if r["ret"] > 0) / ogp_high_gap_count, 8)
+    ogp_low_gap_win_rate: float = round(sum(1 for r in low_gap_rows if r["ret"] > 0) / len(low_gap_rows), 8)
+    ogp_gap_win_rate_premium: float = round(ogp_high_gap_win_rate - ogp_low_gap_win_rate, 8)
+    ogp_high_gap_avg_return: float = round(sum(r["ret"] for r in high_gap_rows) / ogp_high_gap_count, 8)
+    return {
+        "valid": True,
+        "ogp_gap_vs_full_day_ic": ogp_gap_vs_full_day_ic,
+        "ogp_high_gap_win_rate": ogp_high_gap_win_rate,
+        "ogp_low_gap_win_rate": ogp_low_gap_win_rate,
+        "ogp_gap_win_rate_premium": ogp_gap_win_rate_premium,
+        "ogp_high_gap_avg_return": ogp_high_gap_avg_return,
+        "ogp_high_gap_count": ogp_high_gap_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 89, Task 2 (Beta): Tail flow quality score
+# ---------------------------------------------------------------------------
+
+
+def compute_tail_flow_quality_score(rows: list[dict]) -> dict:
+    """尾盘资金流向质量因子——综合尾盘强度与T0净流入的预测力。
+
+    Constructs a composite tail-flow signal by averaging normalised
+    ``t0_tail_strength`` and ``t0_estimated_net_inflow_ratio`` (min-max
+    z-score within the window).  Candidates in the **top quartile**
+    (composite ≥ P75) form the high-flow group; those in the **bottom
+    quartile** (< P25) form the low-flow group.  Per-group T+1 win rates
+    and their premium reveal whether strong tail-end buying pressure
+    predicts next-day continuation.
+
+    Args:
+        rows: Per-window candidate rows; each must contain
+            ``t0_tail_strength``, ``t0_estimated_net_inflow_ratio``, and
+            ``actual_return``.
+
+    Returns:
+        Dict with keys ``valid``, ``tf_composite_win_rate_premium``,
+        ``tf_high_flow_win_rate``, ``tf_low_flow_win_rate``,
+        ``tf_high_flow_avg_return``, ``tf_high_flow_count``.
+    """
+    _INVALID: dict = {
+        "valid": False,
+        "tf_composite_win_rate_premium": 0.0,
+        "tf_high_flow_win_rate": 0.0,
+        "tf_low_flow_win_rate": 0.0,
+        "tf_high_flow_avg_return": 0.0,
+        "tf_high_flow_count": 0,
+    }
+    valid_rows: list[dict] = []
+    for r in rows:
+        tail_val = r.get("t0_tail_strength")
+        inflow_val = r.get("t0_estimated_net_inflow_ratio")
+        ret_val = r.get("actual_return")
+        if tail_val is None or inflow_val is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"tail": float(tail_val), "inflow": float(inflow_val), "ret": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 15:
+        return _INVALID
+    n: int = len(valid_rows)
+    # Min-max normalise each signal to [0, 1] within the window
+    tail_vals: list[float] = [r["tail"] for r in valid_rows]
+    inflow_vals: list[float] = [r["inflow"] for r in valid_rows]
+    t_min: float = min(tail_vals); t_max: float = max(tail_vals)
+    i_min: float = min(inflow_vals); i_max: float = max(inflow_vals)
+    t_range: float = t_max - t_min if t_max != t_min else 1.0
+    i_range: float = i_max - i_min if i_max != i_min else 1.0
+    composite_scores: list[float] = [
+        ((r["tail"] - t_min) / t_range + (r["inflow"] - i_min) / i_range) / 2.0
+        for r in valid_rows
+    ]
+    # P75/P25 split by composite score
+    sorted_scores: list[float] = sorted(composite_scores)
+    p75_idx: int = int(n * 0.75)
+    p25_idx: int = int(n * 0.25)
+    p75_threshold: float = sorted_scores[p75_idx]
+    p25_threshold: float = sorted_scores[p25_idx]
+    high_flow_rows: list[dict] = [valid_rows[i] for i in range(n) if composite_scores[i] >= p75_threshold]
+    low_flow_rows: list[dict] = [valid_rows[i] for i in range(n) if composite_scores[i] < p25_threshold]
+    if len(high_flow_rows) < 5 or len(low_flow_rows) < 5:
+        return _INVALID
+    tf_high_flow_count: int = len(high_flow_rows)
+    tf_high_flow_win_rate: float = round(sum(1 for r in high_flow_rows if r["ret"] > 0) / tf_high_flow_count, 8)
+    tf_low_flow_win_rate: float = round(sum(1 for r in low_flow_rows if r["ret"] > 0) / len(low_flow_rows), 8)
+    tf_composite_win_rate_premium: float = round(tf_high_flow_win_rate - tf_low_flow_win_rate, 8)
+    tf_high_flow_avg_return: float = round(sum(r["ret"] for r in high_flow_rows) / tf_high_flow_count, 8)
+    return {
+        "valid": True,
+        "tf_composite_win_rate_premium": tf_composite_win_rate_premium,
+        "tf_high_flow_win_rate": tf_high_flow_win_rate,
+        "tf_low_flow_win_rate": tf_low_flow_win_rate,
+        "tf_high_flow_avg_return": tf_high_flow_avg_return,
+        "tf_high_flow_count": tf_high_flow_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 89, Task 3 (Gamma): Momentum IC consistency (per-window)
+# ---------------------------------------------------------------------------
+
+
+def compute_momentum_ic_consistency(rows: list[dict]) -> dict:
+    """动量IC一致性因子——衡量momentum_confirmation_score与次日收益的Spearman IC。
+
+    Computes the Spearman rank IC between the cross-factor
+    ``momentum_confirmation_score`` (``breakout_freshness × close_strength``,
+    injected by :func:`compute_all_factor_ics`) and ``actual_return``.  The
+    per-window IC value is stored so that
+    ``compute_cross_window_momentum_ic_consistency`` can check whether the IC
+    direction is stable (≥ 3 of the last 5 windows positive).
+
+    Also splits candidates into a **high-momentum** group (score ≥ P75) and a
+    **low-momentum** group (< P25) to compute win-rate premium without relying
+    on IC significance.
+
+    Args:
+        rows: Per-window candidate rows; each must contain
+            ``momentum_confirmation_score`` (or ``breakout_freshness`` +
+            ``close_strength`` for on-the-fly construction) and
+            ``actual_return``.
+
+    Returns:
+        Dict with keys ``valid``, ``mc_momentum_ic``,
+        ``mc_high_mom_win_rate``, ``mc_low_mom_win_rate``,
+        ``mc_momentum_win_rate_premium``, ``mc_high_mom_avg_return``,
+        ``mc_sample_count``.
+    """
+    _INVALID: dict = {
+        "valid": False,
+        "mc_momentum_ic": 0.0,
+        "mc_high_mom_win_rate": 0.0,
+        "mc_low_mom_win_rate": 0.0,
+        "mc_momentum_win_rate_premium": 0.0,
+        "mc_high_mom_avg_return": 0.0,
+        "mc_sample_count": 0,
+    }
+    valid_rows: list[dict] = []
+    for r in rows:
+        ret_val = r.get("actual_return")
+        # Prefer pre-computed cross-factor; fall back to product of components
+        mcs_val = r.get("momentum_confirmation_score")
+        if mcs_val is None:
+            bf = r.get("breakout_freshness")
+            cs = r.get("close_strength")
+            if bf is not None and cs is not None:
+                try:
+                    mcs_val = float(bf) * float(cs)
+                except (TypeError, ValueError):
+                    mcs_val = None
+        if mcs_val is None or ret_val is None:
+            continue
+        try:
+            valid_rows.append({"mcs": float(mcs_val), "ret": float(ret_val)})
+        except (TypeError, ValueError):
+            continue
+    if len(valid_rows) < 10:
+        return _INVALID
+    n: int = len(valid_rows)
+    mcs_vals: list[float] = [r["mcs"] for r in valid_rows]
+    ret_vals: list[float] = [r["ret"] for r in valid_rows]
+    # Spearman IC via rank arrays
+    sorted_mcs_idx: list[int] = sorted(range(n), key=lambda i: mcs_vals[i])
+    sorted_ret_idx: list[int] = sorted(range(n), key=lambda i: ret_vals[i])
+    rank_mcs: list[float] = [0.0] * n
+    rank_ret: list[float] = [0.0] * n
+    for rank, idx in enumerate(sorted_mcs_idx):
+        rank_mcs[idx] = float(rank + 1)
+    for rank, idx in enumerate(sorted_ret_idx):
+        rank_ret[idx] = float(rank + 1)
+    mean_rx: float = sum(rank_mcs) / n
+    mean_ry: float = sum(rank_ret) / n
+    cov: float = sum((rank_mcs[i] - mean_rx) * (rank_ret[i] - mean_ry) for i in range(n))
+    std_x: float = sum((rank_mcs[i] - mean_rx) ** 2 for i in range(n)) ** 0.5
+    std_y: float = sum((rank_ret[i] - mean_ry) ** 2 for i in range(n)) ** 0.5
+    mc_momentum_ic: float = 0.0
+    if std_x > 0 and std_y > 0:
+        mc_momentum_ic = round(cov / (std_x * std_y), 8)
+    # P75/P25 split by momentum_confirmation_score
+    sorted_mcs: list[float] = sorted(mcs_vals)
+    p75_idx: int = int(n * 0.75)
+    p25_idx: int = int(n * 0.25)
+    p75_threshold: float = sorted_mcs[p75_idx]
+    p25_threshold: float = sorted_mcs[p25_idx]
+    high_mom_rows: list[dict] = [r for r in valid_rows if r["mcs"] >= p75_threshold]
+    low_mom_rows: list[dict] = [r for r in valid_rows if r["mcs"] < p25_threshold]
+    if len(high_mom_rows) < 3 or len(low_mom_rows) < 3:
+        return _INVALID
+    mc_high_mom_win_rate: float = round(sum(1 for r in high_mom_rows if r["ret"] > 0) / len(high_mom_rows), 8)
+    mc_low_mom_win_rate: float = round(sum(1 for r in low_mom_rows if r["ret"] > 0) / len(low_mom_rows), 8)
+    mc_momentum_win_rate_premium: float = round(mc_high_mom_win_rate - mc_low_mom_win_rate, 8)
+    mc_high_mom_avg_return: float = round(sum(r["ret"] for r in high_mom_rows) / len(high_mom_rows), 8)
+    return {
+        "valid": True,
+        "mc_momentum_ic": mc_momentum_ic,
+        "mc_high_mom_win_rate": mc_high_mom_win_rate,
+        "mc_low_mom_win_rate": mc_low_mom_win_rate,
+        "mc_momentum_win_rate_premium": mc_momentum_win_rate_premium,
+        "mc_high_mom_avg_return": mc_high_mom_avg_return,
+        "mc_sample_count": n,
     }

@@ -27065,3 +27065,338 @@ def test_r88_t3_optional_metric_key() -> None:
     assert "signal_quality_trend_slope" in OPTIONAL_COMPARISON_METRICS
     assert "signal_quality_trend_grade" in OPTIONAL_COMPARISON_METRICS
     assert "signal_quality_trend_n" in OPTIONAL_COMPARISON_METRICS
+
+
+# =============================================================================
+# Round 89 tests
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Round 89, Task 1 (Alpha): compute_open_gap_intraday_persistence
+# ---------------------------------------------------------------------------
+
+
+def _make_r89_ogp_rows(n: int, high_gap_wins: bool = True) -> list[dict]:
+    """Generate rows with next_open_return and actual_return for OGP tests."""
+    rows = []
+    for i in range(n):
+        gap = float(i) / n  # 0..1, increasing next_open_return
+        if gap >= 0.75:
+            ret = 0.06 if high_gap_wins else -0.05
+        elif gap < 0.25:
+            ret = -0.03 if high_gap_wins else 0.05
+        else:
+            ret = 0.01
+        rows.append({
+            "next_open_return": gap,
+            "actual_return": ret,
+        })
+    return rows
+
+
+def test_r89_t1_basic_valid() -> None:
+    """20 rows with valid fields returns valid=True and expected keys."""
+    from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+    rows = _make_r89_ogp_rows(20)
+    result = compute_open_gap_intraday_persistence(rows)
+    assert result["valid"] is True
+    assert "ogp_gap_vs_full_day_ic" in result
+    assert "ogp_gap_win_rate_premium" in result
+    assert "ogp_high_gap_win_rate" in result
+    assert "ogp_low_gap_win_rate" in result
+    assert "ogp_high_gap_count" in result
+
+
+def test_r89_t1_insufficient_rows() -> None:
+    """Fewer than 15 rows returns valid=False."""
+    from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+    rows = _make_r89_ogp_rows(14)
+    result = compute_open_gap_intraday_persistence(rows)
+    assert result["valid"] is False
+    assert result["ogp_gap_win_rate_premium"] == 0.0
+
+
+def test_r89_t1_high_gap_wins() -> None:
+    """When high-gap rows win more, ogp_gap_win_rate_premium > 0."""
+    from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+    rows = _make_r89_ogp_rows(40, high_gap_wins=True)
+    result = compute_open_gap_intraday_persistence(rows)
+    assert result["valid"] is True
+    assert result["ogp_gap_win_rate_premium"] > 0
+
+
+def test_r89_t1_low_gap_wins() -> None:
+    """When low-gap rows win more, ogp_gap_win_rate_premium < 0."""
+    from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+    rows = _make_r89_ogp_rows(40, high_gap_wins=False)
+    result = compute_open_gap_intraday_persistence(rows)
+    assert result["valid"] is True
+    assert result["ogp_gap_win_rate_premium"] < 0
+
+
+def test_r89_t1_missing_fields_skipped() -> None:
+    """Rows without next_open_return or actual_return are skipped; large n stays valid."""
+    from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+    rows = _make_r89_ogp_rows(40)
+    # Remove several middle rows; both tails remain large enough
+    for i in (15, 16, 17, 18, 19):
+        rows[i]["next_open_return"] = None
+    result = compute_open_gap_intraday_persistence(rows)
+    # 35 valid rows remain; both P25/P75 groups still have ≥5
+    assert result["valid"] is True
+
+
+def test_r89_t1_floor_key_exists() -> None:
+    """ogp_gap_win_rate_premium in BTST_QUALITY_FLOORS with floor 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "ogp_gap_win_rate_premium" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["ogp_gap_win_rate_premium"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Round 89, Task 2 (Beta): compute_tail_flow_quality_score
+# ---------------------------------------------------------------------------
+
+
+def _make_r89_tf_rows(n: int, high_flow_wins: bool = True) -> list[dict]:
+    """Generate rows with t0_tail_strength, t0_estimated_net_inflow_ratio, actual_return."""
+    rows = []
+    for i in range(n):
+        pos = float(i) / n  # 0..1
+        if pos >= 0.75:
+            ret = 0.05 if high_flow_wins else -0.04
+        elif pos < 0.25:
+            ret = -0.03 if high_flow_wins else 0.06
+        else:
+            ret = 0.01
+        rows.append({
+            "t0_tail_strength": pos,
+            "t0_estimated_net_inflow_ratio": pos,
+            "actual_return": ret,
+        })
+    return rows
+
+
+def test_r89_t2_basic_valid() -> None:
+    """20 rows with valid fields returns valid=True and expected keys."""
+    from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+    rows = _make_r89_tf_rows(20)
+    result = compute_tail_flow_quality_score(rows)
+    assert result["valid"] is True
+    assert "tf_composite_win_rate_premium" in result
+    assert "tf_high_flow_win_rate" in result
+    assert "tf_low_flow_win_rate" in result
+    assert "tf_high_flow_count" in result
+
+
+def test_r89_t2_insufficient_rows() -> None:
+    """Fewer than 15 rows returns valid=False."""
+    from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+    rows = _make_r89_tf_rows(14)
+    result = compute_tail_flow_quality_score(rows)
+    assert result["valid"] is False
+
+
+def test_r89_t2_high_flow_wins() -> None:
+    """When high composite-score rows win, tf_composite_win_rate_premium > 0."""
+    from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+    rows = _make_r89_tf_rows(40, high_flow_wins=True)
+    result = compute_tail_flow_quality_score(rows)
+    assert result["valid"] is True
+    assert result["tf_composite_win_rate_premium"] > 0
+
+
+def test_r89_t2_low_flow_wins() -> None:
+    """When low composite-score rows win, tf_composite_win_rate_premium < 0."""
+    from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+    rows = _make_r89_tf_rows(40, high_flow_wins=False)
+    result = compute_tail_flow_quality_score(rows)
+    assert result["valid"] is True
+    assert result["tf_composite_win_rate_premium"] < 0
+
+
+def test_r89_t2_missing_inflow_skipped() -> None:
+    """Rows missing t0_estimated_net_inflow_ratio are skipped gracefully; large n stays valid."""
+    from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+    rows = _make_r89_tf_rows(40)
+    # Remove middle rows; both tail groups remain >= 5
+    for r in rows[15:20]:
+        r["t0_estimated_net_inflow_ratio"] = None
+    result = compute_tail_flow_quality_score(rows)
+    # 35 valid rows remain → valid
+    assert result["valid"] is True
+
+
+def test_r89_t2_floor_key_exists() -> None:
+    """tf_composite_win_rate_premium in BTST_QUALITY_FLOORS with floor 0.0."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "tf_composite_win_rate_premium" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["tf_composite_win_rate_premium"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Round 89, Task 3 (Gamma): compute_momentum_ic_consistency (per-window) +
+#                            compute_cross_window_momentum_ic_consistency
+# ---------------------------------------------------------------------------
+
+
+def _make_r89_mc_rows(n: int, momentum_wins: bool = True) -> list[dict]:
+    """Generate rows with momentum_confirmation_score and actual_return."""
+    rows = []
+    for i in range(n):
+        mcs = float(i) / n
+        if mcs >= 0.75:
+            ret = 0.05 if momentum_wins else -0.04
+        elif mcs < 0.25:
+            ret = -0.03 if momentum_wins else 0.06
+        else:
+            ret = 0.01
+        rows.append({
+            "momentum_confirmation_score": mcs,
+            "actual_return": ret,
+        })
+    return rows
+
+
+def test_r89_t3_per_window_basic_valid() -> None:
+    """20 rows returns valid=True with expected keys."""
+    from scripts.btst_analysis_utils import compute_momentum_ic_consistency
+    rows = _make_r89_mc_rows(20)
+    result = compute_momentum_ic_consistency(rows)
+    assert result["valid"] is True
+    assert "mc_momentum_ic" in result
+    assert "mc_momentum_win_rate_premium" in result
+    assert "mc_sample_count" in result
+
+
+def test_r89_t3_per_window_insufficient() -> None:
+    """Fewer than 10 rows returns valid=False."""
+    from scripts.btst_analysis_utils import compute_momentum_ic_consistency
+    rows = _make_r89_mc_rows(9)
+    result = compute_momentum_ic_consistency(rows)
+    assert result["valid"] is False
+
+
+def test_r89_t3_per_window_momentum_wins() -> None:
+    """When high-momentum rows win, mc_momentum_win_rate_premium > 0 and IC > 0."""
+    from scripts.btst_analysis_utils import compute_momentum_ic_consistency
+    rows = _make_r89_mc_rows(40, momentum_wins=True)
+    result = compute_momentum_ic_consistency(rows)
+    assert result["valid"] is True
+    assert result["mc_momentum_win_rate_premium"] > 0
+    assert result["mc_momentum_ic"] > 0
+
+
+def test_r89_t3_fallback_to_components() -> None:
+    """When momentum_confirmation_score absent, falls back to breakout_freshness × close_strength."""
+    from scripts.btst_analysis_utils import compute_momentum_ic_consistency
+    rows = []
+    for i in range(20):
+        bf = float(i) / 20
+        cs = float(i) / 20
+        ret = 0.04 if bf * cs >= 0.25 else -0.02
+        rows.append({"breakout_freshness": bf, "close_strength": cs, "actual_return": ret})
+    result = compute_momentum_ic_consistency(rows)
+    assert result["valid"] is True
+
+
+def test_r89_t3_cross_window_basic() -> None:
+    """All positive-IC windows → consistency_score 1.0 and gate_passed=True."""
+    from scripts.optimize_profile import compute_cross_window_momentum_ic_consistency
+    windows = [{"mc_momentum_ic": 0.1 * (i + 1)} for i in range(5)]
+    result = compute_cross_window_momentum_ic_consistency(windows)
+    assert result["valid"] is True
+    assert result["mc_ic_consistency_score"] == pytest.approx(1.0)
+    assert result["mc_ic_gate_passed"] is True
+
+
+def test_r89_t3_cross_window_mixed() -> None:
+    """3 positive + 2 negative → consistency_score = 0.6, gate_passed=True."""
+    from scripts.optimize_profile import compute_cross_window_momentum_ic_consistency
+    windows = [{"mc_momentum_ic": 0.1}, {"mc_momentum_ic": 0.2}, {"mc_momentum_ic": 0.05}, {"mc_momentum_ic": -0.1}, {"mc_momentum_ic": -0.05}]
+    result = compute_cross_window_momentum_ic_consistency(windows)
+    assert result["valid"] is True
+    assert result["mc_ic_consistency_score"] == pytest.approx(0.6)
+    assert result["mc_ic_gate_passed"] is True
+
+
+def test_r89_t3_cross_window_insufficient() -> None:
+    """Fewer than 3 windows returns valid=False."""
+    from scripts.optimize_profile import compute_cross_window_momentum_ic_consistency
+    windows = [{"mc_momentum_ic": 0.1}, {"mc_momentum_ic": 0.2}]
+    result = compute_cross_window_momentum_ic_consistency(windows)
+    assert result["valid"] is False
+
+
+def test_r89_t3_cross_window_all_negative() -> None:
+    """All negative IC → consistency_score 0.0, gate_passed=False."""
+    from scripts.optimize_profile import compute_cross_window_momentum_ic_consistency
+    windows = [{"mc_momentum_ic": -0.05 * (i + 1)} for i in range(5)]
+    result = compute_cross_window_momentum_ic_consistency(windows)
+    assert result["valid"] is True
+    assert result["mc_ic_consistency_score"] == pytest.approx(0.0)
+    assert result["mc_ic_gate_passed"] is False
+
+
+def test_r89_t3_floor_key_exists() -> None:
+    """mc_ic_consistency_score in BTST_QUALITY_FLOORS with floor 0.40."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "mc_ic_consistency_score" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["mc_ic_consistency_score"] == pytest.approx(0.40)
+
+
+def test_r89_t3_optional_metric_keys() -> None:
+    """All Round 89 Task 3 metric keys in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("mc_momentum_ic", "mc_momentum_win_rate_premium", "mc_ic_consistency_score", "mc_ic_gate_passed", "mc_ic_mean"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
+
+
+def test_r89_t1_optional_metric_keys() -> None:
+    """All Round 89 Task 1 metric keys in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("ogp_gap_vs_full_day_ic", "ogp_gap_win_rate_premium", "ogp_high_gap_win_rate", "ogp_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
+
+
+def test_r89_t2_optional_metric_keys() -> None:
+    """All Round 89 Task 2 metric keys in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    for key in ("tf_composite_win_rate_premium", "tf_high_flow_win_rate", "tf_trend_slope"):
+        assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
+
+
+def test_r89_t1_comparison_metric_rank() -> None:
+    """ogp_gap_win_rate_premium in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "ogp_gap_win_rate_premium" in COMPARISON_METRICS
+
+
+def test_r89_t2_comparison_metric_rank() -> None:
+    """tf_composite_win_rate_premium in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "tf_composite_win_rate_premium" in COMPARISON_METRICS
+
+
+def test_r89_t3_comparison_metric_rank() -> None:
+    """mc_ic_consistency_score in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "mc_ic_consistency_score" in COMPARISON_METRICS
+
+
+def test_r89_ogp_cross_window_trend_positive() -> None:
+    """Rising ogp_gap_win_rate_premium across windows → grade A or B."""
+    from scripts.optimize_profile import compute_cross_window_open_gap_persistence_trend
+    windows = [{"ogp_gap_win_rate_premium": 0.01 * i} for i in range(6)]
+    result = compute_cross_window_open_gap_persistence_trend(windows)
+    assert result["valid"] is True
+    assert result["ogp_trend_grade"] in ("A", "B")
+
+
+def test_r89_tf_cross_window_trend_negative() -> None:
+    """Falling tf_composite_win_rate_premium across windows → grade C or D."""
+    from scripts.optimize_profile import compute_cross_window_tail_flow_quality_trend
+    windows = [{"tf_composite_win_rate_premium": 0.1 - 0.02 * i} for i in range(6)]
+    result = compute_cross_window_tail_flow_quality_trend(windows)
+    assert result["valid"] is True
+    assert result["tf_trend_grade"] in ("C", "D")

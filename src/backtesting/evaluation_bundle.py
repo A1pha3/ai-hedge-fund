@@ -737,6 +737,19 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # Task 3 (Round 88, Gamma): signal quality trend slope floor.
     # signal_quality_trend_slope < -0.01 means signal persistence edge is deteriorating across windows.
     "signal_quality_trend_slope": -0.01,
+    # Task 1 (Round 89, Alpha): open-gap intraday persistence win-rate premium floor.
+    # ogp_gap_win_rate_premium < 0.0 means high-gap stocks don't outperform low-gap stocks in win rate.
+    # A negative premium indicates gap-up at T+1 open is associated with WORSE full-day outcomes —
+    # the gap is filling (mean-reversion) rather than persisting, invalidating the factor direction.
+    "ogp_gap_win_rate_premium": 0.0,
+    # Task 2 (Round 89, Beta): tail flow quality composite win-rate premium floor.
+    # tf_composite_win_rate_premium < 0.0 means strong tail-end buying does not improve next-day win rate.
+    # Negative values indicate the tail-flow composite signal has zero positive selection edge.
+    "tf_composite_win_rate_premium": 0.0,
+    # Task 3 (Round 89, Gamma): cross-window momentum IC consistency score floor.
+    # mc_ic_consistency_score < 0.40 means fewer than 40 % of windows have positive momentum IC —
+    # the momentum_confirmation_score factor is directionally unstable and may be adversarial.
+    "mc_ic_consistency_score": 0.40,
 }
 
 # ---------------------------------------------------------------------------

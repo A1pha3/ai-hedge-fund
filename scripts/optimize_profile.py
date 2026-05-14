@@ -594,6 +594,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "et_inflow_timing_edge",
     # Task 3 (Round 88, Gamma): cross-window signal quality OLS trend slope.
     "signal_quality_trend_slope",
+    # Task 1 (Round 89, Alpha): open-gap intraday persistence — gap win-rate premium.
+    "ogp_gap_win_rate_premium",
+    # Task 2 (Round 89, Beta): tail flow quality score — composite win-rate premium.
+    "tf_composite_win_rate_premium",
+    # Task 3 (Round 89, Gamma): cross-window momentum IC consistency score.
+    "mc_ic_consistency_score",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -1081,6 +1087,18 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "et_high_inflow_avg_return": "高流入组平均回报",
     # Task 3 (Round 88, Gamma): signal quality cross-window trend slope label.
     "signal_quality_trend_slope": "信号质量趋势斜率",
+    # Task 1 (Round 89, Alpha): open-gap intraday persistence labels.
+    "ogp_gap_win_rate_premium": "开盘跳空延续性溢价(高隙-低隙胜率差)",
+    "ogp_gap_vs_full_day_ic": "开盘跳空与全天收益IC",
+    "ogp_high_gap_win_rate": "高跳空区胜率",
+    # Task 2 (Round 89, Beta): tail flow quality score labels.
+    "tf_composite_win_rate_premium": "尾盘资金质量溢价(高流量-低流量胜率差)",
+    "tf_high_flow_win_rate": "高尾盘流量组胜率",
+    "tf_low_flow_win_rate": "低尾盘流量组胜率",
+    # Task 3 (Round 89, Gamma): momentum IC consistency labels.
+    "mc_ic_consistency_score": "动量IC方向一致性(正IC窗口占比)",
+    "mc_momentum_ic": "动量确认分数Spearman IC",
+    "mc_momentum_win_rate_premium": "动量胜率溢价",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -1655,6 +1673,37 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "signal_quality_trend_slope",
     "signal_quality_trend_grade",
     "signal_quality_trend_n",
+    # Task 1 (Round 89, Alpha): open-gap intraday persistence metrics — optional; pre-Round-89 surfaces omit these.
+    "ogp_gap_vs_full_day_ic",
+    "ogp_high_gap_win_rate",
+    "ogp_low_gap_win_rate",
+    "ogp_gap_win_rate_premium",
+    "ogp_high_gap_avg_return",
+    "ogp_high_gap_count",
+    # Task 2 (Round 89, Beta): tail flow quality metrics — optional; pre-Round-89 surfaces omit these.
+    "tf_composite_win_rate_premium",
+    "tf_high_flow_win_rate",
+    "tf_low_flow_win_rate",
+    "tf_high_flow_avg_return",
+    "tf_high_flow_count",
+    # Task 3 (Round 89, Gamma): momentum IC consistency cross-window metrics — optional; pre-Round-89 outputs omit these.
+    "mc_momentum_ic",
+    "mc_high_mom_win_rate",
+    "mc_low_mom_win_rate",
+    "mc_momentum_win_rate_premium",
+    "mc_high_mom_avg_return",
+    "mc_sample_count",
+    "mc_ic_consistency_score",
+    "mc_ic_positive_window_count",
+    "mc_ic_total_window_count",
+    "mc_ic_gate_passed",
+    "mc_ic_mean",
+    "ogp_trend_slope",
+    "ogp_trend_grade",
+    "ogp_trend_n",
+    "tf_trend_slope",
+    "tf_trend_grade",
+    "tf_trend_n",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -3574,6 +3623,162 @@ def compute_cross_window_signal_quality_trend(all_windows_summaries: list[dict])
 
 
 # ---------------------------------------------------------------------------
+# Round 89, Task 1 (Alpha): Cross-window open-gap persistence OLS trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_open_gap_persistence_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口开盘跳空延续性趋势：ogp_gap_win_rate_premium 的 OLS 时序斜率。
+
+    Tracks the OLS slope of ``ogp_gap_win_rate_premium`` across replay windows.
+    A positive slope indicates the gap-up → full-day-continuation premium is
+    widening over time; a negative slope signals deterioration.
+
+    Args:
+        all_windows_summaries: List of per-window surface dicts ordered
+            chronologically.  Each dict should carry ``ogp_gap_win_rate_premium``
+            produced by ``compute_open_gap_intraday_persistence``.
+
+    Returns:
+        Dict with keys ``valid``, ``ogp_trend_slope``, ``ogp_trend_grade``,
+        ``ogp_trend_n``.
+    """
+    EMPTY: dict = {"valid": False, "ogp_trend_slope": None, "ogp_trend_grade": None, "ogp_trend_n": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("ogp_gap_win_rate_premium")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    n: int = len(vals)
+    if n < 3:
+        return EMPTY
+    xs: list[float] = list(range(n))
+    sum_x: float = sum(xs)
+    sum_y: float = sum(vals)
+    sum_xy: float = sum(xs[i] * vals[i] for i in range(n))
+    sum_xx: float = sum(x * x for x in xs)
+    denom: float = n * sum_xx - sum_x * sum_x
+    if denom == 0:
+        return EMPTY
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom
+    grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
+    return {"valid": True, "ogp_trend_slope": round(slope, 8), "ogp_trend_grade": grade, "ogp_trend_n": n}
+
+
+# ---------------------------------------------------------------------------
+# Round 89, Task 2 (Beta): Cross-window tail flow quality OLS trend
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_tail_flow_quality_trend(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口尾盘资金质量趋势：tf_composite_win_rate_premium 的 OLS 时序斜率。
+
+    Tracks the OLS slope of ``tf_composite_win_rate_premium`` across replay
+    windows.  A positive slope means the tail-flow composite signal is gaining
+    predictive power over time; negative slope signals degradation.
+
+    Args:
+        all_windows_summaries: List of per-window surface dicts ordered
+            chronologically.  Each dict should carry
+            ``tf_composite_win_rate_premium`` produced by
+            ``compute_tail_flow_quality_score``.
+
+    Returns:
+        Dict with keys ``valid``, ``tf_trend_slope``, ``tf_trend_grade``,
+        ``tf_trend_n``.
+    """
+    EMPTY: dict = {"valid": False, "tf_trend_slope": None, "tf_trend_grade": None, "tf_trend_n": None}
+    vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("tf_composite_win_rate_premium")
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    n: int = len(vals)
+    if n < 3:
+        return EMPTY
+    xs: list[float] = list(range(n))
+    sum_x: float = sum(xs)
+    sum_y: float = sum(vals)
+    sum_xy: float = sum(xs[i] * vals[i] for i in range(n))
+    sum_xx: float = sum(x * x for x in xs)
+    denom: float = n * sum_xx - sum_x * sum_x
+    if denom == 0:
+        return EMPTY
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom
+    grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
+    return {"valid": True, "tf_trend_slope": round(slope, 8), "tf_trend_grade": grade, "tf_trend_n": n}
+
+
+# ---------------------------------------------------------------------------
+# Round 89, Task 3 (Gamma): Cross-window momentum IC direction consistency
+# ---------------------------------------------------------------------------
+
+
+def compute_cross_window_momentum_ic_consistency(all_windows_summaries: list[dict]) -> dict:
+    """跨窗口动量IC方向一致性：检验mc_momentum_ic在多个窗口的方向稳定性。
+
+    Counts how many of the available windows have a positive
+    ``mc_momentum_ic`` (Spearman IC of ``momentum_confirmation_score`` vs
+    T+1 return > 0).  A consistency rate ≥ 0.60 (i.e. ≥ 3 of 5 windows
+    positive) indicates the momentum factor provides a reliably directional
+    signal.
+
+    The ``mc_ic_consistency_score`` is a 0–1 metric equal to the fraction of
+    windows with positive IC; ``mc_ic_gate_passed`` is True when ≥ 3 of the
+    last 5 windows (or ≥ 60 % overall) are positive.
+
+    Args:
+        all_windows_summaries: List of per-window surface dicts ordered
+            chronologically.
+
+    Returns:
+        Dict with keys ``valid``, ``mc_ic_consistency_score``,
+        ``mc_ic_positive_window_count``, ``mc_ic_total_window_count``,
+        ``mc_ic_gate_passed``, ``mc_ic_mean``.
+    """
+    EMPTY: dict = {
+        "valid": False,
+        "mc_ic_consistency_score": None,
+        "mc_ic_positive_window_count": None,
+        "mc_ic_total_window_count": None,
+        "mc_ic_gate_passed": None,
+        "mc_ic_mean": None,
+    }
+    ic_vals: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("mc_momentum_ic")
+        if v is not None:
+            try:
+                ic_vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    n: int = len(ic_vals)
+    if n < 3:
+        return EMPTY
+    positive_count: int = sum(1 for v in ic_vals if v > 0)
+    consistency_score: float = round(positive_count / n, 8)
+    ic_mean: float = round(sum(ic_vals) / n, 8)
+    # Gate: ≥ 60 % of windows OR ≥ 3 of last 5 have positive IC
+    last5: list[float] = ic_vals[-5:]
+    last5_positive: int = sum(1 for v in last5 if v > 0)
+    gate_passed: bool = (consistency_score >= 0.60) or (len(last5) >= 5 and last5_positive >= 3)
+    return {
+        "valid": True,
+        "mc_ic_consistency_score": consistency_score,
+        "mc_ic_positive_window_count": positive_count,
+        "mc_ic_total_window_count": n,
+        "mc_ic_gate_passed": gate_passed,
+        "mc_ic_mean": ic_mean,
+    }
+
+
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Round 86, Task 3 (Gamma): Cross-window batch consistency trend
@@ -5485,6 +5690,12 @@ def _build_replay_evaluator(
         _rsp87: dict[str, Any] = compute_cross_window_regime_spread_trend(all_primary_surfaces)
         # Task 3 (Round 88, Gamma): cross-window signal quality OLS trend.
         _sqt88: dict[str, Any] = compute_cross_window_signal_quality_trend(all_primary_surfaces)
+        # Task 1 (Round 89, Alpha): cross-window open-gap persistence OLS trend.
+        _ogp89: dict[str, Any] = compute_cross_window_open_gap_persistence_trend(all_primary_surfaces)
+        # Task 2 (Round 89, Beta): cross-window tail flow quality OLS trend.
+        _tf89: dict[str, Any] = compute_cross_window_tail_flow_quality_trend(all_primary_surfaces)
+        # Task 3 (Round 89, Gamma): cross-window momentum IC direction consistency.
+        _mc89: dict[str, Any] = compute_cross_window_momentum_ic_consistency(all_primary_surfaces)
         # Task 3 (Round 51, Gamma): cross-window profit-factor trend.
         _pf_trend: dict[str, Any] = compute_cross_window_profit_factor_trend(all_primary_surfaces)
 
@@ -6245,6 +6456,20 @@ def _build_replay_evaluator(
                 "signal_quality_trend_slope": _sqt88.get("signal_quality_trend_slope"),
                 "signal_quality_trend_grade": _sqt88.get("signal_quality_trend_grade"),
                 "signal_quality_trend_n": _sqt88.get("signal_quality_trend_n"),
+                # Task 1 (Round 89, Alpha): cross-window open-gap persistence OLS trend.
+                "ogp_trend_slope": _ogp89.get("ogp_trend_slope"),
+                "ogp_trend_grade": _ogp89.get("ogp_trend_grade"),
+                "ogp_trend_n": _ogp89.get("ogp_trend_n"),
+                # Task 2 (Round 89, Beta): cross-window tail flow quality OLS trend.
+                "tf_trend_slope": _tf89.get("tf_trend_slope"),
+                "tf_trend_grade": _tf89.get("tf_trend_grade"),
+                "tf_trend_n": _tf89.get("tf_trend_n"),
+                # Task 3 (Round 89, Gamma): cross-window momentum IC direction consistency.
+                "mc_ic_consistency_score": _mc89.get("mc_ic_consistency_score"),
+                "mc_ic_positive_window_count": _mc89.get("mc_ic_positive_window_count"),
+                "mc_ic_total_window_count": _mc89.get("mc_ic_total_window_count"),
+                "mc_ic_gate_passed": _mc89.get("mc_ic_gate_passed"),
+                "mc_ic_mean": _mc89.get("mc_ic_mean"),
         }
 
     return evaluator
