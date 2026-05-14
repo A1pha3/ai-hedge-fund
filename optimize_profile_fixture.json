@@ -160,7 +160,10 @@
       "positive_ic_consistency_rate_delta": null,
       "veq_high_vs_low_lift_delta": null,
       "sr_high_vs_low_lift_delta": null,
-      "ev_trend_slope_delta": null
+      "ev_trend_slope_delta": null,
+      "consensus_lift_delta": null,
+      "top_decile_premium_delta": null,
+      "sortino_trend_slope_delta": null
     },
     "default": {
       "candidate": {
@@ -311,7 +314,10 @@
       "positive_ic_consistency_rate_delta": null,
       "veq_high_vs_low_lift_delta": null,
       "sr_high_vs_low_lift_delta": null,
-      "ev_trend_slope_delta": null
+      "ev_trend_slope_delta": null,
+      "consensus_lift_delta": null,
+      "top_decile_premium_delta": null,
+      "sortino_trend_slope_delta": null
     }
   },
   "rollout_recommendation": "hold",

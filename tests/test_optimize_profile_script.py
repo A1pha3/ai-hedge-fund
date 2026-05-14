@@ -11747,3 +11747,338 @@ def test_r48_ev_trend_in_comparison_metrics() -> None:
     """ev_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
     assert "ev_trend_slope" in COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 49, Task 1 (Alpha): compute_factor_consensus_analysis tests
+# ===========================================================================
+
+def _make_consensus_rows(n: int, high_factor_rows: int = 0) -> list[dict]:
+    """Build synthetic rows for consensus tests."""
+    import random
+    random.seed(42)
+    rows = []
+    core_factors = [
+        "close_strength", "volume_expansion_quality", "sector_resonance",
+        "rs_sector_rank", "t0_estimated_net_inflow_ratio",
+        "breakout_quality_score", "momentum_slope_20d",
+    ]
+    for i in range(n):
+        row: dict = {"next_day_return": 0.02 if i % 2 == 0 else -0.01}
+        if i < high_factor_rows:
+            # Give high values to all 7 factors (above P67)
+            for f in core_factors:
+                row[f] = 1.0
+        else:
+            for f in core_factors:
+                row[f] = round(random.uniform(0.0, 0.5), 4)
+        rows.append(row)
+    return rows
+
+
+def test_r49_consensus_empty_input() -> None:
+    """Empty input → graceful degradation."""
+    from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+    result = compute_factor_consensus_analysis([])
+    assert result["consensus_valid"] is False
+    assert result["consensus_lift"] is None
+
+
+def test_r49_consensus_fewer_than_6_rows() -> None:
+    """< 6 rows → degradation (consensus_valid=False)."""
+    from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+    rows = _make_consensus_rows(5)
+    result = compute_factor_consensus_analysis(rows)
+    assert result["consensus_valid"] is False
+    assert result["consensus_lift"] is None
+
+
+def test_r49_consensus_all_factors_missing() -> None:
+    """All factor fields absent → graceful degradation with consensus_count=0."""
+    from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+    rows = [{"next_day_return": 0.01} for _ in range(10)]
+    result = compute_factor_consensus_analysis(rows)
+    # Should not raise; mean_count should be 0.0
+    assert result.get("consensus_mean_count") == 0.0
+    assert result.get("consensus_high_pct") == 0.0
+
+
+def test_r49_consensus_normal_with_high_group() -> None:
+    """Normal scenario: rows with many strong factors → consensus_lift has value."""
+    from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+    # 10 high-consensus rows (all 7 factors high, win) + 10 low rows
+    high_rows = [
+        {
+            "close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0,
+            "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0,
+            "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0,
+            "next_day_return": 0.05,
+        }
+        for _ in range(10)
+    ]
+    low_rows = [
+        {
+            "close_strength": 0.0, "volume_expansion_quality": 0.0, "sector_resonance": 0.0,
+            "rs_sector_rank": 0.0, "t0_estimated_net_inflow_ratio": 0.0,
+            "breakout_quality_score": 0.0, "momentum_slope_20d": 0.0,
+            "next_day_return": -0.02,
+        }
+        for _ in range(10)
+    ]
+    result = compute_factor_consensus_analysis(high_rows + low_rows)
+    assert result["consensus_valid"] is True
+    assert result["consensus_lift"] is not None
+    assert result["high_consensus_win_rate"] is not None
+    assert result["low_consensus_win_rate"] is not None
+
+
+def test_r49_consensus_mean_count_in_range() -> None:
+    """consensus_mean_count must be in [0, 7]."""
+    from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+    rows = _make_consensus_rows(20, high_factor_rows=5)
+    result = compute_factor_consensus_analysis(rows)
+    if result["consensus_mean_count"] is not None:
+        assert 0.0 <= result["consensus_mean_count"] <= 7.0
+
+
+def test_r49_consensus_high_pct_in_range() -> None:
+    """consensus_high_pct must be in [0, 1]."""
+    from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+    rows = _make_consensus_rows(30, high_factor_rows=10)
+    result = compute_factor_consensus_analysis(rows)
+    if result["consensus_high_pct"] is not None:
+        assert 0.0 <= result["consensus_high_pct"] <= 1.0
+
+
+def test_r49_consensus_floor_registered() -> None:
+    """consensus_lift: 0.0 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "consensus_lift" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["consensus_lift"] == 0.0
+
+
+def test_r49_consensus_label_registered() -> None:
+    """consensus_lift must have a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "consensus_lift" in COMPARISON_METRIC_LABELS
+    assert "共识" in COMPARISON_METRIC_LABELS["consensus_lift"]
+
+
+def test_r49_consensus_optional_registered() -> None:
+    """consensus_lift must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "consensus_lift" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r49_consensus_in_comparison_metrics() -> None:
+    """consensus_lift must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "consensus_lift" in COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 49, Task 2 (Beta): compute_score_decile_analysis tests
+# ===========================================================================
+
+def _make_decile_rows(n: int, monotone: bool = False) -> list[dict]:
+    """Build synthetic rows for decile tests."""
+    rows = []
+    for i in range(n):
+        score = i / n  # linearly increasing score
+        if monotone:
+            # Higher score → higher win probability
+            win = 1 if i > n * 0.5 else 0
+        else:
+            win = 1 if i % 2 == 0 else 0
+        rows.append({"score": score, "next_day_return": 0.02 if win else -0.01})
+    return rows
+
+
+def test_r49_decile_empty_input() -> None:
+    """Empty input → degradation."""
+    from scripts.btst_analysis_utils import compute_score_decile_analysis
+    result = compute_score_decile_analysis([])
+    assert result["decile_valid"] is False
+    assert result["top_decile_premium"] is None
+
+
+def test_r49_decile_fewer_than_20_rows() -> None:
+    """< 20 rows → degradation."""
+    from scripts.btst_analysis_utils import compute_score_decile_analysis
+    rows = _make_decile_rows(15)
+    result = compute_score_decile_analysis(rows)
+    assert result["decile_valid"] is False
+    assert result["top_decile_premium"] is None
+
+
+def test_r49_decile_normal_has_all_fields() -> None:
+    """≥ 20 rows → d1..d10 win rates and top_decile_premium present."""
+    from scripts.btst_analysis_utils import compute_score_decile_analysis
+    rows = _make_decile_rows(100)
+    result = compute_score_decile_analysis(rows)
+    assert result["decile_valid"] is True
+    for i in range(1, 11):
+        assert f"d{i}_win_rate" in result
+    assert result["top_decile_premium"] is not None
+
+
+def test_r49_decile_monotone_count_in_range() -> None:
+    """decile_monotone_count must be in [0, 9]."""
+    from scripts.btst_analysis_utils import compute_score_decile_analysis
+    rows = _make_decile_rows(100)
+    result = compute_score_decile_analysis(rows)
+    assert result["decile_valid"] is True
+    assert 0 <= result["decile_monotone_count"] <= 9
+
+
+def test_r49_decile_top_half_lift_computed() -> None:
+    """top_half_vs_bottom_half_lift should be numeric with monotone data."""
+    from scripts.btst_analysis_utils import compute_score_decile_analysis
+    rows = _make_decile_rows(100, monotone=True)
+    result = compute_score_decile_analysis(rows)
+    assert result["decile_valid"] is True
+    assert result["top_half_vs_bottom_half_lift"] is not None
+    # With monotone data (top half wins), lift should be positive
+    assert result["top_half_vs_bottom_half_lift"] > 0
+
+
+def test_r49_decile_score_priority() -> None:
+    """runner_composite_score takes priority over composite_score and score."""
+    from scripts.btst_analysis_utils import compute_score_decile_analysis
+    rows = []
+    for i in range(30):
+        rows.append({
+            "runner_composite_score": i / 30,
+            "composite_score": 0.5,  # same for all — should be ignored
+            "score": 0.9,            # same for all — should be ignored
+            "next_day_return": 0.02 if i > 15 else -0.01,
+        })
+    result = compute_score_decile_analysis(rows)
+    assert result["decile_valid"] is True
+
+
+def test_r49_decile_floor_registered() -> None:
+    """top_decile_premium: 0.0 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "top_decile_premium" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["top_decile_premium"] == 0.0
+
+
+def test_r49_decile_label_registered() -> None:
+    """top_decile_premium must have a Chinese label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "top_decile_premium" in COMPARISON_METRIC_LABELS
+    assert "十分位" in COMPARISON_METRIC_LABELS["top_decile_premium"]
+
+
+def test_r49_decile_optional_registered() -> None:
+    """top_decile_premium must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "top_decile_premium" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r49_decile_in_comparison_metrics() -> None:
+    """top_decile_premium must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "top_decile_premium" in COMPARISON_METRICS
+
+
+# ===========================================================================
+# Round 49, Task 3 (Gamma): compute_cross_window_sortino_trend tests
+# ===========================================================================
+
+def test_r49_sortino_trend_empty_list() -> None:
+    """Empty list → degradation."""
+    from scripts.optimize_profile import compute_cross_window_sortino_trend
+    result = compute_cross_window_sortino_trend([])
+    assert result["sortino_trend_valid"] is False
+    assert result["sortino_trend_slope"] is None
+
+
+def test_r49_sortino_trend_fewer_than_3_windows() -> None:
+    """< 3 valid windows → degradation."""
+    from scripts.optimize_profile import compute_cross_window_sortino_trend
+    summaries = [{"sortino_ratio": 1.0}, {"other_key": 0.5}]
+    result = compute_cross_window_sortino_trend(summaries)
+    assert result["sortino_trend_valid"] is False
+    assert result["sortino_trend_slope"] is None
+
+
+def test_r49_sortino_trend_rising_slope_positive() -> None:
+    """Rising Sortino series → slope > 0."""
+    from scripts.optimize_profile import compute_cross_window_sortino_trend
+    summaries = [{"sortino_ratio": float(i)} for i in range(5)]
+    result = compute_cross_window_sortino_trend(summaries)
+    assert result["sortino_trend_valid"] is True
+    assert result["sortino_trend_slope"] is not None
+    assert result["sortino_trend_slope"] > 0
+
+
+def test_r49_sortino_trend_grade_a_or_b_for_rising() -> None:
+    """Strongly rising series → grade A or B."""
+    from scripts.optimize_profile import compute_cross_window_sortino_trend
+    summaries = [{"sortino_ratio": float(i) * 0.5} for i in range(10)]
+    result = compute_cross_window_sortino_trend(summaries)
+    assert result["sortino_trend_grade"] in ("A", "B")
+
+
+def test_r49_sortino_trend_falling_slope_negative() -> None:
+    """Declining Sortino series → slope < 0."""
+    from scripts.optimize_profile import compute_cross_window_sortino_trend
+    summaries = [{"sortino_ratio": float(5 - i)} for i in range(5)]
+    result = compute_cross_window_sortino_trend(summaries)
+    assert result["sortino_trend_valid"] is True
+    assert result["sortino_trend_slope"] < 0
+
+
+def test_r49_sortino_trend_grade_d_for_steep_decline() -> None:
+    """Slope ≤ -0.10 → grade D."""
+    from scripts.optimize_profile import compute_cross_window_sortino_trend
+    # Make a series where OLS slope is clearly below -0.10
+    summaries = [{"sortino_ratio": 2.0 - i * 0.5} for i in range(6)]
+    result = compute_cross_window_sortino_trend(summaries)
+    assert result["sortino_trend_valid"] is True
+    if result["sortino_trend_slope"] is not None and result["sortino_trend_slope"] <= -0.10:
+        assert result["sortino_trend_grade"] == "D"
+
+
+def test_r49_sortino_positive_windows_pct_all_positive() -> None:
+    """All positive sortino values → sortino_positive_windows_pct == 1.0."""
+    from scripts.optimize_profile import compute_cross_window_sortino_trend
+    summaries = [{"sortino_ratio": 1.0 + i * 0.1} for i in range(5)]
+    result = compute_cross_window_sortino_trend(summaries)
+    assert result["sortino_positive_windows_pct"] == 1.0
+
+
+def test_r49_sortino_positive_windows_pct_all_negative() -> None:
+    """All negative sortino values → sortino_positive_windows_pct == 0.0."""
+    from scripts.optimize_profile import compute_cross_window_sortino_trend
+    summaries = [{"sortino_ratio": -1.0 - i * 0.1} for i in range(5)]
+    result = compute_cross_window_sortino_trend(summaries)
+    assert result["sortino_positive_windows_pct"] == 0.0
+
+
+def test_r49_sortino_trend_floor_registered() -> None:
+    """sortino_trend_slope: -0.10 must be in BTST_QUALITY_FLOORS."""
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+    assert "sortino_trend_slope" in BTST_QUALITY_FLOORS
+    assert BTST_QUALITY_FLOORS["sortino_trend_slope"] == -0.10
+
+
+def test_r49_sortino_trend_label_registered() -> None:
+    """sortino_trend_slope must have a label."""
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+    assert "sortino_trend_slope" in COMPARISON_METRIC_LABELS
+    assert "Sortino" in COMPARISON_METRIC_LABELS["sortino_trend_slope"]
+
+
+def test_r49_sortino_trend_optional_registered() -> None:
+    """sortino_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
+    from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+    assert "sortino_trend_slope" in OPTIONAL_COMPARISON_METRICS
+
+
+def test_r49_sortino_trend_in_comparison_metrics() -> None:
+    """sortino_trend_slope must be in COMPARISON_METRICS."""
+    from scripts.optimize_profile import COMPARISON_METRICS
+    assert "sortino_trend_slope" in COMPARISON_METRICS

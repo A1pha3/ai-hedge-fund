@@ -340,6 +340,12 @@ COMPARISON_METRICS: tuple[str, ...] = (
     "sr_high_vs_low_lift",
     # Task 3 (Round 48, Gamma): cross-window expected-value trend slope.
     "ev_trend_slope",
+    # Task 1 (Round 49, Alpha): multi-factor consensus win-rate lift.
+    "consensus_lift",
+    # Task 2 (Round 49, Beta): score decile top-vs-bottom premium.
+    "top_decile_premium",
+    # Task 3 (Round 49, Gamma): cross-window Sortino trend slope.
+    "sortino_trend_slope",
 )
 COMPARISON_METRIC_LABELS: dict[str, str] = {
     "next_close_positive_rate": "Close+",
@@ -568,6 +574,12 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "sr_high_vs_low_lift": "板块共振高低胜率差",
     # Task 3 (Round 48, Gamma): cross-window expected-value trend slope
     "ev_trend_slope": "期望收益跨窗趋势斜率",
+    # Task 1 (Round 49, Alpha): multi-factor consensus win-rate lift
+    "consensus_lift": "多因子共识胜率溢价",
+    # Task 2 (Round 49, Beta): score decile top-vs-bottom premium
+    "top_decile_premium": "评分十分位溢价",
+    # Task 3 (Round 49, Gamma): cross-window Sortino trend slope
+    "sortino_trend_slope": "Sortino跨窗趋势斜率",
 }
 LOWER_IS_BETTER_COMPARISON_METRICS = {
     "crowding_risk_raw_100",
@@ -846,6 +858,12 @@ OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
     "sr_high_vs_low_lift",
     # Task 3 (Round 48, Gamma): EV trend slope — optional; pre-Round-48 outputs omit it.
     "ev_trend_slope",
+    # Task 1 (Round 49, Alpha): multi-factor consensus lift — optional; pre-Round-49 outputs omit it.
+    "consensus_lift",
+    # Task 2 (Round 49, Beta): score decile top premium — optional; pre-Round-49 outputs omit it.
+    "top_decile_premium",
+    # Task 3 (Round 49, Gamma): Sortino trend slope — optional; pre-Round-49 outputs omit it.
+    "sortino_trend_slope",
 })
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
@@ -2233,6 +2251,81 @@ def compute_cross_window_ev_trend(all_windows_summaries: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 49, Task 3 (Gamma): Cross-Window Sortino Trend
+# ---------------------------------------------------------------------------
+def compute_cross_window_sortino_trend(all_windows_summaries: list[dict]) -> dict:
+    """Compute OLS trend slope of ``sortino_ratio`` across replay windows.
+
+    A declining Sortino trend (negative slope) indicates the strategy's
+    risk-adjusted returns are deteriorating over time.
+
+    Args:
+        all_windows_summaries: List of per-window surface summary dicts, each
+            expected to contain a ``sortino_ratio`` key.
+
+    Returns:
+        Dict with keys: ``sortino_trend_slope``, ``sortino_mean``, ``sortino_std``,
+        ``sortino_trend_grade`` (A/B/C/D), ``sortino_positive_windows_pct``,
+        ``sortino_trend_valid``.
+    """
+    _null: dict = {
+        "sortino_trend_slope": None,
+        "sortino_mean": None,
+        "sortino_std": None,
+        "sortino_trend_grade": None,
+        "sortino_positive_windows_pct": None,
+        "sortino_trend_valid": False,
+    }
+    if not all_windows_summaries:
+        return _null
+
+    sortino_series: list[float] = []
+    for s in all_windows_summaries:
+        v = s.get("sortino_ratio")
+        if v is not None:
+            try:
+                sortino_series.append(float(v))
+            except (TypeError, ValueError):
+                pass
+
+    if len(sortino_series) < 3:
+        return _null
+
+    n = len(sortino_series)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(sortino_series)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, sortino_series))
+    sum_x2 = sum(xi * xi for xi in x)
+    denom = n * sum_x2 - sum_x * sum_x
+    slope: float = (n * sum_xy - sum_x * sum_y) / denom if denom != 0 else 0.0
+
+    mean_val = sum_y / n
+    variance = sum((v - mean_val) ** 2 for v in sortino_series) / (n - 1) if n > 1 else 0.0
+    std_val = variance ** 0.5
+
+    if slope > 0.10:
+        grade = "A"
+    elif slope > 0:
+        grade = "B"
+    elif slope > -0.10:
+        grade = "C"
+    else:
+        grade = "D"
+
+    positive_pct = sum(1 for v in sortino_series if v > 0) / n
+
+    return {
+        "sortino_trend_slope": round(slope, 8),
+        "sortino_mean": round(mean_val, 6),
+        "sortino_std": round(std_val, 6),
+        "sortino_trend_grade": grade,
+        "sortino_positive_windows_pct": round(positive_pct, 6),
+        "sortino_trend_valid": True,
+    }
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -2866,6 +2959,8 @@ def _build_replay_evaluator(
         _fic: dict[str, Any] = compute_factor_ic_consistency(all_primary_surfaces)
         # Task 3 (Round 48, Gamma): cross-window expected-value trend.
         _ev_trend: dict[str, Any] = compute_cross_window_ev_trend(all_primary_surfaces)
+        # Task 3 (Round 49, Gamma): cross-window Sortino trend.
+        _sortino_trend: dict[str, Any] = compute_cross_window_sortino_trend(all_primary_surfaces)
 
         return {
             "sharpe_ratio": avg_sharpe,
@@ -3110,6 +3205,13 @@ def _build_replay_evaluator(
             "ev_min": _ev_trend.get("ev_min"),
             "ev_max": _ev_trend.get("ev_max"),
             "ev_trend_grade": _ev_trend.get("ev_trend_grade"),
+            # Task 3 (Round 49, Gamma): cross-window Sortino trend.
+            "sortino_trend_slope": _sortino_trend.get("sortino_trend_slope"),
+            "sortino_mean": _sortino_trend.get("sortino_mean"),
+            "sortino_std": _sortino_trend.get("sortino_std"),
+            "sortino_trend_grade": _sortino_trend.get("sortino_trend_grade"),
+            "sortino_positive_windows_pct": _sortino_trend.get("sortino_positive_windows_pct"),
+            "sortino_trend_valid": _sortino_trend.get("sortino_trend_valid"),
         }
 
     return evaluator

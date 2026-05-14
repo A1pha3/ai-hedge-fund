@@ -4273,6 +4273,28 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     _surface_result["sr_monotone"] = _srs.get("sr_monotone")
     _surface_result["sr_effective"] = _srs.get("sr_effective")
 
+    # Round 49, Task 1 (Alpha): Multi-Factor Consensus Analysis.
+    # ------------------------------------------------------------
+    _fca: dict[str, Any] = compute_factor_consensus_analysis(next_day_rows)
+    _surface_result["consensus_valid"] = _fca.get("consensus_valid")
+    _surface_result["high_consensus_win_rate"] = _fca.get("high_consensus_win_rate")
+    _surface_result["low_consensus_win_rate"] = _fca.get("low_consensus_win_rate")
+    _surface_result["consensus_lift"] = _fca.get("consensus_lift")
+    _surface_result["consensus_mean_count"] = _fca.get("consensus_mean_count")
+    _surface_result["consensus_high_pct"] = _fca.get("consensus_high_pct")
+
+    # Round 49, Task 2 (Beta): Score Decile Analysis.
+    # ------------------------------------------------
+    _sda: dict[str, Any] = compute_score_decile_analysis(next_day_rows)
+    _surface_result["decile_valid"] = _sda.get("decile_valid")
+    for _di in range(1, 11):
+        _surface_result[f"d{_di}_win_rate"] = _sda.get(f"d{_di}_win_rate")
+    _surface_result["top_decile_win_rate"] = _sda.get("top_decile_win_rate")
+    _surface_result["bottom_decile_win_rate"] = _sda.get("bottom_decile_win_rate")
+    _surface_result["top_decile_premium"] = _sda.get("top_decile_premium")
+    _surface_result["decile_monotone_count"] = _sda.get("decile_monotone_count")
+    _surface_result["top_half_vs_bottom_half_lift"] = _sda.get("top_half_vs_bottom_half_lift")
+
     return _surface_result
 
 
@@ -9315,3 +9337,220 @@ def compute_sector_resonance_stratification(rows: list[dict]) -> dict:
         "sr_monotone": monotone,
         "sr_effective": effective,
     }
+
+
+# ---------------------------------------------------------------------------
+# Round 49, Task 1 (Alpha): Multi-Factor Consensus Analysis
+# ---------------------------------------------------------------------------
+_CORE_FACTORS_R49: list[str] = [
+    "close_strength",
+    "volume_expansion_quality",
+    "sector_resonance",
+    "rs_sector_rank",
+    "t0_estimated_net_inflow_ratio",
+    "breakout_quality_score",
+    "momentum_slope_20d",
+]
+
+
+def compute_factor_consensus_analysis(rows: list[dict]) -> dict:
+    """Compute multi-factor consensus win-rate analysis.
+
+    For each row, counts how many of the 7 core factors meet or exceed their
+    P67 threshold computed from the current window.  Groups rows into high-consensus
+    (>=5 factors strong) and low-consensus (<=2 factors strong) and computes the
+    win-rate lift between the two groups.
+
+    Args:
+        rows: List of per-candidate dicts with factor values and ``next_day_return``.
+
+    Returns:
+        Dict with keys: ``consensus_valid``, ``high_consensus_win_rate``,
+        ``low_consensus_win_rate``, ``consensus_lift``, ``consensus_mean_count``,
+        ``consensus_high_pct``.
+    """
+    _null: dict = {
+        "consensus_valid": False,
+        "high_consensus_win_rate": None,
+        "low_consensus_win_rate": None,
+        "consensus_lift": None,
+        "consensus_mean_count": None,
+        "consensus_high_pct": None,
+    }
+    if not rows or len(rows) < 6:
+        return _null
+
+    # Determine which factors are present (have at least one non-None value)
+    present_factors = [f for f in _CORE_FACTORS_R49 if any(row.get(f) is not None for row in rows)]
+
+    # Compute P67 threshold for each present factor
+    factor_p67: dict[str, float] = {}
+    for f in present_factors:
+        vals: list[float] = []
+        for row in rows:
+            v = row.get(f)
+            if v is not None:
+                try:
+                    vals.append(float(v))
+                except (TypeError, ValueError):
+                    pass
+        if vals:
+            vals_sorted = sorted(vals)
+            n = len(vals_sorted)
+            idx = min(int(n * 2 / 3), n - 1)
+            factor_p67[f] = vals_sorted[idx]
+
+    # Compute consensus_count per row
+    consensus_counts: list[int] = []
+    for row in rows:
+        count = 0
+        for f, p67 in factor_p67.items():
+            v = row.get(f)
+            if v is not None:
+                try:
+                    if float(v) >= p67:
+                        count += 1
+                except (TypeError, ValueError):
+                    pass
+        consensus_counts.append(count)
+
+    n_rows = len(consensus_counts)
+    mean_count = round(sum(consensus_counts) / n_rows, 6) if n_rows > 0 else 0.0
+    high_pct = round(sum(1 for c in consensus_counts if c >= 5) / n_rows, 6) if n_rows > 0 else 0.0
+
+    # Group by consensus_count and compute win rates
+    high_rets: list[float] = []
+    low_rets: list[float] = []
+    for count, row in zip(consensus_counts, rows):
+        ret = row.get("next_day_return")
+        if ret is None:
+            continue
+        try:
+            ret_f = float(ret)
+        except (TypeError, ValueError):
+            continue
+        if count >= 5:
+            high_rets.append(ret_f)
+        elif count <= 2:
+            low_rets.append(ret_f)
+
+    def _wr(rets: list[float]) -> "float | None":
+        if len(rets) < 3:
+            return None
+        return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
+    high_wr = _wr(high_rets)
+    low_wr = _wr(low_rets)
+
+    lift: "float | None" = None
+    if high_wr is not None and low_wr is not None:
+        lift = round(high_wr - low_wr, 6)
+
+    return {
+        "consensus_valid": True,
+        "high_consensus_win_rate": high_wr,
+        "low_consensus_win_rate": low_wr,
+        "consensus_lift": lift,
+        "consensus_mean_count": mean_count,
+        "consensus_high_pct": high_pct,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round 49, Task 2 (Beta): Score Decile Analysis
+# ---------------------------------------------------------------------------
+def compute_score_decile_analysis(rows: list[dict]) -> dict:
+    """Compute score decile win-rate analysis (10 buckets D1=lowest .. D10=highest).
+
+    Sorts candidates by their composite score (runner_composite_score >
+    composite_score > score), splits into 10 decile buckets, and computes
+    win-rate per bucket.
+
+    Args:
+        rows: List of per-candidate dicts with a score field and ``next_day_return``.
+
+    Returns:
+        Dict with ``d1_win_rate`` .. ``d10_win_rate``, ``top_decile_win_rate``,
+        ``bottom_decile_win_rate``, ``top_decile_premium``, ``decile_monotone_count``,
+        ``top_half_vs_bottom_half_lift``, ``decile_valid``.
+    """
+    _null: dict = {**{f"d{i}_win_rate": None for i in range(1, 11)}, **{
+        "top_decile_win_rate": None,
+        "bottom_decile_win_rate": None,
+        "top_decile_premium": None,
+        "decile_monotone_count": None,
+        "top_half_vs_bottom_half_lift": None,
+        "decile_valid": False,
+    }}
+    if not rows or len(rows) < 20:
+        return _null
+
+    # Extract (score, next_day_return) pairs
+    scored: list[tuple[float, "float | None"]] = []
+    for row in rows:
+        s = row.get("runner_composite_score")
+        if s is None:
+            s = row.get("composite_score")
+        if s is None:
+            s = row.get("score")
+        if s is None:
+            continue
+        try:
+            s_f = float(s)
+        except (TypeError, ValueError):
+            continue
+        ret = row.get("next_day_return")
+        ret_f: "float | None" = None
+        if ret is not None:
+            try:
+                ret_f = float(ret)
+            except (TypeError, ValueError):
+                pass
+        scored.append((s_f, ret_f))
+
+    if len(scored) < 20:
+        return _null
+
+    scored.sort(key=lambda x: x[0])
+    n = len(scored)
+
+    # Build 10 decile buckets
+    decile_win_rates: list["float | None"] = []
+    for i in range(10):
+        start = (i * n) // 10
+        end = ((i + 1) * n) // 10
+        bucket = scored[start:end]
+        rets = [r for _, r in bucket if r is not None]
+        if len(rets) >= 2:
+            decile_win_rates.append(round(sum(1 for r in rets if r > 0) / len(rets), 6))
+        else:
+            decile_win_rates.append(None)
+
+    result: dict = {"decile_valid": True}
+    for i, wr in enumerate(decile_win_rates):
+        result[f"d{i + 1}_win_rate"] = wr
+
+    d10 = decile_win_rates[9]
+    d1 = decile_win_rates[0]
+    result["top_decile_win_rate"] = d10
+    result["bottom_decile_win_rate"] = d1
+    result["top_decile_premium"] = round(d10 - d1, 6) if (d10 is not None and d1 is not None) else None
+
+    # Monotone count: number of adjacent pairs where D[k] < D[k+1]
+    monotone_count = 0
+    for i in range(9):
+        a = decile_win_rates[i]
+        b = decile_win_rates[i + 1]
+        if a is not None and b is not None and a < b:
+            monotone_count += 1
+    result["decile_monotone_count"] = monotone_count
+
+    # Top half (D6-D10) vs bottom half (D1-D5) lift
+    top_half = [w for w in decile_win_rates[5:] if w is not None]
+    bottom_half = [w for w in decile_win_rates[:5] if w is not None]
+    if top_half and bottom_half:
+        result["top_half_vs_bottom_half_lift"] = round(sum(top_half) / len(top_half) - sum(bottom_half) / len(bottom_half), 6)
+    else:
+        result["top_half_vs_bottom_half_lift"] = None
+
+    return result

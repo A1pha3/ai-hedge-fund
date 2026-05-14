@@ -343,6 +343,18 @@ BTST_QUALITY_FLOORS: dict[str, float] = {
     # ev_trend_slope = OLS slope of expected_value_per_trade across replay windows.
     # Floor ≥ -0.05 prevents strategies whose EV is in severe decline from passing quality gates.
     "ev_trend_slope": -0.05,
+    # Task 1 (Round 49, Alpha): multi-factor consensus win-rate lift floor.
+    # consensus_lift = win_rate(high consensus) − win_rate(low consensus).
+    # Floor ≥ 0.0 requires high-consensus candidates to be at least as good as low-consensus.
+    "consensus_lift": 0.0,
+    # Task 2 (Round 49, Beta): score decile top-vs-bottom premium floor.
+    # top_decile_premium = win_rate(D10) − win_rate(D1).
+    # Floor ≥ 0.0 requires the top decile to outperform the bottom decile.
+    "top_decile_premium": 0.0,
+    # Task 3 (Round 49, Gamma): cross-window Sortino trend slope floor.
+    # sortino_trend_slope = OLS slope of sortino_ratio across replay windows.
+    # Floor ≥ -0.10 prevents strategies with rapidly deteriorating Sortino from passing.
+    "sortino_trend_slope": -0.10,
 }
 
 # ---------------------------------------------------------------------------
