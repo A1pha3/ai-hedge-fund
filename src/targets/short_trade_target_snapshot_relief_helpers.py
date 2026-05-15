@@ -1050,6 +1050,8 @@ def _build_snapshot_score_payload(
         volume_support_floor=float(getattr(profile, "trend_continuation_strength_volume_support_floor", 0.0) or 0.0),
         weak_close_penalty=float(getattr(profile, "trend_continuation_strength_weak_close_penalty", 0.0) or 0.0),
     )
+    trend_continuation_strength_positive_contribution = round(max(trend_continuation_strength_adjustment, 0.0), 4)
+    trend_continuation_strength_negative_contribution = round(abs(min(trend_continuation_strength_adjustment, 0.0)), 4)
     weighted_positive_contributions = {
         "breakout_freshness": round(positive_score_weights["breakout_freshness"] * threshold_state.breakout_freshness, 4),
         "trend_acceleration": round(positive_score_weights["trend_acceleration"] * threshold_state.trend_acceleration, 4),
@@ -1066,7 +1068,7 @@ def _build_snapshot_score_payload(
         "short_term_reversal": round(positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal, 4),
         "intraday_strength": round(positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength, 4),
         "reversal_2d": round(positive_score_weights.get("reversal_2d", 0.0) * state.reversal_2d, 4),
-        "trend_continuation_strength": round(trend_continuation_strength_adjustment, 4),
+        "trend_continuation_strength": trend_continuation_strength_positive_contribution,
     }
     weighted_negative_contributions = {
         "stale_trend_repair_penalty": round(score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty, 4),
@@ -1080,6 +1082,8 @@ def _build_snapshot_score_payload(
         "watchlist_zero_catalyst_flat_trend_penalty": round(watchlist_penalty_state.effective_watchlist_zero_catalyst_flat_trend_penalty, 4),
         "watchlist_filter_diagnostics_flat_trend_penalty": round(watchlist_penalty_state.effective_watchlist_filter_diagnostics_flat_trend_penalty, 4),
     }
+    if trend_continuation_strength_negative_contribution > 0.0:
+        weighted_negative_contributions["trend_continuation_strength_penalty"] = trend_continuation_strength_negative_contribution
     total_positive_contribution = round(sum(weighted_positive_contributions.values()), 4)
     total_negative_contribution = round(sum(weighted_negative_contributions.values()), 4)
     # Overbought momentum penalty: penalize extreme momentum (overbought) stocks

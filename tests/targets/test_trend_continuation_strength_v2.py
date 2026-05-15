@@ -171,7 +171,37 @@ def test_trend_continuation_strength_v2_surfaces_adjustment_in_score_payload_and
 
     assert expected_adjustment > 0.0
     assert profiled_result.weighted_positive_contributions["trend_continuation_strength"] == pytest.approx(expected_adjustment)
+    assert "trend_continuation_strength_penalty" not in profiled_result.weighted_negative_contributions
     assert profiled_result.metrics_payload["trend_continuation_strength_adjustment"] == pytest.approx(expected_adjustment)
     assert profiled_result.metrics_payload["weighted_positive_contributions"]["trend_continuation_strength"] == pytest.approx(expected_adjustment)
+    assert profiled_result.metrics_payload["total_positive_contribution"] == pytest.approx(sum(profiled_result.weighted_positive_contributions.values()))
+    assert profiled_result.metrics_payload["total_negative_contribution"] == pytest.approx(sum(profiled_result.weighted_negative_contributions.values()))
     assert profiled_result.metrics_payload["thresholds"]["trend_continuation_strength_weight"] == pytest.approx(profile.trend_continuation_strength_weight)
     assert profiled_result.score_target - baseline_result.score_target == pytest.approx(expected_adjustment)
+
+
+def test_trend_continuation_strength_v2_routes_negative_adjustment_into_penalty_bucket(
+    evaluate_short_trade_rejected_target_with_execution_model_shim: Callable[..., Any],
+) -> None:
+    entry = _make_trend_continuation_strength_entry()
+    profile_overrides = {
+        "trend_continuation_strength_close_support_floor": 1.0,
+        "trend_continuation_strength_weak_close_penalty": 0.5,
+    }
+
+    profiled_result = evaluate_short_trade_rejected_target_with_execution_model_shim(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="trend_continuation_strength_v2",
+        profile_overrides=profile_overrides,
+    )
+
+    expected_adjustment = profiled_result.metrics_payload["trend_continuation_strength_adjustment"]
+
+    assert expected_adjustment < 0.0
+    assert profiled_result.weighted_positive_contributions["trend_continuation_strength"] == pytest.approx(0.0)
+    assert profiled_result.weighted_negative_contributions["trend_continuation_strength_penalty"] == pytest.approx(abs(expected_adjustment))
+    assert profiled_result.metrics_payload["weighted_positive_contributions"]["trend_continuation_strength"] == pytest.approx(0.0)
+    assert profiled_result.metrics_payload["weighted_negative_contributions"]["trend_continuation_strength_penalty"] == pytest.approx(abs(expected_adjustment))
+    assert profiled_result.metrics_payload["total_positive_contribution"] == pytest.approx(sum(profiled_result.weighted_positive_contributions.values()))
+    assert profiled_result.metrics_payload["total_negative_contribution"] == pytest.approx(sum(profiled_result.weighted_negative_contributions.values()))
