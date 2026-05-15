@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from types import ModuleType
+from typing import Any, Callable, Iterator
 
 import pytest
 
@@ -67,6 +68,29 @@ def _make_trend_continuation_strength_entry() -> dict:
     }
 
 
+@pytest.fixture()
+def evaluate_short_trade_rejected_target_with_execution_model_shim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Callable[..., Any]]:
+    execution_models_module = ModuleType("src.execution.models")
+    execution_models_module.LayerCResult = type("LayerCResult", (), {})
+    execution_module = ModuleType("src.execution")
+    execution_module.models = execution_models_module
+
+    monkeypatch.setitem(sys.modules, "src.execution", execution_module)
+    monkeypatch.setitem(sys.modules, "src.execution.models", execution_models_module)
+
+    original_short_trade_target = sys.modules.pop("src.targets.short_trade_target", None)
+    try:
+        from src.targets.short_trade_target import evaluate_short_trade_rejected_target
+
+        yield evaluate_short_trade_rejected_target
+    finally:
+        sys.modules.pop("src.targets.short_trade_target", None)
+        if original_short_trade_target is not None:
+            sys.modules["src.targets.short_trade_target"] = original_short_trade_target
+
+
 def test_trend_continuation_strength_rewards_supported_continuation() -> None:
     adjustment = compute_trend_continuation_strength_adjustment(
         trend_continuation=0.82,
@@ -117,25 +141,19 @@ def test_trend_continuation_strength_v2_profile_sets_new_factor_knobs() -> None:
     assert actual_overrides == expected_overrides
 
 
-def test_trend_continuation_strength_v2_surfaces_adjustment_in_score_payload_and_metrics() -> None:
-    execution_models_module = ModuleType("src.execution.models")
-    execution_models_module.LayerCResult = type("LayerCResult", (), {})
-    execution_module = ModuleType("src.execution")
-    execution_module.models = execution_models_module
-    sys.modules.setdefault("src.execution", execution_module)
-    sys.modules["src.execution.models"] = execution_models_module
-    from src.targets.short_trade_target import evaluate_short_trade_rejected_target
-
+def test_trend_continuation_strength_v2_surfaces_adjustment_in_score_payload_and_metrics(
+    evaluate_short_trade_rejected_target_with_execution_model_shim: Callable[..., Any],
+) -> None:
     entry = _make_trend_continuation_strength_entry()
     profile = build_short_trade_target_profile("trend_continuation_strength_v2")
 
-    baseline_result = evaluate_short_trade_rejected_target(
+    baseline_result = evaluate_short_trade_rejected_target_with_execution_model_shim(
         trade_date="20260328",
         entry=entry,
         profile_name="trend_continuation_strength_v2",
         profile_overrides={"trend_continuation_strength_weight": 0.0},
     )
-    profiled_result = evaluate_short_trade_rejected_target(
+    profiled_result = evaluate_short_trade_rejected_target_with_execution_model_shim(
         trade_date="20260328",
         entry=entry,
         profile_name="trend_continuation_strength_v2",
