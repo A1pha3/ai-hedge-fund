@@ -1379,6 +1379,20 @@ SHORT_TRADE_TARGET_PROFILES["trend_corrected_v1"] = ShortTradeTargetProfile(
     overhead_conflict_penalty_conflicts=frozenset({"b_positive_c_strong_bearish", "b_strong_buy_c_negative"}),
 )
 
+SHORT_TRADE_TARGET_PROFILES["trend_continuation_strength_v2"] = replace(
+    SHORT_TRADE_TARGET_PROFILES["trend_corrected_v1"],
+    name="trend_continuation_strength_v2",
+    trend_continuation_weight=0.18,
+    trend_continuation_2d_weight=0.10,
+    close_strength_weight=0.12,
+    volume_expansion_quality_weight=0.18,
+    selected_close_retention_penalty_weight=0.06,
+    trend_continuation_strength_weight=0.12,
+    trend_continuation_strength_close_support_floor=0.55,
+    trend_continuation_strength_volume_support_floor=0.45,
+    trend_continuation_strength_weak_close_penalty=0.08,
+)
+
 # ============================================================
 # Round 89 Task 2: trend_continuation 权重网格变体
 # 基于 trend_corrected_v1，系统搜索最优 tc_w × tc2d_w 组合

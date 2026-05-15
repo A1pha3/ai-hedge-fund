@@ -68,6 +68,10 @@ class ShortTradeTargetProfile:
     # Round 89: 翻转方向因子（IC=-0.34的反转因子取反，获得+0.34的趋势延续因子）
     trend_continuation_weight: float = 0.0
     trend_continuation_2d_weight: float = 0.0
+    trend_continuation_strength_weight: float = 0.0
+    trend_continuation_strength_close_support_floor: float = 0.0
+    trend_continuation_strength_volume_support_floor: float = 0.0
+    trend_continuation_strength_weak_close_penalty: float = 0.0
     stale_penalty_block_threshold: float = 0.72
     overhead_penalty_block_threshold: float = 0.68
     extension_penalty_block_threshold: float = 0.74

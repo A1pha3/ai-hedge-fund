@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.targets import build_short_trade_target_profile
 from src.targets.short_trade_target_factor_helpers import compute_trend_continuation_strength_adjustment
 
 
@@ -29,3 +30,13 @@ def test_trend_continuation_strength_penalizes_weak_close_retention() -> None:
     )
 
     assert adjustment < 0.0
+
+
+def test_trend_continuation_strength_v2_profile_sets_new_factor_knobs() -> None:
+    profile = build_short_trade_target_profile("trend_continuation_strength_v2")
+
+    assert profile.trend_continuation_weight > 0.0
+    assert profile.short_term_reversal_weight == 0.0
+    assert profile.reversal_2d_weight == 0.0
+    assert profile.selected_close_retention_penalty_weight > 0.0
+    assert profile.trend_continuation_strength_weight > 0.0
