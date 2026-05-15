@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_e542f8ac17a6_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_bb2616ce95a9_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -312,7 +312,10 @@
       "regime_spread_trend_slope_delta": null,
       "vp_volume_premium_edge_delta": null,
       "et_inflow_timing_edge_delta": null,
-      "signal_quality_trend_slope_delta": null
+      "signal_quality_trend_slope_delta": null,
+      "ogp_gap_win_rate_premium_delta": null,
+      "tf_composite_win_rate_premium_delta": null,
+      "mc_ic_consistency_score_delta": null
     },
     "default": {
       "candidate": {
@@ -620,7 +623,10 @@
       "regime_spread_trend_slope_delta": null,
       "vp_volume_premium_edge_delta": null,
       "et_inflow_timing_edge_delta": null,
-      "signal_quality_trend_slope_delta": null
+      "signal_quality_trend_slope_delta": null,
+      "ogp_gap_win_rate_premium_delta": null,
+      "tf_composite_win_rate_premium_delta": null,
+      "mc_ic_consistency_score_delta": null
     }
   },
   "rollout_recommendation": "hold",
