@@ -559,7 +559,7 @@ def _build_short_trade_core_metrics_payload(
     near_miss_breakout_gate_pass: bool,
 ) -> dict[str, Any]:
     historical_continuation_prior_score = dict(snapshot.get("historical_continuation_prior_score") or {})
-    trend_continuation_strength_adjustment = float(snapshot.get("trend_continuation_strength_adjustment", dict(snapshot.get("weighted_positive_contributions") or {}).get("trend_continuation_strength", 0.0)) or 0.0)
+    trend_continuation_strength_adjustment = float(snapshot.get("trend_continuation_strength_adjustment", 0.0) or 0.0)
     return {
         "score_b": round(float(input_data.score_b), 4),
         "score_c": round(float(input_data.score_c), 4),

@@ -55,6 +55,7 @@ def build_short_trade_target_snapshot_payload(
         "total_positive_contribution": relief_snapshot["total_positive_contribution"],
         "total_negative_contribution": relief_snapshot["total_negative_contribution"],
         "historical_continuation_prior_score": relief_snapshot["historical_continuation_prior_score"],
+        "trend_continuation_strength_adjustment": relief_snapshot["trend_continuation_strength_adjustment"],
         "score_target": relief_snapshot["score_target"],
         "long_trend_strength": signal_snapshot["long_trend_strength"],
         "event_freshness_strength": signal_snapshot["event_freshness_strength"],
