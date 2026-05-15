@@ -1997,6 +1997,35 @@ def test_build_rollout_recommendation_payload_blocks_meaningful_regression_beyon
     assert "crowding_risk_raw_100_regressed_vs_default" in payload["blockers"]
 
 
+def test_build_rollout_recommendation_payload_appends_strict_objective_blockers(monkeypatch: pytest.MonkeyPatch) -> None:
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.004,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": 0.003,
+            "liquidity_capacity_raw_100_delta": 1.2,
+            "crowding_risk_raw_100_delta": -1.2,
+            "gap_risk_raw_100_delta": -1.1,
+            "projected_theme_exposure_delta": -0.006,
+            "incremental_theme_exposure_delta": -0.006,
+        }
+    }
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "_load_strict_btst_objective_gate",
+        lambda: {"action": "hold", "blockers": ["rejected_outperforms_tradeable_surface", "strict_false_negative_cases_present"]},
+    )
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["action"] == "hold"
+    assert "rejected_outperforms_tradeable_surface" in payload["blockers"]
+    assert "strict_false_negative_cases_present" in payload["blockers"]
+
+
 def test_main_persists_execution_aware_rollout_details_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     output_md = tmp_path / "report.md"
     output_json = tmp_path / "report.json"

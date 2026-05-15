@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_factor_ic_temporal_trend, compute_verdict_calibration, compute_optimal_hold_period, compute_score_position_tiers, compute_profile_health_score, compute_selection_churn_metrics, compute_parameter_stability_metrics, compute_score_stability_across_windows
 from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
+from scripts.btst_strict_objective_gate import load_strict_btst_objective_gate_from_markdown
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
 from src.backtesting.param_search import (
@@ -7327,15 +7328,28 @@ def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str
         }
 
     deduped_blockers = list(dict.fromkeys(blockers))
+    strict_objective_gate = _load_strict_btst_objective_gate()
+    if strict_objective_gate:
+        strict_gate_blockers = list(strict_objective_gate.get("blockers") or [])
+        if strict_gate_blockers:
+            deduped_blockers.extend([blocker for blocker in strict_gate_blockers if blocker not in deduped_blockers])
     return {
         "action": "promote" if not deduped_blockers else "hold",
         "blockers": deduped_blockers,
         "baseline_verdicts": baseline_verdicts,
+        "strict_btst_objective_gate": strict_objective_gate,
     }
 
 
 def _recommend_rollout_action(comparison_summary: dict[str, dict[str, Any]]) -> str:
     return str(_build_rollout_recommendation_payload(comparison_summary).get("action") or "hold")
+
+
+def _load_strict_btst_objective_gate() -> dict[str, Any] | None:
+    objective_monitor_path = REPORTS_DIR / "btst_tplus1_tplus2_objective_monitor_latest.md"
+    if not objective_monitor_path.exists():
+        return None
+    return load_strict_btst_objective_gate_from_markdown(objective_monitor_path)
 
 
 def _build_optimized_profile_manifest_publication(

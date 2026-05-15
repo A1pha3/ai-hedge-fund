@@ -57,6 +57,7 @@ This skill runs the repo's BTST next-day document workflow.
   - Treat session_summary.json as the source of truth for artifact paths and optimization-profile provenance.
   - Read optimization_profile_resolution from session_summary.json before inferring whether the run used the latest optimized manifest or a default fallback.
   - If session_summary.json shows default fallback, the final docs must say so explicitly instead of silently presenting the run as optimized.
+  - If `data/reports/btst_round89_rollout_assessment.json`, `data/reports/btst_admission_edge_replay_validation.json`, or `data/reports/btst_strict_objective_gate.json` exist, read them before describing any optimized profile as production-ready.
   - Prefer JSON artifacts for structure and Markdown artifacts for prose fallback.
 
 5. Write final documents.
@@ -84,6 +85,8 @@ This skill runs the repo's BTST next-day document workflow.
 - Never treat the report directory name as the source of truth when session_summary.json exists; reruns can change suffixes while session_summary keeps the real artifact index.
 - Never claim an optimized-profile run unless session_summary.json or downstream artifacts support that provenance.
 - If optimization_profile_resolution reports mode=default_fallback, surface the fallback state and reason where the final docs describe multi-agent execution provenance.
+- If Round 89 rollout assessment, admission-edge replay validation, or strict-objective gate artifacts say `hold` or `runtime_replay_required_before_conclusion`, surface that status explicitly instead of presenting the profile as an active upgrade.
+- If strict-objective gate artifacts show rejected or blocked names outperforming the tradeable surface, mention that rollout is still blocked by objective-fit evidence rather than framing the variant as validated.
 
 ## Optional context
 
