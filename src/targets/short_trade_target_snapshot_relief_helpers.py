@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.targets.short_trade_event_catalyst_helpers import build_event_catalyst_assessment
+from src.targets.short_trade_target_factor_helpers import compute_trend_continuation_strength_adjustment
 from src.targets.short_trade_target_prior_helpers import (
     resolve_btst_prior_shrinkage_p4_mode,
     resolve_effective_prior_metrics,
@@ -1040,6 +1041,15 @@ def _build_snapshot_score_payload(
     clamp_unit_interval: Callable[[float], float],
 ) -> dict[str, Any]:
     historical_continuation_prior_score = score_short_trade_historical_continuation_prior(state.historical_prior)
+    trend_continuation_strength_adjustment = compute_trend_continuation_strength_adjustment(
+        trend_continuation=threshold_state.trend_acceleration,
+        close_strength=state.close_strength,
+        volume_expansion_quality=threshold_state.volume_expansion_quality,
+        continuation_weight=float(getattr(profile, "trend_continuation_strength_weight", 0.0) or 0.0),
+        close_support_floor=float(getattr(profile, "trend_continuation_strength_close_support_floor", 0.0) or 0.0),
+        volume_support_floor=float(getattr(profile, "trend_continuation_strength_volume_support_floor", 0.0) or 0.0),
+        weak_close_penalty=float(getattr(profile, "trend_continuation_strength_weak_close_penalty", 0.0) or 0.0),
+    )
     weighted_positive_contributions = {
         "breakout_freshness": round(positive_score_weights["breakout_freshness"] * threshold_state.breakout_freshness, 4),
         "trend_acceleration": round(positive_score_weights["trend_acceleration"] * threshold_state.trend_acceleration, 4),
@@ -1056,6 +1066,7 @@ def _build_snapshot_score_payload(
         "short_term_reversal": round(positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal, 4),
         "intraday_strength": round(positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength, 4),
         "reversal_2d": round(positive_score_weights.get("reversal_2d", 0.0) * state.reversal_2d, 4),
+        "trend_continuation_strength": round(trend_continuation_strength_adjustment, 4),
     }
     weighted_negative_contributions = {
         "stale_trend_repair_penalty": round(score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty, 4),
@@ -1094,6 +1105,7 @@ def _build_snapshot_score_payload(
         + (positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal)
         + (positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength)
         + (positive_score_weights.get("reversal_2d", 0.0) * state.reversal_2d)
+        + trend_continuation_strength_adjustment
         - (score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty)
         - (profile.overhead_score_penalty_weight * score_penalty_state.overhead_supply_penalty)
         - (score_penalty_state.effective_extension_score_penalty_weight * score_penalty_state.extension_without_room_penalty)
@@ -1111,6 +1123,7 @@ def _build_snapshot_score_payload(
         "weighted_negative_contributions": weighted_negative_contributions,
         "total_positive_contribution": total_positive_contribution,
         "total_negative_contribution": total_negative_contribution,
+        "trend_continuation_strength_adjustment": round(trend_continuation_strength_adjustment, 4),
         "overbought_momentum_penalty": round(overbought_momentum_penalty, 4),
         "score_target": score_target,
         "historical_continuation_prior_score": historical_continuation_prior_score,
@@ -1388,6 +1401,7 @@ def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolu
         "total_positive_contribution": resolution.score_payload["total_positive_contribution"],
         "total_negative_contribution": resolution.score_payload["total_negative_contribution"],
         "historical_continuation_prior_score": resolution.score_payload["historical_continuation_prior_score"],
+        "trend_continuation_strength_adjustment": resolution.score_payload["trend_continuation_strength_adjustment"],
         "score_target": resolution.score_payload["score_target"],
         "selected_score_tolerance": resolution.selected_score_tolerance,
         "effective_near_miss_threshold": resolution.score_penalty_state.effective_near_miss_threshold,

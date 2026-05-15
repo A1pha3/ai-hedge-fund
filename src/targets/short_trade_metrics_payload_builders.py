@@ -314,6 +314,7 @@ def _build_short_trade_threshold_core_metrics_payload(*, profile: Any, snapshot:
         "catalyst_freshness_weight": round(float(profile.catalyst_freshness_weight), 4),
         "layer_c_alignment_weight": round(float(profile.layer_c_alignment_weight), 4),
         "historical_continuation_score_weight": round(float(getattr(profile, "historical_continuation_score_weight", 0.0) or 0.0), 4),
+        "trend_continuation_strength_weight": round(float(getattr(profile, "trend_continuation_strength_weight", 0.0) or 0.0), 4),
         "momentum_strength_weight": round(float(getattr(profile, "momentum_strength_weight", 0.0)), 4),
         "short_term_reversal_weight": round(float(getattr(profile, "short_term_reversal_weight", 0.0)), 4),
         "intraday_strength_weight": round(float(getattr(profile, "intraday_strength_weight", 0.0)), 4),
@@ -558,6 +559,7 @@ def _build_short_trade_core_metrics_payload(
     near_miss_breakout_gate_pass: bool,
 ) -> dict[str, Any]:
     historical_continuation_prior_score = dict(snapshot.get("historical_continuation_prior_score") or {})
+    trend_continuation_strength_adjustment = float(snapshot.get("trend_continuation_strength_adjustment", dict(snapshot.get("weighted_positive_contributions") or {}).get("trend_continuation_strength", 0.0)) or 0.0)
     return {
         "score_b": round(float(input_data.score_b), 4),
         "score_c": round(float(input_data.score_c), 4),
@@ -597,6 +599,7 @@ def _build_short_trade_core_metrics_payload(
         "layer_c_alignment": round(float(snapshot["layer_c_alignment"]), 4),
         "historical_continuation_prior_score": historical_continuation_prior_score,
         "prior_retention_score": round(float(historical_continuation_prior_score.get("score", 0.0) or 0.0), 4),
+        "trend_continuation_strength_adjustment": round(trend_continuation_strength_adjustment, 4),
         "short_term_reversal": round(float(snapshot.get("short_term_reversal", 0.0)), 4),
         "intraday_strength": round(float(snapshot.get("intraday_strength", 0.0)), 4),
         "reversal_2d": round(float(snapshot.get("reversal_2d", 0.0)), 4),

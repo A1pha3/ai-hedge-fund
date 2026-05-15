@@ -1,7 +1,70 @@
 from __future__ import annotations
 
+import sys
+from types import ModuleType
+
+import pytest
+
+from src.screening.models import StrategySignal
 from src.targets import build_short_trade_target_profile
 from src.targets.short_trade_target_factor_helpers import compute_trend_continuation_strength_adjustment
+
+
+def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
+    return StrategySignal(
+        direction=direction,
+        confidence=confidence,
+        completeness=completeness,
+        sub_factors=sub_factors or {},
+    )
+
+
+def _make_trend_continuation_strength_entry() -> dict:
+    return {
+        "ticker": "601869",
+        "score_b": 0.20,
+        "score_c": -0.40,
+        "score_final": 0.05,
+        "quality_score": 0.60,
+        "decision": "watch",
+        "reason": "short_trade_candidate_score_ranked",
+        "reasons": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+        "candidate_source": "short_trade_boundary",
+        "candidate_reason_codes": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                70.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 73.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 64.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 60.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 56.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 30.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                60.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 52.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(-1, 20.0).model_dump(mode="json"),
+            "fundamental": _make_signal(1, 85.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 4,
+            "next_high_hit_rate_at_threshold": 1.0,
+            "next_close_positive_rate": 1.0,
+            "next_open_to_close_return_mean": 0.0917,
+            "execution_note": "历史上确认后继续收盘延续，属于强 continuation 子桶。",
+        },
+    }
 
 
 def test_trend_continuation_strength_rewards_supported_continuation() -> None:
@@ -52,3 +115,45 @@ def test_trend_continuation_strength_v2_profile_sets_new_factor_knobs() -> None:
     actual_overrides = {name: getattr(profile, name) for name in expected_overrides}
 
     assert actual_overrides == expected_overrides
+
+
+def test_trend_continuation_strength_v2_surfaces_adjustment_in_score_payload_and_metrics() -> None:
+    execution_models_module = ModuleType("src.execution.models")
+    execution_models_module.LayerCResult = type("LayerCResult", (), {})
+    execution_module = ModuleType("src.execution")
+    execution_module.models = execution_models_module
+    sys.modules.setdefault("src.execution", execution_module)
+    sys.modules["src.execution.models"] = execution_models_module
+    from src.targets.short_trade_target import evaluate_short_trade_rejected_target
+
+    entry = _make_trend_continuation_strength_entry()
+    profile = build_short_trade_target_profile("trend_continuation_strength_v2")
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="trend_continuation_strength_v2",
+        profile_overrides={"trend_continuation_strength_weight": 0.0},
+    )
+    profiled_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="trend_continuation_strength_v2",
+    )
+
+    expected_adjustment = compute_trend_continuation_strength_adjustment(
+        trend_continuation=profiled_result.trend_acceleration or 0.0,
+        close_strength=profiled_result.close_strength or 0.0,
+        volume_expansion_quality=profiled_result.volume_expansion_quality or 0.0,
+        continuation_weight=profile.trend_continuation_strength_weight,
+        close_support_floor=profile.trend_continuation_strength_close_support_floor,
+        volume_support_floor=profile.trend_continuation_strength_volume_support_floor,
+        weak_close_penalty=profile.trend_continuation_strength_weak_close_penalty,
+    )
+
+    assert expected_adjustment > 0.0
+    assert profiled_result.weighted_positive_contributions["trend_continuation_strength"] == pytest.approx(expected_adjustment)
+    assert profiled_result.metrics_payload["trend_continuation_strength_adjustment"] == pytest.approx(expected_adjustment)
+    assert profiled_result.metrics_payload["weighted_positive_contributions"]["trend_continuation_strength"] == pytest.approx(expected_adjustment)
+    assert profiled_result.metrics_payload["thresholds"]["trend_continuation_strength_weight"] == pytest.approx(profile.trend_continuation_strength_weight)
+    assert profiled_result.score_target - baseline_result.score_target == pytest.approx(expected_adjustment)
