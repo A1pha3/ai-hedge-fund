@@ -113,6 +113,7 @@
 3. [Execution Bridge 专业讲解](./24-execution-bridge-professional-guide.md)
 4. [Execution Bridge 一页速查卡](./25-execution-bridge-one-page-cheatsheet.md)
 5. [Paper Trading T 日到 T+1 时序专题](./28-paper-trading-tday-t1-timing-guide.md)
+6. [BTST 因子优化 90 轮进展复盘](./29-btst-factor-optimization-90-rounds-retrospective.md)
 
 ### 2.7 BTST 专题层：把次日短线独立成完整工作流
 
@@ -218,12 +219,13 @@
 23. “我不知道应该先看哪个 BTST artifact”：看 [BTST/10-btst-artifact-reading-manual.md](./BTST/10-btst-artifact-reading-manual.md)
 24. “我知道问题存在，但不知道下一步该动哪里”：看 [BTST/11-btst-optimization-decision-tree.md](./BTST/11-btst-optimization-decision-tree.md)
 25. “我只想 5 分钟知道当前 BTST 到底进展到哪了”：看 [BTST/12-btst-five-minute-brief.md](./BTST/12-btst-five-minute-brief.md)
-26. “我准备直接跑脚本，但不知道命令顺序”：看 [BTST/13-btst-command-cookbook.md](./BTST/13-btst-command-cookbook.md)
-27. “我是第一次接手 BTST，不知道 30 分钟内该先看哪几篇”：看 [BTST/14-btst-newcomer-30-minute-guide.md](./BTST/14-btst-newcomer-30-minute-guide.md)
-28. “我想判断新人是否已经能独立使用 BTST 文档”：看 [BTST/15-btst-onboarding-readiness-scorecard.md](./BTST/15-btst-onboarding-readiness-scorecard.md)
-29. “我要带别人学 BTST，但不知道培训脚本怎么排”：看 [BTST/16-btst-trainer-handbook.md](./BTST/16-btst-trainer-handbook.md)
-30. “我要检查新人会不会做 BTST 样本分型和动作判断”：看 [BTST/17-btst-sample-workbook.md](./BTST/17-btst-sample-workbook.md)
-31. “我要在带教现场快速核对 BTST 练习题答案”：看 [BTST/18-btst-workbook-quick-review-card.md](./BTST/18-btst-workbook-quick-review-card.md)
+26. “我想系统复盘 90 轮因子优化到底做成了什么、哪些已经进入报告与选股”：看 [29-btst-factor-optimization-90-rounds-retrospective.md](./29-btst-factor-optimization-90-rounds-retrospective.md)
+27. “我准备直接跑脚本，但不知道命令顺序”：看 [BTST/13-btst-command-cookbook.md](./BTST/13-btst-command-cookbook.md)
+28. “我是第一次接手 BTST，不知道 30 分钟内该先看哪几篇”：看 [BTST/14-btst-newcomer-30-minute-guide.md](./BTST/14-btst-newcomer-30-minute-guide.md)
+29. “我想判断新人是否已经能独立使用 BTST 文档”：看 [BTST/15-btst-onboarding-readiness-scorecard.md](./BTST/15-btst-onboarding-readiness-scorecard.md)
+30. “我要带别人学 BTST，但不知道培训脚本怎么排”：看 [BTST/16-btst-trainer-handbook.md](./BTST/16-btst-trainer-handbook.md)
+31. “我要检查新人会不会做 BTST 样本分型和动作判断”：看 [BTST/17-btst-sample-workbook.md](./BTST/17-btst-sample-workbook.md)
+32. “我要在带教现场快速核对 BTST 练习题答案”：看 [BTST/18-btst-workbook-quick-review-card.md](./BTST/18-btst-workbook-quick-review-card.md)
 
 ---
 

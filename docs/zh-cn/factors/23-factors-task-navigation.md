@@ -75,6 +75,7 @@
 9. 如果知道问题存在但还选不出下一步动作，再看 [BTST 优化决策树](./BTST/11-btst-optimization-decision-tree.md)
 10. 如果要把任务交给自动化代理，再看 [BTST AI 助手优化执行手册](./BTST/05-btst-ai-optimization-runbook.md)
 11. 如果新增样本卡在 buy order，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
+12. 如果你需要先判断“90 轮因子优化到底哪些已经进入 runtime、哪些还停在研究层”，再看 [29-btst-factor-optimization-90-rounds-retrospective.md](./29-btst-factor-optimization-90-rounds-retrospective.md)
 
 适合的问题：
 
