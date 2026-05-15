@@ -1042,7 +1042,7 @@ def _build_snapshot_score_payload(
 ) -> dict[str, Any]:
     historical_continuation_prior_score = score_short_trade_historical_continuation_prior(state.historical_prior)
     trend_continuation_strength_adjustment = compute_trend_continuation_strength_adjustment(
-        trend_continuation=threshold_state.trend_acceleration,
+        trend_continuation=state.trend_acceleration,
         close_strength=state.close_strength,
         volume_expansion_quality=threshold_state.volume_expansion_quality,
         continuation_weight=float(getattr(profile, "trend_continuation_strength_weight", 0.0) or 0.0),

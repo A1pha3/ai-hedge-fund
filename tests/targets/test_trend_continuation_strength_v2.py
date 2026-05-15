@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import sys
 from types import ModuleType
 from typing import Any, Callable, Iterator
@@ -66,6 +67,60 @@ def _make_trend_continuation_strength_entry() -> dict:
             "execution_note": "历史上确认后继续收盘延续，属于强 continuation 子桶。",
         },
     }
+
+
+def _make_prepared_breakout_continuation_relief_entry() -> dict[str, Any]:
+    entry = copy.deepcopy(_make_trend_continuation_strength_entry())
+    entry["candidate_source"] = "layer_c_watchlist"
+    entry["score_b"] = 0.10
+    entry["score_c"] = 1.0
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.18, "investor": 0.0}}
+
+    trend_sub_factors = entry["strategy_signals"]["trend"]["sub_factors"]
+    trend_sub_factors["momentum"] = {
+        "direction": 0,
+        "confidence": 0.0,
+        "completeness": 1.0,
+        "metrics": {
+            "momentum_1m": 0.0,
+            "momentum_3m": 0.6,
+            "momentum_6m": 0.7,
+            "volume_momentum": 0.4,
+        },
+    }
+    trend_sub_factors["adx_strength"] = {"direction": 1, "confidence": 40.0, "completeness": 1.0}
+    trend_sub_factors["ema_alignment"] = {"direction": 1, "confidence": 100.0, "completeness": 1.0}
+    trend_sub_factors["volatility"] = {
+        "direction": 1,
+        "confidence": 60.0,
+        "completeness": 1.0,
+        "metrics": {"volatility_regime": 0.5, "atr_ratio": 0.5},
+    }
+    trend_sub_factors["long_trend_alignment"] = {"direction": 1, "confidence": 95.0, "completeness": 1.0}
+
+    event_signal = entry["strategy_signals"]["event_sentiment"]
+    event_signal["direction"] = 0
+    event_signal["confidence"] = 0.0
+    event_signal["sub_factors"]["event_freshness"] = {"direction": 0, "confidence": 0.0, "completeness": 1.0}
+    event_signal["sub_factors"]["news_sentiment"] = {"direction": 0, "confidence": 0.0, "completeness": 1.0}
+    return entry
+
+
+def _compute_expected_adjustment_from_raw_signal(*, trade_date: str, entry: dict[str, Any], profile_name: str, profile_overrides: dict[str, Any] | None = None) -> float:
+    import src.targets.short_trade_target as short_trade_target_module
+
+    profile = build_short_trade_target_profile(profile_name, overrides=profile_overrides)
+    input_data = short_trade_target_module._build_target_input_from_entry(trade_date=trade_date, entry=entry)
+    signal_snapshot = short_trade_target_module._compute_short_trade_signal_snapshot(input_data, profile=profile)
+    return compute_trend_continuation_strength_adjustment(
+        trend_continuation=signal_snapshot["trend_acceleration"],
+        close_strength=signal_snapshot["close_strength"],
+        volume_expansion_quality=signal_snapshot["volume_expansion_quality"],
+        continuation_weight=profile.trend_continuation_strength_weight,
+        close_support_floor=profile.trend_continuation_strength_close_support_floor,
+        volume_support_floor=profile.trend_continuation_strength_volume_support_floor,
+        weak_close_penalty=profile.trend_continuation_strength_weak_close_penalty,
+    )
 
 
 @pytest.fixture()
@@ -144,8 +199,13 @@ def test_trend_continuation_strength_v2_profile_sets_new_factor_knobs() -> None:
 def test_trend_continuation_strength_v2_surfaces_adjustment_in_score_payload_and_metrics(
     evaluate_short_trade_rejected_target_with_execution_model_shim: Callable[..., Any],
 ) -> None:
-    entry = _make_trend_continuation_strength_entry()
+    entry = _make_prepared_breakout_continuation_relief_entry()
     profile = build_short_trade_target_profile("trend_continuation_strength_v2")
+    expected_adjustment = _compute_expected_adjustment_from_raw_signal(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="trend_continuation_strength_v2",
+    )
 
     baseline_result = evaluate_short_trade_rejected_target_with_execution_model_shim(
         trade_date="20260328",
@@ -157,16 +217,6 @@ def test_trend_continuation_strength_v2_surfaces_adjustment_in_score_payload_and
         trade_date="20260328",
         entry=entry,
         profile_name="trend_continuation_strength_v2",
-    )
-
-    expected_adjustment = compute_trend_continuation_strength_adjustment(
-        trend_continuation=profiled_result.trend_acceleration or 0.0,
-        close_strength=profiled_result.close_strength or 0.0,
-        volume_expansion_quality=profiled_result.volume_expansion_quality or 0.0,
-        continuation_weight=profile.trend_continuation_strength_weight,
-        close_support_floor=profile.trend_continuation_strength_close_support_floor,
-        volume_support_floor=profile.trend_continuation_strength_volume_support_floor,
-        weak_close_penalty=profile.trend_continuation_strength_weak_close_penalty,
     )
 
     assert expected_adjustment > 0.0
@@ -188,6 +238,12 @@ def test_trend_continuation_strength_v2_routes_negative_adjustment_into_penalty_
         "trend_continuation_strength_close_support_floor": 1.0,
         "trend_continuation_strength_weak_close_penalty": 0.5,
     }
+    expected_adjustment = _compute_expected_adjustment_from_raw_signal(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="trend_continuation_strength_v2",
+        profile_overrides=profile_overrides,
+    )
 
     profiled_result = evaluate_short_trade_rejected_target_with_execution_model_shim(
         trade_date="20260328",
@@ -196,9 +252,8 @@ def test_trend_continuation_strength_v2_routes_negative_adjustment_into_penalty_
         profile_overrides=profile_overrides,
     )
 
-    expected_adjustment = profiled_result.metrics_payload["trend_continuation_strength_adjustment"]
-
     assert expected_adjustment < 0.0
+    assert profiled_result.metrics_payload["trend_continuation_strength_adjustment"] == pytest.approx(expected_adjustment)
     assert profiled_result.weighted_positive_contributions["trend_continuation_strength"] == pytest.approx(0.0)
     assert profiled_result.weighted_negative_contributions["trend_continuation_strength_penalty"] == pytest.approx(abs(expected_adjustment))
     assert profiled_result.metrics_payload["weighted_positive_contributions"]["trend_continuation_strength"] == pytest.approx(0.0)
