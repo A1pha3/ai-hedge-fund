@@ -174,6 +174,20 @@ def test_trend_continuation_strength_penalizes_weak_close_retention() -> None:
     assert adjustment < 0.0
 
 
+def test_trend_continuation_strength_skips_weak_close_drag_without_positive_continuation() -> None:
+    adjustment = compute_trend_continuation_strength_adjustment(
+        trend_continuation=0.0,
+        close_strength=0.20,
+        volume_expansion_quality=0.70,
+        continuation_weight=0.12,
+        close_support_floor=0.55,
+        volume_support_floor=0.45,
+        weak_close_penalty=0.08,
+    )
+
+    assert adjustment == pytest.approx(0.0)
+
+
 def test_trend_continuation_strength_v2_profile_sets_new_factor_knobs() -> None:
     profile = build_short_trade_target_profile("trend_continuation_strength_v2")
 
