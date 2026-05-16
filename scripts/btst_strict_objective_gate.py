@@ -4,14 +4,19 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.utils.logging import get_logger
+
 
 _SECTION_PATTERN = re.compile(r"^##\s+(?P<section>.+?)\s*$")
 _ROW_PATTERN = re.compile(r"^-\s+(?P<label>[^:]+):\s*(?P<body>.+)$")
+
+logger = get_logger(__name__)
 
 
 def _coerce_value(raw: str) -> Any:
@@ -93,14 +98,32 @@ def build_strict_btst_objective_gate(objective_monitor: dict[str, Any], structur
     }
 
 
-def _load_json_payload(path: str | Path) -> dict[str, Any]:
+def _load_json_payload(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _load_structural_guardrail(path: str | Path) -> dict[str, Any] | None:
+    try:
+        payload = _load_json_payload(path)
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning("Failed to load BTST structural guardrail sidecar from %s: %s", path, exc)
+        return None
+    if not isinstance(payload, Mapping):
+        logger.warning("Ignoring non-mapping BTST structural guardrail sidecar from %s", path)
+        return None
+    raw_structural_guardrail = payload.get("structural_guardrail")
+    if raw_structural_guardrail is None:
+        return None
+    if not isinstance(raw_structural_guardrail, Mapping):
+        logger.warning("Ignoring non-mapping BTST structural guardrail payload from %s", path)
+        return None
+    return dict(raw_structural_guardrail)
 
 
 def load_strict_btst_objective_gate_from_markdown(path: str | Path, structural_json_path: str | Path | None = None) -> dict[str, Any]:
     structural_guardrail = None
     if structural_json_path:
-        structural_guardrail = (_load_json_payload(structural_json_path).get("structural_guardrail")) or None
+        structural_guardrail = _load_structural_guardrail(structural_json_path)
     return build_strict_btst_objective_gate(parse_objective_monitor_markdown(path), structural_guardrail=structural_guardrail)
 
 
