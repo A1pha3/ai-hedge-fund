@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import scripts.analyze_btst_multi_window_profile_validation as multi_window_validation
 import scripts.btst_admission_replay_validator as btst_admission_replay_validator
 from scripts.btst_admission_replay_validator import build_admission_replay_summary
 
@@ -80,6 +81,55 @@ def test_build_admission_replay_summary_uses_multi_window_replay_to_keep_baselin
 
 
 def test_build_admission_replay_summary_reports_structural_expansion_pressure() -> None:
+    def _build_multi_window_row(
+        *,
+        report_label: str,
+        window_recommendation: str,
+        baseline_tradeable_total: int,
+        variant_tradeable_total: int,
+        baseline_selected_total: int,
+        variant_selected_total: int,
+        baseline_near_miss_total: int,
+        variant_near_miss_total: int,
+    ) -> dict[str, object]:
+        if window_recommendation == "keep_baseline_default":
+            tradeable_surface_delta = {
+                "next_close_positive_rate": -0.01,
+                "next_close_return_p10": -0.01,
+            }
+        elif window_recommendation == "variant_supports_t1_edge":
+            tradeable_surface_delta = {
+                "next_close_positive_rate": 0.01,
+                "next_close_return_p10": 0.01,
+            }
+        else:
+            tradeable_surface_delta = {}
+        return multi_window_validation._summarize_row(
+            report_dir=Path(report_label),
+            baseline={
+                "profile_name": "baseline",
+                "trade_dates": ["2026-03-24"],
+                "surface_summaries": {
+                    "tradeable": {"total_count": baseline_tradeable_total},
+                    "selected": {"total_count": baseline_selected_total},
+                    "near_miss": {"total_count": baseline_near_miss_total},
+                },
+            },
+            variant={
+                "profile_name": "variant",
+                "trade_dates": ["2026-03-24"],
+                "surface_summaries": {
+                    "tradeable": {"total_count": variant_tradeable_total},
+                    "selected": {"total_count": variant_selected_total},
+                    "near_miss": {"total_count": variant_near_miss_total},
+                },
+            },
+            comparison={
+                "tradeable_surface_delta": tradeable_surface_delta,
+                "guardrail_status": "guardrail_pass",
+            },
+        )
+
     summary = build_admission_replay_summary(
         baseline_payload={"selected": [{"ticker": "A"}], "near_miss": [{"ticker": "B"}]},
         candidate_payload={"selected": [{"ticker": "A"}], "near_miss": [{"ticker": "B"}]},
@@ -91,30 +141,36 @@ def test_build_admission_replay_summary_reports_structural_expansion_pressure() 
         multi_window_validation={
             "report_dir_count": 3,
             "rows": [
-                {
-                    "report_label": "window-selected-expansion",
-                    "window_recommendation": "keep_baseline_default",
-                    "baseline_selected": {"total_count": 10},
-                    "variant_selected": {"total_count": 12},
-                    "baseline_near_miss": {"total_count": 5},
-                    "variant_near_miss": {"total_count": 5},
-                },
-                {
-                    "report_label": "window-near-miss-expansion",
-                    "window_recommendation": "mixed",
-                    "baseline_selected": {"total_count": 8},
-                    "variant_selected": {"total_count": 8},
-                    "baseline_near_miss": {"total_count": 10},
-                    "variant_near_miss": {"total_count": 13},
-                },
-                {
-                    "report_label": "window-ignore-supportive",
-                    "window_recommendation": "variant_supports_t1_edge",
-                    "baseline_selected": {"total_count": 10},
-                    "variant_selected": {"total_count": 20},
-                    "baseline_near_miss": {"total_count": 10},
-                    "variant_near_miss": {"total_count": 20},
-                },
+                _build_multi_window_row(
+                    report_label="window-selected-expansion",
+                    window_recommendation="keep_baseline_default",
+                    baseline_tradeable_total=11,
+                    variant_tradeable_total=11,
+                    baseline_selected_total=10,
+                    variant_selected_total=12,
+                    baseline_near_miss_total=5,
+                    variant_near_miss_total=5,
+                ),
+                _build_multi_window_row(
+                    report_label="window-near-miss-expansion",
+                    window_recommendation="mixed",
+                    baseline_tradeable_total=18,
+                    variant_tradeable_total=18,
+                    baseline_selected_total=8,
+                    variant_selected_total=8,
+                    baseline_near_miss_total=10,
+                    variant_near_miss_total=13,
+                ),
+                _build_multi_window_row(
+                    report_label="window-ignore-supportive",
+                    window_recommendation="variant_supports_t1_edge",
+                    baseline_tradeable_total=20,
+                    variant_tradeable_total=20,
+                    baseline_selected_total=10,
+                    variant_selected_total=20,
+                    baseline_near_miss_total=10,
+                    variant_near_miss_total=20,
+                ),
             ],
         },
     )

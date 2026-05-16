@@ -38,14 +38,20 @@ def _classify_window(comparison: dict[str, Any]) -> str:
 
 def _summarize_row(*, report_dir: Path, baseline: dict[str, Any], variant: dict[str, Any], comparison: dict[str, Any]) -> dict[str, Any]:
     classification = _classify_window(comparison)
+    baseline_surface_summaries = dict(baseline.get("surface_summaries") or {})
+    variant_surface_summaries = dict(variant.get("surface_summaries") or {})
     return {
         "report_dir": str(report_dir),
         "report_label": report_dir.name,
         "trade_dates": list(baseline.get("trade_dates") or []),
         "baseline_profile": baseline["profile_name"],
         "variant_profile": variant["profile_name"],
-        "baseline_tradeable": dict(baseline["surface_summaries"]["tradeable"]),
-        "variant_tradeable": dict(variant["surface_summaries"]["tradeable"]),
+        "baseline_tradeable": dict(baseline_surface_summaries.get("tradeable") or {}),
+        "variant_tradeable": dict(variant_surface_summaries.get("tradeable") or {}),
+        "baseline_selected": dict(baseline_surface_summaries.get("selected") or {}),
+        "variant_selected": dict(variant_surface_summaries.get("selected") or {}),
+        "baseline_near_miss": dict(baseline_surface_summaries.get("near_miss") or {}),
+        "variant_near_miss": dict(variant_surface_summaries.get("near_miss") or {}),
         "baseline_frontier_source_family_summaries": dict(baseline.get("frontier_source_family_summaries") or {}),
         "variant_frontier_source_family_summaries": dict(variant.get("frontier_source_family_summaries") or {}),
         "baseline_source_coverage_summary": dict(baseline.get("source_coverage_summary") or {}),
