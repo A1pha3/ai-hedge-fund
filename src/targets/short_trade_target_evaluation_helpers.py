@@ -826,7 +826,9 @@ def _build_short_trade_mutable_verdict_state(snapshot: dict[str, Any]) -> ShortT
     return ShortTradeMutableVerdictState(
         gate_status=dict(snapshot["gate_status"]),
         positive_tags=list(snapshot["positive_tags"]),
-        negative_tags=list(snapshot["negative_tags"]),
+        negative_tags=[
+            tag for tag in list(snapshot["negative_tags"]) if tag != "watchlist_filter_diagnostics_selected_only_shrink_applied"
+        ],
         blockers=list(snapshot["blockers"]),
     )
 
@@ -989,7 +991,9 @@ def _build_short_trade_decision_snapshot_state(snapshot: dict[str, Any]) -> Shor
         effective_select_threshold=float(snapshot["effective_select_threshold"]),
         selected_score_tolerance=float(snapshot["selected_score_tolerance"]),
         positive_tags=list(snapshot["positive_tags"]),
-        negative_tags=list(snapshot["negative_tags"]),
+        negative_tags=[
+            tag for tag in list(snapshot["negative_tags"]) if tag != "watchlist_filter_diagnostics_selected_only_shrink_applied"
+        ],
         blockers=list(snapshot["blockers"]),
         gate_status=dict(snapshot["gate_status"]),
     )

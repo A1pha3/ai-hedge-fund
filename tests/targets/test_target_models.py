@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
 
@@ -1431,6 +1432,47 @@ def test_selected_only_shrink_snapshot_negative_tags_report_guard_application() 
 
     assert snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]["applied"] is True
     assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in snapshot["negative_tags"]
+
+
+def test_selected_only_shrink_snapshot_tag_does_not_displace_prior_verdict_negative_tags() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["strategy_signals"]["fundamental"] = _make_profitability_hard_cliff_signal().model_dump(mode="json")
+    entry["market_state"] = {
+        "breadth_ratio": 0.41,
+        "position_scale": 0.72,
+        "style_dispersion": 0.68,
+        "regime_flip_risk": 0.78,
+        "regime_gate_level": "risk_off",
+        "regime_gate_reasons": ["style_dispersion", "limit_up_ratio_drop"],
+    }
+
+    with _register_short_trade_target_profile_proxy(
+        profile_name="trend_continuation_strength_v3",
+        base_profile_name="trend_continuation_strength_v2",
+        watchlist_filter_diagnostics_selected_only_shrink_enabled=True,
+        watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift=0.05,
+        watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max=0.10,
+        watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max=0.40,
+        watchlist_filter_diagnostics_selected_only_shrink_close_strength_max=0.58,
+    ):
+        snapshot = build_short_trade_target_snapshot_from_entry(
+            trade_date="20260328",
+            entry=entry,
+            profile_name="trend_continuation_strength_v3",
+        )
+        with use_short_trade_target_profile(profile_name="trend_continuation_strength_v3"):
+            result = evaluate_short_trade_rejected_target(
+                trade_date="20260328",
+                entry=entry,
+                rank_hint=1,
+            )
+
+    assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in snapshot["negative_tags"]
+    assert result.negative_tags == [
+        "profitability_hard_cliff",
+        "breakout_trap_penalty_applied",
+        "market_state_risk_off",
+    ]
 
 
 def test_t_plus_2_continuation_candidate_tags_mid_alignment_low_catalyst_watchlist_case() -> None:
