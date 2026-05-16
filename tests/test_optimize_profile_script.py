@@ -1910,7 +1910,8 @@ def test_main_writes_best_candidate_comparison_to_output_files(monkeypatch: pyte
     assert "## Baseline Comparison" in output_md.read_text(encoding="utf-8")
 
 
-def test_recommend_rollout_action_allows_lower_is_better_metric_improvements() -> None:
+def test_recommend_rollout_action_allows_lower_is_better_metric_improvements(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
     comparison_summary = {
         "default": {
             "next_close_positive_rate_delta": 0.03,
@@ -1952,7 +1953,8 @@ def test_build_rollout_recommendation_payload_surfaces_directional_blockers() ->
     assert payload["baseline_verdicts"]["default"]["status"] == "blocked"
 
 
-def test_build_rollout_recommendation_payload_ignores_sub_noise_execution_and_exposure_deltas() -> None:
+def test_build_rollout_recommendation_payload_ignores_sub_noise_execution_and_exposure_deltas(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
     comparison_summary = {
         "default": {
             "next_close_positive_rate_delta": 0.03,
@@ -2281,6 +2283,7 @@ def test_load_strict_btst_objective_gate_ignores_non_mapping_structural_guardrai
 def test_main_persists_execution_aware_rollout_details_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     output_md = tmp_path / "report.md"
     output_json = tmp_path / "report.json"
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
 
     def fake_build_replay_evaluator(input_paths: list[Path], *, base_profile: str, next_high_hit_threshold: float = 0.02):
         del input_paths, next_high_hit_threshold
@@ -2376,6 +2379,7 @@ def test_main_persists_execution_aware_rollout_details_to_output_files(monkeypat
 def test_main_writes_rollout_recommendation_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     output_md = tmp_path / "report.md"
     output_json = tmp_path / "report.json"
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
 
     def fake_build_replay_evaluator(input_paths: list[Path], *, base_profile: str, next_high_hit_threshold: float = 0.02):
         del input_paths, next_high_hit_threshold
