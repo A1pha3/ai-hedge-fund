@@ -1,5 +1,9 @@
+from contextlib import contextmanager
+from types import SimpleNamespace
+
 import pytest
 
+import src.targets.profiles as short_trade_profiles_module
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.paper_trading._btst_reporting.entry_mode_utils import (
     _augment_execution_note,
@@ -1287,43 +1291,62 @@ def test_watchlist_filter_diagnostics_flat_trend_penalty_targets_low_trend_zero_
 
 def _make_watchlist_filter_diagnostics_selected_only_shrink_entry() -> dict:
     return {
-        "ticker": "000960",
+        "ticker": "601869",
         "candidate_source": "watchlist_filter_diagnostics",
         "candidate_reason_codes": ["watchlist_filter_diagnostics"],
-        "score_b": 0.22,
-        "score_c": 0.08,
-        "score_final": 0.12,
-        "quality_score": 0.58,
+        "score_b": 0.20,
+        "score_c": -0.40,
+        "score_final": -0.10,
+        "quality_score": 0.55,
         "strategy_signals": {
             "trend": _make_signal(
                 1,
-                38.0,
+                100.0,
                 sub_factors={
-                    "momentum": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
-                    "adx_strength": {"direction": 0, "confidence": 24.0, "completeness": 1.0},
-                    "ema_alignment": {"direction": 1, "confidence": 46.0, "completeness": 1.0},
+                    "momentum": {"direction": 1, "confidence": 35.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 60.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 55.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
                 },
             ).model_dump(mode="json"),
-            "event_sentiment": _make_signal(0, 6.0).model_dump(mode="json"),
-            "mean_reversion": _make_signal(0, 18.0).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                0,
+                0.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
             "fundamental": _make_signal(1, 70.0).model_dump(mode="json"),
         },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.12, "investor": 0.02}},
     }
 
 
-def test_watchlist_filter_diagnostics_selected_only_shrink_profile_contract() -> None:
-    profile = build_short_trade_target_profile("trend_continuation_strength_v3")
+@contextmanager
+def _use_short_trade_target_profile_proxy(*, base_profile_name: str, **extra_fields: float | bool | str):
+    base_profile = build_short_trade_target_profile(base_profile_name)
+    proxy_payload = vars(base_profile).copy()
+    proxy_payload.update(extra_fields)
+    proxy_profile = SimpleNamespace(**proxy_payload)
+    active_token = short_trade_profiles_module._ACTIVE_SHORT_TRADE_TARGET_PROFILE.set(proxy_profile)
+    context_token = short_trade_profiles_module._SHORT_TRADE_TARGET_PROFILE_CONTEXT_ACTIVE.set(True)
+    try:
+        yield proxy_profile
+    finally:
+        short_trade_profiles_module._SHORT_TRADE_TARGET_PROFILE_CONTEXT_ACTIVE.reset(context_token)
+        short_trade_profiles_module._ACTIVE_SHORT_TRADE_TARGET_PROFILE.reset(active_token)
 
-    assert profile.watchlist_filter_diagnostics_selected_only_shrink_enabled is True
-    assert profile.watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift == pytest.approx(0.05)
-    assert profile.watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max == pytest.approx(0.10)
-    assert profile.watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max == pytest.approx(0.40)
-    assert profile.watchlist_filter_diagnostics_selected_only_shrink_close_strength_max == pytest.approx(0.58)
+
+def test_watchlist_filter_diagnostics_selected_only_shrink_profile_contract() -> None:
+    with pytest.raises(ValueError, match="Unknown short trade target profile: trend_continuation_strength_v3"):
+        build_short_trade_target_profile("trend_continuation_strength_v3")
 
 
 def test_watchlist_filter_diagnostics_selected_only_shrink_downgrades_selected_to_near_miss() -> None:
     entry = _make_watchlist_filter_diagnostics_selected_only_shrink_entry()
-    build_short_trade_target_profile("trend_continuation_strength_v3")
 
     with use_short_trade_target_profile(profile_name="trend_continuation_strength_v2"):
         baseline_result = evaluate_short_trade_rejected_target(
@@ -1331,23 +1354,43 @@ def test_watchlist_filter_diagnostics_selected_only_shrink_downgrades_selected_t
             entry=entry,
             rank_hint=1,
         )
-    with use_short_trade_target_profile(profile_name="trend_continuation_strength_v3"):
-        variant_result = evaluate_short_trade_rejected_target(
+    with _use_short_trade_target_profile_proxy(
+        base_profile_name="trend_continuation_strength_v2",
+        name="trend_continuation_strength_v2_selected_only_shrink_probe",
+        watchlist_filter_diagnostics_selected_only_shrink_enabled=True,
+        watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift=0.05,
+        watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max=0.10,
+        watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max=0.61,
+        watchlist_filter_diagnostics_selected_only_shrink_close_strength_max=0.80,
+    ):
+        shrink_enabled_result = evaluate_short_trade_rejected_target(
             trade_date="20260328",
             entry=entry,
             rank_hint=1,
         )
 
     assert baseline_result.decision == "selected"
-    assert variant_result.decision == "near_miss"
-    assert variant_result.effective_select_threshold > baseline_result.effective_select_threshold
-    assert variant_result.effective_near_miss_threshold == baseline_result.effective_near_miss_threshold
+    assert baseline_result.effective_select_threshold < baseline_result.score_target < baseline_result.effective_select_threshold + 0.05
+    assert baseline_result.catalyst_freshness <= 0.10
+    assert baseline_result.trend_acceleration <= 0.61
+    assert baseline_result.close_strength <= 0.80
+    assert shrink_enabled_result.decision == "near_miss"
+    assert shrink_enabled_result.effective_select_threshold == pytest.approx(baseline_result.effective_select_threshold + 0.05)
+    assert shrink_enabled_result.effective_near_miss_threshold == pytest.approx(baseline_result.effective_near_miss_threshold)
 
 
 def test_selected_only_shrink_watchlist_filter_diagnostics_payload_reports_guard_application() -> None:
     entry = _make_watchlist_filter_diagnostics_selected_only_shrink_entry()
 
-    with use_short_trade_target_profile(profile_name="trend_continuation_strength_v3"):
+    with _use_short_trade_target_profile_proxy(
+        base_profile_name="trend_continuation_strength_v2",
+        name="trend_continuation_strength_v2_selected_only_shrink_probe",
+        watchlist_filter_diagnostics_selected_only_shrink_enabled=True,
+        watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift=0.05,
+        watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max=0.10,
+        watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max=0.61,
+        watchlist_filter_diagnostics_selected_only_shrink_close_strength_max=0.80,
+    ):
         result = evaluate_short_trade_rejected_target(
             trade_date="20260328",
             entry=entry,
