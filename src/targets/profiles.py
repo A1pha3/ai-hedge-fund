@@ -183,6 +183,11 @@ class ShortTradeTargetProfile:
     watchlist_filter_diagnostics_flat_trend_catalyst_freshness_max: float = 0.0
     watchlist_filter_diagnostics_flat_trend_close_strength_min: float = 1.0
     watchlist_filter_diagnostics_flat_trend_trend_acceleration_max: float = 1.0
+    watchlist_filter_diagnostics_selected_only_shrink_enabled: bool = False
+    watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift: float = 0.0
+    watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max: float = 0.0
+    watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max: float = 1.0
+    watchlist_filter_diagnostics_selected_only_shrink_close_strength_max: float = 1.0
     t_plus_2_continuation_enabled: bool = False
     t_plus_2_continuation_catalyst_freshness_max: float = 0.0
     t_plus_2_continuation_breakout_freshness_min: float = 1.0

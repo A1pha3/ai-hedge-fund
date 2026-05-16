@@ -1393,6 +1393,16 @@ SHORT_TRADE_TARGET_PROFILES["trend_continuation_strength_v2"] = replace(
     trend_continuation_strength_weak_close_penalty=0.08,
 )
 
+SHORT_TRADE_TARGET_PROFILES["trend_continuation_strength_v3"] = replace(
+    SHORT_TRADE_TARGET_PROFILES["trend_continuation_strength_v2"],
+    name="trend_continuation_strength_v3",
+    watchlist_filter_diagnostics_selected_only_shrink_enabled=True,
+    watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift=0.05,
+    watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max=0.10,
+    watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max=0.40,
+    watchlist_filter_diagnostics_selected_only_shrink_close_strength_max=0.58,
+)
+
 # ============================================================
 # Round 89 Task 2: trend_continuation 权重网格变体
 # 基于 trend_corrected_v1，系统搜索最优 tc_w × tc2d_w 组合
