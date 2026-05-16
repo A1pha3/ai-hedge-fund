@@ -7330,6 +7330,9 @@ def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str
 
     deduped_blockers = list(dict.fromkeys(blockers))
     strict_objective_gate = _load_strict_btst_objective_gate()
+    execution_eligible_evidence = None
+    if strict_objective_gate and strict_objective_gate.get("execution_eligible_evidence") is not None:
+        execution_eligible_evidence = dict(strict_objective_gate.get("execution_eligible_evidence") or {})
     if strict_objective_gate:
         strict_gate_blockers = list(strict_objective_gate.get("blockers") or [])
         if strict_gate_blockers:
@@ -7339,6 +7342,7 @@ def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str
         "blockers": deduped_blockers,
         "baseline_verdicts": baseline_verdicts,
         "strict_btst_objective_gate": strict_objective_gate,
+        "execution_eligible_evidence": execution_eligible_evidence,
     }
 
 
