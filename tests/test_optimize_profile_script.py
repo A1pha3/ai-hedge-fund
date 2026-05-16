@@ -2026,6 +2026,57 @@ def test_build_rollout_recommendation_payload_appends_strict_objective_blockers(
     assert "strict_false_negative_cases_present" in payload["blockers"]
 
 
+def test_build_rollout_recommendation_payload_appends_structural_guardrail_blockers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.004,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": 0.003,
+            "liquidity_capacity_raw_100_delta": 1.2,
+            "crowding_risk_raw_100_delta": -1.2,
+            "gap_risk_raw_100_delta": -1.1,
+            "projected_theme_exposure_delta": -0.006,
+            "incremental_theme_exposure_delta": -0.006,
+        }
+    }
+
+    (tmp_path / "btst_tplus1_tplus2_objective_monitor_latest.md").write_text(
+        "\n".join(
+            [
+                "## Surface Summary",
+                "- tradeable_surface: positive_rate=0.47, mean_t_plus_2_return=-0.0057",
+                "",
+                "## Decision Leaderboard",
+                "- rejected: positive_rate=0.46, mean_t_plus_2_return=-0.0060",
+                "",
+                "## False Negative Strict Goal Cases",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "btst_admission_edge_replay_validation.json").write_text(
+        json.dumps(
+            {
+                "structural_guardrail": {
+                    "excessive_window_count": 2,
+                    "excessive_window_labels": ["window-a", "window-b"],
+                    "blocker_candidate": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(optimize_profile, "REPORTS_DIR", tmp_path)
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["action"] == "hold"
+    assert "structural_expansion_repeated_across_windows" in payload["blockers"]
+    assert payload["strict_btst_objective_gate"]["structural_guardrail"]["excessive_window_count"] == 2
+
+
 def test_main_persists_execution_aware_rollout_details_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     output_md = tmp_path / "report.md"
     output_json = tmp_path / "report.json"
