@@ -111,13 +111,16 @@ def _build_t_plus_2_continuation_candidate_metrics_payload(t_plus_2_continuation
 
 
 def _build_watchlist_guard_metrics_payload(watchlist_guard: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "enabled": bool(watchlist_guard["enabled"]),
         "eligible": bool(watchlist_guard["eligible"]),
         "applied": bool(watchlist_guard["applied"]),
         "candidate_source": str(watchlist_guard["candidate_source"]),
         "gate_hits": dict(watchlist_guard["gate_hits"]),
     }
+    if "select_threshold_lift" in watchlist_guard:
+        payload["select_threshold_lift"] = round(float(watchlist_guard.get("select_threshold_lift", 0.0) or 0.0), 4)
+    return payload
 
 
 def _build_market_state_threshold_adjustment_metrics_payload(market_state_threshold_adjustment: dict[str, Any]) -> dict[str, Any]:
@@ -175,6 +178,7 @@ def _build_watchlist_metrics_payload(
     watchlist_zero_catalyst_crowded_guard: dict[str, Any],
     watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
     watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any],
+    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "catalyst_theme_penalty": round(float(snapshot["catalyst_theme_penalty"]), 4),
@@ -188,6 +192,7 @@ def _build_watchlist_metrics_payload(
         "watchlist_zero_catalyst_crowded_guard": _build_watchlist_guard_metrics_payload(watchlist_zero_catalyst_crowded_guard),
         "watchlist_zero_catalyst_flat_trend_guard": _build_watchlist_guard_metrics_payload(watchlist_zero_catalyst_flat_trend_guard),
         "watchlist_filter_diagnostics_flat_trend_guard": _build_watchlist_guard_metrics_payload(watchlist_filter_diagnostics_flat_trend_guard),
+        "watchlist_filter_diagnostics_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(watchlist_filter_diagnostics_selected_only_shrink_guard),
     }
 
 
@@ -709,6 +714,7 @@ def _collect_short_trade_metrics_payload_inputs(snapshot: dict[str, Any]) -> dic
         "watchlist_zero_catalyst_crowded_guard": dict(snapshot["watchlist_zero_catalyst_crowded_guard"]),
         "watchlist_zero_catalyst_flat_trend_guard": dict(snapshot["watchlist_zero_catalyst_flat_trend_guard"]),
         "watchlist_filter_diagnostics_flat_trend_guard": dict(snapshot["watchlist_filter_diagnostics_flat_trend_guard"]),
+        "watchlist_filter_diagnostics_selected_only_shrink_guard": dict(snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
         "visibility_gap_continuation_relief": dict(snapshot["visibility_gap_continuation_relief"]),
         "merge_approved_continuation_relief": dict(snapshot["merge_approved_continuation_relief"]),
         "prepared_breakout_penalty_relief": dict(snapshot["prepared_breakout_penalty_relief"]),

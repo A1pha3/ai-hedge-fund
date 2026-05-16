@@ -425,6 +425,7 @@ def _collect_short_trade_penalty_reasons(
     watchlist_zero_catalyst_crowded_guard: dict[str, Any],
     watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
     watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any],
+    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
     carryover_evidence_deficiency: dict[str, Any],
     selected_historical_proof_deficiency: dict[str, Any],
     t_plus_2_continuation_candidate: dict[str, Any],
@@ -448,6 +449,7 @@ def _collect_short_trade_penalty_reasons(
         "watchlist_zero_catalyst_crowded_penalty_applied" if watchlist_zero_catalyst_crowded_guard["applied"] else None,
         "watchlist_zero_catalyst_flat_trend_penalty_applied" if watchlist_zero_catalyst_flat_trend_guard["applied"] else None,
         "watchlist_filter_diagnostics_flat_trend_penalty_applied" if watchlist_filter_diagnostics_flat_trend_guard["applied"] else None,
+        "watchlist_filter_diagnostics_selected_only_shrink_applied" if watchlist_filter_diagnostics_selected_only_shrink_guard.get("applied") else None,
         "evidence_deficient_broad_family_only" if carryover_evidence_deficiency["evidence_deficient"] else None,
         "selected_historical_proof_missing" if selected_historical_proof_deficiency["proof_missing"] else None,
         "t_plus_2_continuation_candidate" if t_plus_2_continuation_candidate["applied"] else None,
@@ -493,6 +495,7 @@ def _build_short_trade_top_reasons(
             watchlist_zero_catalyst_crowded_guard=state.watchlist_zero_catalyst_crowded_guard,
             watchlist_zero_catalyst_flat_trend_guard=state.watchlist_zero_catalyst_flat_trend_guard,
             watchlist_filter_diagnostics_flat_trend_guard=state.watchlist_filter_diagnostics_flat_trend_guard,
+            watchlist_filter_diagnostics_selected_only_shrink_guard={},
             carryover_evidence_deficiency=state.carryover_evidence_deficiency,
             selected_historical_proof_deficiency=state.selected_historical_proof_deficiency,
             t_plus_2_continuation_candidate=state.t_plus_2_continuation_candidate,
@@ -667,6 +670,7 @@ def _build_short_trade_watchlist_explainability_payload(
     watchlist_zero_catalyst_crowded_guard: dict[str, Any],
     watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
     watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any],
+    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
     t_plus_2_continuation_candidate: dict[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -689,6 +693,9 @@ def _build_short_trade_watchlist_explainability_payload(
         "watchlist_filter_diagnostics_flat_trend_guard": _build_watchlist_guard_explainability_payload(
             watchlist_filter_diagnostics_flat_trend_guard,
             effective_penalty=float(snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]),
+        ),
+        "watchlist_filter_diagnostics_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(
+            watchlist_filter_diagnostics_selected_only_shrink_guard
         ),
         "t_plus_2_continuation_candidate": _build_t_plus_2_continuation_candidate_metrics_payload(t_plus_2_continuation_candidate),
     }
@@ -730,6 +737,7 @@ def _build_short_trade_metrics_payload(
             watchlist_zero_catalyst_crowded_guard=metrics_inputs["watchlist_zero_catalyst_crowded_guard"],
             watchlist_zero_catalyst_flat_trend_guard=metrics_inputs["watchlist_zero_catalyst_flat_trend_guard"],
             watchlist_filter_diagnostics_flat_trend_guard=metrics_inputs["watchlist_filter_diagnostics_flat_trend_guard"],
+            watchlist_filter_diagnostics_selected_only_shrink_guard=metrics_inputs["watchlist_filter_diagnostics_selected_only_shrink_guard"],
         ),
         **_build_upstream_shadow_metrics_payload(snapshot),
         **_build_short_trade_relief_metrics_payload(metrics_inputs),
@@ -791,6 +799,7 @@ def _build_short_trade_explainability_payload(
             watchlist_zero_catalyst_crowded_guard=state.watchlist_zero_catalyst_crowded_guard,
             watchlist_zero_catalyst_flat_trend_guard=state.watchlist_zero_catalyst_flat_trend_guard,
             watchlist_filter_diagnostics_flat_trend_guard=state.watchlist_filter_diagnostics_flat_trend_guard,
+            watchlist_filter_diagnostics_selected_only_shrink_guard=dict(snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
             t_plus_2_continuation_candidate=state.t_plus_2_continuation_candidate,
         ),
         "committee": _build_short_trade_committee_payload(snapshot),
@@ -1037,6 +1046,8 @@ def _build_short_trade_decision_reasoning(
             thresholds=thresholds,
         ),
     )
+    if dict(snapshot.get("watchlist_filter_diagnostics_selected_only_shrink_guard") or {}).get("applied"):
+        top_reasons = trim_reasons([*top_reasons, "watchlist_filter_diagnostics_selected_only_shrink_applied"])
     rejection_reasons = build_short_trade_rejection_reasons(
         decision=decision,
         blockers=decision_snapshot.blockers,
@@ -1128,6 +1139,8 @@ def _build_short_trade_decision_stage(
         carryover_evidence_deficiency=context.carryover_evidence_deficiency,
         selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
     )
+    if dict(snapshot.get("watchlist_filter_diagnostics_selected_only_shrink_guard") or {}).get("applied"):
+        decision_snapshot.negative_tags.append("watchlist_filter_diagnostics_selected_only_shrink_applied")
     decision, downgrade_reasons = apply_short_trade_committee_governance(
         decision=decision,
         snapshot=snapshot,

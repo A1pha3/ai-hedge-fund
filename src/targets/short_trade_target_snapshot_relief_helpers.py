@@ -11,6 +11,9 @@ from src.targets.short_trade_target_prior_helpers import (
     resolve_effective_prior_metrics,
     score_short_trade_historical_continuation_prior,
 )
+from src.targets.short_trade_target_watchlist_helpers import (
+    resolve_watchlist_filter_diagnostics_selected_only_shrink_impl,
+)
 
 BREAKOUT_TRAP_PENALTY_WEIGHT = 0.10
 BREAKOUT_TRAP_EXECUTION_BLOCK_THRESHOLD = 0.60
@@ -86,12 +89,14 @@ class WatchlistPenaltyState:
     watchlist_zero_catalyst_crowded_penalty: dict[str, Any]
     watchlist_zero_catalyst_flat_trend_penalty: dict[str, Any]
     watchlist_filter_diagnostics_flat_trend_penalty: dict[str, Any]
+    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any]
     t_plus_2_continuation_candidate: dict[str, Any]
     effective_catalyst_theme_penalty: float
     effective_watchlist_zero_catalyst_penalty: float
     effective_watchlist_zero_catalyst_crowded_penalty: float
     effective_watchlist_zero_catalyst_flat_trend_penalty: float
     effective_watchlist_filter_diagnostics_flat_trend_penalty: float
+    effective_watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift: float
 
 
 @dataclass(frozen=True)
@@ -878,6 +883,14 @@ def _resolve_watchlist_penalty_state(
         trend_acceleration=threshold_state.trend_acceleration,
         profile=profile,
     )
+    watchlist_filter_diagnostics_selected_only_shrink_guard = resolve_watchlist_filter_diagnostics_selected_only_shrink_impl(
+        input_data=input_data,
+        catalyst_freshness=state.raw_catalyst_freshness,
+        close_strength=state.close_strength,
+        trend_acceleration=threshold_state.trend_acceleration,
+        profile=profile,
+        clamp_unit_interval_fn=lambda value: max(0.0, min(1.0, float(value))),
+    )
     t_plus_2_continuation_candidate = resolve_t_plus_2_continuation_candidate(
         input_data=input_data,
         raw_catalyst_freshness=state.raw_catalyst_freshness,
@@ -894,12 +907,14 @@ def _resolve_watchlist_penalty_state(
         watchlist_zero_catalyst_crowded_penalty=watchlist_zero_catalyst_crowded_penalty,
         watchlist_zero_catalyst_flat_trend_penalty=watchlist_zero_catalyst_flat_trend_penalty,
         watchlist_filter_diagnostics_flat_trend_penalty=watchlist_filter_diagnostics_flat_trend_penalty,
+        watchlist_filter_diagnostics_selected_only_shrink_guard=watchlist_filter_diagnostics_selected_only_shrink_guard,
         t_plus_2_continuation_candidate=t_plus_2_continuation_candidate,
         effective_catalyst_theme_penalty=float(catalyst_theme_penalty["effective_penalty"]),
         effective_watchlist_zero_catalyst_penalty=float(watchlist_zero_catalyst_penalty["effective_penalty"]),
         effective_watchlist_zero_catalyst_crowded_penalty=float(watchlist_zero_catalyst_crowded_penalty["effective_penalty"]),
         effective_watchlist_zero_catalyst_flat_trend_penalty=float(watchlist_zero_catalyst_flat_trend_penalty["effective_penalty"]),
         effective_watchlist_filter_diagnostics_flat_trend_penalty=float(watchlist_filter_diagnostics_flat_trend_penalty["effective_penalty"]),
+        effective_watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift=float(watchlist_filter_diagnostics_selected_only_shrink_guard["select_threshold_lift"]),
     )
 
 
@@ -1302,11 +1317,15 @@ def _finalize_short_trade_snapshot_relief_resolution(
         effective_select_threshold=core_state.threshold_state.effective_select_threshold,
         effective_near_miss_threshold=core_state.score_penalty_state.effective_near_miss_threshold,
     )
+    effective_watchlist_selected_only_shrink_select_threshold = (
+        float(market_state_threshold_adjustment["effective_select_threshold"])
+        + core_state.watchlist_penalty_state.effective_watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift
+    )
     selected_close_retention_adjustment = _resolve_selected_close_retention_adjustment(
         profile=core_state.profile,
         state=core_state.state,
         breakout_trap_guard=core_state.score_penalty_state.breakout_trap_guard,
-        effective_select_threshold=float(market_state_threshold_adjustment["effective_select_threshold"]),
+        effective_select_threshold=effective_watchlist_selected_only_shrink_select_threshold,
         effective_near_miss_threshold=float(market_state_threshold_adjustment["effective_near_miss_threshold"]),
         clamp_unit_interval=lambda value: max(0.0, min(1.0, float(value))),
     )
@@ -1395,6 +1414,7 @@ def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolu
         "watchlist_zero_catalyst_crowded_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_crowded_penalty,
         "watchlist_zero_catalyst_flat_trend_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_flat_trend_penalty,
         "watchlist_filter_diagnostics_flat_trend_penalty": resolution.watchlist_penalty_state.watchlist_filter_diagnostics_flat_trend_penalty,
+        "watchlist_filter_diagnostics_selected_only_shrink_guard": resolution.watchlist_penalty_state.watchlist_filter_diagnostics_selected_only_shrink_guard,
         "t_plus_2_continuation_candidate": resolution.watchlist_penalty_state.t_plus_2_continuation_candidate,
         "breakout_trap_guard": resolution.score_penalty_state.breakout_trap_guard,
         "breakout_trap_risk": resolution.score_penalty_state.breakout_trap_risk,

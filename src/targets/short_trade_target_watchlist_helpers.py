@@ -47,6 +47,17 @@ def _build_default_source_penalty_result(*, enabled: bool, source: str) -> dict[
     }
 
 
+def _build_default_selected_threshold_lift_result(*, enabled: bool, source: str) -> dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "eligible": False,
+        "applied": False,
+        "candidate_source": source,
+        "gate_hits": {},
+        "select_threshold_lift": 0.0,
+    }
+
+
 def resolve_watchlist_penalty_rule(
     *,
     input_data: TargetEvaluationInput,
@@ -204,6 +215,39 @@ def resolve_watchlist_filter_diagnostics_flat_trend_penalty_impl(
             "trend_acceleration": trend_acceleration <= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_flat_trend_trend_acceleration_max or 0.0)),
         },
     )
+
+
+def resolve_watchlist_filter_diagnostics_selected_only_shrink_impl(
+    *,
+    input_data: TargetEvaluationInput,
+    catalyst_freshness: float,
+    close_strength: float,
+    trend_acceleration: float,
+    profile: Any,
+    clamp_unit_interval_fn: Callable[[float], float],
+) -> dict[str, Any]:
+    source = str(input_data.replay_context.get("source") or "").strip()
+    enabled = bool(profile.watchlist_filter_diagnostics_selected_only_shrink_enabled)
+    default_result = _build_default_selected_threshold_lift_result(enabled=enabled, source=source)
+    if not enabled or source != "watchlist_filter_diagnostics":
+        return default_result
+
+    gate_hits = {
+        "candidate_source": source == "watchlist_filter_diagnostics",
+        "catalyst_freshness": catalyst_freshness <= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max or 0.0)),
+        "trend_acceleration": trend_acceleration <= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max or 0.0)),
+        "close_strength": close_strength <= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_selected_only_shrink_close_strength_max or 0.0)),
+    }
+    eligible = all(gate_hits.values())
+    select_threshold_lift = clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift or 0.0)) if eligible else 0.0
+    return {
+        "enabled": True,
+        "eligible": eligible,
+        "applied": select_threshold_lift > 0.0,
+        "candidate_source": source,
+        "gate_hits": gate_hits,
+        "select_threshold_lift": select_threshold_lift,
+    }
 
 
 def resolve_t_plus_2_continuation_candidate_impl(
