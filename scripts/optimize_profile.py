@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import sys
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -7357,8 +7358,16 @@ def _load_strict_btst_objective_gate() -> dict[str, Any] | None:
         except (OSError, ValueError, TypeError) as exc:
             logger.warning("Failed to load BTST structural guardrail sidecar from %s: %s", structural_validation_path, exc)
         else:
-            if isinstance(structural_payload, dict):
-                structural_guardrail = dict(structural_payload.get("structural_guardrail") or {})
+            if isinstance(structural_payload, Mapping):
+                raw_structural_guardrail = structural_payload.get("structural_guardrail")
+                if raw_structural_guardrail is None:
+                    structural_guardrail = None
+                elif isinstance(raw_structural_guardrail, Mapping):
+                    structural_guardrail = dict(raw_structural_guardrail)
+                else:
+                    logger.warning("Ignoring non-mapping BTST structural guardrail payload from %s", structural_validation_path)
+            else:
+                logger.warning("Ignoring non-mapping BTST structural guardrail sidecar from %s", structural_validation_path)
     return build_strict_btst_objective_gate(
         parse_objective_monitor_markdown(objective_monitor_path),
         structural_guardrail=structural_guardrail,

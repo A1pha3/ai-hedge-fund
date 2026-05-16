@@ -2123,6 +2123,56 @@ def test_load_strict_btst_objective_gate_ignores_malformed_structural_json(monke
     assert payload["strict_btst_objective_gate"] == strict_gate
 
 
+@pytest.mark.parametrize("structural_guardrail_payload", [1, "bad"])
+def test_load_strict_btst_objective_gate_ignores_non_mapping_structural_guardrail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, structural_guardrail_payload: object) -> None:
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.004,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": -0.001,
+            "liquidity_capacity_raw_100_delta": -0.8,
+            "crowding_risk_raw_100_delta": 0.8,
+            "gap_risk_raw_100_delta": 0.9,
+            "projected_theme_exposure_delta": 0.004,
+            "incremental_theme_exposure_delta": 0.004,
+        }
+    }
+    (tmp_path / "btst_tplus1_tplus2_objective_monitor_latest.md").write_text(
+        "\n".join(
+            [
+                "## Surface Summary",
+                "- tradeable_surface: positive_rate=0.47, mean_t_plus_2_return=-0.0057",
+                "",
+                "## Decision Leaderboard",
+                "- rejected: positive_rate=0.46, mean_t_plus_2_return=-0.0060",
+                "",
+                "## False Negative Strict Goal Cases",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "btst_admission_edge_replay_validation.json").write_text(
+        json.dumps({"structural_guardrail": structural_guardrail_payload}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(optimize_profile, "REPORTS_DIR", tmp_path)
+
+    strict_gate = optimize_profile._load_strict_btst_objective_gate()
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert strict_gate is not None
+    assert strict_gate["action"] == "promote"
+    assert strict_gate["blockers"] == []
+    assert strict_gate["tradeable_surface"]["positive_rate"] == pytest.approx(0.47)
+    assert strict_gate["rejected_surface"]["positive_rate"] == pytest.approx(0.46)
+    assert strict_gate["structural_guardrail"] is None
+    assert payload["action"] == "promote"
+    assert payload["blockers"] == []
+    assert payload["strict_btst_objective_gate"] == strict_gate
+
+
 def test_main_persists_execution_aware_rollout_details_to_output_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     output_md = tmp_path / "report.md"
     output_json = tmp_path / "report.json"
