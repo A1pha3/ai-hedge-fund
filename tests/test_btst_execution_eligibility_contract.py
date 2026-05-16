@@ -152,3 +152,29 @@ def test_build_reporting_target_summary_tracks_formal_blocked_selected_provenanc
     assert summary.short_trade_blocked_count == 1
     assert summary.short_trade_formal_blocked_selected_count == 1
     assert summary.short_trade_formal_block_flag_counts == {"p2_execution_blocked": 1}
+
+
+def test_build_reporting_target_summary_tracks_non_halt_formal_blocked_selected_provenance() -> None:
+    evaluation = DualTargetEvaluation(
+        ticker="300724",
+        trade_date="20260422",
+        execution_eligible=False,
+        btst_regime_gate="shadow_only",
+        historical_prior_quality_level="watch_only",
+        p2_execution_blocked=True,
+        p2_execution_block_reason="p2_regime_gate_enforce:shadow_only",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="selected",
+            score_target=0.81,
+        ),
+    )
+
+    summary = build_reporting_target_summary(
+        selection_targets={"300724": evaluation},
+        target_mode="short_trade_only",
+    )
+
+    assert summary.short_trade_formal_non_halt_blocked_selected_count == 1
+    assert summary.short_trade_formal_non_halt_gate_counts == {"shadow_only": 1}
+    assert summary.short_trade_formal_non_halt_prior_quality_counts == {"watch_only": 1}

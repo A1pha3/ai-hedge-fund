@@ -449,6 +449,7 @@ def _build_replayed_rows(
                 "ticker": str(ticker),
                 "stored_decision": stored_short_trade.get("decision"),
                 "decision": replayed_snapshot.get("decision"),
+                "execution_eligible": bool(replayed_snapshot.get("execution_eligible")),
                 "score_target": replayed_snapshot.get("score_target"),
                 "candidate_source": candidate_source,
                 "candidate_reason_codes": list(stored_evaluation.get("candidate_reason_codes") or []),
@@ -561,6 +562,7 @@ def _build_profile_replay_analysis_payload(
     actionable_rows = [row for row in rows if row.get("decision") in {"selected", "near_miss"}]
     selected_rows = [row for row in rows if row.get("decision") == "selected"]
     near_miss_rows = [row for row in rows if row.get("decision") == "near_miss"]
+    execution_eligible_rows = [row for row in rows if bool(row.get("execution_eligible"))]
     blocked_rows = [row for row in rows if row.get("decision") == "blocked"]
     rejected_rows = [row for row in rows if row.get("decision") == "rejected"]
     false_negative_rows = _build_false_negative_proxy_rows(rows, next_high_hit_threshold=next_high_hit_threshold)
@@ -607,6 +609,7 @@ def _build_profile_replay_analysis_payload(
             "tradeable": _build_surface_summary(actionable_rows, next_high_hit_threshold=next_high_hit_threshold),
             "selected": _build_surface_summary(selected_rows, next_high_hit_threshold=next_high_hit_threshold),
             "near_miss": _build_surface_summary(near_miss_rows, next_high_hit_threshold=next_high_hit_threshold),
+            "execution_eligible": _build_surface_summary(execution_eligible_rows, next_high_hit_threshold=next_high_hit_threshold),
             "blocked": _build_surface_summary(blocked_rows, next_high_hit_threshold=next_high_hit_threshold),
             "rejected": _build_surface_summary(rejected_rows, next_high_hit_threshold=next_high_hit_threshold),
         },

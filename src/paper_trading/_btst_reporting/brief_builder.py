@@ -920,6 +920,17 @@ def _build_btst_brief_summary(
         "short_trade_formal_block_flag_counts": dict(
             reporting_target_summary.get("short_trade_formal_block_flag_counts") or {}
         ),
+        "short_trade_formal_non_halt_blocked_selected_count": _summary_value(
+            reporting_target_summary,
+            "short_trade_formal_non_halt_blocked_selected_count",
+            0,
+        ),
+        "short_trade_formal_non_halt_gate_counts": dict(
+            reporting_target_summary.get("short_trade_formal_non_halt_gate_counts") or {}
+        ),
+        "short_trade_formal_non_halt_prior_quality_counts": dict(
+            reporting_target_summary.get("short_trade_formal_non_halt_prior_quality_counts") or {}
+        ),
         "execution_blocked_candidate_count": execution_blocked_summary["count"],
         "execution_blocked_tickers": execution_blocked_summary["tickers"],
     }

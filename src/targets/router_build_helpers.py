@@ -70,6 +70,35 @@ def resolve_short_trade_reporting_decision(evaluation: Any, short_trade_result: 
     return raw_decision, formal_execution_block_flags
 
 
+def _resolve_formal_block_gate_label(evaluation: Any, short_trade_result: Any | None = None) -> str | None:
+    short_trade_result = short_trade_result if short_trade_result is not None else _read_field(evaluation, "short_trade")
+    gate_label = str(_read_field(evaluation, "btst_regime_gate") or _read_field(short_trade_result, "btst_regime_gate") or "").strip()
+    if gate_label:
+        return gate_label
+    p2_reason = str(_read_field(evaluation, "p2_execution_block_reason") or "").strip()
+    if ":" in p2_reason:
+        _, _, suffix = p2_reason.rpartition(":")
+        normalized = suffix.strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _resolve_formal_block_prior_quality_label(evaluation: Any, short_trade_result: Any | None = None) -> str | None:
+    short_trade_result = short_trade_result if short_trade_result is not None else _read_field(evaluation, "short_trade")
+    for field_name in ("historical_prior_quality_level", "p3_prior_quality_label"):
+        value = str(_read_field(evaluation, field_name) or _read_field(short_trade_result, field_name) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _is_non_halt_formal_block(evaluation: Any, short_trade_result: Any | None = None) -> bool:
+    gate_label = str(_resolve_formal_block_gate_label(evaluation, short_trade_result) or "").strip().lower()
+    p2_reason = str(_read_field(evaluation, "p2_execution_block_reason") or "").strip().lower()
+    return gate_label != "halt" and "halt" not in p2_reason
+
+
 def build_reporting_target_summary(*, selection_targets: dict[str, Any], target_mode: TargetMode | str) -> DualTargetSummary:
     summary = DualTargetSummary(target_mode=target_mode, selection_target_count=len(selection_targets))
     for evaluation in selection_targets.values():
@@ -84,6 +113,14 @@ def build_reporting_target_summary(*, selection_targets: dict[str, Any], target_
             summary.short_trade_formal_blocked_selected_count += 1
             for flag in formal_execution_block_flags:
                 summary.short_trade_formal_block_flag_counts[flag] = int(summary.short_trade_formal_block_flag_counts.get(flag) or 0) + 1
+            if _is_non_halt_formal_block(evaluation, short_trade_result):
+                summary.short_trade_formal_non_halt_blocked_selected_count += 1
+                gate_label = _resolve_formal_block_gate_label(evaluation, short_trade_result)
+                if gate_label:
+                    summary.short_trade_formal_non_halt_gate_counts[gate_label] = int(summary.short_trade_formal_non_halt_gate_counts.get(gate_label) or 0) + 1
+                prior_quality_label = _resolve_formal_block_prior_quality_label(evaluation, short_trade_result)
+                if prior_quality_label:
+                    summary.short_trade_formal_non_halt_prior_quality_counts[prior_quality_label] = int(summary.short_trade_formal_non_halt_prior_quality_counts.get(prior_quality_label) or 0) + 1
         _accumulate_target_result(
             summary=summary,
             result=short_trade_result,

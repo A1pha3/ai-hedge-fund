@@ -113,6 +113,14 @@ def _summarize_structural_guardrail(payload: dict[str, Any] | None, regime_rows:
         for row in regime_rows
         if str(row.get("decision") or "").strip() == "selected" and bool(row.get("execution_eligible"))
     )
+    non_halt_execution_eligible_count = sum(
+        1
+        for row in regime_rows
+        if str(row.get("gate") or "").strip() != "halt" and bool(row.get("execution_eligible"))
+    )
+    has_positive_execution_eligible_evidence = non_halt_execution_eligible_count > 0
+    if not has_positive_execution_eligible_evidence:
+        blockers.append("no_non_halt_execution_eligible_evidence")
     selected_without_execution_eligibility = raw_selected_count > 0 and execution_eligible_selected_count == 0
     if selected_without_execution_eligibility:
         blockers.append("runtime_selecteds_not_execution_eligible")
@@ -127,6 +135,8 @@ def _summarize_structural_guardrail(payload: dict[str, Any] | None, regime_rows:
         "no_runtime_activation_delta_candidate": bool(no_runtime_activation_window_labels),
         "raw_selected_count": raw_selected_count,
         "execution_eligible_selected_count": execution_eligible_selected_count,
+        "non_halt_execution_eligible_count": non_halt_execution_eligible_count,
+        "has_positive_execution_eligible_evidence": has_positive_execution_eligible_evidence,
         "selected_without_execution_eligibility": selected_without_execution_eligibility,
         "blockers": blockers,
         "blocker_candidate": bool(blockers),

@@ -14,6 +14,7 @@ from scripts.btst_optimized_profile_manifest_helpers import (
     derive_latest_replay_trade_date,
     publish_btst_optimized_profile_manifest,
 )
+from scripts.btst_strict_objective_gate import build_strict_btst_objective_gate
 from scripts.optimize_profile import (
     _build_default_checkpoint_path,
     _build_replay_evaluator,
@@ -2077,6 +2078,108 @@ def test_build_rollout_recommendation_payload_appends_structural_guardrail_block
     assert "no_runtime_activation_delta_across_replay_windows" in payload["blockers"]
     assert "structural_expansion_repeated_across_windows" in payload["blockers"]
     assert payload["strict_btst_objective_gate"]["structural_guardrail"]["excessive_window_count"] == 2
+
+
+def test_build_strict_btst_objective_gate_blocks_missing_execution_eligible_edge() -> None:
+    payload = build_strict_btst_objective_gate(
+        {
+            "Surface Summary": {
+                "tradeable_surface": {
+                    "positive_rate": 0.58,
+                    "mean_t_plus_2_return": 0.01,
+                }
+            },
+            "Decision Leaderboard": {
+                "rejected": {
+                    "positive_rate": 0.52,
+                    "mean_t_plus_2_return": 0.009,
+                }
+            },
+        },
+        structural_guardrail={
+            "non_halt_execution_eligible_count": 0,
+            "has_positive_execution_eligible_evidence": False,
+            "blockers": [],
+            "blocker_candidate": False,
+        },
+    )
+
+    assert payload["action"] == "hold"
+    assert "no_non_halt_execution_eligible_evidence" in payload["blockers"]
+    assert payload["execution_eligible_evidence"] == {
+        "non_halt_execution_eligible_count": 0,
+        "has_positive_execution_eligible_evidence": False,
+    }
+
+
+def test_build_rollout_recommendation_payload_surfaces_execution_eligible_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.004,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": 0.003,
+            "liquidity_capacity_raw_100_delta": 1.2,
+            "crowding_risk_raw_100_delta": -1.2,
+            "gap_risk_raw_100_delta": -1.1,
+            "projected_theme_exposure_delta": -0.006,
+            "incremental_theme_exposure_delta": -0.006,
+        }
+    }
+
+    monkeypatch.setattr(
+        optimize_profile,
+        "_load_strict_btst_objective_gate",
+        lambda: {
+            "action": "hold",
+            "blockers": ["no_non_halt_execution_eligible_evidence"],
+            "execution_eligible_evidence": {
+                "non_halt_execution_eligible_count": 0,
+                "has_positive_execution_eligible_evidence": False,
+            },
+        },
+    )
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["action"] == "hold"
+    assert payload["execution_eligible_evidence"] == {
+        "non_halt_execution_eligible_count": 0,
+        "has_positive_execution_eligible_evidence": False,
+    }
+    assert "no_non_halt_execution_eligible_evidence" in payload["blockers"]
+
+
+def test_build_rollout_recommendation_payload_preserves_absent_execution_eligible_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.004,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": 0.003,
+            "liquidity_capacity_raw_100_delta": 1.2,
+            "crowding_risk_raw_100_delta": -1.2,
+            "gap_risk_raw_100_delta": -1.1,
+            "projected_theme_exposure_delta": -0.006,
+            "incremental_theme_exposure_delta": -0.006,
+        }
+    }
+    monkeypatch.setattr(
+        optimize_profile,
+        "_load_strict_btst_objective_gate",
+        lambda: {
+            "action": "promote",
+            "blockers": [],
+            "execution_eligible_evidence": None,
+        },
+    )
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["action"] == "promote"
+    assert payload["execution_eligible_evidence"] is None
 
 
 def test_load_strict_btst_objective_gate_ignores_malformed_structural_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

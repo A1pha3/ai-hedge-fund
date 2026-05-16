@@ -62,6 +62,13 @@ def _format_formal_block_flag_counts(summary: dict[str, Any]) -> str:
     return ", ".join(f"{flag}={int(flag_counts[flag] or 0)}" for flag in sorted(flag_counts))
 
 
+def _format_named_count_map(summary: dict[str, Any], field_name: str) -> str:
+    count_map = dict(summary.get(field_name) or {})
+    if not count_map:
+        return "none"
+    return ", ".join(f"{name}={int(count_map[name] or 0)}" for name in sorted(count_map))
+
+
 def _append_brief_ticker_section(
     lines: list[str],
     *,
@@ -408,6 +415,15 @@ def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) 
     )
     lines.append(
         f"- short_trade_formal_block_flag_counts: {_format_formal_block_flag_counts(summary)}"
+    )
+    lines.append(
+        f"- short_trade_formal_non_halt_blocked_selected_count: {summary.get('short_trade_formal_non_halt_blocked_selected_count', 0)}"
+    )
+    lines.append(
+        f"- short_trade_formal_non_halt_gate_counts: {_format_named_count_map(summary, 'short_trade_formal_non_halt_gate_counts')}"
+    )
+    lines.append(
+        f"- short_trade_formal_non_halt_prior_quality_counts: {_format_named_count_map(summary, 'short_trade_formal_non_halt_prior_quality_counts')}"
     )
     lines.append(
         f"- short_trade_opportunity_pool_count: {summary.get('short_trade_opportunity_pool_count')}"

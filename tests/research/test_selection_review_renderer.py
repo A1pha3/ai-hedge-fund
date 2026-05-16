@@ -86,6 +86,9 @@ def test_render_selection_review_contains_key_sections():
             "short_trade_rejected_count": 0,
             "short_trade_formal_blocked_selected_count": 1,
             "short_trade_formal_block_flag_counts": {"p2_execution_blocked": 1},
+            "short_trade_formal_non_halt_blocked_selected_count": 1,
+            "short_trade_formal_non_halt_gate_counts": {"shadow_only": 1},
+            "short_trade_formal_non_halt_prior_quality_counts": {"watch_only": 1},
             "p2_execution_blocked_count": 1,
             "p3_execution_blocked_count": 0,
         },
@@ -175,6 +178,9 @@ def test_render_selection_review_contains_key_sections():
     assert "short_trade_blocked_count: 1" in markdown
     assert "short_trade_formal_blocked_selected_count: 1" in markdown
     assert "short_trade_formal_block_flag_counts: p2_execution_blocked=1" in markdown
+    assert "short_trade_formal_non_halt_blocked_selected_count: 1" in markdown
+    assert "short_trade_formal_non_halt_gate_counts: shadow_only=1" in markdown
+    assert "short_trade_formal_non_halt_prior_quality_counts: watch_only=1" in markdown
     assert "## Research Target Summary" in markdown
     assert "selected_symbols: 000001" in markdown
     assert "near_miss_symbols: 300750" in markdown

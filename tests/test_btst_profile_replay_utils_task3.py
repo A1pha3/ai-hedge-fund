@@ -196,6 +196,56 @@ def test_build_replayed_rows_prefers_watchlist_metric_sources_when_ticker_overla
     assert row["close_support_30_source"] == "watchlist_support"
 
 
+def test_build_replayed_rows_surfaces_execution_eligible_from_replayed_snapshot() -> None:
+    payload = {
+        "watchlist": [
+            {
+                "ticker": "000004",
+                "score_c": 0.88,
+            }
+        ],
+        "selection_targets": {
+            "000004": {
+                "candidate_source": "watchlist",
+                "short_trade": {"decision": "selected"},
+            },
+        },
+        "buy_order_tickers": ["000004"],
+    }
+    mock_replayed_snapshots = {
+        "000004": {
+            "decision": "selected",
+            "score_target": 0.88,
+            "execution_eligible": True,
+            "blockers": [],
+            "gate_status": {},
+            "metrics_payload": {},
+            "explainability_payload": {
+                "candidate_source": "watchlist",
+            },
+        },
+    }
+
+    with patch("scripts.btst_profile_replay_utils.build_selection_targets") as mock_build_targets, patch("scripts.btst_profile_replay_utils._extract_short_trade_snapshot_map") as mock_extract_snapshots, patch("scripts.btst_profile_replay_utils._extract_btst_price_outcome") as mock_price_outcome:
+        mock_build_targets.return_value = ({}, None)
+        mock_extract_snapshots.return_value = mock_replayed_snapshots
+        mock_price_outcome.return_value = {}
+
+        rows = _build_replayed_rows(
+            payload=payload,
+            trade_date="2024-01-15",
+            target_mode="short_trade_only",
+            rejected_entries=[],
+            supplemental_entries=[],
+            profile_name="test_profile",
+            label=None,
+            replay_input_path=Path("/test.json"),
+            price_cache={},
+        )
+
+    assert rows[0]["execution_eligible"] is True
+
+
 def test_summarize_source_coverage_aggregates_row_level_sources() -> None:
     """Test that _summarize_source_coverage aggregates flow/persist/close_support source counts."""
     from scripts.btst_profile_replay_utils import _summarize_source_coverage
@@ -326,6 +376,67 @@ def test_analyze_btst_profile_replay_window_includes_source_coverage_summary() -
     assert analysis["source_coverage_summary"]["close_support_30_source_counts"]["support_30"] == 1
     assert analysis["source_coverage_summary"]["committee_component_sources_counts"]["momentum_agent"] == 1
     assert analysis["source_coverage_summary"]["committee_component_sources_counts"]["volume_agent"] == 1
+
+
+def test_analyze_btst_profile_replay_window_includes_execution_eligible_surface_summary() -> None:
+    from collections import Counter
+    from unittest.mock import MagicMock, patch
+
+    from scripts.btst_profile_replay_utils import analyze_btst_profile_replay_window
+
+    mock_rows = [
+        {
+            "ticker": "000001",
+            "decision": "selected",
+            "execution_eligible": True,
+            "score_target": 0.85,
+            "next_high_return": 0.06,
+            "next_close_return": 0.03,
+            "t_plus_2_close_return": 0.04,
+            "cycle_status": "closed",
+            "data_status": "complete",
+            "candidate_source": "watchlist",
+            "explainability_payload": {},
+        },
+        {
+            "ticker": "000002",
+            "decision": "near_miss",
+            "execution_eligible": False,
+            "score_target": 0.72,
+            "next_high_return": 0.01,
+            "next_close_return": -0.02,
+            "cycle_status": "closed",
+            "data_status": "complete",
+            "candidate_source": "watchlist",
+            "explainability_payload": {},
+        },
+    ]
+
+    mock_replay_results = {
+        "rows": mock_rows,
+        "decision_counts": Counter({"selected": 1, "near_miss": 1}),
+        "candidate_source_counts": Counter({"watchlist": 2}),
+        "cycle_status_counts": Counter({"closed": 2}),
+        "data_status_counts": Counter({"complete": 2}),
+        "target_modes": Counter({"short_trade_only": 1}),
+        "candidate_entry_filter_observability": {},
+        "filtered_candidate_entry_rows": [],
+        "filtered_candidate_entry_counts": Counter(),
+    }
+
+    with patch("scripts.btst_profile_replay_utils._iter_replay_input_sources") as mock_iter, patch("scripts.btst_profile_replay_utils.build_short_trade_target_profile") as mock_profile, patch("scripts.btst_profile_replay_utils._override_short_trade_thresholds"), patch("scripts.btst_profile_replay_utils._process_replay_input_sources") as mock_process:
+        mock_iter.return_value = [("fake_path", {})]
+        mock_profile.return_value = MagicMock(name="test_profile")
+        mock_process.return_value = mock_replay_results
+
+        analysis = analyze_btst_profile_replay_window(
+            "fake_path",
+            profile_name="watchlist_zero_catalyst_guard_relief",
+            next_high_hit_threshold=0.02,
+        )
+
+    assert analysis["surface_summaries"]["execution_eligible"]["total_count"] == 1
+    assert analysis["surface_summaries"]["execution_eligible"]["closed_cycle_count"] == 1
 
 
 def test_analyze_btst_multi_window_profile_validation_propagates_source_coverage_summaries() -> None:
