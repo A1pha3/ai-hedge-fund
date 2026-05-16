@@ -524,6 +524,8 @@ def test_render_btst_next_day_trade_brief_markdown_emits_sections_and_sources():
                 "short_trade_near_miss_count": 1,
                 "short_trade_blocked_count": 0,
                 "short_trade_rejected_count": 1,
+                "short_trade_formal_blocked_selected_count": 2,
+                "short_trade_formal_block_flag_counts": {"p2_execution_blocked": 2},
                 "short_trade_opportunity_pool_count": 1,
                 "no_history_observer_count": 0,
                 "research_upside_radar_count": 1,
@@ -675,6 +677,8 @@ def test_render_btst_next_day_trade_brief_markdown_emits_sections_and_sources():
     assert "## Upstream Shadow Recall" in markdown
     assert "- candidate_source: upstream_liquidity_corridor_shadow" in markdown
     assert "## Source Paths" in markdown
+    assert "- short_trade_formal_blocked_selected_count: 2" in markdown
+    assert "- short_trade_formal_block_flag_counts: p2_execution_blocked=2" in markdown
     assert "- key_metrics: breakout=0.3010, trend=0.2410, close=0.5410, sector=0.1820, catalyst=0.8120" in markdown
 
 

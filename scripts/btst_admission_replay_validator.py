@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +42,7 @@ def _summarize_regime_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, in
 
 
 def _summarize_multi_window_validation(payload: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not payload:
+    if not payload or not isinstance(payload, Mapping):
         return None
     rows = list(payload.get("rows") or [])
     changed_window_labels: list[str] = []
@@ -56,6 +57,79 @@ def _summarize_multi_window_validation(payload: dict[str, Any] | None) -> dict[s
         "changed_window_count": len(changed_window_labels),
         "changed_window_labels": changed_window_labels,
         "recommendation": str(payload.get("recommendation") or ""),
+    }
+
+
+def _compute_expansion_ratio(*, baseline_count: int, variant_count: int) -> float:
+    if baseline_count <= 0:
+        return 1.0 if variant_count > 0 else 0.0
+    return (float(variant_count) - float(baseline_count)) / float(baseline_count)
+
+
+def _extract_surface_total_count(row: dict[str, Any], *, prefix: str, surface_name: str) -> int:
+    surface_payload = row.get(f"{prefix}_{surface_name}")
+    if surface_payload is None:
+        surface_payload = dict(row.get(f"{prefix}_surface_summaries") or {}).get(surface_name)
+    if isinstance(surface_payload, dict):
+        return int(surface_payload.get("total_count") or 0)
+    return int(surface_payload or 0)
+
+
+def _summarize_structural_guardrail(payload: dict[str, Any] | None, regime_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    selected_ratio_threshold = 0.15
+    near_miss_ratio_threshold = 0.20
+    excessive_window_labels: list[str] = []
+    rows = list(payload.get("rows") or []) if isinstance(payload, Mapping) else []
+    blockers: list[str] = []
+    for row in rows:
+        if str(row.get("window_recommendation") or "").strip() == "variant_supports_t1_edge":
+            continue
+        selected_ratio = _compute_expansion_ratio(
+            baseline_count=_extract_surface_total_count(row, prefix="baseline", surface_name="selected"),
+            variant_count=_extract_surface_total_count(row, prefix="variant", surface_name="selected"),
+        )
+        near_miss_ratio = _compute_expansion_ratio(
+            baseline_count=_extract_surface_total_count(row, prefix="baseline", surface_name="near_miss"),
+            variant_count=_extract_surface_total_count(row, prefix="variant", surface_name="near_miss"),
+        )
+        if selected_ratio > selected_ratio_threshold or near_miss_ratio > near_miss_ratio_threshold:
+            excessive_window_labels.append(str(row.get("report_label") or "unknown"))
+    excessive_window_count = len(excessive_window_labels)
+    if excessive_window_count >= 2:
+        blockers.append("structural_expansion_repeated_across_windows")
+
+    multi_window_summary = _summarize_multi_window_validation(payload)
+    no_runtime_activation_window_labels: list[str] = []
+    if multi_window_summary and int(multi_window_summary.get("report_dir_count") or 0) > 0 and int(multi_window_summary.get("changed_window_count") or 0) == 0:
+        no_runtime_activation_window_labels = [
+            str(row.get("report_label") or "unknown")
+            for row in rows
+        ]
+        blockers.append("no_runtime_activation_delta_across_replay_windows")
+
+    raw_selected_count = sum(1 for row in regime_rows if str(row.get("decision") or "").strip() == "selected")
+    execution_eligible_selected_count = sum(
+        1
+        for row in regime_rows
+        if str(row.get("decision") or "").strip() == "selected" and bool(row.get("execution_eligible"))
+    )
+    selected_without_execution_eligibility = raw_selected_count > 0 and execution_eligible_selected_count == 0
+    if selected_without_execution_eligibility:
+        blockers.append("runtime_selecteds_not_execution_eligible")
+
+    return {
+        "selected_ratio_threshold": selected_ratio_threshold,
+        "near_miss_ratio_threshold": near_miss_ratio_threshold,
+        "excessive_window_count": excessive_window_count,
+        "excessive_window_labels": excessive_window_labels,
+        "no_runtime_activation_window_count": len(no_runtime_activation_window_labels),
+        "no_runtime_activation_window_labels": no_runtime_activation_window_labels,
+        "no_runtime_activation_delta_candidate": bool(no_runtime_activation_window_labels),
+        "raw_selected_count": raw_selected_count,
+        "execution_eligible_selected_count": execution_eligible_selected_count,
+        "selected_without_execution_eligibility": selected_without_execution_eligibility,
+        "blockers": blockers,
+        "blocker_candidate": bool(blockers),
     }
 
 
@@ -74,6 +148,7 @@ def build_admission_replay_summary(
     )
     regime_counts = _summarize_regime_rows(regime_rows)
     multi_window_summary = _summarize_multi_window_validation(multi_window_validation)
+    structural_guardrail = _summarize_structural_guardrail(multi_window_validation, regime_rows)
     blind_spot_reasons: list[str] = []
     if not approximate_surface_changed:
         blind_spot_reasons.append("identical_selected_and_near_miss_surfaces")
@@ -97,6 +172,7 @@ def build_admission_replay_summary(
         "prior_audit": dict(prior_audit),
         "regime_counts": regime_counts,
         "multi_window_validation": multi_window_summary,
+        "structural_guardrail": structural_guardrail,
         "baseline_selected_count": len(list(baseline_payload.get("selected") or [])),
         "candidate_selected_count": len(list(candidate_payload.get("selected") or [])),
         "baseline_near_miss_count": len(list(baseline_payload.get("near_miss") or [])),
@@ -162,6 +238,22 @@ def _render_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- changed_window_count: {multi_window_summary.get('changed_window_count', 0)}")
         lines.append(f"- changed_window_labels: {multi_window_summary.get('changed_window_labels', [])}")
         lines.append(f"- recommendation: {multi_window_summary.get('recommendation', '')}")
+        lines.append("")
+
+    structural_guardrail = dict(summary.get("structural_guardrail") or {})
+    if structural_guardrail:
+        lines.extend(["## Structural Guardrail", ""])
+        lines.append(f"- selected_ratio_threshold: {structural_guardrail.get('selected_ratio_threshold')}")
+        lines.append(f"- near_miss_ratio_threshold: {structural_guardrail.get('near_miss_ratio_threshold')}")
+        lines.append(f"- excessive_window_count: {structural_guardrail.get('excessive_window_count')}")
+        lines.append(f"- excessive_window_labels: {structural_guardrail.get('excessive_window_labels')}")
+        lines.append(f"- no_runtime_activation_window_count: {structural_guardrail.get('no_runtime_activation_window_count')}")
+        lines.append(f"- no_runtime_activation_window_labels: {structural_guardrail.get('no_runtime_activation_window_labels')}")
+        lines.append(f"- raw_selected_count: {structural_guardrail.get('raw_selected_count')}")
+        lines.append(f"- execution_eligible_selected_count: {structural_guardrail.get('execution_eligible_selected_count')}")
+        lines.append(f"- selected_without_execution_eligibility: {structural_guardrail.get('selected_without_execution_eligibility')}")
+        lines.append(f"- blockers: {structural_guardrail.get('blockers')}")
+        lines.append(f"- blocker_candidate: {structural_guardrail.get('blocker_candidate')}")
         lines.append("")
 
     lines.extend(["## Baseline Metrics", ""])

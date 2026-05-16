@@ -11,13 +11,14 @@ import hashlib
 import json
 import math
 import sys
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from scripts.btst_analysis_utils import BTST_FACTOR_NAMES, compute_surface_metric_correlations, compute_factor_ic_stability, compute_factor_ic_temporal_trend, compute_verdict_calibration, compute_optimal_hold_period, compute_score_position_tiers, compute_profile_health_score, compute_selection_churn_metrics, compute_parameter_stability_metrics, compute_score_stability_across_windows
 from scripts.btst_optimized_profile_manifest_helpers import publish_btst_optimized_profile_manifest
-from scripts.btst_strict_objective_gate import load_strict_btst_objective_gate_from_markdown
+from scripts.btst_strict_objective_gate import build_strict_btst_objective_gate, parse_objective_monitor_markdown
 from scripts.analyze_btst_weekly_validation import analyze_btst_weekly_validation
 from src.backtesting.evaluation_bundle import BTST_EXECUTION_GUARDRAILS, BTST_QUALITY_FLOORS
 from src.backtesting.param_search import (
@@ -7347,9 +7348,30 @@ def _recommend_rollout_action(comparison_summary: dict[str, dict[str, Any]]) -> 
 
 def _load_strict_btst_objective_gate() -> dict[str, Any] | None:
     objective_monitor_path = REPORTS_DIR / "btst_tplus1_tplus2_objective_monitor_latest.md"
+    structural_validation_path = REPORTS_DIR / "btst_admission_edge_replay_validation.json"
     if not objective_monitor_path.exists():
         return None
-    return load_strict_btst_objective_gate_from_markdown(objective_monitor_path)
+    structural_guardrail = None
+    if structural_validation_path.exists():
+        try:
+            structural_payload = json.loads(structural_validation_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning("Failed to load BTST structural guardrail sidecar from %s: %s", structural_validation_path, exc)
+        else:
+            if isinstance(structural_payload, Mapping):
+                raw_structural_guardrail = structural_payload.get("structural_guardrail")
+                if raw_structural_guardrail is None:
+                    structural_guardrail = None
+                elif isinstance(raw_structural_guardrail, Mapping):
+                    structural_guardrail = dict(raw_structural_guardrail)
+                else:
+                    logger.warning("Ignoring non-mapping BTST structural guardrail payload from %s", structural_validation_path)
+            else:
+                logger.warning("Ignoring non-mapping BTST structural guardrail sidecar from %s", structural_validation_path)
+    return build_strict_btst_objective_gate(
+        parse_objective_monitor_markdown(objective_monitor_path),
+        structural_guardrail=structural_guardrail,
+    )
 
 
 def _build_optimized_profile_manifest_publication(

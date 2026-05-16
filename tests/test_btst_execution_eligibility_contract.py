@@ -9,6 +9,7 @@ from src.execution.daily_pipeline import (
 from src.execution.models import ExecutionPlan
 from src.portfolio.models import PositionPlan
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
+from src.targets.router_build_helpers import build_reporting_target_summary
 
 
 def _build_plan(
@@ -126,3 +127,28 @@ def test_p5_execution_contract_reports_when_buy_orders_were_already_cleared_by_p
 
     assert enforcement_payload["buy_orders_removed"] == 0
     assert enforcement_payload["buy_orders_already_cleared_upstream_count"] == 1
+
+
+def test_build_reporting_target_summary_tracks_formal_blocked_selected_provenance() -> None:
+    evaluation = DualTargetEvaluation(
+        ticker="300724",
+        trade_date="20260422",
+        execution_eligible=False,
+        p2_execution_blocked=True,
+        p2_execution_block_reason="p2_regime_gate_enforce:halt",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="selected",
+            score_target=0.81,
+        ),
+    )
+
+    summary = build_reporting_target_summary(
+        selection_targets={"300724": evaluation},
+        target_mode="short_trade_only",
+    )
+
+    assert summary.short_trade_selected_count == 0
+    assert summary.short_trade_blocked_count == 1
+    assert summary.short_trade_formal_blocked_selected_count == 1
+    assert summary.short_trade_formal_block_flag_counts == {"p2_execution_blocked": 1}

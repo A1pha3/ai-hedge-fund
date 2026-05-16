@@ -872,6 +872,7 @@ def _build_btst_brief_summary(
     upstream_shadow_summary: dict[str, Any],
 ) -> dict[str, Any]:
     dual_target_summary = snapshot.get("dual_target_summary") or {}
+    reporting_target_summary = snapshot.get("reporting_target_summary") or {}
     brief_decision_counts = _build_btst_brief_decision_counts(selection_targets)
     execution_blocked_summary = _build_execution_blocked_candidate_summary(
         selection_targets
@@ -910,6 +911,14 @@ def _build_btst_brief_summary(
             dual_target_summary,
             "research_selected_count",
             brief_decision_counts["research_selected_count"],
+        ),
+        "short_trade_formal_blocked_selected_count": _summary_value(
+            reporting_target_summary,
+            "short_trade_formal_blocked_selected_count",
+            0,
+        ),
+        "short_trade_formal_block_flag_counts": dict(
+            reporting_target_summary.get("short_trade_formal_block_flag_counts") or {}
         ),
         "execution_blocked_candidate_count": execution_blocked_summary["count"],
         "execution_blocked_tickers": execution_blocked_summary["tickers"],

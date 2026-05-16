@@ -1383,6 +1383,8 @@ def test_file_selection_artifact_writer_surfaces_p2_execution_block_context(tmp_
     assert target_context["formal_execution_block_flags"] == ["p2_execution_blocked"]
     assert snapshot["reporting_target_summary"]["short_trade_selected_count"] == 0
     assert snapshot["reporting_target_summary"]["short_trade_blocked_count"] == 1
+    assert snapshot["reporting_target_summary"]["short_trade_formal_blocked_selected_count"] == 1
+    assert snapshot["reporting_target_summary"]["short_trade_formal_block_flag_counts"] == {"p2_execution_blocked": 1}
     assert snapshot["reporting_target_summary"]["p2_execution_blocked_count"] == 1
     assert snapshot["short_trade_view"]["selected_symbols"] == []
     assert snapshot["short_trade_view"]["blocked_symbols"] == ["300724"]
