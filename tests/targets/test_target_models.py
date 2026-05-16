@@ -5,7 +5,7 @@ from src.paper_trading._btst_reporting.entry_mode_utils import (
     _augment_execution_note,
 )
 from src.screening.models import StrategySignal
-from src.targets import get_short_trade_target_profile, use_short_trade_target_profile
+from src.targets import build_short_trade_target_profile, get_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets
 from src.targets.short_trade_target_evaluation_helpers import (
     _preferred_entry_mode_from_historical_prior,
@@ -1283,6 +1283,80 @@ def test_watchlist_filter_diagnostics_flat_trend_penalty_targets_low_trend_zero_
     assert high_trend_control_result.metrics_payload["watchlist_filter_diagnostics_flat_trend_penalty"] == 0.0
     assert high_trend_control_result.metrics_payload["watchlist_filter_diagnostics_flat_trend_guard"]["applied"] is False
     assert high_trend_control_result.metrics_payload["trend_acceleration"] > 0.66
+
+
+def _make_watchlist_filter_diagnostics_selected_only_shrink_entry() -> dict:
+    return {
+        "ticker": "000960",
+        "candidate_source": "watchlist_filter_diagnostics",
+        "candidate_reason_codes": ["watchlist_filter_diagnostics"],
+        "score_b": 0.22,
+        "score_c": 0.08,
+        "score_final": 0.12,
+        "quality_score": 0.58,
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                38.0,
+                sub_factors={
+                    "momentum": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 0, "confidence": 24.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 46.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(0, 6.0).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 18.0).model_dump(mode="json"),
+            "fundamental": _make_signal(1, 70.0).model_dump(mode="json"),
+        },
+    }
+
+
+def test_watchlist_filter_diagnostics_selected_only_shrink_profile_contract() -> None:
+    profile = build_short_trade_target_profile("trend_continuation_strength_v3")
+
+    assert profile.watchlist_filter_diagnostics_selected_only_shrink_enabled is True
+    assert profile.watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift == pytest.approx(0.05)
+    assert profile.watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max == pytest.approx(0.10)
+    assert profile.watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max == pytest.approx(0.40)
+    assert profile.watchlist_filter_diagnostics_selected_only_shrink_close_strength_max == pytest.approx(0.58)
+
+
+def test_watchlist_filter_diagnostics_selected_only_shrink_downgrades_selected_to_near_miss() -> None:
+    entry = _make_watchlist_filter_diagnostics_selected_only_shrink_entry()
+    build_short_trade_target_profile("trend_continuation_strength_v3")
+
+    with use_short_trade_target_profile(profile_name="trend_continuation_strength_v2"):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+    with use_short_trade_target_profile(profile_name="trend_continuation_strength_v3"):
+        variant_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    assert baseline_result.decision == "selected"
+    assert variant_result.decision == "near_miss"
+    assert variant_result.effective_select_threshold > baseline_result.effective_select_threshold
+    assert variant_result.effective_near_miss_threshold == baseline_result.effective_near_miss_threshold
+
+
+def test_selected_only_shrink_watchlist_filter_diagnostics_payload_reports_guard_application() -> None:
+    entry = _make_watchlist_filter_diagnostics_selected_only_shrink_entry()
+
+    with use_short_trade_target_profile(profile_name="trend_continuation_strength_v3"):
+        result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    assert result.metrics_payload["watchlist_filter_diagnostics_selected_only_shrink_guard"]["applied"] is True
+    assert result.metrics_payload["watchlist_filter_diagnostics_selected_only_shrink_guard"]["select_threshold_lift"] == pytest.approx(0.05)
+    assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in result.negative_tags
 
 
 def test_t_plus_2_continuation_candidate_tags_mid_alignment_low_catalyst_watchlist_case() -> None:
