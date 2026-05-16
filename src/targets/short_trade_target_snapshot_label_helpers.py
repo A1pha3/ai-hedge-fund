@@ -93,6 +93,7 @@ def _append_short_trade_snapshot_penalty_tags(
     watchlist_zero_catalyst_crowded_penalty: dict[str, Any],
     watchlist_zero_catalyst_flat_trend_penalty: dict[str, Any],
     watchlist_filter_diagnostics_flat_trend_penalty: dict[str, Any],
+    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
     breakout_trap_guard: dict[str, Any],
     t_plus_2_continuation_candidate: dict[str, Any],
     positive_tags: list[str],
@@ -108,6 +109,8 @@ def _append_short_trade_snapshot_penalty_tags(
         negative_tags.append("watchlist_zero_catalyst_flat_trend_penalty_applied")
     if watchlist_filter_diagnostics_flat_trend_penalty["applied"]:
         negative_tags.append("watchlist_filter_diagnostics_flat_trend_penalty_applied")
+    if watchlist_filter_diagnostics_selected_only_shrink_guard["applied"]:
+        negative_tags.append("watchlist_filter_diagnostics_selected_only_shrink_applied")
     if breakout_trap_guard["applied"]:
         negative_tags.append("breakout_trap_penalty_applied")
     if breakout_trap_guard["execution_blocked"]:
@@ -235,6 +238,7 @@ def _build_short_trade_snapshot_label_inputs(
         "watchlist_zero_catalyst_crowded_penalty": dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"]),
         "watchlist_zero_catalyst_flat_trend_penalty": dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
         "watchlist_filter_diagnostics_flat_trend_penalty": dict(relief_snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]),
+        "watchlist_filter_diagnostics_selected_only_shrink_guard": dict(relief_snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
         "breakout_trap_guard": dict(relief_snapshot["breakout_trap_guard"]),
         "t_plus_2_continuation_candidate": dict(relief_snapshot["t_plus_2_continuation_candidate"]),
         "stale_trend_repair_penalty": float(relief_snapshot["stale_trend_repair_penalty"]),
@@ -307,6 +311,7 @@ def collect_short_trade_snapshot_labels_and_gates(
         watchlist_zero_catalyst_crowded_penalty=inputs["watchlist_zero_catalyst_crowded_penalty"],
         watchlist_zero_catalyst_flat_trend_penalty=inputs["watchlist_zero_catalyst_flat_trend_penalty"],
         watchlist_filter_diagnostics_flat_trend_penalty=inputs["watchlist_filter_diagnostics_flat_trend_penalty"],
+        watchlist_filter_diagnostics_selected_only_shrink_guard=inputs["watchlist_filter_diagnostics_selected_only_shrink_guard"],
         breakout_trap_guard=inputs["breakout_trap_guard"],
         t_plus_2_continuation_candidate=inputs["t_plus_2_continuation_candidate"],
         positive_tags=positive_tags,

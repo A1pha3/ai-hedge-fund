@@ -1411,6 +1411,28 @@ def test_selected_only_shrink_watchlist_filter_diagnostics_payload_reports_guard
     assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in result.negative_tags
 
 
+def test_selected_only_shrink_snapshot_negative_tags_report_guard_application() -> None:
+    entry = _make_watchlist_filter_diagnostics_selected_only_shrink_entry()
+
+    with _register_short_trade_target_profile_proxy(
+        profile_name="trend_continuation_strength_v3",
+        base_profile_name="trend_continuation_strength_v2",
+        watchlist_filter_diagnostics_selected_only_shrink_enabled=True,
+        watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift=0.05,
+        watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max=0.10,
+        watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max=0.40,
+        watchlist_filter_diagnostics_selected_only_shrink_close_strength_max=0.58,
+    ):
+        snapshot = build_short_trade_target_snapshot_from_entry(
+            trade_date="20260328",
+            entry=entry,
+            profile_name="trend_continuation_strength_v3",
+        )
+
+    assert snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]["applied"] is True
+    assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in snapshot["negative_tags"]
+
+
 def test_t_plus_2_continuation_candidate_tags_mid_alignment_low_catalyst_watchlist_case() -> None:
     continuation_entry = {
         "ticker": "600988",
