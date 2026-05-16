@@ -80,6 +80,7 @@ def _build_runtime_activation_attribution(
     selected_count_delta = _resolve_surface_total_count(variant, "selected") - _resolve_surface_total_count(baseline, "selected")
     near_miss_count_delta = _resolve_surface_total_count(variant, "near_miss") - _resolve_surface_total_count(baseline, "near_miss")
     tradeable_count_delta = _resolve_surface_total_count(variant, "tradeable") - _resolve_surface_total_count(baseline, "tradeable")
+    execution_eligible_count_delta = _resolve_surface_total_count(variant, "execution_eligible") - _resolve_surface_total_count(baseline, "execution_eligible")
     false_negative_count_delta = int(dict(comparison.get("false_negative_proxy_delta") or {}).get("count") or 0)
     baseline_guardrail_status = _resolve_guardrail_status(
         baseline,
@@ -96,6 +97,8 @@ def _build_runtime_activation_attribution(
         activation_change_labels.append("selected_surface")
     if near_miss_count_delta != 0:
         activation_change_labels.append("near_miss_surface")
+    if execution_eligible_count_delta != 0:
+        activation_change_labels.append("execution_eligible_surface")
     if false_negative_count_delta != 0:
         activation_change_labels.append("false_negative_proxy")
     if guardrail_status_changed:
@@ -114,6 +117,7 @@ def _build_runtime_activation_attribution(
         "selected_count_delta": selected_count_delta,
         "near_miss_count_delta": near_miss_count_delta,
         "tradeable_count_delta": tradeable_count_delta,
+        "execution_eligible_count_delta": execution_eligible_count_delta,
         "false_negative_count_delta": false_negative_count_delta,
         "threshold_delta": threshold_delta,
         "threshold_probe_active": threshold_probe_active,
@@ -293,6 +297,7 @@ def render_btst_multi_window_profile_validation_markdown(analysis: dict[str, Any
                 f"selected_delta={runtime_activation_attribution.get('selected_count_delta')}, "
                 f"near_miss_delta={runtime_activation_attribution.get('near_miss_count_delta')}, "
                 f"tradeable_delta={runtime_activation_attribution.get('tradeable_count_delta')}, "
+                f"execution_eligible_delta={runtime_activation_attribution.get('execution_eligible_count_delta')}, "
                 f"guardrail_changed={runtime_activation_attribution.get('guardrail_status_changed')}"
             )
         if baseline_source_coverage or variant_source_coverage:
