@@ -2062,6 +2062,7 @@ def test_build_rollout_recommendation_payload_appends_structural_guardrail_block
                 "structural_guardrail": {
                     "excessive_window_count": 2,
                     "excessive_window_labels": ["window-a", "window-b"],
+                    "blockers": ["no_runtime_activation_delta_across_replay_windows"],
                     "blocker_candidate": True,
                 }
             }
@@ -2073,6 +2074,7 @@ def test_build_rollout_recommendation_payload_appends_structural_guardrail_block
     payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
 
     assert payload["action"] == "hold"
+    assert "no_runtime_activation_delta_across_replay_windows" in payload["blockers"]
     assert "structural_expansion_repeated_across_windows" in payload["blockers"]
     assert payload["strict_btst_objective_gate"]["structural_guardrail"]["excessive_window_count"] == 2
 

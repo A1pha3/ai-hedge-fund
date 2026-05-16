@@ -78,7 +78,12 @@ def build_reporting_target_summary(*, selection_targets: dict[str, Any], target_
         research_result = _read_field(evaluation, "research")
         short_trade_result = _read_field(evaluation, "short_trade")
         _accumulate_target_result(summary=summary, result=research_result, target_type="research")
-        reporting_decision, _ = resolve_short_trade_reporting_decision(evaluation, short_trade_result)
+        reporting_decision, formal_execution_block_flags = resolve_short_trade_reporting_decision(evaluation, short_trade_result)
+        raw_decision = str(_read_field(short_trade_result, "decision") or "")
+        if raw_decision == "selected" and formal_execution_block_flags:
+            summary.short_trade_formal_blocked_selected_count += 1
+            for flag in formal_execution_block_flags:
+                summary.short_trade_formal_block_flag_counts[flag] = int(summary.short_trade_formal_block_flag_counts.get(flag) or 0) + 1
         _accumulate_target_result(
             summary=summary,
             result=short_trade_result,

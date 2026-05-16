@@ -113,6 +113,8 @@ class DualTargetSummary(BaseModel):
     short_trade_near_miss_count: int = 0
     short_trade_blocked_count: int = 0
     short_trade_rejected_count: int = 0
+    short_trade_formal_blocked_selected_count: int = 0
+    short_trade_formal_block_flag_counts: dict[str, int] = Field(default_factory=dict)
     shell_target_count: int = 0
     delta_classification_counts: dict[str, int] = Field(default_factory=dict)
     # P2 regime gate: count of items where formal execution is blocked (research visibility kept).

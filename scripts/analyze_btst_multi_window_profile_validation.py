@@ -36,6 +36,96 @@ def _classify_window(comparison: dict[str, Any]) -> str:
     return "mixed"
 
 
+def _resolve_guardrail_status(
+    report: dict[str, Any],
+    *,
+    guardrail_next_high_hit_rate: float,
+    guardrail_next_close_positive_rate: float,
+) -> str:
+    tradeable = dict(dict(report.get("surface_summaries") or {}).get("tradeable") or {})
+    if not int(tradeable.get("closed_cycle_count") or 0):
+        return "not_enough_closed_tradeable_rows"
+    next_high_hit_rate = tradeable.get("next_high_hit_rate_at_threshold")
+    next_close_positive_rate = tradeable.get("next_close_positive_rate")
+    if next_high_hit_rate is not None and next_close_positive_rate is not None and float(next_high_hit_rate) >= float(guardrail_next_high_hit_rate) and float(next_close_positive_rate) >= float(guardrail_next_close_positive_rate):
+        return "passes_closed_tradeable_guardrails"
+    return "fails_closed_tradeable_guardrails"
+
+
+def _resolve_surface_total_count(report: dict[str, Any], surface_name: str) -> int:
+    surface_summary = dict(dict(report.get("surface_summaries") or {}).get(surface_name) or {})
+    return int(surface_summary.get("total_count") or 0)
+
+
+def _resolve_threshold_delta(baseline_value: Any, variant_value: Any) -> float | None:
+    if baseline_value is None or variant_value is None:
+        return None
+    return round(float(variant_value) - float(baseline_value), 4)
+
+
+def _build_runtime_activation_attribution(
+    *,
+    baseline: dict[str, Any],
+    variant: dict[str, Any],
+    comparison: dict[str, Any],
+    guardrail_next_high_hit_rate: float,
+    guardrail_next_close_positive_rate: float,
+) -> dict[str, Any]:
+    baseline_profile_config = dict(baseline.get("profile_config") or {})
+    variant_profile_config = dict(variant.get("profile_config") or {})
+    threshold_delta = {
+        "select_threshold": _resolve_threshold_delta(baseline_profile_config.get("select_threshold"), variant_profile_config.get("select_threshold")),
+        "near_miss_threshold": _resolve_threshold_delta(baseline_profile_config.get("near_miss_threshold"), variant_profile_config.get("near_miss_threshold")),
+    }
+    selected_count_delta = _resolve_surface_total_count(variant, "selected") - _resolve_surface_total_count(baseline, "selected")
+    near_miss_count_delta = _resolve_surface_total_count(variant, "near_miss") - _resolve_surface_total_count(baseline, "near_miss")
+    tradeable_count_delta = _resolve_surface_total_count(variant, "tradeable") - _resolve_surface_total_count(baseline, "tradeable")
+    false_negative_count_delta = int(dict(comparison.get("false_negative_proxy_delta") or {}).get("count") or 0)
+    baseline_guardrail_status = _resolve_guardrail_status(
+        baseline,
+        guardrail_next_high_hit_rate=guardrail_next_high_hit_rate,
+        guardrail_next_close_positive_rate=guardrail_next_close_positive_rate,
+    )
+    variant_guardrail_status = str(comparison.get("guardrail_status") or "")
+    guardrail_status_changed = baseline_guardrail_status != variant_guardrail_status
+    threshold_probe_active = any(value not in (None, 0, 0.0) for value in threshold_delta.values())
+    activation_change_labels: list[str] = []
+    if tradeable_count_delta != 0:
+        activation_change_labels.append("tradeable_surface")
+    if selected_count_delta != 0:
+        activation_change_labels.append("selected_surface")
+    if near_miss_count_delta != 0:
+        activation_change_labels.append("near_miss_surface")
+    if false_negative_count_delta != 0:
+        activation_change_labels.append("false_negative_proxy")
+    if guardrail_status_changed:
+        activation_change_labels.append("guardrail_status")
+    zero_delta_reason = None
+    if not activation_change_labels:
+        if threshold_probe_active:
+            zero_delta_reason = "threshold_probe_without_runtime_activation_delta"
+        elif dict(variant.get("profile_overrides") or {}):
+            zero_delta_reason = "profile_override_without_runtime_activation_delta"
+        elif str(baseline.get("profile_name") or "") != str(variant.get("profile_name") or ""):
+            zero_delta_reason = "profile_variant_without_runtime_activation_delta"
+        else:
+            zero_delta_reason = "no_runtime_activation_delta"
+    return {
+        "selected_count_delta": selected_count_delta,
+        "near_miss_count_delta": near_miss_count_delta,
+        "tradeable_count_delta": tradeable_count_delta,
+        "false_negative_count_delta": false_negative_count_delta,
+        "threshold_delta": threshold_delta,
+        "threshold_probe_active": threshold_probe_active,
+        "profile_override_keys": sorted(dict(variant.get("profile_overrides") or {}).keys()),
+        "baseline_guardrail_status": baseline_guardrail_status,
+        "variant_guardrail_status": variant_guardrail_status,
+        "guardrail_status_changed": guardrail_status_changed,
+        "activation_change_labels": activation_change_labels,
+        "zero_delta_reason": zero_delta_reason,
+    }
+
+
 def _summarize_row(*, report_dir: Path, baseline: dict[str, Any], variant: dict[str, Any], comparison: dict[str, Any]) -> dict[str, Any]:
     classification = _classify_window(comparison)
     baseline_surface_summaries = dict(baseline.get("surface_summaries") or {})
@@ -58,6 +148,7 @@ def _summarize_row(*, report_dir: Path, baseline: dict[str, Any], variant: dict[
         "variant_source_coverage_summary": dict(variant.get("source_coverage_summary") or {}),
         "tradeable_surface_delta": dict(comparison.get("tradeable_surface_delta") or {}),
         "guardrail_status": str(comparison.get("guardrail_status") or ""),
+        "runtime_activation_attribution": dict(comparison.get("runtime_activation_attribution") or {}),
         "window_recommendation": classification,
     }
 
@@ -109,6 +200,13 @@ def analyze_btst_multi_window_profile_validation(
         comparison = _compare_reports(
             baseline,
             variant,
+            guardrail_next_high_hit_rate=effective_guardrail_next_high_hit_rate,
+            guardrail_next_close_positive_rate=effective_guardrail_next_close_positive_rate,
+        )
+        comparison["runtime_activation_attribution"] = _build_runtime_activation_attribution(
+            baseline=baseline,
+            variant=variant,
+            comparison=comparison,
             guardrail_next_high_hit_rate=effective_guardrail_next_high_hit_rate,
             guardrail_next_close_positive_rate=effective_guardrail_next_close_positive_rate,
         )
@@ -187,6 +285,16 @@ def render_btst_multi_window_profile_validation_markdown(analysis: dict[str, Any
             lines.append(f"  - frontier_source={source_family}, " f"baseline_tradeable={dict(baseline_summary.get('tradeable') or {}).get('total_count')}, " f"variant_tradeable={dict(variant_summary.get('tradeable') or {}).get('total_count')}, " f"baseline_selected={dict(baseline_summary.get('selected') or {}).get('total_count')}, " f"variant_selected={dict(variant_summary.get('selected') or {}).get('total_count')}")
         baseline_source_coverage = dict(row.get("baseline_source_coverage_summary") or {})
         variant_source_coverage = dict(row.get("variant_source_coverage_summary") or {})
+        runtime_activation_attribution = dict(row.get("runtime_activation_attribution") or {})
+        if runtime_activation_attribution:
+            lines.append(
+                "  - "
+                f"activation_attribution={runtime_activation_attribution.get('zero_delta_reason') or 'runtime_activation_changed'}, "
+                f"selected_delta={runtime_activation_attribution.get('selected_count_delta')}, "
+                f"near_miss_delta={runtime_activation_attribution.get('near_miss_count_delta')}, "
+                f"tradeable_delta={runtime_activation_attribution.get('tradeable_count_delta')}, "
+                f"guardrail_changed={runtime_activation_attribution.get('guardrail_status_changed')}"
+            )
         if baseline_source_coverage or variant_source_coverage:
             lines.append(f"  - source_coverage:")
             flow_sources = sorted(

@@ -138,3 +138,119 @@ def test_render_btst_multi_window_profile_validation_markdown_includes_frontier_
 
     markdown = multi_window_validation.render_btst_multi_window_profile_validation_markdown(analysis)
     assert "upstream_liquidity_corridor_shadow" in markdown
+
+
+def test_analyze_btst_multi_window_profile_validation_flags_threshold_probe_without_runtime_activation_delta(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_window_a"
+    (report_dir / "selection_artifacts" / "2026-03-24").mkdir(parents=True)
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(multi_window_validation, "discover_report_dirs", lambda *_args, **_kwargs: [report_dir])
+
+    def _fake_replay_window(input_path, *, profile_name, label, next_high_hit_threshold, select_threshold=None, near_miss_threshold=None, profile_overrides=None):
+        _ = (input_path, label, next_high_hit_threshold, profile_overrides)
+        is_baseline = select_threshold is None
+        return {
+            "label": label,
+            "profile_name": profile_name,
+            "profile_config": {
+                "name": profile_name,
+                "select_threshold": 0.46 if is_baseline else 0.34,
+                "near_miss_threshold": 0.34 if is_baseline else 0.24,
+            },
+            "profile_overrides": {} if is_baseline else {"select_threshold": 0.34, "near_miss_threshold": 0.24},
+            "trade_dates": ["2026-03-24"],
+            "decision_counts": {"selected": 1, "near_miss": 2, "rejected": 3},
+            "surface_summaries": {
+                "tradeable": {
+                    "total_count": 3,
+                    "closed_cycle_count": 3,
+                    "next_high_hit_rate_at_threshold": 0.80,
+                    "next_close_positive_rate": 0.80,
+                    "t_plus_2_close_positive_rate": 0.80,
+                    "next_high_return_distribution": {"mean": 0.05},
+                    "next_close_return_distribution": {"mean": 0.02, "median": 0.025, "p10": 0.01},
+                    "t_plus_2_close_return_distribution": {"mean": 0.025, "median": 0.02, "p10": 0.005},
+                },
+                "selected": {"total_count": 1},
+                "near_miss": {"total_count": 2},
+            },
+            "false_negative_proxy_summary": {"count": 0, "surface_metrics": {}},
+        }
+
+    monkeypatch.setattr(multi_window_validation, "analyze_btst_profile_replay_window", _fake_replay_window)
+
+    analysis = multi_window_validation.analyze_btst_multi_window_profile_validation(
+        reports_root,
+        baseline_profile="trend_continuation_strength_v2",
+        variant_profile="trend_continuation_strength_v3",
+        variant_select_threshold=0.34,
+        variant_near_miss_threshold=0.24,
+    )
+
+    attribution = analysis["rows"][0]["runtime_activation_attribution"]
+    assert attribution["selected_count_delta"] == 0
+    assert attribution["near_miss_count_delta"] == 0
+    assert attribution["tradeable_count_delta"] == 0
+    assert attribution["guardrail_status_changed"] is False
+    assert attribution["threshold_delta"] == {
+        "select_threshold": -0.12,
+        "near_miss_threshold": -0.10,
+    }
+    assert attribution["zero_delta_reason"] == "threshold_probe_without_runtime_activation_delta"
+
+
+def test_render_btst_multi_window_profile_validation_markdown_includes_runtime_activation_attribution(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_window_a"
+    (report_dir / "selection_artifacts" / "2026-03-24").mkdir(parents=True)
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(multi_window_validation, "discover_report_dirs", lambda *_args, **_kwargs: [report_dir])
+
+    def _fake_replay_window(input_path, *, profile_name, label, next_high_hit_threshold, select_threshold=None, near_miss_threshold=None, profile_overrides=None):
+        _ = (input_path, label, next_high_hit_threshold, profile_overrides)
+        is_baseline = select_threshold is None
+        return {
+            "label": label,
+            "profile_name": profile_name,
+            "profile_config": {
+                "name": profile_name,
+                "select_threshold": 0.46 if is_baseline else 0.34,
+                "near_miss_threshold": 0.34 if is_baseline else 0.24,
+            },
+            "profile_overrides": {} if is_baseline else {"select_threshold": 0.34, "near_miss_threshold": 0.24},
+            "trade_dates": ["2026-03-24"],
+            "decision_counts": {"selected": 1, "near_miss": 2, "rejected": 3},
+            "surface_summaries": {
+                "tradeable": {
+                    "total_count": 3,
+                    "closed_cycle_count": 3,
+                    "next_high_hit_rate_at_threshold": 0.80,
+                    "next_close_positive_rate": 0.80,
+                    "t_plus_2_close_positive_rate": 0.80,
+                    "next_high_return_distribution": {"mean": 0.05},
+                    "next_close_return_distribution": {"mean": 0.02, "median": 0.025, "p10": 0.01},
+                    "t_plus_2_close_return_distribution": {"mean": 0.025, "median": 0.02, "p10": 0.005},
+                },
+                "selected": {"total_count": 1},
+                "near_miss": {"total_count": 2},
+            },
+            "false_negative_proxy_summary": {"count": 0, "surface_metrics": {}},
+        }
+
+    monkeypatch.setattr(multi_window_validation, "analyze_btst_profile_replay_window", _fake_replay_window)
+
+    analysis = multi_window_validation.analyze_btst_multi_window_profile_validation(
+        reports_root,
+        baseline_profile="trend_continuation_strength_v2",
+        variant_profile="trend_continuation_strength_v3",
+        variant_select_threshold=0.34,
+        variant_near_miss_threshold=0.24,
+    )
+
+    markdown = multi_window_validation.render_btst_multi_window_profile_validation_markdown(analysis)
+    assert "activation_attribution=threshold_probe_without_runtime_activation_delta" in markdown
+    assert "selected_delta=0" in markdown
+    assert "near_miss_delta=0" in markdown

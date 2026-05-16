@@ -78,6 +78,9 @@ def test_build_admission_replay_summary_uses_multi_window_replay_to_keep_baselin
     assert summary["runtime_recommendation"] == "keep_baseline_default_no_replay_delta"
     assert summary["multi_window_validation"]["changed_window_count"] == 0
     assert "multi_window_replay_showed_no_observable_delta" in summary["blind_spot_reasons"]
+    assert summary["structural_guardrail"]["no_runtime_activation_delta_candidate"] is True
+    assert summary["structural_guardrail"]["blocker_candidate"] is True
+    assert "no_runtime_activation_delta_across_replay_windows" in summary["structural_guardrail"]["blockers"]
 
 
 def test_build_admission_replay_summary_reports_structural_expansion_pressure() -> None:
@@ -179,10 +182,31 @@ def test_build_admission_replay_summary_reports_structural_expansion_pressure() 
     assert summary["structural_guardrail"]["near_miss_ratio_threshold"] == 0.20
     assert summary["structural_guardrail"]["excessive_window_count"] == 2
     assert summary["structural_guardrail"]["blocker_candidate"] is True
+    assert "structural_expansion_repeated_across_windows" in summary["structural_guardrail"]["blockers"]
     assert summary["structural_guardrail"]["excessive_window_labels"] == [
         "window-selected-expansion",
         "window-near-miss-expansion",
     ]
+
+
+def test_build_admission_replay_summary_flags_raw_selecteds_without_execution_eligibility() -> None:
+    summary = build_admission_replay_summary(
+        baseline_payload={"selected": [{"ticker": "A"}], "near_miss": []},
+        candidate_payload={"selected": [{"ticker": "A"}, {"ticker": "B"}], "near_miss": []},
+        regime_rows=[
+            {"gate": "halt", "execution_eligible": False, "decision": "selected"},
+            {"gate": "halt", "execution_eligible": False, "decision": "selected"},
+            {"gate": "halt", "execution_eligible": False, "decision": "blocked"},
+        ],
+        baseline_metrics={"selected_close_win_rate": 47.27, "selected_payoff_ratio": 1.282, "post_fee_expectation_low": -0.16},
+        prior_audit={"downgrade_reasons": {"sample_small_n4_lt_5": 1}},
+    )
+
+    assert summary["structural_guardrail"]["raw_selected_count"] == 2
+    assert summary["structural_guardrail"]["execution_eligible_selected_count"] == 0
+    assert summary["structural_guardrail"]["selected_without_execution_eligibility"] is True
+    assert summary["structural_guardrail"]["blocker_candidate"] is True
+    assert "runtime_selecteds_not_execution_eligible" in summary["structural_guardrail"]["blockers"]
 
 
 def test_build_admission_replay_summary_treats_non_mapping_multi_window_payload_as_absent() -> None:

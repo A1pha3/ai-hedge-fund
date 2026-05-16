@@ -33,6 +33,13 @@ def _summary_to_dict(summary: object) -> dict:
     return dict(summary or {})
 
 
+def _format_formal_block_flag_counts(summary: dict) -> str:
+    flag_counts = dict(summary.get("short_trade_formal_block_flag_counts") or {})
+    if not flag_counts:
+        return "none"
+    return ", ".join(f"{flag}={int(flag_counts[flag] or 0)}" for flag in sorted(flag_counts))
+
+
 def _render_selected_section(snapshot: SelectionSnapshot) -> list[str]:
     lines = ["## 今日入选股票", ""]
     if not snapshot.selected:
@@ -111,6 +118,8 @@ def _render_reporting_target_summary(snapshot: SelectionSnapshot) -> list[str]:
         f"- short_trade_near_miss_count: {summary.get('short_trade_near_miss_count', 0)}",
         f"- short_trade_blocked_count: {summary.get('short_trade_blocked_count', 0)}",
         f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count', 0)}",
+        f"- short_trade_formal_blocked_selected_count: {summary.get('short_trade_formal_blocked_selected_count', 0)}",
+        f"- short_trade_formal_block_flag_counts: {_format_formal_block_flag_counts(summary)}",
         f"- p2_execution_blocked_count: {summary.get('p2_execution_blocked_count', 0)}",
         f"- p3_execution_blocked_count: {summary.get('p3_execution_blocked_count', 0)}",
         "",

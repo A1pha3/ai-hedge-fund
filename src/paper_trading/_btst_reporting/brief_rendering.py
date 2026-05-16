@@ -55,6 +55,13 @@ def _append_frontier_promoted_shadow_none_block(lines: list[str]) -> None:
     _append_frontier_promoted_shadow_none_block_impl(lines)
 
 
+def _format_formal_block_flag_counts(summary: dict[str, Any]) -> str:
+    flag_counts = dict(summary.get("short_trade_formal_block_flag_counts") or {})
+    if not flag_counts:
+        return "none"
+    return ", ".join(f"{flag}={int(flag_counts[flag] or 0)}" for flag in sorted(flag_counts))
+
+
 def _append_brief_ticker_section(
     lines: list[str],
     *,
@@ -395,6 +402,12 @@ def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) 
     )
     lines.append(
         f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count')}"
+    )
+    lines.append(
+        f"- short_trade_formal_blocked_selected_count: {summary.get('short_trade_formal_blocked_selected_count', 0)}"
+    )
+    lines.append(
+        f"- short_trade_formal_block_flag_counts: {_format_formal_block_flag_counts(summary)}"
     )
     lines.append(
         f"- short_trade_opportunity_pool_count: {summary.get('short_trade_opportunity_pool_count')}"
