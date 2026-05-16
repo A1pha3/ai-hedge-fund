@@ -1338,6 +1338,8 @@ def test_file_selection_artifact_writer_surfaces_p2_execution_block_context(tmp_
     evaluation = DualTargetEvaluation(
         ticker="300724",
         trade_date="20260422",
+        btst_regime_gate="shadow_only",
+        historical_prior_quality_level="watch_only",
         research=TargetEvaluationResult(target_type="research", decision="selected"),
         short_trade=TargetEvaluationResult(target_type="short_trade", decision="selected", btst_regime_gate="shadow_only"),
         p2_execution_blocked=True,
@@ -1385,6 +1387,9 @@ def test_file_selection_artifact_writer_surfaces_p2_execution_block_context(tmp_
     assert snapshot["reporting_target_summary"]["short_trade_blocked_count"] == 1
     assert snapshot["reporting_target_summary"]["short_trade_formal_blocked_selected_count"] == 1
     assert snapshot["reporting_target_summary"]["short_trade_formal_block_flag_counts"] == {"p2_execution_blocked": 1}
+    assert snapshot["reporting_target_summary"]["short_trade_formal_non_halt_blocked_selected_count"] == 1
+    assert snapshot["reporting_target_summary"]["short_trade_formal_non_halt_gate_counts"] == {"shadow_only": 1}
+    assert snapshot["reporting_target_summary"]["short_trade_formal_non_halt_prior_quality_counts"] == {"watch_only": 1}
     assert snapshot["reporting_target_summary"]["p2_execution_blocked_count"] == 1
     assert snapshot["short_trade_view"]["selected_symbols"] == []
     assert snapshot["short_trade_view"]["blocked_symbols"] == ["300724"]

@@ -283,7 +283,10 @@ def test_build_reporting_target_session_summary_rebuckets_formal_execution_block
                     "selection_targets": {
                         "000001": {
                             "execution_eligible": False,
+                            "btst_regime_gate": "shadow_only",
+                            "historical_prior_quality_level": "watch_only",
                             "p2_execution_blocked": True,
+                            "p2_execution_block_reason": "p2_regime_gate_enforce:shadow_only",
                             "research": {"decision": "selected"},
                             "short_trade": {"decision": "selected"},
                         },
@@ -320,6 +323,9 @@ def test_build_reporting_target_session_summary_rebuckets_formal_execution_block
     assert summary["short_trade_near_miss_count"] == 1
     assert summary["short_trade_blocked_count"] == 2
     assert summary["short_trade_rejected_count"] == 1
+    assert summary["short_trade_formal_non_halt_blocked_selected_count"] == 1
+    assert summary["short_trade_formal_non_halt_gate_counts"] == {"shadow_only": 1}
+    assert summary["short_trade_formal_non_halt_prior_quality_counts"] == {"watch_only": 1}
     assert summary["p2_execution_blocked_count"] == 1
     assert summary["target_mode_counts"] == {"short_trade_only": 1}
 

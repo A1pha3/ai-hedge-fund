@@ -40,6 +40,13 @@ def _format_formal_block_flag_counts(summary: dict) -> str:
     return ", ".join(f"{flag}={int(flag_counts[flag] or 0)}" for flag in sorted(flag_counts))
 
 
+def _format_named_count_map(summary: dict, field_name: str) -> str:
+    count_map = dict(summary.get(field_name) or {})
+    if not count_map:
+        return "none"
+    return ", ".join(f"{name}={int(count_map[name] or 0)}" for name in sorted(count_map))
+
+
 def _render_selected_section(snapshot: SelectionSnapshot) -> list[str]:
     lines = ["## 今日入选股票", ""]
     if not snapshot.selected:
@@ -120,6 +127,9 @@ def _render_reporting_target_summary(snapshot: SelectionSnapshot) -> list[str]:
         f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count', 0)}",
         f"- short_trade_formal_blocked_selected_count: {summary.get('short_trade_formal_blocked_selected_count', 0)}",
         f"- short_trade_formal_block_flag_counts: {_format_formal_block_flag_counts(summary)}",
+        f"- short_trade_formal_non_halt_blocked_selected_count: {summary.get('short_trade_formal_non_halt_blocked_selected_count', 0)}",
+        f"- short_trade_formal_non_halt_gate_counts: {_format_named_count_map(summary, 'short_trade_formal_non_halt_gate_counts')}",
+        f"- short_trade_formal_non_halt_prior_quality_counts: {_format_named_count_map(summary, 'short_trade_formal_non_halt_prior_quality_counts')}",
         f"- p2_execution_blocked_count: {summary.get('p2_execution_blocked_count', 0)}",
         f"- p3_execution_blocked_count: {summary.get('p3_execution_blocked_count', 0)}",
         "",

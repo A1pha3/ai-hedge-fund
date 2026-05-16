@@ -360,6 +360,9 @@ def _build_empty_dual_target_session_summary() -> dict:
         "short_trade_rejected_count": 0,
         "short_trade_formal_blocked_selected_count": 0,
         "short_trade_formal_block_flag_counts": {},
+        "short_trade_formal_non_halt_blocked_selected_count": 0,
+        "short_trade_formal_non_halt_gate_counts": {},
+        "short_trade_formal_non_halt_prior_quality_counts": {},
         "shell_target_count": 0,
         "target_mode_counts": {},
         "delta_classification_counts": {},
@@ -441,6 +444,7 @@ def _accumulate_dual_target_counts(summary: dict, target_summary: dict) -> None:
         "short_trade_blocked_count",
         "short_trade_rejected_count",
         "short_trade_formal_blocked_selected_count",
+        "short_trade_formal_non_halt_blocked_selected_count",
         "shell_target_count",
         "p2_execution_blocked_count",
         "p3_execution_blocked_count",
@@ -453,6 +457,18 @@ def _accumulate_dual_target_counts(summary: dict, target_summary: dict) -> None:
         if not normalized:
             continue
         summary["short_trade_formal_block_flag_counts"][normalized] = int(summary["short_trade_formal_block_flag_counts"].get(normalized) or 0) + int(value or 0)
+
+    for key, value in dict(target_summary.get("short_trade_formal_non_halt_gate_counts") or {}).items():
+        normalized = str(key or "").strip()
+        if not normalized:
+            continue
+        summary["short_trade_formal_non_halt_gate_counts"][normalized] = int(summary["short_trade_formal_non_halt_gate_counts"].get(normalized) or 0) + int(value or 0)
+
+    for key, value in dict(target_summary.get("short_trade_formal_non_halt_prior_quality_counts") or {}).items():
+        normalized = str(key or "").strip()
+        if not normalized:
+            continue
+        summary["short_trade_formal_non_halt_prior_quality_counts"][normalized] = int(summary["short_trade_formal_non_halt_prior_quality_counts"].get(normalized) or 0) + int(value or 0)
 
     for key, value in dict(target_summary.get("p3_prior_quality_distribution") or {}).items():
         normalized = str(key or "").strip()
