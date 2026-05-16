@@ -7352,8 +7352,13 @@ def _load_strict_btst_objective_gate() -> dict[str, Any] | None:
         return None
     structural_guardrail = None
     if structural_validation_path.exists():
-        structural_payload = json.loads(structural_validation_path.read_text(encoding="utf-8"))
-        structural_guardrail = dict(structural_payload.get("structural_guardrail") or {})
+        try:
+            structural_payload = json.loads(structural_validation_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning("Failed to load BTST structural guardrail sidecar from %s: %s", structural_validation_path, exc)
+        else:
+            if isinstance(structural_payload, dict):
+                structural_guardrail = dict(structural_payload.get("structural_guardrail") or {})
     return build_strict_btst_objective_gate(
         parse_objective_monitor_markdown(objective_monitor_path),
         structural_guardrail=structural_guardrail,
