@@ -185,6 +185,24 @@ def test_build_admission_replay_summary_reports_structural_expansion_pressure() 
     ]
 
 
+def test_build_admission_replay_summary_treats_non_mapping_multi_window_payload_as_absent() -> None:
+    summary = build_admission_replay_summary(
+        baseline_payload={"selected": [{"ticker": "A"}], "near_miss": [{"ticker": "B"}]},
+        candidate_payload={"selected": [{"ticker": "A"}], "near_miss": [{"ticker": "B"}]},
+        regime_rows=[
+            {"gate": "normal_trade", "execution_eligible": True, "decision": "selected"},
+        ],
+        baseline_metrics={"selected_close_win_rate": 47.27, "selected_payoff_ratio": 1.282, "post_fee_expectation_low": -0.16},
+        prior_audit={"downgrade_reasons": {"sample_small_n4_lt_5": 1}},
+        multi_window_validation=["unexpected-shape"],
+    )
+
+    assert summary["requires_runtime_replay"] is True
+    assert summary["multi_window_validation"] is None
+    assert summary["structural_guardrail"]["excessive_window_count"] == 0
+    assert summary["structural_guardrail"]["blocker_candidate"] is False
+
+
 def test_btst_admission_replay_validator_main_writes_blind_spot_report(tmp_path: Path) -> None:
     approximate_json = tmp_path / "approximate.json"
     baseline_json = tmp_path / "baseline.json"

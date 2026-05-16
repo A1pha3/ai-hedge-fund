@@ -77,6 +77,31 @@ def test_build_strict_btst_objective_gate_adds_structural_blockers() -> None:
     assert gate["structural_guardrail"] == structural_guardrail
 
 
+def test_build_strict_btst_objective_gate_ignores_non_boolean_structural_blocker_candidate() -> None:
+    structural_guardrail = {
+        "blocker_candidate": "false",
+        "excessive_window_count": 2,
+        "excessive_window_labels": ["10d", "20d"],
+    }
+
+    gate = build_strict_btst_objective_gate(
+        {
+            "Surface Summary": {
+                "tradeable_surface": {"positive_rate": 0.4706, "mean_t_plus_2_return": -0.0057},
+            },
+            "Decision Leaderboard": {
+                "rejected": {"positive_rate": 0.40, "mean_t_plus_2_return": -0.01},
+            },
+            "False Negative Strict Goal Cases": [],
+        },
+        structural_guardrail=structural_guardrail,
+    )
+
+    assert gate["action"] == "promote"
+    assert "structural_expansion_repeated_across_windows" not in gate["blockers"]
+    assert gate["structural_guardrail"] == structural_guardrail
+
+
 def test_btst_strict_objective_gate_main_writes_hold_artifacts(tmp_path: Path) -> None:
     input_md = tmp_path / "objective.md"
     structural_json = tmp_path / "structural.json"

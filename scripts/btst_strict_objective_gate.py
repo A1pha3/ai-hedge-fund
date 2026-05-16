@@ -85,7 +85,7 @@ def build_strict_btst_objective_gate(objective_monitor: dict[str, Any], structur
         blockers.append("rejected_outperforms_tradeable_return_surface")
     if false_negatives:
         blockers.append("strict_false_negative_cases_present")
-    if structural_guardrail and structural_guardrail.get("blocker_candidate"):
+    if structural_guardrail and structural_guardrail.get("blocker_candidate") is True:
         blockers.append("structural_expansion_repeated_across_windows")
 
     return {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +42,7 @@ def _summarize_regime_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, in
 
 
 def _summarize_multi_window_validation(payload: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not payload:
+    if not payload or not isinstance(payload, Mapping):
         return None
     rows = list(payload.get("rows") or [])
     changed_window_labels: list[str] = []
@@ -78,7 +79,8 @@ def _summarize_structural_guardrail(payload: dict[str, Any] | None) -> dict[str,
     selected_ratio_threshold = 0.15
     near_miss_ratio_threshold = 0.20
     excessive_window_labels: list[str] = []
-    for row in list(dict(payload or {}).get("rows") or []):
+    rows = list(payload.get("rows") or []) if isinstance(payload, Mapping) else []
+    for row in rows:
         if str(row.get("window_recommendation") or "").strip() == "variant_supports_t1_edge":
             continue
         selected_ratio = _compute_expansion_ratio(
