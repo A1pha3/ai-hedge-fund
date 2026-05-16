@@ -79,6 +79,56 @@ def test_build_admission_replay_summary_uses_multi_window_replay_to_keep_baselin
     assert "multi_window_replay_showed_no_observable_delta" in summary["blind_spot_reasons"]
 
 
+def test_build_admission_replay_summary_reports_structural_expansion_pressure() -> None:
+    summary = build_admission_replay_summary(
+        baseline_payload={"selected": [{"ticker": "A"}], "near_miss": [{"ticker": "B"}]},
+        candidate_payload={"selected": [{"ticker": "A"}], "near_miss": [{"ticker": "B"}]},
+        regime_rows=[
+            {"gate": "normal_trade", "execution_eligible": True, "decision": "selected"},
+        ],
+        baseline_metrics={"selected_close_win_rate": 47.27, "selected_payoff_ratio": 1.282, "post_fee_expectation_low": -0.16},
+        prior_audit={"downgrade_reasons": {"sample_small_n4_lt_5": 1}},
+        multi_window_validation={
+            "report_dir_count": 3,
+            "rows": [
+                {
+                    "report_label": "window-selected-expansion",
+                    "window_recommendation": "keep_baseline_default",
+                    "baseline_selected": {"total_count": 10},
+                    "variant_selected": {"total_count": 12},
+                    "baseline_near_miss": {"total_count": 5},
+                    "variant_near_miss": {"total_count": 5},
+                },
+                {
+                    "report_label": "window-near-miss-expansion",
+                    "window_recommendation": "mixed",
+                    "baseline_selected": {"total_count": 8},
+                    "variant_selected": {"total_count": 8},
+                    "baseline_near_miss": {"total_count": 10},
+                    "variant_near_miss": {"total_count": 13},
+                },
+                {
+                    "report_label": "window-ignore-supportive",
+                    "window_recommendation": "variant_supports_t1_edge",
+                    "baseline_selected": {"total_count": 10},
+                    "variant_selected": {"total_count": 20},
+                    "baseline_near_miss": {"total_count": 10},
+                    "variant_near_miss": {"total_count": 20},
+                },
+            ],
+        },
+    )
+
+    assert summary["structural_guardrail"]["selected_ratio_threshold"] == 0.15
+    assert summary["structural_guardrail"]["near_miss_ratio_threshold"] == 0.20
+    assert summary["structural_guardrail"]["excessive_window_count"] == 2
+    assert summary["structural_guardrail"]["blocker_candidate"] is True
+    assert summary["structural_guardrail"]["excessive_window_labels"] == [
+        "window-selected-expansion",
+        "window-near-miss-expansion",
+    ]
+
+
 def test_btst_admission_replay_validator_main_writes_blind_spot_report(tmp_path: Path) -> None:
     approximate_json = tmp_path / "approximate.json"
     baseline_json = tmp_path / "baseline.json"

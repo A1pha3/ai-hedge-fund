@@ -59,6 +59,48 @@ def _summarize_multi_window_validation(payload: dict[str, Any] | None) -> dict[s
     }
 
 
+def _compute_expansion_ratio(*, baseline_count: int, variant_count: int) -> float:
+    if baseline_count <= 0:
+        return 1.0 if variant_count > 0 else 0.0
+    return (float(variant_count) - float(baseline_count)) / float(baseline_count)
+
+
+def _extract_surface_total_count(row: dict[str, Any], *, prefix: str, surface_name: str) -> int:
+    surface_payload = row.get(f"{prefix}_{surface_name}")
+    if surface_payload is None:
+        surface_payload = dict(row.get(f"{prefix}_surface_summaries") or {}).get(surface_name)
+    if isinstance(surface_payload, dict):
+        return int(surface_payload.get("total_count") or 0)
+    return int(surface_payload or 0)
+
+
+def _summarize_structural_guardrail(payload: dict[str, Any] | None) -> dict[str, Any]:
+    selected_ratio_threshold = 0.15
+    near_miss_ratio_threshold = 0.20
+    excessive_window_labels: list[str] = []
+    for row in list(dict(payload or {}).get("rows") or []):
+        if str(row.get("window_recommendation") or "").strip() == "variant_supports_t1_edge":
+            continue
+        selected_ratio = _compute_expansion_ratio(
+            baseline_count=_extract_surface_total_count(row, prefix="baseline", surface_name="selected"),
+            variant_count=_extract_surface_total_count(row, prefix="variant", surface_name="selected"),
+        )
+        near_miss_ratio = _compute_expansion_ratio(
+            baseline_count=_extract_surface_total_count(row, prefix="baseline", surface_name="near_miss"),
+            variant_count=_extract_surface_total_count(row, prefix="variant", surface_name="near_miss"),
+        )
+        if selected_ratio > selected_ratio_threshold or near_miss_ratio > near_miss_ratio_threshold:
+            excessive_window_labels.append(str(row.get("report_label") or "unknown"))
+    excessive_window_count = len(excessive_window_labels)
+    return {
+        "selected_ratio_threshold": selected_ratio_threshold,
+        "near_miss_ratio_threshold": near_miss_ratio_threshold,
+        "excessive_window_count": excessive_window_count,
+        "excessive_window_labels": excessive_window_labels,
+        "blocker_candidate": excessive_window_count >= 2,
+    }
+
+
 def build_admission_replay_summary(
     *,
     baseline_payload: dict[str, Any],
@@ -74,6 +116,7 @@ def build_admission_replay_summary(
     )
     regime_counts = _summarize_regime_rows(regime_rows)
     multi_window_summary = _summarize_multi_window_validation(multi_window_validation)
+    structural_guardrail = _summarize_structural_guardrail(multi_window_validation)
     blind_spot_reasons: list[str] = []
     if not approximate_surface_changed:
         blind_spot_reasons.append("identical_selected_and_near_miss_surfaces")
@@ -97,6 +140,7 @@ def build_admission_replay_summary(
         "prior_audit": dict(prior_audit),
         "regime_counts": regime_counts,
         "multi_window_validation": multi_window_summary,
+        "structural_guardrail": structural_guardrail,
         "baseline_selected_count": len(list(baseline_payload.get("selected") or [])),
         "candidate_selected_count": len(list(candidate_payload.get("selected") or [])),
         "baseline_near_miss_count": len(list(baseline_payload.get("near_miss") or [])),
@@ -162,6 +206,16 @@ def _render_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- changed_window_count: {multi_window_summary.get('changed_window_count', 0)}")
         lines.append(f"- changed_window_labels: {multi_window_summary.get('changed_window_labels', [])}")
         lines.append(f"- recommendation: {multi_window_summary.get('recommendation', '')}")
+        lines.append("")
+
+    structural_guardrail = dict(summary.get("structural_guardrail") or {})
+    if structural_guardrail:
+        lines.extend(["## Structural Guardrail", ""])
+        lines.append(f"- selected_ratio_threshold: {structural_guardrail.get('selected_ratio_threshold')}")
+        lines.append(f"- near_miss_ratio_threshold: {structural_guardrail.get('near_miss_ratio_threshold')}")
+        lines.append(f"- excessive_window_count: {structural_guardrail.get('excessive_window_count')}")
+        lines.append(f"- excessive_window_labels: {structural_guardrail.get('excessive_window_labels')}")
+        lines.append(f"- blocker_candidate: {structural_guardrail.get('blocker_candidate')}")
         lines.append("")
 
     lines.extend(["## Baseline Metrics", ""])
