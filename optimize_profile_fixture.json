@@ -3,12 +3,12 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_f835564c98ef_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_ebb75c4bd511_checkpoint.json"
   },
   "optimized_profile_manifest_publication": {
     "status": "skipped",
     "reason": "non_btst_objective",
-    "manifest_path": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/btst_latest_optimized_profile.json"
+    "manifest_path": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.worktrees/btst-winrate-design-20260517/data/reports/btst_latest_optimized_profile.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -603,7 +603,8 @@
       "missing_crowding_risk_raw_100_delta_vs_default",
       "missing_gap_risk_raw_100_delta_vs_default",
       "missing_projected_theme_exposure_delta_vs_default",
-      "missing_incremental_theme_exposure_delta_vs_default"
+      "missing_incremental_theme_exposure_delta_vs_default",
+      "win_rate_first_rejected"
     ],
     "baseline_verdicts": {
       "ignition_breakout": {
@@ -630,6 +631,40 @@
           "missing_incremental_theme_exposure_delta_vs_default"
         ]
       }
+    },
+    "strict_btst_objective_gate": null,
+    "execution_eligible_evidence": null,
+    "win_rate_first_decision": {
+      "verdict": "rejected",
+      "win_rate_signals": {
+        "next_close_positive_rate_delta": 0.0,
+        "next_high_hit_rate_delta": null
+      },
+      "bounded_tradeoffs": {
+        "window_coverage_delta": 0.0,
+        "next_close_expectancy_delta": 0.0
+      },
+      "rejection_reasons": [
+        "win_rate_uplift_missing"
+      ],
+      "verdict_reason": "win_rate_uplift_missing"
+    },
+    "win_rate_first_verdict": "rejected",
+    "win_rate_first_verdict_detail": {
+      "verdict": "rejected",
+      "win_rate_signals": {
+        "next_close_positive_rate_delta": 0.0,
+        "next_high_hit_rate_delta": null
+      },
+      "bounded_tradeoffs": {
+        "window_coverage_delta": 0.0,
+        "next_close_expectancy_delta": 0.0
+      },
+      "rejection_reasons": [
+        "rollout_blocked",
+        "win_rate_uplift_missing"
+      ],
+      "verdict_reason": "rollout_blocked"
     }
   }
 }

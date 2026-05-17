@@ -27997,3 +27997,43 @@ def test_build_rollout_recommendation_payload_surfaces_rollout_blocked_when_bloc
     # The critical assertion: when blockers are present, verdict_reason should be "rollout_blocked"
     # NOT "win_rate_uplift_missing" or "bounded_tradeoff_check_failed"
     assert payload["win_rate_first_verdict_detail"]["verdict_reason"] == "rollout_blocked"
+    
+    # NEW: rejection_reasons must also include "rollout_blocked" when non-win-rate blockers are present
+    assert "rollout_blocked" in payload["win_rate_first_verdict_detail"]["rejection_reasons"]
+
+
+def test_persist_search_metadata_renders_win_rate_first_verdict_detail_in_markdown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Markdown output must explicitly render win-rate-first verdict detail when rollout recommendation details are present."""
+    from scripts.optimize_profile import _persist_search_metadata
+    
+    md_path = tmp_path / "report.md"
+    json_path = tmp_path / "report.json"
+    md_path.write_text("# Parameter Search Report\nExisting content\n", encoding="utf-8")
+    json_path.write_text("{}", encoding="utf-8")
+    
+    metadata = {"search_stage": "full", "checkpoint_path": "none"}
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+        }
+    }
+    rollout_recommendation_details = {
+        "action": "promote",
+        "blockers": [],
+        "win_rate_first_verdict_detail": {
+            "verdict": "accepted",
+            "verdict_reason": "meets_win_rate_first_criteria",
+            "rejection_reasons": [],
+        },
+    }
+    
+    _persist_search_metadata(
+        md_path=md_path, json_path=json_path, metadata=metadata,
+        comparison_summary=comparison_summary, rollout_recommendation="promote",
+        rollout_recommendation_details=rollout_recommendation_details,
+    )
+    
+    md_text = md_path.read_text(encoding="utf-8")
+    assert "Win-rate-first verdict:" in md_text or "Win-Rate-First" in md_text
+    assert "accepted" in md_text or "meets_win_rate_first_criteria" in md_text

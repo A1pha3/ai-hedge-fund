@@ -7470,6 +7470,11 @@ def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str
     if non_win_rate_blockers and win_rate_first_decision["verdict"] == "rejected":
         # Override verdict_reason to prioritize rollout blockers
         win_rate_first_verdict_detail["verdict_reason"] = "rollout_blocked"
+        # Task B output-surface fix: also prepend "rollout_blocked" to rejection_reasons
+        # so that structured rejection reasons reflect blocker-first dominance
+        existing_reasons = list(win_rate_first_verdict_detail.get("rejection_reasons") or [])
+        if "rollout_blocked" not in existing_reasons:
+            win_rate_first_verdict_detail["rejection_reasons"] = ["rollout_blocked"] + existing_reasons
 
     return {
         "action": "promote" if not deduped_blockers else "hold",  # action now respects win-rate-first blocker
@@ -7604,6 +7609,23 @@ def _persist_search_metadata(
         md_sections.append("\n".join(comparison_lines))
     if rollout_recommendation:
         rollout_lines = [f"Rollout Recommendation: **{rollout_recommendation}**"]
+        # Task B output-surface fix: explicitly render win-rate-first verdict detail
+        win_rate_first_verdict_detail = (rollout_recommendation_details or {}).get("win_rate_first_verdict_detail")
+        if win_rate_first_verdict_detail:
+            verdict = win_rate_first_verdict_detail.get("verdict", "unknown")
+            verdict_reason = win_rate_first_verdict_detail.get("verdict_reason", "unknown")
+            rejection_reasons = win_rate_first_verdict_detail.get("rejection_reasons", [])
+            rollout_lines.append("")
+            rollout_lines.append(f"**Win-Rate-First Verdict**: {verdict}")
+            rollout_lines.append(f"- Verdict Reason: `{verdict_reason}`")
+            if rejection_reasons:
+                rollout_lines.append(f"- Rejection Reasons: {', '.join(f'`{r}`' for r in rejection_reasons)}")
+            win_rate_signals = win_rate_first_verdict_detail.get("win_rate_signals", {})
+            if win_rate_signals:
+                rollout_lines.append(f"- Win-Rate Signals: {', '.join(f'{k}={v:.4f}' if v is not None else f'{k}=N/A' for k, v in win_rate_signals.items())}")
+            bounded_tradeoffs = win_rate_first_verdict_detail.get("bounded_tradeoffs", {})
+            if bounded_tradeoffs:
+                rollout_lines.append(f"- Bounded Tradeoffs: {', '.join(f'{k}={v:.4f}' if v is not None else f'{k}=N/A' for k, v in bounded_tradeoffs.items())}")
         blockers = list((rollout_recommendation_details or {}).get("blockers") or [])
         if blockers:
             rollout_lines.append("")
