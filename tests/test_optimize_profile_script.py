@@ -2031,24 +2031,28 @@ def test_build_rollout_recommendation_payload_rejects_win_rate_first_when_uplift
     comparison_summary = {
         "default": {
             "next_close_positive_rate_delta": 0.012,
-            "next_high_hit_rate_delta": 0.002,
-            "realized_payoff_ratio_delta": -0.04,
+            "next_high_hit_rate_delta": 0.002,  # Below WIN_RATE_FIRST_MIN_POSITIVE_DELTA (0.005)
+            "realized_payoff_ratio_delta": -0.005,  # Within epsilon (0.01) but fails win-rate-first
             "next_close_expectancy_delta": 0.001,
             "downside_p10_delta": 0.001,
-            "window_coverage_delta": -0.01,
+            "window_coverage_delta": -0.001,  # Within epsilon (0.002)
             "liquidity_capacity_raw_100_delta": 1.2,
             "crowding_risk_raw_100_delta": -1.2,
             "gap_risk_raw_100_delta": -1.1,
-            "projected_theme_exposure_delta": -0.006,
-            "incremental_theme_exposure_delta": -0.006,
+            "projected_theme_exposure_delta": -0.004,  # Within epsilon (0.005)
+            "incremental_theme_exposure_delta": -0.004,  # Within epsilon (0.005)
         }
     }
 
     payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
 
     assert payload["win_rate_first_verdict"] == "rejected"
+    # Task B consistency fix: when there are no baseline/strict/structural blockers,
+    # verdict_reason reflects pure win-rate-first rejection reason
     assert payload["win_rate_first_verdict_detail"]["verdict_reason"] == "win_rate_uplift_missing"
     assert payload["win_rate_first_verdict_detail"]["rejection_reasons"] == ["win_rate_uplift_missing"]
+    assert payload["blockers"] == ["win_rate_first_rejected"]
+    assert payload["blockers"] == ["win_rate_first_rejected"]
 
 
 def test_build_rollout_recommendation_payload_rejects_win_rate_first_when_tradeoffs_too_large(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2057,25 +2061,26 @@ def test_build_rollout_recommendation_payload_rejects_win_rate_first_when_tradeo
         "default": {
             "next_close_positive_rate_delta": 0.012,
             "next_high_hit_rate_delta": 0.009,
-            "next_close_expectancy_delta": -0.006,
+            "next_close_expectancy_delta": -0.006,  # Exceeds WIN_RATE_FIRST_MAX_EXPECTANCY_DEGRADATION (0.005), but epsilon is 0.0 so baseline blocker too
             "downside_p10_delta": 0.001,
-            "window_coverage_delta": -0.04,
+            "window_coverage_delta": -0.001,  # Within epsilon (0.002)
             "liquidity_capacity_raw_100_delta": 1.2,
             "crowding_risk_raw_100_delta": -1.2,
             "gap_risk_raw_100_delta": -1.1,
-            "projected_theme_exposure_delta": -0.006,
-            "incremental_theme_exposure_delta": -0.006,
+            "projected_theme_exposure_delta": -0.004,
+            "incremental_theme_exposure_delta": -0.004,
         }
     }
 
     payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
 
     assert payload["win_rate_first_verdict"] == "rejected"
-    assert payload["win_rate_first_verdict_detail"]["verdict_reason"] == "bounded_tradeoff_check_failed"
-    assert payload["win_rate_first_verdict_detail"]["rejection_reasons"] == [
-        "payoff_degradation_too_large",
-        "coverage_degradation_too_large",
-    ]
+    # Task B consistency fix: when baseline comparison blockers are present (next_close_expectancy has epsilon 0.0),
+    # verdict_reason must prioritize "rollout_blocked"
+    assert payload["win_rate_first_verdict_detail"]["verdict_reason"] == "rollout_blocked"
+    assert "payoff_degradation_too_large" in payload["win_rate_first_verdict_detail"]["rejection_reasons"]
+    assert "next_close_expectancy_regressed_vs_default" in payload["blockers"]
+    assert "win_rate_first_rejected" in payload["blockers"]
 
 
 def test_build_rollout_recommendation_payload_blocks_promotion_when_win_rate_first_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27954,3 +27959,41 @@ def test_build_rollout_recommendation_payload_win_rate_first_uses_expectancy_fal
     assert "realized_payoff_ratio_delta" not in payload["win_rate_first_decision"]["bounded_tradeoffs"]
     assert payload["win_rate_first_decision"]["bounded_tradeoffs"]["next_close_expectancy_delta"] == 0.001
 
+
+
+def test_build_rollout_recommendation_payload_surfaces_rollout_blocked_when_blockers_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When strict/structural/baseline blockers are present, win_rate_first_verdict_detail must surface rollout_blocked as dominant reason."""
+    monkeypatch.setattr(
+        optimize_profile,
+        "_load_strict_btst_objective_gate",
+        lambda: {"action": "hold", "blockers": ["rejected_outperforms_tradeable_surface"]},
+    )
+    comparison_summary = {
+        "default": {
+            # Win-rate-first would be rejected for missing uplift
+            "next_close_positive_rate_delta": 0.001,  # below threshold
+            "next_high_hit_rate_delta": 0.001,        # below threshold
+            "next_close_expectancy_delta": -0.002,
+            "realized_payoff_ratio_delta": -0.05,
+            "window_coverage_delta": -0.01,
+            "downside_p10_delta": 0.001,
+            "liquidity_capacity_raw_100_delta": 1.0,
+            "crowding_risk_raw_100_delta": -1.0,
+            "gap_risk_raw_100_delta": -1.0,
+            "projected_theme_exposure_delta": -0.01,
+            "incremental_theme_exposure_delta": -0.01,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    # Action should be "hold" due to strict blocker
+    assert payload["action"] == "hold"
+    assert "rejected_outperforms_tradeable_surface" in payload["blockers"]
+    
+    # Win-rate-first decision should be rejected
+    assert payload["win_rate_first_decision"]["verdict"] == "rejected"
+    
+    # The critical assertion: when blockers are present, verdict_reason should be "rollout_blocked"
+    # NOT "win_rate_uplift_missing" or "bounded_tradeoff_check_failed"
+    assert payload["win_rate_first_verdict_detail"]["verdict_reason"] == "rollout_blocked"

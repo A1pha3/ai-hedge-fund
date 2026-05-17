@@ -7463,6 +7463,14 @@ def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str
         if "win_rate_first_rejected" not in deduped_blockers:
             deduped_blockers.append("win_rate_first_rejected")
 
+    # Task B consistency fix: if strict/structural/baseline blockers are present,
+    # win_rate_first_verdict_detail must surface "rollout_blocked" as dominant reason
+    win_rate_first_verdict_detail = dict(win_rate_first_decision)
+    non_win_rate_blockers = [b for b in deduped_blockers if b != "win_rate_first_rejected"]
+    if non_win_rate_blockers and win_rate_first_decision["verdict"] == "rejected":
+        # Override verdict_reason to prioritize rollout blockers
+        win_rate_first_verdict_detail["verdict_reason"] = "rollout_blocked"
+
     return {
         "action": "promote" if not deduped_blockers else "hold",  # action now respects win-rate-first blocker
         "blockers": deduped_blockers,
@@ -7471,7 +7479,7 @@ def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str
         "execution_eligible_evidence": execution_eligible_evidence,
         "win_rate_first_decision": win_rate_first_decision,
         "win_rate_first_verdict": win_rate_first_decision["verdict"],
-        "win_rate_first_verdict_detail": win_rate_first_decision,
+        "win_rate_first_verdict_detail": win_rate_first_verdict_detail,
     }
 
 
