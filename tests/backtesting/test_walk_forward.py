@@ -748,6 +748,23 @@ def test_classify_win_rate_first_rollout_verdict_accepts_bounded_tradeoffs():
     assert detail["window_coverage_delta"] == pytest.approx(-0.02)
 
 
+def test_classify_win_rate_first_rollout_verdict_rejects_candidate_with_blockers_and_no_baseline():
+    """Task B final fix: candidate with rollout_blockers but no baseline must be rejected, not neutral."""
+    candidate = {
+        "rollout_blockers": ["worst_max_drawdown_floor"],
+        "next_close_positive_rate": 0.612,
+        "next_high_hit_rate": 0.624,
+        "realized_payoff_ratio": 1.22,
+        "window_coverage": 0.81,
+    }
+    # No baseline → would normally return neutral, but blockers must force rejection
+    verdict, detail = classify_win_rate_first_rollout_verdict(candidate, baseline_summary=None)
+
+    assert verdict == "rejected", "Candidate with rollout_blockers must be rejected regardless of baseline availability"
+    assert "rollout_blocked" in detail["rejection_reasons"]
+    assert detail["verdict_reason"] == "rollout_blocked"
+
+
 # ---------------------------------------------------------------------------
 # Round 11 Task 4 — Walk-forward recency weighting
 # ---------------------------------------------------------------------------

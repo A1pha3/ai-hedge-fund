@@ -678,7 +678,22 @@ def classify_win_rate_first_rollout_verdict(
     rollout_blockers = list(candidate_summary.get("rollout_blockers") or [])
 
     # Task B spec fix: if no baseline and no deltas, cannot evaluate uplift → neutral verdict
+    # BUT: existing rollout_blockers must still force rejection
     if baseline_summary is None and close_positive_delta is None and high_hit_delta is None:
+        if rollout_blockers:
+            # Blocker-constrained candidate remains rejected regardless of baseline availability
+            detail = {
+                "next_close_positive_rate_delta": None,
+                "next_high_hit_rate_delta": None,
+                "realized_payoff_ratio_delta": None,
+                "next_close_expectancy_delta": None,
+                "window_coverage_delta": None,
+                "rollout_blockers": rollout_blockers,
+                "rejection_reasons": ["rollout_blocked"],
+                "verdict_reason": "rollout_blocked",
+            }
+            return ("rejected", detail)
+        # Only blocker-free candidates without baseline/deltas may return neutral
         detail = {
             "next_close_positive_rate_delta": None,
             "next_high_hit_rate_delta": None,
