@@ -723,10 +723,10 @@ def classify_win_rate_first_rollout_verdict(
     rejection_reasons = list(dict.fromkeys(rejection_reasons))
     if not rejection_reasons:
         verdict_reason = "meets_win_rate_first_criteria"
+    elif "rollout_blocked" in rejection_reasons:
+        verdict_reason = "rollout_blocked"
     elif rejection_reasons == ["win_rate_uplift_missing"]:
         verdict_reason = "win_rate_uplift_missing"
-    elif rejection_reasons == ["rollout_blocked"]:
-        verdict_reason = "rollout_blocked"
     else:
         verdict_reason = "bounded_tradeoff_check_failed"
 

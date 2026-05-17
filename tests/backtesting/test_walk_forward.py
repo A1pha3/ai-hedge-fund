@@ -765,6 +765,38 @@ def test_classify_win_rate_first_rollout_verdict_rejects_candidate_with_blockers
     assert detail["verdict_reason"] == "rollout_blocked"
 
 
+def test_classify_win_rate_first_rollout_verdict_prioritizes_blocker_reason_over_other_rejections():
+    """Task B final fix: when rollout_blockers are present along with other rejection reasons,
+    verdict_reason must be 'rollout_blocked', not 'bounded_tradeoff_check_failed'."""
+    candidate = {
+        "rollout_blockers": ["worst_max_drawdown_floor"],
+        "next_close_positive_rate": 0.602,  # minimal uplift
+        "next_high_hit_rate": 0.612,  # minimal uplift
+        "realized_payoff_ratio": 1.22,
+        "window_coverage": 0.81,
+    }
+    baseline = {
+        "rollout_blockers": [],
+        "next_close_positive_rate": 0.600,
+        "next_high_hit_rate": 0.610,
+        "realized_payoff_ratio": 1.30,
+        "window_coverage": 0.83,
+    }
+    # Win rate deltas are too small (< 0.005), so we'd have both
+    # rollout_blocked AND win_rate_uplift_missing in rejection_reasons.
+    # But verdict_reason should prioritize rollout_blocked.
+    
+    verdict, detail = classify_win_rate_first_rollout_verdict(candidate, baseline)
+    
+    assert verdict == "rejected"
+    assert "rollout_blocked" in detail["rejection_reasons"]
+    assert "win_rate_uplift_missing" in detail["rejection_reasons"]
+    # The spec gap: currently this would be "bounded_tradeoff_check_failed"
+    # but it MUST be "rollout_blocked" when blockers are present
+    assert detail["verdict_reason"] == "rollout_blocked", \
+        "verdict_reason must prioritize rollout_blocked when blockers are present, even with other rejection reasons"
+
+
 # ---------------------------------------------------------------------------
 # Round 11 Task 4 — Walk-forward recency weighting
 # ---------------------------------------------------------------------------
