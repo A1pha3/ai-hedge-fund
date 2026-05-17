@@ -539,11 +539,21 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
         "rollout_blockers": rollout_blockers,
     }
     runner_verdict, runner_verdict_detail = classify_runner_rollout_verdict(runner_summary=base_summary)
+
+    # Task B (Round btst-winrate-design-20260517): expose win-rate-first acceptance verdict
+    # Use candidate summary as input; no baseline comparison available at this stage
+    win_rate_first_verdict, win_rate_first_verdict_detail = classify_win_rate_first_rollout_verdict(
+        candidate_summary=base_summary,
+        baseline_summary=None,
+    )
+
     return {
         **base_summary,
         **build_promotion_gate_summary(walk_forward_summary=base_summary),
         "runner_rollout_verdict": runner_verdict,
         "runner_rollout_verdict_detail": runner_verdict_detail,
+        "win_rate_first_verdict": win_rate_first_verdict,
+        "win_rate_first_verdict_detail": win_rate_first_verdict_detail,
     }
 
 

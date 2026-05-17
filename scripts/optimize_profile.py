@@ -7458,8 +7458,13 @@ def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str
     # Task B (Round btst-winrate-design-20260517): add win-rate-first acceptance verdict
     win_rate_first_decision = _build_win_rate_first_decision(comparison_summary)
 
+    # Task B (Round btst-winrate-design-20260517): win-rate-first rejection blocks promotion
+    if win_rate_first_decision["verdict"] == "rejected":
+        if "win_rate_first_rejected" not in deduped_blockers:
+            deduped_blockers.append("win_rate_first_rejected")
+
     return {
-        "action": "promote" if not deduped_blockers else "hold",
+        "action": "promote" if not deduped_blockers else "hold",  # action now respects win-rate-first blocker
         "blockers": deduped_blockers,
         "baseline_verdicts": baseline_verdicts,
         "strict_btst_objective_gate": strict_objective_gate,

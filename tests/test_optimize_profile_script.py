@@ -2078,6 +2078,27 @@ def test_build_rollout_recommendation_payload_rejects_win_rate_first_when_tradeo
     ]
 
 
+def test_build_rollout_recommendation_payload_blocks_promotion_when_win_rate_first_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Task B: win-rate-first rejection must force action to 'hold' even when classic blockers are empty."""
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.002,  # Below WIN_RATE_FIRST_MIN_POSITIVE_DELTA (0.005)
+            "next_high_hit_rate_delta": 0.009,
+            "realized_payoff_ratio_delta": -0.04,
+            "next_close_expectancy_delta": 0.001,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": -0.01,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["win_rate_first_verdict"] == "rejected"
+    assert payload["action"] == "hold", "action must be 'hold' when win-rate-first verdict is rejected"
+    assert "win_rate_first_rejected" in payload["blockers"]
+
+
 def test_build_rollout_recommendation_payload_appends_strict_objective_blockers(monkeypatch: pytest.MonkeyPatch) -> None:
     comparison_summary = {
         "default": {

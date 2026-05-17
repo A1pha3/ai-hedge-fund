@@ -1402,3 +1402,43 @@ def test_summarize_walk_forward_empty_results_pool_fields_unknown() -> None:
     assert summary["avg_candidate_pool_size"] is None
     assert summary["scarce_market_window_count"] == 0
     assert summary["abundant_market_window_count"] == 0
+
+
+def test_summarize_walk_forward_exposes_win_rate_first_verdict_fields():
+    """Task B: summarize_walk_forward must expose win-rate-first verdict derived from classify_win_rate_first_rollout_verdict."""
+    windows = [
+        WalkForwardWindow(
+            train_start="2026-01-01",
+            train_end="2026-01-31",
+            test_start="2026-02-01",
+            test_end="2026-02-28",
+        )
+    ]
+
+    class StubEngine:
+        def run_backtest(self):
+            return {
+                "sharpe_ratio": 0.8,
+                "sortino_ratio": 0.9,
+                "max_drawdown": -5.0,
+                "test_trading_days": 10,
+                "next_close_positive_rate": 0.58,
+                "next_high_hit_rate": 0.63,
+                "realized_payoff_ratio": 1.8,
+                "next_close_expectancy": 0.015,
+                "window_coverage": 0.92,
+            }
+
+    results = run_walk_forward(windows, lambda window: StubEngine())
+    summary = summarize_walk_forward(results)
+
+    # Task B: win-rate-first verdict fields must exist in summary
+    assert "win_rate_first_verdict" in summary, "summary must include win_rate_first_verdict"
+    assert "win_rate_first_verdict_detail" in summary, "summary must include win_rate_first_verdict_detail"
+    assert summary["win_rate_first_verdict"] in {"accepted", "rejected"}
+    
+    # The detail payload should have the standard structure from classify_win_rate_first_rollout_verdict
+    detail = summary["win_rate_first_verdict_detail"]
+    assert "verdict_reason" in detail
+    assert "rejection_reasons" in detail
+    assert isinstance(detail["rejection_reasons"], list)
