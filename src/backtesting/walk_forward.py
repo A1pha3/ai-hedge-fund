@@ -54,6 +54,10 @@ RUNNER_T3_WIN_RATE_REGRESSION_FLOOR = -0.02
 RUNNER_DOWNSIDE_REGRESSION_FLOOR = -0.015
 RUNNER_COMPOSITE_SCORE_QUALITY_FLOOR = 0.50
 RUNNER_ESCAPE_RATE_MIN = 0.03
+WIN_RATE_FIRST_MIN_POSITIVE_DELTA = 0.005
+WIN_RATE_FIRST_MAX_PAYOFF_DEGRADATION = 0.10
+WIN_RATE_FIRST_MAX_EXPECTANCY_DEGRADATION = 0.005
+WIN_RATE_FIRST_MAX_COVERAGE_DEGRADATION = 0.03
 
 # Task 4 (Round 11): temporal recency decay for walk-forward BTST quality metrics.
 # Windows with test_start closer to the reference date (most recent) receive weight ~1.0;
@@ -303,7 +307,7 @@ def assess_profile_stability(verdicts: list[tuple[str, dict]]) -> dict[str, Any]
     }
 
 
-def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, Any]:
+def summarize_walk_forward(results: Sequence[WalkForwardResult], baseline_summary: dict | None = None) -> dict[str, Any]:
     if not results:
         base_summary: dict[str, Any] = {
             "window_count": 0,
@@ -535,11 +539,21 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
         "rollout_blockers": rollout_blockers,
     }
     runner_verdict, runner_verdict_detail = classify_runner_rollout_verdict(runner_summary=base_summary)
+
+    # Task B (Round btst-winrate-design-20260517): expose win-rate-first acceptance verdict
+    # Pass baseline_summary through to enable real uplift evaluation when available
+    win_rate_first_verdict, win_rate_first_verdict_detail = classify_win_rate_first_rollout_verdict(
+        candidate_summary=base_summary,
+        baseline_summary=baseline_summary,
+    )
+
     return {
         **base_summary,
         **build_promotion_gate_summary(walk_forward_summary=base_summary),
         "runner_rollout_verdict": runner_verdict,
         "runner_rollout_verdict_detail": runner_verdict_detail,
+        "win_rate_first_verdict": win_rate_first_verdict,
+        "win_rate_first_verdict_detail": win_rate_first_verdict_detail,
     }
 
 
@@ -638,6 +652,95 @@ def classify_runner_rollout_verdict(
         detail["verdict_reason"] = "low_runner_composite_quality"
         return "tail_hit_better_but_t1_risky", detail
     return "promotable_runner_profile", detail
+
+
+def classify_win_rate_first_rollout_verdict(
+    candidate_summary: dict,
+    baseline_summary: dict | None = None,
+) -> tuple[str, dict]:
+    def _delta(metric_key: str) -> float | None:
+        candidate_value = candidate_summary.get(metric_key)
+        if baseline_summary is not None:
+            baseline_value = baseline_summary.get(metric_key)
+            if candidate_value is None or baseline_value is None:
+                return None
+            return float(candidate_value) - float(baseline_value)
+        delta_value = candidate_summary.get(f"{metric_key}_delta")
+        if delta_value is None:
+            return None
+        return float(delta_value)
+
+    close_positive_delta = _delta("next_close_positive_rate")
+    high_hit_delta = _delta("next_high_hit_rate")
+    payoff_ratio_delta = _delta("realized_payoff_ratio")
+    expectancy_delta = _delta("next_close_expectancy")
+    coverage_delta = _delta("window_coverage")
+    rollout_blockers = list(candidate_summary.get("rollout_blockers") or [])
+
+    # Task B spec fix: if no baseline and no deltas, cannot evaluate uplift → neutral verdict
+    # BUT: existing rollout_blockers must still force rejection
+    if baseline_summary is None and close_positive_delta is None and high_hit_delta is None:
+        if rollout_blockers:
+            # Blocker-constrained candidate remains rejected regardless of baseline availability
+            detail = {
+                "next_close_positive_rate_delta": None,
+                "next_high_hit_rate_delta": None,
+                "realized_payoff_ratio_delta": None,
+                "next_close_expectancy_delta": None,
+                "window_coverage_delta": None,
+                "rollout_blockers": rollout_blockers,
+                "rejection_reasons": ["rollout_blocked"],
+                "verdict_reason": "rollout_blocked",
+            }
+            return ("rejected", detail)
+        # Only blocker-free candidates without baseline/deltas may return neutral
+        detail = {
+            "next_close_positive_rate_delta": None,
+            "next_high_hit_rate_delta": None,
+            "realized_payoff_ratio_delta": None,
+            "next_close_expectancy_delta": None,
+            "window_coverage_delta": None,
+            "rollout_blockers": rollout_blockers,
+            "rejection_reasons": [],
+            "verdict_reason": "not_evaluable",
+        }
+        return ("neutral", detail)
+
+    rejection_reasons: list[str] = []
+    if rollout_blockers:
+        rejection_reasons.append("rollout_blocked")
+    if close_positive_delta is None or close_positive_delta < WIN_RATE_FIRST_MIN_POSITIVE_DELTA:
+        rejection_reasons.append("win_rate_uplift_missing")
+    if high_hit_delta is None or high_hit_delta < WIN_RATE_FIRST_MIN_POSITIVE_DELTA:
+        rejection_reasons.append("win_rate_uplift_missing")
+    if payoff_ratio_delta is not None and payoff_ratio_delta < -WIN_RATE_FIRST_MAX_PAYOFF_DEGRADATION:
+        rejection_reasons.append("payoff_degradation_too_large")
+    elif payoff_ratio_delta is None and expectancy_delta is not None and expectancy_delta < -WIN_RATE_FIRST_MAX_EXPECTANCY_DEGRADATION:
+        rejection_reasons.append("payoff_degradation_too_large")
+    if coverage_delta is not None and coverage_delta < -WIN_RATE_FIRST_MAX_COVERAGE_DEGRADATION:
+        rejection_reasons.append("coverage_degradation_too_large")
+
+    rejection_reasons = list(dict.fromkeys(rejection_reasons))
+    if not rejection_reasons:
+        verdict_reason = "meets_win_rate_first_criteria"
+    elif "rollout_blocked" in rejection_reasons:
+        verdict_reason = "rollout_blocked"
+    elif rejection_reasons == ["win_rate_uplift_missing"]:
+        verdict_reason = "win_rate_uplift_missing"
+    else:
+        verdict_reason = "bounded_tradeoff_check_failed"
+
+    detail = {
+        "next_close_positive_rate_delta": close_positive_delta,
+        "next_high_hit_rate_delta": high_hit_delta,
+        "realized_payoff_ratio_delta": payoff_ratio_delta,
+        "next_close_expectancy_delta": expectancy_delta,
+        "window_coverage_delta": coverage_delta,
+        "rollout_blockers": rollout_blockers,
+        "rejection_reasons": rejection_reasons,
+        "verdict_reason": verdict_reason,
+    }
+    return ("accepted" if not rejection_reasons else "rejected"), detail
 
 
 # Verdict priority ordering — higher index means better/more preferred.

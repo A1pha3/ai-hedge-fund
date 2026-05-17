@@ -3,7 +3,7 @@
 ## Search Metadata
 
 Search Stage: **full**
-Checkpoint: `data/reports/param_search_ignition_breakout_bb2616ce95a9_checkpoint.json`
+Checkpoint: `data/reports/param_search_ignition_breakout_c25a9384bb14_checkpoint.json`
 
 ## Baseline Comparison
 
@@ -13,6 +13,12 @@ Checkpoint: `data/reports/param_search_ignition_breakout_bb2616ce95a9_checkpoint
 | default | N/A | N/A | N/A | N/A | 0.0000 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 
 Rollout Recommendation: **hold**
+
+**Win-Rate-First Verdict**: rejected
+- Verdict Reason: `rollout_blocked`
+- Rejection Reasons: `rollout_blocked`, `win_rate_uplift_missing`
+- Win-Rate Signals: next_close_positive_rate_delta=N/A, next_high_hit_rate_delta=N/A
+- Bounded Tradeoffs: window_coverage_delta=0.0000
 
 Rollout Blockers:
 - `missing_next_close_positive_rate_delta_vs_ignition_breakout`
@@ -33,7 +39,8 @@ Rollout Blockers:
 - `missing_gap_risk_raw_100_delta_vs_default`
 - `missing_projected_theme_exposure_delta_vs_default`
 - `missing_incremental_theme_exposure_delta_vs_default`
+- `win_rate_first_rejected`
 
 Optimized Profile Manifest Publication: **skipped**
-- manifest_path: `/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/btst_latest_optimized_profile.json`
+- manifest_path: `/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.worktrees/btst-winrate-design-20260517/data/reports/btst_latest_optimized_profile.json`
 - reason: `non_btst_objective`
