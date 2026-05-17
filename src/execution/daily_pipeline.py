@@ -259,6 +259,7 @@ BTST_0422_P4_PRIOR_SHRINKAGE_MODE_ENV = "BTST_0422_P4_PRIOR_SHRINKAGE_MODE"
 BTST_0422_P4_PRIOR_SHRINKAGE_MODES = frozenset({"off", "enforce"})
 BTST_0422_P5_EXECUTION_CONTRACT_MODE_ENV = "BTST_0422_P5_EXECUTION_CONTRACT_MODE"
 BTST_0422_P5_EXECUTION_CONTRACT_MODES = frozenset({"off", "enforce"})
+BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV = "BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE"
 BTST_0422_P6_RISK_BUDGET_MODE_ENV = "BTST_0422_P6_RISK_BUDGET_MODE"
 BTST_0422_P6_RISK_BUDGET_MODES = frozenset({"off", "enforce"})
 
@@ -622,6 +623,17 @@ def _resolve_btst_execution_contract_p5_mode() -> str:
     return normalized_mode if normalized_mode in BTST_0422_P5_EXECUTION_CONTRACT_MODES else "off"
 
 
+def _resolve_btst_win_rate_first_precision_mode() -> bool:
+    """Resolve win-rate-first precision mode from environment.
+    
+    When enabled, tightens P5 enforcement to downgrade any candidate without
+    execution_ready prior quality. This mode requires P5 enforce mode to be active.
+    Default: False (off) to preserve baseline behavior.
+    """
+    raw = str(os.getenv(BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV, "false") or "false").strip().lower()
+    return raw in {"true", "1", "yes", "on"}
+
+
 def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
     from src.targets.router_build_helpers import build_dual_target_summary
 
@@ -634,6 +646,7 @@ def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
 
     gate = _get_or_classify_gate(plan) or ""
     allowed_gate = gate in {"", "normal_trade", "aggressive_trade"}
+    win_rate_first_precision_mode = _resolve_btst_win_rate_first_precision_mode()
     downgrade_reason_counts: dict[str, int] = {}
     downgraded_tickers: set[str] = set()
 
@@ -644,8 +657,12 @@ def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
         if short_trade_result is not None and short_trade_result.decision == "selected":
             if not allowed_gate:
                 downgrade_reasons.append("btst_regime_gate_not_tradeable")
-            if prior_quality_level not in {None, "", "execution_ready"}:
-                downgrade_reasons.append("historical_prior_not_execution_ready")
+            if win_rate_first_precision_mode:
+                if prior_quality_level != "execution_ready":
+                    downgrade_reasons.append("win_rate_first_precision_prior_not_execution_ready")
+            else:
+                if prior_quality_level not in {None, "", "execution_ready"}:
+                    downgrade_reasons.append("historical_prior_not_execution_ready")
             if str(evaluation.candidate_source or "").strip() in {"upgrade_only", "research_only"}:
                 downgrade_reasons.append("research_only_source_not_formal_execution")
             if downgrade_reasons:
