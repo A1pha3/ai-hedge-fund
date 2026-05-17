@@ -2000,6 +2000,84 @@ def test_build_rollout_recommendation_payload_blocks_meaningful_regression_beyon
     assert "crowding_risk_raw_100_regressed_vs_default" in payload["blockers"]
 
 
+def test_build_rollout_recommendation_payload_exposes_win_rate_first_acceptance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.012,
+            "next_high_hit_rate_delta": 0.009,
+            "realized_payoff_ratio_delta": -0.08,
+            "next_close_expectancy_delta": -0.001,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": -0.02,
+            "liquidity_capacity_raw_100_delta": 1.2,
+            "crowding_risk_raw_100_delta": -1.2,
+            "gap_risk_raw_100_delta": -1.1,
+            "projected_theme_exposure_delta": -0.006,
+            "incremental_theme_exposure_delta": -0.006,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["win_rate_first_verdict"] == "accepted"
+    assert payload["win_rate_first_verdict_detail"]["verdict_reason"] == "meets_win_rate_first_criteria"
+    assert payload["win_rate_first_verdict_detail"]["win_rate_signals"]["next_close_positive_rate_delta"] == pytest.approx(0.012)
+    assert payload["win_rate_first_verdict_detail"]["bounded_tradeoffs"]["realized_payoff_ratio_delta"] == pytest.approx(-0.08)
+
+
+def test_build_rollout_recommendation_payload_rejects_win_rate_first_when_uplift_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.012,
+            "next_high_hit_rate_delta": 0.002,
+            "realized_payoff_ratio_delta": -0.04,
+            "next_close_expectancy_delta": 0.001,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": -0.01,
+            "liquidity_capacity_raw_100_delta": 1.2,
+            "crowding_risk_raw_100_delta": -1.2,
+            "gap_risk_raw_100_delta": -1.1,
+            "projected_theme_exposure_delta": -0.006,
+            "incremental_theme_exposure_delta": -0.006,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["win_rate_first_verdict"] == "rejected"
+    assert payload["win_rate_first_verdict_detail"]["verdict_reason"] == "win_rate_uplift_missing"
+    assert payload["win_rate_first_verdict_detail"]["rejection_reasons"] == ["win_rate_uplift_missing"]
+
+
+def test_build_rollout_recommendation_payload_rejects_win_rate_first_when_tradeoffs_too_large(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.012,
+            "next_high_hit_rate_delta": 0.009,
+            "next_close_expectancy_delta": -0.006,
+            "downside_p10_delta": 0.001,
+            "window_coverage_delta": -0.04,
+            "liquidity_capacity_raw_100_delta": 1.2,
+            "crowding_risk_raw_100_delta": -1.2,
+            "gap_risk_raw_100_delta": -1.1,
+            "projected_theme_exposure_delta": -0.006,
+            "incremental_theme_exposure_delta": -0.006,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["win_rate_first_verdict"] == "rejected"
+    assert payload["win_rate_first_verdict_detail"]["verdict_reason"] == "bounded_tradeoff_check_failed"
+    assert payload["win_rate_first_verdict_detail"]["rejection_reasons"] == [
+        "payoff_degradation_too_large",
+        "coverage_degradation_too_large",
+    ]
+
+
 def test_build_rollout_recommendation_payload_appends_strict_objective_blockers(monkeypatch: pytest.MonkeyPatch) -> None:
     comparison_summary = {
         "default": {
@@ -27685,3 +27763,173 @@ def test_r89_tf_cross_window_trend_negative() -> None:
     result = compute_cross_window_tail_flow_quality_trend(windows)
     assert result["valid"] is True
     assert result["tf_trend_grade"] in ("C", "D")
+
+
+# Task B (Round btst-winrate-design-20260517): win-rate-first acceptance tests
+
+
+def test_build_rollout_recommendation_payload_surfaces_win_rate_first_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When both win-rate deltas are positive and payoff/coverage tradeoffs are bounded, surface win_rate_first_decision=accepted."""
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,  # positive win-rate signal
+            "next_high_hit_rate_delta": 0.02,        # positive win-rate signal
+            "next_close_expectancy_delta": 0.004,    # positive expectancy (no regression)
+            "realized_payoff_ratio_delta": -0.005,   # modest payoff degradation (bounded, within epsilon)
+            "window_coverage_delta": -0.001,         # modest coverage degradation (bounded, within epsilon)
+            "downside_p10_delta": 0.001,
+            "liquidity_capacity_raw_100_delta": 1.0,
+            "crowding_risk_raw_100_delta": -1.0,
+            "gap_risk_raw_100_delta": -1.0,
+            "projected_theme_exposure_delta": -0.01,
+            "incremental_theme_exposure_delta": -0.01,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    # Win-rate-first is accepted and no existing regression blockers are triggered
+    assert payload["action"] == "promote"
+    assert "win_rate_first_decision" in payload
+    assert payload["win_rate_first_decision"]["verdict"] == "accepted"
+    assert payload["win_rate_first_decision"]["win_rate_signals"]["next_close_positive_rate_delta"] == 0.03
+    assert payload["win_rate_first_decision"]["win_rate_signals"]["next_high_hit_rate_delta"] == 0.02
+    assert payload["win_rate_first_decision"]["bounded_tradeoffs"]["realized_payoff_ratio_delta"] == -0.005
+    assert payload["win_rate_first_decision"]["bounded_tradeoffs"]["window_coverage_delta"] == -0.001
+
+
+def test_build_rollout_recommendation_payload_blocks_win_rate_first_when_win_rate_deltas_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When win-rate deltas are not positive beyond noise, verdict should be rejected."""
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.00,  # no win-rate uplift
+            "next_high_hit_rate_delta": 0.00,        # no win-rate uplift
+            "next_close_expectancy_delta": 0.004,
+            "realized_payoff_ratio_delta": 0.10,
+            "window_coverage_delta": 0.03,
+            "downside_p10_delta": 0.001,
+            "liquidity_capacity_raw_100_delta": 1.0,
+            "crowding_risk_raw_100_delta": -1.0,
+            "gap_risk_raw_100_delta": -1.0,
+            "projected_theme_exposure_delta": -0.01,
+            "incremental_theme_exposure_delta": -0.01,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert "win_rate_first_decision" in payload
+    assert payload["win_rate_first_decision"]["verdict"] == "rejected"
+    assert "win_rate_uplift_missing" in payload["win_rate_first_decision"]["rejection_reasons"]
+
+
+def test_build_rollout_recommendation_payload_blocks_win_rate_first_when_payoff_degradation_too_large(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When payoff degradation exceeds bounds, verdict should be rejected."""
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,  # positive win-rate signal
+            "next_high_hit_rate_delta": 0.02,        # positive win-rate signal
+            "next_close_expectancy_delta": -0.010,   # large payoff degradation (unbounded)
+            "realized_payoff_ratio_delta": -0.20,    # large payoff degradation (unbounded)
+            "window_coverage_delta": 0.03,
+            "downside_p10_delta": 0.001,
+            "liquidity_capacity_raw_100_delta": 1.0,
+            "crowding_risk_raw_100_delta": -1.0,
+            "gap_risk_raw_100_delta": -1.0,
+            "projected_theme_exposure_delta": -0.01,
+            "incremental_theme_exposure_delta": -0.01,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert "win_rate_first_decision" in payload
+    assert payload["win_rate_first_decision"]["verdict"] == "rejected"
+    assert "payoff_degradation_too_large" in payload["win_rate_first_decision"]["rejection_reasons"]
+
+
+def test_build_rollout_recommendation_payload_blocks_win_rate_first_when_coverage_degradation_too_large(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When coverage degradation exceeds bounds, verdict should be rejected."""
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,  # positive win-rate signal
+            "next_high_hit_rate_delta": 0.02,        # positive win-rate signal
+            "next_close_expectancy_delta": 0.004,
+            "realized_payoff_ratio_delta": 0.10,
+            "window_coverage_delta": -0.10,          # large coverage degradation (unbounded)
+            "downside_p10_delta": 0.001,
+            "liquidity_capacity_raw_100_delta": 1.0,
+            "crowding_risk_raw_100_delta": -1.0,
+            "gap_risk_raw_100_delta": -1.0,
+            "projected_theme_exposure_delta": -0.01,
+            "incremental_theme_exposure_delta": -0.01,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert "win_rate_first_decision" in payload
+    assert payload["win_rate_first_decision"]["verdict"] == "rejected"
+    assert "coverage_degradation_too_large" in payload["win_rate_first_decision"]["rejection_reasons"]
+
+
+def test_build_rollout_recommendation_payload_win_rate_first_respects_existing_blockers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Win-rate-first acceptance should not override existing strict-objective or structural blockers."""
+    monkeypatch.setattr(
+        optimize_profile,
+        "_load_strict_btst_objective_gate",
+        lambda: {"action": "hold", "blockers": ["rejected_outperforms_tradeable_surface"]},
+    )
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": -0.002,
+            "realized_payoff_ratio_delta": -0.05,
+            "window_coverage_delta": -0.01,
+            "downside_p10_delta": 0.001,
+            "liquidity_capacity_raw_100_delta": 1.0,
+            "crowding_risk_raw_100_delta": -1.0,
+            "gap_risk_raw_100_delta": -1.0,
+            "projected_theme_exposure_delta": -0.01,
+            "incremental_theme_exposure_delta": -0.01,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    # Even though win-rate-first is accepted, action should remain "hold" due to strict blocker
+    assert payload["action"] == "hold"
+    assert "rejected_outperforms_tradeable_surface" in payload["blockers"]
+    assert payload["win_rate_first_decision"]["verdict"] == "accepted"
+
+
+def test_build_rollout_recommendation_payload_win_rate_first_uses_expectancy_fallback_when_payoff_ratio_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When realized_payoff_ratio_delta is missing, use next_close_expectancy_delta as bounded tradeoff proxy."""
+    monkeypatch.setattr(optimize_profile, "_load_strict_btst_objective_gate", lambda: None)
+    comparison_summary = {
+        "default": {
+            "next_close_positive_rate_delta": 0.03,
+            "next_high_hit_rate_delta": 0.02,
+            "next_close_expectancy_delta": 0.001,  # positive (no regression blocker), used as payoff proxy
+            "window_coverage_delta": -0.001,       # within epsilon
+            "downside_p10_delta": 0.001,
+            "liquidity_capacity_raw_100_delta": 1.0,
+            "crowding_risk_raw_100_delta": -1.0,
+            "gap_risk_raw_100_delta": -1.0,
+            "projected_theme_exposure_delta": -0.01,
+            "incremental_theme_exposure_delta": -0.01,
+        }
+    }
+
+    payload = optimize_profile._build_rollout_recommendation_payload(comparison_summary)
+
+    assert payload["action"] == "promote"
+    assert payload["win_rate_first_decision"]["verdict"] == "accepted"
+    assert "realized_payoff_ratio_delta" not in payload["win_rate_first_decision"]["bounded_tradeoffs"]
+    assert payload["win_rate_first_decision"]["bounded_tradeoffs"]["next_close_expectancy_delta"] == 0.001
+

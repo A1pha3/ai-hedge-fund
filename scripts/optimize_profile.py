@@ -7300,6 +7300,123 @@ def _build_replay_comparison_summary(
     return summary
 
 
+# Task B (Round btst-winrate-design-20260517): win-rate-first acceptance gate
+WIN_RATE_FIRST_MIN_POSITIVE_DELTA: float = 0.005  # 0.5% minimum positive win-rate signal beyond noise
+WIN_RATE_FIRST_MAX_PAYOFF_DEGRADATION: float = 0.10  # 10% max payoff ratio degradation
+WIN_RATE_FIRST_MAX_EXPECTANCY_DEGRADATION: float = 0.005  # 0.5% max expectancy degradation
+WIN_RATE_FIRST_MAX_COVERAGE_DEGRADATION: float = 0.03  # 3% max coverage degradation
+
+
+def _build_win_rate_first_decision(comparison_summary: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Evaluate win-rate-first acceptance using existing comparison metrics.
+
+    Task B (Round btst-winrate-design-20260517): re-validate trend-corrected promotion under
+    win-rate-first gates. Uses existing comparison metrics as acceptance surface:
+    - Primary win-rate signals: next_close_positive_rate_delta, next_high_hit_rate_delta
+    - Bounded tradeoff constraints: realized_payoff_ratio_delta (or next_close_expectancy_delta fallback), window_coverage_delta
+
+    Args:
+        comparison_summary: Dict mapping baseline names to comparison entries with {metric}_delta keys.
+
+    Returns:
+        Dict with keys:
+        - verdict: "accepted" | "rejected"
+        - win_rate_signals: Dict of primary win-rate deltas
+        - bounded_tradeoffs: Dict of payoff/coverage deltas
+        - rejection_reasons: List of rejection reason codes (empty if accepted)
+    """
+    if not comparison_summary:
+        return {
+            "verdict": "rejected",
+            "win_rate_signals": {},
+            "bounded_tradeoffs": {},
+            "rejection_reasons": ["missing_comparison_summary"],
+            "verdict_reason": "missing_comparison_summary",
+        }
+
+    # Aggregate win-rate signals and bounded tradeoffs across all baselines
+    # For multi-baseline comparison, use the minimum (most conservative) win-rate delta
+    # and maximum (worst) degradation delta
+    all_close_positive_deltas: list[float] = []
+    all_high_hit_deltas: list[float] = []
+    all_payoff_ratio_deltas: list[float] = []
+    all_expectancy_deltas: list[float] = []
+    all_coverage_deltas: list[float] = []
+
+    for baseline_name, entry in comparison_summary.items():
+        close_positive_delta = _safe_float(entry.get("next_close_positive_rate_delta"))
+        high_hit_delta = _safe_float(entry.get("next_high_hit_rate_delta"))
+        payoff_ratio_delta = _safe_float(entry.get("realized_payoff_ratio_delta"))
+        expectancy_delta = _safe_float(entry.get("next_close_expectancy_delta"))
+        coverage_delta = _safe_float(entry.get("window_coverage_delta"))
+
+        if close_positive_delta is not None:
+            all_close_positive_deltas.append(close_positive_delta)
+        if high_hit_delta is not None:
+            all_high_hit_deltas.append(high_hit_delta)
+        if payoff_ratio_delta is not None:
+            all_payoff_ratio_deltas.append(payoff_ratio_delta)
+        if expectancy_delta is not None:
+            all_expectancy_deltas.append(expectancy_delta)
+        if coverage_delta is not None:
+            all_coverage_deltas.append(coverage_delta)
+
+    min_close_positive_delta = min(all_close_positive_deltas) if all_close_positive_deltas else None
+    min_high_hit_delta = min(all_high_hit_deltas) if all_high_hit_deltas else None
+    min_payoff_ratio_delta = min(all_payoff_ratio_deltas) if all_payoff_ratio_deltas else None
+    min_expectancy_delta = min(all_expectancy_deltas) if all_expectancy_deltas else None
+    min_coverage_delta = min(all_coverage_deltas) if all_coverage_deltas else None
+
+    rejection_reasons: list[str] = []
+
+    # Check primary win-rate signals — both must be positive beyond noise
+    if min_close_positive_delta is None or min_close_positive_delta < WIN_RATE_FIRST_MIN_POSITIVE_DELTA:
+        rejection_reasons.append("win_rate_uplift_missing")
+    if min_high_hit_delta is None or min_high_hit_delta < WIN_RATE_FIRST_MIN_POSITIVE_DELTA:
+        rejection_reasons.append("win_rate_uplift_missing")
+
+    # Check bounded tradeoff constraints
+    # Use realized_payoff_ratio_delta if available, otherwise fall back to next_close_expectancy_delta
+    if min_payoff_ratio_delta is not None and min_payoff_ratio_delta < -WIN_RATE_FIRST_MAX_PAYOFF_DEGRADATION:
+        rejection_reasons.append("payoff_degradation_too_large")
+    elif min_payoff_ratio_delta is None and min_expectancy_delta is not None and min_expectancy_delta < -WIN_RATE_FIRST_MAX_EXPECTANCY_DEGRADATION:
+        rejection_reasons.append("payoff_degradation_too_large")
+    if min_coverage_delta is not None and min_coverage_delta < -WIN_RATE_FIRST_MAX_COVERAGE_DEGRADATION:
+        rejection_reasons.append("coverage_degradation_too_large")
+
+    # Build win_rate_signals and bounded_tradeoffs dicts
+    win_rate_signals: dict[str, float | None] = {
+        "next_close_positive_rate_delta": min_close_positive_delta,
+        "next_high_hit_rate_delta": min_high_hit_delta,
+    }
+
+    bounded_tradeoffs: dict[str, float | None] = {
+        "window_coverage_delta": min_coverage_delta,
+    }
+    if min_payoff_ratio_delta is not None:
+        bounded_tradeoffs["realized_payoff_ratio_delta"] = min_payoff_ratio_delta
+    elif min_expectancy_delta is not None:
+        bounded_tradeoffs["next_close_expectancy_delta"] = min_expectancy_delta
+
+    # Remove rejection_reasons duplicates while preserving order
+    rejection_reasons = list(dict.fromkeys(rejection_reasons))
+
+    if not rejection_reasons:
+        verdict_reason = "meets_win_rate_first_criteria"
+    elif rejection_reasons == ["win_rate_uplift_missing"]:
+        verdict_reason = "win_rate_uplift_missing"
+    else:
+        verdict_reason = "bounded_tradeoff_check_failed"
+
+    return {
+        "verdict": "accepted" if not rejection_reasons else "rejected",
+        "win_rate_signals": win_rate_signals,
+        "bounded_tradeoffs": bounded_tradeoffs,
+        "rejection_reasons": rejection_reasons,
+        "verdict_reason": verdict_reason,
+    }
+
+
 def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str, Any]]) -> dict[str, Any]:
     if not comparison_summary:
         return {
@@ -7337,12 +7454,19 @@ def _build_rollout_recommendation_payload(comparison_summary: dict[str, dict[str
         strict_gate_blockers = list(strict_objective_gate.get("blockers") or [])
         if strict_gate_blockers:
             deduped_blockers.extend([blocker for blocker in strict_gate_blockers if blocker not in deduped_blockers])
+
+    # Task B (Round btst-winrate-design-20260517): add win-rate-first acceptance verdict
+    win_rate_first_decision = _build_win_rate_first_decision(comparison_summary)
+
     return {
         "action": "promote" if not deduped_blockers else "hold",
         "blockers": deduped_blockers,
         "baseline_verdicts": baseline_verdicts,
         "strict_btst_objective_gate": strict_objective_gate,
         "execution_eligible_evidence": execution_eligible_evidence,
+        "win_rate_first_decision": win_rate_first_decision,
+        "win_rate_first_verdict": win_rate_first_decision["verdict"],
+        "win_rate_first_verdict_detail": win_rate_first_decision,
     }
 
 

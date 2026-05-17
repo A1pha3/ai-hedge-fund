@@ -6,6 +6,7 @@ from src.backtesting.walk_forward import (
     WalkForwardWindow,
     build_walk_forward_windows,
     classify_runner_rollout_verdict,
+    classify_win_rate_first_rollout_verdict,
     run_walk_forward,
     summarize_walk_forward,
     WindowMode,
@@ -719,6 +720,32 @@ def test_classify_runner_rollout_verdict_promotable_with_baseline():
     # tail_hit_delta = 0.08 >= 0.05, no T+1 or downside regression
     assert verdict == "promotable_runner_profile"
     assert abs(detail["tail_hit_delta"] - 0.08) < 0.001
+
+
+def test_classify_win_rate_first_rollout_verdict_accepts_bounded_tradeoffs():
+    candidate = {
+        "rollout_blockers": [],
+        "next_close_positive_rate": 0.612,
+        "next_high_hit_rate": 0.624,
+        "realized_payoff_ratio": 1.22,
+        "window_coverage": 0.81,
+    }
+    baseline = {
+        "rollout_blockers": [],
+        "next_close_positive_rate": 0.600,
+        "next_high_hit_rate": 0.615,
+        "realized_payoff_ratio": 1.30,
+        "window_coverage": 0.83,
+    }
+
+    verdict, detail = classify_win_rate_first_rollout_verdict(candidate, baseline)
+
+    assert verdict == "accepted"
+    assert detail["verdict_reason"] == "meets_win_rate_first_criteria"
+    assert detail["next_close_positive_rate_delta"] == pytest.approx(0.012)
+    assert detail["next_high_hit_rate_delta"] == pytest.approx(0.009)
+    assert detail["realized_payoff_ratio_delta"] == pytest.approx(-0.08)
+    assert detail["window_coverage_delta"] == pytest.approx(-0.02)
 
 
 # ---------------------------------------------------------------------------
