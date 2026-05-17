@@ -662,12 +662,12 @@ def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
         is_formally_blocked = bool(formal_execution_block_flags)
         
         if short_trade_result is not None and short_trade_result.decision == "selected":
-            if not allowed_gate:
-                downgrade_reasons.append("btst_regime_gate_not_tradeable")
-            
             # CRITICAL: Do NOT collect downgrade reasons if already formally blocked
             # Formal blocks are upstream hard stops - we don't need to re-reason about them
             if not is_formally_blocked:
+                if not allowed_gate:
+                    downgrade_reasons.append("btst_regime_gate_not_tradeable")
+                
                 if win_rate_first_precision_mode:
                     if prior_quality_level != "execution_ready":
                         downgrade_reasons.append("win_rate_first_precision_prior_not_execution_ready")

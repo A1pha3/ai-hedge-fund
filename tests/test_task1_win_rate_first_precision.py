@@ -193,3 +193,82 @@ def test_win_rate_first_precision_mode_preserves_formal_blocked_selected_provena
     assert result.buy_orders == [], "Formal-blocked names must have no buy orders"
     # Win-rate-first downgrade should NOT be in reasons (because we didn't downgrade a formal block)
     assert "win_rate_first_precision_prior_not_execution_ready" not in evaluation.downgrade_reasons
+
+
+def test_formally_blocked_selected_no_new_p5_downgrade_reasons(monkeypatch):
+    """CRITICAL: Formally-blocked raw-selected names must NOT receive new P5 downgrade reasons.
+    
+    Spec gap: btst_regime_gate_not_tradeable was appended BEFORE the formal-block guard,
+    causing formally-blocked names to accumulate new P5 reasons and pollute metrics/explainability.
+    
+    Once a name is formally blocked (p2/p3/p5/p6_execution_blocked), P5 should:
+    1. Preserve raw selected decision
+    2. Keep execution_eligible=False
+    3. Clear buy orders via existing filtering
+    4. BUT NOT append ANY new P5 downgrade reasons
+    5. NOT persist new P5 downgrade reasons to metrics/explainability
+    6. NOT count them in downgrade_reason_counts
+    """
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "true")
+    
+    # Build a formally-blocked (p3) raw-selected name with BOTH bad gate AND bad prior
+    # This exercises the worst case: both gate downgrade (line 665-666) and win-rate downgrade (line 671-673)
+    evaluation = DualTargetEvaluation(
+        ticker="300724",
+        trade_date="20260422",
+        candidate_source="layer_c_watchlist",
+        p3_prior_quality_label="watch_only",  # Would trigger win-rate downgrade if not blocked
+        p3_execution_blocked=True,  # Formal block flag
+        p3_execution_block_reason="prior_quality_not_execution_ready",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="selected",  # Raw decision is selected
+            score_target=0.81,
+        ),
+    )
+    plan = ExecutionPlan(
+        date="20260422",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"buy_order_count": 0},
+            "btst_regime_gate": {"gate": "shadow_only", "mode": "enforce"},  # Bad gate (not_tradeable)
+            "funnel_diagnostics": {},
+        },
+        buy_orders=[],  # Already blocked upstream
+        selection_targets={"300724": evaluation},
+        target_mode="short_trade_only",
+        dual_target_summary=DualTargetSummary(
+            target_mode="short_trade_only",
+            selection_target_count=1,
+            short_trade_selected_count=1,
+        ),
+    )
+    
+    result = _enforce_btst_execution_contract_p5(plan)
+    
+    evaluation = result.selection_targets["300724"]
+    str_result = evaluation.short_trade
+    assert str_result is not None
+    
+    # 1. Preserve raw selected decision
+    assert str_result.decision == "selected", "Formal-blocked selected must preserve raw 'selected' decision"
+    
+    # 2. Keep execution_eligible=False
+    assert evaluation.execution_eligible is False, "Formal-blocked names are never execution-eligible"
+    assert str_result.execution_eligible is False
+    
+    # 3. Clear buy orders via existing filtering
+    assert result.buy_orders == [], "Formal-blocked names must have no buy orders"
+    
+    # 4. BUT NOT append ANY new P5 downgrade reasons
+    assert evaluation.downgrade_reasons == [], f"Formal-blocked names must have ZERO P5 downgrade reasons, got: {evaluation.downgrade_reasons}"
+    assert str_result.downgrade_reasons == []
+    
+    # 5. NOT persist new P5 downgrade reasons to metrics/explainability
+    assert str_result.metrics_payload.get("downgrade_reasons", []) == []
+    assert str_result.explainability_payload.get("downgrade_reasons", []) == []
+    
+    # 6. Specifically: gate downgrade must NOT be added (the bug we're fixing)
+    assert "btst_regime_gate_not_tradeable" not in evaluation.downgrade_reasons
+    assert "win_rate_first_precision_prior_not_execution_ready" not in evaluation.downgrade_reasons
