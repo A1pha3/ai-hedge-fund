@@ -140,3 +140,56 @@ def test_win_rate_first_precision_mode_combined_with_existing_downgrades(monkeyp
     assert "btst_regime_gate_not_tradeable" in evaluation.downgrade_reasons
     assert "win_rate_first_precision_prior_not_execution_ready" in evaluation.downgrade_reasons
     assert len(evaluation.downgrade_reasons) >= 2
+
+
+def test_win_rate_first_precision_mode_preserves_formal_blocked_selected_provenance(monkeypatch):
+    """CRITICAL: Win-rate-first precision mode must NOT downgrade already formal-blocked selected names.
+    
+    Formal-blocked names (p2_execution_blocked, p3_execution_blocked, etc.) that have raw decision="selected"
+    must preserve that raw decision for correct reporting (blocked-selected provenance).
+    
+    The win-rate-first downgrade should ONLY apply to non-blocked selected names with bad prior quality.
+    """
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "true")
+    
+    # Build a name that is raw selected + p2_execution_blocked + watch_only prior
+    evaluation = DualTargetEvaluation(
+        ticker="300724",
+        trade_date="20260422",
+        candidate_source="layer_c_watchlist",
+        p3_prior_quality_label="watch_only",  # Would trigger downgrade if not blocked
+        p2_execution_blocked=True,  # Formal block flag
+        p2_execution_block_reason="gate:shadow_only",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="selected",  # Raw decision is selected
+            score_target=0.81,
+        ),
+    )
+    plan = ExecutionPlan(
+        date="20260422",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"buy_order_count": 0},
+            "btst_regime_gate": {"gate": "normal_trade", "mode": "enforce"},
+            "funnel_diagnostics": {},
+        },
+        buy_orders=[],  # Already blocked upstream, no buy orders
+        selection_targets={"300724": evaluation},
+        target_mode="short_trade_only",
+        dual_target_summary=DualTargetSummary(target_mode="short_trade_only", selection_target_count=1, short_trade_selected_count=1),
+    )
+    
+    result = _enforce_btst_execution_contract_p5(plan)
+    
+    evaluation = result.selection_targets["300724"]
+    assert evaluation.short_trade is not None
+    # CRITICAL: raw decision must remain "selected" to preserve formal-blocked-selected provenance
+    assert evaluation.short_trade.decision == "selected", "Formal-blocked selected must preserve raw 'selected' decision"
+    # But it must still be non-execution-eligible due to the formal block
+    assert evaluation.execution_eligible is False, "Formal-blocked names are never execution-eligible"
+    # And must have no buy orders
+    assert result.buy_orders == [], "Formal-blocked names must have no buy orders"
+    # Win-rate-first downgrade should NOT be in reasons (because we didn't downgrade a formal block)
+    assert "win_rate_first_precision_prior_not_execution_ready" not in evaluation.downgrade_reasons

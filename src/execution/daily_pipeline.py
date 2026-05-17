@@ -636,6 +636,7 @@ def _resolve_btst_win_rate_first_precision_mode() -> bool:
 
 def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
     from src.targets.router_build_helpers import build_dual_target_summary
+    from src.targets.router_build_helpers import collect_formal_execution_block_flags
 
     if _resolve_btst_execution_contract_p5_mode() != "enforce":
         return plan
@@ -654,22 +655,42 @@ def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
         short_trade_result = evaluation.short_trade
         prior_quality_level = str(evaluation.p3_prior_quality_label or evaluation.historical_prior_quality_level or "").strip() or None
         downgrade_reasons: list[str] = []
+        
+        # Check if this is already formally blocked (P2/P3/P5/P6)
+        # If so, we must NOT downgrade it - preserve the raw selected decision for correct blocked-selected provenance
+        formal_execution_block_flags = collect_formal_execution_block_flags(evaluation, short_trade_result)
+        is_formally_blocked = bool(formal_execution_block_flags)
+        
         if short_trade_result is not None and short_trade_result.decision == "selected":
             if not allowed_gate:
                 downgrade_reasons.append("btst_regime_gate_not_tradeable")
-            if win_rate_first_precision_mode:
-                if prior_quality_level != "execution_ready":
-                    downgrade_reasons.append("win_rate_first_precision_prior_not_execution_ready")
-            else:
-                if prior_quality_level not in {None, "", "execution_ready"}:
-                    downgrade_reasons.append("historical_prior_not_execution_ready")
-            if str(evaluation.candidate_source or "").strip() in {"upgrade_only", "research_only"}:
-                downgrade_reasons.append("research_only_source_not_formal_execution")
-            if downgrade_reasons:
+            
+            # CRITICAL: Do NOT collect downgrade reasons if already formally blocked
+            # Formal blocks are upstream hard stops - we don't need to re-reason about them
+            if not is_formally_blocked:
+                if win_rate_first_precision_mode:
+                    if prior_quality_level != "execution_ready":
+                        downgrade_reasons.append("win_rate_first_precision_prior_not_execution_ready")
+                else:
+                    if prior_quality_level not in {None, "", "execution_ready"}:
+                        downgrade_reasons.append("historical_prior_not_execution_ready")
+                if str(evaluation.candidate_source or "").strip() in {"upgrade_only", "research_only"}:
+                    downgrade_reasons.append("research_only_source_not_formal_execution")
+        
+            # CRITICAL: Only apply downgrade if NOT already formally blocked
+            # Formally-blocked names must preserve their raw "selected" decision for correct reporting
+            # (blocked-selected provenance in build_reporting_target_summary)
+            # But still mark execution_eligible=False and clear buy orders
+            if downgrade_reasons and not is_formally_blocked:
                 short_trade_result.decision = "near_miss"
                 downgraded_tickers.add(str(ticker))
 
-        execution_eligible = bool(short_trade_result is not None and short_trade_result.decision == "selected")
+        # CRITICAL: A name is execution_eligible ONLY if:
+        # 1. short_trade decision is "selected" (raw or preserved)
+        # 2. AND NOT formally blocked (p2/p3/p5/p6_execution_blocked)
+        # 3. AND has no downgrade reasons (gate, prior quality, source)
+        execution_eligible = bool(short_trade_result is not None and short_trade_result.decision == "selected" 
+                                  and not is_formally_blocked and not downgrade_reasons)
         evaluation.execution_eligible = execution_eligible
         evaluation.downgrade_reasons = list(downgrade_reasons)
         evaluation.historical_prior_quality_level = prior_quality_level
