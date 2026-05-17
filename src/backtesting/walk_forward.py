@@ -307,7 +307,7 @@ def assess_profile_stability(verdicts: list[tuple[str, dict]]) -> dict[str, Any]
     }
 
 
-def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, Any]:
+def summarize_walk_forward(results: Sequence[WalkForwardResult], baseline_summary: dict | None = None) -> dict[str, Any]:
     if not results:
         base_summary: dict[str, Any] = {
             "window_count": 0,
@@ -541,10 +541,10 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult]) -> dict[str, An
     runner_verdict, runner_verdict_detail = classify_runner_rollout_verdict(runner_summary=base_summary)
 
     # Task B (Round btst-winrate-design-20260517): expose win-rate-first acceptance verdict
-    # Use candidate summary as input; no baseline comparison available at this stage
+    # Pass baseline_summary through to enable real uplift evaluation when available
     win_rate_first_verdict, win_rate_first_verdict_detail = classify_win_rate_first_rollout_verdict(
         candidate_summary=base_summary,
-        baseline_summary=None,
+        baseline_summary=baseline_summary,
     )
 
     return {
@@ -676,6 +676,20 @@ def classify_win_rate_first_rollout_verdict(
     expectancy_delta = _delta("next_close_expectancy")
     coverage_delta = _delta("window_coverage")
     rollout_blockers = list(candidate_summary.get("rollout_blockers") or [])
+
+    # Task B spec fix: if no baseline and no deltas, cannot evaluate uplift → neutral verdict
+    if baseline_summary is None and close_positive_delta is None and high_hit_delta is None:
+        detail = {
+            "next_close_positive_rate_delta": None,
+            "next_high_hit_rate_delta": None,
+            "realized_payoff_ratio_delta": None,
+            "next_close_expectancy_delta": None,
+            "window_coverage_delta": None,
+            "rollout_blockers": rollout_blockers,
+            "rejection_reasons": [],
+            "verdict_reason": "not_evaluable",
+        }
+        return ("neutral", detail)
 
     rejection_reasons: list[str] = []
     if rollout_blockers:

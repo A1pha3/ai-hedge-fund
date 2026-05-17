@@ -1435,10 +1435,101 @@ def test_summarize_walk_forward_exposes_win_rate_first_verdict_fields():
     # Task B: win-rate-first verdict fields must exist in summary
     assert "win_rate_first_verdict" in summary, "summary must include win_rate_first_verdict"
     assert "win_rate_first_verdict_detail" in summary, "summary must include win_rate_first_verdict_detail"
-    assert summary["win_rate_first_verdict"] in {"accepted", "rejected"}
+    assert summary["win_rate_first_verdict"] in {"accepted", "rejected", "neutral"}
     
     # The detail payload should have the standard structure from classify_win_rate_first_rollout_verdict
     detail = summary["win_rate_first_verdict_detail"]
     assert "verdict_reason" in detail
     assert "rejection_reasons" in detail
     assert isinstance(detail["rejection_reasons"], list)
+
+
+def test_summarize_walk_forward_without_baseline_returns_not_evaluable_verdict():
+    """Task B spec fix: when no baseline and no delta fields, verdict must be neutral (not_evaluable), not falsely rejected."""
+    windows = [
+        WalkForwardWindow(
+            train_start="2026-01-01",
+            train_end="2026-01-31",
+            test_start="2026-02-01",
+            test_end="2026-02-28",
+        )
+    ]
+
+    class StubEngine:
+        def run_backtest(self):
+            return {
+                "sharpe_ratio": 1.2,
+                "sortino_ratio": 1.3,
+                "max_drawdown": -4.0,
+                "test_trading_days": 12,
+                "next_close_positive_rate": 0.62,
+                "next_high_hit_rate": 0.65,
+                "realized_payoff_ratio": 1.9,
+                "next_close_expectancy": 0.018,
+                "window_coverage": 0.88,
+            }
+
+    results = run_walk_forward(windows, lambda window: StubEngine())
+    summary = summarize_walk_forward(results)  # no baseline provided
+
+    # Must NOT falsely reject with win_rate_uplift_missing when no baseline/deltas available
+    verdict = summary["win_rate_first_verdict"]
+    detail = summary["win_rate_first_verdict_detail"]
+    
+    # Expect a neutral verdict, not rejected
+    assert verdict != "rejected" or detail["verdict_reason"] != "win_rate_uplift_missing", \
+        "Without baseline/deltas, verdict must not be win_rate_uplift_missing rejection"
+    
+    # Should be neutral/not-evaluable
+    assert detail["verdict_reason"] in ["not_evaluable", "insufficient_baseline"], \
+        f"Expected neutral verdict reason, got: {detail['verdict_reason']}"
+
+
+def test_summarize_walk_forward_with_baseline_computes_real_verdict():
+    """Task B spec fix: when baseline is provided, win-rate-first verdict must use real uplift signals."""
+    windows = [
+        WalkForwardWindow(
+            train_start="2026-01-01",
+            train_end="2026-01-31",
+            test_start="2026-02-01",
+            test_end="2026-02-28",
+        )
+    ]
+
+    class CandidateEngine:
+        def run_backtest(self):
+            return {
+                "sharpe_ratio": 1.3,
+                "sortino_ratio": 1.4,
+                "max_drawdown": -3.5,
+                "test_trading_days": 12,
+                "next_close_positive_rate": 0.68,  # +0.06 vs baseline
+                "next_high_hit_rate": 0.70,        # +0.07 vs baseline
+                "realized_payoff_ratio": 1.85,     # -0.05 vs baseline (acceptable)
+                "next_close_expectancy": 0.020,
+                "window_coverage": 0.90,           # +0.02 vs baseline
+            }
+
+    results = run_walk_forward(windows, lambda window: CandidateEngine())
+    
+    baseline_summary = {
+        "next_close_positive_rate": 0.62,
+        "next_high_hit_rate": 0.63,
+        "realized_payoff_ratio": 1.90,
+        "next_close_expectancy": 0.018,
+        "window_coverage": 0.88,
+        "rollout_blockers": [],
+    }
+    
+    summary = summarize_walk_forward(results, baseline_summary=baseline_summary)
+
+    # Must accept based on real deltas computed from baseline
+    verdict = summary["win_rate_first_verdict"]
+    detail = summary["win_rate_first_verdict_detail"]
+    
+    assert verdict == "accepted", f"Expected accepted verdict with good uplifts, got {verdict}"
+    assert detail["verdict_reason"] == "meets_win_rate_first_criteria"
+    
+    # Verify deltas were computed from baseline
+    assert detail["next_close_positive_rate_delta"] == pytest.approx(0.06, abs=0.01)
+    assert detail["next_high_hit_rate_delta"] == pytest.approx(0.07, abs=0.01)
