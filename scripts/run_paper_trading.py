@@ -86,6 +86,7 @@ def refresh_btst_nightly_control_tower(report_dir: Path) -> dict[str, str] | Non
 
 
 DEFAULT_SHORT_TRADE_TARGET_PROFILE = "default"
+BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV = "BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE"
 
 
 def parse_args() -> argparse.Namespace:
@@ -156,6 +157,28 @@ def _resolve_short_trade_target_overrides(raw: str | None) -> dict[str, object] 
     if not isinstance(parsed, dict):
         raise ValueError("--short-trade-target-overrides must be a JSON object")
     return parsed
+
+
+def _resolve_governed_btst_precision_runtime_adoption(
+    *,
+    selection_target: str,
+    has_explicit_short_trade_target_inputs: bool,
+    optimization_profile_resolution: dict[str, Any],
+) -> dict[str, Any]:
+    if selection_target != "short_trade_only":
+        return {"auto_enabled": False, "reason": "selection_target_not_short_trade_only"}
+    if has_explicit_short_trade_target_inputs:
+        return {"auto_enabled": False, "reason": "explicit_short_trade_inputs"}
+    if str(optimization_profile_resolution.get("mode") or "") != "optimized":
+        return {"auto_enabled": False, "reason": "manifest_not_optimized"}
+    if str(optimization_profile_resolution.get("status") or "") != "ready":
+        return {"auto_enabled": False, "reason": "manifest_not_ready"}
+    return {
+        "auto_enabled": True,
+        "reason": "implicit_short_trade_only_ready_manifest",
+        "env_name": BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV,
+        "resolved_value": "true",
+    }
 
 
 def _parse_csv_tokens(raw: str | None) -> list[str]:
@@ -545,6 +568,16 @@ def _resolve_paper_trading_runtime_inputs(args: argparse.Namespace) -> dict[str,
     optimization_profile_resolution: dict[str, Any] = {}
     if getattr(args, "selection_target", None) == "short_trade_only" and not has_explicit_short_trade_target_inputs:
         optimization_profile_resolution = resolve_btst_optimized_profile_manifest(getattr(args, "optimized_profile_manifest", _default_optimized_profile_manifest_path()))
+    governed_precision_runtime_adoption = _resolve_governed_btst_precision_runtime_adoption(
+        selection_target=str(getattr(args, "selection_target", "") or ""),
+        has_explicit_short_trade_target_inputs=has_explicit_short_trade_target_inputs,
+        optimization_profile_resolution=optimization_profile_resolution,
+    )
+    if optimization_profile_resolution:
+        optimization_profile_resolution = dict(optimization_profile_resolution)
+        optimization_profile_resolution["governed_precision_runtime_adoption"] = governed_precision_runtime_adoption
+    if governed_precision_runtime_adoption.get("auto_enabled"):
+        os.environ[BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV] = "true"
     short_trade_target_profile = explicit_short_trade_target_profile or str(optimization_profile_resolution.get("profile_name") or "")
     short_trade_target_overrides = (
         explicit_short_trade_target_overrides if explicit_short_trade_target_overrides is not None else optimization_profile_resolution.get("profile_overrides", {})

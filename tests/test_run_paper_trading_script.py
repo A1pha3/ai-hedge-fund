@@ -122,6 +122,105 @@ def test_resolve_runtime_inputs_scopes_optimized_manifest_resolution_to_short_tr
     assert runtime_inputs["optimization_profile_resolution"] == {}
 
 
+def test_resolve_runtime_inputs_auto_enables_governed_precision_for_implicit_ready_btst_run(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", raising=False)
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda _reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+
+    def fake_resolve_btst_optimized_profile_manifest(_path: str | Path) -> dict[str, object]:
+        return {
+            "mode": "optimized",
+            "profile_name": "momentum_optimized",
+            "profile_overrides": {"select_threshold": 0.48},
+            "source_type": "optimize_profile",
+            "source_path": str(tmp_path / "source.json"),
+            "validated_by": "walk_forward_and_rollout",
+            "trade_date": "2026-05-12",
+            "status": "ready",
+            "fallback_reason": None,
+            "manifest_path": str(tmp_path / "btst_latest_optimized_profile.json"),
+        }
+
+    monkeypatch.setattr(run_paper_trading_script, "resolve_btst_optimized_profile_manifest", fake_resolve_btst_optimized_profile_manifest)
+    args = SimpleNamespace(
+        start_date="2026-03-23",
+        end_date="2026-03-26",
+        tickers="",
+        analysts=None,
+        analysts_all=False,
+        fast_analysts=None,
+        short_trade_target_profile=None,
+        short_trade_target_overrides=None,
+        output_dir=str(tmp_path / "paper"),
+        selection_target="short_trade_only",
+        optimized_profile_manifest=str(tmp_path / "btst_latest_optimized_profile.json"),
+    )
+
+    runtime_inputs = run_paper_trading_script._resolve_paper_trading_runtime_inputs(args)
+
+    adoption = runtime_inputs["optimization_profile_resolution"]["governed_precision_runtime_adoption"]
+    assert adoption["auto_enabled"] is True
+    assert adoption["reason"] == "implicit_short_trade_only_ready_manifest"
+    assert adoption["env_name"] == "BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE"
+    assert adoption["resolved_value"] == "true"
+    assert os.environ["BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE"] == "true"
+
+
+def test_resolve_runtime_inputs_does_not_auto_enable_governed_precision_when_profile_is_explicit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", raising=False)
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda _reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+
+    def fail_if_manifest_resolved(_path: str | Path) -> dict[str, object]:
+        raise AssertionError("optimized manifest should not be resolved when explicit short-trade profile is provided")
+
+    monkeypatch.setattr(run_paper_trading_script, "resolve_btst_optimized_profile_manifest", fail_if_manifest_resolved)
+    args = SimpleNamespace(
+        start_date="2026-03-23",
+        end_date="2026-03-26",
+        tickers="",
+        analysts=None,
+        analysts_all=False,
+        fast_analysts=None,
+        short_trade_target_profile="manual_profile",
+        short_trade_target_overrides=None,
+        output_dir=str(tmp_path / "paper"),
+        selection_target="short_trade_only",
+        optimized_profile_manifest=str(tmp_path / "btst_latest_optimized_profile.json"),
+    )
+
+    runtime_inputs = run_paper_trading_script._resolve_paper_trading_runtime_inputs(args)
+
+    assert runtime_inputs["short_trade_target_profile"] == "manual_profile"
+    assert runtime_inputs["short_trade_target_overrides"] == {}
+    assert runtime_inputs["optimization_profile_resolution"] == {}
+    assert "BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE" not in os.environ
+
+
 def test_resolve_runtime_inputs_uses_repo_root_default_manifest_when_cwd_changes(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         run_paper_trading_script,
