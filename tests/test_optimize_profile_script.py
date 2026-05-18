@@ -12,9 +12,11 @@ import scripts.optimize_profile as optimize_profile
 from scripts.btst_optimized_profile_manifest_helpers import (
     build_ready_btst_optimized_profile_manifest,
     derive_latest_replay_trade_date,
+    derive_btst_optimized_profile_source_path,
     publish_btst_optimized_profile_manifest,
 )
 from scripts.btst_strict_objective_gate import build_strict_btst_objective_gate
+from src.paper_trading.optimized_profile_resolution import resolve_btst_optimized_profile_manifest
 from scripts.optimize_profile import (
     _build_default_checkpoint_path,
     _build_replay_evaluator,
@@ -3263,10 +3265,13 @@ def test_publish_btst_optimized_profile_manifest_writes_ready_manifest(tmp_path:
     assert manifest_path.exists()
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert result["payload"] == payload
+    canonical_source_path = derive_btst_optimized_profile_source_path(manifest_path, source_path)
+    assert payload["source_path"] == str(canonical_source_path.resolve())
+    assert canonical_source_path.read_text(encoding="utf-8") == "{}"
     assert payload == build_ready_btst_optimized_profile_manifest(
         profile_name="momentum_optimized",
         profile_overrides={"select_threshold": 0.48, "near_miss_threshold": 0.34},
-        source_path=source_path,
+        source_path=canonical_source_path,
         replay_input_paths=[
             tmp_path / "selection_artifacts" / "2026-05-10" / "selection_target_replay_input.json",
             tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json",
@@ -3298,6 +3303,38 @@ def test_publish_btst_optimized_profile_manifest_promote_writes_null_trade_date_
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert payload["trade_date"] is None
     assert result["payload"] == payload
+
+
+def test_publish_btst_optimized_profile_manifest_persists_canonical_source_for_later_resolution(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "reports" / "btst_latest_optimized_profile.json"
+    original_source_path = tmp_path / "scratch" / "report.json"
+    original_source_path.parent.mkdir(parents=True, exist_ok=True)
+    original_source_payload = {"best_params": {"select_threshold": 0.48}, "rollout_recommendation": "promote"}
+    original_source_path.write_text(json.dumps(original_source_payload), encoding="utf-8")
+
+    publish_btst_optimized_profile_manifest(
+        manifest_path=manifest_path,
+        rollout_recommendation="promote",
+        profile_name="momentum_optimized",
+        profile_overrides={"select_threshold": 0.48},
+        source_path=original_source_path,
+        replay_input_paths=[tmp_path / "selection_artifacts" / "2026-05-12" / "selection_target_replay_input.json"],
+    )
+
+    published_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    canonical_source_path = manifest_path.with_name("btst_latest_optimized_profile_source.json").resolve()
+
+    assert published_manifest["source_path"] == str(canonical_source_path)
+    assert json.loads(canonical_source_path.read_text(encoding="utf-8")) == original_source_payload
+
+    original_source_path.unlink()
+
+    resolved = resolve_btst_optimized_profile_manifest(manifest_path)
+
+    assert resolved["mode"] == "optimized"
+    assert resolved["profile_name"] == "momentum_optimized"
+    assert resolved["profile_overrides"] == {"select_threshold": 0.48}
+    assert resolved["source_path"] == str(canonical_source_path)
 
 
 def test_publish_btst_optimized_profile_manifest_skips_hold_without_overwriting_existing_ready(tmp_path: Path) -> None:

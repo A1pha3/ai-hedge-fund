@@ -42,6 +42,13 @@ def build_ready_btst_optimized_profile_manifest(
     }
 
 
+def derive_btst_optimized_profile_source_path(manifest_path: str | Path, source_path: str | Path) -> Path:
+    resolved_manifest_path = Path(manifest_path).expanduser().resolve()
+    resolved_source_path = Path(source_path).expanduser().resolve()
+    suffix = resolved_source_path.suffix or ".json"
+    return resolved_manifest_path.with_name(f"{resolved_manifest_path.stem}_source{suffix}")
+
+
 def publish_btst_optimized_profile_manifest(
     *,
     manifest_path: str | Path,
@@ -60,10 +67,15 @@ def publish_btst_optimized_profile_manifest(
             "manifest_path": str(resolved_manifest_path),
         }
 
+    resolved_source_path = Path(source_path).expanduser().resolve()
+    canonical_source_path = derive_btst_optimized_profile_source_path(resolved_manifest_path, resolved_source_path)
+    canonical_source_path.parent.mkdir(parents=True, exist_ok=True)
+    canonical_source_path.write_bytes(resolved_source_path.read_bytes())
+
     payload = build_ready_btst_optimized_profile_manifest(
         profile_name=profile_name,
         profile_overrides=profile_overrides,
-        source_path=source_path,
+        source_path=canonical_source_path,
         replay_input_paths=replay_input_paths,
         validated_by=validated_by,
     )

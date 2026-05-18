@@ -34,13 +34,16 @@ class OutputBuilder:
         date_rows: list[list] = []
 
         decisions = agent_output.get("decisions", {})
+        positions = portfolio.get_positions()
 
         for ticker in tickers:
             # Analyst signal counts removed from day table
 
-            pos = portfolio.get_positions()[ticker]
-            long_val = pos["long"] * current_prices[ticker]
-            short_val = pos["short"] * current_prices[ticker]
+            pos = positions.get(ticker)
+            long_shares = int(pos["long"]) if pos is not None else 0
+            short_shares = int(pos["short"]) if pos is not None else 0
+            long_val = long_shares * current_prices[ticker]
+            short_val = short_shares * current_prices[ticker]
             net_position_value = long_val - short_val
 
             action = decisions.get(ticker, {}).get("action", "hold")
@@ -53,8 +56,8 @@ class OutputBuilder:
                     action=action,
                     quantity=quantity,
                     price=current_prices[ticker],
-                    long_shares=pos["long"],
-                    short_shares=pos["short"],
+                    long_shares=long_shares,
+                    short_shares=short_shares,
                     position_value=net_position_value,
                 )
             )
