@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import importlib
 import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from src.paper_trading.optimized_profile_resolution import resolve_btst_optimized_profile_manifest
 
@@ -86,6 +87,7 @@ def refresh_btst_nightly_control_tower(report_dir: Path) -> dict[str, str] | Non
 
 
 DEFAULT_SHORT_TRADE_TARGET_PROFILE = "default"
+BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV = "BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE"
 
 
 def parse_args() -> argparse.Namespace:
@@ -156,6 +158,48 @@ def _resolve_short_trade_target_overrides(raw: str | None) -> dict[str, object] 
     if not isinstance(parsed, dict):
         raise ValueError("--short-trade-target-overrides must be a JSON object")
     return parsed
+
+
+@contextmanager
+def _governed_btst_precision_runtime_mode(governed_precision_runtime_adoption: dict[str, Any]) -> Iterator[None]:
+    if not governed_precision_runtime_adoption.get("auto_enabled"):
+        yield
+        return
+
+    env_name = str(governed_precision_runtime_adoption.get("env_name") or BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV)
+    resolved_value = str(governed_precision_runtime_adoption.get("resolved_value") or "true")
+    had_preexisting_value = env_name in os.environ
+    preexisting_value = os.environ.get(env_name)
+    os.environ[env_name] = resolved_value
+    try:
+        yield
+    finally:
+        if had_preexisting_value and preexisting_value is not None:
+            os.environ[env_name] = preexisting_value
+        else:
+            os.environ.pop(env_name, None)
+
+
+def _resolve_governed_btst_precision_runtime_adoption(
+    *,
+    selection_target: str,
+    has_explicit_short_trade_target_inputs: bool,
+    optimization_profile_resolution: dict[str, Any],
+) -> dict[str, Any]:
+    if selection_target != "short_trade_only":
+        return {"auto_enabled": False, "reason": "selection_target_not_short_trade_only"}
+    if has_explicit_short_trade_target_inputs:
+        return {"auto_enabled": False, "reason": "explicit_short_trade_inputs"}
+    if str(optimization_profile_resolution.get("mode") or "") != "optimized":
+        return {"auto_enabled": False, "reason": "manifest_not_optimized"}
+    if str(optimization_profile_resolution.get("status") or "") != "ready":
+        return {"auto_enabled": False, "reason": "manifest_not_ready"}
+    return {
+        "auto_enabled": True,
+        "reason": "implicit_short_trade_only_ready_manifest",
+        "env_name": BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV,
+        "resolved_value": "true",
+    }
 
 
 def _parse_csv_tokens(raw: str | None) -> list[str]:
@@ -545,6 +589,14 @@ def _resolve_paper_trading_runtime_inputs(args: argparse.Namespace) -> dict[str,
     optimization_profile_resolution: dict[str, Any] = {}
     if getattr(args, "selection_target", None) == "short_trade_only" and not has_explicit_short_trade_target_inputs:
         optimization_profile_resolution = resolve_btst_optimized_profile_manifest(getattr(args, "optimized_profile_manifest", _default_optimized_profile_manifest_path()))
+    governed_precision_runtime_adoption = _resolve_governed_btst_precision_runtime_adoption(
+        selection_target=str(getattr(args, "selection_target", "") or ""),
+        has_explicit_short_trade_target_inputs=has_explicit_short_trade_target_inputs,
+        optimization_profile_resolution=optimization_profile_resolution,
+    )
+    if optimization_profile_resolution:
+        optimization_profile_resolution = dict(optimization_profile_resolution)
+        optimization_profile_resolution["governed_precision_runtime_adoption"] = governed_precision_runtime_adoption
     short_trade_target_profile = explicit_short_trade_target_profile or str(optimization_profile_resolution.get("profile_name") or "")
     short_trade_target_overrides = (
         explicit_short_trade_target_overrides if explicit_short_trade_target_overrides is not None else optimization_profile_resolution.get("profile_overrides", {})
@@ -664,6 +716,27 @@ def _print_paper_trading_runtime_summary(
             print(f"paper_trading_optimization_profile_manifest={optimization_profile_resolution['manifest_path']}")
         if optimization_profile_resolution.get("fallback_reason"):
             print(f"paper_trading_optimization_profile_fallback_reason={optimization_profile_resolution['fallback_reason']}")
+        governed_precision_runtime_adoption = dict(optimization_profile_resolution.get("governed_precision_runtime_adoption") or {})
+        if governed_precision_runtime_adoption:
+            print(
+                "paper_trading_governed_precision_auto_enabled="
+                f"{str(bool(governed_precision_runtime_adoption.get('auto_enabled'))).lower()}"
+            )
+            if governed_precision_runtime_adoption.get("reason"):
+                print(
+                    "paper_trading_governed_precision_reason="
+                    f"{governed_precision_runtime_adoption['reason']}"
+                )
+            if governed_precision_runtime_adoption.get("env_name"):
+                print(
+                    "paper_trading_governed_precision_env_name="
+                    f"{governed_precision_runtime_adoption['env_name']}"
+                )
+            if governed_precision_runtime_adoption.get("resolved_value") is not None:
+                print(
+                    "paper_trading_governed_precision_resolved_value="
+                    f"{governed_precision_runtime_adoption['resolved_value']}"
+                )
 
 
 def _print_shadow_focus_summary(auto_shadow_focus: dict[str, list[str]], shadow_focus_env: dict[str, str]) -> None:
@@ -726,6 +799,7 @@ def main() -> None:
     short_trade_target_profile = runtime_inputs["short_trade_target_profile"]
     short_trade_target_overrides = runtime_inputs["short_trade_target_overrides"]
     optimization_profile_resolution = runtime_inputs["optimization_profile_resolution"]
+    governed_precision_runtime_adoption = dict(optimization_profile_resolution.get("governed_precision_runtime_adoption") or {})
     output_dir = runtime_inputs["output_dir"]
     auto_shadow_focus = runtime_inputs["auto_shadow_focus"]
     shadow_focus_env = _apply_shadow_focus_env_overrides(args, auto_shadow_focus)
@@ -740,26 +814,27 @@ def main() -> None:
         args.upstream_shadow_release_post_gate_rebucket_score_min,
     )
     resolved_model_name, resolved_model_provider = _resolve_model_route(args.model_name, args.model_provider)
-    artifacts = _run_paper_trading_session(
-        disable_data_snapshots=args.disable_data_snapshots,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        output_dir=output_dir,
-        tickers=tickers,
-        initial_capital=args.initial_capital,
-        model_name=resolved_model_name,
-        model_provider=resolved_model_provider,
-        selected_analysts=selected_analysts,
-        fast_selected_analysts=fast_selected_analysts,
-        short_trade_target_profile_name=short_trade_target_profile,
-        short_trade_target_profile_overrides=short_trade_target_overrides,
-        optimization_profile_resolution=optimization_profile_resolution,
-        frozen_plan_source=args.frozen_plan_source,
-        selection_target=args.selection_target,
-        cache_benchmark=args.cache_benchmark,
-        cache_benchmark_ticker=args.cache_benchmark_ticker,
-        cache_benchmark_clear_first=args.cache_benchmark_clear_first,
-    )
+    with _governed_btst_precision_runtime_mode(governed_precision_runtime_adoption):
+        artifacts = _run_paper_trading_session(
+            disable_data_snapshots=args.disable_data_snapshots,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            output_dir=output_dir,
+            tickers=tickers,
+            initial_capital=args.initial_capital,
+            model_name=resolved_model_name,
+            model_provider=resolved_model_provider,
+            selected_analysts=selected_analysts,
+            fast_selected_analysts=fast_selected_analysts,
+            short_trade_target_profile_name=short_trade_target_profile,
+            short_trade_target_profile_overrides=short_trade_target_overrides,
+            optimization_profile_resolution=optimization_profile_resolution,
+            frozen_plan_source=args.frozen_plan_source,
+            selection_target=args.selection_target,
+            cache_benchmark=args.cache_benchmark,
+            cache_benchmark_ticker=args.cache_benchmark_ticker,
+            cache_benchmark_clear_first=args.cache_benchmark_clear_first,
+        )
     _print_paper_trading_run_summary(
         args=args,
         artifacts=artifacts,

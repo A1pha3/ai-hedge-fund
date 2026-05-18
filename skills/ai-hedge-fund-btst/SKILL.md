@@ -38,6 +38,7 @@ This skill runs the repo's BTST next-day document workflow.
   - Use short_trade_only for this skill.
   - Keep MiniMax / MiniMax-M2.7 unless the user explicitly overrides model routing.
   - Default this workflow to the latest approved optimized profile manifest when it is ready.
+  - For implicit short_trade_only runs that resolve a ready optimized manifest, the default BTST multi-agent path may auto-apply the governed P5 precision gate at runtime.
   - If the user supplies explicit short-trade profile inputs, treat them as an intentional bypass of manifest autoselect and do not label the run as optimized unless the artifacts explicitly support that claim.
   - Default invocation:
 
@@ -89,6 +90,7 @@ This skill runs the repo's BTST next-day document workflow.
 - If Round 89 rollout assessment, admission-edge replay validation, or strict-objective gate artifacts say `hold` or `runtime_replay_required_before_conclusion`, surface that status explicitly instead of presenting the profile as an active upgrade.
 - If strict-objective gate artifacts show rejected or blocked names outperforming the tradeable surface, mention that rollout is still blocked by objective-fit evidence rather than framing the variant as validated.
 - If validated BTST docs under `docs/prompt/generate_file/` describe win-rate-first precision tightening or rollout governance, use them to explain why a profile remains blocked or why selected-lane precision is stricter, but do not turn those docs into standalone evidence when the current run artifacts disagree.
+- For governed precision adoption, final Chinese docs may mention the auto-applied P5 precision gate only when `session_summary.json` and downstream artifacts explicitly confirm that the runtime path used it.
 
 ## Optional context
 
