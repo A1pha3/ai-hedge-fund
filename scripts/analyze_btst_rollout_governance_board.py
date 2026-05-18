@@ -155,6 +155,20 @@ def _build_rollout_governance_rows(payloads: dict[str, Any]) -> list[dict[str, A
     recurring_intraday_control = payloads["recurring_intraday_control"]
     recurring_close_row = payloads["recurring_close_row"]
     recurring_intraday_row = payloads["recurring_intraday_row"]
+    primary_promotion_blockers = list(primary_roll.get("promotion_blockers") or [])
+    primary_default_upgrade_eligible = bool(primary_roll.get("default_upgrade_eligible"))
+    if primary_default_upgrade_eligible:
+        primary_governance_tier = "primary_default_upgrade_review"
+        primary_blocker = "default_upgrade_review_ready"
+        primary_next_step = list(primary_roll.get("next_actions") or [primary_window_validation_runbook.get("recommendation") or ""])[0]
+    elif primary_promotion_blockers:
+        primary_governance_tier = "primary_roll_forward_only"
+        primary_blocker = str(primary_promotion_blockers[0] or "promotion_blocked")
+        primary_next_step = list(primary_roll.get("next_actions") or [""])[0]
+    else:
+        primary_governance_tier = "primary_roll_forward_only"
+        primary_blocker = "cross_window_stability_missing"
+        primary_next_step = list(primary_window_validation_runbook.get("rerun_commands") or list(primary_window_gap.get("next_step_commands") or list(primary_roll.get("next_actions") or [""])))[0]
 
     structural_row = next(
         (row for row in list(action_board.get("board_rows") or []) if str(row.get("ticker") or "") == "300724"),
@@ -165,14 +179,10 @@ def _build_rollout_governance_rows(payloads: dict[str, Any]) -> list[dict[str, A
     return [
         {
             "ticker": "001309",
-            "governance_tier": "primary_roll_forward_only",
+            "governance_tier": primary_governance_tier,
             "status": primary_roll.get("roll_forward_verdict"),
-            "blocker": list(primary_roll.get("promotion_blockers") or ["cross_window_stability_missing"])[0],
-            "next_step": (
-                list(primary_roll.get("next_actions") or [""])[0]
-                if list(primary_roll.get("promotion_blockers") or [])
-                else list(primary_window_validation_runbook.get("rerun_commands") or list(primary_window_gap.get("next_step_commands") or list(primary_roll.get("next_actions") or [""])))[0]
-            ),
+            "blocker": primary_blocker,
+            "next_step": primary_next_step,
             "evidence": {
                 "target_case_count": primary_roll.get("target_case_count"),
                 "distinct_window_count": primary_roll.get("distinct_window_count"),
@@ -180,7 +190,8 @@ def _build_rollout_governance_rows(payloads: dict[str, Any]) -> list[dict[str, A
                 "missing_window_count": primary_window_gap.get("missing_window_count"),
                 "scanned_window_count": len(list(primary_window_validation_runbook.get("window_scan_rows") or [])),
                 "promotion_ready": primary_roll.get("promotion_ready"),
-                "promotion_blockers": list(primary_roll.get("promotion_blockers") or []),
+                "promotion_blockers": primary_promotion_blockers,
+                "default_upgrade_eligible": primary_default_upgrade_eligible,
             },
         },
         {
@@ -247,7 +258,14 @@ def _build_rollout_governance_rows(payloads: dict[str, Any]) -> list[dict[str, A
 
 def _build_rollout_next_tasks(governance_rows: list[dict[str, Any]], recurring_close_ticker: str, recurring_intraday_ticker: str) -> list[dict[str, Any]]:
     primary_blocker = str(governance_rows[0].get("blocker") or "")
-    if primary_blocker and primary_blocker != "cross_window_stability_missing":
+    if primary_blocker == "default_upgrade_review_ready":
+        primary_task = {
+            "task_id": "001309_default_upgrade_review",
+            "title": "推进 001309 默认升级评审",
+            "why_now": "001309 已满足 controlled follow-through guardrails 与双窗口稳定性，当前应转入默认升级评审。",
+            "next_step": governance_rows[0]["next_step"],
+        }
+    elif primary_blocker and primary_blocker != "cross_window_stability_missing":
         primary_task = {
             "task_id": "001309_promotion_blocker_remediation",
             "title": "解除 001309 promotion blocker",
@@ -279,15 +297,25 @@ def _build_rollout_next_tasks(governance_rows: list[dict[str, Any]], recurring_c
 
 
 def _build_rollout_recommendation(payloads: dict[str, Any], recurring_close_ticker: str, recurring_intraday_ticker: str) -> str:
+    primary_roll = payloads["primary_roll"]
     recurring_close_bundle = payloads["recurring_close_bundle"]
     penalty_frontier_summary = payloads["penalty_frontier_summary"]
-    recommendation = (
-        "当前 rollout 治理应分成四条清晰车道：001309 只做 primary roll-forward；300383 只做单票 shadow；"
-        f"{recurring_close_ticker}/{recurring_intraday_ticker} 组成 recurring frontier 的 close/intraday 双轨；"
-        "300724 继续保持 structural shadow hold。"
-        f" 若要继续扩 shadow lane，应优先转向 {recurring_close_ticker}/{recurring_intraday_ticker} 的 recurring frontier 组合，而不是复制 300383。"
-        " 但在当前证据边界内，这条 recurring lane 同样仍缺第二个独立窗口，只能继续保留 shadow validation 准备态。"
-    )
+    if bool(primary_roll.get("default_upgrade_eligible")):
+        recommendation = (
+            "当前 rollout 治理应分成四条清晰车道：001309 已进入 primary 默认升级评审；300383 只做单票 shadow；"
+            f"{recurring_close_ticker}/{recurring_intraday_ticker} 组成 recurring frontier 的 close/intraday 双轨；"
+            "300724 继续保持 structural shadow hold。"
+            f" 若要继续扩 shadow lane，应优先转向 {recurring_close_ticker}/{recurring_intraday_ticker} 的 recurring frontier 组合，而不是复制 300383。"
+            " recurring lane 当前仍缺第二个独立窗口，因此只保留 shadow validation 准备态。"
+        )
+    else:
+        recommendation = (
+            "当前 rollout 治理应分成四条清晰车道：001309 只做 primary roll-forward；300383 只做单票 shadow；"
+            f"{recurring_close_ticker}/{recurring_intraday_ticker} 组成 recurring frontier 的 close/intraday 双轨；"
+            "300724 继续保持 structural shadow hold。"
+            f" 若要继续扩 shadow lane，应优先转向 {recurring_close_ticker}/{recurring_intraday_ticker} 的 recurring frontier 组合，而不是复制 300383。"
+            " 但在当前证据边界内，这条 recurring lane 同样仍缺第二个独立窗口，只能继续保留 shadow validation 准备态。"
+        )
     if recurring_close_bundle:
         recommendation += f" {recurring_close_ticker} close-candidate 侧已经补成可直接复用的 bundle，应优先用 bundle 结果回接 governance，而不是手工拼 release/outcome/pair comparison。"
     if penalty_frontier_summary:

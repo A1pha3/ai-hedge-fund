@@ -83,18 +83,33 @@ def analyze_btst_primary_roll_forward(
             f"{normalized_ticker} 已同时满足 controlled follow-through guardrails 与 multi-window 稳定性，"
             "可以进入默认升级评审。"
         )
+        next_actions = [
+            f"启动 {normalized_ticker} 默认升级评审，复核 release/outcome 报告并准备 default-route 变更。",
+            "确认默认升级不会引入新的 changed_non_target_case_count 或负向 close continuation 漂移。",
+            "在默认升级评审通过前，继续保留现有 primary controlled follow-through 监控。",
+        ]
     elif keep_guardrails_ok:
         roll_forward_verdict = "continue_controlled_roll_forward"
         recommendation = (
             f"{normalized_ticker} 继续作为唯一 primary controlled follow-through 入口推进，"
             "但当前仍缺跨窗口稳定复现证据，因此只能做滚动复核，不能升级成默认规则。"
         )
+        next_actions = [
+            f"继续把 {normalized_ticker} 固定为唯一 primary controlled follow-through 入口。",
+            "至少补到一个新增独立窗口后，再讨论默认升级。",
+            "滚动复核期间若 changed_non_target_case_count 再次大于 0 或 close continuation 转负，则立即降级。",
+        ]
     else:
         roll_forward_verdict = "halt_or_rollback"
         recommendation = (
             f"{normalized_ticker} 当前不再满足 primary follow-through 的 keep guardrails，"
             "应暂停滚动推进并重新检查 release 语义。"
         )
+        next_actions = [
+            f"暂停 {normalized_ticker} 的默认升级讨论并回退到问题排查。",
+            "优先定位 release/outcome 语义或 promotion blocker 的新退化来源。",
+            "在 keep guardrails 恢复前，不得继续扩大 primary lane 的 rollout 叙事。",
+        ]
 
     return {
         "generated_on": execution_summary.get("generated_on"),
@@ -120,11 +135,7 @@ def analyze_btst_primary_roll_forward(
         "default_upgrade_eligible": default_upgrade_eligible,
         "roll_forward_verdict": roll_forward_verdict,
         "evidence_gaps": evidence_gaps,
-        "next_actions": [
-            f"继续把 {normalized_ticker} 固定为唯一 primary controlled follow-through 入口。",
-            "至少补到一个新增独立窗口后，再讨论默认升级。",
-            "滚动复核期间若 changed_non_target_case_count 再次大于 0 或 close continuation 转负，则立即降级。",
-        ],
+        "next_actions": next_actions,
         "release_report": execution_row.get("release_report"),
         "outcome_report": execution_row.get("outcome_report"),
         "recommendation": recommendation,

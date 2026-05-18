@@ -59,7 +59,23 @@ def test_compare_reports_includes_profit_aware_tradeable_tail_deltas() -> None:
                 "t_plus_2_close_payoff_ratio": 1.1800,
                 "t_plus_2_close_profit_factor": 1.0400,
                 "t_plus_2_close_expectancy": 0.0025,
-            }
+            },
+            "selected": {
+                "total_count": 4,
+                "closed_cycle_count": 4,
+                "next_high_hit_rate_at_threshold": 0.75,
+                "next_close_positive_rate": 0.75,
+                "t_plus_2_close_positive_rate": 0.75,
+                "next_high_return_distribution": {"mean": 0.0510},
+                "next_close_return_distribution": {"mean": 0.0200, "median": 0.0210, "p10": -0.0180},
+                "t_plus_2_close_return_distribution": {"mean": 0.0180, "median": 0.0160, "p10": -0.0040},
+                "next_close_payoff_ratio": 1.3000,
+                "next_close_profit_factor": 1.1500,
+                "next_close_expectancy": 0.0048,
+                "t_plus_2_close_payoff_ratio": 1.1000,
+                "t_plus_2_close_profit_factor": 1.0000,
+                "t_plus_2_close_expectancy": 0.0022,
+            },
         },
         "false_negative_proxy_summary": {"count": 0, "surface_metrics": {}},
     }
@@ -81,7 +97,23 @@ def test_compare_reports_includes_profit_aware_tradeable_tail_deltas() -> None:
                 "t_plus_2_close_payoff_ratio": 1.2900,
                 "t_plus_2_close_profit_factor": 1.1100,
                 "t_plus_2_close_expectancy": 0.0033,
-            }
+            },
+            "selected": {
+                "total_count": 3,
+                "closed_cycle_count": 3,
+                "next_high_hit_rate_at_threshold": 1.0,
+                "next_close_positive_rate": 1.0,
+                "t_plus_2_close_positive_rate": 0.6667,
+                "next_high_return_distribution": {"mean": 0.0610},
+                "next_close_return_distribution": {"mean": 0.0240, "median": 0.0240, "p10": 0.0060},
+                "t_plus_2_close_return_distribution": {"mean": 0.0190, "median": 0.0180, "p10": -0.0020},
+                "next_close_payoff_ratio": 2.1000,
+                "next_close_profit_factor": 1.5000,
+                "next_close_expectancy": 0.0080,
+                "t_plus_2_close_payoff_ratio": 1.0500,
+                "t_plus_2_close_profit_factor": 0.9800,
+                "t_plus_2_close_expectancy": 0.0020,
+            },
         },
         "false_negative_proxy_summary": {"count": 0, "surface_metrics": {}},
     }
@@ -105,6 +137,12 @@ def test_compare_reports_includes_profit_aware_tradeable_tail_deltas() -> None:
     assert comparison["tradeable_surface_delta"]["t_plus_2_close_payoff_ratio"] == 0.11
     assert comparison["tradeable_surface_delta"]["t_plus_2_close_profit_factor"] == 0.07
     assert comparison["tradeable_surface_delta"]["t_plus_2_close_expectancy"] == 0.0008
+    assert comparison["selected_surface_delta"]["total_count"] == -1
+    assert comparison["selected_surface_delta"]["closed_cycle_count"] == -1
+    assert comparison["selected_surface_delta"]["next_high_hit_rate_at_threshold"] == 0.25
+    assert comparison["selected_surface_delta"]["next_close_positive_rate"] == 0.25
+    assert comparison["selected_surface_delta"]["next_close_payoff_ratio"] == 0.8
+    assert comparison["selected_guardrail_status"] == "passes_closed_selected_guardrails"
 
 
 def test_build_surface_summary_includes_payoff_and_expectancy_metrics() -> None:

@@ -18,6 +18,7 @@ from src.research.artifacts import SelectionArtifactWriter
 from .engine_market_data import (
     MarketDataLoader,
     normalize_ticker,
+    resolve_benchmark_ticker,
     shift_business_days,
 )
 from .engine_pipeline_helpers import (
@@ -432,7 +433,7 @@ class BacktestEngine:
             portfolio=self._portfolio,
             performance_metrics=self._performance_metrics,
             total_value=total_value,
-            benchmark_return_pct=self._benchmark.get_return_pct("SPY", self._start_date, date_str),
+            benchmark_return_pct=self._benchmark.get_return_pct(resolve_benchmark_ticker(self._tickers), self._start_date, date_str),
         )
 
     def _update_daily_performance_metrics(self) -> None:

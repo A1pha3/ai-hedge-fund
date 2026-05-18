@@ -22,6 +22,7 @@ from src.tools.api import (
     get_price_data,
     get_prices,
 )
+from src.tools.akshare_api import is_ashare
 
 from .portfolio import Portfolio
 
@@ -33,6 +34,8 @@ from .portfolio import Portfolio
 DEFENSIVE_EXIT_REASONS = {"hard_stop_loss", "atr_stop_loss"}
 EXIT_REENTRY_COOLDOWN_TRADING_DAYS = max(0, int(os.getenv("PIPELINE_EXIT_REENTRY_COOLDOWN_TRADING_DAYS", "5")))
 EXIT_REENTRY_REVIEW_TRADING_DAYS = max(0, int(os.getenv("PIPELINE_EXIT_REENTRY_REVIEW_TRADING_DAYS", "5")))
+DEFAULT_US_BENCHMARK_TICKER = "SPY"
+DEFAULT_ASHARE_BENCHMARK_TICKER = "000300.SH"
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +49,13 @@ def normalize_ticker(ticker: str) -> str:
 def shift_business_days(trade_date_compact: str, business_days: int) -> str:
     shifted = pd.Timestamp(datetime.strptime(trade_date_compact, "%Y%m%d")) + pd.offsets.BDay(max(0, business_days))
     return shifted.strftime("%Y%m%d")
+
+
+def resolve_benchmark_ticker(tickers: Sequence[str]) -> str:
+    normalized_tickers = [str(ticker).strip() for ticker in tickers if str(ticker).strip()]
+    if normalized_tickers and all(is_ashare(ticker) for ticker in normalized_tickers):
+        return DEFAULT_ASHARE_BENCHMARK_TICKER
+    return DEFAULT_US_BENCHMARK_TICKER
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +96,8 @@ class MarketDataLoader:
             get_insider_trades(ticker, self._end_date, start_date=self._start_date, limit=1000)
             get_company_news(ticker, self._end_date, start_date=self._start_date, limit=1000)
 
-        # Preload data for SPY for benchmark comparison
-        get_prices("SPY", self._start_date, self._end_date)
+        benchmark_ticker = resolve_benchmark_ticker(self._tickers)
+        get_prices(benchmark_ticker, self._start_date, self._end_date)
 
     # ------------------------------------------------------------------
     # Date iteration

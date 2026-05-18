@@ -1258,6 +1258,8 @@ def build_short_trade_target_result(
         short_term_reversal=round(float(snapshot.get("short_term_reversal", 0.0)), 4),
         intraday_strength=round(float(snapshot.get("intraday_strength", 0.0)), 4),
         reversal_2d=round(float(snapshot.get("reversal_2d", 0.0)), 4),
+        trend_continuation=round(float(snapshot.get("trend_continuation", 0.0)), 4),
+        trend_continuation_2d=round(float(snapshot.get("trend_continuation_2d", 0.0)), 4),
         alpha_edge_score=round(float(snapshot.get("alpha_edge_score", 0.0)), 4),
         beta_execution_score=round(float(snapshot.get("beta_execution_score", 0.0)), 4),
         gamma_risk_score=round(float(snapshot.get("gamma_risk_score", 0.0)), 4),

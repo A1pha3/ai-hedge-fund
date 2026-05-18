@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
+from types import SimpleNamespace
 
 import pandas as pd
 
+import src.targets.profiles as short_trade_profiles_module
 from scripts.analyze_btst_profile_frontier import analyze_btst_profile_frontier
 from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
+from src.targets import build_short_trade_target_profile
 from src.targets.router import build_selection_targets
 
 
@@ -240,6 +244,91 @@ def _write_event_catalyst_replay_input(tmp_path):
     return replay_input_path
 
 
+def _write_selected_only_shrink_replay_input(tmp_path):
+    report_dir = tmp_path / "selected_only_shrink"
+    report_dir.mkdir()
+    rejected_entry = {
+        "ticker": "601869",
+        "candidate_source": "watchlist_filter_diagnostics",
+        "candidate_reason_codes": ["watchlist_filter_diagnostics"],
+        "score_b": 0.20,
+        "score_c": 0.40,
+        "score_final": 0.10,
+        "quality_score": 0.55,
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                60.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 25.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 15.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                100.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 28.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.12, "investor": 0.02}},
+    }
+    selection_targets, summary = build_selection_targets(
+        trade_date="20260328",
+        watchlist=[],
+        rejected_entries=[rejected_entry],
+        supplemental_short_trade_entries=[],
+        buy_order_tickers=set(),
+        target_mode="dual_target",
+    )
+    replay_input = {
+        "artifact_version": "v1",
+        "run_id": "test_btst_selected_only_shrink_frontier",
+        "trade_date": "2026-03-28",
+        "market": "CN",
+        "target_mode": "dual_target",
+        "pipeline_config_snapshot": {},
+        "source_summary": {
+            "watchlist_count": 0,
+            "rejected_entry_count": 1,
+            "supplemental_short_trade_entry_count": 0,
+            "buy_order_ticker_count": 0,
+        },
+        "watchlist": [],
+        "rejected_entries": [rejected_entry],
+        "supplemental_short_trade_entries": [],
+        "buy_order_tickers": [],
+        "selection_targets": {ticker: evaluation.model_dump(mode="json") for ticker, evaluation in selection_targets.items()},
+        "target_summary": summary.model_dump(mode="json"),
+    }
+    replay_input_path = report_dir / "selection_target_replay_input.json"
+    replay_input_path.write_text(json.dumps(replay_input, ensure_ascii=False, indent=2), encoding="utf-8")
+    return replay_input_path
+
+
+@contextmanager
+def _register_short_trade_target_profile_proxy(*, profile_name: str, base_profile_name: str, **extra_fields):
+    base_profile = build_short_trade_target_profile(base_profile_name)
+    proxy_payload = vars(base_profile).copy()
+    proxy_payload.update(name=profile_name, **extra_fields)
+    proxy_profile = SimpleNamespace(**proxy_payload)
+    previous_profile = short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES.get(profile_name)
+    short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES[profile_name] = proxy_profile
+    try:
+        yield proxy_profile
+    finally:
+        if previous_profile is None:
+            del short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES[profile_name]
+        else:
+            short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES[profile_name] = previous_profile
+
+
 def test_analyze_btst_profile_frontier_finds_staged_breakout_surface(tmp_path, monkeypatch):
     replay_input_path = _write_profile_replay_input(tmp_path)
 
@@ -377,3 +466,55 @@ def test_analyze_btst_profile_frontier_supports_event_catalyst_guarded(tmp_path,
     assert "near_miss_threshold_relief" in event_catalyst_payload
     assert isinstance(event_catalyst_payload["selected_uplift"], (int, float))
     assert isinstance(event_catalyst_payload["near_miss_threshold_relief"], (int, float))
+
+
+def test_analyze_btst_profile_frontier_surfaces_selected_only_shrink_deltas(tmp_path, monkeypatch):
+    replay_input_path = _write_selected_only_shrink_replay_input(tmp_path)
+
+    def fake_get_price_data(ticker: str, start_date: str, end_date: str):
+        assert ticker == "601869"
+        assert start_date == "2026-03-28"
+        return pd.DataFrame(
+            [
+                {"date": "2026-03-28", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                {"date": "2026-03-31", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
+                {"date": "2026-04-01", "open": 10.2, "high": 10.3, "low": 10.05, "close": 10.18},
+            ]
+        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
+
+    with _register_short_trade_target_profile_proxy(
+        profile_name="selected_only_shrink_baseline_test",
+        base_profile_name="trend_continuation_strength_v2",
+        select_threshold=0.35,
+    ):
+        with _register_short_trade_target_profile_proxy(
+            profile_name="selected_only_shrink_variant_test",
+            base_profile_name="selected_only_shrink_baseline_test",
+            watchlist_filter_diagnostics_selected_only_shrink_enabled=True,
+            watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift=0.05,
+            watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max=0.10,
+            watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max=0.40,
+            watchlist_filter_diagnostics_selected_only_shrink_close_strength_max=0.58,
+        ):
+            analysis = analyze_btst_profile_frontier(
+                replay_input_path,
+                baseline_profile="selected_only_shrink_baseline_test",
+                variant_profiles=["selected_only_shrink_variant_test"],
+                next_high_hit_threshold=0.02,
+            )
+
+    variant = analysis["variants"][0]
+    comparison = analysis["comparisons"][0]
+    ranked_variant = analysis["ranked_variants"][0]
+
+    assert variant["profile_config"]["watchlist_filter_diagnostics_selected_only_shrink_enabled"] is True
+    assert variant["profile_config"]["watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift"] == 0.05
+    assert comparison["tradeable_surface_delta"]["total_count"] == 0
+    assert comparison["selected_surface_delta"]["total_count"] == -1
+    assert comparison["selected_surface_delta"]["closed_cycle_count"] == -1
+    assert comparison["selected_guardrail_status"] == "not_enough_closed_selected_rows"
+    assert ranked_variant["selected_count"] == 0
+    assert ranked_variant["selected_closed_cycle_count"] == 0
+    assert ranked_variant["selected_guardrail_status"] == "not_enough_closed_selected_rows"

@@ -40,6 +40,8 @@ _METRICS_PAYLOAD_FACTOR_NAMES: tuple[str, ...] = (
     "close_strength",
     "volatility_regime",
     "sector_resonance",
+    "trend_continuation",
+    "trend_continuation_2d",
 )
 
 
@@ -97,6 +99,11 @@ def _serialize_profile(profile: Any) -> dict[str, Any]:
         "watchlist_zero_catalyst_flat_trend_layer_c_alignment_min": round(float(profile.watchlist_zero_catalyst_flat_trend_layer_c_alignment_min), 4),
         "watchlist_zero_catalyst_flat_trend_sector_resonance_min": round(float(profile.watchlist_zero_catalyst_flat_trend_sector_resonance_min), 4),
         "watchlist_zero_catalyst_flat_trend_trend_acceleration_max": round(float(profile.watchlist_zero_catalyst_flat_trend_trend_acceleration_max), 4),
+        "watchlist_filter_diagnostics_selected_only_shrink_enabled": bool(getattr(profile, "watchlist_filter_diagnostics_selected_only_shrink_enabled", False)),
+        "watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift": round(float(getattr(profile, "watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift", 0.0)), 4),
+        "watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max": round(float(getattr(profile, "watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max", 0.0)), 4),
+        "watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max": round(float(getattr(profile, "watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max", 1.0)), 4),
+        "watchlist_filter_diagnostics_selected_only_shrink_close_strength_max": round(float(getattr(profile, "watchlist_filter_diagnostics_selected_only_shrink_close_strength_max", 1.0)), 4),
         "t_plus_2_continuation_enabled": bool(profile.t_plus_2_continuation_enabled),
         "t_plus_2_continuation_catalyst_freshness_max": round(float(profile.t_plus_2_continuation_catalyst_freshness_max), 4),
         "t_plus_2_continuation_breakout_freshness_min": round(float(profile.t_plus_2_continuation_breakout_freshness_min), 4),

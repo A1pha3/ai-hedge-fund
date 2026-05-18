@@ -64,6 +64,8 @@ class TargetEvaluationResult(BaseModel):
     short_term_reversal: float | None = None
     intraday_strength: float | None = None
     reversal_2d: float | None = None
+    trend_continuation: float | None = None
+    trend_continuation_2d: float | None = None
     alpha_edge_score: float | None = None
     beta_execution_score: float | None = None
     gamma_risk_score: float | None = None

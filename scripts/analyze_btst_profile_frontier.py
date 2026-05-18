@@ -88,16 +88,23 @@ def analyze_btst_profile_frontier(
     ranked_variants: list[dict[str, Any]] = []
     for variant, comparison in zip(variant_analyses, comparisons):
         tradeable_surface = dict(variant["surface_summaries"]["tradeable"])
+        selected_surface = dict(variant["surface_summaries"]["selected"])
         ranked_variants.append(
             {
                 "profile_name": variant["profile_name"],
                 "label": variant["label"],
                 "guardrail_status": comparison["guardrail_status"],
+                "selected_guardrail_status": comparison["selected_guardrail_status"],
                 "closed_cycle_tradeable_count": int(tradeable_surface.get("closed_cycle_count", 0)),
                 "tradeable_count": int(tradeable_surface.get("total_count", 0)),
                 "next_high_hit_rate_at_threshold": tradeable_surface.get("next_high_hit_rate_at_threshold"),
                 "next_close_positive_rate": tradeable_surface.get("next_close_positive_rate"),
                 "t_plus_2_close_positive_rate": tradeable_surface.get("t_plus_2_close_positive_rate"),
+                "selected_closed_cycle_count": int(selected_surface.get("closed_cycle_count", 0)),
+                "selected_count": int(selected_surface.get("total_count", 0)),
+                "selected_next_high_hit_rate_at_threshold": selected_surface.get("next_high_hit_rate_at_threshold"),
+                "selected_next_close_positive_rate": selected_surface.get("next_close_positive_rate"),
+                "selected_t_plus_2_close_positive_rate": selected_surface.get("t_plus_2_close_positive_rate"),
                 "comparison_note": comparison["comparison_note"],
             }
         )
@@ -158,10 +165,13 @@ def render_btst_profile_frontier_markdown(analysis: dict[str, Any]) -> str:
             lines.append(f"- profile_config: {variant['profile_config']}")
             lines.append(f"- decision_counts: {variant['decision_counts']}")
             lines.append(f"- tradeable_surface: {variant['surface_summaries']['tradeable']}")
+            lines.append(f"- selected_surface: {variant['surface_summaries']['selected']}")
             lines.append(f"- false_negative_proxy_summary: {variant['false_negative_proxy_summary']}")
             lines.append(f"- guardrail_status: {comparison['guardrail_status']}")
+            lines.append(f"- selected_guardrail_status: {comparison['selected_guardrail_status']}")
             lines.append(f"- comparison_note: {comparison['comparison_note']}")
             lines.append(f"- tradeable_surface_delta: {comparison['tradeable_surface_delta']}")
+            lines.append(f"- selected_surface_delta: {comparison['selected_surface_delta']}")
             lines.append(f"- false_negative_proxy_delta: {comparison['false_negative_proxy_delta']}")
             lines.append(f"- top_tradeable_event_catalyst: {[row.get('explainability_payload', {}).get('event_catalyst') for row in variant['top_tradeable_rows'][:3]]}")
             lines.append("")

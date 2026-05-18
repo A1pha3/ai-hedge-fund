@@ -91,16 +91,27 @@ def analyze_btst_primary_window_validation_runbook(
 
     independent_window_rows = [row for row in window_rows if row["status"] == "new_independent_short_trade_window"]
     missing_window_count = int(primary_window_gap.get("missing_window_count") or 0)
-    validation_verdict = "independent_window_requirement_satisfied" if not missing_window_count and independent_window_rows else "await_new_independent_window_data"
+    target_window_count = int(primary_window_gap.get("target_window_count") or 0)
+    distinct_window_count = int(candidate_row.get("distinct_window_count") or 0)
+    validation_verdict = (
+        "independent_window_requirement_satisfied"
+        if not missing_window_count and distinct_window_count >= max(1, target_window_count)
+        else "await_new_independent_window_data"
+    )
     rerun_commands = [
         "python scripts/analyze_multi_window_short_trade_role_candidates.py --report-root-dirs data/reports --report-name-contains paper_trading_window --min-short-trade-trade-dates 2 --output-json data/reports/multi_window_short_trade_role_candidates_YYYYMMDD.json --output-md data/reports/multi_window_short_trade_role_candidates_YYYYMMDD.md",
         f"python scripts/analyze_btst_primary_window_validation_runbook.py --ticker {normalized_ticker} --candidate-report data/reports/multi_window_short_trade_role_candidates_YYYYMMDD.json --output-json data/reports/p7_primary_window_validation_runbook_{normalized_ticker}_YYYYMMDD.json --output-md data/reports/p7_primary_window_validation_runbook_{normalized_ticker}_YYYYMMDD.md",
         f"python scripts/analyze_btst_primary_roll_forward.py --ticker {normalized_ticker} --candidate-report data/reports/multi_window_short_trade_role_candidates_YYYYMMDD.json --output-json data/reports/p4_primary_roll_forward_validation_{normalized_ticker}_YYYYMMDD.json --output-md data/reports/p4_primary_roll_forward_validation_{normalized_ticker}_YYYYMMDD.md",
     ]
-    recommendation = (
-        f"{normalized_ticker} 的 primary roll-forward 方法链已经完整，当前缺的不是额外规则，而是新增独立窗口数据。"
-        " 只要新的 paper_trading_window 落地，就按 rerun_commands 重新扫描并判定是否达到 distinct_window_count>=2。"
-    )
+    if validation_verdict == "independent_window_requirement_satisfied":
+        recommendation = (
+            f"{normalized_ticker} 已满足 distinct_window_count>=2 的独立窗口要求，当前 primary window validation 已完成，可转入默认升级评审。"
+        )
+    else:
+        recommendation = (
+            f"{normalized_ticker} 的 primary roll-forward 方法链已经完整，当前缺的不是额外规则，而是新增独立窗口数据。"
+            " 只要新的 paper_trading_window 落地，就按 rerun_commands 重新扫描并判定是否达到 distinct_window_count>=2。"
+        )
 
     return {
         "generated_on": primary_roll_forward.get("generated_on"),
@@ -109,7 +120,7 @@ def analyze_btst_primary_window_validation_runbook(
         "primary_window_gap": str(Path(primary_window_gap_path).expanduser().resolve()),
         "ticker": normalized_ticker,
         "distinct_window_count": candidate_row.get("distinct_window_count"),
-        "target_window_count": primary_window_gap.get("target_window_count"),
+        "target_window_count": target_window_count,
         "missing_window_count": missing_window_count,
         "current_short_trade_window_keys": current_short_trade_window_keys,
         "window_scan_rows": window_rows,

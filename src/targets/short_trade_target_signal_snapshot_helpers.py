@@ -123,6 +123,8 @@ def _resolve_snapshot_scores(
         * (1.0 - clamp_unit_interval_fn(trend_metrics.get("momentum_1m", trend_metrics["momentum_strength"])))
         + (0.45 * (1.0 - trend_metrics["momentum_strength"]))
     )
+    trend_continuation = clamp_unit_interval_fn(1.0 - short_term_reversal)
+    trend_continuation_2d = clamp_unit_interval_fn(1.0 - reversal_2d)
     return {
         "breakout_freshness": breakout_freshness,
         "trend_acceleration": trend_acceleration,
@@ -134,6 +136,8 @@ def _resolve_snapshot_scores(
         "short_term_reversal": short_term_reversal,
         "intraday_strength": intraday_strength,
         "reversal_2d": reversal_2d,
+        "trend_continuation": trend_continuation,
+        "trend_continuation_2d": trend_continuation_2d,
     }
 
 

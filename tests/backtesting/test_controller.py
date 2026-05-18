@@ -3,6 +3,7 @@ import pandas as pd
 from src.backtesting.engine import BacktestEngine
 from src.backtesting.controller import AgentController
 from src.backtesting.engine_agent_mode import execute_agent_mode_trades
+from src.backtesting.engine_market_data import MarketDataLoader
 from src.backtesting.portfolio import Portfolio
 from src.backtesting.trading_constraints import TradeExecutionInputs
 
@@ -244,3 +245,74 @@ def test_append_daily_state_updates_portfolio_rows_and_metrics(monkeypatch):
     assert engine._table_rows[0] == ["2024-03-04", 123456.0, 1.2]
     assert printed_rows[-1] == engine._table_rows
     assert engine._performance_metrics["sharpe_ratio"] == 1.5
+
+
+def test_market_data_loader_prefetches_hs300_for_ashare_universe(monkeypatch):
+    fetched_price_tickers: list[str] = []
+
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_prices", lambda ticker, *args, **kwargs: fetched_price_tickers.append(ticker) or [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_financial_metrics", lambda *args, **kwargs: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_insider_trades", lambda *args, **kwargs: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_company_news", lambda *args, **kwargs: [])
+
+    loader = MarketDataLoader(
+        tickers=["001309"],
+        start_date="2026-04-07",
+        end_date="2026-04-13",
+        portfolio=Portfolio(tickers=["001309"], initial_cash=100000.0, margin_requirement=0.0),
+        exit_reentry_cooldowns={},
+    )
+
+    loader.prefetch_data()
+
+    assert "001309" in fetched_price_tickers
+    assert "000300.SH" in fetched_price_tickers
+    assert "SPY" not in fetched_price_tickers
+
+
+def test_append_daily_state_uses_hs300_benchmark_for_ashare_universe(monkeypatch):
+    engine = BacktestEngine(
+        agent=dummy_agent,
+        tickers=["001309"],
+        start_date="2026-04-07",
+        end_date="2026-04-13",
+        initial_capital=100000.0,
+        model_name="m",
+        model_provider="p",
+        selected_analysts=["x"],
+        initial_margin_requirement=0.0,
+        backtest_mode="agent",
+    )
+    engine._portfolio_values = [
+        {"Date": pd.Timestamp("2026-04-07")},
+        {"Date": pd.Timestamp("2026-04-08")},
+        {"Date": pd.Timestamp("2026-04-09")},
+    ]
+    benchmark_tickers: list[str] = []
+
+    monkeypatch.setattr("src.backtesting.engine.calculate_portfolio_value", lambda portfolio, prices: 123456.0)
+    monkeypatch.setattr(
+        "src.backtesting.engine.compute_exposures",
+        lambda portfolio, prices: {
+            "Long Exposure": 0.6,
+            "Short Exposure": 0.1,
+            "Gross Exposure": 0.7,
+            "Net Exposure": 0.5,
+            "Long/Short Ratio": 6.0,
+        },
+    )
+    monkeypatch.setattr(engine._benchmark, "get_return_pct", lambda ticker, *args, **kwargs: benchmark_tickers.append(ticker) or 1.2)
+    monkeypatch.setattr(engine._results, "build_day_rows", lambda **kwargs: [[kwargs["date_str"], kwargs["total_value"], kwargs["benchmark_return_pct"]]])
+    monkeypatch.setattr(engine._results, "print_rows", lambda rows: None)
+    monkeypatch.setattr(engine._perf, "compute_metrics", lambda values: {"sharpe_ratio": 1.5})
+
+    engine._append_daily_state(
+        current_date=pd.Timestamp("2026-04-10"),
+        current_date_str="2026-04-10",
+        active_tickers=["001309"],
+        agent_output={"decisions": {"001309": {"action": "buy", "quantity": 10}}, "analyst_signals": {}},
+        executed_trades={"001309": 10},
+        current_prices={"001309": 100.0},
+    )
+
+    assert benchmark_tickers == ["000300.SH"]

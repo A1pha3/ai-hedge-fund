@@ -41,6 +41,8 @@ class SnapshotSignalState:
     short_term_reversal: float
     intraday_strength: float
     reversal_2d: float
+    trend_continuation: float
+    trend_continuation_2d: float
     momentum_1m: float
     momentum_3m: float
     momentum_6m: float
@@ -496,6 +498,8 @@ def _build_snapshot_signal_state(
         short_term_reversal=float(signal_snapshot.get("short_term_reversal", 0.0)),
         intraday_strength=float(signal_snapshot.get("intraday_strength", 0.0)),
         reversal_2d=float(signal_snapshot.get("reversal_2d", 0.0)),
+        trend_continuation=float(signal_snapshot.get("trend_continuation", 0.0)),
+        trend_continuation_2d=float(signal_snapshot.get("trend_continuation_2d", 0.0)),
         momentum_1m=float(signal_snapshot["momentum_1m"]),
         momentum_3m=float(signal_snapshot["momentum_3m"]),
         momentum_6m=float(signal_snapshot["momentum_6m"]),
@@ -1083,6 +1087,8 @@ def _build_snapshot_score_payload(
         "short_term_reversal": round(positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal, 4),
         "intraday_strength": round(positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength, 4),
         "reversal_2d": round(positive_score_weights.get("reversal_2d", 0.0) * state.reversal_2d, 4),
+        "trend_continuation": round(positive_score_weights.get("trend_continuation", 0.0) * state.trend_continuation, 4),
+        "trend_continuation_2d": round(positive_score_weights.get("trend_continuation_2d", 0.0) * state.trend_continuation_2d, 4),
         "trend_continuation_strength": trend_continuation_strength_positive_contribution,
     }
     weighted_negative_contributions = {

@@ -5791,6 +5791,100 @@ def _delta(left: Any, right: Any) -> float | None:
     return round(right_value - left_value, 4)
 
 
+def _resolve_guardrail_status(surface: dict[str, Any], *, guardrail_next_high_hit_rate: float, guardrail_next_close_positive_rate: float, closed_cycle_label: str) -> str:
+    guardrail_status = f"not_enough_closed_{closed_cycle_label}_rows"
+    surface_high_hit_rate = surface.get("next_high_hit_rate_at_threshold")
+    surface_close_positive_rate = surface.get("next_close_positive_rate")
+    if surface.get("closed_cycle_count", 0):
+        if surface_high_hit_rate is not None and surface_close_positive_rate is not None and float(surface_high_hit_rate) >= guardrail_next_high_hit_rate and float(surface_close_positive_rate) >= guardrail_next_close_positive_rate:
+            return f"passes_closed_{closed_cycle_label}_guardrails"
+        return f"fails_closed_{closed_cycle_label}_guardrails"
+    return guardrail_status
+
+
+def _build_surface_delta(baseline_surface: dict[str, Any], variant_surface: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "total_count": int(variant_surface.get("total_count", 0)) - int(baseline_surface.get("total_count", 0)),
+        "closed_cycle_count": int(variant_surface.get("closed_cycle_count", 0)) - int(baseline_surface.get("closed_cycle_count", 0)),
+        "next_high_hit_rate_at_threshold": _delta(
+            baseline_surface.get("next_high_hit_rate_at_threshold"),
+            variant_surface.get("next_high_hit_rate_at_threshold"),
+        ),
+        "next_close_positive_rate": _delta(
+            baseline_surface.get("next_close_positive_rate"),
+            variant_surface.get("next_close_positive_rate"),
+        ),
+        "t_plus_2_close_positive_rate": _delta(
+            baseline_surface.get("t_plus_2_close_positive_rate"),
+            variant_surface.get("t_plus_2_close_positive_rate"),
+        ),
+        "next_high_return_mean": _delta(
+            dict(baseline_surface.get("next_high_return_distribution") or {}).get("mean"),
+            dict(variant_surface.get("next_high_return_distribution") or {}).get("mean"),
+        ),
+        "next_close_return_mean": _delta(
+            dict(baseline_surface.get("next_close_return_distribution") or {}).get("mean"),
+            dict(variant_surface.get("next_close_return_distribution") or {}).get("mean"),
+        ),
+        "next_close_return_median": _delta(
+            dict(baseline_surface.get("next_close_return_distribution") or {}).get("median"),
+            dict(variant_surface.get("next_close_return_distribution") or {}).get("median"),
+        ),
+        "next_close_return_p10": _delta(
+            dict(baseline_surface.get("next_close_return_distribution") or {}).get("p10"),
+            dict(variant_surface.get("next_close_return_distribution") or {}).get("p10"),
+        ),
+        "t_plus_2_close_return_mean": _delta(
+            dict(baseline_surface.get("t_plus_2_close_return_distribution") or {}).get("mean"),
+            dict(variant_surface.get("t_plus_2_close_return_distribution") or {}).get("mean"),
+        ),
+        "t_plus_2_close_return_median": _delta(
+            dict(baseline_surface.get("t_plus_2_close_return_distribution") or {}).get("median"),
+            dict(variant_surface.get("t_plus_2_close_return_distribution") or {}).get("median"),
+        ),
+        "t_plus_2_close_return_p10": _delta(
+            dict(baseline_surface.get("t_plus_2_close_return_distribution") or {}).get("p10"),
+            dict(variant_surface.get("t_plus_2_close_return_distribution") or {}).get("p10"),
+        ),
+        "next_close_payoff_ratio": _delta(
+            baseline_surface.get("next_close_payoff_ratio"),
+            variant_surface.get("next_close_payoff_ratio"),
+        ),
+        "next_close_profit_factor": _delta(
+            baseline_surface.get("next_close_profit_factor"),
+            variant_surface.get("next_close_profit_factor"),
+        ),
+        "next_close_expectancy": _delta(
+            baseline_surface.get("next_close_expectancy"),
+            variant_surface.get("next_close_expectancy"),
+        ),
+        "t_plus_2_close_payoff_ratio": _delta(
+            baseline_surface.get("t_plus_2_close_payoff_ratio"),
+            variant_surface.get("t_plus_2_close_payoff_ratio"),
+        ),
+        "t_plus_2_close_profit_factor": _delta(
+            baseline_surface.get("t_plus_2_close_profit_factor"),
+            variant_surface.get("t_plus_2_close_profit_factor"),
+        ),
+        "t_plus_2_close_expectancy": _delta(
+            baseline_surface.get("t_plus_2_close_expectancy"),
+            variant_surface.get("t_plus_2_close_expectancy"),
+        ),
+        "runner_capture_count": _delta(
+            baseline_surface.get("runner_capture_count"),
+            variant_surface.get("runner_capture_count"),
+        ),
+        "max_future_high_return_2_5d_hit_rate_at_20pct": _delta(
+            baseline_surface.get("max_future_high_return_2_5d_hit_rate_at_20pct"),
+            variant_surface.get("max_future_high_return_2_5d_hit_rate_at_20pct"),
+        ),
+        "max_future_high_return_2_5d_return_mean": _delta(
+            dict(baseline_surface.get("max_future_high_return_2_5d_distribution") or {}).get("mean"),
+            dict(variant_surface.get("max_future_high_return_2_5d_distribution") or {}).get("mean"),
+        ),
+    }
+
+
 def compare_reports(
     baseline: dict[str, Any],
     variant: dict[str, Any],
@@ -5800,6 +5894,8 @@ def compare_reports(
 ) -> dict[str, Any]:
     baseline_tradeable = dict(baseline["surface_summaries"]["tradeable"])
     variant_tradeable = dict(variant["surface_summaries"]["tradeable"])
+    baseline_selected = dict((baseline.get("surface_summaries") or {}).get("selected") or {})
+    variant_selected = dict((variant.get("surface_summaries") or {}).get("selected") or {})
     baseline_false_negative = dict(baseline["false_negative_proxy_summary"])
     variant_false_negative = dict(variant["false_negative_proxy_summary"])
 
@@ -5807,14 +5903,18 @@ def compare_reports(
     closed_cycle_actionable_delta = int(variant_tradeable.get("closed_cycle_count", 0)) - int(baseline_tradeable.get("closed_cycle_count", 0))
     false_negative_delta = int(variant_false_negative.get("count", 0)) - int(baseline_false_negative.get("count", 0))
 
-    guardrail_status = "not_enough_closed_tradeable_rows"
-    variant_high_hit_rate = variant_tradeable.get("next_high_hit_rate_at_threshold")
-    variant_close_positive_rate = variant_tradeable.get("next_close_positive_rate")
-    if variant_tradeable.get("closed_cycle_count", 0):
-        if variant_high_hit_rate is not None and variant_close_positive_rate is not None and float(variant_high_hit_rate) >= guardrail_next_high_hit_rate and float(variant_close_positive_rate) >= guardrail_next_close_positive_rate:
-            guardrail_status = "passes_closed_tradeable_guardrails"
-        else:
-            guardrail_status = "fails_closed_tradeable_guardrails"
+    guardrail_status = _resolve_guardrail_status(
+        variant_tradeable,
+        guardrail_next_high_hit_rate=guardrail_next_high_hit_rate,
+        guardrail_next_close_positive_rate=guardrail_next_close_positive_rate,
+        closed_cycle_label="tradeable",
+    )
+    selected_guardrail_status = _resolve_guardrail_status(
+        variant_selected,
+        guardrail_next_high_hit_rate=guardrail_next_high_hit_rate,
+        guardrail_next_close_positive_rate=guardrail_next_close_positive_rate,
+        closed_cycle_label="selected",
+    )
 
     if variant.get("artifact_status") == "missing_selection_artifacts" and int(variant.get("row_count", 0)) == 0:
         comparison_note = f"{variant['label']} 的 session_summary 已存在，但 selection_artifacts 缺失，无法自动重建 closed-cycle surface；当前比较仅能视为产物完整性告警，不能解读为 coverage 退化。"
@@ -5830,86 +5930,8 @@ def compare_reports(
     return {
         "baseline_label": baseline["label"],
         "variant_label": variant["label"],
-        "tradeable_surface_delta": {
-            "total_count": actionable_count_delta,
-            "closed_cycle_count": closed_cycle_actionable_delta,
-            "next_high_hit_rate_at_threshold": _delta(
-                baseline_tradeable.get("next_high_hit_rate_at_threshold"),
-                variant_tradeable.get("next_high_hit_rate_at_threshold"),
-            ),
-            "next_close_positive_rate": _delta(
-                baseline_tradeable.get("next_close_positive_rate"),
-                variant_tradeable.get("next_close_positive_rate"),
-            ),
-            "t_plus_2_close_positive_rate": _delta(
-                baseline_tradeable.get("t_plus_2_close_positive_rate"),
-                variant_tradeable.get("t_plus_2_close_positive_rate"),
-            ),
-            "next_high_return_mean": _delta(
-                dict(baseline_tradeable.get("next_high_return_distribution") or {}).get("mean"),
-                dict(variant_tradeable.get("next_high_return_distribution") or {}).get("mean"),
-            ),
-            "next_close_return_mean": _delta(
-                dict(baseline_tradeable.get("next_close_return_distribution") or {}).get("mean"),
-                dict(variant_tradeable.get("next_close_return_distribution") or {}).get("mean"),
-            ),
-            "next_close_return_median": _delta(
-                dict(baseline_tradeable.get("next_close_return_distribution") or {}).get("median"),
-                dict(variant_tradeable.get("next_close_return_distribution") or {}).get("median"),
-            ),
-            "next_close_return_p10": _delta(
-                dict(baseline_tradeable.get("next_close_return_distribution") or {}).get("p10"),
-                dict(variant_tradeable.get("next_close_return_distribution") or {}).get("p10"),
-            ),
-            "t_plus_2_close_return_mean": _delta(
-                dict(baseline_tradeable.get("t_plus_2_close_return_distribution") or {}).get("mean"),
-                dict(variant_tradeable.get("t_plus_2_close_return_distribution") or {}).get("mean"),
-            ),
-            "t_plus_2_close_return_median": _delta(
-                dict(baseline_tradeable.get("t_plus_2_close_return_distribution") or {}).get("median"),
-                dict(variant_tradeable.get("t_plus_2_close_return_distribution") or {}).get("median"),
-            ),
-            "t_plus_2_close_return_p10": _delta(
-                dict(baseline_tradeable.get("t_plus_2_close_return_distribution") or {}).get("p10"),
-                dict(variant_tradeable.get("t_plus_2_close_return_distribution") or {}).get("p10"),
-            ),
-            "next_close_payoff_ratio": _delta(
-                baseline_tradeable.get("next_close_payoff_ratio"),
-                variant_tradeable.get("next_close_payoff_ratio"),
-            ),
-            "next_close_profit_factor": _delta(
-                baseline_tradeable.get("next_close_profit_factor"),
-                variant_tradeable.get("next_close_profit_factor"),
-            ),
-            "next_close_expectancy": _delta(
-                baseline_tradeable.get("next_close_expectancy"),
-                variant_tradeable.get("next_close_expectancy"),
-            ),
-            "t_plus_2_close_payoff_ratio": _delta(
-                baseline_tradeable.get("t_plus_2_close_payoff_ratio"),
-                variant_tradeable.get("t_plus_2_close_payoff_ratio"),
-            ),
-            "t_plus_2_close_profit_factor": _delta(
-                baseline_tradeable.get("t_plus_2_close_profit_factor"),
-                variant_tradeable.get("t_plus_2_close_profit_factor"),
-            ),
-            "t_plus_2_close_expectancy": _delta(
-                baseline_tradeable.get("t_plus_2_close_expectancy"),
-                variant_tradeable.get("t_plus_2_close_expectancy"),
-            ),
-            "runner_capture_count": _delta(
-                baseline_tradeable.get("runner_capture_count"),
-                variant_tradeable.get("runner_capture_count"),
-            ),
-            "max_future_high_return_2_5d_hit_rate_at_20pct": _delta(
-                baseline_tradeable.get("max_future_high_return_2_5d_hit_rate_at_20pct"),
-                variant_tradeable.get("max_future_high_return_2_5d_hit_rate_at_20pct"),
-            ),
-            "max_future_high_return_2_5d_return_mean": _delta(
-                dict(baseline_tradeable.get("max_future_high_return_2_5d_distribution") or {}).get("mean"),
-                dict(variant_tradeable.get("max_future_high_return_2_5d_distribution") or {}).get("mean"),
-            ),
-        },
+        "tradeable_surface_delta": _build_surface_delta(baseline_tradeable, variant_tradeable),
+        "selected_surface_delta": _build_surface_delta(baseline_selected, variant_selected),
         "false_negative_proxy_delta": {
             "count": false_negative_delta,
             "next_high_hit_rate_at_threshold": _delta(
@@ -5922,6 +5944,7 @@ def compare_reports(
             ),
         },
         "guardrail_status": guardrail_status,
+        "selected_guardrail_status": selected_guardrail_status,
         "comparison_note": comparison_note,
     }
 

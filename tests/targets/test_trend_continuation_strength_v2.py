@@ -274,3 +274,34 @@ def test_trend_continuation_strength_v2_routes_negative_adjustment_into_penalty_
     assert profiled_result.metrics_payload["weighted_negative_contributions"]["trend_continuation_strength_penalty"] == pytest.approx(abs(expected_adjustment))
     assert profiled_result.metrics_payload["total_positive_contribution"] == pytest.approx(sum(profiled_result.weighted_positive_contributions.values()))
     assert profiled_result.metrics_payload["total_negative_contribution"] == pytest.approx(sum(profiled_result.weighted_negative_contributions.values()))
+
+
+def test_trend_corrected_v1_continuation_weights_boost_supported_continuation_candidate(
+    evaluate_short_trade_rejected_target_with_execution_model_shim: Callable[..., Any],
+) -> None:
+    entry = _make_trend_continuation_strength_entry()
+
+    baseline_result = evaluate_short_trade_rejected_target_with_execution_model_shim(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="trend_corrected_v1",
+        profile_overrides={
+            "trend_continuation_weight": 0.0,
+            "trend_continuation_2d_weight": 0.0,
+        },
+    )
+    profiled_result = evaluate_short_trade_rejected_target_with_execution_model_shim(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="trend_corrected_v1",
+    )
+
+    assert baseline_result.metrics_payload["positive_score_weights"]["trend_continuation"] == pytest.approx(0.0)
+    assert baseline_result.metrics_payload["positive_score_weights"]["trend_continuation_2d"] == pytest.approx(0.0)
+    assert profiled_result.metrics_payload["positive_score_weights"]["trend_continuation"] > 0.0
+    assert profiled_result.metrics_payload["positive_score_weights"]["trend_continuation_2d"] > 0.0
+    assert profiled_result.weighted_positive_contributions["trend_continuation"] > 0.0
+    assert profiled_result.weighted_positive_contributions["trend_continuation_2d"] > 0.0
+    assert profiled_result.metrics_payload["weighted_positive_contributions"]["trend_continuation"] == pytest.approx(profiled_result.weighted_positive_contributions["trend_continuation"])
+    assert profiled_result.metrics_payload["weighted_positive_contributions"]["trend_continuation_2d"] == pytest.approx(profiled_result.weighted_positive_contributions["trend_continuation_2d"])
+    assert profiled_result.score_target != pytest.approx(baseline_result.score_target)

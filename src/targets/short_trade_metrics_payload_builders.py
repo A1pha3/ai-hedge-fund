@@ -608,6 +608,8 @@ def _build_short_trade_core_metrics_payload(
         "short_term_reversal": round(float(snapshot.get("short_term_reversal", 0.0)), 4),
         "intraday_strength": round(float(snapshot.get("intraday_strength", 0.0)), 4),
         "reversal_2d": round(float(snapshot.get("reversal_2d", 0.0)), 4),
+        "trend_continuation": round(float(snapshot.get("trend_continuation", 0.0)), 4),
+        "trend_continuation_2d": round(float(snapshot.get("trend_continuation_2d", 0.0)), 4),
         "positive_score_weights": {name: round(float(value), 4) for name, value in positive_score_weights.items()},
         "breakout_stage": breakout_stage,
         "selected_breakout_gate_pass": selected_breakout_gate_pass,

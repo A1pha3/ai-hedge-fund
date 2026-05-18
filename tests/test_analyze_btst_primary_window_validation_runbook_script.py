@@ -58,3 +58,87 @@ def test_analyze_btst_primary_window_validation_runbook_flags_missing_new_window
 
     assert analysis["validation_verdict"] == "await_new_independent_window_data"
     assert analysis["window_scan_rows"][0]["status"] == "current_qualified_window"
+
+
+def test_analyze_btst_primary_window_validation_runbook_satisfies_requirement_after_two_windows_exist(tmp_path):
+    candidate_report = tmp_path / "candidate_report.json"
+    primary_roll_forward = tmp_path / "primary_roll_forward.json"
+    primary_window_gap = tmp_path / "primary_window_gap.json"
+    first_report_dir = tmp_path / "paper_trading_window_20260323_20260326_live"
+    second_report_dir = tmp_path / "paper_trading_window_20260429_20260514_live"
+    first_snapshot_dir = first_report_dir / "selection_artifacts" / "2026-03-26"
+    second_snapshot_dir = second_report_dir / "selection_artifacts" / "2026-05-14"
+    first_snapshot_dir.mkdir(parents=True)
+    second_snapshot_dir.mkdir(parents=True)
+
+    candidate_report.write_text(
+        json.dumps(
+            {
+                "report_dirs": [str(first_report_dir), str(second_report_dir)],
+                "candidates": [
+                    {
+                        "ticker": "001309",
+                        "distinct_window_count": 2,
+                        "window_keys": ["20260323_20260326", "20260429_20260514"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    primary_roll_forward.write_text(json.dumps({"generated_on": "2026-03-30"}, ensure_ascii=False) + "\n", encoding="utf-8")
+    primary_window_gap.write_text(
+        json.dumps({"missing_window_count": 0, "target_window_count": 2}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    first_snapshot_dir.joinpath("selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-26",
+                "rows": [
+                    {
+                        "ticker": "001309",
+                        "candidate_source": "short_trade_boundary",
+                        "short_trade": {"decision": "near_miss", "score_target": 0.48, "metrics_payload": {}},
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    second_snapshot_dir.joinpath("selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-05-14",
+                "rows": [
+                    {
+                        "ticker": "001309",
+                        "candidate_source": "short_trade_boundary",
+                        "short_trade": {"decision": "selected", "score_target": 0.52, "metrics_payload": {}},
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_primary_window_validation_runbook(
+        candidate_report,
+        primary_roll_forward_path=primary_roll_forward,
+        primary_window_gap_path=primary_window_gap,
+        ticker="001309",
+    )
+
+    assert analysis["missing_window_count"] == 0
+    assert analysis["validation_verdict"] == "independent_window_requirement_satisfied"
+    assert {row["window_key"] for row in analysis["window_scan_rows"] if row["status"] == "current_qualified_window"} == {
+        "20260323_20260326",
+        "20260429_20260514",
+    }
+    assert "已满足 distinct_window_count>=2" in analysis["recommendation"]
