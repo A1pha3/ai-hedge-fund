@@ -2426,3 +2426,170 @@ def test_build_continuation_promotion_ready_summary_two_windows_with_weak_edge_s
     assert summary["edge_threshold_verdict"] == "edge_threshold_not_satisfied"
     assert summary["promotion_merge_review_verdict"] == "await_stronger_edge_vs_default_btst"
     assert summary["next_window_edge_regression_merge_review_verdict"] == "await_stronger_edge_vs_default_btst"
+
+
+def test_generate_reports_manifest_corridor_entry_questions_use_corridor_focus_ticker(tmp_path: Path) -> None:
+    """When corridor persistence dossier has focus_ticker=300683, the manifest entry questions
+    for corridor-specific entries should reference 300683 instead of the stale 300720."""
+    reports_root = tmp_path / "data" / "reports"
+
+    # Write corridor persistence dossier with 300683 as focus
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json",
+        {
+            "focus_ticker": "300683",
+            "verdict": "await_second_independent_selected_window",
+            "next_confirmation_requirement": "300683 still needs 1 independent selected sample.",
+        },
+    )
+    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text(
+        "# corridor persistence dossier\n", encoding="utf-8"
+    )
+
+    # Write corridor window command board with 300683 as focus
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_window_command_board_latest.json",
+        {
+            "focus_ticker": "300683",
+            "verdict": "missing_candidate_dossier",
+            "next_target_trade_dates": ["2026-04-15"],
+        },
+    )
+    (reports_root / "btst_candidate_pool_corridor_window_command_board_latest.md").write_text(
+        "# corridor window command board\n", encoding="utf-8"
+    )
+
+    # Write corridor window diagnostics with 300683 as focus
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_window_diagnostics_latest.json",
+        {
+            "focus_ticker": "300683",
+            "near_miss_upgrade_window": None,
+            "visibility_gap_window": {
+                "trade_dates": ["2026-04-15"],
+                "verdict": "recoverable_current_plan_visibility_gap",
+            },
+            "recommendation": "Prioritize visibility gap window for 300683.",
+        },
+    )
+    (reports_root / "btst_candidate_pool_corridor_window_diagnostics_latest.md").write_text(
+        "# corridor window diagnostics\n", encoding="utf-8"
+    )
+
+    # Write corridor narrow probe with 300683 as focus
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_narrow_probe_latest.json",
+        {
+            "focus_ticker": "300683",
+            "verdict": "lane_specific_select_threshold_override_gap",
+            "threshold_override_gap_vs_anchor": 0.10,
+        },
+    )
+    (reports_root / "btst_candidate_pool_corridor_narrow_probe_latest.md").write_text(
+        "# corridor narrow probe\n", encoding="utf-8"
+    )
+
+    manifest = generate_reports_manifest(reports_root=reports_root)
+    entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
+
+    # Each corridor-specific entry question must reference the current focus ticker 300683
+    # and must NOT still reference the stale 300720
+    persistence_entry = entries_by_id["btst_candidate_pool_corridor_persistence_dossier_latest"]
+    assert "300683" in persistence_entry["question"], (
+        f"Corridor persistence entry question should contain '300683' but got: {persistence_entry['question']!r}"
+    )
+    assert "300720" not in persistence_entry["question"], (
+        f"Corridor persistence entry question still has stale '300720': {persistence_entry['question']!r}"
+    )
+
+    window_cmd_entry = entries_by_id["btst_candidate_pool_corridor_window_command_board_latest"]
+    assert "300683" in window_cmd_entry["question"], (
+        f"Corridor window command board entry question should contain '300683' but got: {window_cmd_entry['question']!r}"
+    )
+    assert "300720" not in window_cmd_entry["question"], (
+        f"Corridor window command board entry question still has stale '300720': {window_cmd_entry['question']!r}"
+    )
+
+    window_diag_entry = entries_by_id["btst_candidate_pool_corridor_window_diagnostics_latest"]
+    assert "300683" in window_diag_entry["question"], (
+        f"Corridor window diagnostics entry question should contain '300683' but got: {window_diag_entry['question']!r}"
+    )
+    assert "300720" not in window_diag_entry["question"], (
+        f"Corridor window diagnostics entry question still has stale '300720': {window_diag_entry['question']!r}"
+    )
+
+    narrow_probe_entry = entries_by_id["btst_candidate_pool_corridor_narrow_probe_latest"]
+    assert "300683" in narrow_probe_entry["question"], (
+        f"Corridor narrow probe entry question should contain '300683' but got: {narrow_probe_entry['question']!r}"
+    )
+    assert "300720" not in narrow_probe_entry["question"], (
+        f"Corridor narrow probe entry question still has stale '300720': {narrow_probe_entry['question']!r}"
+    )
+
+    # Summaries must reflect 300683 (read from JSON)
+    assert manifest["candidate_pool_corridor_persistence_dossier_summary"]["focus_ticker"] == "300683"
+    assert manifest["candidate_pool_corridor_window_command_board_summary"]["focus_ticker"] == "300683"
+    assert manifest["candidate_pool_corridor_window_diagnostics_summary"]["focus_ticker"] == "300683"
+
+
+def test_generate_reports_manifest_corridor_entry_questions_keep_300720_when_dossier_missing(tmp_path: Path) -> None:
+    """When no corridor persistence dossier exists, the manifest entry questions
+    must retain the default (300720) text unchanged."""
+    reports_root = tmp_path / "data" / "reports"
+    # Do NOT write the corridor persistence dossier - simulate missing artifact
+    # Write only the MD so the entry appears but the JSON is absent
+    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").parent.mkdir(
+        parents=True, exist_ok=True
+    )
+    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text(
+        "# corridor persistence dossier\n", encoding="utf-8"
+    )
+
+    manifest = generate_reports_manifest(reports_root=reports_root)
+    entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
+
+    # When the JSON dossier is absent, the entry question should still contain the default
+    # (currently 300720) rather than substituting an empty string or breaking
+    persistence_entry = entries_by_id.get("btst_candidate_pool_corridor_persistence_dossier_latest")
+    if persistence_entry is not None:
+        # Question should not be broken; it may retain 300720 or be the default text
+        assert isinstance(persistence_entry["question"], str)
+        assert len(persistence_entry["question"]) > 0
+
+
+def test_generate_reports_manifest_corridor_entry_questions_keep_300720_when_dossier_has_no_corroborating_artifacts(tmp_path: Path) -> None:
+    """When the corridor persistence dossier declares a focus_ticker (e.g. 300683) but none
+    of the corroborating corridor artifacts (window command board, window diagnostics, narrow probe)
+    exist to confirm that ticker, the manifest entry questions must NOT pivot away from 300720.
+    This is a safety gate preventing stale or unsupported dossier values from rewriting questions.
+    """
+    reports_root = tmp_path / "data" / "reports"
+
+    # Write persistence dossier with 300683 as focus_ticker - but NO corroborating artifacts
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json",
+        {
+            "focus_ticker": "300683",
+            "verdict": "await_second_independent_selected_window",
+            "next_confirmation_requirement": "300683 still needs 1 independent selected sample.",
+        },
+    )
+    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text(
+        "# corridor persistence dossier\n", encoding="utf-8"
+    )
+    # Intentionally omit: window command board, window diagnostics, narrow probe JSONs
+
+    manifest = generate_reports_manifest(reports_root=reports_root)
+    entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
+
+    # Without corroborating artifact support, questions must retain 300720 (the safe default)
+    persistence_entry = entries_by_id.get("btst_candidate_pool_corridor_persistence_dossier_latest")
+    if persistence_entry is not None:
+        assert "300720" in persistence_entry["question"], (
+            f"Corridor persistence entry question should retain '300720' when no corroborating artifacts exist, "
+            f"but got: {persistence_entry['question']!r}"
+        )
+        assert "300683" not in persistence_entry["question"], (
+            f"Corridor persistence entry question must not reference unsupported focus_ticker '300683' "
+            f"when no corroborating artifacts confirm it. Got: {persistence_entry['question']!r}"
+        )

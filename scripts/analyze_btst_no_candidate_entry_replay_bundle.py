@@ -14,6 +14,7 @@ from scripts.btst_report_utils import discover_report_dirs
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "btst_no_candidate_entry_action_board_latest.json"
+DEFAULT_CORRIDOR_SHADOW_PACK_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_no_candidate_entry_replay_bundle_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_no_candidate_entry_replay_bundle_latest.md"
 DEFAULT_PRIORITY_REPLAY_LIMIT = 3
@@ -33,6 +34,15 @@ def _parse_limit(value: int | None, default: int) -> int:
     if value is None:
         return default
     return max(int(value), 0)
+
+
+def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        return {}
+    return _load_json(resolved)
 
 
 def _resolve_report_dir(reports_root: Path, report_dir_name: str | None) -> Path | None:
@@ -244,17 +254,51 @@ def _summarize_window_scan(analysis: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _extract_corridor_primary_shadow_ticker(corridor_shadow_pack: dict[str, Any]) -> str | None:
+    if str(corridor_shadow_pack.get("shadow_status") or "").strip() != "ready_for_primary_shadow_replay":
+        return None
+    if str(corridor_shadow_pack.get("strict_release_status") or "").strip() != "strict_release_ready":
+        return None
+    primary_shadow_replay = corridor_shadow_pack.get("primary_shadow_replay")
+    if isinstance(primary_shadow_replay, dict):
+        ticker = str(primary_shadow_replay.get("ticker") or "").strip()
+        return ticker or None
+    if isinstance(primary_shadow_replay, str):
+        ticker = str(primary_shadow_replay).strip()
+        return ticker or None
+    return None
+
+
+def _merge_promising_priority_tickers(
+    priority_replay_rows: list[dict[str, Any]],
+    *,
+    corridor_primary_shadow_ticker: str | None,
+) -> list[str]:
+    ordered: list[str] = []
+    for row in priority_replay_rows:
+        ticker = str(row.get("ticker") or "").strip()
+        if row.get("viable_recall_probe") and ticker and ticker not in ordered:
+            ordered.append(ticker)
+
+    corridor_ticker = str(corridor_primary_shadow_ticker or "").strip()
+    available_priority_tickers = {
+        str(row.get("ticker") or "").strip()
+        for row in priority_replay_rows
+        if str(row.get("ticker") or "").strip()
+    }
+    if corridor_ticker and corridor_ticker in available_priority_tickers and corridor_ticker not in ordered:
+        ordered.append(corridor_ticker)
+    return ordered
+
+
 def _build_next_actions(
     priority_replay_rows: list[dict[str, Any]],
     hotspot_replay_rows: list[dict[str, Any]],
     global_window_scan_summary: dict[str, Any],
+    *,
+    promising_priority_tickers: list[str],
 ) -> list[str]:
     actions: list[str] = []
-    promising_priority_tickers = [
-        str(row.get("ticker") or "")
-        for row in priority_replay_rows
-        if row.get("viable_recall_probe") and row.get("ticker")
-    ]
     if promising_priority_tickers:
         actions.append(
             f"优先把 {promising_priority_tickers[:3]} 保留为 no-entry shadow recall probe，并继续核对 preserve_ticker 0 误伤。"
@@ -293,6 +337,9 @@ def analyze_btst_no_candidate_entry_replay_bundle(
     priority_replay_limit = _parse_limit(priority_replay_limit, DEFAULT_PRIORITY_REPLAY_LIMIT)
     hotspot_replay_limit = _parse_limit(hotspot_replay_limit, DEFAULT_HOTSPOT_REPLAY_LIMIT)
     global_scan_focus_limit = _parse_limit(global_scan_focus_limit, DEFAULT_GLOBAL_SCAN_FOCUS_LIMIT)
+    corridor_shadow_pack = _safe_load_json(reports_root / DEFAULT_CORRIDOR_SHADOW_PACK_PATH.name)
+    corridor_primary_shadow_ticker = _extract_corridor_primary_shadow_ticker(corridor_shadow_pack)
+    corridor_shadow_pack_status = str(corridor_shadow_pack.get("shadow_status") or "").strip() or "missing"
 
     priority_replay_rows = _build_priority_replay_rows(
         action_board,
@@ -334,21 +381,25 @@ def analyze_btst_no_candidate_entry_replay_bundle(
         if row.get("best_variant_name")
     )
     candidate_entry_status_counts = Counter(str(row.get("candidate_entry_status") or "unknown") for row in all_replay_rows)
-    promising_priority_tickers = [
-        str(row.get("ticker") or "")
-        for row in priority_replay_rows
-        if row.get("viable_recall_probe") and row.get("ticker")
-    ]
+    promising_priority_tickers = _merge_promising_priority_tickers(
+        priority_replay_rows,
+        corridor_primary_shadow_ticker=corridor_primary_shadow_ticker,
+    )
     promising_hotspot_report_dirs = [
         str(row.get("report_dir") or "")
         for row in hotspot_replay_rows
         if row.get("viable_recall_probe") and row.get("report_dir")
     ]
-    next_actions = _build_next_actions(priority_replay_rows, hotspot_replay_rows, global_window_scan_summary)
+    next_actions = _build_next_actions(
+        priority_replay_rows,
+        hotspot_replay_rows,
+        global_window_scan_summary,
+        promising_priority_tickers=promising_priority_tickers,
+    )
 
     if promising_priority_tickers:
         recommendation = (
-            f"当前 no-entry replay bundle 已为 {promising_priority_tickers[:3]} 找到 preserve-safe candidate-entry recall probe，"
+            f"当前 no-entry replay bundle 已为 {promising_priority_tickers[:3]} 找到 preserve-safe shadow recall probe，"
             "下一步应优先接回 shadow governance，而不是继续放松 score frontier。"
         )
     else:
@@ -365,6 +416,9 @@ def analyze_btst_no_candidate_entry_replay_bundle(
         "hotspot_replay_limit": hotspot_replay_limit,
         "global_scan_focus_limit": global_scan_focus_limit,
         "preserve_tickers": preserve_tickers,
+        "corridor_shadow_pack_path": (reports_root / DEFAULT_CORRIDOR_SHADOW_PACK_PATH.name).as_posix(),
+        "corridor_shadow_pack_status": corridor_shadow_pack_status,
+        "corridor_primary_shadow_ticker": corridor_primary_shadow_ticker,
         "priority_replay_rows": priority_replay_rows,
         "hotspot_replay_rows": hotspot_replay_rows,
         "global_window_scan": global_window_scan_summary,
@@ -388,6 +442,9 @@ def render_btst_no_candidate_entry_replay_bundle_markdown(analysis: dict[str, An
     lines.append("")
     lines.append("## Overview")
     lines.append(f"- action_board_path: {analysis.get('action_board_path')}")
+    lines.append(f"- corridor_shadow_pack_path: {analysis.get('corridor_shadow_pack_path')}")
+    lines.append(f"- corridor_shadow_pack_status: {analysis.get('corridor_shadow_pack_status')}")
+    lines.append(f"- corridor_primary_shadow_ticker: {analysis.get('corridor_primary_shadow_ticker')}")
     lines.append(f"- promising_priority_tickers: {analysis.get('promising_priority_tickers')}")
     lines.append(f"- promising_hotspot_report_dirs: {analysis.get('promising_hotspot_report_dirs')}")
     lines.append(f"- best_variant_counts: {analysis.get('best_variant_counts')}")

@@ -3,12 +3,12 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_ebb75c4bd511_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_f835564c98ef_checkpoint.json"
   },
   "optimized_profile_manifest_publication": {
     "status": "skipped",
     "reason": "non_btst_objective",
-    "manifest_path": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.worktrees/btst-winrate-design-20260517/data/reports/btst_latest_optimized_profile.json"
+    "manifest_path": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/btst_latest_optimized_profile.json"
   },
   "comparison_summary": {
     "ignition_breakout": {
@@ -604,6 +604,7 @@
       "missing_gap_risk_raw_100_delta_vs_default",
       "missing_projected_theme_exposure_delta_vs_default",
       "missing_incremental_theme_exposure_delta_vs_default",
+      "strict_false_negative_cases_present",
       "win_rate_first_rejected"
     ],
     "baseline_verdicts": {
@@ -632,7 +633,31 @@
         ]
       }
     },
-    "strict_btst_objective_gate": null,
+    "strict_btst_objective_gate": {
+      "action": "hold",
+      "blockers": [
+        "strict_false_negative_cases_present"
+      ],
+      "false_negative_count": 10,
+      "tradeable_surface": {
+        "closed_cycle_count": 377,
+        "positive_rate": 0.5756,
+        "return_hit_rate": 0.2971,
+        "mean_t_plus_2_return": 0.017,
+        "verdict": "below_strict_btst_objective",
+        "objective_fit_score": 0.4869
+      },
+      "rejected_surface": {
+        "closed_cycle_count": 167,
+        "positive_rate": 0.5689,
+        "return_hit_rate": 0.2335,
+        "mean_t_plus_2_return": 0.0113,
+        "verdict": "below_strict_btst_objective",
+        "objective_fit_score": 0.4254
+      },
+      "structural_guardrail": null,
+      "execution_eligible_evidence": null
+    },
     "execution_eligible_evidence": null,
     "win_rate_first_decision": {
       "verdict": "rejected",

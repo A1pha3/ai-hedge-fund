@@ -199,6 +199,8 @@ def test_analyze_btst_no_candidate_entry_replay_bundle_builds_priority_and_windo
         global_scan_focus_limit=2,
     )
 
+    assert analysis["corridor_shadow_pack_status"] == "missing"
+    assert analysis["corridor_primary_shadow_ticker"] is None
     assert analysis["promising_priority_tickers"] == ["300720", "003036"]
     assert analysis["best_variant_counts"]["weak_structure_triplet"] == 3
     assert analysis["candidate_entry_status_counts"]["filters_focus_and_weaker_than_false_negative_pool"] == 3
@@ -207,4 +209,44 @@ def test_analyze_btst_no_candidate_entry_replay_bundle_builds_priority_and_windo
     assert analysis["priority_replay_rows"][0]["viable_recall_probe"] is True
     assert analysis["priority_replay_rows"][0]["best_variant_name"] == "weak_structure_triplet"
     assert any("300720" in item for item in analysis["next_actions"])
-    assert "preserve-safe candidate-entry recall probe" in analysis["recommendation"]
+    assert "preserve-safe shadow recall probe" in analysis["recommendation"]
+
+
+def test_analyze_btst_no_candidate_entry_replay_bundle_promotes_ready_corridor_shadow_probe(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    action_board_path = _write_json(
+        reports_root / "btst_no_candidate_entry_action_board_latest.json",
+        {
+            "reports_root": str(reports_root.resolve()),
+            "preserve_tickers": ["300394"],
+            "top_priority_tickers": ["300683"],
+            "priority_queue": [
+                {"priority_rank": 1, "ticker": "300683", "primary_report_dir": "missing_report_dir"},
+            ],
+            "window_hotspot_rows": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_shadow_pack_latest.json",
+        {
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "strict_release_status": "strict_release_ready",
+            "strict_release_tickers": ["300683"],
+            "primary_shadow_replay": {"ticker": "300683", "lane_role": "primary_shadow_replay"},
+            "parallel_watch_lanes": [],
+            "recommendation": "corridor lane 已可进入 primary shadow replay，当前首选 ticker=300683。",
+        },
+    )
+
+    analysis = analyze_btst_no_candidate_entry_replay_bundle(
+        action_board_path,
+        priority_replay_limit=1,
+        hotspot_replay_limit=0,
+        global_scan_focus_limit=1,
+    )
+
+    assert analysis["corridor_shadow_pack_status"] == "ready_for_primary_shadow_replay"
+    assert analysis["corridor_primary_shadow_ticker"] == "300683"
+    assert analysis["promising_priority_tickers"] == ["300683"]
+    assert any("300683" in item for item in analysis["next_actions"])
+    assert "shadow recall probe" in analysis["recommendation"]

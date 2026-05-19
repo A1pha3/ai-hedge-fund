@@ -1718,6 +1718,29 @@ class TestActiveCorridorPrimaryFocusLoader:
         result = _load_active_corridor_primary_shadow_focus(pack_path)
         assert result == set()
 
+    @pytest.mark.parametrize("payload", ["null", "[]", '"a string"', "42"])
+    def test_returns_empty_set_when_pack_json_is_not_a_dict(self, tmp_path, payload):
+        """Non-dict JSON payloads (null, list, string, number) must not raise AttributeError."""
+        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+
+        pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+        pack_path.write_text(payload)
+        result = _load_active_corridor_primary_shadow_focus(pack_path)
+        assert result == set()
+
+    @pytest.mark.parametrize("bad_value", [["300683"], "300683", 300683, True])
+    def test_returns_empty_set_when_primary_shadow_replay_is_truthy_non_dict(self, tmp_path, bad_value):
+        """A dict payload with a truthy non-dict primary_shadow_replay must not raise AttributeError."""
+        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+
+        pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+        pack_path.write_text(json.dumps({
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "primary_shadow_replay": bad_value,
+        }))
+        result = _load_active_corridor_primary_shadow_focus(pack_path)
+        assert result == set()
+
     def test_shadow_focus_payload_includes_pack_primary_in_corridor_layer_key(self, tmp_path):
         """When the shadow pack has a ready primary, _shadow_focus_payload must include it
         under the 'layer_a_liquidity_corridor' key so the focus signature changes."""

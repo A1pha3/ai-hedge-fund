@@ -127,8 +127,11 @@ def _load_active_corridor_primary_shadow_focus(pack_path: Path) -> set[str]:
     """
     try:
         data = json.loads(pack_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return set()
         if data.get("shadow_status") == "ready_for_primary_shadow_replay":
-            ticker = str((data.get("primary_shadow_replay") or {}).get("ticker") or "").strip()
+            psr = data.get("primary_shadow_replay")
+            ticker = str((psr.get("ticker") if isinstance(psr, dict) else None) or "").strip()
             return {ticker} if ticker else set()
     except (OSError, json.JSONDecodeError, ValueError):
         pass

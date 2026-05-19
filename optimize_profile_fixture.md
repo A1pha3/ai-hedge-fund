@@ -3,7 +3,7 @@
 ## Search Metadata
 
 Search Stage: **full**
-Checkpoint: `data/reports/param_search_ignition_breakout_ebb75c4bd511_checkpoint.json`
+Checkpoint: `data/reports/param_search_ignition_breakout_f835564c98ef_checkpoint.json`
 
 ## Baseline Comparison
 
@@ -35,8 +35,9 @@ Rollout Blockers:
 - `missing_gap_risk_raw_100_delta_vs_default`
 - `missing_projected_theme_exposure_delta_vs_default`
 - `missing_incremental_theme_exposure_delta_vs_default`
+- `strict_false_negative_cases_present`
 - `win_rate_first_rejected`
 
 Optimized Profile Manifest Publication: **skipped**
-- manifest_path: `/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.worktrees/btst-winrate-design-20260517/data/reports/btst_latest_optimized_profile.json`
+- manifest_path: `/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/btst_latest_optimized_profile.json`
 - reason: `non_btst_objective`

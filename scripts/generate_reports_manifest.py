@@ -2172,7 +2172,54 @@ def _select_latest_btst_candidate(reports_root: Path, repo_root: Path) -> dict[s
     return max(candidates, key=lambda candidate: candidate["rank"])
 
 
+_CORRIDOR_FOCUS_ENTRY_IDS: frozenset[str] = frozenset(
+    {
+        "btst_candidate_pool_corridor_persistence_dossier_latest",
+        "btst_candidate_pool_corridor_window_command_board_latest",
+        "btst_candidate_pool_corridor_window_diagnostics_latest",
+        "btst_candidate_pool_corridor_narrow_probe_latest",
+    }
+)
+_CORRIDOR_FOCUS_ENTRY_DEFAULT_TICKER = "300720"
+
+
+def _resolve_corridor_focus_ticker_for_entries(repo_root: Path) -> str | None:
+    """Return the current corridor focus ticker only when the persistence dossier AND at least
+    one corroborating corridor artifact (window command board, window diagnostics, or narrow probe)
+    agree on the same focus_ticker. This conservative gate prevents stale or insufficiently
+    evidenced dossier values from rewriting entry questions away from the safe default 300720."""
+    reports_root = repo_root / "data" / "reports"
+    dossier_path = reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+    if not dossier_path.exists():
+        return None
+    try:
+        dossier = json.loads(dossier_path.read_text(encoding="utf-8"))
+        ticker = str(dossier.get("focus_ticker") or "").strip()
+        if not ticker:
+            return None
+    except Exception:
+        return None
+
+    # Require at least one corroborating artifact to confirm the same focus_ticker
+    corroborating_paths = [
+        reports_root / "btst_candidate_pool_corridor_window_command_board_latest.json",
+        reports_root / "btst_candidate_pool_corridor_window_diagnostics_latest.json",
+        reports_root / "btst_candidate_pool_corridor_narrow_probe_latest.json",
+    ]
+    for path in corroborating_paths:
+        if not path.exists():
+            continue
+        try:
+            artifact = json.loads(path.read_text(encoding="utf-8"))
+            if str(artifact.get("focus_ticker") or "").strip() == ticker:
+                return ticker
+        except Exception:
+            continue
+    return None
+
+
 def _build_static_entries(repo_root: Path) -> list[dict[str, Any]]:
+    corridor_focus_ticker = _resolve_corridor_focus_ticker_for_entries(repo_root)
     entries: list[dict[str, Any]] = []
     for spec in STATIC_ENTRY_SPECS:
         absolute_path = repo_root / spec["path"]
@@ -2184,6 +2231,13 @@ def _build_static_entries(repo_root: Path) -> list[dict[str, Any]]:
                 relative_name,
                 glob_pattern=STATIC_ENTRY_GLOB_OVERRIDES[spec["id"]],
             )
+        question = spec["question"]
+        if (
+            corridor_focus_ticker
+            and corridor_focus_ticker != _CORRIDOR_FOCUS_ENTRY_DEFAULT_TICKER
+            and spec["id"] in _CORRIDOR_FOCUS_ENTRY_IDS
+        ):
+            question = question.replace(_CORRIDOR_FOCUS_ENTRY_DEFAULT_TICKER, corridor_focus_ticker)
         entry = _build_entry(
             entry_id=spec["id"],
             absolute_path=absolute_path,
@@ -2193,7 +2247,7 @@ def _build_static_entries(repo_root: Path) -> list[dict[str, Any]]:
             usage=spec["usage"],
             priority=int(spec["priority"]),
             is_latest=bool(spec["is_latest"]),
-            question=spec["question"],
+            question=question,
             view_order=int(spec["view_order"]),
             time_scope=dict(spec["time_scope"]),
             source_kind=spec["source_kind"],
