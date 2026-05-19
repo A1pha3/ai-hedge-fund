@@ -79,6 +79,7 @@ from src.tools.tushare_api import (
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _SNAPSHOT_DIR = _PROJECT_ROOT / "data" / "snapshots"
 _COOLDOWN_FILE = _SNAPSHOT_DIR / "cooldown_registry.json"
+_CORRIDOR_SHADOW_PACK_PATH = _PROJECT_ROOT / "data" / "reports" / "btst_candidate_pool_corridor_shadow_pack_latest.json"
 
 # 常量
 MIN_LISTING_DAYS = 60
@@ -115,6 +116,23 @@ SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS = {
 SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS = {
     item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", "").split(",") if item.strip()
 }
+
+
+def _load_active_corridor_primary_shadow_focus(pack_path: Path) -> set[str]:
+    """Read the corridor shadow pack artifact and return the primary_shadow_replay ticker as a focus set.
+
+    Returns an empty set when the file is missing, unreadable, or the shadow status is not
+    'ready_for_primary_shadow_replay'.  This ensures the corridor gate can apply the relaxed
+    focus rules to 300683 (or any future primary) without requiring the env-var to be set manually.
+    """
+    try:
+        data = json.loads(pack_path.read_text(encoding="utf-8"))
+        if data.get("shadow_status") == "ready_for_primary_shadow_replay":
+            ticker = str((data.get("primary_shadow_replay") or {}).get("ticker") or "").strip()
+            return {ticker} if ticker else set()
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    return set()
 
 
 def _candidate_pool_snapshot_path(trade_date: str, pool_size: int | None = None) -> Path:
@@ -171,9 +189,10 @@ def _candidate_liquidity_sort_key(candidate: CandidateStock) -> tuple[int, float
 
 
 def _shadow_focus_payload() -> dict[str, list[str]]:
+    pack_primary_focus = _load_active_corridor_primary_shadow_focus(_CORRIDOR_SHADOW_PACK_PATH)
     return {
         "all": sorted(SHADOW_FOCUS_TICKERS),
-        "layer_a_liquidity_corridor": sorted(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS),
+        "layer_a_liquidity_corridor": sorted(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS | pack_primary_focus),
         "post_gate_liquidity_competition": sorted(SHADOW_FOCUS_REBUCKET_TICKERS),
         "visibility_gap_all": sorted(SHADOW_VISIBILITY_GAP_TICKERS),
         "visibility_gap_layer_a_liquidity_corridor": sorted(SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS),
@@ -192,7 +211,7 @@ def _shadow_focus_signature() -> str:
 def _resolve_shadow_focus_tickers(*, lane: str) -> set[str]:
     lane_specific_focus: set[str] = set()
     if lane == "layer_a_liquidity_corridor":
-        lane_specific_focus = SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS
+        lane_specific_focus = SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS | _load_active_corridor_primary_shadow_focus(_CORRIDOR_SHADOW_PACK_PATH)
     elif lane == "post_gate_liquidity_competition":
         lane_specific_focus = SHADOW_FOCUS_REBUCKET_TICKERS
     return set(SHADOW_FOCUS_TICKERS) | set(lane_specific_focus)
