@@ -395,10 +395,15 @@ def analyze_btst_candidate_pool_lane_pair_board(
     rebucket_comparison_bundle_path: str | Path,
     governance_synthesis_path: str | Path | None = None,
     upstream_handoff_board_path: str | Path | None = None,
+    *,
+    persistence_dossier_path: str | Path | None = None,
 ) -> dict[str, Any]:
     corridor_pack = _maybe_load_json(corridor_shadow_pack_path)
     if not corridor_pack:
-        corridor_pack = analyze_btst_candidate_pool_corridor_shadow_pack(REPORTS_DIR / "btst_candidate_pool_corridor_validation_pack_latest.json")
+        corridor_pack = analyze_btst_candidate_pool_corridor_shadow_pack(
+            REPORTS_DIR / "btst_candidate_pool_corridor_validation_pack_latest.json",
+            persistence_dossier_path=persistence_dossier_path,
+        )
 
     rebucket_bundle = _maybe_load_json(rebucket_comparison_bundle_path)
     if not rebucket_bundle:
@@ -496,6 +501,7 @@ if __name__ == "__main__":
     parser.add_argument("--rebucket-comparison-bundle-path", default=str(DEFAULT_REBUCKET_COMPARISON_BUNDLE_PATH))
     parser.add_argument("--governance-synthesis-path", default=str(DEFAULT_GOVERNANCE_SYNTHESIS_PATH))
     parser.add_argument("--upstream-handoff-board-path", default=None)
+    parser.add_argument("--persistence-dossier-path", default=None)
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -505,6 +511,7 @@ if __name__ == "__main__":
         args.rebucket_comparison_bundle_path,
         governance_synthesis_path=args.governance_synthesis_path,
         upstream_handoff_board_path=args.upstream_handoff_board_path,
+        persistence_dossier_path=args.persistence_dossier_path,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

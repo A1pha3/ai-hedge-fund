@@ -12,6 +12,17 @@ DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_pool_corridor_window_diagnos
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_corridor_window_diagnostics_latest.md"
 
 
+def _is_mismatched_dossier_path(path: Path, focus_ticker: str) -> bool:
+    """Return True when the dossier filename embeds a different ticker than focus_ticker."""
+    prefix = "btst_tplus2_candidate_dossier_"
+    suffix = "_latest"
+    stem = path.stem
+    if stem.startswith(prefix) and stem.endswith(suffix):
+        dossier_ticker = stem[len(prefix) : -len(suffix)]
+        return dossier_ticker != focus_ticker
+    return False
+
+
 def _load_json(path: str | Path) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
     return json.loads(resolved.read_text(encoding="utf-8"))
@@ -124,22 +135,58 @@ def _scan_visibility_gap_report_dir(report_dir: str | Path, ticker: str) -> dict
 
 def analyze_btst_candidate_pool_corridor_window_diagnostics(
     *,
-    candidate_dossier_path: str | Path = DEFAULT_CANDIDATE_DOSSIER_PATH,
+    candidate_dossier_path: str | Path | None = None,
     command_board_path: str | Path = DEFAULT_COMMAND_BOARD_PATH,
+    _reports_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    candidate_dossier = _load_json(candidate_dossier_path)
     command_board = _load_json(command_board_path)
-    focus_ticker = str(command_board.get("focus_ticker") or candidate_dossier.get("candidate_ticker") or "").strip()
+    focus_ticker = str(command_board.get("focus_ticker") or "").strip()
     if not focus_ticker:
-        raise ValueError("No focus_ticker found for corridor window diagnostics.")
+        raise ValueError("No focus_ticker found in command board for corridor window diagnostics.")
+
+    # Resolve the directory to use when constructing a derived dossier path:
+    # prefer an explicit _reports_dir override (for tests), otherwise root next to the command board.
+    _dossier_root = Path(_reports_dir) if _reports_dir is not None else Path(command_board_path).expanduser().resolve().parent
+
+    # Derive dossier path from command board focus ticker when not explicitly given, or when the
+    # provided path targets a stale ticker (e.g. 300720 while focus is now 300683).
+    if candidate_dossier_path is None:
+        candidate_dossier_path = _dossier_root / f"btst_tplus2_candidate_dossier_{focus_ticker}_latest.json"
+    else:
+        resolved_given = Path(candidate_dossier_path).expanduser().resolve()
+        if _is_mismatched_dossier_path(resolved_given, focus_ticker):
+            candidate_dossier_path = _dossier_root / f"btst_tplus2_candidate_dossier_{focus_ticker}_latest.json"
+
+    dossier_file = Path(candidate_dossier_path).expanduser().resolve()
+    if dossier_file.exists():
+        candidate_dossier = _load_json(dossier_file)
+    else:
+        # Graceful degradation: synthesise a minimal dossier from command board action_rows so that
+        # downstream window-selection logic can still proceed without crashing.
+        action_rows = [dict(row or {}) for row in list(command_board.get("action_rows") or [])]
+        per_window_summaries = [
+            {
+                "report_label": row.get("trade_date"),
+                "report_dir": row.get("report_dir"),
+                "decision": row.get("decision"),
+                "candidate_source": row.get("candidate_source"),
+                "downstream_bottleneck": row.get("downstream_bottleneck"),
+            }
+            for row in action_rows
+            if row.get("trade_date")
+        ]
+        candidate_dossier = {
+            "candidate_ticker": focus_ticker,
+            "per_window_summaries": per_window_summaries,
+        }
 
     selected_trade_date = str(list(command_board.get("confirmed_selected_trade_dates") or [None])[0] or "")
     near_miss_trade_date = str(list(command_board.get("next_target_trade_dates") or [None])[0] or "")
 
     selected_window = _choose_anchor_window(candidate_dossier, selected_trade_date)
     near_miss_window = _choose_anchor_window(candidate_dossier, near_miss_trade_date)
-    selected_target = _load_short_trade_target(selected_window.get("report_dir"), selected_trade_date, focus_ticker) if selected_window else {}
-    near_miss_target = _load_short_trade_target(near_miss_window.get("report_dir"), near_miss_trade_date, focus_ticker) if near_miss_window else {}
+    selected_target = _load_short_trade_target(selected_window.get("report_dir"), selected_trade_date, focus_ticker) if selected_window and selected_window.get("report_dir") else {}
+    near_miss_target = _load_short_trade_target(near_miss_window.get("report_dir"), near_miss_trade_date, focus_ticker) if near_miss_window and near_miss_window.get("report_dir") else {}
     selected_metrics = _extract_metric_subset(selected_target)
     near_miss_metrics = _extract_metric_subset(near_miss_target)
 
@@ -214,7 +261,7 @@ def analyze_btst_candidate_pool_corridor_window_diagnostics(
         },
         "recommendation": recommendation,
         "source_reports": {
-            "candidate_dossier": str(Path(candidate_dossier_path).expanduser().resolve()),
+            "candidate_dossier": str(dossier_file),
             "command_board": str(Path(command_board_path).expanduser().resolve()),
         },
     }
@@ -243,8 +290,8 @@ def render_btst_candidate_pool_corridor_window_diagnostics_markdown(analysis: di
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Diagnose the next two corridor windows for the 300720 selected-persistence lane.")
-    parser.add_argument("--candidate-dossier-path", default=str(DEFAULT_CANDIDATE_DOSSIER_PATH))
+    parser = argparse.ArgumentParser(description="Diagnose the next two corridor windows for the active corridor focus ticker.")
+    parser.add_argument("--candidate-dossier-path", default=None, help="Override the candidate dossier path; auto-derived from command board focus ticker if omitted.")
     parser.add_argument("--command-board-path", default=str(DEFAULT_COMMAND_BOARD_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))

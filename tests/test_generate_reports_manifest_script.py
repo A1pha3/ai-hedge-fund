@@ -17,7 +17,12 @@ from scripts.generate_reports_manifest import (
     generate_reports_manifest,
     generate_reports_manifest_artifacts,
 )
-from scripts.generate_reports_manifest_candidate_entry_shadow_helpers import _build_corridor_shadow_pack_summary
+from scripts.generate_reports_manifest_candidate_entry_shadow_helpers import (
+    _build_corridor_shadow_pack_summary,
+    build_candidate_entry_shadow_paths,
+    build_candidate_entry_shadow_initial_state,
+    refresh_candidate_entry_shadow_prerequisites,
+)
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
 
@@ -2593,3 +2598,213 @@ def test_generate_reports_manifest_corridor_entry_questions_keep_300720_when_dos
             f"Corridor persistence entry question must not reference unsupported focus_ticker '300683' "
             f"when no corroborating artifacts confirm it. Got: {persistence_entry['question']!r}"
         )
+
+
+def test_refresh_prerequisites_passes_persistence_dossier_path_to_corridor_shadow_pack(tmp_path: Path) -> None:
+    """regression: refresh_candidate_entry_shadow_prerequisites must call
+    analyze_btst_candidate_pool_corridor_shadow_pack with
+    persistence_dossier_path=reports_root/btst_candidate_pool_corridor_persistence_dossier_latest.json
+    so the persistence gate is honoured during manifest/control-tower refresh.
+    Without this fix the bypass omits persistence_dossier_path and a blocking dossier cannot
+    prevent a false ready state from propagating downstream."""
+    from unittest.mock import MagicMock, patch
+
+    from scripts.generate_reports_manifest import CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES
+
+    reports_root = tmp_path
+
+    captured: list[dict] = []
+
+    def fake_shadow_pack(validation_pack_path, **kwargs):
+        captured.append({"path": validation_pack_path, "kwargs": kwargs})
+        return {
+            "shadow_status": "skipped_no_corridor_lane",
+            "primary_shadow_replay": {},
+            "parallel_watch_lanes": [],
+            "strict_release_candidates": [],
+            "strict_release_status": "strict_release_unavailable",
+            "strict_release_tickers": [],
+            "validation_only_tickers": [],
+            "excluded_low_gate_tail_tickers": [],
+            "shadow_replay_commands": [],
+            "refresh_commands": [],
+            "lanes": [],
+        }
+
+    noop_action_board: dict = {"priority_queue": [], "window_hotspot_rows": []}
+    noop_recall: dict = {
+        "priority_stage_counts": {},
+        "dominant_stage": "",
+        "priority_handoff_branch_diagnoses": [],
+        "priority_handoff_branch_mechanisms": [],
+        "priority_handoff_branch_experiment_queue": [],
+        "shadow_visible_focus_tickers": [],
+        "shadow_visible_focus_profiles": [],
+        "focus_liquidity_profile_summary": {"primary_focus_tickers": [], "priority_handoff_counts": {}},
+    }
+
+    module = "scripts.generate_reports_manifest_candidate_entry_shadow_helpers"
+    with patch.multiple(
+        module,
+        analyze_btst_no_candidate_entry_action_board=MagicMock(return_value=noop_action_board),
+        analyze_btst_no_candidate_entry_failure_dossier=MagicMock(
+            return_value={
+                "priority_failure_class_counts": {},
+                "priority_handoff_stage_counts": {},
+                "top_candidate_entry_visible_but_not_selection_target_tickers": [],
+            }
+        ),
+        analyze_btst_watchlist_recall_dossier=MagicMock(return_value={"priority_recall_stage_counts": {}, "top_absent_from_candidate_pool_tickers": []}),
+        analyze_btst_candidate_pool_recall_dossier=MagicMock(return_value=noop_recall),
+        analyze_btst_candidate_pool_lane_objective_support=MagicMock(return_value={"branch_rows": []}),
+        analyze_btst_candidate_pool_branch_priority_board=MagicMock(return_value={"rows": []}),
+        analyze_btst_candidate_pool_corridor_validation_pack=MagicMock(
+            return_value={
+                "pack_status": "skipped_no_corridor_lane",
+                "strict_release_status": "",
+                "strict_release_candidates": [],
+                "validation_only_rows": [],
+                "excluded_low_gate_tail_tickers": [],
+            }
+        ),
+        analyze_btst_candidate_pool_corridor_shadow_pack=fake_shadow_pack,
+        run_btst_candidate_pool_rebucket_shadow_pack=MagicMock(return_value={"shadow_status": "skipped_no_rebucket_candidate", "experiment": {}}),
+        analyze_btst_candidate_pool_rebucket_objective_validation=MagicMock(return_value={"validation_status": "skipped_no_rebucket_candidate"}),
+        analyze_btst_candidate_pool_rebucket_comparison_bundle=MagicMock(
+            return_value={"bundle_status": "skipped_no_rebucket_lane", "rebucket_objective_row": {}, "priority_alignment_status": ""}
+        ),
+        analyze_btst_candidate_pool_upstream_handoff_board=MagicMock(return_value={"board_status": "skipped_no_focus_tickers", "historical_shadow_probe_tickers": []}),
+        analyze_btst_candidate_pool_lane_pair_board=MagicMock(
+            return_value={
+                "pair_status": "skipped_missing_candidates",
+                "leader": {},
+                "pair_rank_1": {},
+                "pair_rank_2": {},
+                "leader_governance_status": "",
+                "leader_governance_execution_quality": "",
+                "leader_governance_entry_timing_bias": "",
+                "parallel_watch_same_source_sample_count": 0,
+            }
+        ),
+        analyze_btst_candidate_pool_corridor_uplift_runbook=MagicMock(
+            return_value={"runbook_status": "skipped_no_corridor_probe", "corridor_validation_pack_status": "", "promotion_readiness_status": "", "prototype_type": ""}
+        ),
+        _write_analysis_artifact=MagicMock(return_value=None),
+    ):
+        paths = build_candidate_entry_shadow_paths(reports_root, dict(CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES))
+        state = build_candidate_entry_shadow_initial_state()
+        refresh_candidate_entry_shadow_prerequisites(paths=paths, reports_root=reports_root, preserve_tickers=[], state=state)
+
+    assert len(captured) == 1, "analyze_btst_candidate_pool_corridor_shadow_pack should have been called exactly once"
+    assert "persistence_dossier_path" in captured[0]["kwargs"], (
+        "analyze_btst_candidate_pool_corridor_shadow_pack must be called with persistence_dossier_path "
+        "so the persistence gate is honoured during manifest refresh; "
+        f"got kwargs: {captured[0]['kwargs']}"
+    )
+    expected = reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+    assert Path(captured[0]["kwargs"]["persistence_dossier_path"]) == expected
+
+
+def test_refresh_prerequisites_passes_persistence_dossier_path_to_lane_pair_board(tmp_path: Path) -> None:
+    """regression: refresh_candidate_entry_shadow_prerequisites must call
+    analyze_btst_candidate_pool_lane_pair_board with
+    persistence_dossier_path=reports_root/btst_candidate_pool_corridor_persistence_dossier_latest.json
+    so the persistence gate is honoured during the helper -> lane_pair_board hop.
+    Without this fix a missing shadow-pack artifact during the same refresh cycle can reopen
+    the fail-open path even when the dossier should block it."""
+    from unittest.mock import MagicMock, patch
+
+    from scripts.generate_reports_manifest import CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES
+
+    reports_root = tmp_path
+
+    captured: list[dict] = []
+
+    def fake_lane_pair_board(corridor_shadow_pack_path, rebucket_comparison_bundle_path, **kwargs):
+        captured.append({"kwargs": kwargs})
+        return {
+            "pair_status": "skipped_missing_candidates",
+            "leader": {},
+            "pair_rank_1": {},
+            "pair_rank_2": {},
+            "leader_governance_status": "",
+            "leader_governance_execution_quality": "",
+            "leader_governance_entry_timing_bias": "",
+            "parallel_watch_same_source_sample_count": 0,
+        }
+
+    noop_action_board: dict = {"priority_queue": [], "window_hotspot_rows": []}
+    noop_recall: dict = {
+        "priority_stage_counts": {},
+        "dominant_stage": "",
+        "priority_handoff_branch_diagnoses": [],
+        "priority_handoff_branch_mechanisms": [],
+        "priority_handoff_branch_experiment_queue": [],
+        "shadow_visible_focus_tickers": [],
+        "shadow_visible_focus_profiles": [],
+        "focus_liquidity_profile_summary": {"primary_focus_tickers": [], "priority_handoff_counts": {}},
+    }
+
+    module = "scripts.generate_reports_manifest_candidate_entry_shadow_helpers"
+    with patch.multiple(
+        module,
+        analyze_btst_no_candidate_entry_action_board=MagicMock(return_value=noop_action_board),
+        analyze_btst_no_candidate_entry_failure_dossier=MagicMock(
+            return_value={
+                "priority_failure_class_counts": {},
+                "priority_handoff_stage_counts": {},
+                "top_candidate_entry_visible_but_not_selection_target_tickers": [],
+            }
+        ),
+        analyze_btst_watchlist_recall_dossier=MagicMock(return_value={"priority_recall_stage_counts": {}, "top_absent_from_candidate_pool_tickers": []}),
+        analyze_btst_candidate_pool_recall_dossier=MagicMock(return_value=noop_recall),
+        analyze_btst_candidate_pool_lane_objective_support=MagicMock(return_value={"branch_rows": []}),
+        analyze_btst_candidate_pool_branch_priority_board=MagicMock(return_value={"rows": []}),
+        analyze_btst_candidate_pool_corridor_validation_pack=MagicMock(
+            return_value={
+                "pack_status": "skipped_no_corridor_lane",
+                "strict_release_status": "",
+                "strict_release_candidates": [],
+                "validation_only_rows": [],
+                "excluded_low_gate_tail_tickers": [],
+            }
+        ),
+        analyze_btst_candidate_pool_corridor_shadow_pack=MagicMock(
+            return_value={
+                "shadow_status": "skipped_no_corridor_lane",
+                "primary_shadow_replay": {},
+                "parallel_watch_lanes": [],
+                "strict_release_candidates": [],
+                "strict_release_status": "strict_release_unavailable",
+                "strict_release_tickers": [],
+                "validation_only_tickers": [],
+                "excluded_low_gate_tail_tickers": [],
+                "shadow_replay_commands": [],
+                "refresh_commands": [],
+                "lanes": [],
+            }
+        ),
+        run_btst_candidate_pool_rebucket_shadow_pack=MagicMock(return_value={"shadow_status": "skipped_no_rebucket_candidate", "experiment": {}}),
+        analyze_btst_candidate_pool_rebucket_objective_validation=MagicMock(return_value={"validation_status": "skipped_no_rebucket_candidate"}),
+        analyze_btst_candidate_pool_rebucket_comparison_bundle=MagicMock(
+            return_value={"bundle_status": "skipped_no_rebucket_lane", "rebucket_objective_row": {}, "priority_alignment_status": ""}
+        ),
+        analyze_btst_candidate_pool_upstream_handoff_board=MagicMock(return_value={"board_status": "skipped_no_focus_tickers", "historical_shadow_probe_tickers": []}),
+        analyze_btst_candidate_pool_lane_pair_board=fake_lane_pair_board,
+        analyze_btst_candidate_pool_corridor_uplift_runbook=MagicMock(
+            return_value={"runbook_status": "skipped_no_corridor_probe", "corridor_validation_pack_status": "", "promotion_readiness_status": "", "prototype_type": ""}
+        ),
+        _write_analysis_artifact=MagicMock(return_value=None),
+    ):
+        paths = build_candidate_entry_shadow_paths(reports_root, dict(CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES))
+        state = build_candidate_entry_shadow_initial_state()
+        refresh_candidate_entry_shadow_prerequisites(paths=paths, reports_root=reports_root, preserve_tickers=[], state=state)
+
+    assert len(captured) == 1, "analyze_btst_candidate_pool_lane_pair_board should have been called exactly once"
+    assert "persistence_dossier_path" in captured[0]["kwargs"], (
+        "analyze_btst_candidate_pool_lane_pair_board must be called with persistence_dossier_path "
+        "so the persistence gate is honoured during the helper -> lane_pair_board hop; "
+        f"got kwargs: {captured[0]['kwargs']}"
+    )
+    expected = reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+    assert Path(captured[0]["kwargs"]["persistence_dossier_path"]) == expected

@@ -104,12 +104,21 @@ def _load_candidate_pool_snapshot(
         snapshot_cache[compact_trade_date] = cached
         return cached
 
+    # No main snapshot found; still collect shadow-focus tickers independently.
+    shadow_ticker_set_fallback: set[str] = set()
+    for shadow_path in _shadow_snapshot_paths(snapshots_root, trade_date):
+        try:
+            shadow_payload = json.loads(shadow_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for ticker in _iter_shadow_snapshot_tickers(shadow_payload):
+            shadow_ticker_set_fallback.add(ticker)
     cached = {
         "snapshot_path": None,
         "snapshot_name": None,
         "snapshot_size": 0,
         "ticker_ranks": {},
-        "shadow_ticker_set": set(),
+        "shadow_ticker_set": shadow_ticker_set_fallback,
     }
     snapshot_cache[compact_trade_date] = cached
     return cached
@@ -260,7 +269,7 @@ def _collect_ticker_occurrence_evidence(
         shadow_ticker_set: set[str] = set(snapshot_payload.get("shadow_ticker_set") or set())
         candidate_pool_rank = ticker_ranks.get(ticker)
         candidate_pool_visible = candidate_pool_rank is not None or ticker in shadow_ticker_set
-        if not snapshot_payload.get("snapshot_path"):
+        if not snapshot_payload.get("snapshot_path") and not candidate_pool_visible:
             recall_stage = "missing_candidate_pool_snapshot"
         else:
             recall_stage = _classify_recall_stage(

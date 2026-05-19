@@ -288,7 +288,10 @@ def refresh_candidate_entry_shadow_prerequisites(
     )
     state.candidate_pool_corridor_validation_pack.status = str(state.candidate_pool_corridor_validation_pack.analysis.get("pack_status") or "refreshed")
 
-    state.candidate_pool_corridor_shadow_pack.analysis = analyze_btst_candidate_pool_corridor_shadow_pack(paths.candidate_pool_corridor_validation_pack.json)
+    state.candidate_pool_corridor_shadow_pack.analysis = analyze_btst_candidate_pool_corridor_shadow_pack(
+        paths.candidate_pool_corridor_validation_pack.json,
+        persistence_dossier_path=reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json",
+    )
     _write_analysis_artifact(
         paths.candidate_pool_corridor_shadow_pack,
         state.candidate_pool_corridor_shadow_pack.analysis,
@@ -363,6 +366,7 @@ def refresh_candidate_entry_shadow_prerequisites(
         paths.candidate_pool_corridor_shadow_pack.json,
         paths.candidate_pool_rebucket_comparison_bundle.json,
         upstream_handoff_board_path=paths.candidate_pool_upstream_handoff_board.json,
+        persistence_dossier_path=reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json",
     )
     _write_analysis_artifact(
         paths.candidate_pool_lane_pair_board,

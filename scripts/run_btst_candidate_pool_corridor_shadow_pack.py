@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.run_btst_candidate_pool_corridor_validation_pack import analyze_btst_candidate_pool_corridor_validation_pack
 
@@ -14,8 +17,17 @@ DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_la
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_latest.md"
 
 
-def _build_refresh_commands(*, corridor_validation_pack_path: str | Path) -> list[str]:
+def _build_refresh_commands(*, corridor_validation_pack_path: str | Path, persistence_dossier_path: str | Path | None = None) -> list[str]:
     resolved_validation_pack_path = Path(corridor_validation_pack_path).expanduser().resolve()
+    shadow_pack_cmd = (
+        "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
+        f"--corridor-validation-pack-path {resolved_validation_pack_path} "
+        "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
+        "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md"
+    )
+    if persistence_dossier_path:
+        resolved_persistence_dossier_path = Path(persistence_dossier_path).expanduser().resolve()
+        shadow_pack_cmd += f" --persistence-dossier-path {resolved_persistence_dossier_path}"
     return [
         "python scripts/run_btst_candidate_pool_corridor_validation_pack.py "
         "--dossier-path data/reports/btst_candidate_pool_recall_dossier_latest.json "
@@ -24,10 +36,7 @@ def _build_refresh_commands(*, corridor_validation_pack_path: str | Path) -> lis
         "--objective-monitor-path data/reports/btst_tplus1_tplus2_objective_monitor_latest.json "
         "--output-json data/reports/btst_candidate_pool_corridor_validation_pack_latest.json "
         "--output-md data/reports/btst_candidate_pool_corridor_validation_pack_latest.md",
-        "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
-        f"--corridor-validation-pack-path {resolved_validation_pack_path} "
-        "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
-        "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md",
+        shadow_pack_cmd,
     ]
 
 
@@ -112,8 +121,13 @@ def _build_corridor_shadow_replay_commands(
     primary: dict[str, Any],
     parallel: list[dict[str, Any]],
     refresh_commands: list[str],
+    persistence_dossier_path: str | Path | None = None,
 ) -> list[str]:
     shadow_replay_commands: list[str] = []
+    persistence_arg = ""
+    if persistence_dossier_path:
+        resolved_persistence_dossier_path = Path(persistence_dossier_path).expanduser().resolve()
+        persistence_arg = f" --persistence-dossier-path {resolved_persistence_dossier_path}"
     if primary:
         shadow_replay_commands.append(refresh_commands[-1])
     for row in parallel:
@@ -123,14 +137,55 @@ def _build_corridor_shadow_replay_commands(
                 "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
                 f"--corridor-validation-pack-path {Path(corridor_validation_pack_path).expanduser().resolve()} "
                 "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
-                "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md "
+                "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md"
+                f"{persistence_arg} "
                 f"# parallel_watch={ticker}"
             )
     return shadow_replay_commands
 
 
+_PERSISTENCE_BLOCKING_VERDICTS = frozenset({"await_second_independent_selected_window"})
+_PERSISTENCE_BLOCKING_GOVERNANCE_BLOCKERS = frozenset({"shadow_recall_not_persistent", "no_selected_persistence_or_independent_edge"})
+
+
+def _apply_persistence_gate(
+    *,
+    strict_release_status: str,
+    shadow_status: str,
+    strict_release_tickers: list[str],
+    persistence_dossier: dict[str, Any],
+    primary_ticker: str | None,
+) -> tuple[str, str, list[str]]:
+    """Return (strict_release_status, shadow_status, strict_release_tickers) after consulting the persistence dossier.
+
+    If the dossier shows a persistence-level governance blocker or an awaiting-second-window verdict for the
+    active corridor primary, this function overrides the incoming status values to fail-closed, preventing
+    contradictory 'ready' states from propagating downstream.
+    """
+    if not persistence_dossier:
+        return strict_release_status, shadow_status, strict_release_tickers
+
+    focus_ticker = str(persistence_dossier.get("focus_ticker") or "").strip()
+    verdict = str(persistence_dossier.get("verdict") or "").strip()
+    continuation = persistence_dossier.get("continuation_readiness") or {}
+    governance_blocker = str(continuation.get("governance_blocker") or "").strip()
+
+    # Only gate when the dossier focus ticker is the active corridor primary.
+    if primary_ticker and focus_ticker and focus_ticker != primary_ticker:
+        return strict_release_status, shadow_status, strict_release_tickers
+
+    persistence_blocked = verdict in _PERSISTENCE_BLOCKING_VERDICTS or governance_blocker in _PERSISTENCE_BLOCKING_GOVERNANCE_BLOCKERS
+    if not persistence_blocked:
+        return strict_release_status, shadow_status, strict_release_tickers
+
+    gated_tickers = [t for t in strict_release_tickers if t != focus_ticker] if focus_ticker else []
+    return "strict_release_blocked_by_persistence", "blocked_by_persistence_gate", gated_tickers
+
+
 def analyze_btst_candidate_pool_corridor_shadow_pack(
     corridor_validation_pack_path: str | Path,
+    *,
+    persistence_dossier_path: str | Path | None = None,
 ) -> dict[str, Any]:
     pack = _maybe_load_json(corridor_validation_pack_path)
     if not pack:
@@ -145,6 +200,25 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
     validation_only_tickers = [str(row.get("ticker") or "").strip() for row in validation_only_rows if str(row.get("ticker") or "").strip()]
     excluded_low_gate_tail_tickers = [str(ticker).strip() for ticker in list(pack.get("excluded_low_gate_tail_tickers") or []) if str(ticker).strip()]
     shadow_status = _resolve_corridor_shadow_status(pack_status=pack_status, primary=primary)
+
+    persistence_dossier = _maybe_load_json(persistence_dossier_path) if persistence_dossier_path else {}
+    primary_ticker = str(primary.get("ticker") or "").strip() if primary else None
+    strict_release_status, shadow_status, strict_release_tickers = _apply_persistence_gate(
+        strict_release_status=strict_release_status,
+        shadow_status=shadow_status,
+        strict_release_tickers=strict_release_tickers,
+        persistence_dossier=persistence_dossier,
+        primary_ticker=primary_ticker,
+    )
+
+    # When the persistence gate fires, clear all active replay promotion for this cycle.
+    # Do NOT silently promote a secondary ticker to primary — fail-closed means no primary_shadow_replay
+    # and no shadow_replay_commands until the persistence blocker is resolved.
+    if strict_release_status == "strict_release_blocked_by_persistence":
+        strict_release_candidates = [r for r in strict_release_candidates if str(r.get("ticker") or "").strip() in strict_release_tickers]
+        primary = {}
+        parallel = []
+
     strict_release_lanes = _build_corridor_shadow_lanes(primary, parallel)
     lanes = list(strict_release_lanes)
 
@@ -166,12 +240,13 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         excluded_low_gate_tail_tickers=excluded_low_gate_tail_tickers,
     )
 
-    refresh_commands = _build_refresh_commands(corridor_validation_pack_path=corridor_validation_pack_path)
+    refresh_commands = _build_refresh_commands(corridor_validation_pack_path=corridor_validation_pack_path, persistence_dossier_path=persistence_dossier_path)
     shadow_replay_commands = _build_corridor_shadow_replay_commands(
         corridor_validation_pack_path,
         primary=primary,
         parallel=parallel,
         refresh_commands=refresh_commands,
+        persistence_dossier_path=persistence_dossier_path,
     )
 
     return {
@@ -192,7 +267,13 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         "refresh_commands": refresh_commands,
         "shadow_replay_commands": shadow_replay_commands,
         "recommendation": recommendation,
-        "next_step": f"先对 {primary.get('ticker') or 'primary corridor ticker'} 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
+        "next_step": (
+            "persistence gate 已阻断 primary shadow replay，等待 persistence 条件满足后再恢复 corridor lane 执行。"
+            if shadow_status == "blocked_by_persistence_gate"
+            else "当前没有可执行的 corridor lane，shadow pack 仅保留为空位监控，暂无 replay 动作。"
+            if shadow_status == "skipped_no_corridor_lane"
+            else f"先对 {primary.get('ticker') or 'primary corridor ticker'} 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。"
+        ),
     }
 
 
@@ -241,11 +322,12 @@ def render_btst_candidate_pool_corridor_shadow_pack_markdown(analysis: dict[str,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build a corridor shadow pack for candidate-pool recall governance.")
     parser.add_argument("--corridor-validation-pack-path", default=str(DEFAULT_CORRIDOR_VALIDATION_PACK_PATH))
+    parser.add_argument("--persistence-dossier-path", default=None)
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
 
-    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(args.corridor_validation_pack_path)
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(args.corridor_validation_pack_path, persistence_dossier_path=args.persistence_dossier_path)
     output_json = Path(args.output_json).expanduser().resolve()
     output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     output_md = Path(args.output_md).expanduser().resolve()

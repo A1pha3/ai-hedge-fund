@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts.run_btst_candidate_pool_corridor_shadow_pack import analyze_btst_candidate_pool_corridor_shadow_pack
@@ -1825,3 +1827,871 @@ def test_corridor_uplift_runbook_keeps_evidence_only_when_validation_pack_is_not
     assert analysis["runbook_status"] == "accumulate_more_corridor_evidence"
     assert analysis["promotion_readiness_status"] == "corridor_shadow_probe_ready"
     assert any("closed-cycle accumulation" in step for step in analysis["execution_steps"])
+
+
+def test_corridor_shadow_pack_blocked_by_persistence_gate_when_dossier_shows_recall_not_persistent(tmp_path: Path) -> None:
+    """Persistence blocker must hard-gate strict_release_status even when the validation pack says strict_release_ready."""
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "strict_release_status": "strict_release_ready",
+            "strict_release_candidates": [
+                {
+                    "ticker": "300683",
+                    "validation_priority_rank": 1,
+                    "tractability_tier": "second_shadow_probe",
+                    "corridor_priority_rank": 1,
+                    "closed_cycle_count": 4,
+                    "mean_t_plus_2_return": 0.0577,
+                    "t_plus_2_return_hit_rate_at_target": 0.75,
+                    "t_plus_2_positive_rate": 1.0,
+                    "objective_fit_score": 0.9719,
+                    "uplift_to_cutoff_multiple_mean": 6.4288,
+                }
+            ],
+            "strict_release_tickers": ["300683"],
+        },
+    )
+    _write_json(
+        persistence_dossier_path,
+        {
+            "focus_ticker": "300683",
+            "continuation_readiness": {
+                "governance_status": "transient_probe_only",
+                "governance_blocker": "shadow_recall_not_persistent",
+                "current_decision": "rejected",
+            },
+            "verdict": "await_second_independent_selected_window",
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(
+        corridor_validation_pack_path,
+        persistence_dossier_path=persistence_dossier_path,
+    )
+
+    # The persistence gate must override the validation pack's optimistic status.
+    assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", (
+        f"Expected strict_release_blocked_by_persistence but got {analysis['strict_release_status']!r}"
+    )
+    assert analysis["shadow_status"] != "ready_for_primary_shadow_replay", (
+        f"shadow_status must not be ready_for_primary_shadow_replay when persistence gate fires"
+    )
+    assert "300683" not in analysis.get("strict_release_tickers", []), (
+        "300683 must not appear in strict_release_tickers when persistence gate fires"
+    )
+
+
+def test_corridor_shadow_pack_not_blocked_by_persistence_gate_when_dossier_verdict_is_merge_ready(tmp_path: Path) -> None:
+    """If persistence dossier says corridor_merge_review_probe_ready, strict_release_status must pass through unchanged."""
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "strict_release_status": "strict_release_ready",
+            "strict_release_candidates": [
+                {
+                    "ticker": "300683",
+                    "validation_priority_rank": 1,
+                    "tractability_tier": "second_shadow_probe",
+                    "corridor_priority_rank": 1,
+                    "closed_cycle_count": 8,
+                    "mean_t_plus_2_return": 0.0577,
+                    "t_plus_2_return_hit_rate_at_target": 0.75,
+                    "t_plus_2_positive_rate": 1.0,
+                    "objective_fit_score": 0.9719,
+                    "uplift_to_cutoff_multiple_mean": 6.4288,
+                }
+            ],
+            "strict_release_tickers": ["300683"],
+        },
+    )
+    _write_json(
+        persistence_dossier_path,
+        {
+            "focus_ticker": "300683",
+            "continuation_readiness": {
+                "governance_status": "continuation_only_confirm_then_review",
+                "governance_blocker": None,
+                "current_decision": "selected",
+            },
+            "verdict": "corridor_merge_review_probe_ready",
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(
+        corridor_validation_pack_path,
+        persistence_dossier_path=persistence_dossier_path,
+    )
+
+    # No persistence blocker — status must pass through from validation pack.
+    assert analysis["strict_release_status"] == "strict_release_ready", (
+        f"Expected strict_release_ready but got {analysis['strict_release_status']!r}"
+    )
+
+
+def test_corridor_shadow_pack_refresh_commands_include_persistence_dossier_path(tmp_path: Path) -> None:
+    """refresh_commands must carry --persistence-dossier-path so re-running the shadow pack cannot bypass the gate."""
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+
+    _write_json(corridor_validation_pack_path, {"pack_status": "parallel_probe_ready"})
+    _write_json(persistence_dossier_path, {"focus_ticker": "300683", "verdict": "corridor_merge_review_probe_ready"})
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(
+        corridor_validation_pack_path,
+        persistence_dossier_path=persistence_dossier_path,
+    )
+
+    shadow_pack_cmds = [cmd for cmd in analysis["refresh_commands"] if "run_btst_candidate_pool_corridor_shadow_pack.py" in cmd]
+    assert shadow_pack_cmds, "No shadow pack refresh command found in refresh_commands"
+    assert any("--persistence-dossier-path" in cmd for cmd in shadow_pack_cmds), (
+        f"Expected --persistence-dossier-path in shadow pack refresh command, got: {shadow_pack_cmds}"
+    )
+
+
+def test_corridor_shadow_pack_shadow_replay_commands_include_persistence_dossier_path(tmp_path: Path) -> None:
+    """shadow_replay_commands must carry --persistence-dossier-path so replays cannot bypass the gate."""
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "strict_release_candidates": [
+                {"ticker": "300683", "tractability_tier": "second_shadow_probe"},
+                {"ticker": "300720", "tractability_tier": "second_shadow_probe"},
+            ],
+        },
+    )
+    _write_json(persistence_dossier_path, {"focus_ticker": "300683", "verdict": "corridor_merge_review_probe_ready"})
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(
+        corridor_validation_pack_path,
+        persistence_dossier_path=persistence_dossier_path,
+    )
+
+    assert analysis["shadow_replay_commands"], "Expected non-empty shadow_replay_commands"
+    assert any("--persistence-dossier-path" in cmd for cmd in analysis["shadow_replay_commands"]), (
+        f"Expected --persistence-dossier-path in shadow_replay_commands, got: {analysis['shadow_replay_commands']}"
+    )
+
+
+def test_corridor_shadow_pack_cli_accepts_and_passes_persistence_dossier_path(tmp_path: Path) -> None:
+    """The script CLI must accept --persistence-dossier-path and wire it to the analysis function."""
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+    output_json = tmp_path / "output.json"
+    output_md = tmp_path / "output.md"
+
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "strict_release_status": "strict_release_ready",
+            "strict_release_candidates": [
+                {"ticker": "300683", "tractability_tier": "second_shadow_probe", "corridor_priority_rank": 1}
+            ],
+            "strict_release_tickers": ["300683"],
+        },
+    )
+    _write_json(
+        persistence_dossier_path,
+        {
+            "focus_ticker": "300683",
+            "continuation_readiness": {"governance_blocker": "shadow_recall_not_persistent"},
+            "verdict": "await_second_independent_selected_window",
+        },
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_btst_candidate_pool_corridor_shadow_pack.py",
+            "--corridor-validation-pack-path", str(corridor_validation_pack_path),
+            "--persistence-dossier-path", str(persistence_dossier_path),
+            "--output-json", str(output_json),
+            "--output-md", str(output_md),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).parent.parent),
+    )
+    assert result.returncode == 0, f"CLI exited non-zero: {result.stderr}"
+    analysis = json.loads(output_json.read_text())
+    assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", (
+        f"Persistence gate must fire via CLI --persistence-dossier-path, got: {analysis['strict_release_status']!r}"
+    )
+
+
+def test_corridor_uplift_runbook_execution_commands_include_persistence_dossier_path(tmp_path: Path) -> None:
+    """execution_commands emitted by the uplift runbook must include --persistence-dossier-path in the shadow pack step."""
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 8.603,
+                }
+            ]
+        },
+    )
+    _write_json(corridor_shadow_pack_path, {"primary_shadow_replay": {"ticker": "300720"}, "parallel_watch_lanes": [], "success_criteria": [], "guardrails": []})
+    _write_json(lane_pair_board_path, {"board_leader": {"ticker": "300720", "lane_family": "corridor"}})
+    _write_json(persistence_dossier_path, {"focus_ticker": "300720", "verdict": "corridor_merge_review_probe_ready"})
+
+    analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+        recall_dossier_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+        persistence_dossier_path=persistence_dossier_path,
+    )
+
+    shadow_pack_cmds = [cmd for cmd in analysis["execution_commands"] if "run_btst_candidate_pool_corridor_shadow_pack.py" in cmd]
+    assert shadow_pack_cmds, "No shadow pack command found in execution_commands"
+    assert any("--persistence-dossier-path" in cmd for cmd in shadow_pack_cmds), (
+        f"Expected --persistence-dossier-path in shadow pack execution command, got: {shadow_pack_cmds}"
+    )
+
+
+def test_corridor_uplift_runbook_execution_commands_uplift_runbook_step_includes_persistence_dossier_path(tmp_path: Path) -> None:
+    """The uplift-runbook step in execution_commands must carry --persistence-dossier-path so re-running it cannot bypass the gate."""
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 8.603,
+                }
+            ]
+        },
+    )
+    _write_json(corridor_shadow_pack_path, {"primary_shadow_replay": {"ticker": "300720"}, "parallel_watch_lanes": [], "success_criteria": [], "guardrails": []})
+    _write_json(lane_pair_board_path, {"board_leader": {"ticker": "300720", "lane_family": "corridor"}})
+    _write_json(persistence_dossier_path, {"focus_ticker": "300720", "verdict": "corridor_merge_review_probe_ready"})
+
+    analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+        recall_dossier_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+        persistence_dossier_path=persistence_dossier_path,
+    )
+
+    uplift_cmds = [cmd for cmd in analysis["execution_commands"] if "run_btst_candidate_pool_corridor_uplift_runbook.py" in cmd]
+    assert uplift_cmds, "No uplift runbook command found in execution_commands"
+    assert any("--persistence-dossier-path" in cmd for cmd in uplift_cmds), (
+        f"Expected --persistence-dossier-path in uplift runbook execution command, got: {uplift_cmds}"
+    )
+
+
+def test_corridor_uplift_runbook_fallback_shadow_pack_passes_persistence_dossier_path(tmp_path: Path) -> None:
+    """When corridor_shadow_pack_path is missing/empty and the fallback regeneration runs,
+    it must pass persistence_dossier_path to analyze_btst_candidate_pool_corridor_shadow_pack."""
+    import unittest.mock
+
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+    # corridor_shadow_pack_path intentionally omitted so fallback triggers
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 8.603,
+                }
+            ]
+        },
+    )
+    _write_json(lane_pair_board_path, {"board_leader": {"ticker": "300720", "lane_family": "corridor"}})
+    _write_json(persistence_dossier_path, {"focus_ticker": "300720", "verdict": "corridor_merge_review_probe_ready"})
+
+    fake_shadow_pack = {"primary_shadow_replay": {"ticker": "300720"}, "parallel_watch_lanes": [], "success_criteria": [], "guardrails": []}
+
+    with unittest.mock.patch(
+        "scripts.run_btst_candidate_pool_corridor_uplift_runbook.analyze_btst_candidate_pool_corridor_shadow_pack",
+        return_value=fake_shadow_pack,
+    ) as mock_shadow_pack:
+        analyze_btst_candidate_pool_corridor_uplift_runbook(
+            recall_dossier_path,
+            corridor_shadow_pack_path=None,
+            lane_pair_board_path=lane_pair_board_path,
+            persistence_dossier_path=persistence_dossier_path,
+        )
+
+    assert mock_shadow_pack.called, "analyze_btst_candidate_pool_corridor_shadow_pack was not called (fallback not triggered)"
+    _, call_kwargs = mock_shadow_pack.call_args
+    assert "persistence_dossier_path" in call_kwargs, (
+        f"Fallback call to analyze_btst_candidate_pool_corridor_shadow_pack must pass persistence_dossier_path, "
+        f"got kwargs: {call_kwargs}"
+    )
+    assert call_kwargs["persistence_dossier_path"] == persistence_dossier_path, (
+        f"persistence_dossier_path passed to fallback must match the one provided to the runbook, "
+        f"got: {call_kwargs['persistence_dossier_path']!r}"
+    )
+
+
+def test_corridor_shadow_pack_script_has_sys_path_bootstrap_for_direct_cli_execution() -> None:
+    """The script must self-bootstrap sys.path so 'python scripts/run_btst_candidate_pool_corridor_shadow_pack.py'
+    works from repo root without relying on the editable-install .pth in site-packages.
+
+    Regression: without sys.path.insert the script crashes at import time with
+    ModuleNotFoundError: No module named 'scripts.run_btst_candidate_pool_corridor_validation_pack'
+    when invoked via any Python that lacks the editable-install .pth (system Python, CI, etc.).
+    """
+    source = Path("scripts/run_btst_candidate_pool_corridor_shadow_pack.py").read_text()
+    assert "sys.path.insert" in source, (
+        "Script is missing sys.path.insert bootstrap. "
+        "Direct CLI execution 'python scripts/run_btst_candidate_pool_corridor_shadow_pack.py' "
+        "fails with ModuleNotFoundError on any Python without the venv editable-install .pth. "
+        "Add: sys.path.insert(0, str(Path(__file__).resolve().parent.parent)) "
+        "before any 'from scripts.' import."
+    )
+
+
+def test_corridor_shadow_pack_script_direct_cli_execution_works() -> None:
+    """The shadow-pack script must self-bootstrap sys.path so
+    'python scripts/run_btst_candidate_pool_corridor_shadow_pack.py --help'
+    succeeds without relying on the venv's editable-install .pth file.
+
+    Regression: without sys.path.insert the script crashes at import time with
+    ModuleNotFoundError when invoked directly (e.g., via the command emitted in refresh_commands).
+
+    The test simulates a no-.pth environment by passing -S (skip site-packages / .pth files)
+    and providing the venv site-packages directory via PYTHONPATH so that third-party
+    dependencies are still available.  Under these conditions only the script's own
+    sys.path.insert can resolve the 'scripts.*' / 'src.*' package roots, so a missing
+    bootstrap will produce ModuleNotFoundError and a non-zero exit code.
+    """
+    import os
+
+    repo_root = Path(__file__).resolve().parent.parent
+    venv_python = repo_root / ".venv" / "bin" / "python"
+    if not venv_python.exists():
+        venv_python = Path(sys.executable)
+    venv_site = repo_root / ".venv" / "lib"
+    site_dirs = sorted(venv_site.glob("python3.*/site-packages")) if venv_site.exists() else []
+    env = {**os.environ, "PYTHONPATH": str(site_dirs[0]) if site_dirs else ""}
+
+    result = subprocess.run(
+        [str(venv_python), "-S", "scripts/run_btst_candidate_pool_corridor_shadow_pack.py", "--help"],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        "Direct CLI execution of scripts/run_btst_candidate_pool_corridor_shadow_pack.py --help "
+        "failed in a no-.pth environment.  This usually means the sys.path bootstrap is missing or broken.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "usage:" in result.stdout.lower() or "usage:" in result.stderr.lower(), (
+        "Expected argparse usage text in output of --help invocation, "
+        f"got stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+def test_corridor_shadow_pack_persistence_gate_with_multiple_candidates_clears_primary_replay(tmp_path: Path) -> None:
+    """Regression: when persistence gate fires AND there are multiple strict-release candidates,
+    the secondary ticker must NOT be silently promoted to primary_shadow_replay.
+    Fail-closed means: primary_shadow_replay={} and shadow_replay_commands=[] for that cycle.
+    """
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+
+    # Two strict-release candidates: primary=300683 (will be blocked), secondary=300720.
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "strict_release_status": "strict_release_ready",
+            "strict_release_candidates": [
+                {
+                    "ticker": "300683",
+                    "validation_priority_rank": 1,
+                    "tractability_tier": "second_shadow_probe",
+                    "corridor_priority_rank": 1,
+                    "closed_cycle_count": 4,
+                    "mean_t_plus_2_return": 0.057,
+                    "t_plus_2_return_hit_rate_at_target": 0.75,
+                    "t_plus_2_positive_rate": 1.0,
+                    "objective_fit_score": 0.97,
+                    "uplift_to_cutoff_multiple_mean": 6.4,
+                },
+                {
+                    "ticker": "300720",
+                    "validation_priority_rank": 2,
+                    "tractability_tier": "second_shadow_probe",
+                    "corridor_priority_rank": 2,
+                    "closed_cycle_count": 3,
+                    "mean_t_plus_2_return": 0.045,
+                    "t_plus_2_return_hit_rate_at_target": 0.67,
+                    "t_plus_2_positive_rate": 0.9,
+                    "objective_fit_score": 0.88,
+                    "uplift_to_cutoff_multiple_mean": 5.1,
+                },
+            ],
+            "strict_release_tickers": ["300683", "300720"],
+        },
+    )
+    # Persistence dossier gates 300683 (the active primary).
+    _write_json(
+        persistence_dossier_path,
+        {
+            "focus_ticker": "300683",
+            "continuation_readiness": {
+                "governance_status": "transient_probe_only",
+                "governance_blocker": "shadow_recall_not_persistent",
+                "current_decision": "rejected",
+            },
+            "verdict": "await_second_independent_selected_window",
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(
+        corridor_validation_pack_path,
+        persistence_dossier_path=persistence_dossier_path,
+    )
+
+    assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", (
+        f"Expected strict_release_blocked_by_persistence but got {analysis['strict_release_status']!r}"
+    )
+    assert analysis["shadow_status"] == "blocked_by_persistence_gate", (
+        f"Expected blocked_by_persistence_gate but got {analysis['shadow_status']!r}"
+    )
+    assert analysis["primary_shadow_replay"] == {}, (
+        f"Fail-closed: primary_shadow_replay must be empty dict when persistence gate fires, "
+        f"got {analysis['primary_shadow_replay']!r}. "
+        f"300720 must NOT be silently promoted as secondary-becomes-primary."
+    )
+    assert analysis["shadow_replay_commands"] == [], (
+        f"Fail-closed: shadow_replay_commands must be empty when persistence gate fires, "
+        f"got {analysis['shadow_replay_commands']!r}."
+    )
+
+
+def test_corridor_shadow_pack_blocked_next_step_suppresses_replay_guidance(tmp_path: Path) -> None:
+    """Regression: when persistence gate fires and shadow_status == blocked_by_persistence_gate,
+    next_step must NOT emit replay-oriented guidance (e.g. 'shadow replay' language).
+    Fail-closed means next_step switches to an explicit blocked/no-op message."""
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "strict_release_status": "strict_release_ready",
+            "strict_release_candidates": [
+                {
+                    "ticker": "300683",
+                    "validation_priority_rank": 1,
+                    "tractability_tier": "second_shadow_probe",
+                    "corridor_priority_rank": 1,
+                    "closed_cycle_count": 4,
+                    "mean_t_plus_2_return": 0.0577,
+                    "t_plus_2_return_hit_rate_at_target": 0.75,
+                    "t_plus_2_positive_rate": 1.0,
+                    "objective_fit_score": 0.9719,
+                    "uplift_to_cutoff_multiple_mean": 6.4288,
+                }
+            ],
+            "strict_release_tickers": ["300683"],
+        },
+    )
+    _write_json(
+        persistence_dossier_path,
+        {
+            "focus_ticker": "300683",
+            "continuation_readiness": {
+                "governance_status": "transient_probe_only",
+                "governance_blocker": "shadow_recall_not_persistent",
+                "current_decision": "rejected",
+            },
+            "verdict": "await_second_independent_selected_window",
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(
+        corridor_validation_pack_path,
+        persistence_dossier_path=persistence_dossier_path,
+    )
+
+    assert analysis["shadow_status"] == "blocked_by_persistence_gate"
+    next_step = analysis.get("next_step") or ""
+    # Must NOT contain active replay instructions (e.g., "保持 ... shadow replay")
+    assert "保持" not in next_step or "shadow replay" not in next_step.lower(), (
+        f"next_step must NOT contain active replay instructions when persistence gate fires, "
+        f"got: {next_step!r}"
+    )
+    assert "blocked" in next_step.lower() or "persistence" in next_step.lower() or "等待" in next_step or "阻断" in next_step, (
+        f"next_step must reference the blocked/persistence state explicitly, got: {next_step!r}"
+    )
+
+
+def test_corridor_shadow_pack_no_active_primary_next_step_is_noop(tmp_path: Path) -> None:
+    """Regression: when there is no active primary (skipped_no_corridor_lane),
+    next_step must NOT emit replay-oriented guidance but instead a no-op/skip message."""
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+
+    _write_json(corridor_validation_pack_path, {"pack_status": "skipped_no_corridor_lane"})
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(corridor_validation_pack_path)
+
+    assert analysis["shadow_status"] == "skipped_no_corridor_lane"
+    next_step = analysis.get("next_step") or ""
+    assert "shadow replay" not in next_step.lower(), (
+        f"next_step must NOT contain replay-oriented guidance when there is no active primary, "
+        f"got: {next_step!r}"
+    )
+
+
+def test_corridor_uplift_runbook_blocked_shadow_pack_suppresses_paper_trading_commands(tmp_path: Path) -> None:
+    """Regression: when the corridor shadow pack is blocked by persistence gate (no active primary),
+    execution_commands must NOT include run_paper_trading.py commands.
+    Emitting replay/paper-trading commands in a blocked state violates fail-closed semantics."""
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 8.603,
+                }
+            ]
+        },
+    )
+    # Blocked shadow pack: persistence gate fired, no active primary
+    _write_json(
+        corridor_shadow_pack_path,
+        {
+            "shadow_status": "blocked_by_persistence_gate",
+            "strict_release_status": "strict_release_blocked_by_persistence",
+            "primary_shadow_replay": {},
+            "parallel_watch_lanes": [],
+            "shadow_replay_commands": [],
+            "success_criteria": [],
+            "guardrails": [],
+        },
+    )
+    _write_json(lane_pair_board_path, {"board_leader": {"ticker": "300683", "lane_family": "corridor"}})
+
+    analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+        recall_dossier_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+    )
+
+    paper_trading_cmds = [cmd for cmd in analysis["execution_commands"] if "run_paper_trading.py" in cmd]
+    assert paper_trading_cmds == [], (
+        f"execution_commands must NOT include run_paper_trading.py when shadow pack is blocked, "
+        f"got: {paper_trading_cmds}"
+    )
+
+
+def test_corridor_uplift_runbook_blocked_shadow_pack_next_step_is_not_replay_oriented(tmp_path: Path) -> None:
+    """Regression: when the corridor shadow pack is blocked (no active primary),
+    the runbook next_step must NOT be replay-oriented (e.g. 'primary shadow replay 槽位' language)."""
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+
+    _write_json(recall_dossier_path, {"priority_handoff_branch_experiment_queue": []})
+    _write_json(
+        corridor_shadow_pack_path,
+        {
+            "shadow_status": "blocked_by_persistence_gate",
+            "strict_release_status": "strict_release_blocked_by_persistence",
+            "primary_shadow_replay": {},
+            "parallel_watch_lanes": [],
+            "shadow_replay_commands": [],
+            "success_criteria": [],
+            "guardrails": [],
+        },
+    )
+    _write_json(lane_pair_board_path, {"board_leader": {}})
+
+    analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+        recall_dossier_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+    )
+
+    next_step = analysis.get("next_step") or ""
+    assert "primary shadow replay 槽位" not in next_step, (
+        f"next_step must NOT be replay-oriented when shadow pack is blocked, got: {next_step!r}"
+    )
+
+
+def test_corridor_uplift_runbook_execution_commands_preserve_custom_corridor_validation_pack_path(tmp_path: Path) -> None:
+    """Regression: execution_commands must carry the custom --corridor-validation-pack-path in the
+    shadow-pack step so re-running those commands operates on the exact same inputs.
+
+    Previously _build_corridor_uplift_commands hardcoded the default path, silently dropping
+    any custom corridor_validation_pack_path that was passed to the runbook.
+    """
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    # Deliberately non-default name to make the assertion unambiguous.
+    corridor_validation_pack_path = tmp_path / "custom_corridor_validation_pack.json"
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 8.603,
+                }
+            ]
+        },
+    )
+    _write_json(corridor_validation_pack_path, {"pack_status": "parallel_probe_ready"})
+    _write_json(corridor_shadow_pack_path, {"primary_shadow_replay": {"ticker": "300720"}, "parallel_watch_lanes": [], "success_criteria": [], "guardrails": []})
+    _write_json(lane_pair_board_path, {"board_leader": {"ticker": "300720", "lane_family": "corridor"}})
+
+    analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+        recall_dossier_path,
+        corridor_validation_pack_path=corridor_validation_pack_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+    )
+
+    shadow_pack_cmds = [cmd for cmd in analysis["execution_commands"] if "run_btst_candidate_pool_corridor_shadow_pack.py" in cmd]
+    assert shadow_pack_cmds, "No shadow pack command found in execution_commands"
+    resolved_cvp = str(corridor_validation_pack_path.resolve())
+    assert any(resolved_cvp in cmd for cmd in shadow_pack_cmds), (
+        f"Custom corridor_validation_pack_path {resolved_cvp!r} must appear in the shadow-pack "
+        f"execution_command so re-running it operates on the same inputs. "
+        f"Got: {shadow_pack_cmds}"
+    )
+
+
+def test_corridor_uplift_runbook_fallback_shadow_pack_uses_custom_corridor_validation_pack_path(tmp_path: Path) -> None:
+    """Regression: when corridor_shadow_pack_path is missing/empty and fallback regeneration runs,
+    the fallback call to analyze_btst_candidate_pool_corridor_shadow_pack must use the
+    corridor_validation_pack_path that was passed to the runbook, not the hardcoded default.
+    """
+    import unittest.mock
+
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    corridor_validation_pack_path = tmp_path / "custom_corridor_validation_pack.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+    # corridor_shadow_pack_path intentionally omitted so fallback triggers.
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 8.603,
+                }
+            ]
+        },
+    )
+    _write_json(corridor_validation_pack_path, {"pack_status": "parallel_probe_ready"})
+    _write_json(lane_pair_board_path, {"board_leader": {"ticker": "300720", "lane_family": "corridor"}})
+
+    fake_shadow_pack = {"primary_shadow_replay": {"ticker": "300720"}, "parallel_watch_lanes": [], "success_criteria": [], "guardrails": []}
+
+    with unittest.mock.patch(
+        "scripts.run_btst_candidate_pool_corridor_uplift_runbook.analyze_btst_candidate_pool_corridor_shadow_pack",
+        return_value=fake_shadow_pack,
+    ) as mock_shadow_pack:
+        analyze_btst_candidate_pool_corridor_uplift_runbook(
+            recall_dossier_path,
+            corridor_validation_pack_path=corridor_validation_pack_path,
+            corridor_shadow_pack_path=None,
+            lane_pair_board_path=lane_pair_board_path,
+        )
+
+    assert mock_shadow_pack.called, "Fallback analyze_btst_candidate_pool_corridor_shadow_pack was not called"
+    call_args = mock_shadow_pack.call_args
+    # First positional arg must be our custom validation pack path (resolved or as-is)
+    used_path = Path(call_args[0][0]).resolve() if call_args[0] else None
+    expected_path = corridor_validation_pack_path.resolve()
+    assert used_path == expected_path, (
+        f"Fallback must pass the custom corridor_validation_pack_path to shadow pack regeneration. "
+        f"Expected {expected_path!r}, got {used_path!r}"
+    )
+
+
+def test_corridor_uplift_runbook_script_direct_cli_execution_works() -> None:
+    """The uplift runbook script must self-bootstrap sys.path so
+    'python scripts/run_btst_candidate_pool_corridor_uplift_runbook.py --help'
+    succeeds without relying on the venv's editable-install .pth file.
+
+    Regression: without sys.path.insert the script crashes at import time with
+    ModuleNotFoundError when invoked directly (e.g., via the command emitted in execution_commands).
+
+    The test simulates a no-.pth environment by passing -S (skip site-packages / .pth files)
+    and providing the venv site-packages directory via PYTHONPATH so that third-party
+    dependencies are still available.  Under these conditions only the script's own
+    sys.path.insert can resolve the 'scripts.*' / 'src.*' package roots, so a missing
+    bootstrap will produce ModuleNotFoundError and a non-zero exit code.
+    """
+    import os
+
+    repo_root = Path(__file__).resolve().parent.parent
+    # Use the venv's own interpreter to guarantee it matches the site-packages we put on PYTHONPATH.
+    # sys.executable can be a different Python version (e.g. the system Python) which would cause
+    # stdlib/site-packages mismatches and make this test flaky.
+    venv_python = repo_root / ".venv" / "bin" / "python"
+    if not venv_python.exists():
+        venv_python = Path(sys.executable)
+    venv_site = repo_root / ".venv" / "lib"
+    site_dirs = sorted(venv_site.glob("python3.*/site-packages")) if venv_site.exists() else []
+    env = {**os.environ, "PYTHONPATH": str(site_dirs[0]) if site_dirs else ""}
+
+    result = subprocess.run(
+        [str(venv_python), "-S", "scripts/run_btst_candidate_pool_corridor_uplift_runbook.py", "--help"],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        "Direct CLI execution of scripts/run_btst_candidate_pool_corridor_uplift_runbook.py --help "
+        "failed in a no-.pth environment.  This usually means the sys.path bootstrap is missing or broken.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "usage:" in result.stdout.lower() or "usage:" in result.stderr.lower(), (
+        "Expected argparse usage text in output of --help invocation, "
+        f"got stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+def test_corridor_uplift_runbook_self_rerun_command_includes_corridor_validation_pack_path(tmp_path: Path) -> None:
+    """Regression: the self-rerun command for run_btst_candidate_pool_corridor_uplift_runbook.py
+    emitted in execution_commands must include --corridor-validation-pack-path so that re-running
+    the runbook cannot silently switch back to the default validation pack.
+    """
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    corridor_validation_pack_path = tmp_path / "custom_validation_pack.json"
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 8.603,
+                }
+            ]
+        },
+    )
+    _write_json(corridor_validation_pack_path, {"pack_status": "parallel_probe_ready"})
+    _write_json(corridor_shadow_pack_path, {"primary_shadow_replay": {"ticker": "300720"}, "parallel_watch_lanes": [], "success_criteria": [], "guardrails": []})
+    _write_json(lane_pair_board_path, {"board_leader": {"ticker": "300720", "lane_family": "corridor"}})
+
+    analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+        recall_dossier_path,
+        corridor_validation_pack_path=corridor_validation_pack_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+    )
+
+    uplift_cmds = [cmd for cmd in analysis["execution_commands"] if "run_btst_candidate_pool_corridor_uplift_runbook.py" in cmd]
+    assert uplift_cmds, "No uplift runbook self-rerun command found in execution_commands"
+    resolved_pack_path = str(corridor_validation_pack_path.expanduser().resolve())
+    assert any(f"--corridor-validation-pack-path {resolved_pack_path}" in cmd for cmd in uplift_cmds), (
+        f"Expected '--corridor-validation-pack-path {resolved_pack_path}' in uplift runbook self-rerun command, "
+        f"got: {uplift_cmds}"
+    )
+
+
+def test_lane_pair_board_fallback_passes_persistence_dossier_path(tmp_path: Path) -> None:
+    """regression: when corridor_shadow_pack_path cannot be loaded and the fallback inside
+    analyze_btst_candidate_pool_lane_pair_board recomputes the shadow pack, it must forward
+    persistence_dossier_path to analyze_btst_candidate_pool_corridor_shadow_pack so the
+    persistence gate is honoured.  Without the fix the fallback call omits
+    persistence_dossier_path, bypassing the gate and producing a false ready state."""
+    from unittest.mock import patch
+
+    # A path that does not exist triggers the fallback branch at line ~401
+    corridor_shadow_pack_path = tmp_path / "missing_shadow_pack.json"
+    rebucket_path = tmp_path / "rebucket.json"
+    persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+
+    _write_json(rebucket_path, {"bundle_status": "skipped_no_rebucket_lane", "rebucket_objective_row": {}, "priority_alignment_status": ""})
+    _write_json(
+        persistence_dossier_path,
+        {
+            "focus_ticker": "300683",
+            "verdict": "await_second_independent_selected_window",
+            "continuation_readiness": {"governance_blocker": ""},
+        },
+    )
+
+    captured: list[dict] = []
+
+    def fake_shadow_pack(validation_pack_path, **kwargs):
+        captured.append({"path": validation_pack_path, "kwargs": kwargs})
+        return {"shadow_status": "skipped_no_corridor_lane", "primary_shadow_replay": {}, "parallel_watch_lanes": []}
+
+    with patch(
+        "scripts.run_btst_candidate_pool_lane_pair_board.analyze_btst_candidate_pool_corridor_shadow_pack",
+        side_effect=fake_shadow_pack,
+    ):
+        analyze_btst_candidate_pool_lane_pair_board(
+            str(corridor_shadow_pack_path),
+            str(rebucket_path),
+            persistence_dossier_path=str(persistence_dossier_path),
+        )
+
+    assert len(captured) == 1, "fallback should have called analyze_btst_candidate_pool_corridor_shadow_pack"
+    assert "persistence_dossier_path" in captured[0]["kwargs"], (
+        "fallback must forward persistence_dossier_path to preserve fail-closed semantics; "
+        f"got kwargs: {captured[0]['kwargs']}"
+    )

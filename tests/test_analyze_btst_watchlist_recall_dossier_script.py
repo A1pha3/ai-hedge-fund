@@ -170,6 +170,138 @@ def test_analyze_btst_watchlist_recall_dossier_recognizes_shadow_focus_snapshot_
     assert dossiers_by_ticker["300683"]["candidate_pool_visible_count"] == 1
 
 
+def test_analyze_btst_watchlist_recall_dossier_shadow_only_snapshot_counts_as_visible(tmp_path: Path) -> None:
+    """Regression: when NO main top300 snapshot exists but a shadow-focus snapshot does,
+    a ticker present in the shadow file must NOT be classified as missing_candidate_pool_snapshot."""
+    reports_root = tmp_path / "data" / "reports"
+    snapshots_root = tmp_path / "data" / "snapshots"
+    tradeable_pool_path = _write_json(
+        reports_root / "btst_tradeable_opportunity_pool_shadow_only.json",
+        {
+            "reports_root": str(reports_root.resolve()),
+            "rows": [
+                {
+                    "trade_date": "2026-04-10",
+                    "ticker": "300888",
+                    "first_kill_switch": "no_candidate_entry",
+                    "report_dir": "paper_trading_window_x",
+                    "report_mode": "live_pipeline",
+                    "system_seen_stage": None,
+                    "candidate_source": None,
+                    "strict_btst_goal_case": True,
+                    "next_high_return": 0.10,
+                    "t_plus_2_close_return": 0.11,
+                },
+            ],
+            "no_candidate_entry_summary": {
+                "top_ticker_rows": [{"ticker": "300888"}]
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_no_candidate_entry_failure_dossier_latest.json",
+        {"top_absent_from_watchlist_tickers": ["300888"]},
+    )
+    # Deliberately NO main candidate_pool_20260410_top300.json
+    # Only the shadow-focus snapshot exists for this date
+    _write_json(
+        snapshots_root / "candidate_pool_20260410_top300_shadow_focus_def456.json",
+        {
+            "shadow_candidates": [
+                {"ticker": "300888", "candidate_pool_rank": 999},
+            ],
+            "shadow_summary": {
+                "focus_signature": "def456",
+                "shadow_recall_status": "computed",
+                "tickers": [{"ticker": "300888"}],
+            },
+        },
+    )
+
+    analysis = analyze_btst_watchlist_recall_dossier(
+        tradeable_pool_path,
+        failure_dossier_path=reports_root / "btst_no_candidate_entry_failure_dossier_latest.json",
+        priority_limit=1,
+    )
+
+    dossiers_by_ticker = {row["ticker"]: row for row in analysis["priority_ticker_dossiers"]}
+    assert dossiers_by_ticker["300888"]["dominant_recall_stage"] != "missing_candidate_pool_snapshot", (
+        "300888 is present in the shadow-only snapshot; should not be classified as missing_candidate_pool_snapshot"
+    )
+    assert dossiers_by_ticker["300888"]["dominant_recall_stage"] == "candidate_pool_visible_but_missing_layer_b", (
+        "300888 is shadow-visible with no layer-b info; expected candidate_pool_visible_but_missing_layer_b"
+    )
+    assert dossiers_by_ticker["300888"]["candidate_pool_visible_count"] == 1
+
+
+def test_analyze_btst_watchlist_recall_dossier_shadow_only_absent_ticker_stays_missing_snapshot(tmp_path: Path) -> None:
+    """Regression: shadow-only date, ticker NOT in shadow → missing_candidate_pool_snapshot, not absent_from_candidate_pool.
+
+    A shadow-focus snapshot is partial evidence only. If the analyzed ticker does not
+    appear in any shadow file and no main top300 snapshot exists, the script must
+    fall back to missing_candidate_pool_snapshot rather than absent_from_candidate_pool.
+    """
+    reports_root = tmp_path / "data" / "reports"
+    snapshots_root = tmp_path / "data" / "snapshots"
+    tradeable_pool_path = _write_json(
+        reports_root / "btst_tradeable_opportunity_pool_shadow_absent.json",
+        {
+            "reports_root": str(reports_root.resolve()),
+            "rows": [
+                {
+                    "trade_date": "2026-04-11",
+                    "ticker": "300999",
+                    "first_kill_switch": "no_candidate_entry",
+                    "report_dir": "paper_trading_window_y",
+                    "report_mode": "live_pipeline",
+                    "system_seen_stage": None,
+                    "candidate_source": None,
+                    "strict_btst_goal_case": True,
+                    "next_high_return": 0.10,
+                    "t_plus_2_close_return": 0.11,
+                },
+            ],
+            "no_candidate_entry_summary": {
+                "top_ticker_rows": [{"ticker": "300999"}]
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_no_candidate_entry_failure_dossier_latest.json",
+        {"top_absent_from_watchlist_tickers": ["300999"]},
+    )
+    # Deliberately NO main candidate_pool_20260411_top300.json.
+    # Shadow-focus snapshot exists but contains a DIFFERENT ticker, not 300999.
+    _write_json(
+        snapshots_root / "candidate_pool_20260411_top300_shadow_focus_ghi789.json",
+        {
+            "shadow_candidates": [
+                {"ticker": "300111", "candidate_pool_rank": 50},
+            ],
+            "shadow_summary": {
+                "focus_signature": "ghi789",
+                "shadow_recall_status": "computed",
+                "tickers": [{"ticker": "300111"}],
+            },
+        },
+    )
+
+    analysis = analyze_btst_watchlist_recall_dossier(
+        tradeable_pool_path,
+        failure_dossier_path=reports_root / "btst_no_candidate_entry_failure_dossier_latest.json",
+        priority_limit=1,
+    )
+
+    dossiers_by_ticker = {row["ticker"]: row for row in analysis["priority_ticker_dossiers"]}
+    assert dossiers_by_ticker["300999"]["dominant_recall_stage"] != "absent_from_candidate_pool", (
+        "300999 is absent from a shadow-only snapshot; shadow is partial evidence only — "
+        "should not be classified as absent_from_candidate_pool"
+    )
+    assert dossiers_by_ticker["300999"]["dominant_recall_stage"] == "missing_candidate_pool_snapshot", (
+        "No main snapshot and ticker not in shadow; expected missing_candidate_pool_snapshot"
+    )
+
+
 def test_render_btst_watchlist_recall_dossier_markdown_renders_sections() -> None:
     markdown = render_btst_watchlist_recall_dossier_markdown(
         {
