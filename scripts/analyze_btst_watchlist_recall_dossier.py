@@ -46,6 +46,24 @@ def _snapshot_paths(snapshots_root: Path, trade_date: str) -> list[Path]:
     ]
 
 
+def _shadow_snapshot_paths(snapshots_root: Path, trade_date: str) -> list[Path]:
+    compact_trade_date = "".join(ch for ch in str(trade_date or "") if ch.isdigit())
+    focus_paths = sorted(snapshots_root.glob(f"candidate_pool_{compact_trade_date}_top300_shadow_focus_*.json"))
+    default_path = snapshots_root / f"candidate_pool_{compact_trade_date}_top300_shadow.json"
+    ordered_paths = [*focus_paths]
+    if default_path.exists():
+        ordered_paths.append(default_path)
+    return ordered_paths
+
+
+def _iter_shadow_snapshot_tickers(payload: dict[str, Any]) -> list[str]:
+    shadow_summary = dict(payload.get("shadow_summary") or {})
+    summary_entries = [dict(entry) for entry in list(shadow_summary.get("tickers") or []) if isinstance(entry, dict)]
+    if summary_entries:
+        return [str(entry.get("ticker") or "").strip() for entry in summary_entries if str(entry.get("ticker") or "").strip()]
+    return [str(c.get("ticker") or "").strip() for c in list(payload.get("shadow_candidates") or []) if isinstance(c, dict) and str(c.get("ticker") or "").strip()]
+
+
 def _load_candidate_pool_snapshot(
     snapshots_root: Path,
     trade_date: str,
@@ -68,11 +86,20 @@ def _load_candidate_pool_snapshot(
             ticker = str(item.get("ticker") or "").strip()
             if ticker and ticker not in ticker_ranks:
                 ticker_ranks[ticker] = index
+        shadow_ticker_set: set[str] = set()
+        for shadow_path in _shadow_snapshot_paths(snapshots_root, trade_date):
+            try:
+                shadow_payload = json.loads(shadow_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for ticker in _iter_shadow_snapshot_tickers(shadow_payload):
+                shadow_ticker_set.add(ticker)
         cached = {
             "snapshot_path": path.as_posix(),
             "snapshot_name": path.name,
             "snapshot_size": len(ticker_ranks),
             "ticker_ranks": ticker_ranks,
+            "shadow_ticker_set": shadow_ticker_set,
         }
         snapshot_cache[compact_trade_date] = cached
         return cached
@@ -82,6 +109,7 @@ def _load_candidate_pool_snapshot(
         "snapshot_name": None,
         "snapshot_size": 0,
         "ticker_ranks": {},
+        "shadow_ticker_set": set(),
     }
     snapshot_cache[compact_trade_date] = cached
     return cached
@@ -195,6 +223,7 @@ def _build_occurrence_evidence_row(
     ticker: str,
     snapshot_payload: dict[str, Any],
     candidate_pool_rank: int | None,
+    candidate_pool_visible: bool,
     recall_stage: str,
 ) -> dict[str, Any]:
     return {
@@ -210,7 +239,7 @@ def _build_occurrence_evidence_row(
         "candidate_pool_snapshot": snapshot_payload.get("snapshot_name"),
         "candidate_pool_snapshot_path": snapshot_payload.get("snapshot_path"),
         "candidate_pool_snapshot_size": snapshot_payload.get("snapshot_size"),
-        "candidate_pool_visible": candidate_pool_rank is not None,
+        "candidate_pool_visible": candidate_pool_visible,
         "candidate_pool_rank": candidate_pool_rank,
         "recall_stage": recall_stage,
     }
@@ -228,12 +257,14 @@ def _collect_ticker_occurrence_evidence(
         trade_date = str(row.get("trade_date") or "").strip()
         snapshot_payload = _load_candidate_pool_snapshot(snapshots_root, trade_date, snapshot_cache=snapshot_cache)
         ticker_ranks = dict(snapshot_payload.get("ticker_ranks") or {})
+        shadow_ticker_set: set[str] = set(snapshot_payload.get("shadow_ticker_set") or set())
         candidate_pool_rank = ticker_ranks.get(ticker)
+        candidate_pool_visible = candidate_pool_rank is not None or ticker in shadow_ticker_set
         if not snapshot_payload.get("snapshot_path"):
             recall_stage = "missing_candidate_pool_snapshot"
         else:
             recall_stage = _classify_recall_stage(
-                candidate_pool_visible=candidate_pool_rank is not None,
+                candidate_pool_visible=candidate_pool_visible,
                 system_seen_stage=row.get("system_seen_stage"),
                 candidate_source=row.get("candidate_source"),
             )
@@ -243,6 +274,7 @@ def _collect_ticker_occurrence_evidence(
                 ticker=ticker,
                 snapshot_payload=snapshot_payload,
                 candidate_pool_rank=candidate_pool_rank,
+                candidate_pool_visible=candidate_pool_visible,
                 recall_stage=recall_stage,
             )
         )

@@ -1017,6 +1017,69 @@ def test_lane_pair_board_uses_upstream_handoff_overlay_when_governance_synthesis
     assert "next_close_positive_rate=0.125" in rows_by_ticker["003036"]["governance_summary"]
 
 
+def test_lane_pair_board_upgrades_corridor_primary_governance_when_shadow_recall_not_persistent(tmp_path: Path) -> None:
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    rebucket_comparison_bundle_path = tmp_path / "btst_candidate_pool_rebucket_comparison_bundle_latest.json"
+    governance_synthesis_path = tmp_path / "btst_governance_synthesis_latest.json"
+    upstream_handoff_board_path = tmp_path / "btst_candidate_pool_upstream_handoff_board_latest.json"
+    _write_json(
+        corridor_shadow_pack_path,
+        {
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "primary_shadow_replay": {
+                "ticker": "300683",
+                "mean_t_plus_2_return": 0.1051,
+                "objective_fit_score": 1.0,
+                "t_plus_2_return_hit_rate_at_target": 0.75,
+                "t_plus_2_positive_rate": 1.0,
+                "tractability_tier": "second_shadow_probe",
+            },
+            "parallel_watch_lanes": [],
+        },
+    )
+    _write_json(
+        rebucket_comparison_bundle_path,
+        {
+            "priority_alignment_status": "aligned_top_lane",
+            "rebucket_objective_row": {},
+        },
+    )
+    _write_json(governance_synthesis_path, {"execution_surface_constraints": [], "evidence_btst_followups": []})
+    _write_json(
+        upstream_handoff_board_path,
+        {
+            "board_rows": [
+                {
+                    "ticker": "300683",
+                    "latest_followup_decision": "rejected",
+                    "latest_followup_candidate_source": "upstream_liquidity_corridor_shadow",
+                    "downstream_followup_status": "transient_probe_only",
+                    "downstream_followup_blocker": "shadow_recall_not_persistent",
+                    "downstream_followup_summary": "300683 的 shadow recall 不够持续，尚未达到第二个独立选中窗口。",
+                },
+            ]
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_lane_pair_board(
+        corridor_shadow_pack_path,
+        rebucket_comparison_bundle_path,
+        governance_synthesis_path=governance_synthesis_path,
+        upstream_handoff_board_path=upstream_handoff_board_path,
+    )
+
+    rows_by_ticker = {row["ticker"]: row for row in analysis["candidates"]}
+    assert rows_by_ticker["300683"]["governance_blocker"] == "shadow_recall_not_persistent", (
+        "governance_blocker should remain shadow_recall_not_persistent so corridor persistence dossier handles it correctly"
+    )
+    assert rows_by_ticker["300683"]["governance_status"] != "transient_probe_only", (
+        "active corridor primary should not show transient_probe_only; expected corridor_primary_active_replay_pending"
+    )
+    assert rows_by_ticker["300683"]["governance_status"] == "corridor_primary_active_replay_pending", (
+        "active corridor primary with shadow_recall_not_persistent history should be upgraded to corridor_primary_active_replay_pending"
+    )
+
+
 def test_upstream_handoff_board_prioritizes_watchlist_break_before_lane_probe(tmp_path: Path) -> None:
     failure_dossier_path = tmp_path / "btst_no_candidate_entry_failure_dossier_latest.json"
     watchlist_dossier_path = tmp_path / "btst_watchlist_recall_dossier_latest.json"
