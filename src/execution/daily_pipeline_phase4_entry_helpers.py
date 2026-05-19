@@ -140,8 +140,12 @@ def _build_short_trade_boundary_metadata_fields(
     candidate_pool_shadow_reason: str | None,
     candidate_pool_avg_amount_share_of_cutoff: float | None,
     candidate_pool_avg_amount_share_of_min_gate: float | None,
+    shadow_focus_selected: bool,
+    shadow_focus_relaxed_band: bool,
     shadow_visibility_gap_selected: bool,
     shadow_visibility_gap_relaxed_band: bool,
+    source_layer_release_stage: str | None,
+    source_layer_release_reason: str | None,
 ) -> dict[str, Any]:
     return {
         "rank": rank,
@@ -150,8 +154,12 @@ def _build_short_trade_boundary_metadata_fields(
         "candidate_pool_shadow_reason": candidate_pool_shadow_reason,
         "candidate_pool_avg_amount_share_of_cutoff": candidate_pool_avg_amount_share_of_cutoff,
         "candidate_pool_avg_amount_share_of_min_gate": candidate_pool_avg_amount_share_of_min_gate,
+        "shadow_focus_selected": shadow_focus_selected,
+        "shadow_focus_relaxed_band": shadow_focus_relaxed_band,
         "shadow_visibility_gap_selected": shadow_visibility_gap_selected,
         "shadow_visibility_gap_relaxed_band": shadow_visibility_gap_relaxed_band,
+        "source_layer_release_stage": source_layer_release_stage,
+        "source_layer_release_reason": source_layer_release_reason,
     }
 
 
@@ -200,8 +208,12 @@ def _build_short_trade_boundary_entry_payload(
     candidate_pool_shadow_reason: str | None,
     candidate_pool_avg_amount_share_of_cutoff: float | None,
     candidate_pool_avg_amount_share_of_min_gate: float | None,
+    shadow_focus_selected: bool,
+    shadow_focus_relaxed_band: bool,
     shadow_visibility_gap_selected: bool,
     shadow_visibility_gap_relaxed_band: bool,
+    source_layer_release_stage: str | None,
+    source_layer_release_reason: str | None,
 ) -> dict[str, Any]:
     resolved_reason_codes = _build_short_trade_boundary_reason_codes(
         reason=reason,
@@ -219,8 +231,12 @@ def _build_short_trade_boundary_entry_payload(
         candidate_pool_shadow_reason=candidate_pool_shadow_reason,
         candidate_pool_avg_amount_share_of_cutoff=candidate_pool_avg_amount_share_of_cutoff,
         candidate_pool_avg_amount_share_of_min_gate=candidate_pool_avg_amount_share_of_min_gate,
+        shadow_focus_selected=shadow_focus_selected,
+        shadow_focus_relaxed_band=shadow_focus_relaxed_band,
         shadow_visibility_gap_selected=shadow_visibility_gap_selected,
         shadow_visibility_gap_relaxed_band=shadow_visibility_gap_relaxed_band,
+        source_layer_release_stage=source_layer_release_stage,
+        source_layer_release_reason=source_layer_release_reason,
     )
 
 
@@ -237,8 +253,12 @@ def _build_short_trade_boundary_payload(
     candidate_pool_shadow_reason: str | None,
     candidate_pool_avg_amount_share_of_cutoff: float | None,
     candidate_pool_avg_amount_share_of_min_gate: float | None,
+    shadow_focus_selected: bool,
+    shadow_focus_relaxed_band: bool,
     shadow_visibility_gap_selected: bool,
     shadow_visibility_gap_relaxed_band: bool,
+    source_layer_release_stage: str | None,
+    source_layer_release_reason: str | None,
 ) -> dict[str, Any]:
     payload = _build_short_trade_boundary_score_fields(item)
     payload.update(
@@ -258,8 +278,12 @@ def _build_short_trade_boundary_payload(
             candidate_pool_shadow_reason=candidate_pool_shadow_reason,
             candidate_pool_avg_amount_share_of_cutoff=candidate_pool_avg_amount_share_of_cutoff,
             candidate_pool_avg_amount_share_of_min_gate=candidate_pool_avg_amount_share_of_min_gate,
+            shadow_focus_selected=shadow_focus_selected,
+            shadow_focus_relaxed_band=shadow_focus_relaxed_band,
             shadow_visibility_gap_selected=shadow_visibility_gap_selected,
             shadow_visibility_gap_relaxed_band=shadow_visibility_gap_relaxed_band,
+            source_layer_release_stage=source_layer_release_stage,
+            source_layer_release_reason=source_layer_release_reason,
         )
     )
     return payload
@@ -278,8 +302,12 @@ def _build_short_trade_boundary_entry(
     candidate_pool_shadow_reason: str | None = None,
     candidate_pool_avg_amount_share_of_cutoff: float | None = None,
     candidate_pool_avg_amount_share_of_min_gate: float | None = None,
+    shadow_focus_selected: bool = False,
+    shadow_focus_relaxed_band: bool = False,
     shadow_visibility_gap_selected: bool = False,
     shadow_visibility_gap_relaxed_band: bool = False,
+    source_layer_release_stage: str | None = None,
+    source_layer_release_reason: str | None = None,
 ) -> dict[str, Any]:
     return {
         "ticker": item.ticker,
@@ -295,7 +323,11 @@ def _build_short_trade_boundary_entry(
             candidate_pool_shadow_reason=candidate_pool_shadow_reason,
             candidate_pool_avg_amount_share_of_cutoff=candidate_pool_avg_amount_share_of_cutoff,
             candidate_pool_avg_amount_share_of_min_gate=candidate_pool_avg_amount_share_of_min_gate,
+            shadow_focus_selected=shadow_focus_selected,
+            shadow_focus_relaxed_band=shadow_focus_relaxed_band,
             shadow_visibility_gap_selected=shadow_visibility_gap_selected,
             shadow_visibility_gap_relaxed_band=shadow_visibility_gap_relaxed_band,
+            source_layer_release_stage=source_layer_release_stage,
+            source_layer_release_reason=source_layer_release_reason,
         ),
     }

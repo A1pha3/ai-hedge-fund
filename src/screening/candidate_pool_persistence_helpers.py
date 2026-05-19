@@ -43,15 +43,48 @@ def load_candidate_pool_shadow_snapshot(
 ) -> dict[str, Any]:
     with open(snapshot_path, encoding="utf-8") as f:
         payload = json.load(f)
-    shadow_candidates = [candidate_stock_cls(**item) for item in list(payload.get("shadow_candidates") or [])]
+    shadow_summary_payload = dict(payload.get("shadow_summary") or {})
+    shadow_summary_rows = {
+        str(entry.get("ticker") or "").strip(): dict(entry)
+        for entry in list(shadow_summary_payload.get("tickers") or [])
+        if str(dict(entry).get("ticker") or "").strip()
+    }
+    shadow_candidates = [
+        candidate_stock_cls(**_hydrate_shadow_candidate_payload(dict(item), shadow_summary_rows.get(str(dict(item).get("ticker") or "").strip())))
+        for item in list(payload.get("shadow_candidates") or [])
+    ]
     return {
         "selected_candidates": [candidate_stock_cls(**item) for item in list(payload.get("selected_candidates") or [])],
         "shadow_candidates": shadow_candidates,
         "shadow_summary": normalize_shadow_summary_fn(
-            dict(payload.get("shadow_summary") or {}),
+            shadow_summary_payload,
             shadow_candidates=shadow_candidates,
         ),
     }
+
+
+def _hydrate_shadow_candidate_payload(candidate_payload: dict[str, Any], summary_row: dict[str, Any] | None) -> dict[str, Any]:
+    if not summary_row:
+        return candidate_payload
+
+    hydrated_payload = dict(candidate_payload)
+    field_mapping = {
+        "candidate_pool_rank": "candidate_pool_rank",
+        "candidate_pool_lane": "candidate_pool_lane",
+        "candidate_pool_shadow_reason": "candidate_pool_shadow_reason",
+        "avg_amount_share_of_cutoff": "candidate_pool_avg_amount_share_of_cutoff",
+        "avg_amount_share_of_min_gate": "candidate_pool_avg_amount_share_of_min_gate",
+        "shadow_focus_selected": "shadow_focus_selected",
+        "shadow_focus_relaxed_band": "shadow_focus_relaxed_band",
+        "shadow_visibility_gap_selected": "shadow_visibility_gap_selected",
+        "shadow_visibility_gap_relaxed_band": "shadow_visibility_gap_relaxed_band",
+        "source_layer_release_stage": "source_layer_release_stage",
+        "source_layer_release_reason": "source_layer_release_reason",
+    }
+    for summary_key, candidate_key in field_mapping.items():
+        if summary_key in summary_row:
+            hydrated_payload[candidate_key] = summary_row.get(summary_key)
+    return hydrated_payload
 
 
 def write_candidate_pool_shadow_snapshot(

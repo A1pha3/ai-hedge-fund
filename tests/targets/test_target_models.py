@@ -506,6 +506,95 @@ def _make_non_catalyst_boundary_decision_probe_entry() -> dict:
     return entry
 
 
+def test_build_target_input_from_entry_preserves_shadow_focus_release_metadata_in_replay_context() -> None:
+    from src.targets.short_trade_target_input_helpers import build_target_input_from_entry
+
+    result = build_target_input_from_entry(
+        trade_date="20260410",
+        entry={
+            "ticker": "300683",
+            "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow_focus_relaxed_band",
+            "shadow_focus_selected": True,
+            "shadow_focus_relaxed_band": True,
+            "source_layer_release_stage": "strict_release",
+            "source_layer_release_reason": "shadow_focus_selected",
+            "score_final": 0.02,
+            "quality_score": 0.51,
+            "strategy_signals": {"trend": {"signal": "bearish", "confidence": 0.2}},
+        },
+        normalized_reason_codes_fn=lambda raw: [str(item) for item in raw] if isinstance(raw, list) else [],
+    )
+
+    assert result.replay_context["candidate_pool_shadow_reason"] == "upstream_base_liquidity_uplift_shadow_focus_relaxed_band"
+    assert result.replay_context["shadow_focus_selected"] is True
+    assert result.replay_context["shadow_focus_relaxed_band"] is True
+    assert result.replay_context["source_layer_release_stage"] == "strict_release"
+    assert result.replay_context["source_layer_release_reason"] == "shadow_focus_selected"
+
+
+def test_strict_release_focus_shadow_still_fails_when_trend_is_not_constructive() -> None:
+    entry = {
+        "ticker": "300683",
+        "score_b": 0.18,
+        "score_c": -0.28,
+        "score_final": 0.015,
+        "quality_score": 0.51,
+        "decision": "watch",
+        "reason": "upstream_shadow_observation_candidate",
+        "reasons": ["upstream_shadow_observation_candidate"],
+        "candidate_reason_codes": ["upstream_shadow_observation_candidate"],
+        "candidate_source": "upstream_liquidity_corridor_shadow",
+        "candidate_pool_lane": "layer_a_liquidity_corridor",
+        "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow_focus_relaxed_band",
+        "shadow_focus_selected": True,
+        "shadow_focus_relaxed_band": True,
+        "source_layer_release_stage": "strict_release",
+        "source_layer_release_reason": "shadow_focus_selected",
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 4,
+            "next_high_hit_rate_at_threshold": 0.75,
+            "next_close_positive_rate": 0.75,
+            "next_open_to_close_return_mean": 0.012,
+        },
+        "strategy_signals": {
+            "trend": _make_signal(
+                -1,
+                20.0,
+                sub_factors={
+                    "momentum": {"direction": -1, "confidence": 30.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 0, "confidence": 10.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": -1, "confidence": 25.0, "completeness": 1.0},
+                    "volatility": {"direction": 0, "confidence": 50.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 20.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                0,
+                0.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(1, 10.0).model_dump(mode="json"),
+            "fundamental": _make_signal(1, 40.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260417",
+        entry=entry,
+        rank_hint=4,
+    )
+
+    assert "trend_not_constructive" in result.blockers
+    assert result.gate_status["structural"] == "fail"
+    assert result.decision == "blocked"
+
+
 def test_build_selection_targets_wraps_research_semantics_for_watchlist() -> None:
     watchlist = [
         LayerCResult(

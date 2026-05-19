@@ -157,8 +157,9 @@ def build_short_trade_ranked_outputs(
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
         entries.append(entry)
 
-    shadow_observation_entries = rank_scored_entries_fn(
+    shadow_observation_entries = _select_upstream_shadow_observation_entries(
         ranked_shadow_observations,
+        rank_scored_entries_fn=rank_scored_entries_fn,
         limit=upstream_shadow_observation_max_tickers,
     )
     released_shadow_entries = select_upstream_shadow_release_entries_fn(ranked_released_shadow_entries)
@@ -168,6 +169,37 @@ def build_short_trade_ranked_outputs(
         "shadow_observation_entries": shadow_observation_entries,
         "released_shadow_entries": released_shadow_entries,
     }
+
+
+def _is_priority_upstream_shadow_observation_entry(entry: dict[str, Any]) -> bool:
+    return bool(entry.get("shadow_focus_relaxed_band")) or str(entry.get("candidate_pool_shadow_reason") or "").endswith("focus_relaxed_band")
+
+
+def _select_upstream_shadow_observation_entries(
+    ranked_shadow_observations: list[tuple[float, float, dict[str, Any]]],
+    *,
+    rank_scored_entries_fn: Callable[..., list[dict[str, Any]]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    if limit <= 0 or not ranked_shadow_observations:
+        return []
+
+    ranked_entries = rank_scored_entries_fn(ranked_shadow_observations, limit=len(ranked_shadow_observations))
+    if len(ranked_entries) <= limit:
+        return ranked_entries
+
+    priority_entries = [entry for entry in ranked_entries if _is_priority_upstream_shadow_observation_entry(entry)]
+    if not priority_entries:
+        return ranked_entries[:limit]
+
+    selected_entries = priority_entries[:limit]
+    selected_tickers = {str(entry.get("ticker") or "") for entry in selected_entries}
+    remaining_slots = max(limit - len(selected_entries), 0)
+    if remaining_slots > 0:
+        selected_entries.extend([entry for entry in ranked_entries if str(entry.get("ticker") or "") not in selected_tickers][:remaining_slots])
+
+    ranking_order = {str(entry.get("ticker") or ""): index for index, entry in enumerate(ranked_entries)}
+    return sorted(selected_entries, key=lambda entry: ranking_order.get(str(entry.get("ticker") or ""), len(ranked_entries)))
 
 
 def process_short_trade_candidate_diagnostic(
@@ -283,8 +315,12 @@ def _build_short_trade_boundary_entry_kwargs(
         "candidate_pool_shadow_reason": str(shadow_candidate.candidate_pool_shadow_reason or "") if shadow_candidate else None,
         "candidate_pool_avg_amount_share_of_cutoff": round(float(shadow_candidate.candidate_pool_avg_amount_share_of_cutoff), 4) if shadow_candidate else None,
         "candidate_pool_avg_amount_share_of_min_gate": round(float(shadow_candidate.candidate_pool_avg_amount_share_of_min_gate), 4) if shadow_candidate else None,
+        "shadow_focus_selected": bool(shadow_candidate.shadow_focus_selected) if shadow_candidate else False,
+        "shadow_focus_relaxed_band": bool(shadow_candidate.shadow_focus_relaxed_band) if shadow_candidate else False,
         "shadow_visibility_gap_selected": bool(shadow_candidate.shadow_visibility_gap_selected) if shadow_candidate else False,
         "shadow_visibility_gap_relaxed_band": bool(shadow_candidate.shadow_visibility_gap_relaxed_band) if shadow_candidate else False,
+        "source_layer_release_stage": str(shadow_candidate.source_layer_release_stage or "") if shadow_candidate else "",
+        "source_layer_release_reason": str(shadow_candidate.source_layer_release_reason or "") if shadow_candidate else "",
     }
 
 

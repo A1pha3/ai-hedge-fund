@@ -6,6 +6,22 @@ from pathlib import Path
 import scripts.analyze_btst_tplus2_near_cluster_dossier as dossier
 
 
+def test_plan_contains_focus_ticker_recognizes_shadow_observation_entries() -> None:
+    plan_payload = {
+        "risk_metrics": {
+            "funnel_diagnostics": {
+                "filters": {
+                    "short_trade_candidates": {
+                        "shadow_observation_entries": [{"ticker": "300683"}],
+                    }
+                }
+            }
+        }
+    }
+
+    assert dossier._plan_contains_focus_ticker(plan_payload, "300683") is True
+
+
 def test_analyze_btst_tplus2_near_cluster_dossier_summarizes_candidate(monkeypatch, tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     reports_root.mkdir()

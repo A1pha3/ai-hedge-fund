@@ -71,12 +71,14 @@ def _plan_contains_focus_ticker(plan_payload: dict[str, Any], candidate_ticker: 
     filters = dict(dict(dict(plan_payload.get("risk_metrics") or {}).get("funnel_diagnostics") or {}).get("filters") or {})
     for filter_key in ("short_trade_candidates", "watchlist"):
         filter_payload = dict(filters.get(filter_key) or {})
-        tickers = list(filter_payload.get("tickers") or [])
-        if any(str(item) == candidate_ticker or (isinstance(item, dict) and str(item.get("ticker") or "") == candidate_ticker) for item in tickers):
-            return True
-        released_shadow_entries = list(filter_payload.get("released_shadow_entries") or [])
-        if any(str(dict(item or {}).get("ticker") or "") == candidate_ticker for item in released_shadow_entries):
-            return True
+        for ticker_list_key in ("tickers", "shadow_observation_tickers"):
+            tickers = list(filter_payload.get(ticker_list_key) or [])
+            if any(str(item) == candidate_ticker or (isinstance(item, dict) and str(item.get("ticker") or "") == candidate_ticker) for item in tickers):
+                return True
+        for entry_list_key in ("released_shadow_entries", "shadow_observation_entries"):
+            entries = list(filter_payload.get(entry_list_key) or [])
+            if any(str(dict(item or {}).get("ticker") or "") == candidate_ticker for item in entries):
+                return True
     return False
 
 

@@ -82,15 +82,23 @@ def build_cooldown_review_shadow_payload(
                 "candidate_pool_shadow_reason": "cooldown_review_shadow",
                 "candidate_pool_avg_amount_share_of_cutoff": cutoff_share,
                 "candidate_pool_avg_amount_share_of_min_gate": min_gate_share,
+                "shadow_focus_selected": candidate.ticker in review_focus_tickers,
+                "shadow_focus_relaxed_band": False,
                 "shadow_visibility_gap_selected": candidate.ticker in visibility_gap_tickers,
                 "shadow_visibility_gap_relaxed_band": False,
             }
         )
-        shadow_candidates.append(shadow_candidate)
         source_layer_release_stage, source_layer_release_reason = _resolve_source_layer_release_stage(
             lane="cooldown_review",
             shadow_focus_selected=shadow_candidate.ticker in review_focus_tickers,
         )
+        shadow_candidate = shadow_candidate.model_copy(
+            update={
+                "source_layer_release_stage": source_layer_release_stage,
+                "source_layer_release_reason": source_layer_release_reason,
+            }
+        )
+        shadow_candidates.append(shadow_candidate)
         shadow_entries.append(
             {
                 "ticker": shadow_candidate.ticker,
@@ -174,16 +182,24 @@ def build_shadow_lane_payload(
                 "candidate_pool_shadow_reason": resolved_reason,
                 "candidate_pool_avg_amount_share_of_cutoff": cutoff_share,
                 "candidate_pool_avg_amount_share_of_min_gate": min_gate_share,
+                "shadow_focus_selected": candidate.ticker in focus_tickers,
+                "shadow_focus_relaxed_band": focus_relaxed_band,
                 "shadow_visibility_gap_selected": candidate.ticker in visibility_gap_tickers,
                 "shadow_visibility_gap_relaxed_band": visibility_gap_relaxed_band,
             }
         )
-        shadow_candidates.append(shadow_candidate)
         shadow_focus_selected = shadow_candidate.ticker in focus_tickers
         source_layer_release_stage, source_layer_release_reason = _resolve_source_layer_release_stage(
             lane=lane,
             shadow_focus_selected=shadow_focus_selected,
         )
+        shadow_candidate = shadow_candidate.model_copy(
+            update={
+                "source_layer_release_stage": source_layer_release_stage,
+                "source_layer_release_reason": source_layer_release_reason,
+            }
+        )
+        shadow_candidates.append(shadow_candidate)
         shadow_entries.append(
             {
                 "ticker": shadow_candidate.ticker,

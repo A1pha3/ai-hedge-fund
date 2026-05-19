@@ -123,14 +123,14 @@ def _load_active_corridor_primary_shadow_focus(pack_path: Path) -> set[str]:
     """Read the corridor shadow pack artifact and return the primary_shadow_replay ticker as a focus set.
 
     Returns an empty set when the file is missing, unreadable, or the shadow status is not
-    'ready_for_primary_shadow_replay'.  This ensures the corridor gate can apply the relaxed
+    an active corridor-primary replay state. This ensures the corridor gate can apply the relaxed
     focus rules to 300683 (or any future primary) without requiring the env-var to be set manually.
     """
     try:
         data = json.loads(pack_path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return set()
-        if data.get("shadow_status") == "ready_for_primary_shadow_replay":
+        if data.get("shadow_status") in {"ready_for_primary_shadow_replay", "diagnostic_primary_shadow_replay_only"}:
             psr = data.get("primary_shadow_replay")
             ticker = str((psr.get("ticker") if isinstance(psr, dict) else None) or "").strip()
             return {ticker} if ticker else set()

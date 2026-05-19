@@ -1587,6 +1587,230 @@ def test_build_short_trade_candidate_diagnostics_ranks_supportive_release_above_
     assert diagnostics["filtered_reason_counts"] == {}
 
 
+def test_build_short_trade_candidate_diagnostics_keeps_focus_relaxed_band_shadow_visible_under_observation_cap():
+    original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
+    try:
+        snapshot_by_ticker = {
+            "300901": {
+                "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                "blockers": ["trend_not_constructive"],
+                "breakout_freshness": 0.12,
+                "trend_acceleration": 0.26,
+                "volume_expansion_quality": 0.12,
+                "catalyst_freshness": 0.08,
+                "close_strength": 0.60,
+            },
+            "300902": {
+                "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                "blockers": ["trend_not_constructive"],
+                "breakout_freshness": 0.10,
+                "trend_acceleration": 0.20,
+                "volume_expansion_quality": 0.10,
+                "catalyst_freshness": 0.08,
+                "close_strength": 0.56,
+            },
+            "300903": {
+                "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                "blockers": ["trend_not_constructive"],
+                "breakout_freshness": 0.08,
+                "trend_acceleration": 0.18,
+                "volume_expansion_quality": 0.10,
+                "catalyst_freshness": 0.08,
+                "close_strength": 0.55,
+            },
+            "300683": {
+                "gate_status": {"data": "pass", "structural": "fail", "score": "fail"},
+                "blockers": ["trend_not_constructive"],
+                "breakout_freshness": 0.0,
+                "trend_acceleration": 0.0,
+                "volume_expansion_quality": 0.0,
+                "catalyst_freshness": 0.0,
+                "close_strength": 0.0886,
+            },
+        }
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: dict(snapshot_by_ticker[entry["ticker"]])
+        diagnostics = daily_pipeline_module._build_short_trade_candidate_diagnostics(
+            fused=[_fused("300901", 0.24), _fused("300902", 0.23), _fused("300903", 0.22), _fused("300683", -0.1136)],
+            high_pool=[],
+            trade_date="20260305",
+            shadow_candidate_by_ticker={
+                "300901": CandidateStock(
+                    ticker="300901",
+                    name="shadow-a",
+                    industry_sw="机械设备",
+                    avg_volume_20d=4500,
+                    market_cap=80,
+                    listing_date="20190101",
+                    candidate_pool_rank=301,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.9132,
+                    candidate_pool_avg_amount_share_of_min_gate=1.0544,
+                ),
+                "300902": CandidateStock(
+                    ticker="300902",
+                    name="shadow-b",
+                    industry_sw="机械设备",
+                    avg_volume_20d=4490,
+                    market_cap=79,
+                    listing_date="20190101",
+                    candidate_pool_rank=302,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.912,
+                    candidate_pool_avg_amount_share_of_min_gate=1.052,
+                ),
+                "300903": CandidateStock(
+                    ticker="300903",
+                    name="shadow-c",
+                    industry_sw="机械设备",
+                    avg_volume_20d=4480,
+                    market_cap=78,
+                    listing_date="20190101",
+                    candidate_pool_rank=303,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.911,
+                    candidate_pool_avg_amount_share_of_min_gate=1.051,
+                ),
+                "300683": CandidateStock(
+                    ticker="300683",
+                    name="corridor-primary",
+                    industry_sw="医药生物",
+                    avg_volume_20d=1500,
+                    market_cap=80,
+                    listing_date="20190101",
+                    candidate_pool_rank=1401,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow_focus_relaxed_band",
+                    candidate_pool_avg_amount_share_of_cutoff=0.2314,
+                    candidate_pool_avg_amount_share_of_min_gate=7.1498,
+                ),
+            },
+            historical_prior_by_ticker={},
+        )
+    finally:
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+
+    assert diagnostics["shadow_observation_count"] == 3
+    assert diagnostics["shadow_observation_tickers"] == ["300901", "300902", "300683"]
+    assert diagnostics["shadow_observation_entries"][-1]["candidate_pool_shadow_reason"] == "upstream_base_liquidity_uplift_shadow_focus_relaxed_band"
+    assert diagnostics["shadow_observation_entries"][-1]["filter_reason"] == "structural_prefilter_fail"
+    assert diagnostics["released_shadow_tickers"] == []
+
+
+def test_build_short_trade_candidate_diagnostics_prioritizes_explicit_focus_relaxed_band_metadata_over_reason_suffix():
+    original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
+    try:
+        snapshot_by_ticker = {
+            "300901": {
+                "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                "blockers": ["trend_not_constructive"],
+                "breakout_freshness": 0.12,
+                "trend_acceleration": 0.26,
+                "volume_expansion_quality": 0.12,
+                "catalyst_freshness": 0.08,
+                "close_strength": 0.60,
+            },
+            "300902": {
+                "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                "blockers": ["trend_not_constructive"],
+                "breakout_freshness": 0.10,
+                "trend_acceleration": 0.20,
+                "volume_expansion_quality": 0.10,
+                "catalyst_freshness": 0.08,
+                "close_strength": 0.56,
+            },
+            "300903": {
+                "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                "blockers": ["trend_not_constructive"],
+                "breakout_freshness": 0.08,
+                "trend_acceleration": 0.18,
+                "volume_expansion_quality": 0.10,
+                "catalyst_freshness": 0.08,
+                "close_strength": 0.55,
+            },
+            "300683": {
+                "gate_status": {"data": "pass", "structural": "fail", "score": "fail"},
+                "blockers": ["trend_not_constructive"],
+                "breakout_freshness": 0.0,
+                "trend_acceleration": 0.0,
+                "volume_expansion_quality": 0.0,
+                "catalyst_freshness": 0.0,
+                "close_strength": 0.0886,
+            },
+        }
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: dict(snapshot_by_ticker[entry["ticker"]])
+        diagnostics = daily_pipeline_module._build_short_trade_candidate_diagnostics(
+            fused=[_fused("300901", 0.24), _fused("300902", 0.23), _fused("300903", 0.22), _fused("300683", -0.1136)],
+            high_pool=[],
+            trade_date="20260305",
+            shadow_candidate_by_ticker={
+                "300901": CandidateStock(
+                    ticker="300901",
+                    name="shadow-a",
+                    industry_sw="机械设备",
+                    avg_volume_20d=4500,
+                    market_cap=80,
+                    listing_date="20190101",
+                    candidate_pool_rank=301,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.9132,
+                    candidate_pool_avg_amount_share_of_min_gate=1.0544,
+                ),
+                "300902": CandidateStock(
+                    ticker="300902",
+                    name="shadow-b",
+                    industry_sw="机械设备",
+                    avg_volume_20d=4490,
+                    market_cap=79,
+                    listing_date="20190101",
+                    candidate_pool_rank=302,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.912,
+                    candidate_pool_avg_amount_share_of_min_gate=1.052,
+                ),
+                "300903": CandidateStock(
+                    ticker="300903",
+                    name="shadow-c",
+                    industry_sw="机械设备",
+                    avg_volume_20d=4480,
+                    market_cap=78,
+                    listing_date="20190101",
+                    candidate_pool_rank=303,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.911,
+                    candidate_pool_avg_amount_share_of_min_gate=1.051,
+                ),
+                "300683": CandidateStock(
+                    ticker="300683",
+                    name="corridor-primary",
+                    industry_sw="医药生物",
+                    avg_volume_20d=1500,
+                    market_cap=80,
+                    listing_date="20190101",
+                    candidate_pool_rank=1401,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.2314,
+                    candidate_pool_avg_amount_share_of_min_gate=7.1498,
+                    shadow_focus_selected=True,
+                    shadow_focus_relaxed_band=True,
+                    source_layer_release_stage="strict_release",
+                ),
+            },
+            historical_prior_by_ticker={},
+        )
+    finally:
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+
+    assert diagnostics["shadow_observation_tickers"] == ["300901", "300902", "300683"]
+    assert diagnostics["shadow_observation_entries"][-1]["ticker"] == "300683"
+
+
 def test_qualifies_catalyst_theme_candidate_applies_close_momentum_relief_to_metrics_payload():
     original_build_short_trade_target_snapshot_from_entry = catalyst_helpers_module.build_short_trade_target_snapshot_from_entry
     try:

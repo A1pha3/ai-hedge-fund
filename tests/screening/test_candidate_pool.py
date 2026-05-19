@@ -885,6 +885,59 @@ class TestExcludeRules:
         assert payload["shadow_summary"]["shadow_recall_complete"] is True
         assert payload["shadow_summary"]["shadow_recall_status"] == "computed_legacy"
 
+    def test_load_candidate_pool_shadow_snapshot_hydrates_shadow_candidate_metadata_from_summary_contract(self):
+        snapshot_dir = Path(tempfile.mkdtemp())
+        shadow_candidate = CandidateStock(
+            ticker="000301",
+            name="shadow",
+            industry_sw="银行",
+            avg_volume_20d=20000.0,
+            market_cap=100.0,
+            listing_date="20100101",
+            candidate_pool_lane="layer_a_liquidity_corridor",
+            candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+        )
+        shadow_snapshot_path = snapshot_dir / "candidate_pool_20260305_top300_shadow.json"
+        shadow_snapshot_path.write_text(
+            json.dumps(
+                {
+                    "selected_candidates": [],
+                    "shadow_candidates": [shadow_candidate.model_dump()],
+                    "shadow_summary": {
+                        "pool_size": 300,
+                        "selected_count": 300,
+                        "overflow_count": 10,
+                        "lane_counts": {"layer_a_liquidity_corridor": 1},
+                        "selected_tickers": ["000301"],
+                        "focus_tickers": ["000301"],
+                        "tickers": [
+                            {
+                                "ticker": "000301",
+                                "candidate_pool_lane": "layer_a_liquidity_corridor",
+                                "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow_focus_relaxed_band",
+                                "shadow_focus_selected": True,
+                                "shadow_focus_relaxed_band": True,
+                                "source_layer_release_stage": "strict_release",
+                                "source_layer_release_reason": "shadow_focus_selected",
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        payload = candidate_pool_module._load_candidate_pool_shadow_snapshot(shadow_snapshot_path)
+
+        hydrated_shadow_candidate = payload["shadow_candidates"][0]
+        assert hydrated_shadow_candidate.candidate_pool_shadow_reason == "upstream_base_liquidity_uplift_shadow_focus_relaxed_band"
+        assert hydrated_shadow_candidate.shadow_focus_selected is True
+        assert hydrated_shadow_candidate.shadow_focus_relaxed_band is True
+        assert hydrated_shadow_candidate.source_layer_release_stage == "strict_release"
+        assert hydrated_shadow_candidate.source_layer_release_reason == "shadow_focus_selected"
+
     def test_load_upstream_handoff_shadow_focus_tickers_reads_latest_focus_backlog(self):
         reports_dir = Path(tempfile.mkdtemp())
         handoff_board_path = reports_dir / "btst_candidate_pool_upstream_handoff_board_latest.json"
@@ -1186,6 +1239,58 @@ class TestExcludeRules:
         assert focus_entry["shadow_focus_selected"] is True
         assert focus_entry["shadow_focus_relaxed_band"] is True
         assert focus_entry["avg_amount_share_of_min_gate"] == 2.5
+
+    @patch("src.screening.candidate_pool.get_sw_industry_classification")
+    @patch("src.screening.candidate_pool.get_daily_basic_batch")
+    @patch("src.screening.candidate_pool.get_limit_list")
+    @patch("src.screening.candidate_pool.get_suspend_list")
+    @patch("src.screening.candidate_pool.get_all_stock_basic")
+    @patch("src.screening.candidate_pool._get_pro")
+    def test_candidate_pool_shadow_recall_focus_relaxed_candidates_keep_release_contract_metadata(
+        self,
+        mock_pro,
+        mock_basic,
+        mock_suspend,
+        mock_limit,
+        mock_daily,
+        mock_sw,
+    ):
+        stocks = [
+            {"ts_code": f"{i:06d}.SZ", "symbol": f"{i:06d}", "name": f"股票{i}"}
+            for i in range(302)
+        ]
+        avg_amount_map = {f"{i:06d}.SZ": float(200_000 - i) for i in range(300)}
+        avg_amount_map["000300.SZ"] = 19_000.0
+        avg_amount_map["000301.SZ"] = 12_500.0
+
+        snapshot_dir = Path(tempfile.mkdtemp())
+        mock_pro.return_value = MagicMock()
+        mock_basic.return_value = _make_stock_basic_df(stocks)
+        mock_suspend.return_value = pd.DataFrame()
+        mock_limit.return_value = pd.DataFrame()
+        mock_daily.return_value = _make_daily_basic_df(
+            [{"ts_code": stock["ts_code"], "total_mv": 1_000_000} for stock in stocks]
+        )
+        mock_sw.return_value = {}
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
+             patch("src.screening.candidate_pool.MAX_CANDIDATE_POOL_SIZE", 300), \
+             patch("src.screening.candidate_pool.SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS", 2), \
+             patch("src.screening.candidate_pool.SHADOW_REBUCKET_MAX_TICKERS", 0), \
+             patch("src.screening.candidate_pool._get_avg_amount_20d_map", return_value=avg_amount_map):
+            with patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", {"000301"}):
+                _, focused_shadow_candidates, focused_shadow_summary = build_candidate_pool_with_shadow(
+                    "20260305",
+                    use_cache=False,
+                    cooldown_tickers=set(),
+                )
+
+        focus_candidate = focused_shadow_candidates[0]
+        focus_entry = next(item for item in focused_shadow_summary["tickers"] if item["ticker"] == focus_candidate.ticker)
+        assert getattr(focus_candidate, "shadow_focus_selected", False) is True
+        assert getattr(focus_candidate, "shadow_focus_relaxed_band", False) is True
+        assert getattr(focus_candidate, "source_layer_release_stage", "") == "strict_release"
+        assert focus_entry["source_layer_release_stage"] == "strict_release"
 
     @patch("src.screening.candidate_pool.get_sw_industry_classification")
     @patch("src.screening.candidate_pool.get_daily_basic_batch")
@@ -1700,6 +1805,17 @@ class TestActiveCorridorPrimaryFocusLoader:
         result = _load_active_corridor_primary_shadow_focus(pack_path)
         assert "300683" in result
 
+    def test_loads_primary_ticker_when_pack_is_diagnostic_primary_shadow_replay_only(self, tmp_path):
+        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+
+        pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+        pack_path.write_text(json.dumps({
+            "shadow_status": "diagnostic_primary_shadow_replay_only",
+            "primary_shadow_replay": {"ticker": "300683"},
+        }))
+        result = _load_active_corridor_primary_shadow_focus(pack_path)
+        assert "300683" in result
+
     def test_returns_empty_set_when_pack_file_is_missing(self, tmp_path):
         from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
 
@@ -1787,6 +1903,21 @@ class TestActiveCorridorPrimaryFocusLoader:
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         pack_path.write_text(json.dumps({
             "shadow_status": "ready_for_primary_shadow_replay",
+            "primary_shadow_replay": {"ticker": "300683"},
+        }))
+        with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", pack_path), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()):
+            focus_tickers = _resolve_shadow_focus_tickers(lane="layer_a_liquidity_corridor")
+        assert "300683" in focus_tickers
+
+    def test_resolve_shadow_focus_tickers_includes_diagnostic_pack_primary_for_corridor_lane(self, tmp_path):
+        """Diagnostic-only primary replay must still activate the corridor lane focus-relaxed path."""
+        from src.screening.candidate_pool import _resolve_shadow_focus_tickers, _CORRIDOR_SHADOW_PACK_PATH
+
+        pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+        pack_path.write_text(json.dumps({
+            "shadow_status": "diagnostic_primary_shadow_replay_only",
             "primary_shadow_replay": {"ticker": "300683"},
         }))
         with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", pack_path), \
