@@ -44,6 +44,17 @@ DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.j
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.md"
 DEFAULT_PRIORITY_LIMIT = 5
 DEFAULT_FRONTIER_NEIGHBOR_COUNT = 2
+_PIPELINE_STAGE_TO_BLOCKING_STAGE: dict[str, str] = {
+    "st_filter": "st_excluded",
+    "beijing_exchange_filter": "beijing_exchange_excluded",
+    "listing_days_filter": "new_listing_excluded",
+    "suspend_filter": "suspended",
+    "limit_up_filter": "limit_up_excluded",
+    "cooldown_filter": "cooldown_excluded",
+    "estimated_liquidity_filter": "low_estimated_liquidity",
+    "avg_amount_20d_filter": "low_avg_amount_20d",
+}
+
 STAGE_ORDER = [
     "shadow_snapshot_legacy_unknown",
     "missing_market_context",
@@ -201,6 +212,26 @@ def _estimate_avg_amount_20d_from_local_prices(snapshots_root: Path, ticker: str
     return round(sum(amount_samples[-20:]) / len(amount_samples[-20:]), 4), prices_path.as_posix()
 
 
+def _extract_focus_filter_blocking_stages(shadow_summary: dict[str, Any]) -> dict[str, str]:
+    """Extract ticker → recall-blocking-stage from focus_filter_diagnostics in the shadow summary.
+
+    Only entries with final_visibility==filtered_out and a known first_removed_stage are included.
+    Tickers with other final_visibility values (overflow_pool, shadow_pool, etc.) are intentionally
+    excluded because their classification is handled by the shadow_ticker_entries path.
+    """
+    result: dict[str, str] = {}
+    for entry in list(shadow_summary.get("focus_filter_diagnostics") or []):
+        entry_ticker = str(entry.get("ticker") or "").strip()
+        first_removed_stage = str(entry.get("first_removed_stage") or "").strip()
+        final_visibility = str(entry.get("final_visibility") or "").strip()
+        if not entry_ticker or not first_removed_stage or final_visibility != "filtered_out":
+            continue
+        blocking_stage = _PIPELINE_STAGE_TO_BLOCKING_STAGE.get(first_removed_stage)
+        if blocking_stage:
+            result[entry_ticker] = blocking_stage
+    return result
+
+
 def _load_candidate_pool_snapshot(
     snapshots_root: Path,
     trade_date: str,
@@ -238,6 +269,7 @@ def _load_candidate_pool_snapshot(
                 "shadow_selected_cutoff_avg_volume_20d": shadow_summary.get("selected_cutoff_avg_volume_20d"),
                 "shadow_focus_signature": shadow_summary.get("focus_signature"),
             }
+    focus_filter_blocking_stages: dict[str, str] = _extract_focus_filter_blocking_stages(preferred_shadow_summary)
     for path in _snapshot_paths(snapshots_root, trade_date):
         if not path.exists():
             continue
@@ -268,6 +300,7 @@ def _load_candidate_pool_snapshot(
             "shadow_recall_complete": preferred_shadow_summary.get("shadow_recall_complete"),
             "shadow_recall_status": preferred_shadow_summary.get("shadow_recall_status"),
             "shadow_selected_cutoff_avg_volume_20d": preferred_shadow_summary.get("selected_cutoff_avg_volume_20d"),
+            "focus_filter_blocking_stages": focus_filter_blocking_stages,
         }
         snapshot_cache[compact_trade_date] = cached
         return cached
@@ -285,6 +318,7 @@ def _load_candidate_pool_snapshot(
         "shadow_recall_complete": preferred_shadow_summary.get("shadow_recall_complete"),
         "shadow_recall_status": preferred_shadow_summary.get("shadow_recall_status"),
         "shadow_selected_cutoff_avg_volume_20d": preferred_shadow_summary.get("selected_cutoff_avg_volume_20d"),
+        "focus_filter_blocking_stages": focus_filter_blocking_stages,
     }
     snapshot_cache[compact_trade_date] = cached
     return cached
@@ -2549,6 +2583,17 @@ def _resolve_ticker_stage_resolution(
             avg_amount_20d=None,
             local_prices_snapshot_path=None,
             failed_filters=failed_filters,
+        )
+    focus_filter_blocking_stage = dict(snapshot.get("focus_filter_blocking_stages") or {}).get(ticker)
+    if focus_filter_blocking_stage:
+        resolved_failed_filters = list(failed_filters)
+        resolved_failed_filters.append(focus_filter_blocking_stage)
+        return _build_ticker_stage_resolution_payload(
+            blocking_stage=focus_filter_blocking_stage,
+            estimated_amount_1d=None,
+            avg_amount_20d=None,
+            local_prices_snapshot_path=None,
+            failed_filters=resolved_failed_filters,
         )
     if not daily_row or pro is None:
         return _resolve_ticker_stage_with_local_prices(
