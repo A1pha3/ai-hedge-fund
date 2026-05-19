@@ -110,6 +110,14 @@ def _build_shadow_pack_recommendation(*, shadow_status: str, primary: dict[str, 
         if excluded_low_gate_tail_tickers:
             recommendation += f" excluded low-gate tail={excluded_low_gate_tail_tickers} 保留在 uplift 诊断，不进入 parallel watch。"
         return recommendation
+    if shadow_status == "diagnostic_primary_shadow_replay_only":
+        recommendation = (
+            f"保持 {primary.get('ticker') or 'corridor primary'} 作为 diagnostic primary shadow replay，"
+            "继续收集第二个独立 selected window；strict release / paper-trading 继续由 persistence gate 阻断。"
+        )
+        if excluded_low_gate_tail_tickers:
+            recommendation += f" excluded low-gate tail={excluded_low_gate_tail_tickers} 保留在 uplift 诊断，不进入 parallel watch。"
+        return recommendation
     if shadow_status == "hold_for_more_corridor_evidence":
         return "corridor lane 仍需更多 closed-cycle 证据，暂不进入 primary shadow replay。"
     return "当前没有可执行的 corridor lane，shadow pack 仅保留为空位监控。"
@@ -155,12 +163,12 @@ def _apply_persistence_gate(
     strict_release_tickers: list[str],
     persistence_dossier: dict[str, Any],
     primary_ticker: str | None,
-) -> tuple[str, str, list[str]]:
+    ) -> tuple[str, str, list[str]]:
     """Return (strict_release_status, shadow_status, strict_release_tickers) after consulting the persistence dossier.
 
     If the dossier shows a persistence-level governance blocker or an awaiting-second-window verdict for the
-    active corridor primary, this function overrides the incoming status values to fail-closed, preventing
-    contradictory 'ready' states from propagating downstream.
+    active corridor primary, this function must still hard-block strict release while preserving the
+    corridor-primary diagnostic replay lane needed to collect the missing persistence evidence.
     """
     if not persistence_dossier:
         return strict_release_status, shadow_status, strict_release_tickers
@@ -179,7 +187,8 @@ def _apply_persistence_gate(
         return strict_release_status, shadow_status, strict_release_tickers
 
     gated_tickers = [t for t in strict_release_tickers if t != focus_ticker] if focus_ticker else []
-    return "strict_release_blocked_by_persistence", "blocked_by_persistence_gate", gated_tickers
+    diagnostic_shadow_status = "diagnostic_primary_shadow_replay_only" if primary_ticker else "blocked_by_persistence_gate"
+    return "strict_release_blocked_by_persistence", diagnostic_shadow_status, gated_tickers
 
 
 def analyze_btst_candidate_pool_corridor_shadow_pack(
@@ -195,7 +204,9 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
     strict_release_status = str(pack.get("strict_release_status") or "").strip() or "strict_release_unavailable"
     strict_release_candidates = _resolve_strict_release_candidates(pack)
     strict_release_tickers = [str(row.get("ticker") or "").strip() for row in strict_release_candidates if str(row.get("ticker") or "").strip()]
-    primary, parallel = _split_strict_release_lanes(strict_release_candidates)
+    strict_release_primary, strict_release_parallel = _split_strict_release_lanes(strict_release_candidates)
+    primary = dict(strict_release_primary)
+    parallel = [dict(row) for row in strict_release_parallel]
     validation_only_rows = [dict(row) for row in list(pack.get("validation_only_rows") or []) if isinstance(row, dict)]
     validation_only_tickers = [str(row.get("ticker") or "").strip() for row in validation_only_rows if str(row.get("ticker") or "").strip()]
     excluded_low_gate_tail_tickers = [str(ticker).strip() for ticker in list(pack.get("excluded_low_gate_tail_tickers") or []) if str(ticker).strip()]
@@ -211,16 +222,10 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         primary_ticker=primary_ticker,
     )
 
-    # When the persistence gate fires, clear all active replay promotion for this cycle.
-    # Do NOT silently promote a secondary ticker to primary — fail-closed means no primary_shadow_replay
-    # and no shadow_replay_commands until the persistence blocker is resolved.
-    if strict_release_status == "strict_release_blocked_by_persistence":
-        strict_release_candidates = [r for r in strict_release_candidates if str(r.get("ticker") or "").strip() in strict_release_tickers]
-        primary = {}
-        parallel = []
-
-    strict_release_lanes = _build_corridor_shadow_lanes(primary, parallel)
-    lanes = list(strict_release_lanes)
+    strict_release_candidates = [r for r in strict_release_candidates if str(r.get("ticker") or "").strip() in strict_release_tickers]
+    strict_release_primary, strict_release_parallel = _split_strict_release_lanes(strict_release_candidates)
+    strict_release_lanes = _build_corridor_shadow_lanes(strict_release_primary, strict_release_parallel)
+    lanes = _build_corridor_shadow_lanes(primary, parallel)
 
     success_criteria = [
         "primary ticker 在新增窗口里仍维持 t_plus_2_return_hit_rate_at_target 不低于当前 tradeable surface。",
@@ -270,6 +275,10 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         "next_step": (
             "persistence gate 已阻断 primary shadow replay，等待 persistence 条件满足后再恢复 corridor lane 执行。"
             if shadow_status == "blocked_by_persistence_gate"
+            else (
+                f"保持 {primary.get('ticker') or 'primary corridor ticker'} 作为 diagnostic primary shadow replay，继续等待第二个独立 selected window；strict release / paper-trading 暂不放开。"
+            )
+            if shadow_status == "diagnostic_primary_shadow_replay_only"
             else "当前没有可执行的 corridor lane，shadow pack 仅保留为空位监控，暂无 replay 动作。"
             if shadow_status == "skipped_no_corridor_lane"
             else f"先对 {primary.get('ticker') or 'primary corridor ticker'} 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。"

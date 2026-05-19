@@ -35,6 +35,7 @@ def _build_corridor_uplift_commands(
     parallel_watch_tickers: list[str] | None,
     persistence_dossier_path: str | Path | None = None,
     shadow_blocked: bool = False,
+    paper_trading_blocked: bool = False,
 ) -> list[str]:
     resolved_recall_dossier_path = Path(candidate_pool_recall_dossier_path).expanduser().resolve()
     resolved_corridor_validation_pack_path = Path(corridor_validation_pack_path).expanduser().resolve()
@@ -71,7 +72,7 @@ def _build_corridor_uplift_commands(
     ]
     # Only emit the paper-trading command when there is an active primary to replay;
     # in blocked / no-active-primary states, emitting it violates fail-closed semantics.
-    if not shadow_blocked and primary_shadow_replay:
+    if not shadow_blocked and not paper_trading_blocked and primary_shadow_replay:
         commands.append(
             "python scripts/run_paper_trading.py --start-date YYYY-MM-DD --end-date YYYY-MM-DD "
             "--selection-target short_trade_only --model-provider MiniMax --model-name MiniMax-M2.7"
@@ -207,7 +208,9 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
     corridor_experiment = _find_corridor_experiment(recall_dossier)
     primary_shadow = dict(corridor_shadow_pack.get("primary_shadow_replay") or {})
     corridor_shadow_status = str(corridor_shadow_pack.get("shadow_status") or "").strip()
+    corridor_strict_release_status = str(corridor_shadow_pack.get("strict_release_status") or "").strip()
     shadow_blocked = corridor_shadow_status in {"blocked_by_persistence_gate", "skipped_no_corridor_lane"} or not primary_shadow.get("ticker")
+    paper_trading_blocked = corridor_strict_release_status == "strict_release_blocked_by_persistence"
     parallel_watch, excluded_low_gate_tail_tickers = _filter_parallel_watch_lanes(
         [dict(row) for row in list(corridor_shadow_pack.get("parallel_watch_lanes") or [])],
         corridor_narrow_probe,
@@ -224,6 +227,16 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
             "persistence gate 已阻断或当前没有 active primary，暂停所有 shadow replay 和 paper-trading 执行，等待 corridor lane 恢复。",
             "仅允许运行诊断和状态刷新命令，不得启动 paper-trading。",
         ]
+    elif paper_trading_blocked:
+        execution_steps = [
+            f"保持 {primary_shadow.get('ticker') or 'primary corridor ticker'} 为 diagnostic primary shadow replay，继续等待第二个独立 selected window。",
+            "strict release / paper-trading 继续由 persistence gate 阻断，只允许运行 shadow governance 刷新与 lane 对账命令。",
+            f"把 {[row.get('ticker') for row in parallel_watch if row.get('ticker')]} 仅作为 confirmatory parallel watch，不允许替换 primary。",
+            "仅验证 upstream base-liquidity uplift 是否压缩 nearest frontier multiple，不讨论 cutoff 微调。",
+            f"若 pair board leader 仍是 {board_leader.get('ticker') or 'corridor primary'}，则继续保持 corridor-first。",
+        ]
+        if excluded_low_gate_tail_tickers:
+            execution_steps.append(f"把 {excluded_low_gate_tail_tickers} 作为 excluded low-gate tail 留在上游流动性诊断，不进入 retained deepest corridor shadow pack。")
     else:
         execution_steps = [
             f"保持 {primary_shadow.get('ticker') or 'primary corridor ticker'} 为唯一 primary shadow replay 槽位。",
@@ -263,6 +276,7 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
         parallel_watch_tickers=[str(row.get("ticker") or "") for row in parallel_watch if str(row.get("ticker") or "").strip()],
         persistence_dossier_path=persistence_dossier_path,
         shadow_blocked=shadow_blocked,
+        paper_trading_blocked=paper_trading_blocked,
     )
 
     return {

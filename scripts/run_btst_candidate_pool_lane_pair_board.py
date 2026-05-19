@@ -257,7 +257,7 @@ def _build_lane_pair_governance_overlays(
     for ticker, overlay in _build_upstream_handoff_overlays(upstream_handoff_board).items():
         governance_overlays.setdefault(ticker, {}).update({key: value for key, value in overlay.items() if value is not None})
     corridor_pack = _maybe_load_json(corridor_shadow_pack_path)
-    if str(corridor_pack.get("shadow_status") or "") == "ready_for_primary_shadow_replay":
+    if str(corridor_pack.get("shadow_status") or "") in {"ready_for_primary_shadow_replay", "diagnostic_primary_shadow_replay_only"}:
         primary_ticker = str(dict(corridor_pack.get("primary_shadow_replay") or {}).get("ticker") or "").strip()
         if primary_ticker and governance_overlays.get(primary_ticker, {}).get("governance_blocker") == "shadow_recall_not_persistent":
             governance_overlays[primary_ticker]["governance_status"] = "corridor_primary_active_replay_pending"

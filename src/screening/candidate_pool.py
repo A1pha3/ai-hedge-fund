@@ -80,6 +80,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _SNAPSHOT_DIR = _PROJECT_ROOT / "data" / "snapshots"
 _COOLDOWN_FILE = _SNAPSHOT_DIR / "cooldown_registry.json"
 _CORRIDOR_SHADOW_PACK_PATH = _PROJECT_ROOT / "data" / "reports" / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+_UPSTREAM_HANDOFF_BOARD_PATH = _PROJECT_ROOT / "data" / "reports" / "btst_candidate_pool_upstream_handoff_board_latest.json"
 
 # 常量
 MIN_LISTING_DAYS = 60
@@ -133,6 +134,20 @@ def _load_active_corridor_primary_shadow_focus(pack_path: Path) -> set[str]:
             psr = data.get("primary_shadow_replay")
             ticker = str((psr.get("ticker") if isinstance(psr, dict) else None) or "").strip()
             return {ticker} if ticker else set()
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    return set()
+
+
+def _load_upstream_handoff_shadow_focus_tickers(board_path: Path) -> set[str]:
+    try:
+        data = json.loads(board_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return set()
+        focus_tickers = data.get("focus_tickers")
+        if not isinstance(focus_tickers, list):
+            return set()
+        return {str(item).strip() for item in focus_tickers if str(item or "").strip()}
     except (OSError, json.JSONDecodeError, ValueError):
         pass
     return set()
@@ -230,8 +245,10 @@ def _resolve_shadow_visibility_gap_tickers(*, lane: str) -> set[str]:
 
 
 def _resolve_cooldown_shadow_review_tickers() -> set[str]:
+    upstream_handoff_focus = _load_upstream_handoff_shadow_focus_tickers(_UPSTREAM_HANDOFF_BOARD_PATH)
     return (
         set(SHADOW_FOCUS_TICKERS)
+        | set(upstream_handoff_focus)
         | set(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS)
         | set(SHADOW_FOCUS_REBUCKET_TICKERS)
         | set(SHADOW_VISIBILITY_GAP_TICKERS)

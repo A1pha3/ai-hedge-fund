@@ -1027,7 +1027,7 @@ def test_lane_pair_board_upgrades_corridor_primary_governance_when_shadow_recall
     _write_json(
         corridor_shadow_pack_path,
         {
-            "shadow_status": "ready_for_primary_shadow_replay",
+            "shadow_status": "diagnostic_primary_shadow_replay_only",
             "primary_shadow_replay": {
                 "ticker": "300683",
                 "mean_t_plus_2_return": 0.1051,
@@ -1829,8 +1829,8 @@ def test_corridor_uplift_runbook_keeps_evidence_only_when_validation_pack_is_not
     assert any("closed-cycle accumulation" in step for step in analysis["execution_steps"])
 
 
-def test_corridor_shadow_pack_blocked_by_persistence_gate_when_dossier_shows_recall_not_persistent(tmp_path: Path) -> None:
-    """Persistence blocker must hard-gate strict_release_status even when the validation pack says strict_release_ready."""
+def test_corridor_shadow_pack_keeps_diagnostic_primary_replay_when_dossier_shows_recall_not_persistent(tmp_path: Path) -> None:
+    """Persistence blocker should still hard-gate strict release, but keep the active primary in diagnostic replay."""
     corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
     persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
 
@@ -1874,15 +1874,23 @@ def test_corridor_shadow_pack_blocked_by_persistence_gate_when_dossier_shows_rec
         persistence_dossier_path=persistence_dossier_path,
     )
 
-    # The persistence gate must override the validation pack's optimistic status.
+    # The persistence gate must override the validation pack's optimistic strict-release status,
+    # while preserving the active primary for diagnostic shadow replay.
     assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", (
         f"Expected strict_release_blocked_by_persistence but got {analysis['strict_release_status']!r}"
     )
-    assert analysis["shadow_status"] != "ready_for_primary_shadow_replay", (
-        f"shadow_status must not be ready_for_primary_shadow_replay when persistence gate fires"
+    assert analysis["shadow_status"] == "diagnostic_primary_shadow_replay_only", (
+        f"Expected diagnostic_primary_shadow_replay_only but got {analysis['shadow_status']!r}"
     )
-    assert "300683" not in analysis.get("strict_release_tickers", []), (
-        "300683 must not appear in strict_release_tickers when persistence gate fires"
+    assert analysis.get("strict_release_tickers", []) == [], (
+        f"strict_release_tickers must be empty when persistence gate fires, got {analysis.get('strict_release_tickers', [])!r}"
+    )
+    assert analysis["primary_shadow_replay"].get("ticker") == "300683", (
+        "300683 should remain the diagnostic primary shadow replay while persistence is still under-sampled"
+    )
+    assert analysis["shadow_replay_commands"], "diagnostic replay should still emit shadow replay refresh commands"
+    assert any("run_btst_candidate_pool_corridor_shadow_pack.py" in command for command in analysis["shadow_replay_commands"]), (
+        f"Expected a shadow-pack refresh command in shadow_replay_commands, got {analysis['shadow_replay_commands']!r}"
     )
 
 
@@ -2222,11 +2230,8 @@ def test_corridor_shadow_pack_script_direct_cli_execution_works() -> None:
     )
 
 
-def test_corridor_shadow_pack_persistence_gate_with_multiple_candidates_clears_primary_replay(tmp_path: Path) -> None:
-    """Regression: when persistence gate fires AND there are multiple strict-release candidates,
-    the secondary ticker must NOT be silently promoted to primary_shadow_replay.
-    Fail-closed means: primary_shadow_replay={} and shadow_replay_commands=[] for that cycle.
-    """
+def test_corridor_shadow_pack_persistence_gate_with_multiple_candidates_keeps_blocked_primary_as_diagnostic_replay(tmp_path: Path) -> None:
+    """Persistence gating must keep the blocked primary as diagnostic replay without promoting the secondary."""
     corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
     persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
 
@@ -2287,24 +2292,20 @@ def test_corridor_shadow_pack_persistence_gate_with_multiple_candidates_clears_p
     assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", (
         f"Expected strict_release_blocked_by_persistence but got {analysis['strict_release_status']!r}"
     )
-    assert analysis["shadow_status"] == "blocked_by_persistence_gate", (
-        f"Expected blocked_by_persistence_gate but got {analysis['shadow_status']!r}"
+    assert analysis["shadow_status"] == "diagnostic_primary_shadow_replay_only", (
+        f"Expected diagnostic_primary_shadow_replay_only but got {analysis['shadow_status']!r}"
     )
-    assert analysis["primary_shadow_replay"] == {}, (
-        f"Fail-closed: primary_shadow_replay must be empty dict when persistence gate fires, "
-        f"got {analysis['primary_shadow_replay']!r}. "
-        f"300720 must NOT be silently promoted as secondary-becomes-primary."
+    assert analysis["primary_shadow_replay"].get("ticker") == "300683", (
+        "300683 should remain the diagnostic primary shadow replay when persistence is still under-sampled"
     )
-    assert analysis["shadow_replay_commands"] == [], (
-        f"Fail-closed: shadow_replay_commands must be empty when persistence gate fires, "
-        f"got {analysis['shadow_replay_commands']!r}."
+    assert analysis["shadow_replay_commands"], "diagnostic replay should still emit replay refresh commands"
+    assert "300720" not in json.dumps(analysis["primary_shadow_replay"], ensure_ascii=False), (
+        f"300720 must NOT be silently promoted as secondary-becomes-primary, got {analysis['primary_shadow_replay']!r}"
     )
 
 
-def test_corridor_shadow_pack_blocked_next_step_suppresses_replay_guidance(tmp_path: Path) -> None:
-    """Regression: when persistence gate fires and shadow_status == blocked_by_persistence_gate,
-    next_step must NOT emit replay-oriented guidance (e.g. 'shadow replay' language).
-    Fail-closed means next_step switches to an explicit blocked/no-op message."""
+def test_corridor_shadow_pack_diagnostic_primary_replay_next_step_mentions_replay_but_keeps_release_blocked(tmp_path: Path) -> None:
+    """Diagnostic replay next_step should keep replay guidance while stating strict release remains blocked."""
     corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
     persistence_dossier_path = tmp_path / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
 
@@ -2348,15 +2349,13 @@ def test_corridor_shadow_pack_blocked_next_step_suppresses_replay_guidance(tmp_p
         persistence_dossier_path=persistence_dossier_path,
     )
 
-    assert analysis["shadow_status"] == "blocked_by_persistence_gate"
+    assert analysis["shadow_status"] == "diagnostic_primary_shadow_replay_only"
     next_step = analysis.get("next_step") or ""
-    # Must NOT contain active replay instructions (e.g., "保持 ... shadow replay")
-    assert "保持" not in next_step or "shadow replay" not in next_step.lower(), (
-        f"next_step must NOT contain active replay instructions when persistence gate fires, "
-        f"got: {next_step!r}"
+    assert "保持" in next_step and "shadow replay" in next_step.lower(), (
+        f"next_step should preserve active replay guidance for diagnostic sampling, got: {next_step!r}"
     )
-    assert "blocked" in next_step.lower() or "persistence" in next_step.lower() or "等待" in next_step or "阻断" in next_step, (
-        f"next_step must reference the blocked/persistence state explicitly, got: {next_step!r}"
+    assert "strict release" in next_step.lower() or "paper-trading" in next_step.lower() or "阻断" in next_step, (
+        f"next_step must still reference the persistence block on strict release/paper trading, got: {next_step!r}"
     )
 
 
@@ -2423,6 +2422,55 @@ def test_corridor_uplift_runbook_blocked_shadow_pack_suppresses_paper_trading_co
     paper_trading_cmds = [cmd for cmd in analysis["execution_commands"] if "run_paper_trading.py" in cmd]
     assert paper_trading_cmds == [], (
         f"execution_commands must NOT include run_paper_trading.py when shadow pack is blocked, "
+        f"got: {paper_trading_cmds}"
+    )
+
+
+def test_corridor_uplift_runbook_diagnostic_primary_replay_only_suppresses_paper_trading_commands(tmp_path: Path) -> None:
+    """Diagnostic primary replay should preserve shadow governance commands but still suppress paper trading."""
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 8.603,
+                }
+            ]
+        },
+    )
+    _write_json(
+        corridor_shadow_pack_path,
+        {
+            "shadow_status": "diagnostic_primary_shadow_replay_only",
+            "strict_release_status": "strict_release_blocked_by_persistence",
+            "primary_shadow_replay": {"ticker": "300683"},
+            "parallel_watch_lanes": [],
+            "shadow_replay_commands": [
+                "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py --corridor-validation-pack-path /tmp/pack.json"
+            ],
+            "success_criteria": [],
+            "guardrails": [],
+        },
+    )
+    _write_json(lane_pair_board_path, {"board_leader": {"ticker": "300683", "lane_family": "corridor"}})
+
+    analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+        recall_dossier_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+    )
+
+    paper_trading_cmds = [cmd for cmd in analysis["execution_commands"] if "run_paper_trading.py" in cmd]
+    assert paper_trading_cmds == [], (
+        "execution_commands must NOT include run_paper_trading.py when strict release is blocked by persistence, "
         f"got: {paper_trading_cmds}"
     )
 

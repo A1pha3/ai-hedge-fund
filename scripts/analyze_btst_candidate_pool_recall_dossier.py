@@ -247,15 +247,23 @@ def _load_candidate_pool_snapshot(
     preferred_shadow_summary: dict[str, Any] = {}
     preferred_shadow_snapshot_path: Path | None = None
     shadow_ticker_entries: dict[str, dict[str, Any]] = {}
+    focus_filter_blocking_stages: dict[str, str] = {}
+    focus_filter_blocking_stage_priorities: dict[str, tuple[int, int, int]] = {}
     for shadow_snapshot_path in shadow_snapshot_paths:
         shadow_snapshot_payload = _load_candidate_pool_shadow_snapshot(shadow_snapshot_path)
         shadow_summary = dict(shadow_snapshot_payload.get("shadow_summary") or {})
+        shadow_summary_priority = _shadow_summary_priority(shadow_summary)
         if (
             preferred_shadow_snapshot_path is None
-            or _shadow_summary_priority(shadow_summary) > _shadow_summary_priority(preferred_shadow_summary)
+            or shadow_summary_priority > _shadow_summary_priority(preferred_shadow_summary)
         ):
             preferred_shadow_summary = shadow_summary
             preferred_shadow_snapshot_path = shadow_snapshot_path
+        for ticker, blocking_stage in _extract_focus_filter_blocking_stages(shadow_summary).items():
+            existing_priority = focus_filter_blocking_stage_priorities.get(ticker)
+            if existing_priority is None or shadow_summary_priority > existing_priority:
+                focus_filter_blocking_stages[ticker] = blocking_stage
+                focus_filter_blocking_stage_priorities[ticker] = shadow_summary_priority
         for entry in _iter_shadow_snapshot_entries(shadow_snapshot_payload):
             ticker = str(entry.get("ticker") or "").strip()
             if not ticker or ticker in shadow_ticker_entries:
@@ -269,7 +277,6 @@ def _load_candidate_pool_snapshot(
                 "shadow_selected_cutoff_avg_volume_20d": shadow_summary.get("selected_cutoff_avg_volume_20d"),
                 "shadow_focus_signature": shadow_summary.get("focus_signature"),
             }
-    focus_filter_blocking_stages: dict[str, str] = _extract_focus_filter_blocking_stages(preferred_shadow_summary)
     for path in _snapshot_paths(snapshots_root, trade_date):
         if not path.exists():
             continue

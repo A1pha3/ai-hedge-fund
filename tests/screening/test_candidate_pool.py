@@ -885,6 +885,24 @@ class TestExcludeRules:
         assert payload["shadow_summary"]["shadow_recall_complete"] is True
         assert payload["shadow_summary"]["shadow_recall_status"] == "computed_legacy"
 
+    def test_load_upstream_handoff_shadow_focus_tickers_reads_latest_focus_backlog(self):
+        reports_dir = Path(tempfile.mkdtemp())
+        handoff_board_path = reports_dir / "btst_candidate_pool_upstream_handoff_board_latest.json"
+        handoff_board_path.write_text(
+            json.dumps(
+                {
+                    "focus_tickers": ["688796", "300683", "", None, "688383", "300683"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        focus_tickers = candidate_pool_module._load_upstream_handoff_shadow_focus_tickers(handoff_board_path)
+
+        assert focus_tickers == {"688796", "300683", "688383"}
+
     @patch("src.screening.candidate_pool.get_sw_industry_classification")
     @patch("src.screening.candidate_pool.get_daily_basic_batch")
     @patch("src.screening.candidate_pool.get_limit_list")

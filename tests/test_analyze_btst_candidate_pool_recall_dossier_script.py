@@ -2114,3 +2114,136 @@ def test_analyze_btst_candidate_pool_recall_dossier_uses_focus_filter_diagnostic
     # focus_filter_diagnostics shows estimated_liquidity_filter → blocking_stage must be low_estimated_liquidity
     assert occurrence["blocking_stage"] == "low_estimated_liquidity"
     assert occurrence["candidate_pool_shadow_recall_status"] == "computed"
+
+
+def test_analyze_btst_candidate_pool_recall_dossier_merges_focus_filter_diagnostics_across_shadow_focus_files(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    snapshots_root = tmp_path / "data" / "snapshots"
+    ticker_snapshot_root = snapshots_root / "688796" / "2026-04-15"
+    ticker_snapshot_root.mkdir(parents=True, exist_ok=True)
+
+    tradeable_pool_path = _write_json(
+        reports_root / "btst_tradeable_opportunity_pool.json",
+        {
+            "reports_root": str(reports_root.resolve()),
+            "rows": [
+                {
+                    "trade_date": "2026-04-15",
+                    "ticker": "688796",
+                    "first_kill_switch": "no_candidate_entry",
+                    "report_dir": "paper_trading_window_a",
+                    "report_mode": "live_pipeline",
+                    "strict_btst_goal_case": True,
+                    "next_high_return": 0.12,
+                    "t_plus_2_close_return": 0.18,
+                },
+            ],
+            "no_candidate_entry_summary": {"top_ticker_rows": [{"ticker": "688796"}]},
+        },
+    )
+    watchlist_recall_dossier_path = _write_json(
+        reports_root / "btst_watchlist_recall_dossier_latest.json",
+        {
+            "top_absent_from_candidate_pool_tickers": ["688796"],
+            "priority_ticker_dossiers": [
+                {
+                    "ticker": "688796",
+                    "occurrence_evidence": [{"trade_date": "2026-04-15", "recall_stage": "absent_from_candidate_pool"}],
+                }
+            ],
+        },
+    )
+    _write_json(
+        snapshots_root / "candidate_pool_20260415_top300.json",
+        [
+            {
+                "ticker": "600001",
+                "name": "A",
+                "industry_sw": "银行",
+                "market_cap": 10.0,
+                "avg_volume_20d": 165000.0,
+                "listing_date": "20200101",
+            }
+        ],
+    )
+    _write_json(
+        snapshots_root / "candidate_pool_20260415_top300_shadow_focus_0000000001.json",
+        {
+            "selected_candidates": [],
+            "shadow_candidates": [],
+            "shadow_summary": {
+                "pool_size": 300,
+                "selected_count": 300,
+                "overflow_count": 0,
+                "selected_cutoff_avg_volume_20d": 165000.0,
+                "selected_tickers": [],
+                "tickers": [{"ticker": "301292"}, {"ticker": "300720"}, {"ticker": "003036"}],
+                "shadow_recall_complete": True,
+                "shadow_recall_status": "computed",
+                "focus_signature": "0000000001",
+                "focus_filter_diagnostics": [],
+            },
+        },
+    )
+    _write_json(
+        snapshots_root / "candidate_pool_20260415_top300_shadow_focus_zzzzzzzzzz.json",
+        {
+            "selected_candidates": [],
+            "shadow_candidates": [],
+            "shadow_summary": {
+                "pool_size": 300,
+                "selected_count": 300,
+                "overflow_count": 0,
+                "selected_cutoff_avg_volume_20d": 165000.0,
+                "selected_tickers": [],
+                "tickers": [],
+                "shadow_recall_complete": True,
+                "shadow_recall_status": "computed",
+                "focus_signature": "zzzzzzzzzz",
+                "focus_filter_diagnostics": [
+                    {
+                        "ticker": "688796",
+                        "present_in_stock_basic": True,
+                        "first_removed_stage": "estimated_liquidity_filter",
+                        "final_visibility": "filtered_out",
+                    }
+                ],
+            },
+        },
+    )
+    _write_json(
+        ticker_snapshot_root / "prices.json",
+        [
+            {"time": "2026-04-10", "close": 50.0, "volume": 20000},
+            {"time": "2026-04-11", "close": 50.0, "volume": 20000},
+            {"time": "2026-04-14", "close": 50.0, "volume": 20000},
+            {"time": "2026-04-15", "close": 50.0, "volume": 20000},
+        ],
+    )
+
+    stock_basic = pd.DataFrame(
+        [
+            {"symbol": "688796", "ts_code": "688796.SH", "name": "精进电动", "list_date": "20210930", "market": "科创板"},
+        ]
+    )
+    daily_basic = pd.DataFrame(
+        [
+            {"ts_code": "688796.SH", "turnover_rate": 5.0, "circ_mv": 500000.0, "total_mv": 500000.0},
+        ]
+    )
+
+    monkeypatch.setattr(recall_script, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(recall_script, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(recall_script, "get_suspend_list", lambda trade_date: pd.DataFrame(columns=["ts_code"]))
+    monkeypatch.setattr(recall_script, "get_limit_list", lambda trade_date: pd.DataFrame(columns=["ts_code", "limit"]))
+    monkeypatch.setattr(recall_script, "get_cooled_tickers", lambda trade_date: set())
+    monkeypatch.setattr(recall_script, "_get_pro", lambda: None)
+
+    analysis = analyze_btst_candidate_pool_recall_dossier(
+        tradeable_pool_path,
+        watchlist_recall_dossier_path=watchlist_recall_dossier_path,
+    )
+
+    occurrence = analysis["priority_ticker_dossiers"][0]["occurrence_evidence"][0]
+    assert occurrence["blocking_stage"] == "low_estimated_liquidity"
+    assert occurrence["candidate_pool_shadow_recall_status"] == "computed"
