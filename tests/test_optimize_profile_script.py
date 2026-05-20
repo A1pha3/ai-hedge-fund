@@ -3337,6 +3337,37 @@ def test_publish_btst_optimized_profile_manifest_persists_canonical_source_for_l
     assert resolved["source_path"] == str(canonical_source_path)
 
 
+def test_publish_btst_optimized_profile_manifest_accepts_governed_threshold_candidate(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "btst_latest_optimized_profile.json"
+    source_path = tmp_path / "btst_momentum_threshold_rollout_assessment.json"
+    source_path.write_text('{"action":"promote"}', encoding="utf-8")
+
+    result = publish_btst_optimized_profile_manifest(
+        manifest_path=manifest_path,
+        rollout_recommendation="promote",
+        profile_name="momentum_tuned_governed_v1",
+        profile_overrides={
+            "select_threshold": 0.38,
+            "near_miss_threshold": 0.24,
+            "selected_rank_cap_ratio": 0.50,
+        },
+        source_path=source_path,
+        replay_input_paths=[],
+    )
+
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert result["status"] == "published"
+    assert payload["profile_name"] == "momentum_tuned_governed_v1"
+    assert payload["profile_overrides"] == {
+        "select_threshold": 0.38,
+        "near_miss_threshold": 0.24,
+        "selected_rank_cap_ratio": 0.50,
+    }
+    assert payload["trade_date"] is None
+    assert resolve_btst_optimized_profile_manifest(manifest_path)["profile_name"] == "momentum_tuned_governed_v1"
+
+
 def test_publish_btst_optimized_profile_manifest_skips_hold_without_overwriting_existing_ready(tmp_path: Path) -> None:
     manifest_path = tmp_path / "btst_latest_optimized_profile.json"
     existing_payload = {
