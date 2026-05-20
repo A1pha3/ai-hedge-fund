@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 def build_momentum_threshold_rollout_assessment(backtest_summary: dict[str, Any], multi_window_validation: dict[str, Any]) -> dict[str, Any]:
