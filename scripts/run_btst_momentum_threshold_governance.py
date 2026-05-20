@@ -127,7 +127,7 @@ def _resolve_shared_reports_root() -> Path:
                 reports_root = repo_root / "data" / "reports"
                 if reports_root.exists():
                     return reports_root
-    except Exception:
+    except (FileNotFoundError, subprocess.CalledProcessError, OSError, AttributeError, ValueError):
         pass
     # Fallback to local DEFAULT_REPORTS_ROOT
     return DEFAULT_REPORTS_ROOT

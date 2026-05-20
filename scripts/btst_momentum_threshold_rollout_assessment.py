@@ -9,6 +9,11 @@ from typing import Any
 def build_momentum_threshold_rollout_assessment(backtest_summary: dict[str, Any], multi_window_validation: dict[str, Any]) -> dict[str, Any]:
     blockers: list[str] = []
 
+    # Fail closed if no validation windows
+    report_dir_count = int(multi_window_validation.get("report_dir_count", 0) or 0)
+    rows = multi_window_validation.get("rows", [])
+    if report_dir_count == 0 or not rows:
+        blockers.append("multi_window_validation_missing")
     if int(multi_window_validation.get("keep_baseline_count", 0) or 0) > 0:
         blockers.append("window_validation_keeps_baseline")
     if float(backtest_summary.get("payoff_ratio", 0.0) or 0.0) < 1.39:

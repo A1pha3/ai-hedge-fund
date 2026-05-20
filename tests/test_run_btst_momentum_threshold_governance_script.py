@@ -1,8 +1,33 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
+import scripts.run_btst_momentum_threshold_governance as governance_runner
 from scripts.run_btst_momentum_threshold_governance import run_pipeline
+
+
+def test_summarize_selected_backtest_aggregates_selected_entries() -> None:
+    summary = governance_runner._summarize_selected_backtest(
+        governance_runner.PROFILE_NAME,
+        {
+            governance_runner.PROFILE_NAME: {
+                "selected": [
+                    {"win_rate": 0.4, "payoff_ratio": 1.1, "avg_ret": 0.2},
+                    {"win_rate": 0.6, "payoff_ratio": 1.3, "avg_ret": 0.4},
+                ]
+            }
+        },
+    )
+
+    assert summary == {
+        "profile_name": governance_runner.PROFILE_NAME,
+        "selected_day_count": 2,
+        "win_rate": 0.5,
+        "payoff_ratio": 1.2,
+        "avg_ret": 0.3,
+    }
 
 
 def test_run_pipeline_publishes_manifest_only_when_assessment_promotes(monkeypatch, tmp_path: Path) -> None:
@@ -104,3 +129,98 @@ def test_run_pipeline_passes_hold_assessment_into_manifest_publication(monkeypat
         "near_miss_threshold": 0.24,
         "selected_rank_cap_ratio": 0.50,
     }
+
+
+def test_run_20day_backtest_passes_repo_root_tushare_token_into_subprocess_env(monkeypatch, tmp_path: Path) -> None:
+    worktree_root = tmp_path / "worktree"
+    worktree_root.mkdir()
+    output_root = tmp_path / "outputs"
+    main_repo_env = tmp_path / "main-repo.env"
+    main_repo_env.write_text("TUSHARE_TOKEN=test-token\n", encoding="utf-8")
+
+    monkeypatch.setattr(governance_runner, "REPO_ROOT", worktree_root)
+    monkeypatch.setattr(governance_runner, "_resolve_subprocess_dotenv_path", lambda: main_repo_env, raising=False)
+    monkeypatch.setattr(
+        governance_runner,
+        "_summarize_selected_backtest",
+        lambda profile_name, payload: {"profile_name": profile_name, "selected_day_count": 1, "win_rate": 0.5, "payoff_ratio": 1.2, "avg_ret": 0.03},
+    )
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env")
+        raw_output_path = output_root / "btst_20day_backtest_governed_raw.json"
+        raw_output_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_output_path.write_text(
+            json.dumps(
+                {
+                    governance_runner.PROFILE_NAME: {
+                        "selected": [
+                            {
+                                "win_rate": 0.5,
+                                "payoff_ratio": 1.2,
+                                "avg_ret": 0.03,
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(governance_runner.subprocess, "run", fake_run)
+
+    summary = governance_runner.run_20day_backtest(output_root=output_root)
+
+    assert summary["profile_name"] == governance_runner.PROFILE_NAME
+    assert captured["env"]["TUSHARE_TOKEN"] == "test-token"
+
+
+def test_run_multi_window_validation_uses_shared_repo_reports_root(monkeypatch, tmp_path: Path) -> None:
+    worktree_root = tmp_path / "worktree"
+    shared_repo_root = tmp_path / "main-repo"
+    worktree_reports_root = worktree_root / "data" / "reports"
+    shared_reports_root = shared_repo_root / "data" / "reports"
+    worktree_reports_root.mkdir(parents=True)
+    shared_reports_root.mkdir(parents=True)
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        assert cmd == ["git", "rev-parse", "--git-common-dir"]
+        assert kwargs["cwd"] == worktree_root
+        return subprocess.CompletedProcess(cmd, 0, stdout=str(shared_repo_root / ".git"), stderr="")
+
+    def fake_analyze(reports_root, *, baseline_profile, variant_profile):
+        captured["reports_root"] = reports_root
+        captured["baseline_profile"] = baseline_profile
+        captured["variant_profile"] = variant_profile
+        return {
+            "baseline_profile": baseline_profile,
+            "variant_profile": variant_profile,
+            "report_dir_count": 1,
+            "rows": [{"report_dir": "paper_trading_window_1"}],
+            "recommendation": "ok",
+            "reports_root": str(reports_root),
+            "report_name_contains": "paper_trading_window",
+            "baseline_profile": baseline_profile,
+            "variant_profile": variant_profile,
+            "variant_select_threshold": 0.38,
+            "variant_near_miss_threshold": 0.24,
+            "variant_selected_rank_cap_ratio": 0.5,
+        }
+
+    monkeypatch.setattr(governance_runner, "REPO_ROOT", worktree_root)
+    monkeypatch.setattr(governance_runner, "DEFAULT_REPORTS_ROOT", worktree_reports_root)
+    monkeypatch.setattr(governance_runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(governance_runner, "analyze_btst_multi_window_profile_validation", fake_analyze)
+
+    governance_runner.run_multi_window_validation(output_root=tmp_path / "outputs")
+
+    assert captured["reports_root"] == shared_reports_root
+    assert captured["baseline_profile"] == governance_runner.BASELINE_PROFILE
+    assert captured["variant_profile"] == governance_runner.PROFILE_NAME
