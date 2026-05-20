@@ -96,7 +96,7 @@ def run_pipeline(*, output_root: str | Path) -> dict[str, object]:
     assessment_path = resolved_output_root / "btst_momentum_threshold_rollout_assessment.json"
     _write_json(assessment_path, assessment)
     manifest_result = publish_btst_optimized_profile_manifest(
-        manifest_path=resolved_output_root / "btst_latest_optimized_profile.json",
+        manifest_path=REPO_ROOT / "data" / "reports" / "btst_latest_optimized_profile.json",
         rollout_recommendation=str(assessment["action"]),
         profile_name=PROFILE_NAME,
         profile_overrides=PROFILE_OVERRIDES,

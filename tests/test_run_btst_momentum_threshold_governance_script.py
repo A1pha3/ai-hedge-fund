@@ -35,7 +35,28 @@ def test_run_pipeline_publishes_manifest_only_when_assessment_promotes(monkeypat
 
     result = run_pipeline(output_root=tmp_path)
 
+    # Assert top-level keys
+    assert set(result.keys()) == {"backtest_summary", "multi_window_validation", "assessment", "manifest_result"}
+    # Assert representative field values
     assert result["assessment"]["action"] == "promote"
+    assert result["backtest_summary"]["profile_name"] == "momentum_tuned_governed_v1"
+    assert result["multi_window_validation"]["variant_profile"] == "momentum_tuned_governed_v1"
+    assert result["manifest_result"]["status"] == "published"
+    # Assert manifest_path is canonical
+    from scripts.run_btst_momentum_threshold_governance import REPO_ROOT
+    expected_manifest_path = REPO_ROOT / "data" / "reports" / "btst_latest_optimized_profile.json"
+    # Accept Path or str for published["manifest_path"]
+    if isinstance(published["manifest_path"], str):
+        assert published["manifest_path"] == str(expected_manifest_path)
+    else:
+        assert published["manifest_path"] == expected_manifest_path
+    # Accept test double manifest_path for manifest_result (since fake_publish returns tmp_path)
+    manifest_path_result = result["manifest_result"]["manifest_path"]
+    if manifest_path_result == str(expected_manifest_path):
+        pass
+    else:
+        # Accept test double path (tmp_path) if present
+        assert manifest_path_result == str(tmp_path / "btst_latest_optimized_profile.json")
     assert published["profile_name"] == "momentum_tuned_governed_v1"
 
 
