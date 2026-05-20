@@ -207,8 +207,6 @@ def test_run_multi_window_validation_uses_shared_repo_reports_root(monkeypatch, 
             "recommendation": "ok",
             "reports_root": str(reports_root),
             "report_name_contains": "paper_trading_window",
-            "baseline_profile": baseline_profile,
-            "variant_profile": variant_profile,
             "variant_select_threshold": 0.38,
             "variant_near_miss_threshold": 0.24,
             "variant_selected_rank_cap_ratio": 0.5,
@@ -224,3 +222,43 @@ def test_run_multi_window_validation_uses_shared_repo_reports_root(monkeypatch, 
     assert captured["reports_root"] == shared_reports_root
     assert captured["baseline_profile"] == governance_runner.BASELINE_PROFILE
     assert captured["variant_profile"] == governance_runner.PROFILE_NAME
+
+
+def test_run_multi_window_validation_records_render_error_for_expected_markdown_failures(monkeypatch, tmp_path: Path) -> None:
+    output_root = tmp_path / "outputs"
+    summary = {
+        "baseline_profile": governance_runner.BASELINE_PROFILE,
+        "variant_profile": governance_runner.PROFILE_NAME,
+        "report_dir_count": 1,
+        "rows": [{"report_dir": "paper_trading_window_1"}],
+        "report_name_contains": "paper_trading_window",
+    }
+    monkeypatch.setattr(governance_runner, "analyze_btst_multi_window_profile_validation", lambda *args, **kwargs: dict(summary))
+    monkeypatch.setattr(governance_runner, "render_btst_multi_window_profile_validation_markdown", lambda payload: (_ for _ in ()).throw(KeyError("missing rows")))
+
+    result = governance_runner.run_multi_window_validation(output_root=output_root)
+
+    assert result["render_error"] == "KeyError: 'missing rows'"
+    persisted_summary = json.loads((output_root / "btst_multi_window_profile_validation_governed_summary.json").read_text(encoding="utf-8"))
+    assert persisted_summary["render_error"] == "KeyError: 'missing rows'"
+    fallback_markdown = (output_root / "btst_multi_window_profile_validation_governed_summary.md").read_text(encoding="utf-8")
+    assert "render_error: KeyError: 'missing rows'" in fallback_markdown
+
+
+def test_run_multi_window_validation_propagates_unexpected_markdown_render_failures(monkeypatch, tmp_path: Path) -> None:
+    summary = {
+        "baseline_profile": governance_runner.BASELINE_PROFILE,
+        "variant_profile": governance_runner.PROFILE_NAME,
+        "report_dir_count": 1,
+        "rows": [{"report_dir": "paper_trading_window_1"}],
+        "report_name_contains": "paper_trading_window",
+    }
+    monkeypatch.setattr(governance_runner, "analyze_btst_multi_window_profile_validation", lambda *args, **kwargs: dict(summary))
+    monkeypatch.setattr(governance_runner, "render_btst_multi_window_profile_validation_markdown", lambda payload: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    try:
+        governance_runner.run_multi_window_validation(output_root=tmp_path / "outputs")
+    except RuntimeError as exc:
+        assert str(exc) == "boom"
+    else:
+        raise AssertionError("expected RuntimeError from markdown renderer")

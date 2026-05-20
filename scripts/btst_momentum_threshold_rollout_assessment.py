@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+ROUND82_PAYOFF_RATIO_REFERENCE = 1.39
+ROUND82_WIN_RATE_REFERENCE = 0.48
+
 
 def build_momentum_threshold_rollout_assessment(backtest_summary: dict[str, Any], multi_window_validation: dict[str, Any]) -> dict[str, Any]:
     blockers: list[str] = []
@@ -16,9 +19,9 @@ def build_momentum_threshold_rollout_assessment(backtest_summary: dict[str, Any]
         blockers.append("multi_window_validation_missing")
     if int(multi_window_validation.get("keep_baseline_count", 0) or 0) > 0:
         blockers.append("window_validation_keeps_baseline")
-    if float(backtest_summary.get("payoff_ratio", 0.0) or 0.0) < 1.39:
+    if float(backtest_summary.get("payoff_ratio", 0.0) or 0.0) < ROUND82_PAYOFF_RATIO_REFERENCE:
         blockers.append("backtest_payoff_below_round82_reference")
-    if float(backtest_summary.get("win_rate", 0.0) or 0.0) < 0.48:
+    if float(backtest_summary.get("win_rate", 0.0) or 0.0) < ROUND82_WIN_RATE_REFERENCE:
         blockers.append("backtest_win_rate_below_round82_reference")
 
     return {

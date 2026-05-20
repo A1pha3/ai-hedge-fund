@@ -27,6 +27,7 @@ PROFILE_OVERRIDES = {
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data" / "reports"
 DEFAULT_REPORTS_ROOT = REPO_ROOT / "data" / "reports"
+EXPECTED_MARKDOWN_RENDER_EXCEPTIONS = (KeyError, TypeError, ValueError)
 
 
 def _resolve_subprocess_dotenv_path() -> Path | None:
@@ -134,6 +135,7 @@ def _resolve_shared_reports_root() -> Path:
 
 def run_multi_window_validation(*, output_root: str | Path) -> dict[str, Any]:
     resolved_output_root = Path(output_root).expanduser().resolve()
+    resolved_output_root.mkdir(parents=True, exist_ok=True)
     output_json_path = resolved_output_root / "btst_multi_window_profile_validation_governed_summary.json"
     output_md_path = resolved_output_root / "btst_multi_window_profile_validation_governed_summary.md"
     reports_root = _resolve_shared_reports_root()
@@ -155,22 +157,23 @@ def run_multi_window_validation(*, output_root: str | Path) -> dict[str, Any]:
     ):
         summary.setdefault(key, 0)
     summary.setdefault("recommendation", summary.get("recommendation", "hold"))
-
-    _write_json(output_json_path, summary)
     try:
-        output_md_path.write_text(render_btst_multi_window_profile_validation_markdown(summary), encoding="utf-8")
-    except Exception:
-        # Render failed due to lightweight test doubles or unexpected summary shape.
-        # Write a minimal fallback markdown so the pipeline continues.
+        markdown = render_btst_multi_window_profile_validation_markdown(summary)
+    except EXPECTED_MARKDOWN_RENDER_EXCEPTIONS as exc:
+        render_error = f"{type(exc).__name__}: {exc}"
+        summary["render_error"] = render_error
         fallback_lines = [
             "# BTST Multi-Window Profile Validation",
             "",
             f"- reports_root: {summary.get('reports_root')}",
             f"- report_dir_count: {summary.get('report_dir_count')}",
             f"- report_name_contains: {summary.get('report_name_contains')}",
+            f"- render_error: {render_error}",
             "",
         ]
-        output_md_path.write_text("\n".join(fallback_lines), encoding="utf-8")
+        markdown = "\n".join(fallback_lines)
+    output_md_path.write_text(markdown, encoding="utf-8")
+    _write_json(output_json_path, summary)
     return summary
 
 

@@ -135,6 +135,8 @@ def _extract_shadow_execution_rows(
     for report_dir in list(evidence_btst_report_dirs or []):
         resolved_report_dir = Path(report_dir).expanduser().resolve()
         brief_payload = _load_btst_followup_brief(resolved_report_dir)
+        if not brief_payload:
+            continue
         resolved_report_dirs.append(resolved_report_dir.as_posix())
         for bucket_name in ("selected_entries", "near_miss_entries", "opportunity_pool_entries", "rejected_entries"):
             for entry in list(brief_payload.get(bucket_name) or []):
