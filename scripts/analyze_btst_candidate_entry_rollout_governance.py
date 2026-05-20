@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,9 @@ VARIANT_TO_STRUCTURAL_ALIAS = {
     "volume_only_20260326": None,
 }
 TARGET_DISTINCT_WINDOW_COUNT = 2
+CANDIDATE_ENTRY_SHADOW_SOURCE = "watchlist_filter_diagnostics"
+POSITIVE_EXECUTION_BUCKETS = {"selected_entries", "near_miss_entries"}
+NEGATIVE_EXECUTION_BUCKETS = {"opportunity_pool_entries", "rejected_entries"}
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -84,6 +88,118 @@ def derive_candidate_entry_shadow_state(
 
 def _string_list(values: list[Any]) -> list[str]:
     return [str(value) for value in list(values or []) if str(value or "").strip()]
+
+
+def _parse_csv_list(raw: str | None) -> list[str]:
+    if raw is None or not str(raw).strip():
+        return []
+    return [token.strip() for token in str(raw).split(",") if token.strip()]
+
+
+def _resolve_optional_artifact_path(raw_path: str | Path | None, *, report_dir: Path) -> Path | None:
+    if raw_path is None or not str(raw_path).strip():
+        return None
+    candidate = Path(str(raw_path)).expanduser()
+    probe_paths = [candidate]
+    if not candidate.is_absolute():
+        probe_paths.insert(0, report_dir / candidate)
+    probe_paths.append(report_dir / candidate.name)
+    for probe_path in probe_paths:
+        resolved = probe_path.resolve()
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def _load_btst_followup_brief(report_dir: str | Path) -> dict[str, Any]:
+    resolved_report_dir = Path(report_dir).expanduser().resolve()
+    session_summary = _safe_load_json(resolved_report_dir / "session_summary.json")
+    if not session_summary:
+        return {}
+    followup = dict(session_summary.get("btst_followup") or {})
+    artifacts = dict(session_summary.get("artifacts") or {})
+    brief_path = _resolve_optional_artifact_path(
+        followup.get("brief_json") or artifacts.get("btst_next_day_trade_brief_json"),
+        report_dir=resolved_report_dir,
+    )
+    if not brief_path or not brief_path.exists():
+        return {}
+    return _safe_load_json(brief_path)
+
+
+def _extract_shadow_execution_rows(
+    evidence_btst_report_dirs: list[str | Path] | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    evidence_rows: list[dict[str, Any]] = []
+    resolved_report_dirs: list[str] = []
+    for report_dir in list(evidence_btst_report_dirs or []):
+        resolved_report_dir = Path(report_dir).expanduser().resolve()
+        brief_payload = _load_btst_followup_brief(resolved_report_dir)
+        resolved_report_dirs.append(resolved_report_dir.as_posix())
+        for bucket_name in ("selected_entries", "near_miss_entries", "opportunity_pool_entries", "rejected_entries"):
+            for entry in list(brief_payload.get(bucket_name) or []):
+                if str(entry.get("candidate_source") or "").strip() != CANDIDATE_ENTRY_SHADOW_SOURCE:
+                    continue
+                evidence_rows.append(
+                    {
+                        "report_dir": resolved_report_dir.as_posix(),
+                        "bucket": bucket_name,
+                        "ticker": str(entry.get("ticker") or "").strip(),
+                        "decision": entry.get("decision"),
+                        "top_reasons": _string_list(list(entry.get("top_reasons") or [])),
+                    }
+                )
+    return evidence_rows, resolved_report_dirs
+
+
+def _extract_shadow_execution_context(
+    *,
+    evidence_btst_report_dirs: list[str | Path] | None,
+    focus_tickers: list[str],
+) -> dict[str, Any]:
+    evidence_rows, resolved_report_dirs = _extract_shadow_execution_rows(evidence_btst_report_dirs)
+    signal_report_dirs = sorted({str(row.get("report_dir") or "") for row in evidence_rows if str(row.get("report_dir") or "").strip()})
+    bucket_counts: Counter[str] = Counter(str(row.get("bucket") or "") for row in evidence_rows if str(row.get("bucket") or "").strip())
+    focus_ticker_set = {str(ticker) for ticker in list(focus_tickers or []) if str(ticker or "").strip()}
+    focus_positive_tickers = sorted({str(row.get("ticker") or "") for row in evidence_rows if str(row.get("ticker") or "") in focus_ticker_set and str(row.get("bucket") or "") in POSITIVE_EXECUTION_BUCKETS})
+    focus_negative_tickers = sorted({str(row.get("ticker") or "") for row in evidence_rows if str(row.get("ticker") or "") in focus_ticker_set and str(row.get("bucket") or "") in NEGATIVE_EXECUTION_BUCKETS})
+    non_focus_positive_tickers = sorted({str(row.get("ticker") or "") for row in evidence_rows if str(row.get("ticker") or "").strip() and str(row.get("ticker") or "") not in focus_ticker_set and str(row.get("bucket") or "") in POSITIVE_EXECUTION_BUCKETS})
+
+    if not resolved_report_dirs:
+        execution_verdict = "no_shadow_execution_evidence"
+        recommendation = None
+    elif not signal_report_dirs:
+        execution_verdict = "shadow_execution_inconclusive"
+        recommendation = "已提供 BTST followup 报告，但其中没有 watchlist_filter_diagnostics 执行样本，当前还不能据此推进或否决 candidate-entry shadow review。"
+    elif focus_positive_tickers:
+        execution_verdict = "focus_ticker_execution_contradiction"
+        recommendation = f"shadow execution 已出现反证：focus_tickers={focus_positive_tickers} 在实际 BTST followup 中进入了 selected/near_miss，当前不应继续推进 lane promotion。"
+    elif focus_negative_tickers and non_focus_positive_tickers:
+        execution_verdict = "focus_ticker_execution_support_with_separation"
+        recommendation = (
+            f"shadow execution 对弱结构入口清洗形成了分离证据：focus_tickers={focus_negative_tickers} 只出现在 opportunity/rejected，"
+            f"而非 focus 的 watchlist_filter_diagnostics 名字 {non_focus_positive_tickers} 仍能进入 selected/near_miss。"
+        )
+    elif focus_negative_tickers:
+        execution_verdict = "focus_ticker_execution_support"
+        recommendation = f"shadow execution 继续支持弱结构入口清洗：focus_tickers={focus_negative_tickers} 只出现在 opportunity/rejected，而没有进入 selected/near_miss。"
+    else:
+        execution_verdict = "shadow_execution_inconclusive"
+        recommendation = "当前 shadow execution 只提供了 watchlist_filter_diagnostics 样本，但还没有形成与 focus_ticker 命中直接相关的推进/否决证据。"
+
+    return {
+        "summary": {
+            "evidence_report_count": len(resolved_report_dirs),
+            "candidate_entry_signal_report_count": len(signal_report_dirs),
+            "bucket_counts": dict(bucket_counts),
+            "focus_positive_tickers": focus_positive_tickers,
+            "focus_negative_tickers": focus_negative_tickers,
+            "non_focus_positive_tickers": non_focus_positive_tickers,
+            "execution_verdict": execution_verdict,
+            "recommendation": recommendation,
+            "evidence_report_dirs": resolved_report_dirs,
+        }
+    }
 
 
 def _extract_best_variant_context(frontier_report: dict[str, Any], structural_validation: dict[str, Any]) -> dict[str, Any]:
@@ -267,6 +383,7 @@ def _extract_candidate_pool_recall_context(candidate_pool_recall_dossier: dict[s
 
 def _build_rollout_recommendation(
     window_scan_context: dict[str, Any],
+    shadow_execution_context: dict[str, Any],
     no_candidate_entry_context: dict[str, Any],
     watchlist_recall_context: dict[str, Any],
     candidate_pool_recall_context: dict[str, Any],
@@ -290,10 +407,13 @@ def _build_rollout_recommendation(
     recommendation = _append_watchlist_recall_recommendation(recommendation, watchlist_recall_context)
     recommendation = _append_candidate_pool_recall_recommendation(recommendation, candidate_pool_recall_context)
     if no_candidate_entry_context["promising_tickers"]:
-        return (
+        recommendation = (
             f"{recommendation} 当前 replay bundle 已为 {no_candidate_entry_context['promising_tickers']} 找到 preserve-safe recall probe，"
             "因此下一步应优先接回 shadow governance，而不是继续停留在纯动作板层面。"
         )
+    shadow_execution_recommendation = str(dict(shadow_execution_context.get("summary") or {}).get("recommendation") or "").strip()
+    if shadow_execution_recommendation:
+        recommendation = f"{recommendation} {shadow_execution_recommendation}"
     return recommendation
 
 
@@ -424,6 +544,7 @@ def _append_non_truncation_gap_recommendation(recommendation: str, candidate_poo
 
 
 def _build_rollout_next_actions(
+    shadow_execution_context: dict[str, Any],
     no_candidate_entry_context: dict[str, Any],
     watchlist_recall_context: dict[str, Any],
     candidate_pool_recall_context: dict[str, Any],
@@ -455,6 +576,16 @@ def _build_rollout_next_actions(
         next_actions.append(
             f"把 {no_candidate_entry_context['promising_tickers']} 作为 no-entry shadow recall probe 接回治理板，并持续核对 preserve_ticker 0 误伤"
         )
+    shadow_summary = dict(shadow_execution_context.get("summary") or {})
+    shadow_execution_verdict = str(shadow_summary.get("execution_verdict") or "")
+    if shadow_execution_verdict == "focus_ticker_execution_contradiction":
+        next_actions.append("focus_ticker 已在实际执行面进入 selected/near_miss，暂停 candidate-entry lane progression，回到 research-only 复核。")
+    elif shadow_execution_verdict == "focus_ticker_execution_support_with_separation":
+        next_actions.append("继续积累 shadow execution separation evidence，优先核对 focus_ticker 是否持续停留在 opportunity/rejected，同时确认非 focus 名字仍能进入 selected/near_miss。")
+    elif shadow_execution_verdict == "focus_ticker_execution_support":
+        next_actions.append("继续沿 BTST followup 观察 focus_ticker 的执行去向，确认它是否持续停留在 opportunity/rejected。")
+    elif int(shadow_summary.get("evidence_report_count") or 0) > 0:
+        next_actions.append("已接入 BTST followup 证据，但当前 execution evidence 仍不足以推进或否决 lane promotion，需要继续补样本。")
     return next_actions
 
 
@@ -565,6 +696,7 @@ def _build_analysis_paths(
     structural_validation_path: str | Path,
     window_scan_path: str | Path,
     score_frontier_path: str | Path,
+    evidence_btst_report_dirs: list[str | Path] | None,
     no_candidate_entry_action_board_path: str | Path | None,
     no_candidate_entry_replay_bundle_path: str | Path | None,
     no_candidate_entry_failure_dossier_path: str | Path | None,
@@ -576,6 +708,7 @@ def _build_analysis_paths(
         "structural_validation_report": str(Path(structural_validation_path).expanduser().resolve()),
         "window_scan_report": str(Path(window_scan_path).expanduser().resolve()),
         "score_frontier_report": str(Path(score_frontier_path).expanduser().resolve()),
+        "evidence_btst_report_dirs": [str(Path(path).expanduser().resolve()) for path in list(evidence_btst_report_dirs or [])],
         "no_candidate_entry_action_board": str(Path(no_candidate_entry_action_board_path).expanduser().resolve()) if no_candidate_entry_action_board_path else None,
         "no_candidate_entry_replay_bundle": str(Path(no_candidate_entry_replay_bundle_path).expanduser().resolve()) if no_candidate_entry_replay_bundle_path else None,
         "no_candidate_entry_failure_dossier": str(Path(no_candidate_entry_failure_dossier_path).expanduser().resolve()) if no_candidate_entry_failure_dossier_path else None,
@@ -590,6 +723,7 @@ def analyze_btst_candidate_entry_rollout_governance(
     structural_validation_path: str | Path,
     window_scan_path: str | Path,
     score_frontier_path: str | Path,
+    evidence_btst_report_dirs: list[str | Path] | None = None,
     no_candidate_entry_action_board_path: str | Path | None = None,
     no_candidate_entry_replay_bundle_path: str | Path | None = None,
     no_candidate_entry_failure_dossier_path: str | Path | None = None,
@@ -607,6 +741,10 @@ def analyze_btst_candidate_entry_rollout_governance(
     candidate_pool_recall_dossier = _safe_load_json(candidate_pool_recall_dossier_path)
     best_variant_context = _extract_best_variant_context(frontier_report, structural_validation)
     window_scan_context = _extract_window_scan_context(window_scan, score_frontier_report)
+    shadow_execution_context = _extract_shadow_execution_context(
+        evidence_btst_report_dirs=evidence_btst_report_dirs,
+        focus_tickers=list(best_variant_context["current_window_evidence"].get("focus_filtered_tickers") or []),
+    )
     no_candidate_entry_context = _extract_no_candidate_entry_context(
         no_candidate_entry_action_board,
         no_candidate_entry_replay_bundle,
@@ -617,11 +755,13 @@ def analyze_btst_candidate_entry_rollout_governance(
     shadow_state = dict(window_scan_context["shadow_state"])
     recommendation = _build_rollout_recommendation(
         window_scan_context,
+        shadow_execution_context,
         no_candidate_entry_context,
         watchlist_recall_context,
         candidate_pool_recall_context,
     )
     next_actions = _build_rollout_next_actions(
+        shadow_execution_context,
         no_candidate_entry_context,
         watchlist_recall_context,
         candidate_pool_recall_context,
@@ -633,6 +773,7 @@ def analyze_btst_candidate_entry_rollout_governance(
             structural_validation_path=structural_validation_path,
             window_scan_path=window_scan_path,
             score_frontier_path=score_frontier_path,
+            evidence_btst_report_dirs=evidence_btst_report_dirs,
             no_candidate_entry_action_board_path=no_candidate_entry_action_board_path,
             no_candidate_entry_replay_bundle_path=no_candidate_entry_replay_bundle_path,
             no_candidate_entry_failure_dossier_path=no_candidate_entry_failure_dossier_path,
@@ -650,6 +791,7 @@ def analyze_btst_candidate_entry_rollout_governance(
         "current_window_evidence": best_variant_context["current_window_evidence"],
         "main_chain_validation": best_variant_context["main_chain_validation"],
         "window_scan_summary": window_scan_context["window_scan_summary"],
+        "shadow_execution_evidence_summary": shadow_execution_context["summary"],
         "no_candidate_entry_action_board_summary": no_candidate_entry_context["action_board_summary"],
         "no_candidate_entry_replay_bundle_summary": no_candidate_entry_context["replay_bundle_summary"],
         "no_candidate_entry_failure_dossier_summary": no_candidate_entry_context["failure_dossier_summary"],
@@ -712,6 +854,7 @@ def render_btst_candidate_entry_rollout_governance_markdown(analysis: dict[str, 
     _append_markdown_section(lines, "Current Window Evidence", dict(analysis.get("current_window_evidence") or {}))
     _append_markdown_section(lines, "Main-Chain Validation", dict(analysis.get("main_chain_validation") or {}))
     _append_markdown_section(lines, "Window Scan Summary", dict(analysis.get("window_scan_summary") or {}))
+    _append_markdown_section(lines, "Shadow Execution Evidence", dict(analysis.get("shadow_execution_evidence_summary") or {}))
     _append_markdown_section(lines, "No Candidate Entry Action Board", dict(analysis.get("no_candidate_entry_action_board_summary") or {}))
     _append_markdown_section(lines, "No Candidate Entry Replay Bundle", dict(analysis.get("no_candidate_entry_replay_bundle_summary") or {}))
     _append_markdown_section(lines, "No Candidate Entry Failure Dossier", dict(analysis.get("no_candidate_entry_failure_dossier_summary") or {}))
@@ -729,6 +872,7 @@ def main() -> None:
     parser.add_argument("--structural-validation-report", default=str(DEFAULT_STRUCTURAL_VALIDATION_PATH))
     parser.add_argument("--window-scan-report", default=str(DEFAULT_WINDOW_SCAN_PATH))
     parser.add_argument("--score-frontier-report", default=str(DEFAULT_SCORE_FRONTIER_PATH))
+    parser.add_argument("--evidence-btst-report-dirs", default="", help="Comma-separated BTST followup report directories used to summarize shadow execution evidence.")
     parser.add_argument("--no-candidate-entry-action-board", default="")
     parser.add_argument("--no-candidate-entry-replay-bundle", default="")
     parser.add_argument("--no-candidate-entry-failure-dossier", default="")
@@ -743,6 +887,7 @@ def main() -> None:
         structural_validation_path=args.structural_validation_report,
         window_scan_path=args.window_scan_report,
         score_frontier_path=args.score_frontier_report,
+        evidence_btst_report_dirs=_parse_csv_list(args.evidence_btst_report_dirs),
         no_candidate_entry_action_board_path=args.no_candidate_entry_action_board or None,
         no_candidate_entry_replay_bundle_path=args.no_candidate_entry_replay_bundle or None,
         no_candidate_entry_failure_dossier_path=args.no_candidate_entry_failure_dossier or None,

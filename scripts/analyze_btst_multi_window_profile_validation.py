@@ -63,6 +63,66 @@ def _resolve_threshold_delta(baseline_value: Any, variant_value: Any) -> float |
     return round(float(variant_value) - float(baseline_value), 4)
 
 
+def _build_watchlist_shrink_diagnostics(*, baseline: dict[str, Any], variant: dict[str, Any]) -> dict[str, int]:
+    baseline_rows = {
+        (
+            str(row.get("trade_date") or ""),
+            str(row.get("ticker") or ""),
+            str(row.get("candidate_source") or ""),
+        ): dict(row)
+        for row in list(baseline.get("rows") or [])
+    }
+    variant_rows = {
+        (
+            str(row.get("trade_date") or ""),
+            str(row.get("ticker") or ""),
+            str(row.get("candidate_source") or ""),
+        ): dict(row)
+        for row in list(variant.get("rows") or [])
+    }
+
+    guard_applied_count = 0
+    selected_gate_pass_count = 0
+    selected_boundary_overlap_count = 0
+    selected_above_lift_count = 0
+    for key, variant_row in variant_rows.items():
+        baseline_row = baseline_rows.get(key)
+        if baseline_row is None:
+            continue
+        guard = dict(dict(variant_row.get("metrics_payload") or {}).get("watchlist_filter_diagnostics_selected_only_shrink_guard") or {})
+        if not guard.get("applied"):
+            continue
+        guard_applied_count += 1
+        if str(baseline_row.get("decision") or "") != "selected":
+            continue
+
+        gate_hits = dict(guard.get("gate_hits") or {})
+        if not gate_hits or not all(bool(value) for value in gate_hits.values()):
+            continue
+        selected_gate_pass_count += 1
+
+        baseline_metrics = dict(baseline_row.get("metrics_payload") or {})
+        score_target = baseline_row.get("score_target")
+        effective_select_threshold = baseline_metrics.get("effective_select_threshold")
+        select_threshold_lift = guard.get("select_threshold_lift")
+        if score_target is None or effective_select_threshold is None or select_threshold_lift is None:
+            continue
+        baseline_threshold = float(effective_select_threshold)
+        lift = float(select_threshold_lift)
+        score = float(score_target)
+        if baseline_threshold <= score < baseline_threshold + lift:
+            selected_boundary_overlap_count += 1
+        elif score >= baseline_threshold + lift:
+            selected_above_lift_count += 1
+
+    return {
+        "watchlist_shrink_guard_applied_count": guard_applied_count,
+        "watchlist_shrink_selected_gate_pass_count": selected_gate_pass_count,
+        "watchlist_shrink_selected_boundary_overlap_count": selected_boundary_overlap_count,
+        "watchlist_shrink_selected_above_lift_count": selected_above_lift_count,
+    }
+
+
 def _build_runtime_activation_attribution(
     *,
     baseline: dict[str, Any],
@@ -87,6 +147,10 @@ def _build_runtime_activation_attribution(
         guardrail_next_high_hit_rate=guardrail_next_high_hit_rate,
         guardrail_next_close_positive_rate=guardrail_next_close_positive_rate,
     )
+    watchlist_shrink_diagnostics = _build_watchlist_shrink_diagnostics(
+        baseline=baseline,
+        variant=variant,
+    )
     variant_guardrail_status = str(comparison.get("guardrail_status") or "")
     guardrail_status_changed = baseline_guardrail_status != variant_guardrail_status
     threshold_probe_active = any(value not in (None, 0, 0.0) for value in threshold_delta.values())
@@ -107,6 +171,12 @@ def _build_runtime_activation_attribution(
     if not activation_change_labels:
         if threshold_probe_active:
             zero_delta_reason = "threshold_probe_without_runtime_activation_delta"
+        elif (
+            watchlist_shrink_diagnostics["watchlist_shrink_guard_applied_count"] > 0
+            and watchlist_shrink_diagnostics["watchlist_shrink_selected_gate_pass_count"] > 0
+            and watchlist_shrink_diagnostics["watchlist_shrink_selected_boundary_overlap_count"] == 0
+        ):
+            zero_delta_reason = "watchlist_shrink_guard_without_selected_boundary_overlap"
         elif dict(variant.get("profile_overrides") or {}):
             zero_delta_reason = "profile_override_without_runtime_activation_delta"
         elif str(baseline.get("profile_name") or "") != str(variant.get("profile_name") or ""):
@@ -127,6 +197,7 @@ def _build_runtime_activation_attribution(
         "guardrail_status_changed": guardrail_status_changed,
         "activation_change_labels": activation_change_labels,
         "zero_delta_reason": zero_delta_reason,
+        **watchlist_shrink_diagnostics,
     }
 
 
@@ -300,6 +371,22 @@ def render_btst_multi_window_profile_validation_markdown(analysis: dict[str, Any
                 f"execution_eligible_delta={runtime_activation_attribution.get('execution_eligible_count_delta')}, "
                 f"guardrail_changed={runtime_activation_attribution.get('guardrail_status_changed')}"
             )
+            if any(
+                int(runtime_activation_attribution.get(field) or 0) > 0
+                for field in (
+                    "watchlist_shrink_guard_applied_count",
+                    "watchlist_shrink_selected_gate_pass_count",
+                    "watchlist_shrink_selected_boundary_overlap_count",
+                    "watchlist_shrink_selected_above_lift_count",
+                )
+            ):
+                lines.append(
+                    "  - "
+                    f"watchlist_shrink_applied={runtime_activation_attribution.get('watchlist_shrink_guard_applied_count')}, "
+                    f"watchlist_shrink_selected_gate_pass={runtime_activation_attribution.get('watchlist_shrink_selected_gate_pass_count')}, "
+                    f"watchlist_shrink_selected_boundary_overlap={runtime_activation_attribution.get('watchlist_shrink_selected_boundary_overlap_count')}, "
+                    f"watchlist_shrink_selected_above_lift={runtime_activation_attribution.get('watchlist_shrink_selected_above_lift_count')}"
+                )
         if baseline_source_coverage or variant_source_coverage:
             lines.append(f"  - source_coverage:")
             flow_sources = sorted(

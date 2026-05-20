@@ -80,6 +80,79 @@ def _load_broad_scope_shadow_fallback(reports_root: Path, focus_ticker: str) -> 
     }
 
 
+def _dedupe_trade_dates(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        normalized = str(value or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+def _should_apply_broad_scope_fallback(
+    *,
+    candidate_dossier: dict[str, Any],
+    confirmed_selected_trade_dates: list[str],
+    exploratory_trade_dates: list[str],
+    action_rows: list[dict[str, Any]],
+) -> bool:
+    if not candidate_dossier:
+        return False
+    if confirmed_selected_trade_dates or exploratory_trade_dates:
+        return False
+    if not action_rows:
+        return True
+    return all(
+        not str(row.get("report_dir") or "").strip() and not str(row.get("decision") or "").strip()
+        for row in action_rows
+    )
+
+
+def _merge_action_rows(
+    existing_rows: list[dict[str, Any]],
+    fallback_rows: list[dict[str, Any]],
+    *,
+    tier_rank: dict[str, int],
+) -> list[dict[str, Any]]:
+    merged_by_trade_date: dict[str, dict[str, Any]] = {}
+
+    def _row_rank(row: dict[str, Any]) -> tuple[int, int, int, float]:
+        return (
+            -tier_rank.get(str(row.get("action_tier") or ""), 9),
+            1 if str(row.get("report_dir") or "").strip() else 0,
+            1 if str(row.get("decision") or "") == "selected" else 0,
+            float(row.get("score_target") or -999.0),
+        )
+
+    for row in [dict(item or {}) for item in [*existing_rows, *fallback_rows]]:
+        trade_date = str(row.get("trade_date") or "").strip()
+        if not trade_date:
+            continue
+        previous = merged_by_trade_date.get(trade_date)
+        if previous is None or _row_rank(row) > _row_rank(previous):
+            merged_by_trade_date[trade_date] = row
+
+    return list(merged_by_trade_date.values())
+
+
+def _action_sort_key(row: dict[str, Any], tier_rank: dict[str, int]) -> tuple[int, float, str]:
+    action_tier = str(row.get("action_tier") or "")
+    if action_tier == "upgrade_near_miss_window":
+        return (
+            tier_rank.get(action_tier, 9),
+            -float(row.get("score_target") or -999.0),
+            str(row.get("trade_date") or ""),
+        )
+    return (
+        tier_rank.get(action_tier, 9),
+        0.0,
+        str(row.get("trade_date") or ""),
+    )
+
+
 def analyze_btst_candidate_pool_corridor_window_command_board(
     manifest_path: str | Path = DEFAULT_MANIFEST_PATH,
     *,
@@ -157,8 +230,26 @@ def analyze_btst_candidate_pool_corridor_window_command_board(
         current_plan_visible_trade_dates = []
         visibility_gap_trade_dates = []
         action_rows = [dict(row or {}) for row in list(broad_scope_fallback.get("action_rows") or [])]
+    elif _should_apply_broad_scope_fallback(
+        candidate_dossier=candidate_dossier,
+        confirmed_selected_trade_dates=confirmed_selected_trade_dates,
+        exploratory_trade_dates=exploratory_trade_dates,
+        action_rows=action_rows,
+    ):
+        broad_scope_fallback = _load_broad_scope_shadow_fallback(reports_root, focus_ticker)
+        confirmed_selected_trade_dates = _dedupe_trade_dates(
+            [*confirmed_selected_trade_dates, *list(broad_scope_fallback.get("confirmed_selected_trade_dates") or [])]
+        )
+        exploratory_trade_dates = _dedupe_trade_dates(
+            [*exploratory_trade_dates, *list(broad_scope_fallback.get("exploratory_trade_dates") or [])]
+        )
+        action_rows = _merge_action_rows(
+            action_rows,
+            [dict(row or {}) for row in list(broad_scope_fallback.get("action_rows") or [])],
+            tier_rank=tier_rank,
+        )
 
-    action_rows.sort(key=lambda row: (tier_rank.get(str(row.get("action_tier") or ""), 9), str(row.get("trade_date") or "")))
+    action_rows.sort(key=lambda row: _action_sort_key(row, tier_rank))
     next_target_trade_dates = [str(row.get("trade_date") or "") for row in action_rows if str(row.get("trade_date") or "") and str(row.get("decision") or "") != "selected"][:3]
 
     if candidate_dossier:

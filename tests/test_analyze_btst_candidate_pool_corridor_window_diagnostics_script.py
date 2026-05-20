@@ -403,3 +403,77 @@ def test_diagnostics_loads_dossier_next_to_custom_command_board_without_reports_
     assert analysis["near_miss_upgrade_window"]["score_target"] == 0.44, (
         "Near-miss score_target must be loaded from the actual dossier file beside the command board"
     )
+
+
+def test_diagnostics_uses_command_board_action_row_when_dossier_anchor_is_empty(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    candidate_dossier_path = reports_root / "btst_tplus2_candidate_dossier_300683_latest.json"
+    command_board_path = reports_root / "btst_candidate_pool_corridor_window_command_board_latest.json"
+    near_miss_report_dir = reports_root / "corridor_probe_683"
+
+    _write_json(
+        candidate_dossier_path,
+        {
+            "candidate_ticker": "300683",
+            "per_window_summaries": [
+                {
+                    "report_label": "20260327",
+                    "report_dir": None,
+                    "decision": None,
+                    "candidate_source": None,
+                    "downstream_bottleneck": None,
+                }
+            ],
+            "current_plan_visibility_summary": {"current_plan_visibility_gap_report_dirs": []},
+        },
+    )
+    _write_json(
+        command_board_path,
+        {
+            "focus_ticker": "300683",
+            "confirmed_selected_trade_dates": [],
+            "next_target_trade_dates": ["2026-03-27"],
+            "visibility_gap_trade_dates": [],
+            "action_rows": [
+                {
+                    "trade_date": "2026-03-27",
+                    "decision": "near_miss",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "score_target": 0.3882,
+                    "report_dir": str(near_miss_report_dir),
+                    "downstream_bottleneck": "broad_scope_shadow_role_history",
+                    "action_tier": "upgrade_near_miss_window",
+                }
+            ],
+        },
+    )
+    _write_json(
+        near_miss_report_dir / "selection_artifacts" / "2026-03-27" / "selection_target_replay_input.json",
+        {
+            "selection_targets": {
+                "300683": {
+                    "short_trade": {
+                        "decision": "near_miss",
+                        "score_target": 0.3882,
+                        "metrics_payload": {
+                            "breakout_stage": "confirmed_breakout",
+                            "trend_acceleration": 0.78,
+                            "close_strength": 0.83,
+                            "volume_expansion_quality": 0.18,
+                            "upstream_shadow_catalyst_relief_applied": False,
+                        },
+                    }
+                }
+            }
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_window_diagnostics(
+        candidate_dossier_path=candidate_dossier_path,
+        command_board_path=command_board_path,
+    )
+
+    assert analysis["near_miss_upgrade_window"]["trade_date"] == "2026-03-27"
+    assert analysis["near_miss_upgrade_window"]["report_dir"] == str(near_miss_report_dir)
+    assert analysis["near_miss_upgrade_window"]["decision"] == "near_miss"
+    assert analysis["near_miss_upgrade_window"]["score_target"] == 0.3882

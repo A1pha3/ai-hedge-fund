@@ -528,6 +528,77 @@ def test_rebuild_selection_targets_for_plan_keeps_frontier_diagnostics_canonical
     assert "candidate_pool_frontier_expansion" not in rebuilt.risk_metrics["funnel_diagnostics"]
 
 
+def test_recompute_missing_historical_prior_by_ticker_rebuilds_corridor_prior_from_report_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    report_dir = tmp_path / "paper_trading_20260406_case"
+    report_dir.mkdir(parents=True)
+    filters = {
+        "watchlist": {"tickers": [], "released_shadow_entries": []},
+        "short_trade_candidates": {
+            "tickers": [],
+            "released_shadow_entries": [
+                {
+                    "ticker": "300683",
+                    "decision": "watch",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "short_trade_boundary_metrics": {
+                        "candidate_score": 0.4111,
+                        "breakout_freshness": 0.4,
+                        "trend_acceleration": 0.7872,
+                        "close_strength": 0.8936,
+                    },
+                }
+            ],
+            "shadow_observation_entries": [],
+        },
+        "catalyst_theme_candidates": {"tickers": []},
+    }
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        refresh_module,
+        "_collect_historical_watch_candidate_rows",
+        lambda report_dir, trade_date: {"rows": [{"ticker": "300683"}]},
+    )
+
+    def _fake_build_watch_candidate_historical_prior(entry, historical_rows, price_cache, *, family):
+        captured["ticker"] = entry.get("ticker")
+        captured["family"] = family
+        captured["score_target"] = entry.get("score_target")
+        captured["metrics"] = dict(entry.get("metrics") or {})
+        return {
+            "applied_scope": "same_ticker",
+            "evaluable_count": 4,
+            "next_close_positive_rate": 0.75,
+            "next_close_return_mean": 0.053,
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+        }
+
+    monkeypatch.setattr(
+        refresh_module,
+        "_build_watch_candidate_historical_prior",
+        _fake_build_watch_candidate_historical_prior,
+    )
+
+    rebuilt = refresh_module._recompute_missing_historical_prior_by_ticker(
+        report_dir=report_dir,
+        trade_date_compact="20260407",
+        filters=filters,
+        prior_by_ticker={},
+    )
+
+    assert rebuilt["300683"]["evaluable_count"] == 4
+    assert captured["ticker"] == "300683"
+    assert captured["family"] == "near_miss"
+    assert captured["score_target"] == 0.4111
+    assert captured["metrics"] == {
+        "candidate_score": 0.4111,
+        "breakout_freshness": 0.4,
+        "trend_acceleration": 0.7872,
+        "close_strength": 0.8936,
+    }
+
+
 def test_main_refreshes_unique_report_dirs_and_optional_followups(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]):
     reports_root = tmp_path / "reports"
     report_dir = reports_root / "paper_trading_20260331_case"

@@ -308,6 +308,85 @@ def _write_replay_input_with_legacy_bearish_conflict_block(tmp_path):
     return replay_input_path
 
 
+def _write_replay_input_with_missing_rejected_entry_source_but_stored_watchlist_filter_target(tmp_path):
+    rejected_entry = {
+        "ticker": "601869",
+        "candidate_source": "watchlist_filter_diagnostics",
+        "candidate_reason_codes": ["watchlist_filter_diagnostics"],
+        "score_b": 0.20,
+        "score_c": 0.40,
+        "score_final": 0.10,
+        "quality_score": 0.55,
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                60.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 25.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 15.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                100.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 28.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.12, "investor": 0.02}},
+    }
+    with _override_short_trade_thresholds(
+        profile_name="trend_continuation_strength_v2",
+        select_threshold=0.35,
+        near_miss_threshold=0.24,
+    ):
+        selection_targets, summary = build_selection_targets(
+            trade_date="20260328",
+            watchlist=[],
+            rejected_entries=[rejected_entry],
+            supplemental_short_trade_entries=[],
+            buy_order_tickers=set(),
+            target_mode="dual_target",
+        )
+    assert selection_targets["601869"].short_trade is not None
+    assert selection_targets["601869"].short_trade.decision == "selected"
+    replay_input = {
+        "artifact_version": "v1",
+        "run_id": "test_missing_rejected_entry_source_watchlist_filter_target",
+        "trade_date": "2026-03-28",
+        "market": "CN",
+        "target_mode": "dual_target",
+        "pipeline_config_snapshot": {},
+        "source_summary": {
+            "watchlist_count": 0,
+            "rejected_entry_count": 1,
+            "supplemental_short_trade_entry_count": 0,
+            "buy_order_ticker_count": 0,
+        },
+        "watchlist": [],
+        "rejected_entries": [
+            {
+                key: value
+                for key, value in rejected_entry.items()
+                if key not in {"candidate_source", "candidate_reason_codes"}
+            }
+        ],
+        "supplemental_short_trade_entries": [],
+        "buy_order_tickers": [],
+        "selection_targets": {ticker: evaluation.model_dump(mode="json") for ticker, evaluation in selection_targets.items()},
+        "target_summary": summary.model_dump(mode="json"),
+    }
+    replay_input_path = tmp_path / "selection_target_replay_input.json"
+    replay_input_path.write_text(json.dumps(replay_input, ensure_ascii=False, indent=2), encoding="utf-8")
+    return replay_input_path
+
+
 def _write_selection_snapshot(tmp_path):
     watch_item = LayerCResult(
         ticker="000001",
@@ -755,6 +834,25 @@ def test_replay_selection_target_calibration_includes_upstream_shadow_observatio
     assert diagnostic["stored_decision"] is None
     assert diagnostic["replayed_decision"] in {"near_miss", "selected"}
     assert diagnostic["replayed_metrics_payload"]["visibility_gap_continuation_relief"]["applied"] in {True, False}
+
+
+def test_replay_selection_target_calibration_recovers_missing_rejected_entry_source_from_stored_target(tmp_path):
+    replay_input_path = _write_replay_input_with_missing_rejected_entry_source_but_stored_watchlist_filter_target(tmp_path)
+
+    analysis = analyze_selection_target_replay_inputs(
+        replay_input_path,
+        profile_name="trend_continuation_strength_v3",
+        select_threshold=0.35,
+        near_miss_threshold=0.24,
+        focus_tickers=["601869"],
+    )
+
+    assert analysis["candidate_source_counts"]["watchlist_filter_diagnostics"] == 1
+    diagnostic = analysis["focused_score_diagnostics"][0]
+    assert diagnostic["candidate_source"] == "watchlist_filter_diagnostics"
+    assert diagnostic["stored_decision"] == "selected"
+    assert diagnostic["replayed_decision"] == "near_miss"
+    assert diagnostic["replayed_metrics_payload"]["watchlist_filter_diagnostics_selected_only_shrink_guard"]["applied"] is True
 
 
 def test_replay_selection_target_calibration_structural_variant_applies_watchlist_guard_profile_overrides(tmp_path):
