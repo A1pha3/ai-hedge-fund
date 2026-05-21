@@ -6,7 +6,9 @@ an interoperable bridge artifact (JSON + Markdown).
 """
 from __future__ import annotations
 
+import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -33,6 +35,23 @@ def _load_json(path: str) -> Any:
         raise ValueError(f"failed to read JSON {path}: {e}")
 
 
+def _iter_report_rows(source: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rows = source.get("rows")
+    if isinstance(rows, list):
+        return [row for row in rows if isinstance(row, dict)]
+
+    report_rows: List[Dict[str, Any]] = []
+    for report_key, payload in source.items():
+        if not isinstance(payload, dict):
+            continue
+        if "objective" not in payload or "best_params" not in payload or "best_metrics" not in payload:
+            continue
+        row = dict(payload)
+        row.setdefault("report_key", report_key)
+        report_rows.append(row)
+    return report_rows
+
+
 def build_bridge(*, active_baseline_json: str, source_json: str) -> Dict[str, Any]:
     active = _load_json(active_baseline_json)
     source = _load_json(source_json)
@@ -52,7 +71,7 @@ def build_bridge(*, active_baseline_json: str, source_json: str) -> Dict[str, An
 
     # find matching rows
     rows: List[Dict[str, Any]] = []
-    for r in source.get("rows", []):
+    for r in _iter_report_rows(source):
         if r.get("objective") != "btst":
             continue
         if r.get("best_params") == profile_overrides:
@@ -100,11 +119,25 @@ def render_markdown(bridge: Dict[str, Any]) -> str:
 
 
 def main(
+    argv: list[str] | None = None,
+    *,
     active_baseline_json: str = "data/reports/btst_momentum_active_baseline_snapshot.json",
     source_json: str = "data/reports/btst_v2_objective_alignment_primary.json",
     output_json: str = "data/reports/btst_momentum_active_baseline_bridge.json",
     output_md: str = "data/reports/btst_momentum_active_baseline_bridge.md",
-):
+) -> int:
+    if argv is not None:
+        parser = argparse.ArgumentParser(description="Create a governed baseline bridge from a BTST-v2 report.")
+        parser.add_argument("--active-baseline-json", default=active_baseline_json)
+        parser.add_argument("--source-json", default=source_json)
+        parser.add_argument("--output-json", default=output_json)
+        parser.add_argument("--output-md", default=output_md)
+        args = parser.parse_args(argv)
+        active_baseline_json = args.active_baseline_json
+        source_json = args.source_json
+        output_json = args.output_json
+        output_md = args.output_md
+
     bridge = build_bridge(active_baseline_json=active_baseline_json, source_json=source_json)
 
     outp = Path(output_json)
@@ -115,7 +148,8 @@ def main(
     outmd = Path(output_md)
     outmd.parent.mkdir(parents=True, exist_ok=True)
     outmd.write_text(md)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main(argv=sys.argv[1:]))

@@ -39,6 +39,15 @@ def test_build_snapshot_success():
     assert snap["trade_date"] == "20260513"
 
 
+def test_build_snapshot_allows_null_trade_date():
+    sess = make_sample_session()
+    sess["optimization_profile_resolution"]["trade_date"] = None
+
+    snap = build_active_baseline_snapshot(session_summary=sess)
+
+    assert snap["trade_date"] is None
+
+
 def test_build_snapshot_missing_opr_raises():
     sess = {"some": "value"}
     with pytest.raises(SystemExit):

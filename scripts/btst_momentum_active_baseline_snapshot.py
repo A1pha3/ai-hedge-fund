@@ -59,8 +59,8 @@ def build_active_baseline_snapshot(*, session_summary: Dict[str, Any]) -> Dict[s
         raise SystemExit("optimization_profile_resolution.profile_overrides must be a JSON object")
 
     trade_date = opr.get("trade_date")
-    if not isinstance(trade_date, str) or not trade_date.strip():
-        raise SystemExit("optimization_profile_resolution.trade_date must be a non-empty string")
+    if trade_date is not None and (not isinstance(trade_date, str) or not trade_date.strip()):
+        raise SystemExit("optimization_profile_resolution.trade_date must be None or a non-empty string")
 
     snapshot = {
         "profile_name": opr["profile_name"],
