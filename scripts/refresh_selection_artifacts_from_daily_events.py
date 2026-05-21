@@ -13,10 +13,10 @@ from scripts.btst_latest_followup_utils import load_btst_followup_by_ticker_for_
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import _build_catalyst_theme_candidate_diagnostics
 from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_config, _build_upstream_shadow_observation_entry, _qualifies_short_trade_boundary_candidate
 from src.execution.models import ExecutionPlan
-from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
-from src.paper_trading._btst_reporting.historical_prior import (
+from src.paper_trading.btst_reporting import (
     _build_watch_candidate_historical_prior,
     _collect_historical_watch_candidate_rows,
+    generate_and_register_btst_followup_artifacts,
 )
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 from src.research.artifacts import FileSelectionArtifactWriter, _merge_supplemental_short_trade_entries

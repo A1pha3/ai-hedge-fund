@@ -327,3 +327,63 @@ def test_analyze_btst_candidate_entry_rollout_governance_summarizes_shadow_execu
     assert analysis["shadow_execution_evidence_summary"]["non_focus_positive_tickers"] == ["300394"]
     assert analysis["shadow_execution_evidence_summary"]["execution_verdict"] == "focus_ticker_execution_support_with_separation"
     assert "300502" in analysis["recommendation"]
+
+
+def test_analyze_btst_candidate_entry_rollout_governance_ignores_missing_shadow_evidence_dirs(tmp_path: Path) -> None:
+    frontier_path = _write_json(
+        tmp_path / "btst_candidate_entry_frontier.json",
+        {
+            "best_variant": {
+                "variant_name": "weak_structure_triplet",
+                "filtered_candidate_entry_count": 1,
+                "focus_filtered_tickers": ["300502"],
+                "preserve_filtered_tickers": [],
+            }
+        },
+    )
+    structural_path = _write_json(
+        tmp_path / "structural_validation.json",
+        {
+            "rows": [
+                {
+                    "structural_variant": "exclude_watchlist_avoid_weak_structure_entries",
+                    "decision_mismatch_count": 1,
+                    "released_from_blocked": ["300502"],
+                    "analysis": {},
+                }
+            ]
+        },
+    )
+    window_scan_path = _write_json(
+        tmp_path / "window_scan.json",
+        {
+            "report_count": 1,
+            "filtered_report_count": 1,
+            "focus_hit_report_count": 1,
+            "preserve_misfire_report_count": 0,
+            "distinct_window_count_with_filtered_entries": 1,
+            "rollout_readiness": "shadow_only_until_second_window",
+            "filtered_ticker_counts": {"300502": 1},
+        },
+    )
+    score_frontier_path = _write_json(
+        tmp_path / "score_frontier.json",
+        {
+            "ranked_variants": [
+                {"variant_name": "prepared_breakout_balance", "closed_cycle_tradeable_count": 0},
+            ]
+        },
+    )
+    missing_report_dir = tmp_path / "missing-followup-report"
+
+    analysis = analyze_btst_candidate_entry_rollout_governance(
+        frontier_path,
+        structural_validation_path=structural_path,
+        window_scan_path=window_scan_path,
+        score_frontier_path=score_frontier_path,
+        evidence_btst_report_dirs=[missing_report_dir],
+    )
+
+    assert analysis["shadow_execution_evidence_summary"]["evidence_report_count"] == 0
+    assert analysis["shadow_execution_evidence_summary"]["candidate_entry_signal_report_count"] == 0
+    assert analysis["shadow_execution_evidence_summary"]["execution_verdict"] == "no_shadow_execution_evidence"

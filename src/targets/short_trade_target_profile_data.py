@@ -1162,6 +1162,14 @@ SHORT_TRADE_TARGET_PROFILES["momentum_tuned"] = replace(
     selected_rank_cap_ratio=0.50,
 )
 
+SHORT_TRADE_TARGET_PROFILES["momentum_tuned_governed_v1"] = replace(
+    SHORT_TRADE_TARGET_PROFILES["momentum_optimized"],
+    name="momentum_tuned_governed_v1",
+    select_threshold=0.38,
+    near_miss_threshold=0.24,
+    selected_rank_cap_ratio=0.50,
+)
+
 # Task 3 - event_catalyst_guarded: Research profile for event-catalyst replay and frontier diagnostics
 # Guarded research profile enabling event-catalyst logic with controlled candidate sources
 # Limited to catalyst_theme and short_trade_boundary sources only
