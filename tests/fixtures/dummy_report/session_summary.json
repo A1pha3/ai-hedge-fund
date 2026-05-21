@@ -1,0 +1,2 @@
+{"profile_name": "trend_continuation_strength_v2", "surface_summaries": {"tradeable": {"closed_cycle_count": 1, "next_high_hit_rate_at_threshold": 0.03, "next_close_positive_rate": 0.03, "total_count": 1}}, "false_negative_proxy_summary": {"surface_metrics": {"next_high_hit_rate_at_threshold": 0.03, "next_close_positive_rate": 0.03}}, "frontier_source_family_summaries": {}, "source_coverage_summary": {}, "trade_dates": [20240101]}
+

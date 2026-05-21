@@ -90,7 +90,11 @@ def main(argv: list[str] | None = None) -> int:
     output_md = Path(args.output_md)
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_md.parent.mkdir(parents=True, exist_ok=True)
-    output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"Failed to write JSON output: {e}")
+        return 1
 
     lines = [
         "# Trend Continuation Activation Delta Calibration",
@@ -107,5 +111,9 @@ def main(argv: list[str] | None = None) -> int:
             f"- {item['candidate_name']}: execution_eligible_positive_window_count={diagnostics.get('execution_eligible_positive_window_count')}, "
             f"variant_supports_t1_count={analysis.get('variant_supports_t1_count')}, mixed_count={analysis.get('mixed_count')}"
         )
-    output_md.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    try:
+        output_md.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    except Exception as e:
+        print(f"Failed to write Markdown output: {e}")
+        return 1
     return 0
