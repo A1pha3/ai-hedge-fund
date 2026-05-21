@@ -11,7 +11,7 @@ def test_build_retune_shortlist_prefers_lower_stability_pressure_without_worseni
         results=[
             {
                 "trial_index": 10,
-                "params": {"select_threshold": 0.46},
+                "params": {"select_threshold": 0.46, "momentum_strength_weight": 0.0, "short_term_reversal_weight": 0.0},
                 "comparison_summary": {
                     "momentum_optimized": {"win_rate_window_trend_delta": -0.02, "gate_above_threshold_cv_delta": 0.0, "max_drawdown_simulated_delta": 0.0},
                     "default": {"win_rate_cv_delta": -0.01, "t_plus_3_close_payoff_ratio_delta": 0.0},
@@ -19,7 +19,7 @@ def test_build_retune_shortlist_prefers_lower_stability_pressure_without_worseni
             },
             {
                 "trial_index": 11,
-                "params": {"select_threshold": 0.46},
+                "params": {"select_threshold": 0.46, "momentum_strength_weight": 0.0, "short_term_reversal_weight": 0.0},
                 "comparison_summary": {
                     "momentum_optimized": {"win_rate_window_trend_delta": 0.01, "gate_above_threshold_cv_delta": 0.0, "max_drawdown_simulated_delta": 0.0},
                     "default": {"win_rate_cv_delta": 0.0, "t_plus_3_close_payoff_ratio_delta": 0.0},
@@ -67,3 +67,31 @@ def test_main_writes_shortlist_outputs(tmp_path: Path) -> None:
     data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["candidate_count"] == 1
     assert output_md.exists()
+
+
+def test_build_retune_shortlist_fails_closed_when_local_candidate_missing_fixed_zero_weight_params() -> None:
+    with pytest.raises(SystemExit, match="local retune candidates"):
+        shortlist.build_momentum_stability_retune_shortlist(
+            results=[
+                {
+                    "trial_index": 12,
+                    "params": {"select_threshold": 0.46},
+                    "comparison_summary": {"momentum_optimized": {"win_rate_window_trend_delta": 0.01}},
+                }
+            ],
+            surface={"grid": {"select_threshold": [0.42, 0.46, 0.5]}, "fixed_params": {"momentum_strength_weight": 0.0, "short_term_reversal_weight": 0.0}},
+        )
+
+
+def test_build_retune_shortlist_fails_closed_when_trial_index_is_malformed() -> None:
+    with pytest.raises(SystemExit, match="trial_index"):
+        shortlist.build_momentum_stability_retune_shortlist(
+            results=[
+                {
+                    "trial_index": "bad-index",
+                    "params": {"select_threshold": 0.46, "momentum_strength_weight": 0.0, "short_term_reversal_weight": 0.0},
+                    "comparison_summary": {"momentum_optimized": {"win_rate_window_trend_delta": 0.01}},
+                }
+            ],
+            surface={"grid": {"select_threshold": [0.42, 0.46, 0.5]}, "fixed_params": {"momentum_strength_weight": 0.0, "short_term_reversal_weight": 0.0}},
+        )

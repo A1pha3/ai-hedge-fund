@@ -75,7 +75,7 @@ def _matches_surface(params: dict[str, Any], surface: dict[str, Any]) -> bool:
             return False
 
     for key, expected in fixed_params.items():
-        if key in params and params.get(key) != expected:
+        if params.get(key) != expected:
             return False
 
     return True
@@ -97,6 +97,14 @@ def _extract_results(src: object) -> list[dict[str, Any]]:
     return normalized
 
 
+def _normalize_trial_index(value: object) -> int:
+    try:
+        trial_index = int(value)
+    except (TypeError, ValueError) as exc:
+        raise SystemExit("each shortlisted source result must include an integer-valued trial_index.") from exc
+    return trial_index
+
+
 def build_momentum_stability_retune_shortlist(*, results: list[dict[str, object]], surface: dict[str, object]) -> dict[str, object]:
     grid = surface.get("grid")
     fixed_params = surface.get("fixed_params")
@@ -114,7 +122,7 @@ def build_momentum_stability_retune_shortlist(*, results: list[dict[str, object]
 
         local_candidates.append(
             {
-                "trial_index": int(row["trial_index"]),
+                "trial_index": _normalize_trial_index(row.get("trial_index")),
                 "params": dict(params),
                 "cross_window_blocker_count": _count_regressions(comparison_summary, CROSS_WINDOW_METRICS),
                 "risk_blocker_count": _count_regressions(comparison_summary, RISK_METRICS),
