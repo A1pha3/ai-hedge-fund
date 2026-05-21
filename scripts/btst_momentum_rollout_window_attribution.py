@@ -133,9 +133,28 @@ def _load_rollout_blockers(rollout_payload: dict[str, Any]) -> list[str]:
 
 def _load_window_rows(source_payload: dict[str, Any]) -> list[dict[str, Any]]:
     window_rows = source_payload.get("window_rows")
-    if window_rows is None:
-        raise SystemExit("Source JSON must contain 'window_rows'.")
-    return _validate_window_rows(window_rows)
+    if window_rows is not None:
+        return _validate_window_rows(window_rows)
+
+    comparison_summary = source_payload.get("comparison_summary")
+    if isinstance(comparison_summary, dict):
+        if not comparison_summary:
+            raise SystemExit("comparison_summary must include at least one baseline delta row.")
+
+        synthesized_rows: list[dict[str, Any]] = []
+        for report_label, comparison_payload in comparison_summary.items():
+            if not isinstance(comparison_payload, dict):
+                raise SystemExit("comparison_summary entries must be objects.")
+
+            row: dict[str, Any] = {"report_label": str(report_label).strip()}
+            for field_name, field_value in comparison_payload.items():
+                if field_name.endswith("_delta"):
+                    row[field_name] = field_value
+            synthesized_rows.append(row)
+
+        return _validate_window_rows(synthesized_rows)
+
+    raise SystemExit("Source JSON must contain 'window_rows' or 'comparison_summary'.")
 
 
 def _derive_metric_field_candidates(blocker: str) -> tuple[str, ...]:
@@ -175,7 +194,7 @@ def _windows_missing_theme_exposure(window_rows: list[dict[str, Any]]) -> tuple[
     windows: list[str] = []
     surfaces: dict[str, list[str]] = {}
     for row in window_rows:
-        missing_surfaces = [field_name for field_name in THEME_EXPOSURE_FIELDS if row.get(field_name) is None]
+        missing_surfaces = [field_name for field_name in THEME_EXPOSURE_FIELDS if field_name in row and row.get(field_name) is None]
         if missing_surfaces:
             report_label = str(row["report_label"])
             windows.append(report_label)
@@ -187,7 +206,7 @@ def _attribute_windows_for_blocker(blocker: str, window_rows: list[dict[str, Any
     family_name = _classify_blocker(blocker)
     if family_name == "missing_observability":
         target_fields = set(_derive_metric_field_candidates(blocker))
-        return sorted([str(row["report_label"]) for row in window_rows if any(row.get(field_name) is None for field_name in target_fields)])
+        return sorted([str(row["report_label"]) for row in window_rows if any(field_name in row and row.get(field_name) is None for field_name in target_fields)])
 
     candidate_fields = _derive_metric_field_candidates(blocker)
     attributed_windows: list[str] = []

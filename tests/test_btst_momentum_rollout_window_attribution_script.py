@@ -193,6 +193,63 @@ def test_main_reads_dossier_style_rollout_json() -> None:
             shutil.rmtree(scratch_dir)
 
 
+def test_main_reads_comparison_summary_source_json() -> None:
+    scratch_dir = _make_scratch_dir("main_reads_comparison_summary_source_json")
+    try:
+        rollout_json = scratch_dir / "rollout.json"
+        source_json = scratch_dir / "source.json"
+        output_json = scratch_dir / "attribution.json"
+        output_md = scratch_dir / "attribution.md"
+        rollout_json.write_text(
+            json.dumps(
+                {
+                    "blockers": [
+                        "missing_projected_theme_exposure_delta_vs_default",
+                        "win_rate_window_trend_regressed_vs_momentum_optimized",
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        source_json.write_text(
+            json.dumps(
+                {
+                    "comparison_summary": {
+                        "momentum_optimized": {"win_rate_window_trend_delta": -0.04},
+                        "default": {"projected_theme_exposure_delta": None, "incremental_theme_exposure_delta": 0.01},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = attribution.main(
+            [
+                "--rollout-json",
+                str(rollout_json),
+                "--source-json",
+                str(source_json),
+                "--output-json",
+                str(output_json),
+                "--output-md",
+                str(output_md),
+            ]
+        )
+
+        assert result == 0
+        data = json.loads(output_json.read_text(encoding="utf-8"))
+        assert data["window_count"] == 2
+        assert data["windows_missing_theme_exposure"] == ["default"]
+        assert data["windows_by_blocker"]["missing_projected_theme_exposure_delta_vs_default"] == ["default"]
+        assert data["windows_by_blocker"]["win_rate_window_trend_regressed_vs_momentum_optimized"] == ["momentum_optimized"]
+        markdown = output_md.read_text(encoding="utf-8")
+        assert "momentum_optimized" in markdown
+        assert "default" in markdown
+    finally:
+        if scratch_dir.exists():
+            shutil.rmtree(scratch_dir)
+
+
 def test_render_momentum_rollout_window_attribution_markdown_uses_safe_code_fences_for_backticks() -> None:
     payload = attribution.build_momentum_rollout_window_attribution(
         rollout_blockers=["win_rate_window_trend_regressed_vs_default"],
