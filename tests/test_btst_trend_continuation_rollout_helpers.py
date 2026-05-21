@@ -160,6 +160,20 @@ def test_build_trend_continuation_rollout_assessment_blocks_promotion_with_wrong
     assert "diagnostics_profile_mismatch" in assessment["blockers"]
 
 
+def test_build_trend_continuation_rollout_assessment_blocks_promotion_without_diagnostics_report_dirs() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics={
+            **_build_diagnostics(all_windows_zero_delta=False, execution_eligible_positive_window_count=1),
+            "report_dir_count": 0,
+        },
+        activation_delta_calibration=_build_calibration_payload(),
+    )
+
+    assert assessment["action"] == "hold"
+    assert "no_diagnostics_report_dirs" in assessment["blockers"]
+
+
 def test_build_trend_continuation_rollout_assessment_blocks_promotion_with_wrong_profile_calibration_payload() -> None:
     assessment = build_trend_continuation_rollout_assessment(
         _build_analysis(),

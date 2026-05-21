@@ -142,6 +142,8 @@ def build_trend_continuation_rollout_assessment(
     elif not activation_delta_diagnostics_summary["profile_match"]:
         blockers.append("diagnostics_profile_mismatch")
     else:
+        if activation_delta_diagnostics_summary["report_dir_count"] <= 0:
+            blockers.append("no_diagnostics_report_dirs")
         if activation_delta_diagnostics_summary["all_windows_zero_delta"]:
             blockers.append("no_runtime_activation_delta")
         if (
