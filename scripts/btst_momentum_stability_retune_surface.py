@@ -21,18 +21,23 @@ def build_momentum_stability_retune_surface(*, best_params: dict[str, object], t
     if str(triage.get("action") or "") != "parameter_retune_next":
         raise SystemExit("triage action must be parameter_retune_next before building a retune surface.")
 
-    # normalize numeric best params
+    # normalize numeric best params - fail-closed on missing or non-numeric values
+    expected_keys = set(LOCAL_GRID.keys()) | set(FIXED_ZERO_PARAMS)
+    if not isinstance(best_params, dict):
+        raise SystemExit("best_params must be an object mapping parameter names to numeric values.")
     normalized_best_params: dict[str, float] = {}
-    for key, value in best_params.items():
+    for key in expected_keys:
+        if key not in best_params:
+            raise SystemExit(f"missing required best_param: {key}")
+        value = best_params[key]
         if isinstance(value, bool):
-            continue
+            raise SystemExit(f"invalid type for best_param {key}: bool is not allowed")
         try:
             normalized_best_params[key] = float(value)
         except Exception:
-            # skip non-numeric
-            continue
+            raise SystemExit(f"non-numeric best_param: {key}")
 
-    fixed_params: dict[str, float] = {key: float(normalized_best_params.get(key, 0.0)) for key in FIXED_ZERO_PARAMS}
+    fixed_params: dict[str, float] = {key: float(normalized_best_params[key]) for key in FIXED_ZERO_PARAMS}
     if any(value != 0.0 for value in fixed_params.values()):
         raise SystemExit("fixed zero-weight parameters must stay disabled for this retune cycle.")
 
@@ -70,7 +75,12 @@ def main(argv: list[str] | None = None) -> int:
 
     src = json.loads(source.read_text(encoding="utf-8"))
     triage = json.loads(triage_path.read_text(encoding="utf-8"))
-    best_params = src.get("best_params") or {}
+
+    if not isinstance(src, dict):
+        raise SystemExit("source JSON must be an object with a 'best_params' mapping.")
+    best_params = src.get("best_params")
+    if not isinstance(best_params, dict):
+        raise SystemExit("source JSON 'best_params' must be an object mapping parameter names to values.")
 
     payload = build_momentum_stability_retune_surface(best_params=best_params, triage=triage)
 

@@ -66,3 +66,77 @@ def test_main_writes_surface_outputs(tmp_path: Path) -> None:
     data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["retune_allowed"] is True
     assert output_md.exists()
+
+
+def test_main_fails_when_source_json_is_not_object(tmp_path: Path) -> None:
+    source_json = tmp_path / "param_search.json"
+    triage_json = tmp_path / "triage.json"
+    source_json.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+    triage_json.write_text(json.dumps({"action": "parameter_retune_next", "dominant_family": "cross_window_stability"}), encoding="utf-8")
+
+    with pytest.raises(SystemExit):
+        surface.main(
+            [
+                "--source-json",
+                str(source_json),
+                "--triage-json",
+                str(triage_json),
+                "--output-json",
+                str(tmp_path / "out.json"),
+                "--output-md",
+                str(tmp_path / "out.md"),
+            ]
+        )
+
+
+def test_main_fails_when_best_params_not_object(tmp_path: Path) -> None:
+    source_json = tmp_path / "param_search.json"
+    triage_json = tmp_path / "triage.json"
+    source_json.write_text(json.dumps({"best_params": ["not", "object"]}), encoding="utf-8")
+    triage_json.write_text(json.dumps({"action": "parameter_retune_next", "dominant_family": "cross_window_stability"}), encoding="utf-8")
+
+    with pytest.raises(SystemExit):
+        surface.main(
+            [
+                "--source-json",
+                str(source_json),
+                "--triage-json",
+                str(triage_json),
+                "--output-json",
+                str(tmp_path / "out.json"),
+                "--output-md",
+                str(tmp_path / "out.md"),
+            ]
+        )
+
+
+def test_build_fails_when_fixed_weights_missing_or_non_numeric() -> None:
+    # missing fixed-weight keys should fail-closed
+    with pytest.raises(SystemExit):
+        surface.build_momentum_stability_retune_surface(
+            best_params={
+                "select_threshold": 0.46,
+                "recency_half_life_days": 180,
+                "trend_acceleration_weight": 0.22,
+                "close_strength_weight": 0.12,
+                "volume_expansion_quality_weight": 0.16,
+                "catalyst_freshness_weight": 0.14,
+            },
+            triage={"action": "parameter_retune_next", "dominant_family": "cross_window_stability"},
+        )
+
+    # non-numeric value should fail
+    with pytest.raises(SystemExit):
+        surface.build_momentum_stability_retune_surface(
+            best_params={
+                "select_threshold": "not-a-number",
+                "recency_half_life_days": 180,
+                "trend_acceleration_weight": 0.22,
+                "close_strength_weight": 0.12,
+                "volume_expansion_quality_weight": 0.16,
+                "catalyst_freshness_weight": 0.14,
+                "momentum_strength_weight": 0.0,
+                "short_term_reversal_weight": 0.0,
+            },
+            triage={"action": "parameter_retune_next", "dominant_family": "cross_window_stability"},
+        )
