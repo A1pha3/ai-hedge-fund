@@ -33,6 +33,15 @@ FAMILY_RULES: dict[str, tuple[str, ...]] = {
 }
 
 THEME_EXPOSURE_FIELDS = ("projected_theme_exposure_delta", "incremental_theme_exposure_delta")
+POSITIVE_DIRECTION_REGRESSION_ROOTS = {
+    "factor_drift_score",
+    "gate_above_threshold_cv",
+    "max_drawdown_simulated",
+    "param_drift_score",
+    "win_rate_ci_width",
+    "win_rate_cv",
+    "win_rate_window_volatility",
+}
 
 
 def _normalize_blocker(blocker: str) -> str:
@@ -56,8 +65,9 @@ def _validate_rollout_blockers(rollout_blockers: list[str]) -> list[str]:
         if not isinstance(blocker, str):
             raise SystemExit("rollout_blockers must be a list of strings.")
         normalized_blocker = _normalize_blocker(blocker)
-        if normalized_blocker:
-            normalized_blockers.append(normalized_blocker)
+        if not normalized_blocker:
+            raise SystemExit("rollout_blockers must contain non-empty strings.")
+        normalized_blockers.append(normalized_blocker)
     return normalized_blockers
 
 
@@ -98,11 +108,16 @@ def _load_rollout_blockers(rollout_payload: dict[str, Any]) -> list[str]:
 
     families = rollout_payload.get("families")
     if isinstance(families, dict):
+        if not families:
+            raise SystemExit("families must include at least one family entry when reading a dossier JSON.")
         family_blockers: list[str] = []
         for family_payload in families.values():
             if not isinstance(family_payload, dict):
                 raise SystemExit("families entries must be objects when reading a dossier JSON.")
-            family_blockers.extend(_validate_rollout_blockers(list(family_payload.get("blockers") or [])))
+            raw_family_blockers = family_payload.get("blockers")
+            if raw_family_blockers is None:
+                raise SystemExit("families entries must include a blockers list when reading a dossier JSON.")
+            family_blockers.extend(_validate_rollout_blockers(raw_family_blockers))
         return family_blockers
 
     raise SystemExit("Rollout JSON must contain either 'blockers' or dossier-style 'families.blockers'.")
@@ -132,6 +147,15 @@ def _derive_metric_field_candidates(blocker: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(candidates))
 
 
+def _is_regression_value(blocker: str, metric_value: float) -> bool:
+    blocker_root = blocker.split("_vs_", 1)[0]
+    if blocker_root.endswith("_regressed"):
+        blocker_root = blocker_root.removesuffix("_regressed")
+    if blocker_root in POSITIVE_DIRECTION_REGRESSION_ROOTS:
+        return metric_value > 0
+    return metric_value < 0
+
+
 def _windows_missing_theme_exposure(window_rows: list[dict[str, Any]]) -> tuple[list[str], dict[str, list[str]]]:
     windows: list[str] = []
     surfaces: dict[str, list[str]] = {}
@@ -157,7 +181,7 @@ def _attribute_windows_for_blocker(blocker: str, window_rows: list[dict[str, Any
             metric_value = row.get(field_name)
             if metric_value is None:
                 continue
-            if float(metric_value) < 0:
+            if _is_regression_value(blocker, float(metric_value)):
                 attributed_windows.append(str(row["report_label"]))
                 break
     return sorted(dict.fromkeys(attributed_windows))
