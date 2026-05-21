@@ -23,6 +23,25 @@ def test_rank_calibration_candidates_prefers_execution_eligible_activation_then_
     assert ranked[0]["candidate_name"] == "balanced"
 
 
+def test_rank_calibration_candidates_prefers_clean_candidates_over_governance_blocked_ones() -> None:
+    ranked = calibration.rank_calibration_candidates(
+        [
+            {
+                "candidate_name": "blocked_more_activation",
+                "diagnostics": {"execution_eligible_positive_window_count": 3, "all_windows_zero_delta": False, "report_dir_count": 2},
+                "analysis": {"variant_supports_t1_count": 1, "mixed_count": 0, "keep_baseline_count": 1},
+            },
+            {
+                "candidate_name": "clean_less_activation",
+                "diagnostics": {"execution_eligible_positive_window_count": 1, "all_windows_zero_delta": False, "report_dir_count": 2},
+                "analysis": {"variant_supports_t1_count": 1, "mixed_count": 0, "keep_baseline_count": 0},
+            },
+        ]
+    )
+
+    assert ranked[0]["candidate_name"] == "clean_less_activation"
+
+
 def test_build_candidate_overrides_keeps_scope_inside_v3_shrink_parameters() -> None:
     candidate = calibration.CALIBRATION_CANDIDATES[0]
 
@@ -51,11 +70,13 @@ def test_run_calibration_calls_validation_and_diagnostics_for_each_candidate(mon
             "variant_profile": variant_profile,
             "variant_supports_t1_count": 1,
             "mixed_count": 0,
+            "report_dir_count": 1,
             "rows": [],
         }
 
     def fake_diagnostics(analysis):
         return {
+            "report_dir_count": analysis["report_dir_count"],
             "all_windows_zero_delta": False,
             "execution_eligible_positive_window_count": 1,
             "analysis_variant_profile": analysis["variant_profile"],
@@ -70,6 +91,33 @@ def test_run_calibration_calls_validation_and_diagnostics_for_each_candidate(mon
     assert all(call["baseline_profile"] == "trend_continuation_strength_v2" for call in captured_calls)
     assert all(call["variant_profile"] == "trend_continuation_strength_v3" for call in captured_calls)
     assert payload["best_candidate"]["diagnostics"]["execution_eligible_positive_window_count"] == 1
+
+
+def test_run_calibration_returns_no_best_candidate_without_report_evidence(monkeypatch) -> None:
+    def fake_analyze(reports_root, *, baseline_profile, variant_profile, variant_profile_overrides):
+        return {
+            "baseline_profile": baseline_profile,
+            "variant_profile": variant_profile,
+            "keep_baseline_count": 0,
+            "variant_supports_t1_count": 1,
+            "mixed_count": 0,
+            "report_dir_count": 0,
+            "rows": [],
+        }
+
+    def fake_diagnostics(analysis):
+        return {
+            "report_dir_count": analysis["report_dir_count"],
+            "all_windows_zero_delta": False,
+            "execution_eligible_positive_window_count": 1,
+        }
+
+    monkeypatch.setattr(calibration, "analyze_btst_multi_window_profile_validation", fake_analyze)
+    monkeypatch.setattr(calibration, "build_trend_continuation_activation_delta_diagnostics", fake_diagnostics)
+
+    payload = calibration.run_calibration(reports_root=Path("/tmp/reports"))
+
+    assert payload["best_candidate"] is None
 
 
 def test_main_writes_json_and_markdown_outputs(tmp_path: Path, monkeypatch) -> None:

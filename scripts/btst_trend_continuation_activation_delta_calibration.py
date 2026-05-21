@@ -41,10 +41,23 @@ CALIBRATION_CANDIDATES = [
 ]
 
 
+def _candidate_is_selection_eligible(item: dict[str, Any]) -> bool:
+    analysis = dict(item.get("analysis") or {})
+    diagnostics = dict(item.get("diagnostics") or {})
+    return (
+        int(analysis.get("keep_baseline_count") or 0) == 0
+        and int(diagnostics.get("report_dir_count") or 0) > 0
+        and int(diagnostics.get("execution_eligible_positive_window_count") or 0) > 0
+        and int(analysis.get("variant_supports_t1_count") or 0) > 0
+        and not bool(diagnostics.get("all_windows_zero_delta"))
+    )
+
+
 def rank_calibration_candidates(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         results,
         key=lambda item: (
+            0 if _candidate_is_selection_eligible(item) else 1,
             -(int(dict(item.get("diagnostics") or {}).get("execution_eligible_positive_window_count") or 0)),
             -(int(dict(item.get("analysis") or {}).get("variant_supports_t1_count") or 0)),
             int(dict(item.get("analysis") or {}).get("mixed_count") or 0),
@@ -78,11 +91,12 @@ def run_calibration(*, reports_root: str | Path) -> dict[str, Any]:
         )
 
     ranked_candidates = rank_calibration_candidates(calibration_results)
+    best_candidate = next((item for item in ranked_candidates if _candidate_is_selection_eligible(item)), None)
     return {
         "baseline_profile": baseline_profile,
         "candidate_profile": candidate_profile,
         "ranked_candidates": ranked_candidates,
-        "best_candidate": ranked_candidates[0] if ranked_candidates else None,
+        "best_candidate": best_candidate,
     }
 
 
