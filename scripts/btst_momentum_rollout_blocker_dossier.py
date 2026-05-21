@@ -48,8 +48,6 @@ def parse_rollout_blockers_from_markdown(markdown_text: str) -> list[str]:
             continue
 
         if not line:
-            if blockers:
-                break
             continue
         if line.startswith("#"):
             break
