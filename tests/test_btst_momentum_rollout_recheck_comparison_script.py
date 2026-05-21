@@ -32,11 +32,8 @@ def test_build_rollout_recheck_comparison_extracts_winner_baseline_and_challenge
                     "next_close_payoff_ratio_delta": 0.1398,
                 }
             },
-            "baseline_verdicts": {
-                "momentum_optimized": {
-                    "status": "blocked",
-                    "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"],
-                }
+            "rollout_recommendation_details": {
+                "baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"]}},
             },
         },
     )
@@ -187,6 +184,33 @@ def test_build_rollout_recheck_comparison_rejects_non_numeric_bridge_metrics() -
         )
 
 
+def test_build_rollout_recheck_comparison_rejects_missing_baseline_summary_fields() -> None:
+    with pytest.raises(SystemExit, match="baseline_summary.next_close_payoff_ratio_delta must be present"):
+        comparison.build_momentum_rollout_recheck_comparison(
+            rollout_pack={
+                "winner": {"trial_index": 602},
+                "challengers": [],
+                "active_baseline": {"profile_name": "momentum_optimized"},
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "release_posture": "hold",
+                "fail_closed": True,
+            },
+            source_report={
+                "results": [{"trial_index": 602, "metrics": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24}}],
+                "comparison_summary": {
+                    "momentum_optimized": {
+                        "candidate": {"next_close_positive_rate": 0.5377},
+                        "baseline": {"next_close_positive_rate": 0.5440},
+                        "next_close_positive_rate_delta": -0.0063,
+                    }
+                },
+                "rollout_recommendation_details": {
+                    "baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": []}},
+                },
+            },
+        )
+
+
 def test_main_writes_rollout_recheck_comparison_outputs(tmp_path: Path) -> None:
     rollout_pack_json = tmp_path / "rollout_pack.json"
     source_json = tmp_path / "source.json"
@@ -218,11 +242,8 @@ def test_main_writes_rollout_recheck_comparison_outputs(tmp_path: Path) -> None:
                         "next_close_payoff_ratio_delta": 0.1398,
                     }
                 },
-                "baseline_verdicts": {
-                    "momentum_optimized": {
-                        "status": "blocked",
-                        "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"],
-                    }
+                "rollout_recommendation_details": {
+                    "baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"]}}
                 },
             }
         ),
@@ -245,4 +266,5 @@ def test_main_writes_rollout_recheck_comparison_outputs(tmp_path: Path) -> None:
     assert result == 0
     data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["winner_vs_active_baseline"]["baseline_name"] == "momentum_optimized"
+    assert data["winner_vs_active_baseline"]["blockers"] == ["next_close_positive_rate_regressed_vs_momentum_optimized"]
     assert output_md.exists()

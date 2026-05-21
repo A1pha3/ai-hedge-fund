@@ -61,6 +61,13 @@ def _require_non_empty_string(name: str, value: Any) -> str:
     return value.strip()
 
 
+def _require_baseline_summary_field(baseline_summary: dict[str, Any], field_name: str) -> Any:
+    value = baseline_summary.get(field_name)
+    if value is None:
+        raise SystemExit(f"baseline_summary.{field_name} must be present.")
+    return value
+
+
 def _index_results(results: Any) -> dict[int, dict[str, Any]]:
     indexed: dict[int, dict[str, Any]] = {}
     for row in _require_list("source_report.results", results):
@@ -162,10 +169,10 @@ def build_momentum_rollout_recheck_comparison(
             raise SystemExit("baseline_verdicts must contain the active baseline entry.")
         winner_vs_active_baseline = {
             "baseline_name": baseline_name,
-            "candidate": baseline_summary.get("candidate"),
-            "baseline": baseline_summary.get("baseline"),
-            "next_close_positive_rate_delta": baseline_summary.get("next_close_positive_rate_delta"),
-            "next_close_payoff_ratio_delta": baseline_summary.get("next_close_payoff_ratio_delta"),
+            "candidate": _require_baseline_summary_field(baseline_summary, "candidate"),
+            "baseline": _require_baseline_summary_field(baseline_summary, "baseline"),
+            "next_close_positive_rate_delta": _require_baseline_summary_field(baseline_summary, "next_close_positive_rate_delta"),
+            "next_close_payoff_ratio_delta": _require_baseline_summary_field(baseline_summary, "next_close_payoff_ratio_delta"),
             "blockers": list(baseline_verdict.get("blockers") or []),
         }
     else:
