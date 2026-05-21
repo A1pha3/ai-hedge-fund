@@ -53,6 +53,13 @@ def _require_string(name: str, value: Any) -> str:
     return value.strip()
 
 
+def _require_single_line_string(name: str, value: Any) -> str:
+    normalized = _require_string(name, value)
+    if "\n" in normalized or "\r" in normalized:
+        raise SystemExit(f"{name} must not contain newlines.")
+    return normalized
+
+
 def _require_guardrails(value: Any) -> list[str]:
     if not isinstance(value, list):
         raise SystemExit("guardrails must be a list.")
@@ -81,7 +88,7 @@ def build_momentum_rerun_rollout_pack(*, cohort: dict[str, object], decision: di
     if release_posture != "hold":
         raise SystemExit("decision.release_posture must be hold.")
 
-    dominant_family = _require_string("decision.dominant_family", normalized_decision.get("dominant_family"))
+    dominant_family = _require_single_line_string("decision.dominant_family", normalized_decision.get("dominant_family"))
     missing_theme_exposure_window_count = _require_non_negative_int(
         "decision.missing_theme_exposure_window_count", normalized_decision.get("missing_theme_exposure_window_count")
     )
