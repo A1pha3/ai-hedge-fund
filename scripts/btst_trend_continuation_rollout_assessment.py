@@ -13,12 +13,20 @@ from scripts.btst_trend_continuation_rollout_helpers import (
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build a governed rollout assessment for BTST trend continuation strength variants.")
     parser.add_argument("--input-json", required=True, help="Path to the multi-window validation JSON")
+    parser.add_argument("--diagnostics-json", default=None, help="Optional activation-delta diagnostics JSON")
+    parser.add_argument("--calibration-json", default=None, help="Optional activation-delta calibration JSON")
     parser.add_argument("--output-json", required=True, help="Path to write the rollout assessment JSON")
     parser.add_argument("--output-md", required=True, help="Path to write the rollout assessment Markdown")
     args = parser.parse_args(argv)
 
     analysis = json.loads(Path(args.input_json).read_text(encoding="utf-8"))
-    payload = build_trend_continuation_rollout_assessment(analysis)
+    diagnostics = json.loads(Path(args.diagnostics_json).read_text(encoding="utf-8")) if args.diagnostics_json else None
+    calibration = json.loads(Path(args.calibration_json).read_text(encoding="utf-8")) if args.calibration_json else None
+    payload = build_trend_continuation_rollout_assessment(
+        analysis,
+        activation_delta_diagnostics=diagnostics,
+        activation_delta_calibration=calibration,
+    )
 
     output_json = Path(args.output_json)
     output_md = Path(args.output_md)
