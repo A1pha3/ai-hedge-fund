@@ -166,6 +166,21 @@ def test_build_calibration_candidate_governance_blockers_fail_closed_on_malforme
     assert "best_candidate_malformed_all_windows_zero_delta" in blockers
 
 
+def test_build_calibration_candidate_governance_blockers_disqualify_non_mapping_nested_payloads() -> None:
+    blockers = calibration.build_calibration_candidate_governance_blockers(
+        {
+            "candidate_name": "malformed_nested_payloads",
+            "baseline_profile": "trend_continuation_strength_v2",
+            "candidate_profile": "trend_continuation_strength_v3",
+            "diagnostics": 1,
+            "analysis": ["not-a-mapping"],
+        }
+    )
+
+    assert "best_candidate_malformed_diagnostics_payload" in blockers
+    assert "best_candidate_malformed_analysis_payload" in blockers
+
+
 def test_build_candidate_overrides_keeps_scope_inside_v3_shrink_parameters() -> None:
     candidate = calibration.CALIBRATION_CANDIDATES[0]
 

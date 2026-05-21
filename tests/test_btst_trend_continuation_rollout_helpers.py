@@ -160,6 +160,17 @@ def test_build_trend_continuation_rollout_assessment_blocks_promotion_with_wrong
     assert "diagnostics_profile_mismatch" in assessment["blockers"]
 
 
+def test_build_trend_continuation_rollout_assessment_blocks_promotion_with_non_mapping_diagnostics_payload() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics=[{"report_dir_count": 1}],
+        activation_delta_calibration=_build_calibration_payload(),
+    )
+
+    assert assessment["action"] == "hold"
+    assert "malformed_diagnostics_payload" in assessment["blockers"]
+
+
 def test_build_trend_continuation_rollout_assessment_blocks_promotion_without_diagnostics_report_dirs() -> None:
     assessment = build_trend_continuation_rollout_assessment(
         _build_analysis(),
@@ -183,6 +194,17 @@ def test_build_trend_continuation_rollout_assessment_blocks_promotion_with_wrong
 
     assert assessment["action"] == "hold"
     assert "calibration_profile_mismatch" in assessment["blockers"]
+
+
+def test_build_trend_continuation_rollout_assessment_blocks_promotion_with_non_mapping_calibration_payload() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics=_build_diagnostics(),
+        activation_delta_calibration=[{"best_candidate": "not-a-mapping"}],
+    )
+
+    assert assessment["action"] == "hold"
+    assert "malformed_calibration_payload" in assessment["blockers"]
 
 
 def test_build_trend_continuation_rollout_assessment_flags_missing_runtime_activation_delta() -> None:

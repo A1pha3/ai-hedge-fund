@@ -12,6 +12,14 @@ def _coerce_int(value: Any) -> int:
     return int(value or 0)
 
 
+def _coerce_mapping(payload: Any) -> tuple[dict[str, Any], bool]:
+    if payload is None:
+        return {}, False
+    if isinstance(payload, Mapping):
+        return dict(payload), False
+    return {}, True
+
+
 def _parse_required_int_evidence(payload: Mapping[str, Any], field_name: str) -> tuple[int | None, str | None]:
     if field_name not in payload:
         return None, f"missing_{field_name}"
@@ -81,7 +89,7 @@ def _build_activation_delta_diagnostics_summary(
     baseline_profile: str,
     candidate_profile: str,
 ) -> dict[str, Any]:
-    diagnostics = dict(payload or {})
+    diagnostics, malformed_payload = _coerce_mapping(payload)
     resolved_baseline_profile = str(diagnostics.get("baseline_profile") or "").strip() or None
     resolved_candidate_profile = str(diagnostics.get("candidate_profile") or diagnostics.get("variant_profile") or "").strip() or None
     report_dir_count, report_dir_count_issue = _parse_required_int_evidence(diagnostics, "report_dir_count") if diagnostics else (None, None)
@@ -100,6 +108,7 @@ def _build_activation_delta_diagnostics_summary(
     ]
     return {
         "provided": bool(diagnostics),
+        "malformed_payload": malformed_payload,
         "baseline_profile": resolved_baseline_profile,
         "candidate_profile": resolved_candidate_profile,
         "profile_match": bool(diagnostics) and resolved_baseline_profile == baseline_profile and resolved_candidate_profile == candidate_profile,
@@ -117,10 +126,10 @@ def _build_activation_delta_calibration_summary(
     baseline_profile: str,
     candidate_profile: str,
 ) -> dict[str, Any]:
-    calibration = dict(payload or {})
+    calibration, malformed_payload = _coerce_mapping(payload)
     ranked_candidates = [dict(item) for item in list(calibration.get("ranked_candidates") or []) if isinstance(item, Mapping)]
-    best_candidate = dict(calibration.get("best_candidate") or {})
-    best_diagnostics = dict(best_candidate.get("diagnostics") or {})
+    best_candidate, malformed_best_candidate = _coerce_mapping(calibration.get("best_candidate"))
+    best_diagnostics, _ = _coerce_mapping(best_candidate.get("diagnostics"))
     resolved_baseline_profile = str(calibration.get("baseline_profile") or "").strip() or None
     resolved_candidate_profile = str(calibration.get("candidate_profile") or "").strip() or None
     best_candidate_report_dir_count, best_candidate_report_dir_count_issue = (
@@ -137,9 +146,12 @@ def _build_activation_delta_calibration_summary(
         baseline_profile=baseline_profile,
         candidate_profile=candidate_profile,
     ) if best_candidate else []
+    if malformed_best_candidate:
+        best_candidate_blockers = ["best_candidate_malformed_payload", *best_candidate_blockers]
 
     return {
         "provided": bool(calibration),
+        "malformed_payload": malformed_payload,
         "baseline_profile": resolved_baseline_profile,
         "candidate_profile": resolved_candidate_profile,
         "profile_match": bool(calibration) and resolved_baseline_profile == baseline_profile and resolved_candidate_profile == candidate_profile,
@@ -158,7 +170,7 @@ def _build_activation_delta_calibration_summary(
             if issue
         ],
         "best_candidate_blockers": best_candidate_blockers,
-        "best_candidate_governance_safe": bool(best_candidate) and not best_candidate_blockers,
+        "best_candidate_governance_safe": bool(best_candidate) and not malformed_best_candidate and not best_candidate_blockers,
     }
 
 
@@ -199,7 +211,9 @@ def build_trend_continuation_rollout_assessment(
         blockers.append("no_execution_eligible_activation_evidence")
     if runtime_activation_summary["all_windows_zero_delta"]:
         blockers.append("no_runtime_activation_delta")
-    if not activation_delta_diagnostics_summary["provided"]:
+    if activation_delta_diagnostics_summary["malformed_payload"]:
+        blockers.append("malformed_diagnostics_payload")
+    elif not activation_delta_diagnostics_summary["provided"]:
         blockers.append("missing_diagnostics_evidence")
     elif not activation_delta_diagnostics_summary["profile_match"]:
         blockers.append("diagnostics_profile_mismatch")
@@ -215,7 +229,9 @@ def build_trend_continuation_rollout_assessment(
             and activation_delta_diagnostics_summary["execution_eligible_positive_window_count"] <= 0
         ):
             blockers.append("activation_delta_without_execution_eligible_support")
-    if not activation_delta_calibration_summary["provided"]:
+    if activation_delta_calibration_summary["malformed_payload"]:
+        blockers.append("malformed_calibration_payload")
+    elif not activation_delta_calibration_summary["provided"]:
         blockers.append("missing_calibration_evidence")
     else:
         if not activation_delta_calibration_summary["profile_match"]:
@@ -229,7 +245,11 @@ def build_trend_continuation_rollout_assessment(
             blockers.append("no_calibration_report_dirs")
         if activation_delta_calibration_summary["best_candidate_name"] is None:
             blockers.append("no_qualifying_calibration_best_candidate")
-        elif activation_delta_calibration_summary["profile_match"] and not activation_delta_calibration_summary["best_candidate_governance_safe"]:
+        if activation_delta_calibration_summary["profile_match"] and activation_delta_calibration_summary["best_candidate_blockers"]:
+            blockers.extend(
+                blocker for blocker in activation_delta_calibration_summary["best_candidate_blockers"] if blocker.startswith("best_candidate_malformed_")
+            )
+        if activation_delta_calibration_summary["profile_match"] and not activation_delta_calibration_summary["best_candidate_governance_safe"]:
             blockers.append("calibration_best_candidate_not_governance_safe")
     if variant_improves_t2_only_count > 0 and variant_supports_t1_count <= 0:
         blockers.append("t2_only_tradeoff_without_t1_upgrade")

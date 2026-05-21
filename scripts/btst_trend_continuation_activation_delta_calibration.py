@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,14 @@ def _coerce_int(value: Any) -> int:
     return int(value or 0)
 
 
+def _coerce_mapping(payload: Any) -> tuple[dict[str, Any], bool]:
+    if payload is None:
+        return {}, False
+    if isinstance(payload, Mapping):
+        return dict(payload), False
+    return {}, True
+
+
 def _parse_required_int_evidence(payload: dict[str, Any], field_name: str) -> tuple[int | None, str | None]:
     if field_name not in payload:
         return None, f"missing_{field_name}"
@@ -78,14 +87,20 @@ def build_calibration_candidate_governance_blockers(
     baseline_profile: str = DEFAULT_BASELINE_PROFILE,
     candidate_profile: str = DEFAULT_CANDIDATE_PROFILE,
 ) -> list[str]:
-    candidate = dict(item or {})
-    analysis = dict(candidate.get("analysis") or {})
-    diagnostics = dict(candidate.get("diagnostics") or {})
+    candidate, malformed_candidate = _coerce_mapping(item)
+    analysis, malformed_analysis = _coerce_mapping(candidate.get("analysis"))
+    diagnostics, malformed_diagnostics = _coerce_mapping(candidate.get("diagnostics"))
 
     resolved_baseline_profile = str(candidate.get("baseline_profile") or analysis.get("baseline_profile") or diagnostics.get("baseline_profile") or "").strip()
     resolved_candidate_profile = str(candidate.get("candidate_profile") or analysis.get("variant_profile") or diagnostics.get("candidate_profile") or "").strip()
 
     blockers: list[str] = []
+    if malformed_candidate:
+        blockers.append("best_candidate_malformed_payload")
+    if malformed_analysis:
+        blockers.append("best_candidate_malformed_analysis_payload")
+    if malformed_diagnostics:
+        blockers.append("best_candidate_malformed_diagnostics_payload")
     if resolved_baseline_profile != baseline_profile:
         blockers.append("best_candidate_baseline_profile_mismatch")
     if resolved_candidate_profile != candidate_profile:
@@ -135,9 +150,9 @@ def rank_calibration_candidates(results: list[dict[str, Any]]) -> list[dict[str,
         results,
         key=lambda item: (
             0 if _candidate_is_selection_eligible(item) else 1,
-            *_sort_int(dict(item.get("diagnostics") or {}), "execution_eligible_positive_window_count", descending=True),
-            *_sort_int(dict(item.get("analysis") or {}), "variant_supports_t1_count", descending=True),
-            *_sort_int(dict(item.get("analysis") or {}), "mixed_count", descending=False),
+            *_sort_int(_coerce_mapping(item.get("diagnostics"))[0], "execution_eligible_positive_window_count", descending=True),
+            *_sort_int(_coerce_mapping(item.get("analysis"))[0], "variant_supports_t1_count", descending=True),
+            *_sort_int(_coerce_mapping(item.get("analysis"))[0], "mixed_count", descending=False),
             str(item.get("candidate_name") or ""),
         ),
     )
