@@ -14,6 +14,10 @@ from src.execution.daily_pipeline_catalyst_diagnostics_helpers import _build_cat
 from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_config, _build_upstream_shadow_observation_entry, _qualifies_short_trade_boundary_candidate
 from src.execution.models import ExecutionPlan
 from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
+from src.paper_trading._btst_reporting.historical_prior import (
+    _build_watch_candidate_historical_prior,
+    _collect_historical_watch_candidate_rows,
+)
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 from src.research.artifacts import FileSelectionArtifactWriter, _merge_supplemental_short_trade_entries
 from src.screening.candidate_pool_frontier_helpers import build_candidate_pool_frontier_entries
@@ -439,6 +443,90 @@ def _extract_historical_prior_from_plan_selection_targets(plan: ExecutionPlan) -
     return prior_by_ticker
 
 
+def _normalize_entry_for_historical_prior(entry: dict[str, Any]) -> dict[str, Any]:
+    normalized_entry = dict(entry or {})
+    metrics = dict(
+        normalized_entry.get("metrics")
+        or normalized_entry.get("short_trade_boundary_metrics")
+        or normalized_entry.get("catalyst_theme_metrics")
+        or {}
+    )
+    if metrics and not normalized_entry.get("metrics"):
+        normalized_entry["metrics"] = metrics
+    if normalized_entry.get("score_target") in (None, ""):
+        fallback_score = (
+            metrics.get("candidate_score")
+            if metrics
+            else normalized_entry.get("shadow_release_candidate_score")
+        )
+        if fallback_score not in (None, ""):
+            normalized_entry["score_target"] = fallback_score
+    return normalized_entry
+
+
+def _resolve_historical_prior_family(entry: dict[str, Any]) -> str:
+    decision = str(entry.get("decision") or "").strip()
+    candidate_source = str(entry.get("candidate_source") or "").strip()
+    if decision in {"selected", "near_miss"}:
+        return decision
+    if candidate_source == "catalyst_theme":
+        return "catalyst_theme"
+    if decision == "research_upside_radar":
+        return "research_upside_radar"
+    if decision in {"rejected", "opportunity_pool"}:
+        return "opportunity_pool"
+    return "near_miss"
+
+
+def _iter_candidate_entries_for_historical_prior(filters: dict[str, Any]) -> list[dict[str, Any]]:
+    watchlist_filter = dict(filters.get("watchlist") or {})
+    short_trade_filter = dict(filters.get("short_trade_candidates") or {})
+    catalyst_theme_filter = dict(filters.get("catalyst_theme_candidates") or {})
+    return [
+        *[dict(entry or {}) for entry in list(watchlist_filter.get("tickers") or [])],
+        *[dict(entry or {}) for entry in list(watchlist_filter.get("released_shadow_entries") or [])],
+        *[dict(entry or {}) for entry in list(short_trade_filter.get("tickers") or [])],
+        *[dict(entry or {}) for entry in list(short_trade_filter.get("released_shadow_entries") or [])],
+        *[dict(entry or {}) for entry in list(short_trade_filter.get("shadow_observation_entries") or [])],
+        *[dict(entry or {}) for entry in list(catalyst_theme_filter.get("tickers") or [])],
+    ]
+
+
+def _recompute_missing_historical_prior_by_ticker(
+    *,
+    report_dir: Path | None,
+    trade_date_compact: str,
+    filters: dict[str, Any],
+    prior_by_ticker: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    if report_dir is None:
+        return dict(prior_by_ticker)
+
+    resolved_prior_by_ticker = {str(ticker): dict(prior or {}) for ticker, prior in dict(prior_by_ticker or {}).items()}
+    historical_rows: list[dict[str, Any]] | None = None
+    price_cache = {}
+    trade_date = normalize_trade_date(trade_date_compact) or trade_date_compact
+
+    for raw_entry in _iter_candidate_entries_for_historical_prior(filters):
+        ticker = str(raw_entry.get("ticker") or "").strip()
+        if not ticker or resolved_prior_by_ticker.get(ticker):
+            continue
+        normalized_entry = _normalize_entry_for_historical_prior(raw_entry)
+        if not str(normalized_entry.get("candidate_source") or "").strip():
+            continue
+        if historical_rows is None:
+            historical_rows = list(_collect_historical_watch_candidate_rows(report_dir, trade_date).get("rows") or [])
+        recomputed_prior = _build_watch_candidate_historical_prior(
+            normalized_entry,
+            historical_rows,
+            price_cache,
+            family=_resolve_historical_prior_family(normalized_entry),
+        )
+        if recomputed_prior:
+            resolved_prior_by_ticker[ticker] = dict(recomputed_prior)
+    return resolved_prior_by_ticker
+
+
 def _build_selected_catalyst_theme_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int) -> DualTargetEvaluation:
     selected_entry = dict(entry or {})
     relief = dict(selected_entry.get("short_trade_catalyst_relief") or {})
@@ -538,6 +626,7 @@ def rebuild_selection_targets_for_plan(
     trade_date_compact: str,
     shadow_lookup: dict[str, dict[str, Any]] | None = None,
     *,
+    report_dir: Path | None = None,
     historical_prior_by_ticker: dict[str, dict[str, Any]] | None = None,
     strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> ExecutionPlan:
@@ -550,6 +639,12 @@ def rebuild_selection_targets_for_plan(
         **_extract_historical_prior_from_plan_selection_targets(plan),
         **dict(historical_prior_by_ticker or {}),
     }
+    historical_prior_by_ticker = _recompute_missing_historical_prior_by_ticker(
+        report_dir=report_dir,
+        trade_date_compact=trade_date_compact,
+        filters=filters,
+        prior_by_ticker=historical_prior_by_ticker,
+    )
 
     _refresh_released_shadow_entries(filters, "short_trade_candidates", shadow_lookup, prior_by_ticker=historical_prior_by_ticker)
     _refresh_released_shadow_entries(filters, "watchlist", shadow_lookup, prior_by_ticker=historical_prior_by_ticker)
@@ -1054,6 +1149,7 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
             plan,
             trade_date_compact,
             shadow_lookup,
+            report_dir=resolved_report_dir,
             historical_prior_by_ticker=_load_latest_historical_prior_by_ticker(resolved_report_dir),
             strategy_signals_by_ticker=strategy_signals_by_ticker,
         )

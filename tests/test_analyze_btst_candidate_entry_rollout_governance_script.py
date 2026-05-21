@@ -12,6 +12,66 @@ def _write_json(path: Path, payload: object) -> Path:
     return path
 
 
+def _write_btst_followup_report(
+    report_dir: Path,
+    *,
+    trade_date: str,
+    selected_entries: list[dict] | None = None,
+    near_miss_entries: list[dict] | None = None,
+    opportunity_pool_entries: list[dict] | None = None,
+    rejected_entries: list[dict] | None = None,
+) -> Path:
+    report_dir.mkdir(parents=True, exist_ok=True)
+    brief_path = report_dir / "btst_next_day_trade_brief.json"
+    priority_board_path = report_dir / "btst_next_day_priority_board.json"
+    _write_json(
+        brief_path,
+        {
+            "summary": {
+                "short_trade_selected_count": len(selected_entries or []),
+                "short_trade_near_miss_count": len(near_miss_entries or []),
+                "short_trade_blocked_count": 0,
+                "short_trade_rejected_count": len(rejected_entries or []),
+                "short_trade_opportunity_pool_count": len(opportunity_pool_entries or []),
+                "research_upside_radar_count": 0,
+            },
+            "selected_entries": list(selected_entries or []),
+            "near_miss_entries": list(near_miss_entries or []),
+            "opportunity_pool_entries": list(opportunity_pool_entries or []),
+            "rejected_entries": list(rejected_entries or []),
+            "recommendation": "shadow execution followup",
+        },
+    )
+    _write_json(
+        priority_board_path,
+        {
+            "trade_date": trade_date,
+            "next_trade_date": trade_date,
+            "selection_target": "short_trade_only",
+            "headline": "shadow execution followup",
+        },
+    )
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "selection_target": "short_trade_only",
+            "end_date": trade_date,
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "btst_followup": {
+                "trade_date": trade_date,
+                "next_trade_date": trade_date,
+                "brief_json": str(brief_path.resolve()),
+                "priority_board_json": str(priority_board_path.resolve()),
+            },
+            "artifacts": {
+                "btst_next_day_trade_brief_json": str(brief_path.resolve()),
+                "btst_next_day_priority_board_json": str(priority_board_path.resolve()),
+            },
+        },
+    )
+    return report_dir
+
+
 def test_analyze_btst_candidate_entry_rollout_governance_shadow_only(tmp_path: Path) -> None:
     frontier_path = _write_json(
         tmp_path / "btst_candidate_entry_frontier.json",
@@ -174,3 +234,96 @@ def test_analyze_btst_candidate_entry_rollout_governance_shadow_only(tmp_path: P
     assert "low_avg_amount_20d" in analysis["recommendation"]
     assert "连 watchlist 都没有进入" in analysis["recommendation"]
     assert "preserve-safe recall probe" in analysis["recommendation"]
+
+
+def test_analyze_btst_candidate_entry_rollout_governance_summarizes_shadow_execution_evidence(tmp_path: Path) -> None:
+    frontier_path = _write_json(
+        tmp_path / "btst_candidate_entry_frontier.json",
+        {
+            "best_variant": {
+                "variant_name": "weak_structure_triplet",
+                "filtered_candidate_entry_count": 1,
+                "focus_filtered_tickers": ["300502"],
+                "preserve_filtered_tickers": [],
+                "filtered_next_high_hit_rate_at_threshold": 0.0,
+                "filtered_next_close_positive_rate": 0.0,
+                "evidence_tier": "window_verified_selective_rule",
+                "selection_basis": "candidate_entry_frontier_priority",
+            }
+        },
+    )
+    structural_path = _write_json(
+        tmp_path / "structural_validation.json",
+        {
+            "rows": [
+                {
+                    "structural_variant": "exclude_watchlist_avoid_weak_structure_entries",
+                    "decision_mismatch_count": 1,
+                    "released_from_blocked": ["300502"],
+                    "blocked_to_near_miss": [],
+                    "blocked_to_selected": [],
+                    "analysis": {
+                        "filtered_candidate_entry_counts": {"watchlist_avoid_boundary_weak_structure_entry": 1},
+                        "candidate_entry_filter_observability": {"watchlist_avoid_boundary_weak_structure_entry": {"precondition_match_count": 3, "metric_data_pass_count": 3, "metric_threshold_match_count": 1}},
+                    },
+                }
+            ]
+        },
+    )
+    window_scan_path = _write_json(
+        tmp_path / "window_scan.json",
+        {
+            "report_count": 4,
+            "filtered_report_count": 2,
+            "focus_hit_report_count": 2,
+            "preserve_misfire_report_count": 0,
+            "distinct_window_count_with_filtered_entries": 2,
+            "rollout_readiness": "shadow_rollout_review_ready",
+            "filtered_ticker_counts": {"300502": 2},
+        },
+    )
+    score_frontier_path = _write_json(
+        tmp_path / "score_frontier.json",
+        {
+            "ranked_variants": [
+                {"variant_name": "prepared_breakout_balance", "closed_cycle_tradeable_count": 0},
+            ]
+        },
+    )
+    evidence_report_dir = _write_btst_followup_report(
+        tmp_path / "paper_trading_20260506_20260506_live_m2_7_short_trade_only_20260507",
+        trade_date="2026-05-06",
+        selected_entries=[
+            {
+                "ticker": "300394",
+                "decision": "selected",
+                "candidate_source": "watchlist_filter_diagnostics",
+                "top_reasons": ["confirmed_breakout"],
+            }
+        ],
+        opportunity_pool_entries=[
+            {
+                "ticker": "300502",
+                "decision": "rejected",
+                "candidate_source": "watchlist_filter_diagnostics",
+                "top_reasons": ["stale_trend_repair_penalty_heavy"],
+            }
+        ],
+    )
+
+    analysis = analyze_btst_candidate_entry_rollout_governance(
+        frontier_path,
+        structural_validation_path=structural_path,
+        window_scan_path=window_scan_path,
+        score_frontier_path=score_frontier_path,
+        evidence_btst_report_dirs=[evidence_report_dir],
+    )
+
+    assert analysis["lane_status"] == "shadow_rollout_review_ready"
+    assert analysis["shadow_execution_evidence_summary"]["evidence_report_count"] == 1
+    assert analysis["shadow_execution_evidence_summary"]["candidate_entry_signal_report_count"] == 1
+    assert analysis["shadow_execution_evidence_summary"]["focus_negative_tickers"] == ["300502"]
+    assert analysis["shadow_execution_evidence_summary"]["focus_positive_tickers"] == []
+    assert analysis["shadow_execution_evidence_summary"]["non_focus_positive_tickers"] == ["300394"]
+    assert analysis["shadow_execution_evidence_summary"]["execution_verdict"] == "focus_ticker_execution_support_with_separation"
+    assert "300502" in analysis["recommendation"]

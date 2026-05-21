@@ -64,6 +64,39 @@ def _choose_anchor_window(candidate_dossier: dict[str, Any], trade_date: str) ->
     return dict(recent_windows.get(trade_date) or {})
 
 
+def _choose_action_row_anchor(command_board: dict[str, Any], trade_date: str) -> dict[str, Any]:
+    if not trade_date:
+        return {}
+    matching_rows = [
+        dict(row or {})
+        for row in list(command_board.get("action_rows") or [])
+        if _normalize_trade_date(row.get("trade_date")) == trade_date
+    ]
+    if not matching_rows:
+        return {}
+    return max(
+        matching_rows,
+        key=lambda row: (
+            1 if str(row.get("decision") or "").strip() == "selected" else 0,
+            1 if str(row.get("report_dir") or "").strip() else 0,
+            float(row.get("score_target") or -999.0),
+        ),
+    )
+
+
+def _resolve_anchor_window(candidate_dossier: dict[str, Any], command_board: dict[str, Any], trade_date: str) -> dict[str, Any]:
+    anchor = _choose_anchor_window(candidate_dossier, trade_date)
+    if str(anchor.get("report_dir") or "").strip():
+        return anchor
+    action_row_anchor = _choose_action_row_anchor(command_board, trade_date)
+    if not action_row_anchor:
+        return anchor
+    return {
+        **anchor,
+        **{key: value for key, value in action_row_anchor.items() if value not in (None, "", [], {})},
+    }
+
+
 def _extract_metric_subset(row: dict[str, Any]) -> dict[str, Any]:
     metrics = dict(row.get("metrics_payload") or {})
     thresholds = dict(metrics.get("thresholds") or {})
@@ -183,8 +216,8 @@ def analyze_btst_candidate_pool_corridor_window_diagnostics(
     selected_trade_date = str(list(command_board.get("confirmed_selected_trade_dates") or [None])[0] or "")
     near_miss_trade_date = str(list(command_board.get("next_target_trade_dates") or [None])[0] or "")
 
-    selected_window = _choose_anchor_window(candidate_dossier, selected_trade_date)
-    near_miss_window = _choose_anchor_window(candidate_dossier, near_miss_trade_date)
+    selected_window = _resolve_anchor_window(candidate_dossier, command_board, selected_trade_date)
+    near_miss_window = _resolve_anchor_window(candidate_dossier, command_board, near_miss_trade_date)
     selected_target = _load_short_trade_target(selected_window.get("report_dir"), selected_trade_date, focus_ticker) if selected_window and selected_window.get("report_dir") else {}
     near_miss_target = _load_short_trade_target(near_miss_window.get("report_dir"), near_miss_trade_date, focus_ticker) if near_miss_window and near_miss_window.get("report_dir") else {}
     selected_metrics = _extract_metric_subset(selected_target)

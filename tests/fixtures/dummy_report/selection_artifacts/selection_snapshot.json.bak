@@ -1,0 +1,37 @@
+{
+  "funnel_diagnostics": {
+    "filters": {
+      "watchlist": {
+        "selected_entries": [
+          {
+            "trade_date": "20240101",
+            "target_mode": "research_only",
+            "ticker": "000001",
+            "open": 10.0,
+            "high": 10.5,
+            "low": 9.8,
+            "close": 10.2,
+            "next_open": 10.3,
+            "next_high": 10.7,
+            "next_low": 10.1,
+            "next_close": 10.6,
+            "next_open_return": 0.03,
+            "next_open_to_close_return": 0.028,
+            "actual_return": 0.039,
+            "market_state": {}
+          }
+        ],
+        "tickers": []
+      },
+      "short_trade_candidates": {
+        "tickers": [],
+        "shadow_observation_entries": []
+      },
+      "catalyst_theme_candidates": {
+        "tickers": []
+      }
+    }
+  },
+  "market_state": {}
+}
+

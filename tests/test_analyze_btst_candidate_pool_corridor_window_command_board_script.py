@@ -179,3 +179,126 @@ def test_analyze_btst_candidate_pool_corridor_window_command_board_falls_back_to
     assert analysis["action_rows"][0]["trade_date"] == "2026-03-27"
     assert analysis["action_rows"][0]["decision"] == "near_miss"
     assert analysis["action_rows"][1]["trade_date"] == "2026-04-06"
+
+
+def test_analyze_btst_candidate_pool_corridor_window_command_board_uses_broad_scope_shadow_windows_when_dossier_only_has_visibility_gaps(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    manifest_path = reports_root / "report_manifest_latest.json"
+    persistence_path = reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+    candidate_dossier_path = reports_root / "btst_tplus2_candidate_dossier_300683_latest.json"
+
+    _write_json(
+        manifest_path,
+        {
+            "continuation_promotion_ready_summary": {
+                "focus_ticker": "300683",
+                "combined_merge_ready_evidence_trade_dates": [],
+                "combined_evidence_trade_dates": [],
+                "candidate_dossier_current_plan_visible_trade_dates": ["2026-03-23"],
+                "candidate_dossier_current_plan_visibility_gap_trade_dates": ["2026-03-26", "2026-03-27"],
+            }
+        },
+    )
+    _write_json(
+        persistence_path,
+        {
+            "focus_ticker": "300683",
+            "continuation_readiness": {"missing_independent_sample_count": 2},
+        },
+    )
+    _write_json(
+        candidate_dossier_path,
+        {
+            "recent_window_summaries": [],
+            "per_window_summaries": [],
+        },
+    )
+
+    report_dir = reports_root / "paper_trading_20260326_20260331_live_m2_7_short_trade_only_20260415_corridor_probe_300683_301188"
+    _write_snapshot(
+        report_dir,
+        "2026-03-27",
+        [
+            {"ticker": "300683", "candidate_source": "upstream_liquidity_corridor_shadow", "short_trade": {"decision": "near_miss", "score_target": 0.3882}},
+        ],
+    )
+    _write_snapshot(
+        report_dir,
+        "2026-03-30",
+        [
+            {"ticker": "300683", "candidate_source": "upstream_liquidity_corridor_shadow", "short_trade": {"decision": "near_miss", "score_target": 0.3965}},
+        ],
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_window_command_board(
+        manifest_path=manifest_path,
+        persistence_dossier_path=persistence_path,
+    )
+
+    assert analysis["focus_ticker"] == "300683"
+    assert analysis["verdict"] == "collect_one_more_selected_window"
+    assert analysis["exploratory_trade_dates"] == ["2026-03-27", "2026-03-30"]
+    assert analysis["broad_scope_distinct_window_count"] == 1
+    assert analysis["next_target_trade_dates"][:2] == ["2026-03-30", "2026-03-27"]
+    assert analysis["action_rows"][0]["action_tier"] == "upgrade_near_miss_window"
+    assert analysis["action_rows"][0]["trade_date"] == "2026-03-30"
+    assert analysis["action_rows"][0]["report_dir"] == str(report_dir)
+
+
+def test_analyze_btst_candidate_pool_corridor_window_command_board_prioritizes_stronger_upgrade_probe_before_earlier_date(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    manifest_path = reports_root / "report_manifest_latest.json"
+    persistence_path = reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
+    candidate_dossier_path = reports_root / "btst_tplus2_candidate_dossier_300683_latest.json"
+
+    _write_json(
+        manifest_path,
+        {
+            "continuation_promotion_ready_summary": {
+                "focus_ticker": "300683",
+                "combined_merge_ready_evidence_trade_dates": [],
+                "combined_evidence_trade_dates": [],
+                "candidate_dossier_current_plan_visible_trade_dates": [],
+                "candidate_dossier_current_plan_visibility_gap_trade_dates": [],
+            }
+        },
+    )
+    _write_json(
+        persistence_path,
+        {
+            "focus_ticker": "300683",
+            "continuation_readiness": {"missing_independent_sample_count": 2},
+        },
+    )
+    _write_json(
+        candidate_dossier_path,
+        {
+            "recent_window_summaries": [],
+            "per_window_summaries": [],
+        },
+    )
+
+    report_dir = reports_root / "paper_trading_20260326_20260331_live_m2_7_short_trade_only_20260415_corridor_probe_300683_301188"
+    _write_snapshot(
+        report_dir,
+        "2026-03-27",
+        [
+            {"ticker": "300683", "candidate_source": "upstream_liquidity_corridor_shadow", "short_trade": {"decision": "near_miss", "score_target": 0.3882}},
+        ],
+    )
+    _write_snapshot(
+        report_dir,
+        "2026-03-30",
+        [
+            {"ticker": "300683", "candidate_source": "upstream_liquidity_corridor_shadow", "short_trade": {"decision": "near_miss", "score_target": 0.3965}},
+        ],
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_window_command_board(
+        manifest_path=manifest_path,
+        persistence_dossier_path=persistence_path,
+    )
+
+    assert analysis["next_target_trade_dates"][:2] == ["2026-03-30", "2026-03-27"]
+    assert analysis["action_rows"][0]["trade_date"] == "2026-03-30"
+    assert analysis["action_rows"][0]["score_target"] == 0.3965

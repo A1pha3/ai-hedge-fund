@@ -85,6 +85,38 @@ def build_replay_analysis_state() -> ReplayAnalysisState:
     return ReplayAnalysisState()
 
 
+def _recover_candidate_metadata_from_selection_target(
+    entry: dict[str, Any],
+    *,
+    selection_targets: dict[str, Any],
+) -> dict[str, Any]:
+    ticker = str(entry.get("ticker") or "").strip()
+    if not ticker:
+        return dict(entry)
+    stored_evaluation = dict(selection_targets.get(ticker) or {})
+    if not stored_evaluation:
+        return dict(entry)
+
+    recovered_entry = dict(entry)
+    if not recovered_entry.get("candidate_source"):
+        stored_short_trade = dict(stored_evaluation.get("short_trade") or {})
+        explainability_payload = dict(stored_short_trade.get("explainability_payload") or {})
+        replay_context = dict(explainability_payload.get("replay_context") or {})
+        candidate_source = (
+            stored_evaluation.get("candidate_source")
+            or explainability_payload.get("candidate_source")
+            or explainability_payload.get("source")
+            or replay_context.get("source")
+        )
+        if candidate_source:
+            recovered_entry["candidate_source"] = candidate_source
+    if not recovered_entry.get("candidate_reason_codes"):
+        candidate_reason_codes = list(stored_evaluation.get("candidate_reason_codes") or [])
+        if candidate_reason_codes:
+            recovered_entry["candidate_reason_codes"] = candidate_reason_codes
+    return recovered_entry
+
+
 def prepare_replay_source_context(
     *,
     replay_input_path: Path,
@@ -102,9 +134,20 @@ def prepare_replay_source_context(
 ) -> ReplaySourceContext:
     trade_date = str(payload.get("trade_date") or "")
     target_mode = str(payload.get("target_mode") or "research_only")
-    watchlist_entries = [dict(entry or {}) for entry in list(payload.get("watchlist") or [])]
+    selection_targets = dict(payload.get("selection_targets") or {})
+    watchlist_entries = [
+        _recover_candidate_metadata_from_selection_target(dict(entry or {}), selection_targets=selection_targets)
+        for entry in list(payload.get("watchlist") or [])
+    ]
     replay_short_trade_entries, upstream_shadow_observation_entries = merge_replay_entries(payload)
-    rejected_entries_input = [dict(entry or {}) for entry in list(payload.get("rejected_entries") or [])]
+    replay_short_trade_entries = [
+        _recover_candidate_metadata_from_selection_target(dict(entry or {}), selection_targets=selection_targets)
+        for entry in replay_short_trade_entries
+    ]
+    rejected_entries_input = [
+        _recover_candidate_metadata_from_selection_target(dict(entry or {}), selection_targets=selection_targets)
+        for entry in list(payload.get("rejected_entries") or [])
+    ]
 
     rejected_filter_observability = summarize_filter_observability(
         rejected_entries_input,

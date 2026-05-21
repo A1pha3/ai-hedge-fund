@@ -150,7 +150,7 @@ def test_analyze_btst_multi_window_profile_validation_flags_threshold_probe_with
 
     def _fake_replay_window(input_path, *, profile_name, label, next_high_hit_threshold, select_threshold=None, near_miss_threshold=None, profile_overrides=None):
         _ = (input_path, label, next_high_hit_threshold, profile_overrides)
-        is_baseline = select_threshold is None
+        is_baseline = profile_name == "trend_continuation_strength_v2"
         return {
             "label": label,
             "profile_name": profile_name,
@@ -211,7 +211,7 @@ def test_analyze_btst_multi_window_profile_validation_flags_execution_eligible_r
 
     def _fake_replay_window(input_path, *, profile_name, label, next_high_hit_threshold, select_threshold=None, near_miss_threshold=None, profile_overrides=None):
         _ = (input_path, label, next_high_hit_threshold, profile_overrides)
-        is_baseline = select_threshold is None
+        is_baseline = profile_name == "trend_continuation_strength_v2"
         return {
             "label": label,
             "profile_name": profile_name,
@@ -256,6 +256,105 @@ def test_analyze_btst_multi_window_profile_validation_flags_execution_eligible_r
     assert "execution_eligible_surface" in attribution["activation_change_labels"]
 
 
+def test_analyze_btst_multi_window_profile_validation_identifies_watchlist_shrink_without_boundary_overlap(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_window_a"
+    (report_dir / "selection_artifacts" / "2026-03-24").mkdir(parents=True)
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(multi_window_validation, "discover_report_dirs", lambda *_args, **_kwargs: [report_dir])
+
+    def _fake_replay_window(input_path, *, profile_name, label, next_high_hit_threshold, select_threshold=None, near_miss_threshold=None, profile_overrides=None):
+        _ = (input_path, label, next_high_hit_threshold, profile_overrides)
+        is_baseline = profile_name == "trend_continuation_strength_v2"
+        rows = [
+            {
+                "ticker": "601869",
+                "candidate_source": "watchlist_filter_diagnostics",
+                "decision": "selected" if is_baseline else "selected",
+                "score_target": 0.60,
+                "metrics_payload": {
+                    "effective_select_threshold": 0.46 if is_baseline else 0.51,
+                    "watchlist_filter_diagnostics_selected_only_shrink_guard": {
+                        "applied": not is_baseline,
+                        "eligible": not is_baseline,
+                        "select_threshold_lift": 0.05 if not is_baseline else 0.0,
+                        "gate_hits": {
+                            "candidate_source": True,
+                            "catalyst_freshness": True,
+                            "trend_acceleration": True,
+                            "close_strength": True,
+                        },
+                    },
+                },
+            },
+            {
+                "ticker": "300502",
+                "candidate_source": "watchlist_filter_diagnostics",
+                "decision": "rejected",
+                "score_target": 0.18,
+                "metrics_payload": {
+                    "effective_select_threshold": 0.46 if is_baseline else 0.46,
+                    "watchlist_filter_diagnostics_selected_only_shrink_guard": {
+                        "applied": not is_baseline,
+                        "eligible": not is_baseline,
+                        "select_threshold_lift": 0.05 if not is_baseline else 0.0,
+                        "gate_hits": {
+                            "candidate_source": True,
+                            "catalyst_freshness": True,
+                            "trend_acceleration": True,
+                            "close_strength": True,
+                        },
+                    },
+                },
+            },
+        ]
+        return {
+            "label": label,
+            "profile_name": profile_name,
+            "profile_config": {
+                "name": profile_name,
+                "select_threshold": 0.46 if is_baseline else 0.46,
+                "near_miss_threshold": 0.34 if is_baseline else 0.34,
+            },
+            "profile_overrides": {},
+            "trade_dates": ["2026-03-24"],
+            "rows": rows,
+            "decision_counts": {"selected": 1, "rejected": 1},
+            "surface_summaries": {
+                "tradeable": {
+                    "total_count": 1,
+                    "closed_cycle_count": 1,
+                    "next_high_hit_rate_at_threshold": 0.80,
+                    "next_close_positive_rate": 0.80,
+                    "t_plus_2_close_positive_rate": 0.80,
+                    "next_high_return_distribution": {"mean": 0.05},
+                    "next_close_return_distribution": {"mean": 0.02, "median": 0.025, "p10": 0.01},
+                    "t_plus_2_close_return_distribution": {"mean": 0.025, "median": 0.02, "p10": 0.005},
+                },
+                "selected": {"total_count": 1},
+                "near_miss": {"total_count": 0},
+                "execution_eligible": {"total_count": 0},
+            },
+            "false_negative_proxy_summary": {"count": 0, "surface_metrics": {}},
+        }
+
+    monkeypatch.setattr(multi_window_validation, "analyze_btst_profile_replay_window", _fake_replay_window)
+
+    analysis = multi_window_validation.analyze_btst_multi_window_profile_validation(
+        reports_root,
+        baseline_profile="trend_continuation_strength_v2",
+        variant_profile="trend_continuation_strength_v3",
+    )
+
+    attribution = analysis["rows"][0]["runtime_activation_attribution"]
+    assert attribution["watchlist_shrink_guard_applied_count"] == 2
+    assert attribution["watchlist_shrink_selected_gate_pass_count"] == 1
+    assert attribution["watchlist_shrink_selected_boundary_overlap_count"] == 0
+    assert attribution["watchlist_shrink_selected_above_lift_count"] == 1
+    assert attribution["zero_delta_reason"] == "watchlist_shrink_guard_without_selected_boundary_overlap"
+
+
 def test_render_btst_multi_window_profile_validation_markdown_includes_runtime_activation_attribution(tmp_path: Path, monkeypatch) -> None:
     reports_root = tmp_path / "reports"
     report_dir = reports_root / "paper_trading_window_a"
@@ -266,7 +365,7 @@ def test_render_btst_multi_window_profile_validation_markdown_includes_runtime_a
 
     def _fake_replay_window(input_path, *, profile_name, label, next_high_hit_threshold, select_threshold=None, near_miss_threshold=None, profile_overrides=None):
         _ = (input_path, label, next_high_hit_threshold, profile_overrides)
-        is_baseline = select_threshold is None
+        is_baseline = profile_name == "trend_continuation_strength_v2"
         return {
             "label": label,
             "profile_name": profile_name,
@@ -309,6 +408,82 @@ def test_render_btst_multi_window_profile_validation_markdown_includes_runtime_a
     assert "activation_attribution=threshold_probe_without_runtime_activation_delta" in markdown
     assert "selected_delta=0" in markdown
     assert "near_miss_delta=0" in markdown
+
+
+def test_render_btst_multi_window_profile_validation_markdown_includes_watchlist_shrink_diagnostics(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_window_a"
+    (report_dir / "selection_artifacts" / "2026-03-24").mkdir(parents=True)
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(multi_window_validation, "discover_report_dirs", lambda *_args, **_kwargs: [report_dir])
+
+    def _fake_replay_window(input_path, *, profile_name, label, next_high_hit_threshold, select_threshold=None, near_miss_threshold=None, profile_overrides=None):
+        _ = (input_path, label, next_high_hit_threshold, profile_overrides)
+        is_baseline = profile_name == "trend_continuation_strength_v2"
+        rows = [
+            {
+                "ticker": "601869",
+                "candidate_source": "watchlist_filter_diagnostics",
+                "decision": "selected",
+                "score_target": 0.60,
+                "metrics_payload": {
+                    "effective_select_threshold": 0.46 if is_baseline else 0.51,
+                    "watchlist_filter_diagnostics_selected_only_shrink_guard": {
+                        "applied": not is_baseline,
+                        "eligible": not is_baseline,
+                        "select_threshold_lift": 0.05 if not is_baseline else 0.0,
+                        "gate_hits": {
+                            "candidate_source": True,
+                            "catalyst_freshness": True,
+                            "trend_acceleration": True,
+                            "close_strength": True,
+                        },
+                    },
+                },
+            }
+        ]
+        return {
+            "label": label,
+            "profile_name": profile_name,
+            "profile_config": {
+                "name": profile_name,
+                "select_threshold": 0.46,
+                "near_miss_threshold": 0.34,
+            },
+            "profile_overrides": {},
+            "trade_dates": ["2026-03-24"],
+            "rows": rows,
+            "decision_counts": {"selected": 1},
+            "surface_summaries": {
+                "tradeable": {
+                    "total_count": 1,
+                    "closed_cycle_count": 1,
+                    "next_high_hit_rate_at_threshold": 0.80,
+                    "next_close_positive_rate": 0.80,
+                    "t_plus_2_close_positive_rate": 0.80,
+                    "next_high_return_distribution": {"mean": 0.05},
+                    "next_close_return_distribution": {"mean": 0.02, "median": 0.025, "p10": 0.01},
+                    "t_plus_2_close_return_distribution": {"mean": 0.025, "median": 0.02, "p10": 0.005},
+                },
+                "selected": {"total_count": 1},
+                "near_miss": {"total_count": 0},
+                "execution_eligible": {"total_count": 0},
+            },
+            "false_negative_proxy_summary": {"count": 0, "surface_metrics": {}},
+        }
+
+    monkeypatch.setattr(multi_window_validation, "analyze_btst_profile_replay_window", _fake_replay_window)
+
+    analysis = multi_window_validation.analyze_btst_multi_window_profile_validation(
+        reports_root,
+        baseline_profile="trend_continuation_strength_v2",
+        variant_profile="trend_continuation_strength_v3",
+    )
+
+    markdown = multi_window_validation.render_btst_multi_window_profile_validation_markdown(analysis)
+    assert "watchlist_shrink_applied=1" in markdown
+    assert "watchlist_shrink_selected_boundary_overlap=0" in markdown
 
 
 def test_render_btst_multi_window_profile_validation_markdown_includes_execution_eligible_delta(tmp_path: Path, monkeypatch) -> None:
