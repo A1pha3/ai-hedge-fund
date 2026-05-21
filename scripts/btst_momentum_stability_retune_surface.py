@@ -17,6 +17,27 @@ LOCAL_GRID = {
 FIXED_ZERO_PARAMS = ("momentum_strength_weight", "short_term_reversal_weight")
 
 
+def _load_json_file(path: Path, *, label: str) -> object:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise SystemExit(f"{label} file not found: {path}") from exc
+    except OSError as exc:
+        raise SystemExit(f"unable to read {label} file: {path}") from exc
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"invalid JSON in {label} file: {path}") from exc
+
+
+def _write_output_file(path: Path, *, content: str, label: str) -> None:
+    try:
+        path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(f"unable to write {label}: {path}") from exc
+
+
 def build_momentum_stability_retune_surface(*, best_params: dict[str, object], triage: dict[str, object]) -> dict[str, object]:
     # triage must be a mapping/object with an 'action' key — fail-closed on malformed shapes
     if not isinstance(triage, dict):
@@ -76,8 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     output_json = Path(args.output_json)
     output_md = Path(args.output_md)
 
-    src = json.loads(source.read_text(encoding="utf-8"))
-    triage = json.loads(triage_path.read_text(encoding="utf-8"))
+    src = _load_json_file(source, label="source")
+    triage = _load_json_file(triage_path, label="triage")
 
     if not isinstance(src, dict):
         raise SystemExit("source JSON must be an object with a 'best_params' mapping.")
@@ -87,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = build_momentum_stability_retune_surface(best_params=best_params, triage=triage)
 
-    output_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _write_output_file(output_json, content=json.dumps(payload, indent=2), label="output JSON")
 
     # write a simple markdown summary
     md = ["# Momentum stability retune surface", "\n"]
@@ -97,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     md.append("## Grid\n")
     for k, v in payload.get("grid", {}).items():
         md.append(f"- {k}: {v}\n")
-    output_md.write_text("\n".join(md), encoding="utf-8")
+    _write_output_file(output_md, content="\n".join(md), label="output markdown")
 
     return 0
 
