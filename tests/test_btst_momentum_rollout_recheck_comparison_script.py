@@ -154,6 +154,39 @@ def test_build_rollout_recheck_comparison_fails_closed_when_bridge_baseline_name
         )
 
 
+def test_build_rollout_recheck_comparison_rejects_non_numeric_bridge_metrics() -> None:
+    with pytest.raises(SystemExit, match="baseline_bridge.baseline_metrics.next_close_positive_rate must be a numeric value"):
+        comparison.build_momentum_rollout_recheck_comparison(
+            rollout_pack={
+                "winner": {"trial_index": 602},
+                "challengers": [],
+                "active_baseline": {"profile_name": "btst_precision_v2"},
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "release_posture": "hold",
+                "fail_closed": True,
+            },
+            source_report={
+                "results": [{"trial_index": 602, "metrics": {"next_close_positive_rate": 0.61332, "next_close_payoff_ratio": 1.64004, "window_count": 5}}],
+                "comparison_summary": {},
+            },
+            baseline_bridge={
+                "baseline_name": "btst_precision_v2",
+                "report_key": "core_btst",
+                "baseline_metrics": {
+                    "next_close_positive_rate": None,
+                    "next_close_payoff_ratio": 1.64004,
+                    "window_count": 5,
+                },
+                "source_path": "data/reports/btst_momentum_active_baseline_bridge.json",
+                "validated_by": "objective_alignment_primary",
+                "release_posture": "hold",
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "blockers": [],
+                "fail_closed": True,
+            },
+        )
+
+
 def test_main_writes_rollout_recheck_comparison_outputs(tmp_path: Path) -> None:
     rollout_pack_json = tmp_path / "rollout_pack.json"
     source_json = tmp_path / "source.json"

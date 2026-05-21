@@ -102,8 +102,11 @@ def _require_baseline_bridge(payload: Any, *, active_baseline_name: str) -> dict
 
     baseline_metrics = _require_object("baseline_bridge.baseline_metrics", bridge.get("baseline_metrics"))
     for metric_name in REQUIRED_BRIDGE_METRICS:
+        metric_value = baseline_metrics.get(metric_name)
         if metric_name not in baseline_metrics:
             raise SystemExit(f"baseline_bridge.baseline_metrics.{metric_name} must be present.")
+        if isinstance(metric_value, bool) or not isinstance(metric_value, (int, float)):
+            raise SystemExit(f"baseline_bridge.baseline_metrics.{metric_name} must be a numeric value.")
     return bridge
 
 
