@@ -289,6 +289,19 @@ def test_build_trend_continuation_rollout_assessment_blocks_when_best_calibratio
     assert "no_qualifying_calibration_best_candidate" in assessment["blockers"]
 
 
+def test_build_trend_continuation_rollout_assessment_surfaces_absent_best_candidate_reason_in_summary() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics=_build_diagnostics(),
+        activation_delta_calibration=_build_calibration_payload(report_dir_count=0),
+    )
+
+    assert assessment["action"] == "hold"
+    assert assessment["activation_delta_calibration"]["best_candidate_blockers"] == ["best_candidate_absent"]
+    assert "best_candidate_absent" in assessment["blockers"]
+    assert assessment["activation_delta_calibration"]["best_candidate_governance_safe"] is False
+
+
 def test_build_trend_continuation_rollout_assessment_blocks_when_best_calibration_candidate_is_not_governance_safe() -> None:
     assessment = build_trend_continuation_rollout_assessment(
         _build_analysis(),
@@ -297,6 +310,23 @@ def test_build_trend_continuation_rollout_assessment_blocks_when_best_calibratio
     )
 
     assert assessment["action"] == "hold"
+    assert "calibration_best_candidate_not_governance_safe" in assessment["blockers"]
+
+
+def test_build_trend_continuation_rollout_assessment_promotes_specific_best_candidate_governance_blockers() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics=_build_diagnostics(),
+        activation_delta_calibration=_build_calibration_payload(all_windows_zero_delta=True, execution_eligible_positive_window_count=0),
+    )
+
+    assert assessment["action"] == "hold"
+    assert assessment["activation_delta_calibration"]["best_candidate_blockers"] == [
+        "best_candidate_all_windows_zero_delta",
+        "best_candidate_missing_execution_eligible_activation",
+    ]
+    assert "best_candidate_all_windows_zero_delta" in assessment["blockers"]
+    assert "best_candidate_missing_execution_eligible_activation" in assessment["blockers"]
     assert "calibration_best_candidate_not_governance_safe" in assessment["blockers"]
 
 

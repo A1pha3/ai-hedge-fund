@@ -146,6 +146,8 @@ def _build_activation_delta_calibration_summary(
         baseline_profile=baseline_profile,
         candidate_profile=candidate_profile,
     ) if best_candidate else []
+    if calibration and not best_candidate and not malformed_best_candidate:
+        best_candidate_blockers = ["best_candidate_absent", *best_candidate_blockers]
     if malformed_best_candidate:
         best_candidate_blockers = ["best_candidate_malformed_payload", *best_candidate_blockers]
 
@@ -246,9 +248,7 @@ def build_trend_continuation_rollout_assessment(
         if activation_delta_calibration_summary["best_candidate_name"] is None:
             blockers.append("no_qualifying_calibration_best_candidate")
         if activation_delta_calibration_summary["profile_match"] and activation_delta_calibration_summary["best_candidate_blockers"]:
-            blockers.extend(
-                blocker for blocker in activation_delta_calibration_summary["best_candidate_blockers"] if blocker.startswith("best_candidate_malformed_")
-            )
+            blockers.extend(activation_delta_calibration_summary["best_candidate_blockers"])
         if activation_delta_calibration_summary["profile_match"] and not activation_delta_calibration_summary["best_candidate_governance_safe"]:
             blockers.append("calibration_best_candidate_not_governance_safe")
     if variant_improves_t2_only_count > 0 and variant_supports_t1_count <= 0:
