@@ -9,13 +9,35 @@ def test_rank_calibration_candidates_prefers_execution_eligible_activation_then_
         [
             {
                 "candidate_name": "tight",
-                "diagnostics": {"execution_eligible_positive_window_count": 0, "all_windows_zero_delta": True},
-                "analysis": {"variant_supports_t1_count": 0, "mixed_count": 2},
+                "diagnostics": {
+                    "baseline_profile": "trend_continuation_strength_v2",
+                    "candidate_profile": "trend_continuation_strength_v3",
+                    "execution_eligible_positive_window_count": 0,
+                    "all_windows_zero_delta": True,
+                },
+                "analysis": {
+                    "baseline_profile": "trend_continuation_strength_v2",
+                    "variant_profile": "trend_continuation_strength_v3",
+                    "variant_supports_t1_count": 0,
+                    "mixed_count": 2,
+                },
             },
             {
                 "candidate_name": "balanced",
-                "diagnostics": {"execution_eligible_positive_window_count": 2, "all_windows_zero_delta": False},
-                "analysis": {"variant_supports_t1_count": 1, "mixed_count": 1},
+                "diagnostics": {
+                    "baseline_profile": "trend_continuation_strength_v2",
+                    "candidate_profile": "trend_continuation_strength_v3",
+                    "execution_eligible_positive_window_count": 2,
+                    "all_windows_zero_delta": False,
+                    "report_dir_count": 1,
+                },
+                "analysis": {
+                    "baseline_profile": "trend_continuation_strength_v2",
+                    "variant_profile": "trend_continuation_strength_v3",
+                    "variant_supports_t1_count": 1,
+                    "mixed_count": 1,
+                    "keep_baseline_count": 0,
+                },
             },
         ]
     )
@@ -28,18 +50,68 @@ def test_rank_calibration_candidates_prefers_clean_candidates_over_governance_bl
         [
             {
                 "candidate_name": "blocked_more_activation",
-                "diagnostics": {"execution_eligible_positive_window_count": 3, "all_windows_zero_delta": False, "report_dir_count": 2},
-                "analysis": {"variant_supports_t1_count": 1, "mixed_count": 0, "keep_baseline_count": 1},
+                "diagnostics": {
+                    "baseline_profile": "trend_continuation_strength_v2",
+                    "candidate_profile": "trend_continuation_strength_v3",
+                    "execution_eligible_positive_window_count": 3,
+                    "all_windows_zero_delta": False,
+                    "report_dir_count": 2,
+                },
+                "analysis": {
+                    "baseline_profile": "trend_continuation_strength_v2",
+                    "variant_profile": "trend_continuation_strength_v3",
+                    "variant_supports_t1_count": 1,
+                    "mixed_count": 0,
+                    "keep_baseline_count": 1,
+                },
             },
             {
                 "candidate_name": "clean_less_activation",
-                "diagnostics": {"execution_eligible_positive_window_count": 1, "all_windows_zero_delta": False, "report_dir_count": 2},
-                "analysis": {"variant_supports_t1_count": 1, "mixed_count": 0, "keep_baseline_count": 0},
+                "diagnostics": {
+                    "baseline_profile": "trend_continuation_strength_v2",
+                    "candidate_profile": "trend_continuation_strength_v3",
+                    "execution_eligible_positive_window_count": 1,
+                    "all_windows_zero_delta": False,
+                    "report_dir_count": 2,
+                },
+                "analysis": {
+                    "baseline_profile": "trend_continuation_strength_v2",
+                    "variant_profile": "trend_continuation_strength_v3",
+                    "variant_supports_t1_count": 1,
+                    "mixed_count": 0,
+                    "keep_baseline_count": 0,
+                },
             },
         ]
     )
 
     assert ranked[0]["candidate_name"] == "clean_less_activation"
+
+
+def test_build_calibration_candidate_governance_blockers_require_matching_profiles() -> None:
+    blockers = calibration.build_calibration_candidate_governance_blockers(
+        {
+            "candidate_name": "stale",
+            "baseline_profile": "trend_continuation_strength_v2",
+            "candidate_profile": "trend_continuation_strength_v9",
+            "diagnostics": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "candidate_profile": "trend_continuation_strength_v9",
+                "report_dir_count": 1,
+                "all_windows_zero_delta": False,
+                "execution_eligible_positive_window_count": 1,
+            },
+            "analysis": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "variant_profile": "trend_continuation_strength_v9",
+                "keep_baseline_count": 0,
+                "variant_supports_t1_count": 1,
+                "mixed_count": 0,
+            },
+        }
+    )
+
+    assert "best_candidate_candidate_profile_mismatch" in blockers
 
 
 def test_build_candidate_overrides_keeps_scope_inside_v3_shrink_parameters() -> None:

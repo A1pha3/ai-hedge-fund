@@ -48,8 +48,16 @@ def _build_analysis(
     }
 
 
-def _build_diagnostics(*, all_windows_zero_delta: bool = False, execution_eligible_positive_window_count: int = 1) -> dict[str, object]:
+def _build_diagnostics(
+    *,
+    all_windows_zero_delta: bool = False,
+    execution_eligible_positive_window_count: int = 1,
+    baseline_profile: str = "trend_continuation_strength_v2",
+    candidate_profile: str = "trend_continuation_strength_v3",
+) -> dict[str, object]:
     return {
+        "baseline_profile": baseline_profile,
+        "candidate_profile": candidate_profile,
         "report_dir_count": 1,
         "all_windows_zero_delta": all_windows_zero_delta,
         "execution_eligible_positive_window_count": execution_eligible_positive_window_count,
@@ -64,9 +72,13 @@ def _build_calibration_payload(
     all_windows_zero_delta: bool = False,
     keep_baseline_count: int = 0,
     variant_supports_t1_count: int = 1,
+    baseline_profile: str = "trend_continuation_strength_v2",
+    candidate_profile: str = "trend_continuation_strength_v3",
 ) -> dict[str, object]:
     best_candidate = {
         "candidate_name": "lift_0p03_relaxed_close",
+        "baseline_profile": baseline_profile,
+        "candidate_profile": candidate_profile,
         "analysis": {
             "keep_baseline_count": keep_baseline_count,
             "variant_supports_t1_count": variant_supports_t1_count,
@@ -79,8 +91,8 @@ def _build_calibration_payload(
         },
     }
     return {
-        "baseline_profile": "trend_continuation_strength_v2",
-        "candidate_profile": "trend_continuation_strength_v3",
+        "baseline_profile": baseline_profile,
+        "candidate_profile": candidate_profile,
         "ranked_candidates": [best_candidate],
         "best_candidate": best_candidate if report_dir_count > 0 else None,
     }
@@ -124,6 +136,39 @@ def test_build_trend_continuation_rollout_assessment_holds_without_execution_eli
     assert assessment["action"] == "hold"
     assert assessment["execution_eligible_evidence"]["has_positive_execution_eligible_evidence"] is False
     assert "no_execution_eligible_activation_evidence" in assessment["blockers"]
+
+
+def test_build_trend_continuation_rollout_assessment_blocks_promotion_with_empty_diagnostics_payload() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics={},
+        activation_delta_calibration=_build_calibration_payload(),
+    )
+
+    assert assessment["action"] == "hold"
+    assert "missing_diagnostics_evidence" in assessment["blockers"]
+
+
+def test_build_trend_continuation_rollout_assessment_blocks_promotion_with_wrong_profile_diagnostics_payload() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics=_build_diagnostics(candidate_profile="trend_continuation_strength_v9"),
+        activation_delta_calibration=_build_calibration_payload(),
+    )
+
+    assert assessment["action"] == "hold"
+    assert "diagnostics_profile_mismatch" in assessment["blockers"]
+
+
+def test_build_trend_continuation_rollout_assessment_blocks_promotion_with_wrong_profile_calibration_payload() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics=_build_diagnostics(),
+        activation_delta_calibration=_build_calibration_payload(candidate_profile="trend_continuation_strength_v9"),
+    )
+
+    assert assessment["action"] == "hold"
+    assert "calibration_profile_mismatch" in assessment["blockers"]
 
 
 def test_build_trend_continuation_rollout_assessment_flags_missing_runtime_activation_delta() -> None:

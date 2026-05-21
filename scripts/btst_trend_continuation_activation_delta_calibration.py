@@ -10,6 +10,9 @@ from scripts.btst_trend_continuation_activation_delta_diagnostics import (
     build_trend_continuation_activation_delta_diagnostics,
 )
 
+DEFAULT_BASELINE_PROFILE = "trend_continuation_strength_v2"
+DEFAULT_CANDIDATE_PROFILE = "trend_continuation_strength_v3"
+
 CALIBRATION_CANDIDATES = [
     {
         "candidate_name": "lift_0p04",
@@ -41,16 +44,43 @@ CALIBRATION_CANDIDATES = [
 ]
 
 
+def _coerce_int(value: Any) -> int:
+    return int(value or 0)
+
+
+def build_calibration_candidate_governance_blockers(
+    item: dict[str, Any] | None,
+    *,
+    baseline_profile: str = DEFAULT_BASELINE_PROFILE,
+    candidate_profile: str = DEFAULT_CANDIDATE_PROFILE,
+) -> list[str]:
+    candidate = dict(item or {})
+    analysis = dict(candidate.get("analysis") or {})
+    diagnostics = dict(candidate.get("diagnostics") or {})
+
+    resolved_baseline_profile = str(candidate.get("baseline_profile") or analysis.get("baseline_profile") or diagnostics.get("baseline_profile") or "").strip()
+    resolved_candidate_profile = str(candidate.get("candidate_profile") or analysis.get("variant_profile") or diagnostics.get("candidate_profile") or "").strip()
+
+    blockers: list[str] = []
+    if resolved_baseline_profile != baseline_profile:
+        blockers.append("best_candidate_baseline_profile_mismatch")
+    if resolved_candidate_profile != candidate_profile:
+        blockers.append("best_candidate_candidate_profile_mismatch")
+    if _coerce_int(diagnostics.get("report_dir_count")) <= 0:
+        blockers.append("best_candidate_missing_report_dirs")
+    if bool(diagnostics.get("all_windows_zero_delta")):
+        blockers.append("best_candidate_all_windows_zero_delta")
+    if _coerce_int(diagnostics.get("execution_eligible_positive_window_count")) <= 0:
+        blockers.append("best_candidate_missing_execution_eligible_activation")
+    if _coerce_int(analysis.get("keep_baseline_count")) > 0:
+        blockers.append("best_candidate_keeps_baseline")
+    if _coerce_int(analysis.get("variant_supports_t1_count")) <= 0:
+        blockers.append("best_candidate_lacks_t1_support")
+    return blockers
+
+
 def _candidate_is_selection_eligible(item: dict[str, Any]) -> bool:
-    analysis = dict(item.get("analysis") or {})
-    diagnostics = dict(item.get("diagnostics") or {})
-    return (
-        int(analysis.get("keep_baseline_count") or 0) == 0
-        and int(diagnostics.get("report_dir_count") or 0) > 0
-        and int(diagnostics.get("execution_eligible_positive_window_count") or 0) > 0
-        and int(analysis.get("variant_supports_t1_count") or 0) > 0
-        and not bool(diagnostics.get("all_windows_zero_delta"))
-    )
+    return not build_calibration_candidate_governance_blockers(item)
 
 
 def rank_calibration_candidates(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -67,8 +97,8 @@ def rank_calibration_candidates(results: list[dict[str, Any]]) -> list[dict[str,
 
 
 def run_calibration(*, reports_root: str | Path) -> dict[str, Any]:
-    baseline_profile = "trend_continuation_strength_v2"
-    candidate_profile = "trend_continuation_strength_v3"
+    baseline_profile = DEFAULT_BASELINE_PROFILE
+    candidate_profile = DEFAULT_CANDIDATE_PROFILE
     calibration_results: list[dict[str, Any]] = []
     resolved_reports_root = Path(reports_root)
 
