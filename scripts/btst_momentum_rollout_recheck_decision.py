@@ -51,6 +51,18 @@ def _require_float(name: str, value: Any) -> float:
     return float(value)
 
 
+def _has_measurement_evidence(payload: dict[str, Any] | None) -> bool:
+    if not payload:
+        return False
+    required_keys = ("next_close_positive_rate", "next_close_payoff_ratio", "window_count")
+    if not all(payload.get(key) is not None for key in required_keys):
+        return False
+    window_count = payload.get("window_count")
+    if isinstance(window_count, bool) or not isinstance(window_count, int) or window_count <= 0:
+        return False
+    return True
+
+
 def _require_guardrails(value: Any) -> list[str]:
     if not isinstance(value, list):
         raise SystemExit("guardrails must be a JSON list.")
@@ -88,7 +100,12 @@ def build_momentum_rollout_recheck_decision(*, comparison: dict[str, object]) ->
 
     next_close_positive_rate_delta = winner_vs_active_baseline.get("next_close_positive_rate_delta")
     next_close_payoff_ratio_delta = winner_vs_active_baseline.get("next_close_payoff_ratio_delta")
-    if candidate is None or baseline is None or next_close_positive_rate_delta is None or next_close_payoff_ratio_delta is None:
+    if (
+        not _has_measurement_evidence(candidate)
+        or not _has_measurement_evidence(baseline)
+        or next_close_positive_rate_delta is None
+        or next_close_payoff_ratio_delta is None
+    ):
         action = "fallback_measurement_repair"
     else:
         win_rate_delta = _require_float("winner_vs_active_baseline.next_close_positive_rate_delta", next_close_positive_rate_delta)

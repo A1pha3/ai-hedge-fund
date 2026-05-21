@@ -50,6 +50,27 @@ def test_build_rollout_recheck_decision_falls_back_to_measurement_repair_when_re
     assert payload["action"] == "fallback_measurement_repair"
 
 
+def test_build_rollout_recheck_decision_falls_back_to_measurement_repair_when_candidate_and_baseline_are_empty() -> None:
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {},
+                "baseline": {},
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
 def test_build_rollout_recheck_decision_returns_retain_hold_when_win_rate_does_not_improve() -> None:
     payload = decision.build_momentum_rollout_recheck_decision(
         comparison={
@@ -92,6 +113,116 @@ def test_build_rollout_recheck_decision_returns_retain_hold_when_blockers_presen
     assert payload["action"] == "retain_hold"
 
 
+def test_build_rollout_recheck_decision_falls_back_when_candidate_incomplete_despite_positive_deltas() -> None:
+    """Regression: incomplete candidate should fail closed even with positive deltas and no blockers."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": 0.5377},  # Missing payoff_ratio and window_count
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
+def test_build_rollout_recheck_decision_falls_back_when_baseline_incomplete_despite_positive_deltas() -> None:
+    """Regression: incomplete baseline should fail closed even with positive deltas and no blockers."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24},
+                "baseline": {"next_close_positive_rate": 0.5440},  # Missing payoff_ratio and window_count
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
+def test_build_rollout_recheck_decision_falls_back_when_candidate_has_null_values() -> None:
+    """Regression: candidate with None values should fail closed even with positive deltas and no blockers."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": None, "next_close_payoff_ratio": 1.9198, "window_count": 24},
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
+def test_build_rollout_recheck_decision_falls_back_when_baseline_has_null_values() -> None:
+    """Regression: baseline with None values should fail closed even with positive deltas and no blockers."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24},
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": None, "window_count": 24},
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
+def test_build_rollout_recheck_decision_falls_back_when_candidate_has_zero_window_count() -> None:
+    """Regression: candidate with zero window_count should fail closed even with positive deltas and no blockers."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 0},
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
 def test_main_writes_rollout_recheck_decision_outputs(tmp_path: Path) -> None:
     comparison_json = tmp_path / "comparison.json"
     output_json = tmp_path / "decision.json"
@@ -131,4 +262,3 @@ def test_main_writes_rollout_recheck_decision_outputs(tmp_path: Path) -> None:
     data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["action"] == "ready_for_release_review"
     assert output_md.exists()
-
