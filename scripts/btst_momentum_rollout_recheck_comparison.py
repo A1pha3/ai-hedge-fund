@@ -45,6 +45,13 @@ def _require_result_metrics(name: str, result_row: dict[str, Any]) -> dict[str, 
     return _require_object(name, result_row.get("metrics"))
 
 
+def _require_baseline_summary_field(baseline_summary: dict[str, Any], field_name: str) -> Any:
+    value = baseline_summary.get(field_name)
+    if value is None:
+        raise SystemExit(f"baseline_summary.{field_name} must be present.")
+    return value
+
+
 def _load_baseline_verdicts(normalized_source: dict[str, Any]) -> dict[str, Any]:
     baseline_verdicts = normalized_source.get("baseline_verdicts")
     if isinstance(baseline_verdicts, dict):
@@ -102,10 +109,10 @@ def build_momentum_rollout_recheck_comparison(*, rollout_pack: dict[str, object]
         },
         "winner_vs_active_baseline": {
             "baseline_name": baseline_name,
-            "candidate": baseline_summary.get("candidate"),
-            "baseline": baseline_summary.get("baseline"),
-            "next_close_positive_rate_delta": baseline_summary.get("next_close_positive_rate_delta"),
-            "next_close_payoff_ratio_delta": baseline_summary.get("next_close_payoff_ratio_delta"),
+            "candidate": _require_baseline_summary_field(baseline_summary, "candidate"),
+            "baseline": _require_baseline_summary_field(baseline_summary, "baseline"),
+            "next_close_positive_rate_delta": _require_baseline_summary_field(baseline_summary, "next_close_positive_rate_delta"),
+            "next_close_payoff_ratio_delta": _require_baseline_summary_field(baseline_summary, "next_close_payoff_ratio_delta"),
             "blockers": list(baseline_verdict.get("blockers") or []),
         },
         "challenger_context": challenger_context,

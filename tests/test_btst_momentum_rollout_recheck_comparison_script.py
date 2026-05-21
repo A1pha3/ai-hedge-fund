@@ -58,6 +58,33 @@ def test_build_rollout_recheck_comparison_fails_closed_when_active_baseline_miss
         )
 
 
+def test_build_rollout_recheck_comparison_fails_closed_when_baseline_summary_lacks_required_fields() -> None:
+    with pytest.raises(SystemExit, match="baseline_summary"):
+        comparison.build_momentum_rollout_recheck_comparison(
+            rollout_pack={
+                "winner": {"trial_index": 602},
+                "challengers": [],
+                "active_baseline": {"profile_name": "momentum_optimized"},
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "release_posture": "hold",
+                "fail_closed": True,
+            },
+            source_report={
+                "results": [{"trial_index": 602, "metrics": {"next_close_positive_rate": 0.5377}}],
+                "comparison_summary": {
+                    "momentum_optimized": {
+                        "candidate": {"next_close_positive_rate": 0.5377},
+                        "baseline": {"next_close_positive_rate": 0.5440},
+                        "next_close_positive_rate_delta": -0.0063,
+                    }
+                },
+                "rollout_recommendation_details": {
+                    "baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": []}},
+                },
+            },
+        )
+
+
 def test_main_writes_rollout_recheck_comparison_outputs(tmp_path: Path) -> None:
     rollout_pack_json = tmp_path / "rollout_pack.json"
     source_json = tmp_path / "source.json"
