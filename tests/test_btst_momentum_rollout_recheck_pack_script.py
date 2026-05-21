@@ -141,6 +141,77 @@ def test_build_rollout_recheck_pack_rejects_non_hold_release_posture_and_guardra
         )
 
 
+def test_build_rollout_recheck_pack_rejects_wrong_shared_guardrails_and_pack_release_posture() -> None:
+    with pytest.raises(SystemExit, match="rerun_pack.guardrails must preserve no_manifest_publication and no_btst_skill_promotion exactly"):
+        recheck_pack.build_momentum_rollout_recheck_pack(
+            rerun_pack={
+                "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                "challengers": [],
+                "guardrails": ["no_manifest_publication", "different_guardrail"],
+                "release_posture": "hold",
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
+            },
+            rerun_recommendation={
+                "action": "advance_rollout_recheck",
+                "release_posture": "hold",
+                "guardrails": ["no_manifest_publication", "different_guardrail"],
+            },
+            baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
+        )
+
+    with pytest.raises(SystemExit, match="rerun_pack.release_posture must be hold"):
+        recheck_pack.build_momentum_rollout_recheck_pack(
+            rerun_pack={
+                "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                "challengers": [],
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "release_posture": "release",
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
+            },
+            rerun_recommendation={
+                "action": "advance_rollout_recheck",
+                "release_posture": "hold",
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            },
+            baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("candidate_key", "candidate"),
+    [
+        ("winner", {"trial_index": 602, "cross_window_blocker_count": "0", "risk_blocker_count": 0}),
+        ("challengers[0]", {"trial_index": 1226, "cross_window_blocker_count": 1.5, "risk_blocker_count": 0}),
+    ],
+)
+def test_build_rollout_recheck_pack_rejects_malformed_blocker_count_fields(candidate_key: str, candidate: dict[str, object]) -> None:
+    import re
+
+    expected = re.escape(candidate_key) + r" .* must be a non-negative integer"
+    with pytest.raises(SystemExit, match=expected):
+        recheck_pack.build_momentum_rollout_recheck_pack(
+            rerun_pack={
+                "winner": candidate if candidate_key == "winner" else {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                "challengers": [candidate] if candidate_key.startswith("challengers[") else [],
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "release_posture": "hold",
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
+            },
+            rerun_recommendation={
+                "action": "advance_rollout_recheck",
+                "release_posture": "hold",
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            },
+            baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
+        )
+
+
 def test_main_writes_rollout_recheck_pack_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rerun_pack_json = tmp_path / "btst_momentum_rerun_rollout_pack.json"
     rerun_recommendation_json = tmp_path / "btst_momentum_rerun_rollout_recommendation.json"
