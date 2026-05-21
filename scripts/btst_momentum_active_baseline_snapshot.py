@@ -17,34 +17,30 @@ DEFAULT_JSON_OUT = Path("data/reports/btst_momentum_active_baseline_snapshot.jso
 DEFAULT_MD_OUT = Path("data/reports/btst_momentum_active_baseline_snapshot.md")
 
 
-class SnapshotValidationError(ValueError):
-    pass
-
-
 def load_session_summary(path: Path) -> Dict[str, Any]:
     if not path.exists():
-        raise SnapshotValidationError(f"session summary not found: {path}")
+        raise SystemExit(f"session summary not found: {path}")
     try:
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        raise SnapshotValidationError(f"failed to read session summary JSON: {e}")
+        raise SystemExit(f"failed to read session summary JSON: {e}")
     return data
 
 
-def build_snapshot(session_summary: Dict[str, Any]) -> Dict[str, Any]:
+def build_active_baseline_snapshot(*, session_summary: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(session_summary, dict):
-        raise SnapshotValidationError("session summary must be a JSON object")
+        raise SystemExit("session summary must be a JSON object")
 
     opr = session_summary.get("optimization_profile_resolution")
     if not isinstance(opr, dict):
-        raise SnapshotValidationError("missing or malformed optimization_profile_resolution")
+        raise SystemExit("missing or malformed optimization_profile_resolution")
 
     mode = opr.get("mode")
     status = opr.get("status")
     fallback_reason = opr.get("fallback_reason")
     if mode != "optimized" or status != "ready" or fallback_reason is not None:
-        raise SnapshotValidationError(
+        raise SystemExit(
             "optimization_profile_resolution must have mode==optimized, status==ready, and fallback_reason==None"
         )
 
@@ -53,18 +49,18 @@ def build_snapshot(session_summary: Dict[str, Any]) -> Dict[str, Any]:
     for k in required_strs:
         v = opr.get(k)
         if not isinstance(v, str) or not v.strip():
-            raise SnapshotValidationError(f"optimization_profile_resolution.{k} must be a non-empty string")
+            raise SystemExit(f"optimization_profile_resolution.{k} must be a non-empty string")
 
     profile_overrides = opr.get("profile_overrides")
     if profile_overrides is None:
         # allow empty dict but must be present and an object
-        raise SnapshotValidationError("optimization_profile_resolution.profile_overrides must be present (object)")
+        raise SystemExit("optimization_profile_resolution.profile_overrides must be present (object)")
     if not isinstance(profile_overrides, dict):
-        raise SnapshotValidationError("optimization_profile_resolution.profile_overrides must be a JSON object")
+        raise SystemExit("optimization_profile_resolution.profile_overrides must be a JSON object")
 
-    trade_date = session_summary.get("trade_date")
+    trade_date = opr.get("trade_date")
     if not isinstance(trade_date, str) or not trade_date.strip():
-        raise SnapshotValidationError("session_summary.trade_date must be a non-empty string")
+        raise SystemExit("optimization_profile_resolution.trade_date must be a non-empty string")
 
     snapshot = {
         "profile_name": opr["profile_name"],
@@ -82,41 +78,41 @@ def build_snapshot(session_summary: Dict[str, Any]) -> Dict[str, Any]:
     return snapshot
 
 
-def render_markdown(snapshot: Dict[str, Any]) -> str:
+def render_active_baseline_snapshot_markdown(payload: Dict[str, Any]) -> str:
     lines = ["# BTST Momentum Active Baseline Snapshot", ""]
-    lines.append(f"- profile_name: `{snapshot.get('profile_name')}`")
-    lines.append(f"- trade_date: `{snapshot.get('trade_date')}`")
-    lines.append(f"- source_type: `{snapshot.get('source_type')}`")
-    lines.append(f"- source_path: `{snapshot.get('source_path')}`")
-    lines.append(f"- validated_by: `{snapshot.get('validated_by')}`")
-    lines.append(f"- manifest_path: `{snapshot.get('manifest_path')}`")
+    lines.append(f"- profile_name: `{payload.get('profile_name')}`")
+    lines.append(f"- trade_date: `{payload.get('trade_date')}`")
+    lines.append(f"- source_type: `{payload.get('source_type')}`")
+    lines.append(f"- source_path: `{payload.get('source_path')}`")
+    lines.append(f"- validated_by: `{payload.get('validated_by')}`")
+    lines.append(f"- manifest_path: `{payload.get('manifest_path')}`")
     lines.append("")
     lines.append("## Profile overrides")
-    po = json.dumps(snapshot.get("profile_overrides", {}), indent=2)
+    po = json.dumps(payload.get("profile_overrides", {}), indent=2)
     lines.append("```json")
     lines.append(po)
     lines.append("```")
     lines.append("")
     lines.append("## Governance")
-    lines.append(f"- release_posture: `{snapshot.get('release_posture')}`")
-    lines.append(f"- guardrails: `{snapshot.get('guardrails')}`")
-    lines.append(f"- fail_closed: `{snapshot.get('fail_closed')}`")
+    lines.append(f"- release_posture: `{payload.get('release_posture')}`")
+    lines.append(f"- guardrails: `{payload.get('guardrails')}`")
+    lines.append(f"- fail_closed: `{payload.get('fail_closed')}`")
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Emit BTST momentum active baseline snapshot from session summary")
-    parser.add_argument("--input", default=str(DEFAULT_INPUT))
-    parser.add_argument("--json-output", default=str(DEFAULT_JSON_OUT))
-    parser.add_argument("--md-output", default=str(DEFAULT_MD_OUT))
+    parser.add_argument("--session-summary-json", default=str(DEFAULT_INPUT))
+    parser.add_argument("--output-json", default=str(DEFAULT_JSON_OUT))
+    parser.add_argument("--output-md", default=str(DEFAULT_MD_OUT))
     args = parser.parse_args(argv)
 
-    input_path = Path(args.input)
-    json_out = Path(args.json_output)
-    md_out = Path(args.md_output)
+    input_path = Path(args.session_summary_json)
+    json_out = Path(args.output_json)
+    md_out = Path(args.output_md)
 
     session = load_session_summary(input_path)
-    snapshot = build_snapshot(session)
+    snapshot = build_active_baseline_snapshot(session_summary=session)
 
     # ensure parent directories exist
     json_out.parent.mkdir(parents=True, exist_ok=True)
@@ -125,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     with json_out.open("w", encoding="utf-8") as f:
         json.dump(snapshot, f, indent=2, ensure_ascii=False)
 
-    md_text = render_markdown(snapshot)
+    md_text = render_active_baseline_snapshot_markdown(snapshot)
     with md_out.open("w", encoding="utf-8") as f:
         f.write(md_text)
 

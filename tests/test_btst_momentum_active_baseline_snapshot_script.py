@@ -3,18 +3,17 @@ from pathlib import Path
 import pytest
 
 from scripts.btst_momentum_active_baseline_snapshot import (
-    build_snapshot,
+    build_active_baseline_snapshot,
     load_session_summary,
-    render_markdown,
+    render_active_baseline_snapshot_markdown,
     main,
-    SnapshotValidationError,
 )
 
 
 def make_sample_session():
     return {
-        "trade_date": "20260513",
         "optimization_profile_resolution": {
+            "trade_date": "20260513",
             "mode": "optimized",
             "status": "ready",
             "fallback_reason": None,
@@ -30,19 +29,20 @@ def make_sample_session():
 
 def test_build_snapshot_success():
     sess = make_sample_session()
-    snap = build_snapshot(sess)
+    snap = build_active_baseline_snapshot(session_summary=sess)
     assert snap["profile_name"] == "btst_precision_v2"
     assert snap["profile_overrides"] == {"param": 1}
     assert snap["source_type"] == "approved_btst_research_backfill"
     assert snap["manifest_path"] == "manifests/btst_precision_v2.json"
     assert snap["release_posture"] == "hold"
     assert snap["fail_closed"] is True
+    assert snap["trade_date"] == "20260513"
 
 
 def test_build_snapshot_missing_opr_raises():
-    sess = {"trade_date": "20260513"}
-    with pytest.raises(SnapshotValidationError):
-        build_snapshot(sess)
+    sess = {"some": "value"}
+    with pytest.raises(SystemExit):
+        build_active_baseline_snapshot(session_summary=sess)
 
 
 def test_main_writes_outputs(tmp_path, monkeypatch):
@@ -55,7 +55,14 @@ def test_main_writes_outputs(tmp_path, monkeypatch):
     md_out = tmp_path / "out.md"
 
     # call main with our paths
-    rc = main(["--input", str(input_file), "--json-output", str(json_out), "--md-output", str(md_out)])
+    rc = main([
+        "--session-summary-json",
+        str(input_file),
+        "--output-json",
+        str(json_out),
+        "--output-md",
+        str(md_out),
+    ])
     assert rc == 0
 
     assert json_out.exists()
