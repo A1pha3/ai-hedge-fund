@@ -54,9 +54,10 @@ def _require_float(name: str, value: Any) -> float:
 def _has_measurement_evidence(payload: dict[str, Any] | None) -> bool:
     if not payload:
         return False
-    required_keys = ("next_close_positive_rate", "next_close_payoff_ratio", "window_count")
-    if not all(payload.get(key) is not None for key in required_keys):
-        return False
+    for key in ("next_close_positive_rate", "next_close_payoff_ratio"):
+        value = payload.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
     window_count = payload.get("window_count")
     if isinstance(window_count, bool) or not isinstance(window_count, int) or window_count <= 0:
         return False

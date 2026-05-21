@@ -223,6 +223,28 @@ def test_build_rollout_recheck_decision_falls_back_when_candidate_has_zero_windo
     assert payload["action"] == "fallback_measurement_repair"
 
 
+def test_build_rollout_recheck_decision_falls_back_when_measurement_values_are_malformed() -> None:
+    """Regression: malformed non-None measurement values must fail closed."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": "invalid", "next_close_payoff_ratio": False, "window_count": 24},
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
 def test_main_writes_rollout_recheck_decision_outputs(tmp_path: Path) -> None:
     comparison_json = tmp_path / "comparison.json"
     output_json = tmp_path / "decision.json"
