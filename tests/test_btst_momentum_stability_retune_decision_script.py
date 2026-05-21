@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import scripts.btst_momentum_stability_retune_decision as decision
 
 
@@ -50,3 +52,11 @@ def test_main_writes_retune_decision_outputs(tmp_path: Path) -> None:
     data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["action"] == "retain_hold"
     assert output_md.exists()
+
+
+def test_build_retune_decision_fails_closed_when_best_candidate_trial_index_missing() -> None:
+    with pytest.raises(SystemExit, match="trial_index"):
+        decision.build_momentum_stability_retune_decision(
+            shortlist={"best_candidate": {"cross_window_blocker_count": 1, "risk_blocker_count": 0}, "candidate_count": 2},
+            triage={"dominant_family": "cross_window_stability", "blocker_count": 8, "missing_theme_exposure_window_count": 1},
+        )

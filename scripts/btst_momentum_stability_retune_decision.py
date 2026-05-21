@@ -54,7 +54,7 @@ def build_momentum_stability_retune_decision(*, shortlist: dict[str, object], tr
         "missing_theme_exposure_window_count", normalized_triage.get("missing_theme_exposure_window_count")
     )
 
-    trial_index = best_candidate.get("trial_index")
+    trial_index = _require_non_negative_int("trial_index", best_candidate.get("trial_index"))
     cross_window_blocker_count = _require_non_negative_int("cross_window_blocker_count", best_candidate.get("cross_window_blocker_count"))
     risk_blocker_count = _require_non_negative_int("risk_blocker_count", best_candidate.get("risk_blocker_count"))
 
