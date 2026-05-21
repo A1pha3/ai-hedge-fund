@@ -21,6 +21,17 @@ RISK_METRICS: tuple[str, ...] = (
     "liquidity_capacity_raw_100_delta",
     "t_plus_3_close_payoff_ratio_delta",
 )
+LOWER_IS_BETTER_METRICS: frozenset[str] = frozenset(
+    {
+        "win_rate_window_volatility",
+        "win_rate_ci_width",
+        "win_rate_cv",
+        "factor_drift_score",
+        "param_drift_score",
+        "gate_above_threshold_cv",
+        "max_drawdown_simulated",
+    }
+)
 
 
 def _load_json_file(path: Path, *, label: str) -> object:
@@ -82,8 +93,17 @@ def _matches_surface(params: dict[str, Any], surface: dict[str, Any]) -> bool:
 
 
 def _extract_results(src: object) -> list[dict[str, Any]]:
+    baseline_metrics: dict[str, Any] | None = None
     if isinstance(src, dict):
         results = src.get("results")
+        best_params = src.get("best_params")
+        if isinstance(best_params, dict) and isinstance(results, list):
+            for row in results:
+                if not isinstance(row, dict):
+                    continue
+                if row.get("params") == best_params and isinstance(row.get("metrics"), dict):
+                    baseline_metrics = dict(row["metrics"])
+                    break
     else:
         results = src
     if not isinstance(results, list):
@@ -93,7 +113,10 @@ def _extract_results(src: object) -> list[dict[str, Any]]:
     for row in results:
         if not isinstance(row, dict):
             raise SystemExit("each source result must be a JSON object.")
-        normalized.append(dict(row))
+        normalized_row = dict(row)
+        if not isinstance(normalized_row.get("comparison_summary"), dict) and isinstance(normalized_row.get("metrics"), dict) and baseline_metrics is not None:
+            normalized_row["comparison_summary"] = _build_comparison_summary_from_metrics(dict(normalized_row["metrics"]), baseline_metrics)
+        normalized.append(normalized_row)
     return normalized
 
 
@@ -103,6 +126,26 @@ def _normalize_trial_index(value: object) -> int:
     except (TypeError, ValueError) as exc:
         raise SystemExit("each shortlisted source result must include an integer-valued trial_index.") from exc
     return trial_index
+
+
+def _build_comparison_summary_from_metrics(metrics: dict[str, Any], baseline_metrics: dict[str, Any]) -> dict[str, dict[str, float]]:
+    deltas: dict[str, float] = {}
+    for delta_name in CROSS_WINDOW_METRICS + RISK_METRICS:
+        metric_name = delta_name.removesuffix("_delta")
+        value = metrics.get(metric_name)
+        baseline_value = baseline_metrics.get(metric_name)
+        if isinstance(value, bool) or isinstance(baseline_value, bool):
+            continue
+        if not isinstance(value, (int, float)) or not isinstance(baseline_value, (int, float)):
+            continue
+        candidate_value = float(value)
+        baseline_float = float(baseline_value)
+        if metric_name in LOWER_IS_BETTER_METRICS:
+            delta = baseline_float - candidate_value
+        else:
+            delta = candidate_value - baseline_float
+        deltas[delta_name] = round(delta, 6)
+    return {"current_best": deltas}
 
 
 def build_momentum_stability_retune_shortlist(*, results: list[dict[str, object]], surface: dict[str, object]) -> dict[str, object]:

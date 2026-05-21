@@ -69,6 +69,48 @@ def test_main_writes_shortlist_outputs(tmp_path: Path) -> None:
     assert output_md.exists()
 
 
+def test_main_writes_shortlist_outputs_from_metrics_only_source_using_best_params_baseline(tmp_path: Path) -> None:
+    source_json = tmp_path / "source.json"
+    surface_json = tmp_path / "surface.json"
+    output_json = tmp_path / "shortlist.json"
+    output_md = tmp_path / "shortlist.md"
+    source_json.write_text(
+        json.dumps(
+            {
+                "best_params": {"select_threshold": 0.46, "momentum_strength_weight": 0.0, "short_term_reversal_weight": 0.0},
+                "results": [
+                    {
+                        "trial_index": 10,
+                        "params": {"select_threshold": 0.46, "momentum_strength_weight": 0.0, "short_term_reversal_weight": 0.0},
+                        "metrics": {"win_rate_window_trend": 0.10, "gate_above_threshold_cv": 0.30, "max_drawdown_simulated": 0.12, "win_rate_cv": 0.18, "t_plus_3_close_payoff_ratio": 1.20},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    surface_json.write_text(json.dumps({"grid": {"select_threshold": [0.42, 0.46, 0.5]}, "fixed_params": {"momentum_strength_weight": 0.0, "short_term_reversal_weight": 0.0}}), encoding="utf-8")
+
+    result = shortlist.main(
+        [
+            "--source-json",
+            str(source_json),
+            "--surface-json",
+            str(surface_json),
+            "--output-json",
+            str(output_json),
+            "--output-md",
+            str(output_md),
+        ]
+    )
+
+    assert result == 0
+    data = json.loads(output_json.read_text(encoding="utf-8"))
+    assert data["candidate_count"] == 1
+    assert data["best_candidate"]["trial_index"] == 10
+    assert output_md.exists()
+
+
 def test_build_retune_shortlist_fails_closed_when_local_candidate_missing_fixed_zero_weight_params() -> None:
     with pytest.raises(SystemExit, match="local retune candidates"):
         shortlist.build_momentum_stability_retune_shortlist(
