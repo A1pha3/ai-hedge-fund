@@ -73,8 +73,13 @@ def _require_guardrails(value: Any) -> list[str]:
 
 def _normalize_candidate(name: str, candidate: Any) -> dict[str, Any]:
     normalized_candidate = _require_object(name, candidate)
-    trial_index = _require_non_negative_int(f"{name} trial_index", normalized_candidate.get("trial_index"))
-    normalized_candidate["trial_index"] = trial_index
+    normalized_candidate["trial_index"] = _require_non_negative_int(f"{name} trial_index", normalized_candidate.get("trial_index"))
+    normalized_candidate["cross_window_blocker_count"] = _require_non_negative_int(
+        f"{name} cross_window_blocker_count", normalized_candidate.get("cross_window_blocker_count")
+    )
+    normalized_candidate["risk_blocker_count"] = _require_non_negative_int(
+        f"{name} risk_blocker_count", normalized_candidate.get("risk_blocker_count")
+    )
     return normalized_candidate
 
 

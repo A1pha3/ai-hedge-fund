@@ -9,8 +9,8 @@ import scripts.btst_momentum_rerun_rollout_pack as pack
 def test_build_rerun_pack_carries_winner_challengers_and_guardrails() -> None:
     payload = pack.build_momentum_rerun_rollout_pack(
         cohort={
-            "winner": {"trial_index": 602, "params": {"select_threshold": 0.46}},
-            "challengers": [{"trial_index": 1226, "params": {"select_threshold": 0.46}}],
+            "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0, "params": {"select_threshold": 0.46}},
+            "challengers": [{"trial_index": 1226, "cross_window_blocker_count": 1, "risk_blocker_count": 0, "params": {"select_threshold": 0.46}}],
             "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
         },
         decision={"action": "rerun_rollout_check", "release_posture": "hold", "dominant_family": "cross_window_stability", "missing_theme_exposure_window_count": 2},
@@ -38,7 +38,16 @@ def test_main_writes_rerun_pack_outputs(tmp_path: Path) -> None:
     decision_json = tmp_path / "decision.json"
     output_json = tmp_path / "pack.json"
     output_md = tmp_path / "pack.md"
-    cohort_json.write_text(json.dumps({"winner": {"trial_index": 602}, "challengers": [], "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"]}), encoding="utf-8")
+    cohort_json.write_text(
+        json.dumps(
+            {
+                "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                "challengers": [],
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            }
+        ),
+        encoding="utf-8",
+    )
     decision_json.write_text(json.dumps({"action": "rerun_rollout_check", "release_posture": "hold", "dominant_family": "cross_window_stability", "missing_theme_exposure_window_count": 2}), encoding="utf-8")
 
     result = pack.main(
@@ -84,6 +93,23 @@ def test_build_rerun_pack_fails_closed_when_dominant_family_contains_backticks()
                 "action": "rerun_rollout_check",
                 "release_posture": "hold",
                 "dominant_family": "cross_window`stability",
+                "missing_theme_exposure_window_count": 2,
+            },
+        )
+
+
+def test_build_rerun_pack_fails_closed_when_winner_blocker_counts_are_missing() -> None:
+    with pytest.raises(SystemExit, match="cross_window_blocker_count"):
+        pack.build_momentum_rerun_rollout_pack(
+            cohort={
+                "winner": {"trial_index": 602},
+                "challengers": [],
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            },
+            decision={
+                "action": "rerun_rollout_check",
+                "release_posture": "hold",
+                "dominant_family": "cross_window_stability",
                 "missing_theme_exposure_window_count": 2,
             },
         )
