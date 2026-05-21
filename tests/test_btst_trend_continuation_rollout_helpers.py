@@ -196,6 +196,34 @@ def test_build_trend_continuation_rollout_assessment_flags_missing_runtime_activ
     assert "no_runtime_activation_delta" in assessment["blockers"]
 
 
+def test_build_trend_continuation_rollout_assessment_blocks_promotion_when_diagnostics_zero_delta_flag_is_missing() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics={
+            **_build_diagnostics(execution_eligible_positive_window_count=1),
+            "all_windows_zero_delta": None,
+        },
+        activation_delta_calibration=_build_calibration_payload(),
+    )
+
+    assert assessment["action"] == "hold"
+    assert "malformed_diagnostics_all_windows_zero_delta" in assessment["blockers"]
+
+
+def test_build_trend_continuation_rollout_assessment_blocks_promotion_on_malformed_diagnostics_numeric_value() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics={
+            **_build_diagnostics(execution_eligible_positive_window_count=1),
+            "report_dir_count": "abc",
+        },
+        activation_delta_calibration=_build_calibration_payload(),
+    )
+
+    assert assessment["action"] == "hold"
+    assert "malformed_diagnostics_report_dir_count" in assessment["blockers"]
+
+
 def test_build_trend_continuation_rollout_assessment_flags_cosmetic_only_activation_delta() -> None:
     analysis = _build_analysis(execution_eligible_delta=0, mixed_count=1)
     analysis["rows"] = [

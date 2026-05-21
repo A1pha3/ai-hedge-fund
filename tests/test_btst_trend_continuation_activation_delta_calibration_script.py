@@ -114,6 +114,58 @@ def test_build_calibration_candidate_governance_blockers_require_matching_profil
     assert "best_candidate_candidate_profile_mismatch" in blockers
 
 
+def test_build_calibration_candidate_governance_blockers_fail_closed_on_malformed_numeric_evidence() -> None:
+    blockers = calibration.build_calibration_candidate_governance_blockers(
+        {
+            "candidate_name": "malformed_numeric",
+            "baseline_profile": "trend_continuation_strength_v2",
+            "candidate_profile": "trend_continuation_strength_v3",
+            "diagnostics": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "candidate_profile": "trend_continuation_strength_v3",
+                "report_dir_count": "abc",
+                "all_windows_zero_delta": False,
+                "execution_eligible_positive_window_count": 1,
+            },
+            "analysis": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "variant_profile": "trend_continuation_strength_v3",
+                "keep_baseline_count": 0,
+                "variant_supports_t1_count": 1,
+                "mixed_count": 0,
+            },
+        }
+    )
+
+    assert "best_candidate_malformed_report_dir_count" in blockers
+
+
+def test_build_calibration_candidate_governance_blockers_fail_closed_on_malformed_bool_evidence() -> None:
+    blockers = calibration.build_calibration_candidate_governance_blockers(
+        {
+            "candidate_name": "malformed_bool",
+            "baseline_profile": "trend_continuation_strength_v2",
+            "candidate_profile": "trend_continuation_strength_v3",
+            "diagnostics": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "candidate_profile": "trend_continuation_strength_v3",
+                "report_dir_count": 1,
+                "all_windows_zero_delta": "abc",
+                "execution_eligible_positive_window_count": 1,
+            },
+            "analysis": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "variant_profile": "trend_continuation_strength_v3",
+                "keep_baseline_count": 0,
+                "variant_supports_t1_count": 1,
+                "mixed_count": 0,
+            },
+        }
+    )
+
+    assert "best_candidate_malformed_all_windows_zero_delta" in blockers
+
+
 def test_build_candidate_overrides_keeps_scope_inside_v3_shrink_parameters() -> None:
     candidate = calibration.CALIBRATION_CANDIDATES[0]
 
@@ -140,6 +192,7 @@ def test_run_calibration_calls_validation_and_diagnostics_for_each_candidate(mon
         return {
             "baseline_profile": baseline_profile,
             "variant_profile": variant_profile,
+            "keep_baseline_count": 0,
             "variant_supports_t1_count": 1,
             "mixed_count": 0,
             "report_dir_count": 1,
@@ -148,6 +201,8 @@ def test_run_calibration_calls_validation_and_diagnostics_for_each_candidate(mon
 
     def fake_diagnostics(analysis):
         return {
+            "baseline_profile": analysis["baseline_profile"],
+            "candidate_profile": analysis["variant_profile"],
             "report_dir_count": analysis["report_dir_count"],
             "all_windows_zero_delta": False,
             "execution_eligible_positive_window_count": 1,
@@ -179,6 +234,8 @@ def test_run_calibration_returns_no_best_candidate_without_report_evidence(monke
 
     def fake_diagnostics(analysis):
         return {
+            "baseline_profile": analysis["baseline_profile"],
+            "candidate_profile": analysis["variant_profile"],
             "report_dir_count": analysis["report_dir_count"],
             "all_windows_zero_delta": False,
             "execution_eligible_positive_window_count": 1,
