@@ -45,6 +45,18 @@ def _require_result_metrics(name: str, result_row: dict[str, Any]) -> dict[str, 
     return _require_object(name, result_row.get("metrics"))
 
 
+def _load_baseline_verdicts(normalized_source: dict[str, Any]) -> dict[str, Any]:
+    baseline_verdicts = normalized_source.get("baseline_verdicts")
+    if isinstance(baseline_verdicts, dict):
+        return dict(baseline_verdicts)
+    rollout_recommendation_details = normalized_source.get("rollout_recommendation_details")
+    if isinstance(rollout_recommendation_details, dict):
+        nested_baseline_verdicts = rollout_recommendation_details.get("baseline_verdicts")
+        if isinstance(nested_baseline_verdicts, dict):
+            return dict(nested_baseline_verdicts)
+    raise SystemExit("baseline_verdicts must be a JSON object.")
+
+
 def build_momentum_rollout_recheck_comparison(*, rollout_pack: dict[str, object], source_report: dict[str, object]) -> dict[str, object]:
     normalized_pack = _require_object("rollout_pack", rollout_pack)
     normalized_source = _require_object("source_report", source_report)
@@ -64,7 +76,7 @@ def build_momentum_rollout_recheck_comparison(*, rollout_pack: dict[str, object]
     baseline_summary = comparison_summary.get(baseline_name)
     if not isinstance(baseline_summary, dict):
         raise SystemExit("comparison_summary must contain the active baseline entry.")
-    baseline_verdicts = _require_object("baseline_verdicts", normalized_source.get("baseline_verdicts"))
+    baseline_verdicts = _load_baseline_verdicts(normalized_source)
     baseline_verdict = baseline_verdicts.get(baseline_name)
     if not isinstance(baseline_verdict, dict):
         raise SystemExit("baseline_verdicts must contain the active baseline entry.")
@@ -90,8 +102,10 @@ def build_momentum_rollout_recheck_comparison(*, rollout_pack: dict[str, object]
         },
         "winner_vs_active_baseline": {
             "baseline_name": baseline_name,
-            "comparison_summary": baseline_summary,
-            "baseline_verdict": baseline_verdict,
+            "candidate": baseline_summary.get("candidate"),
+            "baseline": baseline_summary.get("baseline"),
+            "next_close_positive_rate_delta": baseline_summary.get("next_close_positive_rate_delta"),
+            "next_close_payoff_ratio_delta": baseline_summary.get("next_close_payoff_ratio_delta"),
             "blockers": list(baseline_verdict.get("blockers") or []),
         },
         "challenger_context": challenger_context,

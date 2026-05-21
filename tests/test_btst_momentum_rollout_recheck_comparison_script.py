@@ -32,13 +32,21 @@ def test_build_rollout_recheck_comparison_extracts_winner_baseline_and_challenge
                     "next_close_payoff_ratio_delta": 0.1398,
                 }
             },
-            "baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"]}},
+            "rollout_recommendation_details": {
+                "baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"]}},
+            },
         },
     )
 
     assert payload["winner"]["trial_index"] == 602
-    assert payload["winner_vs_active_baseline"]["baseline_name"] == "momentum_optimized"
-    assert payload["winner_vs_active_baseline"]["blockers"] == ["next_close_positive_rate_regressed_vs_momentum_optimized"]
+    assert payload["winner_vs_active_baseline"] == {
+        "baseline_name": "momentum_optimized",
+        "candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24},
+        "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+        "next_close_positive_rate_delta": -0.0063,
+        "next_close_payoff_ratio_delta": 0.1398,
+        "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"],
+    }
     assert payload["challenger_context"][0]["trial_index"] == 1226
 
 
@@ -57,7 +65,7 @@ def test_main_writes_rollout_recheck_comparison_outputs(tmp_path: Path) -> None:
     output_md = tmp_path / "comparison.md"
 
     rollout_pack_json.write_text(json.dumps({"winner": {"trial_index": 602}, "challengers": [], "active_baseline": {"profile_name": "momentum_optimized"}, "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"], "release_posture": "hold", "fail_closed": True}), encoding="utf-8")
-    source_json.write_text(json.dumps({"results": [{"trial_index": 602, "metrics": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24}}], "comparison_summary": {"momentum_optimized": {"candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24}, "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24}, "next_close_positive_rate_delta": -0.0063, "next_close_payoff_ratio_delta": 0.1398}}, "baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"]}}}), encoding="utf-8")
+    source_json.write_text(json.dumps({"results": [{"trial_index": 602, "metrics": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24}}], "comparison_summary": {"momentum_optimized": {"candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24}, "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24}, "next_close_positive_rate_delta": -0.0063, "next_close_payoff_ratio_delta": 0.1398}}, "rollout_recommendation_details": {"baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"]}}}}), encoding="utf-8")
 
     result = comparison.main(
         [
@@ -75,4 +83,5 @@ def test_main_writes_rollout_recheck_comparison_outputs(tmp_path: Path) -> None:
     assert result == 0
     data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["winner_vs_active_baseline"]["baseline_name"] == "momentum_optimized"
+    assert data["winner_vs_active_baseline"]["blockers"] == ["next_close_positive_rate_regressed_vs_momentum_optimized"]
     assert output_md.exists()
