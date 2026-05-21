@@ -371,9 +371,15 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         max_idx = future_horizon_rows[future_horizon_rows["high"].astype(float) == max_future_high].index[0]
         max_future_high_trade_date_2_5d = max_idx.strftime("%Y-%m-%d")
     max_future_high_return_2_5d = None if max_future_high is None else round((max_future_high / trade_close) - 1.0, 4)
-    hit_rows = future_horizon_rows.loc[(future_horizon_rows["high"].astype(float) / trade_close) - 1.0 >= 0.20]
-    time_to_hit_20pct = None if hit_rows.empty else int((hit_rows.index[0].normalize() - future_horizon_rows.index[0].normalize()).days + 1)
-    future_high_hit_20pct_2_5d = False if hit_rows.empty else True
+    def _resolve_runner_threshold_metrics(threshold: float) -> tuple[bool, int | None]:
+        hit_rows = future_horizon_rows.loc[(future_horizon_rows["high"].astype(float) / trade_close) - 1.0 >= threshold]
+        if hit_rows.empty:
+            return False, None
+        time_to_hit = int((hit_rows.index[0].normalize() - future_horizon_rows.index[0].normalize()).days + 1)
+        return True, time_to_hit
+
+    future_high_hit_15pct_2_5d, time_to_hit_15pct = _resolve_runner_threshold_metrics(0.15)
+    future_high_hit_20pct_2_5d, time_to_hit_20pct = _resolve_runner_threshold_metrics(0.20)
 
     data_status = "ok" if t_plus_2_close is not None else "missing_t_plus_2_bar"
     cycle_status = "closed_cycle" if t_plus_2_close is not None else "t1_only"
@@ -412,6 +418,8 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         "t_plus_5_close_return": None if t_plus_5_close is None else round((t_plus_5_close / trade_close) - 1.0, 4),
         "max_future_high_return_2_5d": max_future_high_return_2_5d,
         "max_future_high_trade_date_2_5d": max_future_high_trade_date_2_5d,
+        "time_to_hit_15pct": time_to_hit_15pct,
+        "future_high_hit_15pct_2_5d": future_high_hit_15pct_2_5d,
         "time_to_hit_20pct": time_to_hit_20pct,
         "future_high_hit_20pct_2_5d": future_high_hit_20pct_2_5d,
         # Task 1-3 (Round 16): T0 bar metrics — net inflow ratio, divergence score/flag, predicted range.
@@ -3050,6 +3058,9 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     t_plus_3_edge = _build_return_edge_metrics(t_plus_3_close_returns)
 
     runner_rows = [row for row in rows if row.get("max_future_high_return_2_5d") is not None]
+    runner_capture_count_15pct = sum(1 for row in runner_rows if bool(row.get("future_high_hit_15pct_2_5d")))
+    runner_hit_rate_15pct = None if not runner_rows else round(runner_capture_count_15pct / len(runner_rows), 4)
+    time_to_hit_15pct_values = [float(row["time_to_hit_15pct"]) for row in runner_rows if row.get("time_to_hit_15pct") is not None]
     runner_capture_count = sum(1 for row in runner_rows if bool(row.get("future_high_hit_20pct_2_5d")))
     runner_hit_rate = None if not runner_rows else round(runner_capture_count / len(runner_rows), 4)
     time_to_hit_values = [float(row["time_to_hit_20pct"]) for row in runner_rows if row.get("time_to_hit_20pct") is not None]
@@ -3363,8 +3374,11 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "t_plus_3_close_profit_factor": t_plus_3_edge["profit_factor"],
         "t_plus_3_close_expectancy": t_plus_3_edge["expectancy"],
         "runner_capture_count": runner_capture_count,
+        "runner_capture_count_15pct": runner_capture_count_15pct,
+        "max_future_high_return_2_5d_hit_rate_at_15pct": runner_hit_rate_15pct,
         "max_future_high_return_2_5d_hit_rate_at_20pct": runner_hit_rate,
         "max_future_high_return_2_5d_distribution": summarize_distribution([float(row["max_future_high_return_2_5d"]) for row in runner_rows]),
+        "time_to_hit_15pct_median": summarize_distribution(time_to_hit_15pct_values)["median"] if time_to_hit_15pct_values else None,
         "time_to_hit_20pct_median": summarize_distribution(time_to_hit_values)["median"] if time_to_hit_values else None,
         "runner_escape_rate": runner_escape_rate,
         "avg_composite_score_escaped": avg_composite_score_escaped,

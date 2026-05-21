@@ -16,10 +16,12 @@ _OBJECTIVE_KEYS = (
     "t_plus_3_close_expectancy",
     "t_plus_3_close_payoff_ratio",
     "sample_weight",
+    "max_future_high_return_2_5d_hit_rate_at_15pct",
     "max_future_high_return_2_5d_hit_rate_at_20pct",
     "median_max_future_high_return_2_5d",
     "next_open_return",
     "next_open_to_close_return",
+    "time_to_hit_15pct_median",
     "time_to_hit_20pct_median",
 )
 _GUARDRAIL_KEYS = (

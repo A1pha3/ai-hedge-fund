@@ -5096,8 +5096,10 @@ def _build_replay_evaluator(
             "liquidity_capacity_raw_100": [],
             "crowding_risk_raw_100": [],
             "gap_risk_raw_100": [],
+            "max_future_high_return_2_5d_hit_rate_at_15pct": [],
             "max_future_high_return_2_5d_hit_rate_at_20pct": [],
             "runner_capture_count": [],
+            "time_to_hit_15pct_median": [],
             "time_to_hit_20pct_median": [],
             "runner_escape_rate": [],
             "avg_composite_score_escaped": [],
@@ -5129,7 +5131,9 @@ def _build_replay_evaluator(
             "t_plus_3_close_expectancy": [],
             "t_plus_3_close_payoff_ratio": [],
             "downside_p10": [],
+            "max_future_high_return_2_5d_hit_rate_at_15pct": [],
             "max_future_high_return_2_5d_hit_rate_at_20pct": [],
+            "time_to_hit_15pct_median": [],
             "time_to_hit_20pct_median": [],
             # Task 1 (Round 12): intraday drawdown is also sample-weighted
             "t_plus_1_intraday_drawdown_p10": [],
@@ -5267,14 +5271,22 @@ def _build_replay_evaluator(
                 total_metrics["sample_weight"].append(sample_weight)
 
                 # Runner horizon metrics
+                runner_tail_hit_rate_15pct = _safe_float(primary_surface.get("max_future_high_return_2_5d_hit_rate_at_15pct"))
                 runner_tail_hit_rate = _safe_float(primary_surface.get("max_future_high_return_2_5d_hit_rate_at_20pct"))
                 runner_capture_count = primary_surface.get("runner_capture_count", 0)
+                time_to_hit_15pct = _safe_float(primary_surface.get("time_to_hit_15pct_median"))
                 time_to_hit_20pct = _safe_float(primary_surface.get("time_to_hit_20pct_median"))
+                if runner_tail_hit_rate_15pct is not None:
+                    total_metrics["max_future_high_return_2_5d_hit_rate_at_15pct"].append(runner_tail_hit_rate_15pct)
+                    total_metric_weights["max_future_high_return_2_5d_hit_rate_at_15pct"].append(sample_weight)
                 if runner_tail_hit_rate is not None:
                     total_metrics["max_future_high_return_2_5d_hit_rate_at_20pct"].append(runner_tail_hit_rate)
                     total_metric_weights["max_future_high_return_2_5d_hit_rate_at_20pct"].append(sample_weight)
                 if isinstance(runner_capture_count, (int, float)):
                     total_metrics["runner_capture_count"].append(float(runner_capture_count))
+                if time_to_hit_15pct is not None:
+                    total_metrics["time_to_hit_15pct_median"].append(time_to_hit_15pct)
+                    total_metric_weights["time_to_hit_15pct_median"].append(sample_weight)
                 if time_to_hit_20pct is not None:
                     total_metrics["time_to_hit_20pct_median"].append(time_to_hit_20pct)
                     total_metric_weights["time_to_hit_20pct_median"].append(sample_weight)
@@ -5391,8 +5403,10 @@ def _build_replay_evaluator(
         avg_downside_p10 = _weighted_avg(total_metrics["downside_p10"], total_metric_weights["downside_p10"])
 
         # Runner horizon metrics
+        avg_runner_tail_hit_rate_15pct = _weighted_avg(total_metrics["max_future_high_return_2_5d_hit_rate_at_15pct"], total_metric_weights["max_future_high_return_2_5d_hit_rate_at_15pct"])
         avg_runner_tail_hit_rate = _weighted_avg(total_metrics["max_future_high_return_2_5d_hit_rate_at_20pct"], total_metric_weights["max_future_high_return_2_5d_hit_rate_at_20pct"])
         total_runner_capture_count = int(sum(total_metrics["runner_capture_count"])) if total_metrics["runner_capture_count"] else 0
+        avg_time_to_hit_15pct = _weighted_avg(total_metrics["time_to_hit_15pct_median"], total_metric_weights["time_to_hit_15pct_median"])
         avg_time_to_hit_20pct = _weighted_avg(total_metrics["time_to_hit_20pct_median"], total_metric_weights["time_to_hit_20pct_median"])
         avg_runner_escape_rate = sum(total_metrics["runner_escape_rate"]) / len(total_metrics["runner_escape_rate"]) if total_metrics["runner_escape_rate"] else None
         avg_composite_score_escaped = sum(total_metrics["avg_composite_score_escaped"]) / len(total_metrics["avg_composite_score_escaped"]) if total_metrics["avg_composite_score_escaped"] else None
@@ -5902,9 +5916,11 @@ def _build_replay_evaluator(
             "liquidity_capacity_raw_100": avg_liquidity_capacity_raw_100,
             "crowding_risk_raw_100": avg_crowding_risk_raw_100,
             "gap_risk_raw_100": avg_gap_risk_raw_100,
+            "max_future_high_return_2_5d_hit_rate_at_15pct": avg_runner_tail_hit_rate_15pct,
             "max_future_high_return_2_5d_hit_rate_at_20pct": avg_runner_tail_hit_rate,
             "runner_capture_count": total_runner_capture_count,
             "median_max_future_high_return_2_5d": median_max_future_high_return_2_5d,
+            "time_to_hit_15pct_median": avg_time_to_hit_15pct,
             "time_to_hit_20pct_median": avg_time_to_hit_20pct,
             "runner_escape_rate": avg_runner_escape_rate,
             "avg_composite_score_escaped": avg_composite_score_escaped,

@@ -8,10 +8,6 @@
 
 - 你觉得下一步的任务继续做下去意义还大吗？是不是要回归主线去优化 更有价值的策略？
 
-- wait to do
-给 Cross-Report Workflow Queue 增加按 trade_date / report 的更细粒度过滤与排序
-把 Trade Date Target Index 的统计再做成更清晰的 badge 或小型汇总卡，减少来回阅读成本
-
 
 # 重构代码 （refactor）
 

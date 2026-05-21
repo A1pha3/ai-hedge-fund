@@ -3421,9 +3421,11 @@ def test_replay_evaluator_emits_runner_metrics(monkeypatch: pytest.MonkeyPatch) 
             "t_plus_3_close_return_distribution": {"median": 0.013},
             "next_close_return_distribution": {"p10": -0.02},
             "downside_p10": -0.02,
+            "max_future_high_return_2_5d_hit_rate_at_15pct": 0.50,
             "max_future_high_return_2_5d_hit_rate_at_20pct": 0.25,
             "runner_capture_count": 3,
             "max_future_high_return_2_5d_distribution": {"median": 0.19},
+            "time_to_hit_15pct_median": 2.0,
             "time_to_hit_20pct_median": 3.0,
         }
         return {"surface_summaries": {"selected": surface, "tradeable": surface}}
@@ -3434,8 +3436,10 @@ def test_replay_evaluator_emits_runner_metrics(monkeypatch: pytest.MonkeyPatch) 
     evaluator = _build_replay_evaluator([Path("runner_window.json")], base_profile="default")
     metrics = evaluator({})
 
+    assert metrics["max_future_high_return_2_5d_hit_rate_at_15pct"] == pytest.approx(0.50)
     assert metrics["max_future_high_return_2_5d_hit_rate_at_20pct"] == pytest.approx(0.25)
     assert metrics["runner_capture_count"] == 3
+    assert metrics["time_to_hit_15pct_median"] == pytest.approx(2.0)
     assert metrics["time_to_hit_20pct_median"] == pytest.approx(3.0)
 
 

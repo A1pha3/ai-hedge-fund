@@ -177,6 +177,7 @@ def compute_objective_score(
         if metrics.get("promotion_guardrail_pass") is False:
             return None
         bundle = build_canonical_btst_evaluation_bundle(metrics)
+        tail_hit_rate_15pct = bundle.lookup("max_future_high_return_2_5d_hit_rate_at_15pct")
         tail_hit_rate = bundle.lookup("max_future_high_return_2_5d_hit_rate_at_20pct")
         tail_median = bundle.lookup("median_max_future_high_return_2_5d")
         next_open_return = bundle.lookup("next_open_return")
@@ -186,7 +187,10 @@ def compute_objective_score(
         sample_weight = clip(float(bundle.lookup("sample_weight") or 0.0), 0.0, 1.0)
         if None in (tail_hit_rate, tail_median, next_open_return, next_open_to_close_return, next_close_positive_rate, downside_p10):
             return None
-        tail_score = (0.42 * float(tail_hit_rate)) + (0.18 * clip(float(tail_median) / 0.25, 0.0, 1.0))
+        if tail_hit_rate_15pct is None:
+            tail_score = (0.42 * float(tail_hit_rate)) + (0.18 * clip(float(tail_median) / 0.25, 0.0, 1.0))
+        else:
+            tail_score = (0.28 * float(tail_hit_rate_15pct)) + (0.18 * float(tail_hit_rate)) + (0.14 * clip(float(tail_median) / 0.25, 0.0, 1.0))
         t1_score = (0.18 * clip((float(next_open_return) + 0.05) / 0.10, 0.0, 1.0)) + (0.14 * clip((float(next_open_to_close_return) + 0.05) / 0.10, 0.0, 1.0)) + (0.10 * float(next_close_positive_rate))
         downside_penalty = 0.20 * clip(abs(float(downside_p10)) / 0.06, 0.0, 1.0)
         return (tail_score + t1_score - downside_penalty) * (0.35 + (0.65 * sample_weight))

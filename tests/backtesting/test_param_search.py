@@ -711,9 +711,11 @@ def test_save_search_payload_includes_failed_guardrails(tmp_path):
 def test_compute_objective_score_btst_runner_prioritizes_tail_hits_without_ignoring_t1() -> None:
     metrics = {
         "promotion_guardrail_pass": True,
+        "max_future_high_return_2_5d_hit_rate_at_15pct": 0.48,
         "max_future_high_return_2_5d_hit_rate_at_20pct": 0.32,
         "runner_capture_count": 14,
         "median_max_future_high_return_2_5d": 0.18,
+        "time_to_hit_15pct_median": 2.0,
         "time_to_hit_20pct_median": 3.0,
         "next_open_return": 0.01,
         "next_open_to_close_return": 0.02,
@@ -726,3 +728,29 @@ def test_compute_objective_score_btst_runner_prioritizes_tail_hits_without_ignor
 
     assert score is not None
     assert score > 0.0
+
+
+def test_compute_objective_score_btst_runner_rewards_15pct_hit_improvement() -> None:
+    metrics = {
+        "promotion_guardrail_pass": True,
+        "max_future_high_return_2_5d_hit_rate_at_15pct": 0.35,
+        "max_future_high_return_2_5d_hit_rate_at_20pct": 0.18,
+        "runner_capture_count": 10,
+        "median_max_future_high_return_2_5d": 0.17,
+        "time_to_hit_15pct_median": 2.0,
+        "time_to_hit_20pct_median": 3.0,
+        "next_open_return": 0.01,
+        "next_open_to_close_return": 0.02,
+        "next_close_positive_rate": 0.58,
+        "downside_p10": -0.025,
+        "sample_weight": 0.8,
+    }
+
+    stronger_objective_metrics = {**metrics, "max_future_high_return_2_5d_hit_rate_at_15pct": 0.65}
+
+    base_score = compute_objective_score(metrics, SearchObjective.BTST_RUNNER)
+    stronger_score = compute_objective_score(stronger_objective_metrics, SearchObjective.BTST_RUNNER)
+
+    assert base_score is not None
+    assert stronger_score is not None
+    assert stronger_score > base_score
