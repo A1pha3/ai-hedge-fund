@@ -85,9 +85,14 @@ def build_momentum_rerun_rollout_cohort(*, shortlist: dict[str, object], decisio
         raise SystemExit("shortlist candidates must be a list of objects.")
 
     normalized_candidates: list[dict[str, Any]] = []
+    seen_trial_indices: set[int] = set()
     winner_found = False
     for index, candidate in enumerate(raw_candidates):
         normalized_candidate = _normalize_candidate(f"candidate[{index}]", candidate)
+        trial_index = int(normalized_candidate["trial_index"])
+        if trial_index in seen_trial_indices:
+            raise SystemExit("shortlist candidates must not contain a duplicate trial_index.")
+        seen_trial_indices.add(trial_index)
         if normalized_candidate["trial_index"] == shortlist_winner["trial_index"] and not winner_found:
             winner_found = True
             continue

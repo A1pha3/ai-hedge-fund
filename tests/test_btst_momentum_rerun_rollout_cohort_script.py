@@ -82,3 +82,18 @@ def test_build_rerun_cohort_does_not_emit_undocumented_action_field() -> None:
     )
 
     assert "action" not in payload
+
+
+def test_build_rerun_cohort_fails_closed_when_shortlist_candidates_repeat_trial_index() -> None:
+    with pytest.raises(SystemExit, match="duplicate trial_index"):
+        cohort.build_momentum_rerun_rollout_cohort(
+            shortlist={
+                "best_candidate": {"trial_index": 602, "params": {"select_threshold": 0.46}, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                "candidates": [
+                    {"trial_index": 602, "params": {"select_threshold": 0.46}, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                    {"trial_index": 1226, "params": {"select_threshold": 0.46}, "cross_window_blocker_count": 1, "risk_blocker_count": 1},
+                    {"trial_index": 602, "params": {"select_threshold": 0.46}, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                ],
+            },
+            decision={"action": "rerun_rollout_check", "best_candidate": {"trial_index": 602}},
+        )
