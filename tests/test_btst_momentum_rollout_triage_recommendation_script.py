@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import scripts.btst_momentum_rollout_triage_recommendation as recommendation
 
 
@@ -51,3 +53,43 @@ def test_main_writes_recommendation_outputs(tmp_path: Path) -> None:
     data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["action"] == "parameter_retune_next"
     assert output_md.exists()
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_message"),
+    [
+        (
+            {
+                "action": "measurement_fix_next",
+                "release_posture": "hold",
+                "guardrails": [],
+                "dominant_family": "missing_observability",
+                "blocker_count": 4,
+                "window_count": 2,
+                "windows_missing_theme_exposure": ["window_a"],
+                "missing_theme_exposure_window_count": 1,
+                "fail_closed": True,
+            },
+            "guardrails",
+        ),
+        (
+            {
+                "action": "measurement_fix_next",
+                "release_posture": "allow",
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "dominant_family": "missing_observability",
+                "blocker_count": 4,
+                "window_count": 2,
+                "windows_missing_theme_exposure": ["window_a"],
+                "missing_theme_exposure_window_count": 1,
+                "fail_closed": True,
+            },
+            "release_posture",
+        ),
+    ],
+)
+def test_render_triage_recommendation_markdown_fails_closed_on_invalid_governance_payload(
+    payload: dict[str, object], expected_message: str
+) -> None:
+    with pytest.raises(SystemExit, match=expected_message):
+        recommendation.render_momentum_rollout_triage_recommendation_markdown(payload)

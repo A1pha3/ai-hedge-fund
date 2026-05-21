@@ -18,6 +18,11 @@ ALLOWED_DOMINANT_FAMILIES = {
     "risk_payoff_regression",
 }
 GUARDRAILS = ("no_manifest_publication", "no_btst_skill_promotion")
+ALLOWED_ACTIONS = {
+    "measurement_fix_next",
+    "parameter_retune_next",
+    "retain_hold",
+}
 
 
 def _require_object(name: str, payload: Any) -> dict[str, Any]:
@@ -53,11 +58,75 @@ def _load_missing_theme_exposure_windows(value: Any) -> list[str]:
     return normalized_windows
 
 
+def _load_guardrails(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise SystemExit("guardrails must be a list of strings.")
+
+    normalized_guardrails: list[str] = []
+    seen_guardrails: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            raise SystemExit("guardrails must be a list of strings.")
+        normalized_item = item.strip()
+        if not normalized_item:
+            raise SystemExit("guardrails must not contain blank entries.")
+        if normalized_item in seen_guardrails:
+            raise SystemExit("guardrails must not contain duplicate entries.")
+        seen_guardrails.add(normalized_item)
+        normalized_guardrails.append(normalized_item)
+
+    if normalized_guardrails != list(GUARDRAILS):
+        raise SystemExit("guardrails must preserve the governed no-publication and no-BTST-skill constraints.")
+    return normalized_guardrails
+
+
 def _render_inline_code(value: str) -> str:
     text = str(value)
     max_backtick_run = max((len(match.group(0)) for match in re.finditer(r"`+", text)), default=0)
     fence = "`" * (max_backtick_run + 1)
     return f"{fence}{text}{fence}"
+
+
+def _normalize_recommendation_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized_payload = _require_object("payload", payload)
+
+    action = str(normalized_payload.get("action") or "").strip()
+    if action not in ALLOWED_ACTIONS:
+        raise SystemExit("action must be one of the governed rollout recommendation actions.")
+
+    release_posture = str(normalized_payload.get("release_posture") or "").strip()
+    if release_posture != "hold":
+        raise SystemExit("release_posture must remain hold for the governed triage artifact.")
+
+    dominant_family = str(normalized_payload.get("dominant_family") or "").strip()
+    if dominant_family not in ALLOWED_DOMINANT_FAMILIES:
+        raise SystemExit("dominant_family must be one of the governed rollout blocker families.")
+
+    blocker_count = _require_non_negative_int("blocker_count", normalized_payload.get("blocker_count"))
+    window_count = _require_non_negative_int("window_count", normalized_payload.get("window_count"))
+    missing_theme_exposure_window_count = _require_non_negative_int(
+        "missing_theme_exposure_window_count", normalized_payload.get("missing_theme_exposure_window_count")
+    )
+    windows_missing_theme_exposure = _load_missing_theme_exposure_windows(normalized_payload.get("windows_missing_theme_exposure", []))
+    if missing_theme_exposure_window_count != len(windows_missing_theme_exposure):
+        raise SystemExit("missing_theme_exposure_window_count must match windows_missing_theme_exposure.")
+
+    if normalized_payload.get("fail_closed") is not True:
+        raise SystemExit("fail_closed must be true for the governed triage artifact.")
+
+    guardrails = _load_guardrails(normalized_payload.get("guardrails"))
+
+    return {
+        "action": action,
+        "release_posture": release_posture,
+        "guardrails": guardrails,
+        "dominant_family": dominant_family,
+        "blocker_count": blocker_count,
+        "window_count": window_count,
+        "windows_missing_theme_exposure": windows_missing_theme_exposure,
+        "missing_theme_exposure_window_count": missing_theme_exposure_window_count,
+        "fail_closed": True,
+    }
 
 
 def build_momentum_rollout_triage_recommendation(*, dossier: dict[str, object], attribution: dict[str, object]) -> dict[str, object]:
@@ -93,29 +162,27 @@ def build_momentum_rollout_triage_recommendation(*, dossier: dict[str, object], 
 
 
 def render_momentum_rollout_triage_recommendation_markdown(payload: dict[str, Any]) -> str:
+    normalized_payload = _normalize_recommendation_payload(payload)
     lines = [
         "# Momentum Rollout Triage Recommendation",
         "",
-        f"- action: {_render_inline_code(str(payload.get('action') or 'retain_hold'))}",
-        f"- release_posture: {_render_inline_code(str(payload.get('release_posture') or 'hold'))}",
-        f"- dominant_family: {_render_inline_code(str(payload.get('dominant_family') or 'unknown'))}",
-        f"- blocker_count: {int(payload.get('blocker_count') or 0)}",
-        f"- window_count: {int(payload.get('window_count') or 0)}",
-        f"- missing_theme_exposure_window_count: {int(payload.get('missing_theme_exposure_window_count') or 0)}",
-        f"- fail_closed: {bool(payload.get('fail_closed', True))}",
+        f"- action: {_render_inline_code(normalized_payload['action'])}",
+        f"- release_posture: {_render_inline_code(normalized_payload['release_posture'])}",
+        f"- dominant_family: {_render_inline_code(normalized_payload['dominant_family'])}",
+        f"- blocker_count: {normalized_payload['blocker_count']}",
+        f"- window_count: {normalized_payload['window_count']}",
+        f"- missing_theme_exposure_window_count: {normalized_payload['missing_theme_exposure_window_count']}",
+        f"- fail_closed: {normalized_payload['fail_closed']}",
         "",
         "## Guardrails",
         "",
     ]
 
-    guardrails = list(payload.get("guardrails") or [])
-    if guardrails:
-        lines.extend(f"- {_render_inline_code(str(guardrail))}" for guardrail in guardrails)
-    else:
-        lines.append("- _none_")
+    guardrails = normalized_payload["guardrails"]
+    lines.extend(f"- {_render_inline_code(str(guardrail))}" for guardrail in guardrails)
 
     lines.extend(["", "## Windows Missing Theme Exposure", ""])
-    windows_missing_theme_exposure = list(payload.get("windows_missing_theme_exposure") or [])
+    windows_missing_theme_exposure = normalized_payload["windows_missing_theme_exposure"]
     if windows_missing_theme_exposure:
         lines.extend(f"- {_render_inline_code(str(report_label))}" for report_label in windows_missing_theme_exposure)
     else:
