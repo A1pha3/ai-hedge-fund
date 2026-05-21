@@ -88,12 +88,16 @@ def _validate_window_rows(window_rows: list[dict[str, object]]) -> list[dict[str
         raise SystemExit("window_rows must be a list of objects.")
 
     normalized_rows: list[dict[str, Any]] = []
+    seen_report_labels: set[str] = set()
     for row in window_rows:
         if not isinstance(row, dict):
             raise SystemExit("window_rows must be a list of objects.")
         report_label = str(row.get("report_label") or "").strip()
         if not report_label:
             raise SystemExit("Each window row must include a non-empty report_label.")
+        if report_label in seen_report_labels:
+            raise SystemExit("Each window row must include a unique report_label.")
+        seen_report_labels.add(report_label)
 
         normalized_row: dict[str, Any] = {"report_label": report_label}
         for field_name, field_value in row.items():

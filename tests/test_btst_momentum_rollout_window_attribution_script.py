@@ -133,6 +133,17 @@ def test_build_momentum_rollout_window_attribution_fails_closed_on_malformed_win
         )
 
 
+def test_build_momentum_rollout_window_attribution_fails_closed_on_duplicate_report_labels() -> None:
+    with pytest.raises(SystemExit, match="report_label"):
+        attribution.build_momentum_rollout_window_attribution(
+            rollout_blockers=["missing_projected_theme_exposure_delta_vs_default"],
+            window_rows=[
+                {"report_label": "window_a", "projected_theme_exposure_delta": None, "incremental_theme_exposure_delta": 0.01},
+                {"report_label": "window_a", "projected_theme_exposure_delta": 0.02, "incremental_theme_exposure_delta": None},
+            ],
+        )
+
+
 def test_main_reads_dossier_style_rollout_json() -> None:
     scratch_dir = _make_scratch_dir("main_reads_dossier_style_rollout_json")
     try:
