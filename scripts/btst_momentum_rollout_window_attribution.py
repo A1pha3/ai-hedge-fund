@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,9 @@ def _validate_rollout_blockers(rollout_blockers: list[str]) -> list[str]:
         if not normalized_blocker:
             raise SystemExit("rollout_blockers must contain non-empty strings.")
         normalized_blockers.append(normalized_blocker)
+
+    if len(set(normalized_blockers)) != len(normalized_blockers):
+        raise SystemExit("rollout_blockers must not contain duplicate blocker names.")
     return normalized_blockers
 
 
@@ -154,6 +158,13 @@ def _is_regression_value(blocker: str, metric_value: float) -> bool:
     if blocker_root in POSITIVE_DIRECTION_REGRESSION_ROOTS:
         return metric_value > 0
     return metric_value < 0
+
+
+def _render_inline_code(value: str) -> str:
+    text = str(value)
+    max_backtick_run = max((len(match.group(0)) for match in re.finditer(r"`+", text)), default=0)
+    fence = "`" * (max_backtick_run + 1)
+    return f"{fence}{text}{fence}"
 
 
 def _windows_missing_theme_exposure(window_rows: list[dict[str, Any]]) -> tuple[list[str], dict[str, list[str]]]:
@@ -246,7 +257,7 @@ def render_momentum_rollout_window_attribution_markdown(payload: dict[str, Any])
     lines.extend(["", "## Dominant Family Windows", ""])
     dominant_family_windows = list(payload.get("dominant_family_windows") or [])
     if dominant_family_windows:
-        lines.extend(f"- `{report_label}`" for report_label in dominant_family_windows)
+        lines.extend(f"- {_render_inline_code(str(report_label))}" for report_label in dominant_family_windows)
     else:
         lines.append("- _none_")
 
@@ -256,7 +267,7 @@ def render_momentum_rollout_window_attribution_markdown(payload: dict[str, Any])
     if windows_missing_theme_exposure:
         for report_label in windows_missing_theme_exposure:
             missing_surfaces = ", ".join(missing_theme_exposure_surfaces.get(report_label) or [])
-            lines.append(f"- `{report_label}`: {missing_surfaces}")
+            lines.append(f"- {_render_inline_code(str(report_label))}: {missing_surfaces}")
     else:
         lines.append("- _none_")
 
@@ -266,9 +277,10 @@ def render_momentum_rollout_window_attribution_markdown(payload: dict[str, Any])
         for blocker in sorted(windows_by_blocker):
             report_labels = list(windows_by_blocker.get(blocker) or [])
             if report_labels:
-                lines.append(f"- `{blocker}` -> {', '.join(f'`{report_label}`' for report_label in report_labels)}")
+                rendered_labels = ", ".join(_render_inline_code(str(report_label)) for report_label in report_labels)
+                lines.append(f"- {_render_inline_code(str(blocker))} -> {rendered_labels}")
             else:
-                lines.append(f"- `{blocker}` -> _none_")
+                lines.append(f"- {_render_inline_code(str(blocker))} -> _none_")
     else:
         lines.append("- _none_")
     lines.append("")

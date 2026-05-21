@@ -114,6 +114,17 @@ def test_build_momentum_rollout_window_attribution_fails_closed_on_blank_blocker
         )
 
 
+def test_build_momentum_rollout_window_attribution_fails_closed_on_duplicate_blockers() -> None:
+    with pytest.raises(SystemExit, match="duplicate"):
+        attribution.build_momentum_rollout_window_attribution(
+            rollout_blockers=[
+                "win_rate_window_trend_regressed_vs_default",
+                "win_rate_window_trend_regressed_vs_default",
+            ],
+            window_rows=[{"report_label": "window_a", "win_rate_window_trend_delta": -0.04}],
+        )
+
+
 def test_build_momentum_rollout_window_attribution_fails_closed_on_malformed_window_rows() -> None:
     with pytest.raises(SystemExit, match="report_label"):
         attribution.build_momentum_rollout_window_attribution(
@@ -169,6 +180,17 @@ def test_main_reads_dossier_style_rollout_json() -> None:
     finally:
         if scratch_dir.exists():
             shutil.rmtree(scratch_dir)
+
+
+def test_render_momentum_rollout_window_attribution_markdown_uses_safe_code_fences_for_backticks() -> None:
+    payload = attribution.build_momentum_rollout_window_attribution(
+        rollout_blockers=["win_rate_window_trend_regressed_vs_default"],
+        window_rows=[{"report_label": "window`a", "win_rate_window_trend_delta": -0.04}],
+    )
+
+    markdown = attribution.render_momentum_rollout_window_attribution_markdown(payload)
+
+    assert "``window`a``" in markdown
 
 
 def test_main_fails_closed_on_malformed_dossier_blocker_list() -> None:
