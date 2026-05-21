@@ -57,6 +57,8 @@ def _require_single_line_string(name: str, value: Any) -> str:
     normalized = _require_string(name, value)
     if "\n" in normalized or "\r" in normalized:
         raise SystemExit(f"{name} must not contain newlines.")
+    if "`" in normalized:
+        raise SystemExit(f"{name} must not contain backticks.")
     return normalized
 
 

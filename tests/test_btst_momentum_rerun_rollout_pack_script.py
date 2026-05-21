@@ -74,3 +74,16 @@ def test_build_rerun_pack_fails_closed_when_dominant_family_contains_newlines() 
                 "missing_theme_exposure_window_count": 2,
             },
         )
+
+
+def test_build_rerun_pack_fails_closed_when_dominant_family_contains_backticks() -> None:
+    with pytest.raises(SystemExit, match="dominant_family"):
+        pack.build_momentum_rerun_rollout_pack(
+            cohort={"winner": {"trial_index": 602}, "challengers": [], "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"]},
+            decision={
+                "action": "rerun_rollout_check",
+                "release_posture": "hold",
+                "dominant_family": "cross_window`stability",
+                "missing_theme_exposure_window_count": 2,
+            },
+        )
