@@ -69,6 +69,78 @@ def test_build_rollout_recheck_pack_fails_closed_when_rerun_action_is_not_advanc
         )
 
 
+def test_build_rollout_recheck_pack_rejects_unresolved_baseline_fallback() -> None:
+    with pytest.raises(SystemExit, match="baseline_resolution must be resolved"):
+        recheck_pack.build_momentum_rollout_recheck_pack(
+            rerun_pack={
+                "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                "challengers": [],
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "release_posture": "hold",
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
+            },
+            rerun_recommendation={
+                "action": "advance_rollout_recheck",
+                "release_posture": "hold",
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            },
+            baseline_resolution={
+                "mode": "default_fallback",
+                "profile_name": "default",
+                "profile_overrides": {},
+                "source_type": None,
+                "source_path": None,
+                "validated_by": None,
+                "trade_date": None,
+                "status": "missing",
+                "fallback_reason": "optimized_profile_manifest_missing",
+                "manifest_path": "data/reports/btst_latest_optimized_profile.json",
+            },
+        )
+
+
+def test_build_rollout_recheck_pack_rejects_non_hold_release_posture_and_guardrail_mismatch() -> None:
+    with pytest.raises(SystemExit, match="rerun_recommendation.release_posture must be hold"):
+        recheck_pack.build_momentum_rollout_recheck_pack(
+            rerun_pack={
+                "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                "challengers": [],
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "release_posture": "hold",
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
+            },
+            rerun_recommendation={
+                "action": "advance_rollout_recheck",
+                "release_posture": "release",
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            },
+            baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
+        )
+
+    with pytest.raises(SystemExit, match="rerun_recommendation.guardrails must preserve rerun_pack.guardrails exactly"):
+        recheck_pack.build_momentum_rollout_recheck_pack(
+            rerun_pack={
+                "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                "challengers": [],
+                "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "release_posture": "hold",
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
+            },
+            rerun_recommendation={
+                "action": "advance_rollout_recheck",
+                "release_posture": "hold",
+                "guardrails": ["no_manifest_publication", "different_guardrail"],
+            },
+            baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
+        )
+
+
 def test_main_writes_rollout_recheck_pack_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rerun_pack_json = tmp_path / "btst_momentum_rerun_rollout_pack.json"
     rerun_recommendation_json = tmp_path / "btst_momentum_rerun_rollout_recommendation.json"

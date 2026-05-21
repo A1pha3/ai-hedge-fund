@@ -67,6 +67,14 @@ def build_momentum_rollout_recheck_pack(*, rerun_pack: dict[str, object], rerun_
 
     if str(normalized_recommendation.get("action") or "").strip() != "advance_rollout_recheck":
         raise SystemExit("rerun_recommendation.action must be advance_rollout_recheck.")
+    if str(normalized_recommendation.get("release_posture") or "").strip() != "hold":
+        raise SystemExit("rerun_recommendation.release_posture must be hold.")
+    if list(normalized_recommendation.get("guardrails") or []) != list(normalized_pack.get("guardrails") or []):
+        raise SystemExit("rerun_recommendation.guardrails must preserve rerun_pack.guardrails exactly.")
+    if str(normalized_baseline.get("mode") or "").strip() != "optimized" or str(normalized_baseline.get("status") or "").strip() != "ready":
+        raise SystemExit("baseline_resolution must be resolved to an optimized profile.")
+    if normalized_baseline.get("fallback_reason") is not None:
+        raise SystemExit("baseline_resolution must be resolved to an optimized profile.")
     if str(normalized_pack.get("release_posture") or "").strip() != "hold":
         raise SystemExit("rerun_pack.release_posture must be hold.")
     if list(normalized_pack.get("guardrails") or []) != list(GUARDRAILS):
