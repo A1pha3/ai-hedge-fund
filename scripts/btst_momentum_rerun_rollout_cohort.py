@@ -102,7 +102,6 @@ def build_momentum_rerun_rollout_cohort(*, shortlist: dict[str, object], decisio
     )[:CHALLENGER_LIMIT]
 
     return {
-        "action": action,
         "guardrails": list(GUARDRAILS),
         "winner": shortlist_winner,
         "challenger_count": len(challengers),
@@ -120,7 +119,6 @@ def render_momentum_rerun_rollout_cohort_markdown(payload: dict[str, Any]) -> st
         "",
         "## Summary",
         "",
-        f"- action: `{normalized_payload['action']}`",
         f"- winner_trial_index: {winner['trial_index']}",
         f"- challenger_count: {normalized_payload['challenger_count']}",
         f"- fail_closed: {normalized_payload['fail_closed']}",

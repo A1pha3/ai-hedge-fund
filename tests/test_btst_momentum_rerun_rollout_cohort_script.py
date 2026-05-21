@@ -70,3 +70,15 @@ def test_main_writes_rerun_cohort_outputs(tmp_path: Path) -> None:
     data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["winner"]["trial_index"] == 602
     assert output_md.exists()
+
+
+def test_build_rerun_cohort_does_not_emit_undocumented_action_field() -> None:
+    payload = cohort.build_momentum_rerun_rollout_cohort(
+        shortlist={
+            "best_candidate": {"trial_index": 602, "params": {"select_threshold": 0.46}, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+            "candidates": [{"trial_index": 602, "params": {"select_threshold": 0.46}, "cross_window_blocker_count": 0, "risk_blocker_count": 0}],
+        },
+        decision={"action": "rerun_rollout_check", "best_candidate": {"trial_index": 602}},
+    )
+
+    assert "action" not in payload
