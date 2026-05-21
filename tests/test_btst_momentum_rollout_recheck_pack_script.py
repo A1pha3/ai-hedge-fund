@@ -25,6 +25,9 @@ def test_build_rollout_recheck_pack_preserves_winner_and_resolved_baseline() -> 
             "action": "advance_rollout_recheck",
             "release_posture": "hold",
             "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "dominant_family": "cross_window_stability",
+            "missing_theme_exposure_window_count": 2,
+            "fail_closed": True,
         },
         baseline_resolution={
             "mode": "optimized",
@@ -64,6 +67,9 @@ def test_build_rollout_recheck_pack_fails_closed_when_rerun_action_is_not_advanc
                 "action": "retain_hold",
                 "release_posture": "hold",
                 "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
             },
             baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
         )
@@ -85,6 +91,9 @@ def test_build_rollout_recheck_pack_rejects_unresolved_baseline_fallback() -> No
                 "action": "advance_rollout_recheck",
                 "release_posture": "hold",
                 "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
             },
             baseline_resolution={
                 "mode": "default_fallback",
@@ -117,6 +126,9 @@ def test_build_rollout_recheck_pack_rejects_non_hold_release_posture_and_guardra
                 "action": "advance_rollout_recheck",
                 "release_posture": "release",
                 "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
             },
             baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
         )
@@ -136,6 +148,9 @@ def test_build_rollout_recheck_pack_rejects_non_hold_release_posture_and_guardra
                 "action": "advance_rollout_recheck",
                 "release_posture": "hold",
                 "guardrails": ["no_manifest_publication", "different_guardrail"],
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
             },
             baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
         )
@@ -157,7 +172,104 @@ def test_build_rollout_recheck_pack_rejects_wrong_shared_guardrails_and_pack_rel
                 "action": "advance_rollout_recheck",
                 "release_posture": "hold",
                 "guardrails": ["no_manifest_publication", "different_guardrail"],
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
             },
+            baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "rerun_pack_value", "rerun_recommendation_value", "expected_message"),
+    [
+        (
+            "dominant_family",
+            "cross_window_stability",
+            "risk_payoff_regression",
+            "rerun_recommendation.dominant_family must match rerun_pack.dominant_family exactly",
+        ),
+        (
+            "missing_theme_exposure_window_count",
+            2,
+            3,
+            "rerun_recommendation.missing_theme_exposure_window_count must match rerun_pack.missing_theme_exposure_window_count exactly",
+        ),
+    ],
+)
+def test_build_rollout_recheck_pack_rejects_mismatched_shared_context_fields(
+    field_name: str, rerun_pack_value: object, rerun_recommendation_value: object, expected_message: str
+) -> None:
+    rerun_pack = {
+        "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+        "challengers": [],
+        "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+        "release_posture": "hold",
+        "dominant_family": "cross_window_stability",
+        "missing_theme_exposure_window_count": 2,
+        "fail_closed": True,
+    }
+    rerun_pack[field_name] = rerun_pack_value
+
+    rerun_recommendation = {
+        "action": "advance_rollout_recheck",
+        "release_posture": "hold",
+        "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+        "dominant_family": "cross_window_stability",
+        "missing_theme_exposure_window_count": 2,
+        "fail_closed": True,
+    }
+    rerun_recommendation[field_name] = rerun_recommendation_value
+
+    with pytest.raises(SystemExit, match=expected_message):
+        recheck_pack.build_momentum_rollout_recheck_pack(
+            rerun_pack=rerun_pack,
+            rerun_recommendation=rerun_recommendation,
+            baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("artifact_name", "rerun_pack_fail_closed", "rerun_recommendation_fail_closed"),
+    [
+        (
+            "rerun_pack",
+            False,
+            True,
+        ),
+        (
+            "rerun_recommendation",
+            True,
+            False,
+        ),
+    ],
+)
+def test_build_rollout_recheck_pack_requires_both_inputs_to_be_fail_closed(
+    artifact_name: str, rerun_pack_fail_closed: bool, rerun_recommendation_fail_closed: bool
+) -> None:
+    expected = f"{artifact_name}.fail_closed must be true"
+    rerun_pack = {
+        "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+        "challengers": [],
+        "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+        "release_posture": "hold",
+        "dominant_family": "cross_window_stability",
+        "missing_theme_exposure_window_count": 2,
+        "fail_closed": rerun_pack_fail_closed,
+    }
+    rerun_recommendation = {
+        "action": "advance_rollout_recheck",
+        "release_posture": "hold",
+        "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+        "dominant_family": "cross_window_stability",
+        "missing_theme_exposure_window_count": 2,
+        "fail_closed": rerun_recommendation_fail_closed,
+    }
+
+    with pytest.raises(SystemExit, match=expected):
+        recheck_pack.build_momentum_rollout_recheck_pack(
+            rerun_pack=rerun_pack,
+            rerun_recommendation=rerun_recommendation,
             baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
         )
 
@@ -176,6 +288,9 @@ def test_build_rollout_recheck_pack_rejects_wrong_shared_guardrails_and_pack_rel
                 "action": "advance_rollout_recheck",
                 "release_posture": "hold",
                 "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
             },
             baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
         )
@@ -207,6 +322,9 @@ def test_build_rollout_recheck_pack_rejects_non_list_guardrails(guardrail_field:
                 "action": "advance_rollout_recheck",
                 "release_posture": "hold",
                 "guardrails": rerun_recommendation_guardrails,
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
             },
             baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
         )
@@ -238,6 +356,9 @@ def test_build_rollout_recheck_pack_rejects_malformed_blocker_count_fields(candi
                 "action": "advance_rollout_recheck",
                 "release_posture": "hold",
                 "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
             },
             baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
         )
@@ -270,6 +391,9 @@ def test_main_writes_rollout_recheck_pack_outputs(tmp_path: Path, monkeypatch: p
                 "action": "advance_rollout_recheck",
                 "release_posture": "hold",
                 "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
             }
         ),
         encoding="utf-8",

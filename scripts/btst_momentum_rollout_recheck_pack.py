@@ -56,6 +56,28 @@ def _require_list(name: str, value: Any) -> list[Any]:
     return value
 
 
+def _require_string(name: str, value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit(f"{name} must be a non-empty string.")
+    return value.strip()
+
+
+def _require_matching_string_field(field_name: str, *, rerun_pack: dict[str, Any], rerun_recommendation: dict[str, Any]) -> str:
+    pack_value = _require_string(f"rerun_pack.{field_name}", rerun_pack.get(field_name))
+    recommendation_value = _require_string(f"rerun_recommendation.{field_name}", rerun_recommendation.get(field_name))
+    if recommendation_value != pack_value:
+        raise SystemExit(f"rerun_recommendation.{field_name} must match rerun_pack.{field_name} exactly")
+    return pack_value
+
+
+def _require_matching_non_negative_int_field(field_name: str, *, rerun_pack: dict[str, Any], rerun_recommendation: dict[str, Any]) -> int:
+    pack_value = _require_non_negative_int(f"rerun_pack.{field_name}", rerun_pack.get(field_name))
+    recommendation_value = _require_non_negative_int(f"rerun_recommendation.{field_name}", rerun_recommendation.get(field_name))
+    if recommendation_value != pack_value:
+        raise SystemExit(f"rerun_recommendation.{field_name} must match rerun_pack.{field_name} exactly")
+    return pack_value
+
+
 def _normalize_candidate(name: str, candidate: Any) -> dict[str, Any]:
     normalized_candidate = _require_object(name, candidate)
     normalized_candidate["trial_index"] = _require_non_negative_int(f"{name} trial_index", normalized_candidate.get("trial_index"))
@@ -79,6 +101,14 @@ def build_momentum_rollout_recheck_pack(*, rerun_pack: dict[str, object], rerun_
     normalized_pack_guardrails = _require_list("rerun_pack.guardrails", normalized_pack.get("guardrails") or [])
     if normalized_recommendation_guardrails != normalized_pack_guardrails:
         raise SystemExit("rerun_recommendation.guardrails must preserve rerun_pack.guardrails exactly.")
+    _require_matching_string_field("dominant_family", rerun_pack=normalized_pack, rerun_recommendation=normalized_recommendation)
+    _require_matching_non_negative_int_field(
+        "missing_theme_exposure_window_count", rerun_pack=normalized_pack, rerun_recommendation=normalized_recommendation
+    )
+    if normalized_pack.get("fail_closed") is not True:
+        raise SystemExit("rerun_pack.fail_closed must be true")
+    if normalized_recommendation.get("fail_closed") is not True:
+        raise SystemExit("rerun_recommendation.fail_closed must be true")
     if str(normalized_baseline.get("mode") or "").strip() != "optimized" or str(normalized_baseline.get("status") or "").strip() != "ready":
         raise SystemExit("baseline_resolution must be resolved to an optimized profile.")
     if normalized_baseline.get("fallback_reason") is not None:
