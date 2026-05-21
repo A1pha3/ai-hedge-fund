@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import json
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,14 @@ def _require_non_negative_int(name: str, value: Any) -> int:
 def _require_float(name: str, value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise SystemExit(f"{name} must be a number.")
-    return float(value)
+    float_value = float(value)
+    if not math.isfinite(float_value):
+        raise SystemExit(f"{name} must be a number.")
+    return float_value
+
+
+def _is_finite_number(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(float(value))
 
 
 def _has_measurement_evidence(payload: dict[str, Any] | None) -> bool:
@@ -56,14 +64,28 @@ def _has_measurement_evidence(payload: dict[str, Any] | None) -> bool:
         return False
     for key in ("next_close_positive_rate", "next_close_payoff_ratio"):
         value = payload.get(key)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return False
-        if value < 0:
+        if not _is_finite_number(value) or value < 0:
             return False
     window_count = payload.get("window_count")
     if isinstance(window_count, bool) or not isinstance(window_count, int) or window_count <= 0:
         return False
     return True
+
+
+def _sanitize_measurement_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Replace non-finite numeric values with None to ensure valid JSON output."""
+    if not payload or not isinstance(payload, dict):
+        return payload
+    sanitized = {}
+    for key, value in payload.items():
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if not math.isfinite(value):
+                sanitized[key] = None
+            else:
+                sanitized[key] = value
+        else:
+            sanitized[key] = value
+    return sanitized
 
 
 def _require_guardrails(value: Any) -> list[str]:
@@ -103,11 +125,19 @@ def build_momentum_rollout_recheck_decision(*, comparison: dict[str, object]) ->
 
     next_close_positive_rate_delta = winner_vs_active_baseline.get("next_close_positive_rate_delta")
     next_close_payoff_ratio_delta = winner_vs_active_baseline.get("next_close_payoff_ratio_delta")
+    win_rate_delta = None
+    payoff_delta = None
+    if _is_finite_number(next_close_positive_rate_delta):
+        win_rate_delta = float(next_close_positive_rate_delta)
+    if _is_finite_number(next_close_payoff_ratio_delta):
+        payoff_delta = float(next_close_payoff_ratio_delta)
     if (
         not _has_measurement_evidence(candidate)
         or not _has_measurement_evidence(baseline)
         or next_close_positive_rate_delta is None
         or next_close_payoff_ratio_delta is None
+        or not _is_finite_number(next_close_positive_rate_delta)
+        or not _is_finite_number(next_close_payoff_ratio_delta)
     ):
         action = "fallback_measurement_repair"
     else:
@@ -125,14 +155,10 @@ def build_momentum_rollout_recheck_decision(*, comparison: dict[str, object]) ->
         "winner": winner_payload,
         "winner_vs_active_baseline": {
             "baseline_name": str(winner_vs_active_baseline.get("baseline_name") or "").strip(),
-            "candidate": candidate,
-            "baseline": baseline,
-            "next_close_positive_rate_delta": None
-            if next_close_positive_rate_delta is None
-            else _require_float("winner_vs_active_baseline.next_close_positive_rate_delta", next_close_positive_rate_delta),
-            "next_close_payoff_ratio_delta": None
-            if next_close_payoff_ratio_delta is None
-            else _require_float("winner_vs_active_baseline.next_close_payoff_ratio_delta", next_close_payoff_ratio_delta),
+            "candidate": _sanitize_measurement_payload(candidate),
+            "baseline": _sanitize_measurement_payload(baseline),
+            "next_close_positive_rate_delta": win_rate_delta,
+            "next_close_payoff_ratio_delta": payoff_delta,
             "blockers": blockers,
         },
         "fail_closed": True,

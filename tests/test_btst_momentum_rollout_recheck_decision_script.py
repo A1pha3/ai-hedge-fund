@@ -267,6 +267,147 @@ def test_build_rollout_recheck_decision_falls_back_when_measurement_values_are_n
     assert payload["action"] == "fallback_measurement_repair"
 
 
+
+def test_build_rollout_recheck_decision_falls_back_when_candidate_contains_nan_values() -> None:
+    """Regression: NaN measurement values must fail closed."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": float("nan"), "next_close_payoff_ratio": 1.9198, "window_count": 24},
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
+def test_build_rollout_recheck_decision_falls_back_when_deltas_contain_infinity_values() -> None:
+    """Regression: infinite delta values must fail closed."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24},
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": float("inf"),
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
+def test_build_rollout_recheck_decision_falls_back_when_both_deltas_are_positive_infinity() -> None:
+    """Regression: both deltas being positive infinity should fail closed, not produce ready_for_release_review."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24},
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": float("inf"),
+                "next_close_payoff_ratio_delta": float("inf"),
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
+def test_build_rollout_recheck_decision_falls_back_when_deltas_contain_nan_values() -> None:
+    """Regression: NaN delta values must fail closed."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24},
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": float("nan"),
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+
+
+def test_build_rollout_recheck_decision_produces_valid_json_when_candidate_contains_infinity() -> None:
+    """Regression: non-finite measurement values must not appear in JSON output."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": float("inf"), "next_close_payoff_ratio": 1.9198, "window_count": 24},
+                "baseline": {"next_close_positive_rate": 0.5440, "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+    # The payload must be serializable to valid JSON (no Infinity/NaN)
+    json_str = json.dumps(payload, ensure_ascii=False)
+    assert "Infinity" not in json_str
+    assert "NaN" not in json_str
+
+
+def test_build_rollout_recheck_decision_produces_valid_json_when_baseline_contains_nan() -> None:
+    """Regression: non-finite measurement values must not appear in JSON output."""
+    payload = decision.build_momentum_rollout_recheck_decision(
+        comparison={
+            "winner": {"trial_index": 602},
+            "winner_vs_active_baseline": {
+                "baseline_name": "momentum_optimized",
+                "candidate": {"next_close_positive_rate": 0.5377, "next_close_payoff_ratio": 1.9198, "window_count": 24},
+                "baseline": {"next_close_positive_rate": float("nan"), "next_close_payoff_ratio": 1.7800, "window_count": 24},
+                "next_close_positive_rate_delta": 0.0063,
+                "next_close_payoff_ratio_delta": 0.1398,
+                "blockers": [],
+            },
+            "guardrails": ["no_manifest_publication", "no_btst_skill_promotion"],
+            "release_posture": "hold",
+            "fail_closed": True,
+        }
+    )
+
+    assert payload["action"] == "fallback_measurement_repair"
+    # The payload must be serializable to valid JSON (no Infinity/NaN)
+    json_str = json.dumps(payload, ensure_ascii=False)
+    assert "Infinity" not in json_str
+    assert "NaN" not in json_str
+
+
 def test_main_writes_rollout_recheck_decision_outputs(tmp_path: Path) -> None:
     comparison_json = tmp_path / "comparison.json"
     output_json = tmp_path / "decision.json"
