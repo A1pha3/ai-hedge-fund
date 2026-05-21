@@ -20,6 +20,9 @@ def test_build_rerun_pack_carries_winner_challengers_and_guardrails() -> None:
     assert [row["trial_index"] for row in payload["challengers"]] == [1226]
     assert payload["release_posture"] == "hold"
     assert payload["guardrails"] == ["no_manifest_publication", "no_btst_skill_promotion"]
+    assert payload["dominant_family"] == "cross_window_stability"
+    assert payload["missing_theme_exposure_window_count"] == 2
+    assert payload["fail_closed"] is True
 
 
 def test_build_rerun_pack_fails_closed_when_release_posture_is_not_hold() -> None:
@@ -54,4 +57,7 @@ def test_main_writes_rerun_pack_outputs(tmp_path: Path) -> None:
     assert result == 0
     data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["release_posture"] == "hold"
+    assert data["dominant_family"] == "cross_window_stability"
+    assert data["missing_theme_exposure_window_count"] == 2
+    assert data["fail_closed"] is True
     assert output_md.exists()
