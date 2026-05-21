@@ -49,6 +49,59 @@ def test_build_activation_delta_diagnostics_summarizes_zero_delta_reasons() -> N
     assert payload["dominant_zero_delta_reason"] in payload["zero_delta_reason_counts"]
 
 
+def test_cli_main_creates_expected_outputs(tmp_path):
+    import sys
+    import json
+    from pathlib import Path
+    from scripts import btst_trend_continuation_activation_delta_diagnostics as mod
+
+    # Prepare minimal input
+    input_data = {
+        "baseline_profile": "trend_continuation_strength_v2",
+        "variant_profile": "trend_continuation_strength_v3",
+        "report_dir_count": 1,
+        "rows": [
+            {
+                "report_label": "window_x",
+                "runtime_activation_attribution": {
+                    "selected_count_delta": 0,
+                    "near_miss_count_delta": 0,
+                    "execution_eligible_count_delta": 0,
+                    "zero_delta_reason": "profile_variant_without_runtime_activation_delta",
+                    "watchlist_shrink_guard_applied_count": 0,
+                    "watchlist_shrink_selected_boundary_overlap_count": 0,
+                },
+            }
+        ],
+    }
+    input_path = tmp_path / "input.json"
+    json.dump(input_data, input_path.open("w"))
+    json_out = tmp_path / "out.json"
+    md_out = tmp_path / "out.md"
+
+    # Run CLI main
+    sys_argv = sys.argv
+    sys.argv = [
+        "btst_trend_continuation_activation_delta_diagnostics.py",
+        "--input-json", str(input_path),
+        "--output-json", str(json_out),
+        "--output-md", str(md_out),
+    ]
+    try:
+        mod.main()
+    finally:
+        sys.argv = sys_argv
+
+    # Assert output files exist
+    assert json_out.exists(), f"JSON output {json_out} does not exist"
+    assert md_out.exists(), f"Markdown output {md_out} does not exist"
+
+    # Assert markdown contains dominant reason and activation summary
+    md = md_out.read_text()
+    assert "profile_variant_without_runtime_activation_delta" in md
+    assert "Dominant zero-delta reason" in md
+    assert "Activation summary" in md
+
 def test_build_activation_delta_diagnostics_flags_execution_eligible_surface_when_present() -> None:
     payload = build_trend_continuation_activation_delta_diagnostics(
         _analysis_with_rows(
