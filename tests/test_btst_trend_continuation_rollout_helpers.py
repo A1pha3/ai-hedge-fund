@@ -74,17 +74,25 @@ def _build_calibration_payload(
     variant_supports_t1_count: int = 1,
     baseline_profile: str = "trend_continuation_strength_v2",
     candidate_profile: str = "trend_continuation_strength_v3",
+    analysis_baseline_profile: str | None = None,
+    analysis_candidate_profile: str | None = None,
+    diagnostics_baseline_profile: str | None = None,
+    diagnostics_candidate_profile: str | None = None,
 ) -> dict[str, object]:
     best_candidate = {
         "candidate_name": "lift_0p03_relaxed_close",
         "baseline_profile": baseline_profile,
         "candidate_profile": candidate_profile,
         "analysis": {
+            "baseline_profile": analysis_baseline_profile or baseline_profile,
+            "variant_profile": analysis_candidate_profile or candidate_profile,
             "keep_baseline_count": keep_baseline_count,
             "variant_supports_t1_count": variant_supports_t1_count,
             "mixed_count": 0,
         },
         "diagnostics": {
+            "baseline_profile": diagnostics_baseline_profile or baseline_profile,
+            "candidate_profile": diagnostics_candidate_profile or candidate_profile,
             "report_dir_count": report_dir_count,
             "execution_eligible_positive_window_count": execution_eligible_positive_window_count,
             "all_windows_zero_delta": all_windows_zero_delta,
@@ -327,6 +335,20 @@ def test_build_trend_continuation_rollout_assessment_promotes_specific_best_cand
     ]
     assert "best_candidate_all_windows_zero_delta" in assessment["blockers"]
     assert "best_candidate_missing_execution_eligible_activation" in assessment["blockers"]
+    assert "calibration_best_candidate_not_governance_safe" in assessment["blockers"]
+
+
+def test_build_trend_continuation_rollout_assessment_blocks_nested_calibration_profile_mismatch() -> None:
+    assessment = build_trend_continuation_rollout_assessment(
+        _build_analysis(),
+        activation_delta_diagnostics=_build_diagnostics(),
+        activation_delta_calibration=_build_calibration_payload(diagnostics_candidate_profile="trend_continuation_strength_v9"),
+    )
+
+    assert assessment["action"] == "hold"
+    assert assessment["activation_delta_calibration"]["best_candidate_governance_safe"] is False
+    assert "best_candidate_candidate_profile_mismatch" in assessment["activation_delta_calibration"]["best_candidate_blockers"]
+    assert "best_candidate_candidate_profile_mismatch" in assessment["blockers"]
     assert "calibration_best_candidate_not_governance_safe" in assessment["blockers"]
 
 

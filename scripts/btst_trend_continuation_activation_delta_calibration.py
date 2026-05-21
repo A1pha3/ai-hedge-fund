@@ -57,6 +57,14 @@ def _coerce_mapping(payload: Any) -> tuple[dict[str, Any], bool]:
     return {}, True
 
 
+def _normalize_profile_values(*values: Any) -> list[str]:
+    return [str(value or "").strip() for value in values]
+
+
+def _provided_profile_values_match_expected(expected: str, *values: Any) -> bool:
+    return all(not value or value == expected for value in _normalize_profile_values(*values))
+
+
 def _parse_required_int_evidence(payload: dict[str, Any], field_name: str) -> tuple[int | None, str | None]:
     if field_name not in payload:
         return None, f"missing_{field_name}"
@@ -91,8 +99,10 @@ def build_calibration_candidate_governance_blockers(
     analysis, malformed_analysis = _coerce_mapping(candidate.get("analysis"))
     diagnostics, malformed_diagnostics = _coerce_mapping(candidate.get("diagnostics"))
 
-    resolved_baseline_profile = str(candidate.get("baseline_profile") or analysis.get("baseline_profile") or diagnostics.get("baseline_profile") or "").strip()
-    resolved_candidate_profile = str(candidate.get("candidate_profile") or analysis.get("variant_profile") or diagnostics.get("candidate_profile") or "").strip()
+    baseline_profiles = _normalize_profile_values(candidate.get("baseline_profile"), analysis.get("baseline_profile"), diagnostics.get("baseline_profile"))
+    candidate_profiles = _normalize_profile_values(candidate.get("candidate_profile"), analysis.get("variant_profile"), diagnostics.get("candidate_profile"))
+    resolved_baseline_profile = next((value for value in baseline_profiles if value), "")
+    resolved_candidate_profile = next((value for value in candidate_profiles if value), "")
 
     blockers: list[str] = []
     if malformed_candidate:
@@ -101,9 +111,9 @@ def build_calibration_candidate_governance_blockers(
         blockers.append("best_candidate_malformed_analysis_payload")
     if malformed_diagnostics:
         blockers.append("best_candidate_malformed_diagnostics_payload")
-    if resolved_baseline_profile != baseline_profile:
+    if resolved_baseline_profile != baseline_profile or not _provided_profile_values_match_expected(baseline_profile, *baseline_profiles):
         blockers.append("best_candidate_baseline_profile_mismatch")
-    if resolved_candidate_profile != candidate_profile:
+    if resolved_candidate_profile != candidate_profile or not _provided_profile_values_match_expected(candidate_profile, *candidate_profiles):
         blockers.append("best_candidate_candidate_profile_mismatch")
     report_dir_count, report_dir_issue = _parse_required_int_evidence(diagnostics, "report_dir_count")
     if report_dir_issue:

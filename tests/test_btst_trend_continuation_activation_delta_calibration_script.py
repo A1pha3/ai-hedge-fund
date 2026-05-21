@@ -114,6 +114,58 @@ def test_build_calibration_candidate_governance_blockers_require_matching_profil
     assert "best_candidate_candidate_profile_mismatch" in blockers
 
 
+def test_build_calibration_candidate_governance_blockers_fail_closed_on_nested_profile_mismatch() -> None:
+    blockers = calibration.build_calibration_candidate_governance_blockers(
+        {
+            "candidate_name": "stale_nested_profile",
+            "baseline_profile": "trend_continuation_strength_v2",
+            "candidate_profile": "trend_continuation_strength_v3",
+            "diagnostics": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "candidate_profile": "trend_continuation_strength_v9",
+                "report_dir_count": 1,
+                "all_windows_zero_delta": False,
+                "execution_eligible_positive_window_count": 1,
+            },
+            "analysis": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "variant_profile": "trend_continuation_strength_v3",
+                "keep_baseline_count": 0,
+                "variant_supports_t1_count": 1,
+                "mixed_count": 0,
+            },
+        }
+    )
+
+    assert "best_candidate_candidate_profile_mismatch" in blockers
+
+
+def test_build_calibration_candidate_governance_blockers_fail_closed_on_nested_analysis_profile_mismatch() -> None:
+    blockers = calibration.build_calibration_candidate_governance_blockers(
+        {
+            "candidate_name": "stale_nested_analysis_profile",
+            "baseline_profile": "trend_continuation_strength_v2",
+            "candidate_profile": "trend_continuation_strength_v3",
+            "diagnostics": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "candidate_profile": "trend_continuation_strength_v3",
+                "report_dir_count": 1,
+                "all_windows_zero_delta": False,
+                "execution_eligible_positive_window_count": 1,
+            },
+            "analysis": {
+                "baseline_profile": "trend_continuation_strength_v2",
+                "variant_profile": "trend_continuation_strength_v9",
+                "keep_baseline_count": 0,
+                "variant_supports_t1_count": 1,
+                "mixed_count": 0,
+            },
+        }
+    )
+
+    assert "best_candidate_candidate_profile_mismatch" in blockers
+
+
 def test_build_calibration_candidate_governance_blockers_fail_closed_on_malformed_numeric_evidence() -> None:
     blockers = calibration.build_calibration_candidate_governance_blockers(
         {
