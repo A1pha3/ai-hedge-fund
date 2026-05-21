@@ -164,3 +164,67 @@ def test_main_fails_when_triage_json_is_not_object(tmp_path: Path) -> None:
                 str(tmp_path / "out.md"),
             ]
         )
+
+
+def test_main_fails_closed_when_source_file_missing(tmp_path: Path) -> None:
+    triage_json = tmp_path / "triage.json"
+    triage_json.write_text(json.dumps({"action": "parameter_retune_next", "dominant_family": "cross_window_stability"}), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="source file not found"):
+        surface.main(
+            [
+                "--source-json",
+                str(tmp_path / "missing.json"),
+                "--triage-json",
+                str(triage_json),
+                "--output-json",
+                str(tmp_path / "out.json"),
+                "--output-md",
+                str(tmp_path / "out.md"),
+            ]
+        )
+
+
+def test_main_fails_closed_when_source_json_is_invalid(tmp_path: Path) -> None:
+    source_json = tmp_path / "param_search.json"
+    triage_json = tmp_path / "triage.json"
+    source_json.write_text("{invalid", encoding="utf-8")
+    triage_json.write_text(json.dumps({"action": "parameter_retune_next", "dominant_family": "cross_window_stability"}), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="invalid JSON in source file"):
+        surface.main(
+            [
+                "--source-json",
+                str(source_json),
+                "--triage-json",
+                str(triage_json),
+                "--output-json",
+                str(tmp_path / "out.json"),
+                "--output-md",
+                str(tmp_path / "out.md"),
+            ]
+        )
+
+
+def test_main_fails_closed_when_output_path_is_unwritable(tmp_path: Path) -> None:
+    source_json = tmp_path / "param_search.json"
+    triage_json = tmp_path / "triage.json"
+    source_json.write_text(
+        json.dumps({"best_params": {"select_threshold": 0.46, "recency_half_life_days": 180, "trend_acceleration_weight": 0.22, "close_strength_weight": 0.12, "volume_expansion_quality_weight": 0.16, "catalyst_freshness_weight": 0.14, "momentum_strength_weight": 0.0, "short_term_reversal_weight": 0.0}}),
+        encoding="utf-8",
+    )
+    triage_json.write_text(json.dumps({"action": "parameter_retune_next", "dominant_family": "cross_window_stability"}), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="unable to write output JSON"):
+        surface.main(
+            [
+                "--source-json",
+                str(source_json),
+                "--triage-json",
+                str(triage_json),
+                "--output-json",
+                str(tmp_path / "missing-dir" / "out.json"),
+                "--output-md",
+                str(tmp_path / "out.md"),
+            ]
+        )
