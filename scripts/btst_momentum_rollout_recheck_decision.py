@@ -58,6 +58,8 @@ def _has_measurement_evidence(payload: dict[str, Any] | None) -> bool:
         value = payload.get(key)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False
+        if value < 0:
+            return False
     window_count = payload.get("window_count")
     if isinstance(window_count, bool) or not isinstance(window_count, int) or window_count <= 0:
         return False
