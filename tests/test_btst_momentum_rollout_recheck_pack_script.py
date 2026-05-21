@@ -182,6 +182,37 @@ def test_build_rollout_recheck_pack_rejects_wrong_shared_guardrails_and_pack_rel
 
 
 @pytest.mark.parametrize(
+    ("guardrail_field", "rerun_pack_guardrails", "rerun_recommendation_guardrails"),
+    [
+        ("rerun_pack.guardrails", 1, ["no_manifest_publication", "no_btst_skill_promotion"]),
+        ("rerun_recommendation.guardrails", ["no_manifest_publication", "no_btst_skill_promotion"], 1),
+    ],
+)
+def test_build_rollout_recheck_pack_rejects_non_list_guardrails(guardrail_field: str, rerun_pack_guardrails: object, rerun_recommendation_guardrails: object) -> None:
+    import re
+
+    expected = re.escape(guardrail_field) + r" must be a list\."
+    with pytest.raises(SystemExit, match=expected):
+        recheck_pack.build_momentum_rollout_recheck_pack(
+            rerun_pack={
+                "winner": {"trial_index": 602, "cross_window_blocker_count": 0, "risk_blocker_count": 0},
+                "challengers": [],
+                "guardrails": rerun_pack_guardrails,
+                "release_posture": "hold",
+                "dominant_family": "cross_window_stability",
+                "missing_theme_exposure_window_count": 2,
+                "fail_closed": True,
+            },
+            rerun_recommendation={
+                "action": "advance_rollout_recheck",
+                "release_posture": "hold",
+                "guardrails": rerun_recommendation_guardrails,
+            },
+            baseline_resolution={"mode": "optimized", "profile_name": "momentum_optimized", "profile_overrides": {}, "status": "ready", "manifest_path": "data/reports/btst_latest_optimized_profile.json"},
+        )
+
+
+@pytest.mark.parametrize(
     ("candidate_key", "candidate"),
     [
         ("winner", {"trial_index": 602, "cross_window_blocker_count": "0", "risk_blocker_count": 0}),

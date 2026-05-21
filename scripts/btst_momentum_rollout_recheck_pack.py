@@ -50,6 +50,12 @@ def _require_non_negative_int(name: str, value: Any) -> int:
     return value
 
 
+def _require_list(name: str, value: Any) -> list[Any]:
+    if not isinstance(value, list):
+        raise SystemExit(f"{name} must be a list.")
+    return value
+
+
 def _normalize_candidate(name: str, candidate: Any) -> dict[str, Any]:
     normalized_candidate = _require_object(name, candidate)
     normalized_candidate["trial_index"] = _require_non_negative_int(f"{name} trial_index", normalized_candidate.get("trial_index"))
@@ -69,7 +75,9 @@ def build_momentum_rollout_recheck_pack(*, rerun_pack: dict[str, object], rerun_
         raise SystemExit("rerun_recommendation.action must be advance_rollout_recheck.")
     if str(normalized_recommendation.get("release_posture") or "").strip() != "hold":
         raise SystemExit("rerun_recommendation.release_posture must be hold.")
-    if list(normalized_recommendation.get("guardrails") or []) != list(normalized_pack.get("guardrails") or []):
+    normalized_recommendation_guardrails = _require_list("rerun_recommendation.guardrails", normalized_recommendation.get("guardrails") or [])
+    normalized_pack_guardrails = _require_list("rerun_pack.guardrails", normalized_pack.get("guardrails") or [])
+    if normalized_recommendation_guardrails != normalized_pack_guardrails:
         raise SystemExit("rerun_recommendation.guardrails must preserve rerun_pack.guardrails exactly.")
     if str(normalized_baseline.get("mode") or "").strip() != "optimized" or str(normalized_baseline.get("status") or "").strip() != "ready":
         raise SystemExit("baseline_resolution must be resolved to an optimized profile.")
@@ -77,7 +85,7 @@ def build_momentum_rollout_recheck_pack(*, rerun_pack: dict[str, object], rerun_
         raise SystemExit("baseline_resolution must be resolved to an optimized profile.")
     if str(normalized_pack.get("release_posture") or "").strip() != "hold":
         raise SystemExit("rerun_pack.release_posture must be hold.")
-    if list(normalized_pack.get("guardrails") or []) != list(GUARDRAILS):
+    if _require_list("rerun_pack.guardrails", normalized_pack.get("guardrails") or []) != list(GUARDRAILS):
         raise SystemExit("rerun_pack.guardrails must preserve no_manifest_publication and no_btst_skill_promotion exactly.")
 
     winner = _normalize_candidate("winner", normalized_pack.get("winner"))
