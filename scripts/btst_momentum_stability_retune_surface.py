@@ -18,6 +18,9 @@ FIXED_ZERO_PARAMS = ("momentum_strength_weight", "short_term_reversal_weight")
 
 
 def build_momentum_stability_retune_surface(*, best_params: dict[str, object], triage: dict[str, object]) -> dict[str, object]:
+    # triage must be a mapping/object with an 'action' key — fail-closed on malformed shapes
+    if not isinstance(triage, dict):
+        raise SystemExit("triage JSON must be an object with an 'action' key.")
     if str(triage.get("action") or "") != "parameter_retune_next":
         raise SystemExit("triage action must be parameter_retune_next before building a retune surface.")
 
