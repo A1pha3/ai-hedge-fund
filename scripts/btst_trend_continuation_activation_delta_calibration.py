@@ -76,7 +76,10 @@ def _parse_required_int_evidence(payload: dict[str, Any], field_name: str) -> tu
     if isinstance(value, str):
         stripped = value.strip()
         if stripped and stripped.lstrip("+-").isdigit():
-            return int(stripped), None
+            try:
+                return int(stripped), None
+            except ValueError:
+                return None, f"malformed_{field_name}"
     return None, f"malformed_{field_name}"
 
 

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import scripts.btst_trend_continuation_rollout_helpers as rollout_helpers
 import scripts.btst_trend_continuation_rollout_assessment as trend_continuation_rollout_assessment
 from scripts.btst_trend_continuation_rollout_helpers import build_trend_continuation_rollout_assessment
 
@@ -252,6 +253,13 @@ def test_build_trend_continuation_rollout_assessment_blocks_promotion_on_malform
 
     assert assessment["action"] == "hold"
     assert "malformed_diagnostics_report_dir_count" in assessment["blockers"]
+
+
+def test_parse_required_int_evidence_rejects_weird_signed_string() -> None:
+    value, issue = rollout_helpers._parse_required_int_evidence({"report_dir_count": "+-123"}, "report_dir_count")
+
+    assert value is None
+    assert issue == "malformed_report_dir_count"
 
 
 def test_build_trend_continuation_rollout_assessment_flags_cosmetic_only_activation_delta() -> None:

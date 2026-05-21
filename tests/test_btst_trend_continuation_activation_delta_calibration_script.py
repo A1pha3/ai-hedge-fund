@@ -192,6 +192,13 @@ def test_build_calibration_candidate_governance_blockers_fail_closed_on_malforme
     assert "best_candidate_malformed_report_dir_count" in blockers
 
 
+def test_parse_required_int_evidence_rejects_weird_signed_string() -> None:
+    value, issue = calibration._parse_required_int_evidence({"report_dir_count": "+-123"}, "report_dir_count")
+
+    assert value is None
+    assert issue == "malformed_report_dir_count"
+
+
 def test_build_calibration_candidate_governance_blockers_fail_closed_on_malformed_bool_evidence() -> None:
     blockers = calibration.build_calibration_candidate_governance_blockers(
         {
