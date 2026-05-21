@@ -17,6 +17,7 @@ def test_build_rerun_pack_carries_winner_challengers_and_guardrails() -> None:
     )
 
     assert payload["winner"]["trial_index"] == 602
+    assert [row["trial_index"] for row in payload["challengers"]] == [1226]
     assert payload["release_posture"] == "hold"
     assert payload["guardrails"] == ["no_manifest_publication", "no_btst_skill_promotion"]
 
