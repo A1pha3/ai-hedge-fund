@@ -1,5 +1,5 @@
 from pathlib import Path
-
+import scripts.analyze_btst_5d_15pct_boundary_contract_inspection as boundary_script
 import scripts.analyze_btst_5d_15pct_boundary_quarantine as quarantine_script
 
 
@@ -115,16 +115,13 @@ def test_analyze_btst_5d_15pct_boundary_quarantine_excludes_repaired_contract_ro
     )
 
     monkeypatch.setattr(
-        quarantine_script,
-        "analyze_btst_5d_15pct_boundary_contract_inspection",
-        lambda reports_root: {
-            "generated_at": "2026-05-22T00:00:00Z",
-            "reports_root": str(reports_root),
-            "row_count": 1,
-            "boundary_row_count": 0,
-            "boundary_rows": [],
-            "source_comparison_board": [],
-            "governance_recommendation_board": [],
+        boundary_script,
+        "_extract_btst_price_outcome",
+        lambda ticker, trade_date, price_cache: {
+            "cycle_status": "closed_cycle",
+            "future_high_hit_15pct_2_5d": False,
+            "max_future_high_return_2_5d": 0.04,
+            "next_open_return": 0.01,
         },
     )
 
