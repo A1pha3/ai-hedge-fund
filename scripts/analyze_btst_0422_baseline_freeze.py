@@ -49,6 +49,7 @@ def _build_session_summary_field_inventory() -> list[str]:
         llm_route_provenance={},
         execution_plan_provenance={},
         dual_target_summary={},
+        reporting_target_summary={},
         llm_observability_summary={},
         llm_error_digest={},
         data_cache_summary={},

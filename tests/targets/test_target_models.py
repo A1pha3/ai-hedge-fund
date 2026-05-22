@@ -1385,8 +1385,8 @@ def _make_watchlist_filter_diagnostics_selected_only_shrink_entry() -> dict:
         "ticker": "601869",
         "candidate_source": "watchlist_filter_diagnostics",
         "candidate_reason_codes": ["watchlist_filter_diagnostics"],
-        "score_b": 0.20,
-        "score_c": 0.40,
+        "score_b": 0.40,
+        "score_c": 1.00,
         "score_final": 0.10,
         "quality_score": 0.55,
         "strategy_signals": {
@@ -1394,7 +1394,7 @@ def _make_watchlist_filter_diagnostics_selected_only_shrink_entry() -> dict:
                 1,
                 60.0,
                 sub_factors={
-                    "momentum": {"direction": 1, "confidence": 25.0, "completeness": 1.0},
+                    "momentum": {"direction": 1, "confidence": 55.0, "completeness": 1.0},
                     "adx_strength": {"direction": 1, "confidence": 15.0, "completeness": 1.0},
                     "ema_alignment": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
                     "volatility": {"direction": 1, "confidence": 100.0, "completeness": 1.0},

@@ -14,21 +14,39 @@
 import json
 import os
 import shutil
-import tempfile
 from pathlib import Path
 
-# 必须在 import snapshot 之前设置环境变量
-_tmp_dir = tempfile.mkdtemp(prefix="snapshot_test_")
-os.environ["DATA_SNAPSHOT_ENABLED"] = "true"
-os.environ["DATA_SNAPSHOT_PATH"] = _tmp_dir
+import pytest
 
-# 重置单例以便测试使用新配置
 from src.data.snapshot import DataSnapshotExporter
-
-DataSnapshotExporter._instance = None  # type: ignore[attr-defined]
-
 from src.data.models import CompanyNews, FinancialMetrics, LineItem, Price
 from src.data.snapshot import get_snapshot_exporter
+
+_SNAPSHOT_TEST_DIR = Path(__file__).resolve().parent / ".snapshot_manual_workspace"
+_tmp_dir = str(_SNAPSHOT_TEST_DIR)
+
+
+def _reset_snapshot_exporter() -> None:
+    DataSnapshotExporter._instance = None  # type: ignore[attr-defined]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _snapshot_workspace():
+    shutil.rmtree(_SNAPSHOT_TEST_DIR, ignore_errors=True)
+    _SNAPSHOT_TEST_DIR.mkdir(parents=True, exist_ok=True)
+    yield
+    shutil.rmtree(_SNAPSHOT_TEST_DIR, ignore_errors=True)
+    _reset_snapshot_exporter()
+
+
+@pytest.fixture(autouse=True)
+def _snapshot_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("DATA_SNAPSHOT_ENABLED", "true")
+    monkeypatch.setenv("DATA_SNAPSHOT_PATH", _tmp_dir)
+    monkeypatch.delenv("DATA_SNAPSHOT_MODE", raising=False)
+    _reset_snapshot_exporter()
+    yield
+    _reset_snapshot_exporter()
 
 
 def make_prices(n: int = 5) -> list[Price]:

@@ -91,19 +91,19 @@ def build_strict_btst_objective_gate(objective_monitor: dict[str, Any], structur
             blockers.append(blocker)
     execution_eligible_evidence = None
     if structural_guardrail:
-        non_halt_execution_eligible_count = int(structural_guardrail.get("non_halt_execution_eligible_count") or 0)
-        has_positive_execution_eligible_evidence = bool(
-            structural_guardrail.get("has_positive_execution_eligible_evidence", non_halt_execution_eligible_count > 0)
-        )
-        execution_eligible_evidence = {
-            "non_halt_execution_eligible_count": non_halt_execution_eligible_count,
-            "has_positive_execution_eligible_evidence": has_positive_execution_eligible_evidence,
-        }
-        if not has_positive_execution_eligible_evidence and "no_non_halt_execution_eligible_evidence" not in blockers:
-            blockers.append("no_non_halt_execution_eligible_evidence")
-    if structural_guardrail and int(structural_guardrail.get("excessive_window_count") or 0) > 0 and "structural_expansion_repeated_across_windows" not in blockers:
-        blockers.append("structural_expansion_repeated_across_windows")
-    elif structural_guardrail and structural_guardrail.get("blocker_candidate") is True and not structural_guardrail_blockers:
+        has_execution_eligible_evidence = "non_halt_execution_eligible_count" in structural_guardrail or "has_positive_execution_eligible_evidence" in structural_guardrail
+        if has_execution_eligible_evidence:
+            non_halt_execution_eligible_count = int(structural_guardrail.get("non_halt_execution_eligible_count") or 0)
+            has_positive_execution_eligible_evidence = bool(
+                structural_guardrail.get("has_positive_execution_eligible_evidence", non_halt_execution_eligible_count > 0)
+            )
+            execution_eligible_evidence = {
+                "non_halt_execution_eligible_count": non_halt_execution_eligible_count,
+                "has_positive_execution_eligible_evidence": has_positive_execution_eligible_evidence,
+            }
+            if not has_positive_execution_eligible_evidence and "no_non_halt_execution_eligible_evidence" not in blockers:
+                blockers.append("no_non_halt_execution_eligible_evidence")
+    if structural_guardrail and structural_guardrail.get("blocker_candidate") is True and "structural_expansion_repeated_across_windows" not in blockers:
         blockers.append("structural_expansion_repeated_across_windows")
 
     return {

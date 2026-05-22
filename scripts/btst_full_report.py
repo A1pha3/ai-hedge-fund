@@ -209,7 +209,12 @@ def main():
     args = parse_args()
     ts.set_token(os.getenv('TUSHARE_TOKEN'))
     _ts_timeout = int(os.getenv('TUSHARE_TIMEOUT', '120'))
-    pro = ts.pro_api(timeout=_ts_timeout)
+    try:
+        pro = ts.pro_api(timeout=_ts_timeout)
+    except TypeError as error:
+        if "timeout" not in str(error):
+            raise
+        pro = ts.pro_api()
 
     trade_date, next_date, all_dates = resolve_trade_dates(pro, args.trade_date)
     next_map = {d: all_dates[i+1] for i, d in enumerate(all_dates) if i+1 < len(all_dates)}
