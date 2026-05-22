@@ -17,7 +17,6 @@ def is_boundary_without_explainability_target(row: dict[str, Any]) -> bool:
 
 
 def classify_boundary_quarantine_decision(row: dict[str, Any]) -> dict[str, Any]:
-    governance_action = suggest_missing_core_compression_action(row)
     candidate_source = str(row.get("candidate_source") or "")
     boundary_context = dict(row.get("boundary_context") or {})
 
@@ -27,10 +26,12 @@ def classify_boundary_quarantine_decision(row: dict[str, Any]) -> dict[str, Any]
     elif not boundary_context:
         disposition = "separate_surface"
         governance_action = "split_into_separate_research_surface"
-    elif governance_action == "inspect_candidate_source_contract":
-        disposition = "quarantine"
     else:
-        disposition = "separate_surface"
+        governance_action = suggest_missing_core_compression_action(row)
+        if governance_action == "inspect_candidate_source_contract":
+            disposition = "quarantine"
+        else:
+            disposition = "separate_surface"
 
     return {
         **row,
