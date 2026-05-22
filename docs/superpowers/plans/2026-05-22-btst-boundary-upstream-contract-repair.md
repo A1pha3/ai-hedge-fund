@@ -703,6 +703,7 @@ git commit -m "docs: record upstream boundary contract repair"
 ## Placeholder scan
 
 - No placeholders or vague “implement later” steps remain.
+- No placeholders or vague deferred-work wording remain.
 - Every code step includes concrete code and exact commands.
 
 ## Type consistency check
