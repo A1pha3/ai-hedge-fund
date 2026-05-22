@@ -27,7 +27,7 @@ DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT = REPORTS_DIR / "btst_5d_15pct_boundary_qua
 def _load_boundary_quarantine_lists(path: str | Path | None) -> dict[str, set[str]]:
     lists = {"allow": set(), "quarantine": set(), "separate_surface": set()}
     if path is None:
-        return lists
+        path = DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT
     artifact_path = Path(path).expanduser()
     if not artifact_path.exists():
         return lists
