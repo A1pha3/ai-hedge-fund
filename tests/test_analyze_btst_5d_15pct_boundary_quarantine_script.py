@@ -82,3 +82,57 @@ def test_render_btst_5d_15pct_boundary_quarantine_markdown_includes_surface_list
 
     assert "## research_surface_lists" in markdown
     assert "- quarantine: ['001309']" in markdown
+
+
+def test_analyze_btst_5d_15pct_boundary_quarantine_excludes_repaired_contract_rows(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_window_20260323_20260326_boundary_contract"
+    snapshot_dir = report_dir / "selection_artifacts" / "2026-03-24"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_dir.joinpath("selection_snapshot.json").write_text(
+        '''
+        {
+          "trade_date": "20260324",
+          "selection_targets": {
+            "001309": {
+              "candidate_source": "short_trade_boundary",
+              "short_trade": {
+                "decision": "selected",
+                "explainability_payload": {
+                  "breakout_freshness": 0.71,
+                  "trend_acceleration": 0.66,
+                  "volume_expansion_quality": 0.63,
+                  "close_strength": 0.68,
+                  "trend_continuation": 0.57,
+                  "short_term_reversal": 0.21
+                }
+              }
+            }
+          }
+        }
+        '''.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        quarantine_script,
+        "analyze_btst_5d_15pct_boundary_contract_inspection",
+        lambda reports_root: {
+            "generated_at": "2026-05-22T00:00:00Z",
+            "reports_root": str(reports_root),
+            "row_count": 1,
+            "boundary_row_count": 0,
+            "boundary_rows": [],
+            "source_comparison_board": [],
+            "governance_recommendation_board": [],
+        },
+    )
+
+    analysis = quarantine_script.analyze_btst_5d_15pct_boundary_quarantine(reports_root)
+
+    assert analysis["boundary_row_count"] == 0
+    assert analysis["research_surface_lists"] == {
+        "allow": [],
+        "quarantine": [],
+        "separate_surface": [],
+    }
