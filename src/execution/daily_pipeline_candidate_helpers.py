@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.targets.short_trade_boundary_contract_helpers import build_boundary_contract_core_payload
+
 
 def resolve_short_trade_candidate_context(shadow_candidate: Any) -> tuple[str, str, str, list[str]]:
     if shadow_candidate and shadow_candidate.candidate_pool_lane == "layer_a_liquidity_corridor":
@@ -48,10 +50,17 @@ def build_short_trade_boundary_metrics_payload(
         "gate_status": gate_status,
         "blockers": blockers,
     }
-    if "trend_continuation" in snapshot:
-        payload["trend_continuation"] = round(float(snapshot.get("trend_continuation", 0.0) or 0.0), 4)
-    if "short_term_reversal" in snapshot:
-        payload["short_term_reversal"] = round(float(snapshot.get("short_term_reversal", 0.0) or 0.0), 4)
+    boundary_contract_core_payload = build_boundary_contract_core_payload(
+        explicit_values=snapshot,
+        metrics_payload=raw_candidate_metrics,
+    )
+    payload.update(
+        {
+            key: value
+            for key, value in boundary_contract_core_payload.items()
+            if key not in payload or payload.get(key) is None
+        }
+    )
     for key, value in dict(raw_candidate_metrics or {}).items():
         payload.setdefault(str(key), value)
     return payload
