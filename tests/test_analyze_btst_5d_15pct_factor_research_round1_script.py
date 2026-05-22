@@ -151,3 +151,66 @@ def test_analyze_btst_5d_15pct_factor_research_round1_excludes_quarantined_ticke
 
     assert analysis["row_count"] == 0
     assert analysis["alpha_beta_gamma_shortlist"] == []
+
+
+def test_analyze_btst_5d_15pct_factor_research_round1_discovers_quarantine_artifact_from_custom_reports_root(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "custom_reports_root"
+    quarantine_artifact = reports_root / "btst_5d_15pct_boundary_quarantine_latest.json"
+    quarantine_artifact.parent.mkdir(parents=True, exist_ok=True)
+    quarantine_artifact.write_text(
+        """
+        {
+          "research_surface_lists": {
+            "allow": [],
+            "quarantine": [],
+            "separate_surface": ["001309"]
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    report_dir = reports_root / "paper_trading_window_20260323_20260326_round1_a"
+    snapshot_dir = report_dir / "selection_artifacts" / "2026-03-24"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_dir.joinpath("selection_snapshot.json").write_text(
+        """
+        {
+          "trade_date": "20260324",
+          "selection_targets": {
+            "001309": {
+              "candidate_source": "short_trade_boundary",
+              "short_trade": {
+                "decision": "selected",
+                "explainability_payload": {
+                  "trend_acceleration": 0.64,
+                  "close_strength": 0.67,
+                  "volume_expansion_quality": 0.62,
+                  "breakout_freshness": 0.58
+                }
+              }
+            }
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        round1_script,
+        "_extract_btst_price_outcome",
+        lambda ticker, trade_date, price_cache: {
+            "cycle_status": "closed_cycle",
+            "future_high_hit_15pct_2_5d": True,
+            "max_future_high_return_2_5d": 0.18,
+            "time_to_hit_15pct": 2,
+            "next_open_return": 0.01,
+        },
+    )
+
+    analysis = round1_script.analyze_btst_5d_15pct_factor_research_round1(
+        reports_root,
+        min_closed_cycle_count=1,
+    )
+
+    assert analysis["row_count"] == 0
+    assert analysis["alpha_beta_gamma_shortlist"] == []

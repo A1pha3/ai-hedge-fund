@@ -27,7 +27,7 @@ DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT = REPORTS_DIR / "btst_5d_15pct_boundary_qua
 def _load_boundary_quarantine_lists(path: str | Path | None) -> dict[str, set[str]]:
     lists = {"allow": set(), "quarantine": set(), "separate_surface": set()}
     if path is None:
-        path = DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT
+        return lists
     artifact_path = Path(path).expanduser()
     if not artifact_path.exists():
         return lists
@@ -39,6 +39,12 @@ def _load_boundary_quarantine_lists(path: str | Path | None) -> dict[str, set[st
             if ticker is not None and (ticker_str := str(ticker))
         }
     return lists
+
+
+def _resolve_boundary_quarantine_artifact(reports_root: Path, boundary_quarantine_artifact: str | Path | None) -> Path:
+    if boundary_quarantine_artifact is not None:
+        return Path(boundary_quarantine_artifact).expanduser()
+    return reports_root / DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT.name
 
 
 def _group_summary(rows: list[dict[str, Any]], *, min_closed_cycle_count: int) -> dict[str, Any]:
@@ -103,7 +109,7 @@ def analyze_btst_5d_15pct_factor_research_round1(
     boundary_quarantine_artifact: str | Path | None = None,
 ) -> dict[str, Any]:
     resolved_root = Path(reports_root).expanduser().resolve()
-    quarantine_lists = _load_boundary_quarantine_lists(boundary_quarantine_artifact)
+    quarantine_lists = _load_boundary_quarantine_lists(_resolve_boundary_quarantine_artifact(resolved_root, boundary_quarantine_artifact))
     excluded_tickers = quarantine_lists["quarantine"] | quarantine_lists["separate_surface"]
     report_dirs = discover_report_dirs([resolved_root], report_name_contains="paper_trading_window")
     price_cache: dict[tuple[str, str], Any] = {}
@@ -174,7 +180,7 @@ def main() -> None:
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     parser.add_argument("--min-closed-cycle-count", type=int, default=3)
-    parser.add_argument("--boundary-quarantine-artifact", default=str(DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT))
+    parser.add_argument("--boundary-quarantine-artifact")
     args = parser.parse_args()
 
     analysis = analyze_btst_5d_15pct_factor_research_round1(
