@@ -1256,8 +1256,16 @@ def build_short_trade_target_result(
             "trend_acceleration": round(thresholds.trend_acceleration, 4),
             "volume_expansion_quality": round(float(snapshot["volume_expansion_quality"]), 4),
             "close_strength": round(float(snapshot["close_strength"]), 4),
-            "trend_continuation": round(float(snapshot.get("trend_continuation", 0.0)), 4),
-            "short_term_reversal": round(float(snapshot.get("short_term_reversal", 0.0)), 4),
+            **(
+                {"trend_continuation": round(float(snapshot["trend_continuation"]), 4)}
+                if "trend_continuation" in snapshot
+                else {}
+            ),
+            **(
+                {"short_term_reversal": round(float(snapshot["short_term_reversal"]), 4)}
+                if "short_term_reversal" in snapshot
+                else {}
+            ),
         },
         metrics_payload=metrics_payload,
     )

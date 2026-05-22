@@ -188,3 +188,78 @@ def test_build_short_trade_target_result_emits_boundary_contract_core_keys_into_
     assert result.explainability_payload["close_strength"] == 0.68
     assert result.explainability_payload["trend_continuation"] == 0.57
     assert result.explainability_payload["short_term_reversal"] == 0.21
+
+
+def test_build_short_trade_target_result_backfills_missing_boundary_contract_values_from_metrics(monkeypatch) -> None:
+    monkeypatch.setattr(
+        short_trade_target_evaluation_helpers,
+        "_build_short_trade_metrics_payload",
+        lambda **_: {
+            "trend_continuation": 0.57,
+            "short_term_reversal": 0.21,
+        },
+    )
+    monkeypatch.setattr(
+        short_trade_target_evaluation_helpers,
+        "_build_short_trade_explainability_state",
+        lambda snapshot: snapshot,
+    )
+    monkeypatch.setattr(
+        short_trade_target_evaluation_helpers,
+        "_build_short_trade_explainability_payload",
+        lambda **_: {"committee": {"enabled": True}},
+    )
+
+    result = build_short_trade_target_result(
+        context=ShortTradeEvaluationContext(
+            snapshot={
+                "profile": "demo-profile",
+                "score_target": 0.82,
+                "volume_expansion_quality": 0.63,
+                "close_strength": 0.68,
+                "sector_resonance": 0.31,
+                "raw_catalyst_freshness": 0.29,
+                "layer_c_alignment": 0.44,
+                "historical_prior": {},
+                "weighted_positive_contributions": {},
+                "weighted_negative_contributions": {},
+            },
+            carryover_evidence_deficiency={},
+            selected_historical_proof_deficiency={},
+        ),
+        thresholds=ShortTradeThresholdState(
+            breakout_freshness=0.71,
+            trend_acceleration=0.66,
+            effective_near_miss_threshold=0.55,
+            effective_select_threshold=0.65,
+            selected_score_tolerance=0.0,
+            breakout_stage="fresh",
+            selected_breakout_gate_pass=True,
+            near_miss_breakout_gate_pass=True,
+        ),
+        verdict=ShortTradeVerdict(
+            decision="selected",
+            confidence=0.88,
+            positive_tags=[],
+            negative_tags=[],
+            blockers=[],
+            gate_status={},
+            top_reasons=[],
+            rejection_reasons=[],
+            downgrade_reasons=[],
+        ),
+        input_data=TargetEvaluationInput(
+            trade_date="2026-05-22",
+            ticker="300620",
+            replay_context={"source": "paper"},
+        ),
+        rank_hint=1,
+    )
+
+    assert result.explainability_payload["committee"] == {"enabled": True}
+    assert result.explainability_payload["breakout_freshness"] == 0.71
+    assert result.explainability_payload["trend_acceleration"] == 0.66
+    assert result.explainability_payload["volume_expansion_quality"] == 0.63
+    assert result.explainability_payload["close_strength"] == 0.68
+    assert result.explainability_payload["trend_continuation"] == 0.57
+    assert result.explainability_payload["short_term_reversal"] == 0.21
