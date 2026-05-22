@@ -4,6 +4,10 @@ import importlib.util
 import json
 from pathlib import Path
 
+from src.execution.models import ExecutionPlan, LayerCResult
+from src.research.artifacts import FileSelectionArtifactWriter
+from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
+
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "analyze_btst_5d_15pct_boundary_missing_six_core_keys.py"
 MISSING_SIX_CORE_KEYS = [
@@ -73,6 +77,8 @@ def _nested_source_metrics_row() -> dict[str, object]:
         "trend_acceleration": 0.82,
         "volume_expansion_quality": 0.73,
         "close_strength": 0.64,
+        "trend_continuation": 0.55,
+        "short_term_reversal": 0.18,
     }
     return {
         "candidate_source": "short_trade_boundary",
@@ -270,8 +276,7 @@ def test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_from_rows_returns_
     trace_by_ticker = {row["ticker"]: row for row in analysis["trace_status_board"]}
     assert analysis["boundary_row_count"] == 2
     assert trace_by_ticker["001309"]["surface_trace_status_counts"] == {
-        "dropped_before_snapshot": 4,
-        "missing_at_source": 2,
+        "dropped_before_snapshot": 6,
         "present_end_to_end": 1,
     }
     assert trace_by_ticker["001309"]["surface_trace_statuses"] == {
@@ -279,31 +284,28 @@ def test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_from_rows_returns_
         "trend_acceleration": "dropped_before_snapshot",
         "volume_expansion_quality": "dropped_before_snapshot",
         "close_strength": "dropped_before_snapshot",
-        "trend_continuation": "missing_at_source",
-        "short_term_reversal": "missing_at_source",
+        "trend_continuation": "dropped_before_snapshot",
+        "short_term_reversal": "dropped_before_snapshot",
         "t0_tail_strength": "present_end_to_end",
     }
     assert trace_by_ticker["001309"]["nested_only_missing_six_keys"] == []
-    assert trace_by_ticker["001309"]["missing_everywhere_missing_six_keys"] == [
-        "trend_continuation",
-        "short_term_reversal",
-    ]
-    assert trace_by_ticker["001309"]["governance_action"] == "fix_boundary_source_contract"
+    assert trace_by_ticker["001309"]["missing_everywhere_missing_six_keys"] == []
+    assert trace_by_ticker["001309"]["governance_action"] == "fix_snapshot_attachment_contract"
     assert trace_by_ticker["300111"]["missing_everywhere_missing_six_keys"] == MISSING_SIX_CORE_KEYS
 
     assert analysis["key_trace_summary_board"] == [
         {
             "row_count": 2,
             "surface_trace_status_counts": {
-                "dropped_before_snapshot": 4,
-                "missing_at_source": 8,
+                "dropped_before_snapshot": 6,
+                "missing_at_source": 6,
                 "present_end_to_end": 2,
             },
             "missing_six_key_diagnosis_counts": {
                 "nested_only": 0,
-                "missing_everywhere": 8,
+                "missing_everywhere": 6,
                 "surface_visible": 0,
-                "lost_after_source": 4,
+                "lost_after_source": 6,
                 "inconclusive": 0,
             },
         }
@@ -323,11 +325,11 @@ def test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_from_rows_returns_
             "candidate_source": "short_trade_boundary",
             "row_count": 1,
             "nested_only_missing_six_key_count": 0,
-            "missing_everywhere_missing_six_key_count": 2,
+            "missing_everywhere_missing_six_key_count": 0,
             "surface_visible_missing_six_key_count": 0,
-            "lost_after_source_missing_six_key_count": 4,
+            "lost_after_source_missing_six_key_count": 6,
             "inconclusive_missing_six_key_count": 0,
-            "governance_action": "fix_boundary_source_contract",
+            "governance_action": "fix_snapshot_attachment_contract",
         },
     ]
     assert {row["key"]: row for row in analysis["survivor_key_contrast_board"]} == {
@@ -365,7 +367,7 @@ def test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_from_rows_returns_
         },
         "trend_continuation": {
             "key": "trend_continuation",
-            "source_payload_count": 0,
+            "source_payload_count": 1,
             "attached_metrics_payload_count": 0,
             "attached_surface_payload_count": 0,
             "snapshot_metrics_payload_count": 0,
@@ -373,7 +375,7 @@ def test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_from_rows_returns_
         },
         "short_term_reversal": {
             "key": "short_term_reversal",
-            "source_payload_count": 0,
+            "source_payload_count": 1,
             "attached_metrics_payload_count": 0,
             "attached_surface_payload_count": 0,
             "snapshot_metrics_payload_count": 0,
@@ -391,8 +393,14 @@ def test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_from_rows_returns_
     assert analysis["governance_diagnosis_board"] == [
         {
             "action": "fix_boundary_source_contract",
-            "row_count": 2,
-            "tickers": ["001309", "300111"],
+            "row_count": 1,
+            "tickers": ["300111"],
+            "affected_keys": MISSING_SIX_CORE_KEYS,
+        },
+        {
+            "action": "fix_snapshot_attachment_contract",
+            "row_count": 1,
+            "tickers": ["001309"],
             "affected_keys": MISSING_SIX_CORE_KEYS,
         }
     ]
@@ -412,6 +420,8 @@ def test_extract_source_payload_includes_short_trade_boundary_metrics_container(
                     "trend_acceleration": 0.82,
                     "volume_expansion_quality": 0.73,
                     "close_strength": 0.64,
+                    "trend_continuation": 0.55,
+                    "short_term_reversal": 0.18,
                 },
             }
         }
@@ -422,8 +432,27 @@ def test_extract_source_payload_includes_short_trade_boundary_metrics_container(
         "trend_acceleration": 0.82,
         "volume_expansion_quality": 0.73,
         "close_strength": 0.64,
+        "trend_continuation": 0.55,
+        "short_term_reversal": 0.18,
         "t0_tail_strength": 0.61,
     }
+
+
+def test_source_contract_repair_stops_marking_tail_two_keys_missing_everywhere() -> None:
+    script = _load_script_module()
+
+    analysis = script.analyze_btst_5d_15pct_boundary_missing_six_core_keys_from_rows([_nested_source_metrics_row()])
+
+    assert analysis["trace_status_board"][0]["missing_everywhere_missing_six_keys"] == []
+    assert analysis["trace_status_board"][0]["governance_action"] == "fix_snapshot_attachment_contract"
+    assert analysis["governance_diagnosis_board"] == [
+        {
+            "action": "fix_snapshot_attachment_contract",
+            "row_count": 1,
+            "tickers": ["001309"],
+            "affected_keys": MISSING_SIX_CORE_KEYS,
+        }
+    ]
 
 
 def test_nested_only_six_core_keys_drive_snapshot_attachment_contract_diagnosis() -> None:
@@ -602,6 +631,7 @@ def _write_live_boundary_artifacts(reports_root: Path) -> dict[str, object]:
                 "ticker": "001309",
                 "candidate_source": "short_trade_boundary",
                 "t0_tail_strength": 0.61,
+                "short_trade_boundary_metrics": nested_metrics,
             },
         ],
         "selection_targets": {
@@ -657,16 +687,16 @@ def test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_reconstructs_live_
             "ticker": "001309",
             "trade_date": "20260324",
             "surface_trace_status_counts": {
-                "missing_at_source": 6,
+                "dropped_before_snapshot": 6,
                 "present_end_to_end": 1,
             },
             "surface_trace_statuses": {
-                "breakout_freshness": "missing_at_source",
-                "trend_acceleration": "missing_at_source",
-                "volume_expansion_quality": "missing_at_source",
-                "close_strength": "missing_at_source",
-                "trend_continuation": "missing_at_source",
-                "short_term_reversal": "missing_at_source",
+                "breakout_freshness": "dropped_before_snapshot",
+                "trend_acceleration": "dropped_before_snapshot",
+                "volume_expansion_quality": "dropped_before_snapshot",
+                "close_strength": "dropped_before_snapshot",
+                "trend_continuation": "dropped_before_snapshot",
+                "short_term_reversal": "dropped_before_snapshot",
                 "t0_tail_strength": "present_end_to_end",
             },
             "nested_only_missing_six_keys": MISSING_SIX_CORE_KEYS,
@@ -675,6 +705,113 @@ def test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_reconstructs_live_
             "governance_action": "fix_snapshot_attachment_contract",
         }
     ]
+
+
+def _write_surface_repaired_boundary_artifacts(reports_root: Path) -> dict[str, object]:
+    report_dir = reports_root / "paper_trading_window_20260324_boundary_surface_repaired"
+    writer = FileSelectionArtifactWriter(
+        artifact_root=report_dir / "selection_artifacts",
+        run_id="session_surface_repaired",
+    )
+    evaluation = DualTargetEvaluation(
+        ticker="001309",
+        trade_date="20260324",
+        candidate_source="short_trade_boundary",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="near_miss",
+            candidate_source="short_trade_boundary",
+            explainability_payload={"t0_tail_strength": 0.61},
+            metrics_payload={
+                "breakout_freshness": 0.81,
+                "trend_acceleration": 0.67,
+                "volume_expansion_quality": 0.74,
+                "close_strength": 0.64,
+                "trend_continuation": 0.55,
+                "short_term_reversal": 0.18,
+            },
+        ),
+    )
+    plan = ExecutionPlan(
+        date="20260324",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "short_trade_candidates": {
+                        "tickers": [
+                            {
+                                "ticker": "001309",
+                                "candidate_source": "short_trade_boundary",
+                                "t0_tail_strength": 0.61,
+                                "short_trade_boundary_metrics": {
+                                    "breakout_freshness": 0.81,
+                                    "trend_acceleration": 0.67,
+                                    "volume_expansion_quality": 0.74,
+                                    "close_strength": 0.64,
+                                    "trend_continuation": 0.55,
+                                    "short_term_reversal": 0.18,
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="001309",
+                score_b=0.8,
+                score_c=0.71,
+                score_final=0.76,
+                quality_score=0.65,
+                decision="watch",
+            )
+        ],
+        selection_targets={"001309": evaluation},
+        target_mode="short_trade_only",
+        dual_target_summary=DualTargetSummary(target_mode="short_trade_only", selection_target_count=1),
+        buy_orders=[],
+    )
+    writer.write_for_plan(plan=plan, trade_date="20260324", pipeline=None, selected_analysts=None)
+    return {
+        "report_dir_name": report_dir.name,
+        "trade_date": "20260324",
+        "ticker": "001309",
+        "candidate_source": "short_trade_boundary",
+    }
+
+
+def test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_reconstructs_surface_repaired_rows(tmp_path: Path, monkeypatch) -> None:
+    script = _load_script_module()
+    reports_root = tmp_path / "data" / "reports"
+    boundary_row = _write_surface_repaired_boundary_artifacts(reports_root)
+
+    monkeypatch.setattr(
+        script,
+        "analyze_btst_5d_15pct_boundary_contract_inspection",
+        lambda reports_root: {
+            "generated_at": "2026-03-25T00:00:00Z",
+            "reports_root": str(Path(reports_root).resolve()),
+            "boundary_row_count": 1,
+            "boundary_rows": [boundary_row],
+        },
+    )
+
+    analysis = script.analyze_btst_5d_15pct_boundary_missing_six_core_keys(reports_root)
+
+    trace_row = analysis["trace_status_board"][0]
+    assert trace_row["nested_only_missing_six_keys"] == ["trend_continuation", "short_term_reversal"], f"nested_only should be only tail-two, got {trace_row['nested_only_missing_six_keys']}"
+    assert trace_row["missing_everywhere_missing_six_keys"] == [], f"all keys present somewhere, got {trace_row['missing_everywhere_missing_six_keys']}"
+    assert trace_row["surface_visible_keys"] == ["breakout_freshness", "trend_acceleration", "volume_expansion_quality", "close_strength", "t0_tail_strength"], f"four attachment keys + t0_tail_strength should be surface visible, got {trace_row['surface_visible_keys']}"
+    assert analysis["governance_diagnosis_board"] == [
+        {
+            "action": "fix_snapshot_attachment_contract",
+            "row_count": 1,
+            "tickers": ["001309"],
+            "affected_keys": ["trend_continuation", "short_term_reversal"],
+        }
+    ], f"governance board mismatch: {analysis['governance_diagnosis_board']}"
 
 
 def test_locate_replay_input_source_entry_does_not_attribute_mismatched_single_ticker_entry() -> None:
