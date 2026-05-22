@@ -33,7 +33,11 @@ def _load_boundary_quarantine_lists(path: str | Path | None) -> dict[str, set[st
         return lists
     payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     for disposition in lists:
-        lists[disposition] = {str(ticker) for ticker in list(dict(payload.get("research_surface_lists") or {}).get(disposition) or []) if str(ticker)}
+        lists[disposition] = {
+            ticker_str
+            for ticker in list(dict(payload.get("research_surface_lists") or {}).get(disposition) or [])
+            if ticker is not None and (ticker_str := str(ticker))
+        }
     return lists
 
 
