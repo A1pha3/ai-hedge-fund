@@ -70,3 +70,51 @@ def test_build_short_trade_boundary_metrics_payload_keeps_snapshot_values_over_r
 
     assert metrics_payload["trend_continuation"] == 0.88
     assert metrics_payload["short_term_reversal"] == 0.12
+
+
+def test_build_short_trade_boundary_metrics_payload_backfills_boundary_contract_core_keys_from_raw_candidate_metrics() -> None:
+    payload = build_short_trade_boundary_metrics_payload(
+        snapshot={
+            "breakout_freshness": 0.71,
+            "trend_acceleration": 0.66,
+            "volume_expansion_quality": 0.63,
+            "close_strength": 0.68,
+            "catalyst_freshness": 0.55,
+            "sector_resonance": 0.44,
+            "gate_status": {"data": "pass"},
+            "blockers": [],
+        },
+        compute_candidate_score_fn=lambda snapshot: 0.77,
+        raw_candidate_metrics={
+            "trend_continuation": 0.57,
+            "short_term_reversal": 0.21,
+        },
+    )
+
+    assert payload["trend_continuation"] == 0.57
+    assert payload["short_term_reversal"] == 0.21
+
+
+def test_build_short_trade_boundary_metrics_payload_keeps_explicit_snapshot_values_authoritative() -> None:
+    payload = build_short_trade_boundary_metrics_payload(
+        snapshot={
+            "breakout_freshness": 0.71,
+            "trend_acceleration": 0.66,
+            "volume_expansion_quality": 0.63,
+            "close_strength": 0.68,
+            "trend_continuation": 0.61,
+            "short_term_reversal": 0.19,
+            "catalyst_freshness": 0.55,
+            "sector_resonance": 0.44,
+            "gate_status": {"data": "pass"},
+            "blockers": [],
+        },
+        compute_candidate_score_fn=lambda snapshot: 0.77,
+        raw_candidate_metrics={
+            "trend_continuation": 0.57,
+            "short_term_reversal": 0.21,
+        },
+    )
+
+    assert payload["trend_continuation"] == 0.61
+    assert payload["short_term_reversal"] == 0.19

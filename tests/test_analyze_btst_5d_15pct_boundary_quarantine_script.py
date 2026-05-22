@@ -1,5 +1,5 @@
 from pathlib import Path
-
+import scripts.analyze_btst_5d_15pct_boundary_contract_inspection as boundary_script
 import scripts.analyze_btst_5d_15pct_boundary_quarantine as quarantine_script
 
 
@@ -82,3 +82,54 @@ def test_render_btst_5d_15pct_boundary_quarantine_markdown_includes_surface_list
 
     assert "## research_surface_lists" in markdown
     assert "- quarantine: ['001309']" in markdown
+
+
+def test_analyze_btst_5d_15pct_boundary_quarantine_excludes_repaired_contract_rows(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_window_20260323_20260326_boundary_contract"
+    snapshot_dir = report_dir / "selection_artifacts" / "2026-03-24"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_dir.joinpath("selection_snapshot.json").write_text(
+        '''
+        {
+          "trade_date": "20260324",
+          "selection_targets": {
+            "001309": {
+              "candidate_source": "short_trade_boundary",
+              "short_trade": {
+                "decision": "selected",
+                "explainability_payload": {
+                  "breakout_freshness": 0.71,
+                  "trend_acceleration": 0.66,
+                  "volume_expansion_quality": 0.63,
+                  "close_strength": 0.68,
+                  "trend_continuation": 0.57,
+                  "short_term_reversal": 0.21
+                }
+              }
+            }
+          }
+        }
+        '''.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        boundary_script,
+        "_extract_btst_price_outcome",
+        lambda ticker, trade_date, price_cache: {
+            "cycle_status": "closed_cycle",
+            "future_high_hit_15pct_2_5d": False,
+            "max_future_high_return_2_5d": 0.04,
+            "next_open_return": 0.01,
+        },
+    )
+
+    analysis = quarantine_script.analyze_btst_5d_15pct_boundary_quarantine(reports_root)
+
+    assert analysis["boundary_row_count"] == 0
+    assert analysis["research_surface_lists"] == {
+        "allow": [],
+        "quarantine": [],
+        "separate_surface": [],
+    }
