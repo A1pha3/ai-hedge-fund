@@ -9,6 +9,10 @@ from src.targets.explainability import (
     trim_reasons,
 )
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
+from src.targets.short_trade_boundary_contract_helpers import (
+    build_boundary_contract_core_payload,
+    merge_boundary_contract_core_payload,
+)
 from src.targets.short_trade_target_committee_helpers import (
     apply_short_trade_committee_governance,
 )
@@ -1228,6 +1232,39 @@ def build_short_trade_target_result(
     preferred_entry_mode_from_historical_prior: Any = _preferred_entry_mode_from_historical_prior,
 ) -> TargetEvaluationResult:
     snapshot = context.snapshot
+    metrics_payload = _build_short_trade_metrics_payload(
+        input_data=input_data,
+        profile=snapshot["profile"],
+        snapshot=snapshot,
+        breakout_stage=thresholds.breakout_stage,
+        selected_breakout_gate_pass=thresholds.selected_breakout_gate_pass,
+        near_miss_breakout_gate_pass=thresholds.near_miss_breakout_gate_pass,
+        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
+    )
+    explainability_payload = _build_short_trade_explainability_payload(
+        input_data=input_data,
+        snapshot=snapshot,
+        breakout_stage=thresholds.breakout_stage,
+        state=_build_short_trade_explainability_state(snapshot),
+        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
+    )
+    boundary_contract_core_payload = build_boundary_contract_core_payload(
+        explicit_values={
+            "breakout_freshness": round(thresholds.breakout_freshness, 4),
+            "trend_acceleration": round(thresholds.trend_acceleration, 4),
+            "volume_expansion_quality": round(float(snapshot["volume_expansion_quality"]), 4),
+            "close_strength": round(float(snapshot["close_strength"]), 4),
+            "trend_continuation": round(float(snapshot.get("trend_continuation", 0.0)), 4),
+            "short_term_reversal": round(float(snapshot.get("short_term_reversal", 0.0)), 4),
+        },
+        metrics_payload=metrics_payload,
+    )
+    explainability_payload = merge_boundary_contract_core_payload(
+        explainability_payload=explainability_payload,
+        core_payload=boundary_contract_core_payload,
+    )
     return TargetEvaluationResult(
         target_type="short_trade",
         decision=verdict.decision,
@@ -1269,22 +1306,6 @@ def build_short_trade_target_result(
         committee_vetoes=list(snapshot.get("committee_vetoes") or []),
         weighted_positive_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_positive_contributions"]).items()},
         weighted_negative_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_negative_contributions"]).items()},
-        metrics_payload=_build_short_trade_metrics_payload(
-            input_data=input_data,
-            profile=snapshot["profile"],
-            snapshot=snapshot,
-            breakout_stage=thresholds.breakout_stage,
-            selected_breakout_gate_pass=thresholds.selected_breakout_gate_pass,
-            near_miss_breakout_gate_pass=thresholds.near_miss_breakout_gate_pass,
-            carryover_evidence_deficiency=context.carryover_evidence_deficiency,
-            selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
-        ),
-        explainability_payload=_build_short_trade_explainability_payload(
-            input_data=input_data,
-            snapshot=snapshot,
-            breakout_stage=thresholds.breakout_stage,
-            state=_build_short_trade_explainability_state(snapshot),
-            carryover_evidence_deficiency=context.carryover_evidence_deficiency,
-            selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
-        ),
+        metrics_payload=metrics_payload,
+        explainability_payload=explainability_payload,
     )
