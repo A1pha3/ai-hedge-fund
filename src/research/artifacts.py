@@ -721,6 +721,8 @@ def build_selection_snapshot(
         list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("shadow_candidates", []) or []),
         market_state_payload={},
     )
+    # Reuse normalized selection_targets for both fields below
+    _normalized_selection_targets = dict(plan.selection_targets or {})
     return SelectionSnapshot(
         artifact_version=artifact_version,
         run_id=run_id,
@@ -746,7 +748,31 @@ def build_selection_snapshot(
         selected=_build_selected_candidates(plan),
         rejected=_build_rejected_candidates(plan),
         # Reuse normalized selection_targets for both fields below
-        _normalized_selection_targets = dict(plan.selection_targets or {})
+    _normalized_selection_targets = dict(plan.selection_targets or {})
+    return SelectionSnapshot(
+        artifact_version=artifact_version,
+        run_id=run_id,
+        experiment_id=experiment_id,
+        trade_date=formatted_trade_date,
+        market=market,
+        market_state=market_state_payload,
+        btst_regime_gate=btst_regime_gate_payload,
+        decision_timestamp=f"{formatted_trade_date}T15:05:00+08:00",
+        data_available_until=f"{formatted_trade_date}T15:00:00+08:00",
+        target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
+        pipeline_config_snapshot=_build_pipeline_config_snapshot(plan, pipeline, selected_analysts),
+        universe_summary={
+            "input_symbol_count": int(counts.get("layer_a_count", plan.layer_a_count) or 0),
+            "candidate_count": int(counts.get("layer_a_count", plan.layer_a_count) or 0),
+            "high_pool_count": int(counts.get("layer_b_count", plan.layer_b_count) or 0),
+            "watchlist_count": int(counts.get("watchlist_count", len(plan.watchlist)) or 0),
+            "catalyst_theme_candidate_count": int(counts.get("catalyst_theme_candidate_count", len(catalyst_theme_candidates)) or 0),
+            "catalyst_theme_shadow_candidate_count": int(counts.get("catalyst_theme_shadow_candidate_count", len(catalyst_theme_shadow_candidates)) or 0),
+            "buy_order_count": int(counts.get("buy_order_count", len(plan.buy_orders)) or 0),
+            "sell_order_count": int(counts.get("sell_order_count", len(plan.sell_orders)) or 0),
+        },
+        selected=_build_selected_candidates(plan),
+        rejected=_build_rejected_candidates(plan),
         selection_targets=_normalized_selection_targets,
         target_summary=plan.dual_target_summary,
         reporting_target_summary=build_reporting_target_summary(
