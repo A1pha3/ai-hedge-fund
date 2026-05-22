@@ -759,6 +759,8 @@ def build_selection_snapshot(
         list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("shadow_candidates", []) or []),
         market_state_payload={},
     )
+    # Precompute serialized selection targets for reuse
+    serialized_selection_targets = _serialize_selection_targets_for_artifacts(plan.selection_targets)
     return SelectionSnapshot(
         artifact_version=artifact_version,
         run_id=run_id,
@@ -783,10 +785,10 @@ def build_selection_snapshot(
         },
         selected=_build_selected_candidates(plan),
         rejected=_build_rejected_candidates(plan),
-        selection_targets=_serialize_selection_targets_for_artifacts(plan.selection_targets),
+        selection_targets=serialized_selection_targets,
         target_summary=plan.dual_target_summary,
         reporting_target_summary=build_reporting_target_summary(
-            selection_targets=_serialize_selection_targets_for_artifacts(plan.selection_targets),
+            selection_targets=serialized_selection_targets,
             target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
         ).model_dump(mode="json"),
         research_view=_build_research_target_view(plan),
