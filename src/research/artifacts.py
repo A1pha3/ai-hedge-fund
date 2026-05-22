@@ -745,10 +745,12 @@ def build_selection_snapshot(
         },
         selected=_build_selected_candidates(plan),
         rejected=_build_rejected_candidates(plan),
-        selection_targets=dict(plan.selection_targets or {}),
+        # Reuse normalized selection_targets for both fields below
+        _normalized_selection_targets = dict(plan.selection_targets or {})
+        selection_targets=_normalized_selection_targets,
         target_summary=plan.dual_target_summary,
         reporting_target_summary=build_reporting_target_summary(
-            selection_targets=dict(plan.selection_targets or {}),
+            selection_targets=_normalized_selection_targets,
             target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
         ).model_dump(mode="json"),
         research_view=_build_research_target_view(plan),
