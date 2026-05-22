@@ -118,8 +118,8 @@ def test_build_short_trade_target_result_emits_boundary_contract_core_keys_into_
         short_trade_target_evaluation_helpers,
         "_build_short_trade_metrics_payload",
         lambda **_: {
-            "trend_continuation": 0.57,
-            "short_term_reversal": 0.21,
+            "trend_continuation": 0.11,
+            "short_term_reversal": 0.09,
         },
     )
     monkeypatch.setattr(
@@ -182,6 +182,8 @@ def test_build_short_trade_target_result_emits_boundary_contract_core_keys_into_
     )
 
     assert result.explainability_payload["committee"] == {"enabled": True}
+    assert result.metrics_payload["trend_continuation"] == 0.11
+    assert result.metrics_payload["short_term_reversal"] == 0.09
     assert result.explainability_payload["breakout_freshness"] == 0.71
     assert result.explainability_payload["trend_acceleration"] == 0.66
     assert result.explainability_payload["volume_expansion_quality"] == 0.63
