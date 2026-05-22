@@ -1333,6 +1333,112 @@ def test_file_selection_artifact_writer_surfaces_p5_contract_metadata_and_review
     assert "是否可执行" in review_text
 
 
+def test_file_selection_artifact_writer_lifts_short_trade_attachment_keys_onto_surface(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_surface_repair")
+    evaluation = DualTargetEvaluation(
+        ticker="300724",
+        trade_date="20260422",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="near_miss",
+            metrics_payload={
+                "breakout_freshness": 0.81,
+                "trend_acceleration": 0.67,
+                "volume_expansion_quality": 0.74,
+                "close_strength": 0.64,
+                "trend_continuation": 0.55,
+                "short_term_reversal": 0.18,
+            },
+        ),
+    )
+    plan = ExecutionPlan(
+        date="20260422",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"layer_a_count": 10, "layer_b_count": 1, "watchlist_count": 1, "buy_order_count": 0}},
+        watchlist=[
+            LayerCResult(
+                ticker="300724",
+                score_b=0.8,
+                score_c=0.71,
+                score_final=0.76,
+                quality_score=0.65,
+                decision="watch",
+            )
+        ],
+        selection_targets={"300724": evaluation},
+        target_mode="short_trade_only",
+        dual_target_summary=DualTargetSummary(target_mode="short_trade_only", selection_target_count=1),
+        buy_orders=[],
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260422", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    snapshot = json.loads((tmp_path / "2026-04-22" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    replay_input = json.loads((tmp_path / "2026-04-22" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+
+    for artifact_name, artifact in [("selection_snapshot.json", snapshot), ("selection_target_replay_input.json", replay_input)]:
+        st = artifact["selection_targets"]["300724"]["short_trade"]
+        assert st.get("breakout_freshness") == 0.81, f"{artifact_name}: breakout_freshness should be 0.81 at surface, got {st.get('breakout_freshness')}"
+        assert st.get("trend_acceleration") == 0.67, f"{artifact_name}: trend_acceleration should be 0.67 at surface"
+        assert st.get("volume_expansion_quality") == 0.74, f"{artifact_name}: volume_expansion_quality should be 0.74 at surface"
+        assert st.get("close_strength") == 0.64, f"{artifact_name}: close_strength should be 0.64 at surface"
+        mp = st.get("metrics_payload", {})
+        assert mp.get("trend_continuation") == 0.55, f"{artifact_name}: trend_continuation should remain in metrics_payload"
+        assert mp.get("short_term_reversal") == 0.18, f"{artifact_name}: short_term_reversal should remain in metrics_payload"
+
+
+def test_file_selection_artifact_writer_preserves_explicit_short_trade_surface_values(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_surface_precedence")
+    evaluation = DualTargetEvaluation(
+        ticker="300724",
+        trade_date="20260422",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="near_miss",
+            breakout_freshness=0.44,
+            trend_acceleration=0.45,
+            volume_expansion_quality=0.46,
+            close_strength=0.47,
+            metrics_payload={
+                "breakout_freshness": 0.81,
+                "trend_acceleration": 0.67,
+                "volume_expansion_quality": 0.74,
+                "close_strength": 0.64,
+            },
+        ),
+    )
+    plan = ExecutionPlan(
+        date="20260422",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"layer_a_count": 10, "layer_b_count": 1, "watchlist_count": 1, "buy_order_count": 0}},
+        watchlist=[
+            LayerCResult(
+                ticker="300724",
+                score_b=0.8,
+                score_c=0.71,
+                score_final=0.76,
+                quality_score=0.65,
+                decision="watch",
+            )
+        ],
+        selection_targets={"300724": evaluation},
+        target_mode="short_trade_only",
+        dual_target_summary=DualTargetSummary(target_mode="short_trade_only", selection_target_count=1),
+        buy_orders=[],
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260422", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    snapshot = json.loads((tmp_path / "2026-04-22" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    st = snapshot["selection_targets"]["300724"]["short_trade"]
+    assert st.get("breakout_freshness") == 0.44, f"explicit top-level breakout_freshness should win over nested 0.81, got {st.get('breakout_freshness')}"
+    assert st.get("trend_acceleration") == 0.45, f"explicit top-level trend_acceleration should win over nested 0.67"
+    assert st.get("volume_expansion_quality") == 0.46, f"explicit top-level volume_expansion_quality should win over nested 0.74"
+    assert st.get("close_strength") == 0.47, f"explicit top-level close_strength should win over nested 0.64"
+
+
 def test_file_selection_artifact_writer_surfaces_p2_execution_block_context(tmp_path):
     writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_p2_block")
     evaluation = DualTargetEvaluation(

@@ -66,6 +66,8 @@ def build_short_trade_target_snapshot_payload(
         "investor_alignment": signal_snapshot["investor_alignment"],
         "analyst_penalty": signal_snapshot["analyst_penalty"],
         "investor_penalty": signal_snapshot["investor_penalty"],
+        "trend_continuation": signal_snapshot["trend_continuation"],
+        "short_term_reversal": signal_snapshot["short_term_reversal"],
     }
     payload.update(_build_profitability_snapshot_payload(snapshot_views))
     payload.update(_build_catalyst_relief_snapshot_payload(snapshot_views))

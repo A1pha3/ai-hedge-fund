@@ -48,6 +48,10 @@ def build_short_trade_boundary_metrics_payload(
         "gate_status": gate_status,
         "blockers": blockers,
     }
+    if "trend_continuation" in snapshot:
+        payload["trend_continuation"] = round(float(snapshot.get("trend_continuation", 0.0) or 0.0), 4)
+    if "short_term_reversal" in snapshot:
+        payload["short_term_reversal"] = round(float(snapshot.get("short_term_reversal", 0.0) or 0.0), 4)
     for key, value in dict(raw_candidate_metrics or {}).items():
         payload.setdefault(str(key), value)
     return payload
