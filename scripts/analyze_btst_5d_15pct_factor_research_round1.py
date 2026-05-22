@@ -21,6 +21,30 @@ REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_5d_15pct_factor_research_round1_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_5d_15pct_factor_research_round1_latest.md"
+DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT = REPORTS_DIR / "btst_5d_15pct_boundary_quarantine_latest.json"
+
+
+def _load_boundary_quarantine_lists(path: str | Path | None) -> dict[str, set[str]]:
+    lists = {"allow": set(), "quarantine": set(), "separate_surface": set()}
+    if path is None:
+        return lists
+    artifact_path = Path(path).expanduser()
+    if not artifact_path.exists():
+        return lists
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    for disposition in lists:
+        lists[disposition] = {
+            ticker_str
+            for ticker in list(dict(payload.get("research_surface_lists") or {}).get(disposition) or [])
+            if ticker is not None and (ticker_str := str(ticker))
+        }
+    return lists
+
+
+def _resolve_boundary_quarantine_artifact(reports_root: Path, boundary_quarantine_artifact: str | Path | None) -> Path:
+    if boundary_quarantine_artifact is not None:
+        return Path(boundary_quarantine_artifact).expanduser()
+    return reports_root / DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT.name
 
 
 def _group_summary(rows: list[dict[str, Any]], *, min_closed_cycle_count: int) -> dict[str, Any]:
@@ -78,8 +102,15 @@ def _collect_shortlist(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
-def analyze_btst_5d_15pct_factor_research_round1(reports_root: str | Path, *, min_closed_cycle_count: int = 3) -> dict[str, Any]:
+def analyze_btst_5d_15pct_factor_research_round1(
+    reports_root: str | Path,
+    *,
+    min_closed_cycle_count: int = 3,
+    boundary_quarantine_artifact: str | Path | None = None,
+) -> dict[str, Any]:
     resolved_root = Path(reports_root).expanduser().resolve()
+    quarantine_lists = _load_boundary_quarantine_lists(_resolve_boundary_quarantine_artifact(resolved_root, boundary_quarantine_artifact))
+    excluded_tickers = quarantine_lists["quarantine"] | quarantine_lists["separate_surface"]
     report_dirs = discover_report_dirs([resolved_root], report_name_contains="paper_trading_window")
     price_cache: dict[tuple[str, str], Any] = {}
     rows: list[dict[str, Any]] = []
@@ -87,6 +118,8 @@ def analyze_btst_5d_15pct_factor_research_round1(reports_root: str | Path, *, mi
         for snapshot in _iter_selection_snapshots(report_dir) or []:
             trade_date = _normalize_trade_date(snapshot.get("trade_date"))
             for ticker, evaluation in dict(snapshot.get("selection_targets") or {}).items():
+                if str(ticker) in excluded_tickers:
+                    continue
                 short_trade = dict((evaluation or {}).get("short_trade") or {})
                 if not short_trade:
                     continue
@@ -147,9 +180,14 @@ def main() -> None:
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     parser.add_argument("--min-closed-cycle-count", type=int, default=3)
+    parser.add_argument("--boundary-quarantine-artifact")
     args = parser.parse_args()
 
-    analysis = analyze_btst_5d_15pct_factor_research_round1(args.reports_root, min_closed_cycle_count=args.min_closed_cycle_count)
+    analysis = analyze_btst_5d_15pct_factor_research_round1(
+        args.reports_root,
+        min_closed_cycle_count=args.min_closed_cycle_count,
+        boundary_quarantine_artifact=args.boundary_quarantine_artifact,
+    )
     output_json = Path(args.output_json).expanduser().resolve()
     output_md = Path(args.output_md).expanduser().resolve()
     output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

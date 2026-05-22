@@ -1,0 +1,84 @@
+from pathlib import Path
+
+import scripts.analyze_btst_5d_15pct_boundary_quarantine as quarantine_script
+
+
+def test_analyze_btst_5d_15pct_boundary_quarantine_builds_boards_and_surface_lists(tmp_path: Path, monkeypatch) -> None:
+    captured_rows = [
+        {
+            "ticker": "001309",
+            "candidate_source": "short_trade_boundary",
+            "root_cause": "boundary_without_explainability",
+            "bucket": "missing_all_core_features",
+            "boundary_context": {"t0_tail_strength": 0.61},
+        },
+        {
+            "ticker": "300111",
+            "candidate_source": "layer_b_boundary",
+            "root_cause": "boundary_without_explainability",
+            "bucket": "missing_all_core_features",
+            "boundary_context": {},
+        },
+    ]
+
+    monkeypatch.setattr(
+        quarantine_script,
+        "analyze_btst_5d_15pct_boundary_contract_inspection",
+        lambda reports_root: {
+            "generated_at": "2026-05-22T00:00:00Z",
+            "reports_root": str(reports_root),
+            "row_count": 2,
+            "boundary_row_count": 2,
+            "boundary_rows": captured_rows,
+            "source_comparison_board": [],
+            "governance_recommendation_board": [],
+        },
+    )
+
+    analysis = quarantine_script.analyze_btst_5d_15pct_boundary_quarantine(tmp_path / "data" / "reports")
+
+    assert analysis["boundary_row_count"] == 2
+    assert analysis["research_surface_lists"] == {
+        "allow": [],
+        "quarantine": ["001309"],
+        "separate_surface": ["300111"],
+    }
+    assert analysis["governance_decision_board"] == [
+        {
+            "action": "inspect_candidate_source_contract",
+            "row_count": 1,
+            "tickers": ["001309"],
+        },
+        {
+            "action": "split_into_separate_research_surface",
+            "row_count": 1,
+            "tickers": ["300111"],
+        },
+    ]
+
+
+def test_analyze_btst_5d_15pct_boundary_quarantine_handles_zero_rows() -> None:
+    analysis = quarantine_script.analyze_btst_5d_15pct_boundary_quarantine_from_rows([])
+
+    assert analysis["boundary_row_count"] == 0
+    assert analysis["decision_rows"] == []
+    assert analysis["research_surface_lists"] == {
+        "allow": [],
+        "quarantine": [],
+        "separate_surface": [],
+    }
+
+
+def test_render_btst_5d_15pct_boundary_quarantine_markdown_includes_surface_lists() -> None:
+    markdown = quarantine_script.render_btst_5d_15pct_boundary_quarantine_markdown(
+        {
+            "boundary_row_count": 1,
+            "disposition_summary_board": [{"allow_count": 0, "quarantine_count": 1, "separate_surface_count": 0}],
+            "source_summary_board": [{"candidate_source": "short_trade_boundary", "row_count": 1, "quarantine_count": 1, "separate_surface_count": 0, "allow_count": 0}],
+            "governance_decision_board": [{"action": "inspect_candidate_source_contract", "row_count": 1, "tickers": ["001309"]}],
+            "research_surface_lists": {"allow": [], "quarantine": ["001309"], "separate_surface": []},
+        }
+    )
+
+    assert "## research_surface_lists" in markdown
+    assert "- quarantine: ['001309']" in markdown
