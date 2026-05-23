@@ -119,6 +119,32 @@ def test_trend_gate_oos_validation_supports_candidate_source_gate_ids(monkeypatc
     assert validation["candidate_manifest"][0]["ticker"] == "AAA"
 
 
+def test_trend_gate_oos_validation_supports_parameterized_catalyst_close_strength_gate_ids(monkeypatch) -> None:
+    rows = [
+        {
+            **_row("AAA", "20260324", report_dir_name="report_a", trend_acceleration=0.92, hit=True, max_return=0.20),
+            "candidate_source": "catalyst_theme",
+            "close_strength": 0.91,
+        },
+        {
+            **_row("BBB", "20260325", report_dir_name="report_b", trend_acceleration=0.91, hit=False, max_return=0.04),
+            "candidate_source": "catalyst_theme",
+            "close_strength": 0.93,
+        },
+    ]
+    monkeypatch.setattr(oos_script, "_collect_rows", lambda *args, **kwargs: rows)
+
+    validation = oos_script.analyze_btst_5d_15pct_trend_gate_oos_validation(
+        "unused",
+        min_closed_cycle_count=1,
+        top_fraction=1.0,
+        gate_id="catalyst_theme_close_strength_lt_0_92",
+    )
+
+    assert validation["candidate_unique_summary"]["closed_cycle_count"] == 1
+    assert validation["candidate_manifest"][0]["ticker"] == "AAA"
+
+
 def test_trend_gate_oos_validation_script_writes_outputs(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     report_dir = reports_root / "paper_trading_window_20260323_20260326_oos"

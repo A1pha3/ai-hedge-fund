@@ -95,9 +95,21 @@ def _read_price_rows(path: Path) -> list[dict[str, Any]]:
     return serialized
 
 
+def _price_dates(prices: list[dict[str, Any]]) -> list[str]:
+    return sorted({str(row.get("time") or "") for row in prices if row.get("time")})
+
+
 def _prices_cover_trade_date(prices: list[dict[str, Any]], trade_date: str) -> bool:
-    dates = {str(row.get("time") or "") for row in prices}
-    return trade_date in dates
+    return trade_date in set(_price_dates(prices))
+
+
+def _prices_cover_repair_window(prices: list[dict[str, Any]], trade_date: str, *, missing_reason: str) -> bool:
+    if not _prices_cover_trade_date(prices, trade_date):
+        return False
+    if missing_reason != "local_snapshot_missing_future_bar":
+        return True
+    future_dates = [date for date in _price_dates(prices) if date > trade_date]
+    return len(future_dates) >= 2
 
 
 def _iter_local_price_paths(
@@ -119,6 +131,7 @@ def _find_local_price_source(
     *,
     ticker: str,
     trade_date: str,
+    missing_reason: str,
     reports_root: Path,
     local_snapshot_roots: list[Path],
     scan_report_snapshots: bool,
@@ -140,7 +153,7 @@ def _find_local_price_source(
     candidates = [
         (path, rows)
         for path, rows in local_price_cache[ticker]
-        if _prices_cover_trade_date(rows, trade_date)
+        if _prices_cover_repair_window(rows, trade_date, missing_reason=missing_reason)
     ]
     if not candidates:
         return None
@@ -228,6 +241,7 @@ def backfill_btst_5d_15pct_scoped_price_snapshots(
         local_source = _find_local_price_source(
             ticker=ticker,
             trade_date=trade_date,
+            missing_reason=str(row.get("local_price_missing_reason") or ""),
             reports_root=resolved_reports_root,
             local_snapshot_roots=resolved_local_snapshot_roots,
             scan_report_snapshots=scan_report_snapshots,

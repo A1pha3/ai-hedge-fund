@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from scripts.analyze_btst_5d_15pct_trend_top20_gate_diagnostics import (
 )
 from scripts.btst_analysis_utils import normalize_trade_date as _normalize_trade_date
 from scripts.btst_analysis_utils import round_or_none as _round_or_none
+from scripts.btst_analysis_utils import safe_float as _safe_float
 
 
 DEFAULT_OUTPUT_JSON = Path("data/reports/btst_5d_15pct_trend_gate_oos_validation_latest.json")
@@ -41,6 +43,10 @@ def _gate_predicate(gate_id: str) -> Callable[[dict[str, Any]], bool]:
     for candidate_gate_id, predicate in _gate_specs():
         if candidate_gate_id == gate_id:
             return predicate
+    threshold_match = re.fullmatch(r"catalyst_theme_close_strength_lt_(\d+)_(\d+)", gate_id)
+    if threshold_match:
+        threshold = float(f"{threshold_match.group(1)}.{threshold_match.group(2)}")
+        return lambda row: str(row.get("candidate_source") or "") == "catalyst_theme" and (_safe_float(row.get("close_strength")) or 0.0) < threshold
     if gate_id.startswith("candidate_source_"):
         source = gate_id.removeprefix("candidate_source_")
         return lambda row: str(row.get("candidate_source") or "unknown") == source

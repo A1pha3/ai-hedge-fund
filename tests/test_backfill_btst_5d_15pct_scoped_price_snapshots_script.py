@@ -175,6 +175,41 @@ def test_scoped_price_backfill_local_only_skips_when_no_local_source(tmp_path: P
     assert result["result_rows"][0]["status"] == "missing_local_source"
 
 
+def test_scoped_price_backfill_rejects_local_source_without_future_bars_for_future_bar_repairs(tmp_path: Path) -> None:
+    backfill_script = importlib.import_module("scripts.backfill_btst_5d_15pct_scoped_price_snapshots")
+    reports_root = tmp_path / "data" / "reports"
+    snapshot_root = tmp_path / "data" / "snapshots"
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(manifest_path)
+    incomplete_source = snapshot_root / "TREND2" / "2026-03-25" / "prices.json"
+    incomplete_source.parent.mkdir(parents=True, exist_ok=True)
+    incomplete_source.write_text(
+        json.dumps(
+            [
+                {"time": "2026-03-24", "open": 99.0, "close": 100.0, "high": 101.0, "low": 98.0, "volume": 100000},
+                {"time": "2026-03-25", "open": 101.0, "close": 102.0, "high": 103.0, "low": 100.0, "volume": 120000},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = backfill_script.backfill_btst_5d_15pct_scoped_price_snapshots(
+        manifest_path,
+        reports_root=reports_root,
+        dry_run=False,
+        priority_buckets=[P1_BUCKET],
+        local_snapshot_roots=[snapshot_root],
+        scan_report_snapshots=False,
+        local_only=True,
+    )
+
+    assert result["success_request_count"] == 0
+    assert result["local_source_request_count"] == 0
+    assert result["skipped_no_local_source_request_count"] == 1
+    assert result["result_rows"][0]["status"] == "missing_local_source"
+
+
 def test_scoped_price_backfill_script_writes_outputs_in_dry_run(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     manifest_path = tmp_path / "manifest.json"
