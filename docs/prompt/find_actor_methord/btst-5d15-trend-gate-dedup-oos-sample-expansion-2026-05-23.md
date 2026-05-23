@@ -92,6 +92,52 @@ python scripts/analyze_btst_5d_15pct_trend_gate_oos_validation.py \
 
 结论很直接：不能靠放宽 close_strength 阈值凑样本。`0.90` 附近是当前收益质量还能保住的边界，往上放会把胜率拉回普通 catalyst 水平。
 
+现在已经把这组比较固化成网格报告：
+
+```bash
+python scripts/analyze_btst_5d_15pct_trend_gate_threshold_grid.py \
+  --local-price-only \
+  --report-name-contains "" \
+  --min-closed-cycle-count 30 \
+  --min-train-months 1 \
+  --min-oos-test-months 2
+```
+
+最新网格输出：
+
+- 报告：`data/reports/btst_5d_15pct_trend_gate_threshold_grid_latest.md`
+- 最佳研究候选：`catalyst_theme_close_strength_lt_0_90` + `top_fraction=0.20`
+- 当前去重 closed：11
+- 距离 30 个去重 closed 还差：19
+- 网格决策：`keep_narrow_gate_collect_samples`
+
+## 样本 Intake 分解
+
+网格报告告诉我们哪个 gate 值得保留，Intake Board 负责回答“还差的样本到底卡在哪里”。
+
+```bash
+python scripts/analyze_btst_5d_15pct_trend_gate_sample_intake_board.py \
+  --local-price-only \
+  --report-name-contains "" \
+  --gate-id catalyst_theme_close_strength_lt_0_90 \
+  --top-fraction 0.20 \
+  --min-closed-cycle-count 30
+```
+
+最新分解：
+
+- pre-execution 去重候选：15
+- closed hit：5
+- closed miss：6
+- pending cycle：2
+- non-executable gap：2
+- 缺价格：0
+- closed 去重样本：11
+- 距离 30 个 closed 还差：19
+- intake 决策：`collect_new_trade_dates`
+
+这说明本地能补的数据已经补完，当前瓶颈不是补历史价格，而是继续收集新交易日里的同类候选。两个 pending cycle 可以自然转入闭环；两个 non-executable gap 不应强行计入，因为 beta 成本约束已经失败。
+
 ## 下一步
 
 继续收集新交易日里的同类候选，而不是回头扩大历史搜索范围。
