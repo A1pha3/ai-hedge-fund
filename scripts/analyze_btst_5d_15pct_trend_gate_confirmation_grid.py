@@ -35,14 +35,12 @@ DEFAULT_OUTPUT_JSON = Path("data/reports/btst_5d_15pct_trend_gate_confirmation_g
 DEFAULT_OUTPUT_MD = Path("data/reports/btst_5d_15pct_trend_gate_confirmation_grid_latest.md")
 DEFAULT_BASE_GATE_ID = "catalyst_theme_close_strength_lt_0_90"
 DEFAULT_CONFIRMATION_SPECS: tuple[tuple[str, str, str, float], ...] = (
-    ("trend_continuation_ge_0_85", "trend_continuation", ">=", 0.85),
-    ("trend_continuation_ge_0_90", "trend_continuation", ">=", 0.90),
-    ("volume_expansion_quality_ge_0_35", "volume_expansion_quality", ">=", 0.35),
-    ("volume_expansion_quality_ge_0_45", "volume_expansion_quality", ">=", 0.45),
-    ("breakout_freshness_le_0_25", "breakout_freshness", "<=", 0.25),
-    ("breakout_freshness_le_0_35", "breakout_freshness", "<=", 0.35),
-    ("t0_tail_strength_ge_0_45", "t0_tail_strength", ">=", 0.45),
-    ("t0_tail_strength_ge_0_55", "t0_tail_strength", ">=", 0.55),
+    ("breakout_freshness_le_0_40", "breakout_freshness", "<=", 0.40),
+    ("breakout_freshness_le_0_43", "breakout_freshness", "<=", 0.43),
+    ("volume_expansion_quality_le_0_25", "volume_expansion_quality", "<=", 0.25),
+    ("volume_expansion_quality_le_0_28", "volume_expansion_quality", "<=", 0.28),
+    ("close_strength_le_0_89", "close_strength", "<=", 0.89),
+    ("close_strength_le_0_895", "close_strength", "<=", 0.895),
 )
 
 ConfirmationSpec = tuple[str, str, str, float]

@@ -164,3 +164,25 @@ def test_confirmation_grid_script_writes_outputs(tmp_path: Path) -> None:
     assert payload["grid_row_count"] >= 1
     assert payload["base_summary"]["closed_cycle_count"] == 1
     assert "Confirmation Grid Board" in output_md.read_text(encoding="utf-8")
+
+
+def test_confirmation_grid_default_catalog_matches_catalyst_trend_gate_distribution(monkeypatch) -> None:
+    rows = [
+        _row("AAA", "20260324", report_dir_name="report_a", hit=True, max_return=0.22, trend_continuation=0.0, volume_expansion_quality=0.25, breakout_freshness=0.40, close_strength=0.881),
+        _row("BBB", "20260402", report_dir_name="report_b", hit=True, max_return=0.18, trend_continuation=0.0, volume_expansion_quality=0.27, breakout_freshness=0.43, close_strength=0.889),
+        _row("CCC", "20260403", report_dir_name="report_c", hit=False, max_return=0.08, trend_continuation=0.0, volume_expansion_quality=0.31, breakout_freshness=0.47, close_strength=0.893),
+    ]
+    for row in rows:
+        row["t0_tail_strength"] = None
+    monkeypatch.setattr(confirmation_script, "_collect_rows", lambda *args, **kwargs: rows)
+
+    board = confirmation_script.analyze_btst_5d_15pct_trend_gate_confirmation_grid(
+        "unused",
+        top_fraction=1.0,
+        min_closed_cycle_count=3,
+    )
+
+    assert board["best_confirmation_candidate"]["confirmation_id"] == "breakout_freshness_le_0_43"
+    assert board["best_confirmation_candidate"]["candidate_unique_closed"] == 2
+    assert board["best_confirmation_candidate"]["candidate_unique_hit_rate_15pct"] == 1.0
+    assert board["grid_decision"]["next_step"] == "keep_confirmation_candidate_collect_samples"
