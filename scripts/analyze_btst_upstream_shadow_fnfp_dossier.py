@@ -13,6 +13,11 @@ REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_upstream_shadow_fnfp_dossier_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_upstream_shadow_fnfp_dossier_latest.md"
 UPSTREAM_SHADOW_SOURCE = "upstream_liquidity_corridor_shadow"
+BLOCKER_SEVERITY_WEIGHTS = {
+    "trend_not_constructive": 3,
+    "weak_close_confirmation": 2,
+    "late_extension": 1,
+}
 
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
@@ -71,6 +76,15 @@ def _build_blocker_clusters(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"blocker": blocker, "count": count} for blocker, count in counts.most_common()]
 
 
+def _build_repeat_ticker_counts(rows: list[dict[str, Any]]) -> Counter[str]:
+    return Counter(str(row.get("ticker") or "") for row in rows if str(row.get("ticker") or "").strip())
+
+
+def _blocker_severity_score(row: dict[str, Any]) -> int:
+    blockers = [str(blocker) for blocker in list(row.get("blockers") or []) if str(blocker or "").strip()]
+    return sum(BLOCKER_SEVERITY_WEIGHTS.get(blocker, 1) for blocker in blockers)
+
+
 def _build_upstream_shadow_row(row: dict[str, Any], price_cache: dict[tuple[str, str], Any]) -> dict[str, Any]:
     short_trade = dict(row.get("short_trade") or {})
     metrics_payload = dict(short_trade.get("metrics_payload") or {})
@@ -125,10 +139,12 @@ def analyze_btst_upstream_shadow_fnfp_dossier(reports_root: str | Path) -> dict[
             cohort_rows.append(_build_upstream_shadow_row(dict(row), price_cache))
 
     cohort_rows = _deduplicate_rows(cohort_rows)
+    repeat_ticker_counts = _build_repeat_ticker_counts(cohort_rows)
     false_negative_rows = [row for row in cohort_rows if _classify_upstream_shadow_row(row) == "false_negative"]
     false_positive_rows = [row for row in cohort_rows if _classify_upstream_shadow_row(row) == "false_positive"]
     false_negative_rows.sort(
         key=lambda row: (
+            repeat_ticker_counts.get(str(row.get("ticker") or ""), 0),
             _safe_float(row.get("t_plus_2_close_return"), -999.0),
             -abs(_safe_float(row.get("gap_to_select"), 999.0) or 999.0),
             _safe_float(row.get("historical_next_close_positive_rate"), -999.0),
@@ -138,6 +154,7 @@ def analyze_btst_upstream_shadow_fnfp_dossier(reports_root: str | Path) -> dict[
     )
     false_positive_rows.sort(
         key=lambda row: (
+            _blocker_severity_score(row),
             1 if str(row.get("decision") or "") == "selected" else 0,
             -(_safe_float(row.get("t_plus_2_close_return"), 999.0) or 999.0),
             1 if str(row.get("historical_execution_quality_label") or "") == "balanced_confirmation" else 0,
