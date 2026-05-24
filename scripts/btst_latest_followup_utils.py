@@ -212,6 +212,18 @@ def load_btst_followup_by_ticker_for_report(report_dir: str | Path) -> dict[str,
     return _merge_ticker_rows(brief_json)
 
 
+def load_upstream_shadow_followup_rows_for_report(report_dir: str | Path) -> list[dict[str, Any]]:
+    candidate = _extract_btst_candidate(Path(report_dir).expanduser().resolve())
+    if not candidate:
+        return []
+    summary = build_upstream_shadow_followup_summary(
+        dict(candidate.get("brief_json") or {}),
+        report_dir=str(candidate.get("report_dir") or ""),
+        trade_date=str(candidate.get("trade_date") or ""),
+    )
+    return [dict(row) for row in list(summary.get("rows") or [])]
+
+
 def select_latest_btst_followup_candidate(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     candidates = [candidate for candidate in (_extract_btst_candidate(path) for path in _discover_report_dirs(resolved_reports_root)) if candidate]
