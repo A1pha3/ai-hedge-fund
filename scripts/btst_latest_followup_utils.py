@@ -822,3 +822,15 @@ def load_upstream_shadow_followup_history_by_ticker(reports_root: str | Path) ->
         ticker: [row for _rank, row in sorted(items, key=lambda item: item[0], reverse=True)]
         for ticker, items in grouped.items()
     }
+
+def load_upstream_shadow_followup_rows_for_report(report_dir: str | Path) -> list[dict[str, Any]]:
+    candidate = _extract_btst_candidate(Path(report_dir).expanduser().resolve())
+    if not candidate:
+        return []
+    summary = build_upstream_shadow_followup_summary(
+        dict(candidate.get("brief_json") or {}),
+        report_dir=str(candidate.get("report_dir") or ""),
+        trade_date=str(candidate.get("trade_date") or ""),
+    )
+    return [dict(row) for row in list(summary.get("rows") or [])]
+
