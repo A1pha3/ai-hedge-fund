@@ -166,10 +166,15 @@ def _classify_upstream_shadow_row(row: dict[str, Any]) -> str | None:
     next_close_return = _safe_float(row.get("next_close_return"))
     t_plus_2_close_return = _safe_float(row.get("t_plus_2_close_return"))
     quality_label = str(row.get("historical_execution_quality_label") or "unknown")
+    has_clearly_positive_follow_through = (t_plus_2_close_return is not None and t_plus_2_close_return >= 0.05) or (next_close_return is not None and next_close_return >= 0.03)
+    has_weak_or_poor_follow_through = (next_close_return is None or next_close_return < 0.03) and (t_plus_2_close_return is None or t_plus_2_close_return < 0.05)
 
-    if decision != "selected" and ((t_plus_2_close_return is not None and t_plus_2_close_return >= 0.05) or (next_close_return is not None and next_close_return >= 0.03)):
+    if decision != "selected" and has_clearly_positive_follow_through:
         return "false_negative"
-    if decision in {"selected", "near_miss"} and (((next_close_return is not None and next_close_return <= 0.0) and (t_plus_2_close_return is None or t_plus_2_close_return <= 0.0)) or quality_label == "balanced_confirmation"):
+    if decision in {"selected", "near_miss"} and (
+        ((next_close_return is not None and next_close_return <= 0.0) and (t_plus_2_close_return is None or t_plus_2_close_return <= 0.0))
+        or (quality_label == "balanced_confirmation" and has_weak_or_poor_follow_through and not has_clearly_positive_follow_through)
+    ):
         return "false_positive"
     return None
 

@@ -3,9 +3,38 @@ from __future__ import annotations
 import json
 
 from scripts.analyze_btst_upstream_shadow_fnfp_dossier import (
+    _classify_upstream_shadow_row,
     analyze_btst_upstream_shadow_fnfp_dossier,
     render_btst_upstream_shadow_fnfp_dossier_markdown,
 )
+
+
+def test_classify_upstream_shadow_row_does_not_flag_balanced_confirmation_with_strong_positive_returns():
+    assert (
+        _classify_upstream_shadow_row(
+            {
+                "decision": "selected",
+                "historical_execution_quality_label": "balanced_confirmation",
+                "next_close_return": 0.034,
+                "t_plus_2_close_return": 0.061,
+            }
+        )
+        is None
+    )
+
+
+def test_classify_upstream_shadow_row_flags_balanced_confirmation_when_follow_through_stays_weak():
+    assert (
+        _classify_upstream_shadow_row(
+            {
+                "decision": "near_miss",
+                "historical_execution_quality_label": "balanced_confirmation",
+                "next_close_return": 0.012,
+                "t_plus_2_close_return": 0.021,
+            }
+        )
+        == "false_positive"
+    )
 
 
 def test_analyze_btst_upstream_shadow_fnfp_dossier_splits_false_negative_and_false_positive(monkeypatch, tmp_path):
