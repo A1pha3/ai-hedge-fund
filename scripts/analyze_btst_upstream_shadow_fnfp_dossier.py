@@ -26,114 +26,49 @@ def _is_upstream_shadow_row(row: dict[str, Any]) -> bool:
     return str(row.get("candidate_source") or "") == UPSTREAM_SHADOW_SOURCE
 
 
-def _trend_acceleration_band(value: Any) -> str:
-    metric = _safe_float(value)
-    if metric is None:
-        return "unknown"
-    if metric >= 0.8:
-        return "gte_0_80"
-    if metric >= 0.6:
-        return "gte_0_60_lt_0_80"
-    return "lt_0_60"
-
-
-def _close_strength_band(value: Any) -> str:
-    metric = _safe_float(value)
-    if metric is None:
-        return "unknown"
-    if metric >= 0.85:
-        return "gte_0_85"
-    if metric >= 0.6:
-        return "gte_0_60_lt_0_85"
-    return "lt_0_60"
-
-
-def _build_band_split(rows: list[dict[str, Any]], metric_key: str, band_fn: Any) -> dict[str, dict[str, Any]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
+def _deduplicate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduplicated: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
-        band = band_fn(row.get(metric_key))
-        grouped.setdefault(band, []).append(row)
-    return {
-        band: {
-            "count": len(group_rows),
-            "tickers": sorted({str(group_row.get("ticker") or "") for group_row in group_rows if str(group_row.get("ticker") or "")}),
-        }
-        for band, group_rows in sorted(grouped.items())
-    }
+        key = (str(row.get("trade_date") or ""), str(row.get("ticker") or ""))
+        current = deduplicated.get(key)
+        if current is None:
+            deduplicated[key] = row
+            continue
+        rank = (
+            1 if str(row.get("decision") or "") == "selected" else 0,
+            1 if str(row.get("decision") or "") == "near_miss" else 0,
+            float(row.get("score_target") or 0.0),
+        )
+        current_rank = (
+            1 if str(current.get("decision") or "") == "selected" else 0,
+            1 if str(current.get("decision") or "") == "near_miss" else 0,
+            float(current.get("score_target") or 0.0),
+        )
+        if rank > current_rank:
+            deduplicated[key] = row
+    return list(deduplicated.values())
+
+
+def _band_label(value: Any, *, threshold: float) -> str:
+    numeric_value = _safe_float(value)
+    if numeric_value is None:
+        return "unknown"
+    return f"gte_{threshold:0.2f}".replace(".", "_") if numeric_value >= threshold else f"lt_{threshold:0.2f}".replace(".", "_")
+
+
+def _summarize_band(rows: list[dict[str, Any]], field_name: str, *, threshold: float) -> dict[str, dict[str, int]]:
+    counts = Counter(_band_label(row.get(field_name), threshold=threshold) for row in rows)
+    return {label: {"count": count} for label, count in sorted(counts.items())}
 
 
 def _build_repeat_ticker_board(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    ticker_groups: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        ticker = str(row.get("ticker") or "")
-        if not ticker:
-            continue
-        ticker_groups.setdefault(ticker, []).append(row)
-
-    repeat_rows: list[dict[str, Any]] = []
-    for ticker, group_rows in ticker_groups.items():
-        if len(group_rows) < 2:
-            continue
-        repeat_rows.append(
-            {
-                "ticker": ticker,
-                "count": len(group_rows),
-                "false_negative_count": sum(1 for row in group_rows if _classify_upstream_shadow_row(row) == "false_negative"),
-                "false_positive_count": sum(1 for row in group_rows if _classify_upstream_shadow_row(row) == "false_positive"),
-            }
-        )
-    repeat_rows.sort(key=lambda row: (int(row.get("count") or 0), int(row.get("false_negative_count") or 0), str(row.get("ticker") or "")), reverse=True)
-    return repeat_rows
+    counts = Counter(str(row.get("ticker") or "") for row in rows if str(row.get("ticker") or "").strip())
+    return [{"ticker": ticker, "count": count} for ticker, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
 
 
 def _build_blocker_clusters(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    blocker_groups: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        for blocker in list(row.get("blockers") or []):
-            blocker_name = str(blocker or "").strip()
-            if not blocker_name:
-                continue
-            blocker_groups.setdefault(blocker_name, []).append(row)
-
-    blocker_rows: list[dict[str, Any]] = []
-    for blocker, group_rows in blocker_groups.items():
-        blocker_rows.append(
-            {
-                "blocker": blocker,
-                "count": len(group_rows),
-                "false_negative_count": sum(1 for row in group_rows if _classify_upstream_shadow_row(row) == "false_negative"),
-                "false_positive_count": sum(1 for row in group_rows if _classify_upstream_shadow_row(row) == "false_positive"),
-            }
-        )
-    blocker_rows.sort(key=lambda row: (-int(row.get("count") or 0), str(row.get("blocker") or "")))
-    return blocker_rows
-
-
-def _rank_false_negative_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(
-        rows,
-        key=lambda row: (
-            _safe_float(row.get("t_plus_2_close_return"), -999.0),
-            _safe_float(row.get("next_close_return"), -999.0),
-            _safe_float(row.get("score_target"), -999.0),
-            str(row.get("trade_date") or ""),
-            str(row.get("ticker") or ""),
-        ),
-        reverse=True,
-    )
-
-
-def _rank_false_positive_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(
-        rows,
-        key=lambda row: (
-            _safe_float(row.get("t_plus_2_close_return"), 999.0),
-            _safe_float(row.get("next_close_return"), 999.0),
-            -(_safe_float(row.get("score_target"), 0.0) or 0.0),
-            str(row.get("trade_date") or ""),
-            str(row.get("ticker") or ""),
-        ),
-    )
+    counts = Counter(blocker for row in rows for blocker in list(row.get("blockers") or []))
+    return [{"blocker": blocker, "count": count} for blocker, count in counts.most_common()]
 
 
 def _build_upstream_shadow_row(row: dict[str, Any], price_cache: dict[tuple[str, str], Any]) -> dict[str, Any]:
@@ -189,9 +124,38 @@ def analyze_btst_upstream_shadow_fnfp_dossier(reports_root: str | Path) -> dict[
                 continue
             cohort_rows.append(_build_upstream_shadow_row(dict(row), price_cache))
 
-    false_negative_rows = _rank_false_negative_rows([row for row in cohort_rows if _classify_upstream_shadow_row(row) == "false_negative"])
-    false_positive_rows = _rank_false_positive_rows([row for row in cohort_rows if _classify_upstream_shadow_row(row) == "false_positive"])
+    cohort_rows = _deduplicate_rows(cohort_rows)
+    false_negative_rows = [row for row in cohort_rows if _classify_upstream_shadow_row(row) == "false_negative"]
+    false_positive_rows = [row for row in cohort_rows if _classify_upstream_shadow_row(row) == "false_positive"]
+    false_negative_rows.sort(
+        key=lambda row: (
+            _safe_float(row.get("t_plus_2_close_return"), -999.0),
+            -abs(_safe_float(row.get("gap_to_select"), 999.0) or 999.0),
+            _safe_float(row.get("historical_next_close_positive_rate"), -999.0),
+            str(row.get("ticker") or ""),
+        ),
+        reverse=True,
+    )
+    false_positive_rows.sort(
+        key=lambda row: (
+            1 if str(row.get("decision") or "") == "selected" else 0,
+            -(_safe_float(row.get("t_plus_2_close_return"), 999.0) or 999.0),
+            1 if str(row.get("historical_execution_quality_label") or "") == "balanced_confirmation" else 0,
+            str(row.get("ticker") or ""),
+        ),
+        reverse=True,
+    )
     quality_label_split = dict(Counter(str(row.get("historical_execution_quality_label") or "unknown") for row in cohort_rows))
+    trend_acceleration_band_split = _summarize_band(cohort_rows, "trend_acceleration", threshold=0.80)
+    close_strength_band_split = _summarize_band(cohort_rows, "close_strength", threshold=0.85)
+    repeat_ticker_board = _build_repeat_ticker_board(cohort_rows)
+    blocker_clusters = _build_blocker_clusters(cohort_rows)
+
+    recommendation = "Collect more upstream-shadow outcome history before ranking FN/FP rows."
+    if false_negative_rows:
+        recommendation = "Prioritize close_continuation upstream-shadow rows that narrowly missed selection."
+    elif false_positive_rows:
+        recommendation = "Review balanced_confirmation upstream-shadow rows that still reached selected or near_miss."
 
     return {
         "reports_root": str(resolved_reports_root),
@@ -200,13 +164,13 @@ def analyze_btst_upstream_shadow_fnfp_dossier(reports_root: str | Path) -> dict[
         "false_positive_count": len(false_positive_rows),
         "candidate_source_counts": dict(Counter(str(row.get("candidate_source") or "unknown") for row in cohort_rows)),
         "quality_label_split": quality_label_split,
-        "trend_acceleration_band_split": _build_band_split(cohort_rows, "trend_acceleration", _trend_acceleration_band),
-        "close_strength_band_split": _build_band_split(cohort_rows, "close_strength", _close_strength_band),
-        "repeat_ticker_board": _build_repeat_ticker_board(cohort_rows),
-        "blocker_clusters": _build_blocker_clusters(cohort_rows),
+        "trend_acceleration_band_split": trend_acceleration_band_split,
+        "close_strength_band_split": close_strength_band_split,
+        "repeat_ticker_board": repeat_ticker_board,
+        "blocker_clusters": blocker_clusters,
         "false_negative_rows": false_negative_rows,
         "false_positive_rows": false_positive_rows,
-        "recommendation": "Prioritize close_continuation upstream-shadow rows that narrowly missed selection." if false_negative_rows else "No upstream-shadow false negatives qualified yet.",
+        "recommendation": recommendation,
     }
 
 
