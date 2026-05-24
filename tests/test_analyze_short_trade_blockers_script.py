@@ -296,6 +296,41 @@ def test_collect_short_trade_rows_preserves_upstream_shadow_observation_entries(
     assert rows[0]["short_trade"]["decision"] == "observation"
 
 
+def test_analyze_short_trade_blockers_streams_rows_without_collecting_all(monkeypatch, tmp_path):
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    (report_dir / "selection_artifacts").mkdir()
+
+    monkeypatch.setattr(blockers_module, "collect_short_trade_rows", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("analyze_short_trade_blockers should stream rows directly")))
+    monkeypatch.setattr(blockers_module, "_load_historical_prior_by_ticker", lambda report_path: {})
+
+    def iter_rows(*args, **kwargs):
+        yield {
+            "trade_date": "2026-03-30",
+            "ticker": "301188",
+            "candidate_source": "upstream_liquidity_corridor_shadow",
+            "candidate_reason_codes": ["upstream_base_liquidity_uplift_shadow"],
+            "delta_classification": None,
+            "short_trade": {
+                "decision": "observation",
+                "score_target": 0.18,
+                "blockers": ["trend_not_constructive"],
+                "negative_tags": [],
+                "top_reasons": ["candidate_score=0.18", "filter_reason=structural_prefilter_fail"],
+                "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                "metrics_payload": {"candidate_score": 0.18},
+            },
+            "available_strategy_signals": ["trend"],
+        }
+
+    monkeypatch.setattr(blockers_module, "_iter_short_trade_rows", iter_rows)
+
+    analysis = analyze_short_trade_blockers(report_dir)
+
+    assert analysis["short_trade_target_count"] == 1
+    assert analysis["failure_mechanism_counts"] == {"blocked_trend_not_constructive": 1}
+
+
 def test_analyze_short_trade_blockers_recomputes_missing_observation_blockers(tmp_path):
     report_dir = tmp_path / "report"
     selection_root = report_dir / "selection_artifacts" / "2026-03-30"
