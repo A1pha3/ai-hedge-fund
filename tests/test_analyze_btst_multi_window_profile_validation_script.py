@@ -256,6 +256,68 @@ def test_analyze_btst_multi_window_profile_validation_flags_execution_eligible_r
     assert "execution_eligible_surface" in attribution["activation_change_labels"]
 
 
+def test_analyze_btst_multi_window_profile_validation_surfaces_upstream_shadow_runtime_activation_delta(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_window_a"
+    (report_dir / "selection_artifacts" / "2026-03-24").mkdir(parents=True)
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(multi_window_validation, "discover_report_dirs", lambda *_args, **_kwargs: [report_dir])
+
+    def _fake_replay_window(input_path, *, profile_name, label, next_high_hit_threshold, select_threshold=None, near_miss_threshold=None, profile_overrides=None):
+        _ = (input_path, label, next_high_hit_threshold, select_threshold, near_miss_threshold, profile_overrides)
+        is_baseline = not profile_overrides
+        return {
+            "label": label,
+            "profile_name": profile_name,
+            "profile_config": {"name": profile_name, "select_threshold": 0.4, "near_miss_threshold": 0.34},
+            "profile_overrides": {} if is_baseline else {"liquidity_shadow_source_specific_rank_cap_require_relief_applied": False},
+            "surface_summaries": {
+                "tradeable": {
+                    "total_count": 3 if is_baseline else 6,
+                    "closed_cycle_count": 3 if is_baseline else 6,
+                    "next_high_hit_rate_at_threshold": 0.50,
+                    "next_close_positive_rate": 0.50,
+                    "t_plus_2_close_positive_rate": 0.50,
+                    "next_high_return_distribution": {"mean": 0.04},
+                    "next_close_return_distribution": {"mean": 0.01, "median": 0.01, "p10": -0.02},
+                    "t_plus_2_close_return_distribution": {"mean": 0.02, "median": 0.02, "p10": -0.01},
+                },
+                "selected": {"total_count": 1 if is_baseline else 3},
+                "near_miss": {"total_count": 2 if is_baseline else 3},
+                "execution_eligible": {"total_count": 1 if is_baseline else 2},
+            },
+            "false_negative_proxy_summary": {"count": 0, "surface_metrics": {}},
+            "frontier_source_family_summaries": {
+                "upstream_liquidity_corridor_shadow": {
+                    "tradeable": {"total_count": 1 if is_baseline else 4},
+                    "selected": {"total_count": 0 if is_baseline else 2},
+                    "near_miss": {"total_count": 1 if is_baseline else 2},
+                    "execution_eligible": {"total_count": 0 if is_baseline else 1},
+                }
+            },
+        }
+
+    monkeypatch.setattr(multi_window_validation, "analyze_btst_profile_replay_window", _fake_replay_window)
+
+    analysis = multi_window_validation.analyze_btst_multi_window_profile_validation(
+        reports_root,
+        baseline_profile="btst_precision_v2_liquidity_shadow_release_probe",
+        variant_profile="btst_precision_v2_liquidity_shadow_release_probe",
+        variant_profile_overrides={"liquidity_shadow_source_specific_rank_cap_require_relief_applied": False},
+        next_high_hit_threshold=0.15,
+    )
+
+    row = analysis["rows"][0]
+    upstream_delta = row["upstream_shadow_runtime_activation_attribution"]
+    assert upstream_delta["selected_count_delta"] == 2
+    assert upstream_delta["near_miss_count_delta"] == 1
+    assert upstream_delta["tradeable_count_delta"] == 3
+    assert upstream_delta["execution_eligible_count_delta"] == 1
+    assert row["baseline_upstream_shadow_tradeable"]["total_count"] == 1
+    assert row["variant_upstream_shadow_tradeable"]["total_count"] == 4
+
+
 def test_analyze_btst_multi_window_profile_validation_identifies_watchlist_shrink_without_boundary_overlap(tmp_path: Path, monkeypatch) -> None:
     reports_root = tmp_path / "reports"
     report_dir = reports_root / "paper_trading_window_a"

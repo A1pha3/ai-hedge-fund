@@ -9,6 +9,7 @@ def test_summarize_rows_by_frontier_source_family_groups_tradeable_rows() -> Non
             "decision": "selected",
             "candidate_source": "upstream_liquidity_corridor_shadow",
             "frontier_expansion_source_family": "upstream_liquidity_corridor_shadow",
+            "execution_eligible": True,
             "next_close_return": 0.03,
             "next_high_return": 0.05,
             "cycle_status": "closed",
@@ -37,6 +38,7 @@ def test_summarize_rows_by_frontier_source_family_groups_tradeable_rows() -> Non
 
     assert summary["upstream_liquidity_corridor_shadow"]["tradeable"]["total_count"] == 1
     assert summary["upstream_liquidity_corridor_shadow"]["selected"]["total_count"] == 1
+    assert summary["upstream_liquidity_corridor_shadow"]["execution_eligible"]["total_count"] == 1
     assert summary["post_gate_liquidity_competition_shadow"]["tradeable"]["total_count"] == 1
     assert summary["post_gate_liquidity_competition_shadow"]["near_miss"]["total_count"] == 1
     assert "watchlist_filter_diagnostics" not in summary
