@@ -2309,6 +2309,8 @@ def test_run_paper_trading_session_applies_p2_regime_gate_enforcement_during_fro
         "mode": "enforce",
         "buy_orders_cleared": True,
         "buy_orders_cleared_count": 1,
+        "shadow_promotion_count": 0,
+        "shadow_promotion_tickers": [],
     }
 
 
@@ -2363,6 +2365,8 @@ def test_run_paper_trading_session_defaults_p2_regime_gate_enforcement_for_short
         "mode": "enforce",
         "buy_orders_cleared": True,
         "buy_orders_cleared_count": 1,
+        "shadow_promotion_count": 0,
+        "shadow_promotion_tickers": [],
     }
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
