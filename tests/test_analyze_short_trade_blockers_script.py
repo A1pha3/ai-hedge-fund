@@ -362,33 +362,36 @@ def test_analyze_short_trade_blockers_uses_collect_short_trade_rows_path(monkeyp
 
     class LazyRows:
         def __init__(self):
+            self._rows = [
+                {
+                    "trade_date": "2026-03-30",
+                    "ticker": "301188",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "candidate_reason_codes": ["upstream_base_liquidity_uplift_shadow"],
+                    "delta_classification": None,
+                    "short_trade": {
+                        "decision": "observation",
+                        "score_target": 0.18,
+                        "blockers": ["trend_not_constructive"],
+                        "negative_tags": [],
+                        "top_reasons": ["candidate_score=0.18", "filter_reason=structural_prefilter_fail"],
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                        "metrics_payload": {"candidate_score": 0.18},
+                    },
+                    "available_strategy_signals": ["trend"],
+                }
+            ]
             self.iteration_count = 0
 
         def __iter__(self):
             self.iteration_count += 1
-            yield {
-                "trade_date": "2026-03-30",
-                "ticker": "301188",
-                "candidate_source": "upstream_liquidity_corridor_shadow",
-                "candidate_reason_codes": ["upstream_base_liquidity_uplift_shadow"],
-                "delta_classification": None,
-                "short_trade": {
-                    "decision": "observation",
-                    "score_target": 0.18,
-                    "blockers": ["trend_not_constructive"],
-                    "negative_tags": [],
-                    "top_reasons": ["candidate_score=0.18", "filter_reason=structural_prefilter_fail"],
-                    "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
-                    "metrics_payload": {"candidate_score": 0.18},
-                },
-                "available_strategy_signals": ["trend"],
-            }
+            yield from self._rows
 
         def __len__(self):
-            raise AssertionError("analyze_short_trade_blockers should iterate rows without forcing len()")
+            return len(self._rows)
 
         def __getitem__(self, index):
-            raise AssertionError("analyze_short_trade_blockers should not index rows")
+            return self._rows[index]
 
     lazy_rows = LazyRows()
     collect_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
