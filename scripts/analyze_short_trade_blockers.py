@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Iterator, Sequence
 from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean
@@ -220,20 +221,58 @@ def _iter_short_trade_rows(selection_root: Path, *, trade_dates: set[str] | None
                 yield normalized
 
 
-def collect_short_trade_rows(report_dir: str | Path, *, trade_dates: set[str] | None = None) -> list[dict[str, Any]]:
+class _LazyShortTradeRows(Sequence[dict[str, Any]]):
+    def __init__(self, row_iterator: Iterator[dict[str, Any]]):
+        self._row_iterator = row_iterator
+        self._cache: list[dict[str, Any]] = []
+        self._exhausted = False
+
+    def _consume_next(self) -> bool:
+        if self._exhausted:
+            return False
+        try:
+            self._cache.append(next(self._row_iterator))
+            return True
+        except StopIteration:
+            self._exhausted = True
+            return False
+
+    def _consume_through(self, index: int) -> None:
+        while len(self._cache) <= index and self._consume_next():
+            pass
+
+    def _consume_all(self) -> None:
+        if self._exhausted:
+            return
+        self._cache.extend(self._row_iterator)
+        self._exhausted = True
+
+    def __iter__(self):
+        yield from self._cache
+        while self._consume_next():
+            yield self._cache[-1]
+
+    def __getitem__(self, index: int | slice) -> dict[str, Any] | list[dict[str, Any]]:
+        if isinstance(index, slice):
+            self._consume_all()
+            return self._cache[index]
+        if index < 0:
+            self._consume_all()
+            return self._cache[index]
+        self._consume_through(index)
+        return self._cache[index]
+
+    def __len__(self) -> int:
+        self._consume_all()
+        return len(self._cache)
+
+
+def collect_short_trade_rows(report_dir: str | Path, *, trade_dates: set[str] | None = None) -> Sequence[dict[str, Any]]:
     resolved_report_dir = Path(report_dir).expanduser().resolve()
     selection_root = resolved_report_dir / "selection_artifacts"
     if not selection_root.exists():
-        return []
-    return list(_iter_short_trade_rows(selection_root, trade_dates=trade_dates))
-
-
-def iter_short_trade_rows(report_dir: str | Path, *, trade_dates: set[str] | None = None):
-    resolved_report_dir = Path(report_dir).expanduser().resolve()
-    selection_root = resolved_report_dir / "selection_artifacts"
-    if not selection_root.exists():
-        return iter(())
-    return _iter_short_trade_rows(selection_root, trade_dates=trade_dates)
+        return _LazyShortTradeRows(iter(()))
+    return _LazyShortTradeRows(_iter_short_trade_rows(selection_root, trade_dates=trade_dates))
 
 
 def _classify_failure_mechanism(*, decision: str, candidate_source: str, blockers: list[str], gate_status: dict[str, Any]) -> str:
@@ -487,7 +526,7 @@ def analyze_short_trade_blockers(report_dir: str | Path, *, trade_dates: set[str
 
     day_counters: dict[str, Counter[str]] = defaultdict(Counter)
 
-    short_trade_rows = iter_short_trade_rows(report_path, trade_dates=active_trade_dates)
+    short_trade_rows = collect_short_trade_rows(report_path, trade_dates=active_trade_dates)
 
     for row in short_trade_rows:
         trade_date = str(row.get("trade_date") or "")

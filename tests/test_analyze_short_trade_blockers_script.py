@@ -296,15 +296,16 @@ def test_collect_short_trade_rows_preserves_upstream_shadow_observation_entries(
     assert rows[0]["short_trade"]["decision"] == "observation"
 
 
-def test_analyze_short_trade_blockers_streams_rows_without_collecting_all(monkeypatch, tmp_path):
+def test_collect_short_trade_rows_is_lazy_cacheable_sequence(monkeypatch, tmp_path):
     report_dir = tmp_path / "report"
     report_dir.mkdir()
     (report_dir / "selection_artifacts").mkdir()
 
-    monkeypatch.setattr(blockers_module, "collect_short_trade_rows", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("analyze_short_trade_blockers should stream rows directly")))
     monkeypatch.setattr(blockers_module, "_load_historical_prior_by_ticker", lambda report_path: {})
+    yielded_tickers: list[str] = []
 
     def iter_rows(*args, **kwargs):
+        yielded_tickers.append("301188")
         yield {
             "trade_date": "2026-03-30",
             "ticker": "301188",
@@ -322,11 +323,86 @@ def test_analyze_short_trade_blockers_streams_rows_without_collecting_all(monkey
             },
             "available_strategy_signals": ["trend"],
         }
+        yielded_tickers.append("301189")
+        yield {
+            "trade_date": "2026-03-31",
+            "ticker": "301189",
+            "candidate_source": "post_gate_liquidity_competition_shadow",
+            "candidate_reason_codes": ["post_gate_liquidity_competition_shadow"],
+            "delta_classification": None,
+            "short_trade": {
+                "decision": "blocked",
+                "score_target": 0.21,
+                "blockers": ["trend_not_constructive"],
+                "negative_tags": [],
+                "top_reasons": ["candidate_score=0.21", "filter_reason=structural_prefilter_fail"],
+                "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                "metrics_payload": {"candidate_score": 0.21},
+            },
+            "available_strategy_signals": ["trend"],
+        }
 
     monkeypatch.setattr(blockers_module, "_iter_short_trade_rows", iter_rows)
 
+    rows = collect_short_trade_rows(report_dir)
+
+    assert yielded_tickers == []
+    assert rows[0]["ticker"] == "301188"
+    assert yielded_tickers == ["301188"]
+    assert rows[0]["ticker"] == "301188"
+    assert yielded_tickers == ["301188"]
+    assert len(rows) == 2
+    assert yielded_tickers == ["301188", "301189"]
+    assert rows[1]["ticker"] == "301189"
+
+
+def test_analyze_short_trade_blockers_uses_collect_short_trade_rows_path(monkeypatch, tmp_path):
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+
+    class LazyRows:
+        def __init__(self):
+            self.iteration_count = 0
+
+        def __iter__(self):
+            self.iteration_count += 1
+            yield {
+                "trade_date": "2026-03-30",
+                "ticker": "301188",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "candidate_reason_codes": ["upstream_base_liquidity_uplift_shadow"],
+                "delta_classification": None,
+                "short_trade": {
+                    "decision": "observation",
+                    "score_target": 0.18,
+                    "blockers": ["trend_not_constructive"],
+                    "negative_tags": [],
+                    "top_reasons": ["candidate_score=0.18", "filter_reason=structural_prefilter_fail"],
+                    "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                    "metrics_payload": {"candidate_score": 0.18},
+                },
+                "available_strategy_signals": ["trend"],
+            }
+
+        def __len__(self):
+            raise AssertionError("analyze_short_trade_blockers should iterate rows without forcing len()")
+
+        def __getitem__(self, index):
+            raise AssertionError("analyze_short_trade_blockers should not index rows")
+
+    lazy_rows = LazyRows()
+    collect_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def collect_rows(*args, **kwargs):
+        collect_calls.append((args, kwargs))
+        return lazy_rows
+
+    monkeypatch.setattr(blockers_module, "collect_short_trade_rows", collect_rows)
+
     analysis = analyze_short_trade_blockers(report_dir)
 
+    assert collect_calls
+    assert lazy_rows.iteration_count == 1
     assert analysis["short_trade_target_count"] == 1
     assert analysis["failure_mechanism_counts"] == {"blocked_trend_not_constructive": 1}
 
