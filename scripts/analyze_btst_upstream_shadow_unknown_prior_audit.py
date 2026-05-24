@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -113,26 +114,29 @@ def _build_prior_trace(
 
 def _build_ticker_timeline_board(ticker_timeline: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
     board: list[dict[str, Any]] = []
-    for ticker in sorted(ticker_timeline):
-        rows = list(ticker_timeline[ticker])
+    for ticker, rows in ticker_timeline.items():
+        ordered_rows = sorted(rows, key=lambda row: str(row.get("trade_date") or ""))
         board.append(
             {
                 "ticker": ticker,
-                "occurrences": len(rows),
-                "trace_statuses": [str(row.get("prior_trace", {}).get("trace_status") or "") for row in rows],
-                "trade_dates": [str(row.get("trade_date") or "") for row in rows],
+                "occurrences": len(ordered_rows),
+                "trace_statuses": [str(row["prior_trace"]["trace_status"]) for row in ordered_rows],
+                "trade_dates": [str(row.get("trade_date") or "") for row in ordered_rows],
             }
         )
-    return board
+    return sorted(board, key=lambda row: (-int(row["occurrences"]), str(row["ticker"])))
 
 
 def _build_recommendation(trace_status_split: Counter[str]) -> str:
-    attachment_gap_statuses = {"missing_upstream_prior", "latest_prior_missing", "resolve_dropped_stronger_prior"}
-    if any(int(trace_status_split.get(status) or 0) > 0 for status in attachment_gap_statuses):
+    if (
+        int(trace_status_split.get("missing_upstream_prior") or 0) > 0
+        or int(trace_status_split.get("latest_prior_missing") or 0) > 0
+        or int(trace_status_split.get("resolve_dropped_stronger_prior") or 0) > 0
+    ):
         return "Prioritize attachment repair before any label-generation audit."
     if int(trace_status_split.get("resolved_but_low_sample") or 0) > 0:
-        return "Prioritize sample-quality follow-up before any label-generation audit."
-    return "No immediate attachment gap found; inspect label-generation only after validating trace coverage."
+        return "Prioritize weak-prior fallback analysis before any new rollout change."
+    return "Collect more upstream-shadow prior evidence before changing runtime rules."
 
 
 def analyze_btst_upstream_shadow_unknown_prior_audit(reports_root: str | Path) -> dict[str, Any]:
@@ -212,3 +216,56 @@ def analyze_btst_upstream_shadow_unknown_prior_audit(reports_root: str | Path) -
         "ticker_timeline_board": _build_ticker_timeline_board(ticker_timeline),
         "recommendation": _build_recommendation(trace_status_split),
     }
+
+
+def render_btst_upstream_shadow_unknown_prior_audit_markdown(analysis: dict[str, Any]) -> str:
+    lines = [
+        "# Upstream Shadow Unknown Prior Coverage Audit",
+        "",
+        "## Coverage Summary",
+        f"- rows_audited: {analysis['coverage_summary']['rows_audited']}",
+        f"- rows_skipped_for_missing_report_inputs: {analysis['coverage_summary']['rows_skipped_for_missing_report_inputs']}",
+        f"- rows_with_partial_trace: {analysis['coverage_summary']['rows_with_partial_trace']}",
+        "",
+        "## Trace Status Split",
+    ]
+    for status, count in sorted(dict(analysis.get("trace_status_split") or {}).items()):
+        lines.append(f"- {status}: {count}")
+    lines.extend(["", "## Attachment Gap Rows"])
+    for row in list(analysis.get("attachment_gap_rows") or []):
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}")
+    if not list(analysis.get("attachment_gap_rows") or []):
+        lines.append("- none")
+    lines.extend(["", "## Low Sample Or Weak Prior Rows"])
+    for row in list(analysis.get("low_sample_or_weak_prior_rows") or []):
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}")
+    if not list(analysis.get("low_sample_or_weak_prior_rows") or []):
+        lines.append("- none")
+    lines.extend(["", "## Ticker Timeline Board"])
+    for row in list(analysis.get("ticker_timeline_board") or []):
+        lines.append(f"- {row}")
+    if not list(analysis.get("ticker_timeline_board") or []):
+        lines.append("- none")
+    lines.extend(["", "## Recommendation", f"- {analysis.get('recommendation')}", ""])
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Audit upstream-shadow historical prior coverage gaps.")
+    parser.add_argument("--reports-root", default=str(REPORTS_DIR))
+    parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
+    parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
+    args = parser.parse_args()
+
+    analysis = analyze_btst_upstream_shadow_unknown_prior_audit(args.reports_root)
+    output_json = Path(args.output_json).expanduser().resolve()
+    output_md = Path(args.output_md).expanduser().resolve()
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    output_md.parent.mkdir(parents=True, exist_ok=True)
+    output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output_md.write_text(render_btst_upstream_shadow_unknown_prior_audit_markdown(analysis), encoding="utf-8")
+    print(json.dumps(analysis, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
