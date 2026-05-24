@@ -33,6 +33,11 @@ def _safe_float(value: Any, default: float | None = None) -> float | None:
         return default
 
 
+def _safe_float_or_default(value: Any, default: float) -> float:
+    numeric_value = _safe_float(value)
+    return default if numeric_value is None else numeric_value
+
+
 def _is_upstream_shadow_row(row: dict[str, Any]) -> bool:
     return str(row.get("candidate_source") or "") == UPSTREAM_SHADOW_SOURCE
 
@@ -166,7 +171,7 @@ def analyze_btst_upstream_shadow_fnfp_dossier(reports_root: str | Path) -> dict[
         key=lambda row: (
             repeat_ticker_counts.get(str(row.get("ticker") or ""), 0),
             _safe_float(row.get("t_plus_2_close_return"), -999.0),
-            -abs(_safe_float(row.get("gap_to_select"), 999.0) or 999.0),
+            -abs(_safe_float_or_default(row.get("gap_to_select"), 999.0)),
             _safe_float(row.get("historical_next_close_positive_rate"), -999.0),
             str(row.get("ticker") or ""),
         ),
@@ -177,7 +182,7 @@ def analyze_btst_upstream_shadow_fnfp_dossier(reports_root: str | Path) -> dict[
             _blocker_severity_score(row),
             _penalty_severity_score(row),
             1 if str(row.get("decision") or "") == "selected" else 0,
-            -(_safe_float(row.get("t_plus_2_close_return"), 999.0) or 999.0),
+            -_safe_float_or_default(row.get("t_plus_2_close_return"), 999.0),
             1 if str(row.get("historical_execution_quality_label") or "") == "balanced_confirmation" else 0,
             str(row.get("ticker") or ""),
         ),
