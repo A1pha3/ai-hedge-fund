@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import scripts.analyze_short_trade_blockers as blockers_module
-from scripts.analyze_short_trade_blockers import analyze_short_trade_blockers
+from scripts.analyze_short_trade_blockers import analyze_short_trade_blockers, collect_short_trade_rows
 
 
 def test_analyze_short_trade_blockers_aggregates_decisions_and_sources(tmp_path):
@@ -247,6 +247,167 @@ def test_analyze_short_trade_blockers_includes_upstream_shadow_observation_entri
     assert analysis["candidate_source_breakdown"]["upstream_liquidity_corridor_shadow"]["blocker_counts"] == {"trend_not_constructive": 1}
     assert analysis["top_near_threshold_examples"][0]["ticker"] == "301188"
     assert analysis["recommended_focus_areas"][0]["focus_area"] == "trend_not_constructive_shadow_review"
+
+
+def test_collect_short_trade_rows_preserves_upstream_shadow_observation_entries(tmp_path):
+    report_dir = tmp_path / "report"
+    selection_root = report_dir / "selection_artifacts" / "2026-03-30"
+    selection_root.mkdir(parents=True)
+
+    (selection_root / "selection_snapshot.json").write_text(
+        json.dumps({"trade_date": "2026-03-30", "selection_targets": {}}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (selection_root / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "upstream_shadow_observation_entries": [
+                    {
+                        "ticker": "301188",
+                        "decision": "observation",
+                        "score_target": 0.18,
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "candidate_reason_codes": ["upstream_base_liquidity_uplift_shadow"],
+                        "blockers": ["trend_not_constructive"],
+                        "top_reasons": ["candidate_score=0.18", "filter_reason=structural_prefilter_fail"],
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                        "strategy_signals": {"trend": {}},
+                        "short_trade_boundary_metrics": {
+                            "candidate_score": 0.18,
+                            "trend_acceleration": 0.0,
+                            "close_strength": 0.4,
+                            "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                            "blockers": ["trend_not_constructive"],
+                        },
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows = collect_short_trade_rows(report_dir)
+
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "301188"
+    assert rows[0]["candidate_source"] == "upstream_liquidity_corridor_shadow"
+    assert rows[0]["short_trade"]["decision"] == "observation"
+
+
+def test_collect_short_trade_rows_is_lazy_cacheable_sequence(monkeypatch, tmp_path):
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    (report_dir / "selection_artifacts").mkdir()
+
+    monkeypatch.setattr(blockers_module, "_load_historical_prior_by_ticker", lambda report_path: {})
+    yielded_tickers: list[str] = []
+
+    def iter_rows(*args, **kwargs):
+        yielded_tickers.append("301188")
+        yield {
+            "trade_date": "2026-03-30",
+            "ticker": "301188",
+            "candidate_source": "upstream_liquidity_corridor_shadow",
+            "candidate_reason_codes": ["upstream_base_liquidity_uplift_shadow"],
+            "delta_classification": None,
+            "short_trade": {
+                "decision": "observation",
+                "score_target": 0.18,
+                "blockers": ["trend_not_constructive"],
+                "negative_tags": [],
+                "top_reasons": ["candidate_score=0.18", "filter_reason=structural_prefilter_fail"],
+                "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                "metrics_payload": {"candidate_score": 0.18},
+            },
+            "available_strategy_signals": ["trend"],
+        }
+        yielded_tickers.append("301189")
+        yield {
+            "trade_date": "2026-03-31",
+            "ticker": "301189",
+            "candidate_source": "post_gate_liquidity_competition_shadow",
+            "candidate_reason_codes": ["post_gate_liquidity_competition_shadow"],
+            "delta_classification": None,
+            "short_trade": {
+                "decision": "blocked",
+                "score_target": 0.21,
+                "blockers": ["trend_not_constructive"],
+                "negative_tags": [],
+                "top_reasons": ["candidate_score=0.21", "filter_reason=structural_prefilter_fail"],
+                "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                "metrics_payload": {"candidate_score": 0.21},
+            },
+            "available_strategy_signals": ["trend"],
+        }
+
+    monkeypatch.setattr(blockers_module, "_iter_short_trade_rows", iter_rows)
+
+    rows = collect_short_trade_rows(report_dir)
+
+    assert yielded_tickers == []
+    assert rows[0]["ticker"] == "301188"
+    assert yielded_tickers == ["301188"]
+    assert rows[0]["ticker"] == "301188"
+    assert yielded_tickers == ["301188"]
+    assert len(rows) == 2
+    assert yielded_tickers == ["301188", "301189"]
+    assert rows[1]["ticker"] == "301189"
+
+
+def test_analyze_short_trade_blockers_uses_collect_short_trade_rows_path(monkeypatch, tmp_path):
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+
+    class LazyRows:
+        def __init__(self):
+            self._rows = [
+                {
+                    "trade_date": "2026-03-30",
+                    "ticker": "301188",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "candidate_reason_codes": ["upstream_base_liquidity_uplift_shadow"],
+                    "delta_classification": None,
+                    "short_trade": {
+                        "decision": "observation",
+                        "score_target": 0.18,
+                        "blockers": ["trend_not_constructive"],
+                        "negative_tags": [],
+                        "top_reasons": ["candidate_score=0.18", "filter_reason=structural_prefilter_fail"],
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                        "metrics_payload": {"candidate_score": 0.18},
+                    },
+                    "available_strategy_signals": ["trend"],
+                }
+            ]
+            self.iteration_count = 0
+
+        def __iter__(self):
+            self.iteration_count += 1
+            yield from self._rows
+
+        def __len__(self):
+            return len(self._rows)
+
+        def __getitem__(self, index):
+            return self._rows[index]
+
+    lazy_rows = LazyRows()
+    collect_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def collect_rows(*args, **kwargs):
+        collect_calls.append((args, kwargs))
+        return lazy_rows
+
+    monkeypatch.setattr(blockers_module, "collect_short_trade_rows", collect_rows)
+
+    analysis = analyze_short_trade_blockers(report_dir)
+
+    assert collect_calls
+    assert lazy_rows.iteration_count == 1
+    assert analysis["short_trade_target_count"] == 1
+    assert analysis["failure_mechanism_counts"] == {"blocked_trend_not_constructive": 1}
 
 
 def test_analyze_short_trade_blockers_recomputes_missing_observation_blockers(tmp_path):
