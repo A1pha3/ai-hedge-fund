@@ -120,7 +120,7 @@ def _build_ticker_timeline_board(ticker_timeline: dict[str, list[dict[str, Any]]
             {
                 "ticker": ticker,
                 "occurrences": len(ordered_rows),
-                "trace_statuses": [str(row["prior_trace"]["trace_status"]) for row in ordered_rows],
+                "trace_statuses": [str((row.get("prior_trace") or {}).get("trace_status")) for row in ordered_rows],
                 "trade_dates": [str(row.get("trade_date") or "") for row in ordered_rows],
             }
         )
@@ -128,6 +128,7 @@ def _build_ticker_timeline_board(ticker_timeline: dict[str, list[dict[str, Any]]
 
 
 def _build_recommendation(trace_status_split: Counter[str]) -> str:
+    # Task 4: Always prioritize attachment repair if any of the three key statuses are present
     if (
         int(trace_status_split.get("missing_upstream_prior") or 0) > 0
         or int(trace_status_split.get("latest_prior_missing") or 0) > 0
