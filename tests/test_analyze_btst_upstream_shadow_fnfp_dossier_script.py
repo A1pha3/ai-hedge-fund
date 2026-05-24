@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from scripts.analyze_btst_upstream_shadow_fnfp_dossier import (
+    _build_blocker_clusters,
     _classify_upstream_shadow_row,
     analyze_btst_upstream_shadow_fnfp_dossier,
     render_btst_upstream_shadow_fnfp_dossier_markdown,
@@ -45,6 +46,20 @@ def test_classify_upstream_shadow_row_does_not_flag_balanced_confirmation_withou
                 "historical_execution_quality_label": "balanced_confirmation",
                 "data_status": "missing_price_frame",
                 "cycle_status": "missing_next_day",
+            }
+        )
+        is None
+    )
+
+
+def test_classify_upstream_shadow_row_does_not_flag_balanced_confirmation_with_partial_outcomes():
+    assert (
+        _classify_upstream_shadow_row(
+            {
+                "decision": "near_miss",
+                "historical_execution_quality_label": "balanced_confirmation",
+                "next_close_return": 0.012,
+                "cycle_status": "missing_t_plus_2_day",
             }
         )
         is None
@@ -580,3 +595,14 @@ def test_analyze_btst_upstream_shadow_fnfp_dossier_keeps_missing_outcome_balance
     assert analysis["false_positive_count"] == 0
     assert analysis["false_positive_rows"] == []
     assert analysis["recommendation"] == "Collect more upstream-shadow outcome history before ranking FN/FP rows."
+
+
+def test_build_blocker_clusters_filters_invalid_blockers():
+    blocker_clusters = _build_blocker_clusters(
+        [
+            {"blockers": ["trend_not_constructive", "", None, "  "]},
+            {"blockers": [None, "late_extension"]},
+        ]
+    )
+
+    assert blocker_clusters == [{"blocker": "trend_not_constructive", "count": 1}, {"blocker": "late_extension", "count": 1}]

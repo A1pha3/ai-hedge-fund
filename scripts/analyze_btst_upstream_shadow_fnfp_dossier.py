@@ -78,7 +78,12 @@ def _build_repeat_ticker_board(rows: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def _build_blocker_clusters(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    counts = Counter(blocker for row in rows for blocker in list(row.get("blockers") or []))
+    counts = Counter(
+        normalized_blocker
+        for row in rows
+        for blocker in list(row.get("blockers") or [])
+        if (normalized_blocker := str(blocker or "").strip())
+    )
     return [{"blocker": blocker, "count": count} for blocker, count in counts.most_common()]
 
 
@@ -129,7 +134,7 @@ def _classify_upstream_shadow_row(row: dict[str, Any]) -> str | None:
     next_close_return = _safe_float(row.get("next_close_return"))
     t_plus_2_close_return = _safe_float(row.get("t_plus_2_close_return"))
     quality_label = str(row.get("historical_execution_quality_label") or "unknown")
-    has_observed_outcome = next_close_return is not None or t_plus_2_close_return is not None
+    has_complete_observed_outcome = next_close_return is not None and t_plus_2_close_return is not None
     has_clearly_positive_follow_through = (t_plus_2_close_return is not None and t_plus_2_close_return >= 0.05) or (next_close_return is not None and next_close_return >= 0.03)
     has_weak_or_poor_follow_through = (next_close_return is None or next_close_return < 0.03) and (t_plus_2_close_return is None or t_plus_2_close_return < 0.05)
 
@@ -137,7 +142,7 @@ def _classify_upstream_shadow_row(row: dict[str, Any]) -> str | None:
         return "false_negative"
     if decision in {"selected", "near_miss"} and (
         ((next_close_return is not None and next_close_return <= 0.0) and (t_plus_2_close_return is None or t_plus_2_close_return <= 0.0))
-        or (quality_label == "balanced_confirmation" and has_observed_outcome and has_weak_or_poor_follow_through and not has_clearly_positive_follow_through)
+        or (quality_label == "balanced_confirmation" and has_complete_observed_outcome and has_weak_or_poor_follow_through and not has_clearly_positive_follow_through)
     ):
         return "false_positive"
     return None
