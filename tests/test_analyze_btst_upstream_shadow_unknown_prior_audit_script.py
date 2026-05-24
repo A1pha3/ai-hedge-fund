@@ -57,14 +57,13 @@ def test_load_upstream_shadow_followup_rows_for_report_returns_rows_with_report_
     assert rows[0]["validated_by_upstream_shadow_recall"] is True
     assert rows[0]["historical_prior"]["execution_quality_label"] == "unknown"
 
-from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import (
-    analyze_btst_upstream_shadow_unknown_prior_audit,
-)
+
 
 
 def test_analyze_btst_upstream_shadow_unknown_prior_audit_splits_attachment_gap_and_low_sample_rows(
     monkeypatch, tmp_path
 ) -> None:
+    from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import analyze_btst_upstream_shadow_unknown_prior_audit
     report_dir = tmp_path / "report-20260520"
     report_dir.mkdir()
 
@@ -170,12 +169,11 @@ def test_analyze_btst_upstream_shadow_unknown_prior_audit_splits_attachment_gap_
         },
     ]
 
-from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import (
-    render_btst_upstream_shadow_unknown_prior_audit_markdown,
-)
+
 
 
 def test_render_btst_upstream_shadow_unknown_prior_audit_markdown_renders_coverage_and_boards() -> None:
+    from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import render_btst_upstream_shadow_unknown_prior_audit_markdown
     markdown = render_btst_upstream_shadow_unknown_prior_audit_markdown(
         {
             "coverage_summary": {
