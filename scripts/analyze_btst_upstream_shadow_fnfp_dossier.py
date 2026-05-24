@@ -140,7 +140,7 @@ def _classify_upstream_shadow_row(row: dict[str, Any]) -> str | None:
 
     if decision != "selected" and has_clearly_positive_follow_through:
         return "false_negative"
-    if decision in {"selected", "near_miss"} and (
+    if decision in {"selected", "near_miss"} and has_complete_observed_outcome and (
         ((next_close_return is not None and next_close_return <= 0.0) and (t_plus_2_close_return is None or t_plus_2_close_return <= 0.0))
         or (quality_label == "balanced_confirmation" and has_complete_observed_outcome and has_weak_or_poor_follow_through and not has_clearly_positive_follow_through)
     ):

@@ -66,6 +66,21 @@ def test_classify_upstream_shadow_row_does_not_flag_balanced_confirmation_with_p
     )
 
 
+def test_classify_upstream_shadow_row_does_not_flag_partial_negative_outcomes_without_t_plus_2_close():
+    for decision in ("selected", "near_miss"):
+        assert (
+            _classify_upstream_shadow_row(
+                {
+                    "decision": decision,
+                    "historical_execution_quality_label": "balanced_confirmation",
+                    "next_close_return": -0.012,
+                    "cycle_status": "missing_t_plus_2_day",
+                }
+            )
+            is None
+        )
+
+
 def test_analyze_btst_upstream_shadow_fnfp_dossier_splits_false_negative_and_false_positive(monkeypatch, tmp_path):
     report_dir = tmp_path / "report"
     selection_root = report_dir / "selection_artifacts" / "2026-04-01"
