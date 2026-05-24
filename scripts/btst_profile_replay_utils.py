@@ -497,11 +497,13 @@ def _summarize_rows_by_frontier_source_family(rows: list[dict[str, Any]], *, nex
         selected_rows = [row for row in source_rows if row.get("decision") == "selected"]
         near_miss_rows = [row for row in source_rows if row.get("decision") == "near_miss"]
         tradeable_rows = [row for row in source_rows if row.get("decision") in {"selected", "near_miss"}]
+        execution_eligible_rows = [row for row in source_rows if bool(row.get("execution_eligible"))]
         summaries[source_family] = {
             "all": _build_surface_summary(source_rows, next_high_hit_threshold=next_high_hit_threshold),
             "tradeable": _build_surface_summary(tradeable_rows, next_high_hit_threshold=next_high_hit_threshold),
             "selected": _build_surface_summary(selected_rows, next_high_hit_threshold=next_high_hit_threshold),
             "near_miss": _build_surface_summary(near_miss_rows, next_high_hit_threshold=next_high_hit_threshold),
+            "execution_eligible": _build_surface_summary(execution_eligible_rows, next_high_hit_threshold=next_high_hit_threshold),
             "decision_counts": dict(Counter(str(row.get("decision") or "unknown") for row in source_rows)),
         }
     return summaries
