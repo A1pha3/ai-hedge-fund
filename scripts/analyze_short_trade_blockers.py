@@ -6,7 +6,7 @@ from collections.abc import Iterator, Sequence
 from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean
-from typing import Any
+from typing import Any, overload
 
 from scripts.btst_latest_followup_utils import load_btst_followup_by_ticker_for_report, load_latest_btst_historical_prior_by_ticker
 from src.execution.daily_pipeline import _qualifies_short_trade_boundary_candidate
@@ -251,6 +251,12 @@ class _LazyShortTradeRows(Sequence[dict[str, Any]]):
         yield from self._cache
         while self._consume_next():
             yield self._cache[-1]
+
+    @overload
+    def __getitem__(self, index: int) -> dict[str, Any]: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[dict[str, Any]]: ...
 
     def __getitem__(self, index: int | slice) -> dict[str, Any] | list[dict[str, Any]]:
         if isinstance(index, slice):
