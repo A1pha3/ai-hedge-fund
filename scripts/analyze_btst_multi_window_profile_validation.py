@@ -63,6 +63,30 @@ def _resolve_threshold_delta(baseline_value: Any, variant_value: Any) -> float |
     return round(float(variant_value) - float(baseline_value), 4)
 
 
+def _resolve_frontier_source_family_surface(report: dict[str, Any], source_family: str, surface_name: str) -> dict[str, Any]:
+    family_summaries = dict(report.get("frontier_source_family_summaries") or {})
+    family_summary = dict(family_summaries.get(source_family) or {})
+    return dict(family_summary.get(surface_name) or {})
+
+
+def _build_frontier_runtime_activation_attribution(*, baseline: dict[str, Any], variant: dict[str, Any], source_family: str) -> dict[str, Any]:
+    baseline_selected = int(_resolve_frontier_source_family_surface(baseline, source_family, "selected").get("total_count") or 0)
+    variant_selected = int(_resolve_frontier_source_family_surface(variant, source_family, "selected").get("total_count") or 0)
+    baseline_near_miss = int(_resolve_frontier_source_family_surface(baseline, source_family, "near_miss").get("total_count") or 0)
+    variant_near_miss = int(_resolve_frontier_source_family_surface(variant, source_family, "near_miss").get("total_count") or 0)
+    baseline_tradeable = int(_resolve_frontier_source_family_surface(baseline, source_family, "tradeable").get("total_count") or 0)
+    variant_tradeable = int(_resolve_frontier_source_family_surface(variant, source_family, "tradeable").get("total_count") or 0)
+    baseline_execution_eligible = int(_resolve_frontier_source_family_surface(baseline, source_family, "execution_eligible").get("total_count") or 0)
+    variant_execution_eligible = int(_resolve_frontier_source_family_surface(variant, source_family, "execution_eligible").get("total_count") or 0)
+    return {
+        "selected_count_delta": variant_selected - baseline_selected,
+        "near_miss_count_delta": variant_near_miss - baseline_near_miss,
+        "tradeable_count_delta": variant_tradeable - baseline_tradeable,
+        "execution_eligible_count_delta": variant_execution_eligible - baseline_execution_eligible,
+        "source_family": source_family,
+    }
+
+
 def _build_watchlist_shrink_diagnostics(*, baseline: dict[str, Any], variant: dict[str, Any]) -> dict[str, int]:
     baseline_rows = {
         (
@@ -205,6 +229,7 @@ def _summarize_row(*, report_dir: Path, baseline: dict[str, Any], variant: dict[
     classification = _classify_window(comparison)
     baseline_surface_summaries = dict(baseline.get("surface_summaries") or {})
     variant_surface_summaries = dict(variant.get("surface_summaries") or {})
+    upstream_shadow_source_family = "upstream_liquidity_corridor_shadow"
     return {
         "report_dir": str(report_dir),
         "report_label": report_dir.name,
@@ -219,6 +244,13 @@ def _summarize_row(*, report_dir: Path, baseline: dict[str, Any], variant: dict[
         "variant_near_miss": dict(variant_surface_summaries.get("near_miss") or {}),
         "baseline_frontier_source_family_summaries": dict(baseline.get("frontier_source_family_summaries") or {}),
         "variant_frontier_source_family_summaries": dict(variant.get("frontier_source_family_summaries") or {}),
+        "baseline_upstream_shadow_tradeable": _resolve_frontier_source_family_surface(baseline, upstream_shadow_source_family, "tradeable"),
+        "variant_upstream_shadow_tradeable": _resolve_frontier_source_family_surface(variant, upstream_shadow_source_family, "tradeable"),
+        "upstream_shadow_runtime_activation_attribution": _build_frontier_runtime_activation_attribution(
+            baseline=baseline,
+            variant=variant,
+            source_family=upstream_shadow_source_family,
+        ),
         "baseline_source_coverage_summary": dict(baseline.get("source_coverage_summary") or {}),
         "variant_source_coverage_summary": dict(variant.get("source_coverage_summary") or {}),
         "tradeable_surface_delta": dict(comparison.get("tradeable_surface_delta") or {}),
