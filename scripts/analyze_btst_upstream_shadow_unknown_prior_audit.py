@@ -120,7 +120,7 @@ def _build_ticker_timeline_board(ticker_timeline: dict[str, list[dict[str, Any]]
             {
                 "ticker": ticker,
                 "occurrences": len(ordered_rows),
-                "trace_statuses": [str((row.get("prior_trace") or {}).get("trace_status")) for row in ordered_rows],
+                "trace_statuses": [str((row.get("prior_trace") or {}).get("trace_status") or "") for row in ordered_rows],
                 "trade_dates": [str(row.get("trade_date") or "") for row in ordered_rows],
             }
         )
