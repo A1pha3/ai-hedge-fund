@@ -172,6 +172,63 @@ def test_analyze_btst_upstream_shadow_unknown_prior_audit_splits_attachment_gap_
 
 
 
+def test_analyze_btst_upstream_shadow_unknown_prior_audit_treats_missing_priors_as_attachment_gaps_and_does_not_count_empty_reports(monkeypatch, tmp_path) -> None:
+    from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import analyze_btst_upstream_shadow_unknown_prior_audit
+
+    empty_report_dir = tmp_path / "report-20260519"
+    empty_report_dir.mkdir()
+    populated_report_dir = tmp_path / "report-20260520"
+    populated_report_dir.mkdir()
+
+    def fake_followup_rows(path):
+        if path == empty_report_dir:
+            return []
+        return [
+            {
+                "ticker": "300001",
+                "trade_date": "20260520",
+                "report_dir": populated_report_dir.resolve().as_posix(),
+                "decision": "selected",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "historical_prior": {},
+            },
+            {
+                "ticker": "300002",
+                "trade_date": "20260520",
+                "report_dir": populated_report_dir.resolve().as_posix(),
+                "decision": "near_miss",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "historical_prior": {"execution_quality_label": "unknown", "sample_count": 1, "evaluable_count": 1},
+            },
+        ]
+
+    monkeypatch.setattr(
+        "scripts.analyze_btst_upstream_shadow_unknown_prior_audit.load_upstream_shadow_followup_rows_for_report",
+        fake_followup_rows,
+    )
+    monkeypatch.setattr(
+        "scripts.analyze_btst_upstream_shadow_unknown_prior_audit.load_latest_btst_historical_prior_by_ticker",
+        lambda reports_root: {},
+    )
+    monkeypatch.setattr(
+        "scripts.analyze_btst_upstream_shadow_unknown_prior_audit._extract_btst_candidate",
+        lambda report_dir: {"report_dir": str(report_dir)},
+    )
+    monkeypatch.setattr(
+        "scripts.analyze_btst_upstream_shadow_unknown_prior_audit.collect_short_trade_rows",
+        lambda report_dir, trade_dates=None: [],
+    )
+
+    analysis = analyze_btst_upstream_shadow_unknown_prior_audit(tmp_path)
+
+    assert analysis["coverage_summary"]["rows_audited"] == 2
+    assert analysis["coverage_summary"]["rows_skipped_for_missing_report_inputs"] == 0
+    assert analysis["trace_status_split"] == {"missing_upstream_prior": 1, "latest_prior_missing": 1}
+    assert [row["ticker"] for row in analysis["attachment_gap_rows"]] == ["300001", "300002"]
+    assert analysis["low_sample_or_weak_prior_rows"] == []
+    assert analysis["recommendation"] == "Prioritize attachment repair before any label-generation audit."
+
+
 def test_render_btst_upstream_shadow_unknown_prior_audit_markdown_renders_coverage_and_boards() -> None:
     from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import render_btst_upstream_shadow_unknown_prior_audit_markdown
     markdown = render_btst_upstream_shadow_unknown_prior_audit_markdown(

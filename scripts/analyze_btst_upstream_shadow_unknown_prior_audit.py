@@ -7,6 +7,7 @@ from typing import Any
 
 from scripts.analyze_short_trade_blockers import collect_short_trade_rows
 from scripts.btst_latest_followup_utils import (
+    _extract_btst_candidate,
     load_latest_btst_historical_prior_by_ticker,
     load_upstream_shadow_followup_rows_for_report,
 )
@@ -126,7 +127,8 @@ def _build_ticker_timeline_board(ticker_timeline: dict[str, list[dict[str, Any]]
 
 
 def _build_recommendation(trace_status_split: Counter[str]) -> str:
-    if int(trace_status_split.get("resolve_dropped_stronger_prior") or 0) > 0:
+    attachment_gap_statuses = {"missing_upstream_prior", "latest_prior_missing", "resolve_dropped_stronger_prior"}
+    if any(int(trace_status_split.get(status) or 0) > 0 for status in attachment_gap_statuses):
         return "Prioritize attachment repair before any label-generation audit."
     if int(trace_status_split.get("resolved_but_low_sample") or 0) > 0:
         return "Prioritize sample-quality follow-up before any label-generation audit."
@@ -162,7 +164,8 @@ def analyze_btst_upstream_shadow_unknown_prior_audit(reports_root: str | Path) -
     for report_dir in sorted(path for path in resolved_reports_root.iterdir() if path.is_dir()):
         followup_rows = load_upstream_shadow_followup_rows_for_report(report_dir)
         if not followup_rows:
-            rows_skipped_for_missing_report_inputs += 1
+            if _extract_btst_candidate(report_dir) is None:
+                rows_skipped_for_missing_report_inputs += 1
             continue
         final_rows_by_key = {
             (str(row.get("trade_date") or ""), str(row.get("ticker") or "")): dict(row)
@@ -191,7 +194,7 @@ def analyze_btst_upstream_shadow_unknown_prior_audit(reports_root: str | Path) -
             trace_status = str(prior_trace["trace_status"])
             trace_status_split[trace_status] += 1
             ticker_timeline[key[1]].append(output_row)
-            if trace_status == "resolve_dropped_stronger_prior":
+            if trace_status in {"missing_upstream_prior", "latest_prior_missing", "resolve_dropped_stronger_prior"}:
                 attachment_gap_rows.append(output_row)
             elif trace_status in {"resolved_but_low_sample", "resolve_kept_unknown"}:
                 low_sample_or_weak_prior_rows.append(output_row)
