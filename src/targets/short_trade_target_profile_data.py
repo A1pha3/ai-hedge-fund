@@ -1137,6 +1137,8 @@ SHORT_TRADE_TARGET_PROFILES["btst_precision_v2_liquidity_shadow_release_probe"] 
     liquidity_shadow_selected_rank_cap_ratio=0.18,
     liquidity_shadow_near_miss_rank_cap_ratio=0.30,
     liquidity_shadow_source_specific_rank_cap_require_relief_applied=True,
+    upstream_shadow_source_specific_rank_cap_trend_acceleration_min=0.80,
+    upstream_shadow_source_specific_rank_cap_close_strength_min=0.85,
 )
 
 SHORT_TRADE_TARGET_PROFILES["btst_precision_v2_watchlist_incumbent_displacement_probe"] = replace(

@@ -338,6 +338,8 @@ def _build_short_trade_threshold_core_metrics_payload(*, profile: Any, snapshot:
         "liquidity_shadow_selected_rank_cap_ratio": None if getattr(profile, "liquidity_shadow_selected_rank_cap_ratio", None) is None else round(float(getattr(profile, "liquidity_shadow_selected_rank_cap_ratio", 0.0) or 0.0), 4),
         "liquidity_shadow_near_miss_rank_cap_ratio": None if getattr(profile, "liquidity_shadow_near_miss_rank_cap_ratio", None) is None else round(float(getattr(profile, "liquidity_shadow_near_miss_rank_cap_ratio", 0.0) or 0.0), 4),
         "liquidity_shadow_source_specific_rank_cap_require_relief_applied": bool(getattr(profile, "liquidity_shadow_source_specific_rank_cap_require_relief_applied", True)),
+        "upstream_shadow_source_specific_rank_cap_trend_acceleration_min": round(float(getattr(profile, "upstream_shadow_source_specific_rank_cap_trend_acceleration_min", 0.0) or 0.0), 4),
+        "upstream_shadow_source_specific_rank_cap_close_strength_min": round(float(getattr(profile, "upstream_shadow_source_specific_rank_cap_close_strength_min", 0.0) or 0.0), 4),
         "selected_rank_cap_relief_catalyst_theme_research_enabled": bool(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_enabled", False)),
         "selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min": round(float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min", 0.0) or 0.0), 4),
         "selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min": round(float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min", 0.0) or 0.0), 4),

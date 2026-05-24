@@ -230,11 +230,29 @@ def _resolve_rank_decision_cap(
     liquidity_shadow_source_specific_rank_cap_require_relief_applied = bool(
         getattr(profile, "liquidity_shadow_source_specific_rank_cap_require_relief_applied", True)
     )
+    upstream_shadow_source_specific_rank_cap_trend_acceleration_min = max(
+        0.0,
+        float(getattr(profile, "upstream_shadow_source_specific_rank_cap_trend_acceleration_min", 0.0) or 0.0),
+    )
+    upstream_shadow_source_specific_rank_cap_close_strength_min = max(
+        0.0,
+        float(getattr(profile, "upstream_shadow_source_specific_rank_cap_close_strength_min", 0.0) or 0.0),
+    )
     shadow_source_specific_rank_cap_guard_active = (
         normalized_candidate_source in {"upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"}
         and "upstream_shadow_release_candidate" in normalized_reason_codes
     )
     shadow_source_specific_rank_cap_relief_applied = upstream_shadow_catalyst_relief_applied
+    upstream_shadow_source_specific_rank_cap_trend_acceleration_pass = (
+        trend_acceleration >= upstream_shadow_source_specific_rank_cap_trend_acceleration_min
+    )
+    upstream_shadow_source_specific_rank_cap_close_strength_pass = (
+        close_strength >= upstream_shadow_source_specific_rank_cap_close_strength_min
+    )
+    upstream_shadow_source_specific_rank_cap_support_pass = (
+        upstream_shadow_source_specific_rank_cap_trend_acceleration_pass
+        and upstream_shadow_source_specific_rank_cap_close_strength_pass
+    )
     shadow_source_specific_rank_cap_has_override = (
         liquidity_shadow_selected_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO
         or liquidity_shadow_near_miss_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO
@@ -242,6 +260,7 @@ def _resolve_rank_decision_cap(
     shadow_source_specific_caps_enabled = (
         shadow_source_specific_rank_cap_guard_active
         and shadow_source_specific_rank_cap_has_override
+        and upstream_shadow_source_specific_rank_cap_support_pass
         and (
             shadow_source_specific_rank_cap_relief_applied
             or not liquidity_shadow_source_specific_rank_cap_require_relief_applied
@@ -439,6 +458,11 @@ def _resolve_rank_decision_cap(
         "shadow_source_specific_rank_cap_guard_active": shadow_source_specific_rank_cap_guard_active,
         "shadow_source_specific_rank_cap_has_override": shadow_source_specific_rank_cap_has_override,
         "shadow_source_specific_rank_cap_relief_applied": shadow_source_specific_rank_cap_relief_applied,
+        "upstream_shadow_source_specific_rank_cap_trend_acceleration_min": round(upstream_shadow_source_specific_rank_cap_trend_acceleration_min, 4),
+        "upstream_shadow_source_specific_rank_cap_close_strength_min": round(upstream_shadow_source_specific_rank_cap_close_strength_min, 4),
+        "upstream_shadow_source_specific_rank_cap_trend_acceleration_pass": upstream_shadow_source_specific_rank_cap_trend_acceleration_pass,
+        "upstream_shadow_source_specific_rank_cap_close_strength_pass": upstream_shadow_source_specific_rank_cap_close_strength_pass,
+        "upstream_shadow_source_specific_rank_cap_support_pass": upstream_shadow_source_specific_rank_cap_support_pass,
         "shadow_source_specific_caps_enabled": shadow_source_specific_caps_enabled,
         "catalyst_theme_source_specific_rank_cap_guard_active": catalyst_theme_source_specific_rank_cap_guard_active,
         "catalyst_theme_source_specific_rank_cap_trend_acceleration_min": round(catalyst_theme_source_specific_rank_cap_trend_acceleration_min, 4),
@@ -701,4 +725,3 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
         return 0.0
     raw = (w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score + w_ni * net_inflow_score + w_vp * vp_quality_score + w_ts * t0_tail_score + w_ma * momentum_alignment_score + w_mc * momentum_confirmation_score + w_vm * volume_momentum_score + w_rs * rs_sector_rank_score)
     return round(raw / total_weight, 4)
-

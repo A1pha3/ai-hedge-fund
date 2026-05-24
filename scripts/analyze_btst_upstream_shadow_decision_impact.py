@@ -71,25 +71,31 @@ def _aggregate_tradeable_surface_deltas(rows: list[dict[str, Any]]) -> dict[str,
     return {key: round(value, 4) for key, value in totals.items()}
 
 
-def _variant_sort_key(result: dict[str, Any]) -> tuple[int, int, float, float, float]:
+def _variant_sort_key(result: dict[str, Any]) -> tuple[int, int, int, float, float, float]:
     upstream_delta = dict(result.get("aggregate_upstream_shadow_delta") or {})
     tradeable_delta = dict(result.get("aggregate_tradeable_surface_delta") or {})
+    next_close_positive_rate_delta = float(tradeable_delta.get("next_close_positive_rate") or 0.0)
+    next_close_return_p10_delta = float(tradeable_delta.get("next_close_return_p10") or 0.0)
+    t_plus_2_close_return_median_delta = float(tradeable_delta.get("t_plus_2_close_return_median") or 0.0)
+    non_negative_t1_guardrail = int(next_close_positive_rate_delta >= 0.0 and next_close_return_p10_delta >= 0.0)
     return (
         int(upstream_delta.get("selected_count_delta") or 0),
         int(upstream_delta.get("tradeable_count_delta") or 0),
-        float(tradeable_delta.get("next_close_positive_rate") or 0.0),
-        float(tradeable_delta.get("next_close_return_p10") or 0.0),
-        float(tradeable_delta.get("t_plus_2_close_return_median") or 0.0),
+        non_negative_t1_guardrail,
+        next_close_positive_rate_delta,
+        next_close_return_p10_delta,
+        t_plus_2_close_return_median_delta,
     )
 
 
-def _run_experiment(*, reports_root: str | Path, experiment_name: str, profile_overrides: dict[str, Any], next_high_hit_threshold: float = 0.15) -> dict[str, Any]:
+def _run_experiment(*, reports_root: str | Path, experiment_name: str, profile_overrides: dict[str, Any], next_high_hit_threshold: float = 0.15, report_name_contains: str | None = None) -> dict[str, Any]:
     analysis = analyze_btst_multi_window_profile_validation(
         reports_root,
         baseline_profile=DEFAULT_BASELINE_PROFILE,
         variant_profile=DEFAULT_BASELINE_PROFILE,
         variant_profile_overrides=profile_overrides,
         next_high_hit_threshold=next_high_hit_threshold,
+        report_name_contains=report_name_contains or None,
     )
     rows = list(analysis.get("rows") or [])
     return {
@@ -120,7 +126,7 @@ def _normalize_experiment_result(result: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def analyze_upstream_shadow_decision_impact(*, reports_root: str | Path, output_label: str, next_high_hit_threshold: float = 0.15) -> dict[str, Any]:
+def analyze_upstream_shadow_decision_impact(*, reports_root: str | Path, output_label: str, next_high_hit_threshold: float = 0.15, report_name_contains: str | None = None) -> dict[str, Any]:
     control_variant: dict[str, Any] | None = None
     ranked_variants: list[dict[str, Any]] = []
     rejected_variants: list[dict[str, Any]] = []
@@ -132,6 +138,7 @@ def analyze_upstream_shadow_decision_impact(*, reports_root: str | Path, output_
             experiment_name=str(experiment["experiment_name"]),
             profile_overrides=dict(experiment.get("profile_overrides") or {}),
             next_high_hit_threshold=next_high_hit_threshold,
+            report_name_contains=report_name_contains,
             )
         )
         if result["experiment_name"] == "current_probe_control":
@@ -148,6 +155,7 @@ def analyze_upstream_shadow_decision_impact(*, reports_root: str | Path, output_
         "output_label": output_label,
         "reports_root": str(Path(reports_root).expanduser().resolve()),
         "baseline_profile": DEFAULT_BASELINE_PROFILE,
+        "report_name_contains": report_name_contains,
         "control_variant": control_variant,
         "best_variant": ranked_variants[0] if ranked_variants else None,
         "ranked_variants": ranked_variants,
@@ -161,6 +169,7 @@ def render_upstream_shadow_decision_impact_markdown(analysis: dict[str, Any]) ->
     lines.append("")
     lines.append(f"- output_label: {analysis.get('output_label')}")
     lines.append(f"- baseline_profile: {analysis.get('baseline_profile')}")
+    lines.append(f"- report_name_contains: {analysis.get('report_name_contains')}")
     lines.append("")
     best_variant = dict(analysis.get("best_variant") or {})
     if best_variant:
@@ -205,6 +214,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze upstream shadow rollout variants for measurable decision impact.")
     parser.add_argument("--reports-root", default=str(DEFAULT_REPORTS_ROOT))
     parser.add_argument("--output-label", default="latest")
+    parser.add_argument("--report-name-contains", default="")
     parser.add_argument("--output-json", required=True)
     parser.add_argument("--output-md", required=True)
     parser.add_argument("--next-high-hit-threshold", type=float, default=0.15)
@@ -214,6 +224,7 @@ def main() -> None:
         reports_root=args.reports_root,
         output_label=str(args.output_label),
         next_high_hit_threshold=float(args.next_high_hit_threshold),
+        report_name_contains=str(args.report_name_contains or ""),
     )
 
     output_json = Path(args.output_json).expanduser().resolve()

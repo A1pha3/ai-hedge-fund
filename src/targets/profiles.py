@@ -24,6 +24,8 @@ class ShortTradeTargetProfile:
     liquidity_shadow_selected_rank_cap_ratio: float | None = None
     liquidity_shadow_near_miss_rank_cap_ratio: float | None = None
     liquidity_shadow_source_specific_rank_cap_require_relief_applied: bool = True
+    upstream_shadow_source_specific_rank_cap_trend_acceleration_min: float = 0.0
+    upstream_shadow_source_specific_rank_cap_close_strength_min: float = 0.0
     selected_rank_cap_relief_score_margin_min: float = 0.0
     selected_rank_cap_relief_rank_buffer: int = 0
     selected_rank_cap_relief_rank_buffer_ratio: float = 0.0

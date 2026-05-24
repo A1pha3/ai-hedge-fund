@@ -60,6 +60,8 @@ def _serialize_profile(profile: Any) -> dict[str, Any]:
         "liquidity_shadow_selected_rank_cap_ratio": None if getattr(profile, "liquidity_shadow_selected_rank_cap_ratio", None) is None else round(float(profile.liquidity_shadow_selected_rank_cap_ratio), 4),
         "liquidity_shadow_near_miss_rank_cap_ratio": None if getattr(profile, "liquidity_shadow_near_miss_rank_cap_ratio", None) is None else round(float(profile.liquidity_shadow_near_miss_rank_cap_ratio), 4),
         "liquidity_shadow_source_specific_rank_cap_require_relief_applied": bool(getattr(profile, "liquidity_shadow_source_specific_rank_cap_require_relief_applied", True)),
+        "upstream_shadow_source_specific_rank_cap_trend_acceleration_min": round(float(getattr(profile, "upstream_shadow_source_specific_rank_cap_trend_acceleration_min", 0.0) or 0.0), 4),
+        "upstream_shadow_source_specific_rank_cap_close_strength_min": round(float(getattr(profile, "upstream_shadow_source_specific_rank_cap_close_strength_min", 0.0) or 0.0), 4),
         "selected_rank_cap_relief_close_strength_max": round(float(profile.selected_rank_cap_relief_close_strength_max), 4),
         "selected_rank_cap_relief_allow_risk_off": bool(getattr(profile, "selected_rank_cap_relief_allow_risk_off", True)),
         "selected_rank_cap_relief_allow_crisis": bool(getattr(profile, "selected_rank_cap_relief_allow_crisis", True)),
