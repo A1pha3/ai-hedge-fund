@@ -68,19 +68,23 @@ def _classify_trace_status(
         return "missing_upstream_prior"
     if embedded_prior and not latest_loader_prior and not resolved_final_prior:
         return "latest_prior_missing"
-    resolved_core = {
-        key: resolved_final_prior.get(key)
-        for key in ("execution_quality_label", "sample_count", "evaluable_count")
-        if key in resolved_final_prior
-    }
-    latest_core = {
-        key: latest_loader_prior.get(key)
-        for key in ("execution_quality_label", "sample_count", "evaluable_count")
-        if key in latest_loader_prior
-    }
-    if latest_loader_prior and _prior_rank(latest_loader_prior) > _prior_rank(resolved_final_prior) and latest_core != resolved_core:
-        return "resolve_dropped_stronger_prior"
-    if resolved_final_prior and int(resolved_final_prior.get("evaluable_count") or 0) < LOW_SAMPLE_EVALUABLE_COUNT:
+    # Only count as resolve_dropped_stronger_prior if latest_loader_prior is meaningfully stronger than final row,
+    # not just due to scope-only rank delta. If the final row already carries the same meaningful prior core as
+    # the latest loader prior (execution_quality_label, sample_count, evaluable_count), and that final prior is still low-sample,
+    # classify as resolved_but_low_sample. Only use resolve_dropped_stronger_prior when the latest loader prior is
+    # meaningfully stronger than the final row, not just stronger because of extra ranked metadata like applied_scope.
+    if latest_loader_prior:
+        # Compare core prior fields
+        core_keys = ["execution_quality_label", "sample_count", "evaluable_count"]
+        final_core = tuple(resolved_final_prior.get(k) for k in core_keys)
+        loader_core = tuple(latest_loader_prior.get(k) for k in core_keys)
+        if final_core == loader_core:
+            # If the final prior is still low-sample, classify as resolved_but_low_sample
+            if int(resolved_final_prior.get("evaluable_count") or 0) < LOW_SAMPLE_EVALUABLE_COUNT:
+                return "resolved_but_low_sample"
+        elif _prior_rank(latest_loader_prior) > _prior_rank(resolved_final_prior):
+            return "resolve_dropped_stronger_prior"
+    if resolved_final_prior and int(resolved_final_prior.get("evaluable_count") or 0) < LOW_SAMPLE_EVALUABLE_COUNT and not latest_loader_prior:
         return "resolved_but_low_sample"
     return "resolve_kept_unknown"
 
