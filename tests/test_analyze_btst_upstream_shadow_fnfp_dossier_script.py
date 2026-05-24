@@ -56,11 +56,77 @@ def test_analyze_btst_upstream_shadow_fnfp_dossier_splits_false_negative_and_fal
         encoding="utf-8",
     )
 
+    second_selection_root = report_dir / "selection_artifacts" / "2026-04-02"
+    second_selection_root.mkdir(parents=True)
+    (second_selection_root / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-04-02",
+                "selection_targets": {
+                    "300999": {
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "short_trade": {
+                            "decision": "near_miss",
+                            "score_target": 0.57,
+                            "blockers": ["trend_not_constructive", "weak_close_confirmation"],
+                            "top_reasons": ["score_short=0.57"],
+                            "metrics_payload": {"trend_acceleration": 0.67, "close_strength": 0.83},
+                            "historical_prior": {
+                                "execution_quality_label": "close_continuation",
+                                "evaluable_count": 5,
+                                "next_close_positive_rate": 0.8,
+                            },
+                        },
+                    },
+                    "300683": {
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "short_trade": {
+                            "decision": "rejected",
+                            "score_target": 0.51,
+                            "blockers": ["trend_not_constructive"],
+                            "top_reasons": ["score_short=0.51"],
+                            "metrics_payload": {"trend_acceleration": 0.91, "close_strength": 0.9},
+                            "historical_prior": {
+                                "execution_quality_label": "close_continuation",
+                                "evaluable_count": 3,
+                                "next_close_positive_rate": 0.67,
+                            },
+                        },
+                    },
+                    "301188": {
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "short_trade": {
+                            "decision": "selected",
+                            "score_target": 0.61,
+                            "blockers": ["late_extension"],
+                            "top_reasons": ["score_short=0.61"],
+                            "metrics_payload": {"trend_acceleration": 0.59, "close_strength": 0.61},
+                            "historical_prior": {
+                                "execution_quality_label": "balanced_confirmation",
+                                "evaluable_count": 4,
+                                "next_close_positive_rate": 0.25,
+                            },
+                        },
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     def _fake_extract_btst_price_outcome(ticker: str, trade_date: str, price_cache):
-        assert trade_date == "2026-04-01"
-        if ticker == "300683":
+        assert trade_date in {"2026-04-01", "2026-04-02"}
+        if (ticker, trade_date) == ("300683", "2026-04-01"):
             return {"next_close_return": 0.041, "t_plus_2_close_return": 0.082, "cycle_status": "closed"}
-        return {"next_close_return": -0.031, "t_plus_2_close_return": -0.054, "cycle_status": "closed"}
+        if (ticker, trade_date) == ("300999", "2026-04-02"):
+            return {"next_close_return": 0.055, "t_plus_2_close_return": 0.11, "cycle_status": "closed"}
+        if (ticker, trade_date) == ("300683", "2026-04-02"):
+            return {"next_close_return": 0.034, "t_plus_2_close_return": 0.061, "cycle_status": "closed"}
+        if (ticker, trade_date) == ("301188", "2026-04-01"):
+            return {"next_close_return": -0.031, "t_plus_2_close_return": -0.054, "cycle_status": "closed"}
+        return {"next_close_return": -0.022, "t_plus_2_close_return": -0.031, "cycle_status": "closed"}
 
     monkeypatch.setattr(
         "scripts.analyze_btst_upstream_shadow_fnfp_dossier.extract_btst_price_outcome",
@@ -69,12 +135,24 @@ def test_analyze_btst_upstream_shadow_fnfp_dossier_splits_false_negative_and_fal
 
     analysis = analyze_btst_upstream_shadow_fnfp_dossier(tmp_path)
 
-    assert analysis["cohort_count"] == 2
-    assert analysis["false_negative_count"] == 1
-    assert analysis["false_positive_count"] == 1
-    assert analysis["false_negative_rows"][0]["ticker"] == "300683"
+    assert analysis["cohort_count"] == 5
+    assert analysis["false_negative_count"] == 3
+    assert analysis["false_positive_count"] == 2
+    assert [row["ticker"] for row in analysis["false_negative_rows"]] == ["300999", "300683", "300683"]
+    assert analysis["false_negative_rows"][0]["trade_date"] == "2026-04-02"
     assert analysis["false_positive_rows"][0]["ticker"] == "301188"
-    assert analysis["quality_label_split"] == {"close_continuation": 1, "balanced_confirmation": 1}
+    assert analysis["false_positive_rows"][0]["trade_date"] == "2026-04-01"
+    assert analysis["quality_label_split"] == {"close_continuation": 3, "balanced_confirmation": 2}
+    assert analysis["trend_acceleration_band_split"]["gte_0_80"]["count"] == 2
+    assert analysis["trend_acceleration_band_split"]["gte_0_60_lt_0_80"]["count"] == 1
+    assert analysis["close_strength_band_split"]["gte_0_85"]["count"] == 2
+    assert analysis["close_strength_band_split"]["gte_0_60_lt_0_85"]["count"] == 2
+    assert analysis["repeat_ticker_board"][0]["ticker"] == "300683"
+    assert analysis["repeat_ticker_board"][0]["count"] == 2
+    assert analysis["blocker_clusters"][0]["blocker"] == "trend_not_constructive"
+    assert analysis["blocker_clusters"][0]["count"] == 3
+    assert analysis["blocker_clusters"][1]["blocker"] == "late_extension"
+    assert analysis["blocker_clusters"][1]["count"] == 1
 
 
 def test_render_btst_upstream_shadow_fnfp_dossier_markdown_renders_summary_blocks():
@@ -99,3 +177,4 @@ def test_render_btst_upstream_shadow_fnfp_dossier_markdown_renders_summary_block
     assert "false_negative_count: 1" in markdown
     assert "300683" in markdown
     assert "trend_not_constructive" in markdown
+    assert "## Repeat Ticker Board" in markdown
