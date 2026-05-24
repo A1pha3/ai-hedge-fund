@@ -20,7 +20,6 @@ from src.targets.short_trade_target import (
     evaluate_short_trade_selected_target,
 )
 
-
 _P2_BLOCKED_GATES = frozenset({"halt", "shadow_only"})
 
 
@@ -34,6 +33,7 @@ def _is_execution_eligible(evaluation: DualTargetEvaluation) -> bool:
 def apply_p2_regime_gate_enforcement_to_selection_targets(
     selection_targets: dict[str, DualTargetEvaluation],
     gate: str | None,
+    allowed_tickers: set[str] | None = None,
 ) -> None:
     """Mark formally selected items in selection_targets as p2_execution_blocked when gate is halt/shadow_only.
 
@@ -45,7 +45,17 @@ def apply_p2_regime_gate_enforcement_to_selection_targets(
     if not gate or gate not in _P2_BLOCKED_GATES:
         return
     block_reason = f"p2_regime_gate_enforce:{gate}"
+    allowed_tickers = {str(ticker) for ticker in list(allowed_tickers or set()) if str(ticker or "").strip()}
     for evaluation in selection_targets.values():
+        if str(getattr(evaluation, "ticker", "") or "") in allowed_tickers:
+            evaluation.p2_execution_blocked = False
+            evaluation.p2_execution_block_reason = None
+            evaluation.execution_eligible = _is_execution_eligible(evaluation)
+            if evaluation.research is not None:
+                evaluation.research.execution_eligible = evaluation.research.decision == "selected"
+            if evaluation.short_trade is not None:
+                evaluation.short_trade.execution_eligible = evaluation.short_trade.decision == "selected"
+            continue
         if _is_execution_eligible(evaluation):
             evaluation.p2_execution_blocked = True
             evaluation.p2_execution_block_reason = block_reason

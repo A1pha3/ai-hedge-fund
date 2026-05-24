@@ -136,6 +136,7 @@ def calculate_position(
         score_final=score_final,
         execution_ratio=execution_ratio,
         quality_score=max(0.0, min(1.0, quality_score)),
+        daily_limit_priority=score_final,
     )
 
 
@@ -143,7 +144,15 @@ def enforce_daily_trade_limit(plans: list[PositionPlan], portfolio_nav: float, l
     allowed_amount = portfolio_nav * limit_ratio
     selected: list[PositionPlan] = []
     consumed = 0.0
-    for plan in sorted(plans, key=lambda item: (item.score_final, item.quality_score), reverse=True):
+    for plan in sorted(
+        plans,
+        key=lambda item: (
+            float(getattr(item, "daily_limit_priority", item.score_final) or 0.0),
+            item.score_final,
+            item.quality_score,
+        ),
+        reverse=True,
+    ):
         if len(selected) >= max_new_positions:
             break
         if consumed + plan.amount > allowed_amount:

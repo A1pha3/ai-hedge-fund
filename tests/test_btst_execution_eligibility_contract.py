@@ -18,6 +18,9 @@ def _build_plan(
     candidate_source: str = "layer_c_watchlist",
     prior_quality_label: str = "watch_only",
     gate: str = "shadow_only",
+    preferred_entry_mode: str | None = None,
+    positive_tags: list[str] | None = None,
+    historical_prior: dict[str, object] | None = None,
 ) -> ExecutionPlan:
     evaluation = DualTargetEvaluation(
         ticker="300724",
@@ -28,6 +31,11 @@ def _build_plan(
             target_type="short_trade",
             decision=decision,
             score_target=0.81,
+            preferred_entry_mode=preferred_entry_mode,
+            positive_tags=list(positive_tags or []),
+            metrics_payload={
+                "historical_prior": dict(historical_prior or {}),
+            },
         ),
     )
     return ExecutionPlan(
@@ -178,3 +186,253 @@ def test_build_reporting_target_summary_tracks_non_halt_formal_blocked_selected_
     assert summary.short_trade_formal_non_halt_blocked_selected_count == 1
     assert summary.short_trade_formal_non_halt_gate_counts == {"shadow_only": 1}
     assert summary.short_trade_formal_non_halt_prior_quality_counts == {"watch_only": 1}
+
+
+def test_shadow_only_close_continuation_near_miss_survives_p2_and_promotes_to_selected(monkeypatch) -> None:
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    plan = _build_plan(
+        decision="near_miss",
+        prior_quality_label="watch_only",
+        gate="shadow_only",
+        preferred_entry_mode="confirm_then_hold_breakout",
+        positive_tags=["historical_execution_relief", "fresh_catalyst_support"],
+        historical_prior={
+            "execution_quality_label": "close_continuation",
+            "evaluable_count": 5,
+            "next_close_positive_rate": 0.58,
+            "next_high_hit_rate_at_threshold": 0.64,
+        },
+    )
+
+    after_p2 = _enforce_btst_regime_gate_p2(plan)
+
+    assert [order.ticker for order in after_p2.buy_orders] == ["300724"]
+    assert after_p2.selection_targets["300724"].p2_execution_blocked is False
+
+    result = _enforce_btst_execution_contract_p5(after_p2)
+    evaluation = result.selection_targets["300724"]
+
+    assert evaluation.execution_eligible is True
+    assert evaluation.short_trade is not None
+    assert evaluation.short_trade.decision == "selected"
+    assert evaluation.short_trade.execution_eligible is True
+    assert [order.ticker for order in result.buy_orders] == ["300724"]
+
+
+def test_shadow_only_promotion_reads_historical_prior_from_explainability_payload(monkeypatch) -> None:
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    plan = _build_plan(
+        decision="near_miss",
+        prior_quality_label="watch_only",
+        gate="shadow_only",
+        preferred_entry_mode="confirm_then_hold_breakout",
+        positive_tags=["historical_execution_relief", "fresh_catalyst_support"],
+    )
+    short_trade = plan.selection_targets["300724"].short_trade
+    assert short_trade is not None
+    short_trade.metrics_payload = {}
+    short_trade.explainability_payload = {
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "evaluable_count": 5,
+            "next_close_positive_rate": 0.58,
+            "next_high_hit_rate_at_threshold": 0.64,
+        }
+    }
+
+    after_p2 = _enforce_btst_regime_gate_p2(plan)
+
+    assert [order.ticker for order in after_p2.buy_orders] == ["300724"]
+
+
+def test_halt_close_continuation_selected_survives_p2_and_p5_relief(monkeypatch) -> None:
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    plan = _build_plan(
+        decision="selected",
+        prior_quality_label="watch_only",
+        gate="halt",
+        preferred_entry_mode="confirm_then_hold_breakout",
+        positive_tags=["historical_execution_relief", "fresh_catalyst_support"],
+    )
+    short_trade = plan.selection_targets["300724"].short_trade
+    assert short_trade is not None
+    short_trade.explainability_payload = {
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "evaluable_count": 6,
+            "next_close_positive_rate": 0.82,
+            "next_high_hit_rate_at_threshold": 0.95,
+        }
+    }
+
+    after_p2 = _enforce_btst_regime_gate_p2(plan)
+
+    assert [order.ticker for order in after_p2.buy_orders] == ["300724"]
+    assert after_p2.selection_targets["300724"].p2_execution_blocked is False
+
+    result = _enforce_btst_execution_contract_p5(after_p2)
+
+    assert [order.ticker for order in result.buy_orders] == ["300724"]
+    assert result.selection_targets["300724"].execution_eligible is True
+
+
+def test_shadow_only_close_continuation_near_miss_requires_catalyst_support(monkeypatch) -> None:
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    plan = _build_plan(
+        decision="near_miss",
+        prior_quality_label="watch_only",
+        gate="shadow_only",
+        preferred_entry_mode="confirm_then_hold_breakout",
+        positive_tags=["historical_execution_relief"],
+        historical_prior={
+            "execution_quality_label": "close_continuation",
+            "evaluable_count": 5,
+            "next_close_positive_rate": 0.58,
+            "next_high_hit_rate_at_threshold": 0.64,
+        },
+    )
+
+    result = _enforce_btst_execution_contract_p5(_enforce_btst_regime_gate_p2(plan))
+
+    assert result.buy_orders == []
+    assert result.selection_targets["300724"].execution_eligible is False
+    assert result.selection_targets["300724"].short_trade is not None
+
+
+def test_halt_close_continuation_selected_requires_minimum_score_target(monkeypatch) -> None:
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    plan = _build_plan(
+        decision="selected",
+        prior_quality_label="watch_only",
+        gate="halt",
+        preferred_entry_mode="confirm_then_hold_breakout",
+        positive_tags=["historical_execution_relief", "fresh_catalyst_support"],
+    )
+    short_trade = plan.selection_targets["300724"].short_trade
+    assert short_trade is not None
+    short_trade.score_target = 0.49
+    short_trade.explainability_payload = {
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "evaluable_count": 6,
+            "next_close_positive_rate": 0.82,
+            "next_high_hit_rate_at_threshold": 0.95,
+        }
+    }
+
+    result = _enforce_btst_execution_contract_p5(_enforce_btst_regime_gate_p2(plan))
+
+    assert result.buy_orders == []
+    assert result.selection_targets["300724"].execution_eligible is False
+    assert result.selection_targets["300724"].short_trade is not None
+
+
+def test_halt_catalyst_theme_carryover_selected_survives_p2_and_p5_relief(monkeypatch) -> None:
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    plan = _build_plan(
+        decision="selected",
+        candidate_source="catalyst_theme",
+        prior_quality_label="watch_only",
+        gate="halt",
+        preferred_entry_mode="confirm_then_hold_breakout",
+        positive_tags=["catalyst_theme_short_trade_carryover_applied"],
+    )
+    short_trade = plan.selection_targets["300724"].short_trade
+    assert short_trade is not None
+    short_trade.score_target = 0.52
+    short_trade.explainability_payload = {
+        "replay_context": {
+            "candidate_reason_codes": [
+                "catalyst_theme_candidate_score_ranked",
+                "catalyst_theme_short_trade_carryover_candidate",
+            ],
+            "short_trade_catalyst_relief": {
+                "enabled": True,
+                "reason": "catalyst_theme_short_trade_carryover",
+                "min_historical_evaluable_count": 3,
+            },
+        },
+        "upstream_shadow_catalyst_relief": {
+            "enabled": True,
+            "eligible": True,
+            "applied": True,
+            "reason": "catalyst_theme_short_trade_carryover",
+        },
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "evaluable_count": 4,
+            "next_close_positive_rate": 0.68,
+            "next_high_hit_rate_at_threshold": 0.78,
+        },
+    }
+
+    after_p2 = _enforce_btst_regime_gate_p2(plan)
+
+    assert [order.ticker for order in after_p2.buy_orders] == ["300724"]
+    assert after_p2.selection_targets["300724"].p2_execution_blocked is False
+
+    result = _enforce_btst_execution_contract_p5(after_p2)
+
+    assert [order.ticker for order in result.buy_orders] == ["300724"]
+    assert result.selection_targets["300724"].execution_eligible is True
+
+
+def test_halt_catalyst_theme_carryover_selected_clears_stale_p2_flags_from_replay(monkeypatch) -> None:
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    plan = _build_plan(
+        decision="selected",
+        candidate_source="catalyst_theme",
+        prior_quality_label="watch_only",
+        gate="halt",
+        preferred_entry_mode="confirm_then_hold_breakout",
+        positive_tags=["catalyst_theme_short_trade_carryover_applied"],
+    )
+    evaluation = plan.selection_targets["300724"]
+    short_trade = evaluation.short_trade
+    assert short_trade is not None
+    evaluation.execution_eligible = False
+    evaluation.p2_execution_blocked = True
+    evaluation.p2_execution_block_reason = "p2_regime_gate_enforce:halt"
+    short_trade.execution_eligible = False
+    short_trade.score_target = 0.52
+    short_trade.explainability_payload = {
+        "replay_context": {
+            "candidate_reason_codes": [
+                "catalyst_theme_candidate_score_ranked",
+                "catalyst_theme_short_trade_carryover_candidate",
+            ],
+            "short_trade_catalyst_relief": {
+                "enabled": True,
+                "reason": "catalyst_theme_short_trade_carryover",
+                "min_historical_evaluable_count": 3,
+            },
+        },
+        "upstream_shadow_catalyst_relief": {
+            "enabled": True,
+            "eligible": True,
+            "applied": True,
+            "reason": "catalyst_theme_short_trade_carryover",
+        },
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "evaluable_count": 4,
+            "next_close_positive_rate": 0.68,
+            "next_high_hit_rate_at_threshold": 0.78,
+        },
+    }
+
+    after_p2 = _enforce_btst_regime_gate_p2(plan)
+
+    assert [order.ticker for order in after_p2.buy_orders] == ["300724"]
+    assert after_p2.selection_targets["300724"].p2_execution_blocked is False
+    assert after_p2.selection_targets["300724"].p2_execution_block_reason is None
+
+    result = _enforce_btst_execution_contract_p5(after_p2)
+
+    assert result.selection_targets["300724"].execution_eligible is True

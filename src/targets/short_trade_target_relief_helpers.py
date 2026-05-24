@@ -216,6 +216,22 @@ def _build_historical_execution_relief_gate_hits(
     }
 
 
+def _resolve_historical_execution_relief_source(
+    *,
+    input_data: TargetEvaluationInput,
+    candidate_reason_codes: set[str],
+) -> str:
+    source = str(input_data.replay_context.get("source") or "").strip()
+    upstream_candidate_source = str(input_data.replay_context.get("upstream_candidate_source") or "").strip()
+    if (
+        source in {"catalyst_theme", "catalyst_theme_shadow"}
+        and upstream_candidate_source in {"upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"}
+        and "upstream_shadow_release_candidate" in candidate_reason_codes
+    ):
+        return upstream_candidate_source
+    return source
+
+
 def _resolve_historical_execution_relief_profitability_gate(
     *,
     source: str,
@@ -534,8 +550,11 @@ def resolve_historical_execution_relief(
     strong_carryover_history_min_evaluable_count: int,
 ) -> dict[str, Any]:
     historical_prior = historical_prior_getter(input_data)
-    source = str(input_data.replay_context.get("source") or "").strip()
     candidate_reason_codes = set(normalized_reason_codes(input_data.replay_context.get("candidate_reason_codes")))
+    source = _resolve_historical_execution_relief_source(
+        input_data=input_data,
+        candidate_reason_codes=candidate_reason_codes,
+    )
     catalyst_theme_carryover_candidate = is_catalyst_theme_carryover_candidate(
         source=source,
         candidate_reason_codes=candidate_reason_codes,

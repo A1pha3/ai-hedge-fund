@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pandas as pd
 import pytest
 
@@ -4237,6 +4238,72 @@ def test_build_buy_orders_blocks_market_regime_execution_gate_from_short_trade_t
     assert diagnostics["tickers"][0]["short_trade_decision"] == "selected"
 
 
+def test_build_buy_orders_allows_halt_relief_candidate_despite_market_regime_gate():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.31, score_b=0.6, quality_score=0.68, decision="watch")]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            execution_eligible=True,
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                score_target=0.52,
+                preferred_entry_mode="confirm_then_hold_breakout",
+                positive_tags=["historical_execution_relief", "fresh_catalyst_support"],
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["market_risk_risk_off", "score_short=0.31"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": True,
+                            "risk_level": "risk_off",
+                            "regime_gate_level": "risk_off",
+                            "execution_hard_gate": True,
+                        }
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": True,
+                        "eligible": False,
+                        "applied": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+                explainability_payload={
+                    "market_state_threshold_adjustment": {
+                        "enabled": True,
+                        "risk_level": "risk_off",
+                        "regime_gate_level": "risk_off",
+                        "execution_hard_gate": True,
+                    },
+                    "historical_prior": {
+                        "execution_quality_label": "close_continuation",
+                        "evaluable_count": 6,
+                        "next_close_positive_rate": 0.82,
+                        "next_high_hit_rate_at_threshold": 0.95,
+                    },
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert [order.ticker for order in buy_orders] == ["300724"]
+    assert diagnostics["reason_counts"] == {}
+
+
 def test_regime_gate_payload_is_reused_in_daily_pipeline_market_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(daily_pipeline_module.BTST_0422_P1_REGIME_GATE_MODE_ENV, "shadow")
     reused_payload = {
@@ -4976,6 +5043,48 @@ def test_daily_pipeline_applies_reentry_filter_to_frozen_buy_orders():
     assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["selected_tickers"] == []
 
 
+def test_daily_pipeline_applies_recent_formal_buy_cooldown_to_frozen_buy_orders(tmp_path, monkeypatch):
+    selection_dir = tmp_path / "paper_trading_2026-03-08_2026-03-08_live_m2_7_short_trade_only_plan" / "selection_artifacts" / "2026-03-08"
+    selection_dir.mkdir(parents=True, exist_ok=True)
+    (selection_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-08",
+                "buy_orders": [{"ticker": "300724"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    frozen_plan = ExecutionPlan(
+        date="20260310",
+        buy_orders=[PositionPlan(ticker="300724", shares=100, amount=12000.0, score_final=0.52, execution_ratio=0.3)],
+        watchlist=[LayerCResult(ticker="300724", score_c=-0.05, score_final=0.52, score_b=0.43, decision="watch")],
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"watchlist_count": 1, "buy_order_count": 1},
+            "funnel_diagnostics": {"filters": {"buy_orders": {"filtered_count": 0, "reason_counts": {}, "tickers": [], "selected_tickers": ["300724"]}}},
+        },
+    )
+    pipeline = DailyPipeline(
+        frozen_post_market_plans={"20260310": frozen_plan},
+        frozen_plan_source="/tmp/frozen.jsonl",
+        base_model_name="gpt-4.1",
+        base_model_provider="OpenAI",
+    )
+    monkeypatch.setattr(daily_pipeline_module, "BTST_REPORTS_ROOT", tmp_path)
+
+    replayed = pipeline.run_post_market(
+        "20260310",
+        portfolio_snapshot={"cash": 1.0, "positions": {}},
+    )
+
+    assert replayed.buy_orders == []
+    assert replayed.risk_metrics["counts"]["buy_order_count"] == 0
+    assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["reason_counts"] == {"blocked_by_exit_cooldown": 1}
+    assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["tickers"][0]["trigger_reason"] == "recent_formal_buy_cooldown"
+    assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["selected_tickers"] == []
+
+
 def test_daily_pipeline_applies_stronger_weak_confirmation_reentry_filter_to_frozen_buy_orders():
     frozen_plan = ExecutionPlan(
         date="20260310",
@@ -5187,6 +5296,332 @@ def test_build_buy_orders_allows_candidate_below_theme_exposure_cap():
     assert len(buy_orders) == 1
     assert buy_orders[0].ticker == "300724"
     assert diagnostics["reason_counts"] == {}
+
+
+def test_run_post_market_backfills_buy_order_for_post_p5_halt_relief_candidate(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    monkeypatch.delenv("BTST_0422_P6_RISK_BUDGET_MODE", raising=False)
+
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    trade_date = "20260313"
+    legacy_watchlist = [
+        LayerCResult(
+            ticker="300408",
+            score_c=0.2,
+            score_final=0.29,
+            score_b=0.58,
+            quality_score=0.61,
+            decision="watch",
+        )
+    ]
+    promoted_entry = {
+        "ticker": "300724",
+        "score_c": 0.2,
+        "score_final": 0.31,
+        "score_b": 0.6,
+        "quality_score": 0.68,
+        "candidate_source": "layer_b_boundary",
+    }
+    promoted_selection_target = DualTargetEvaluation(
+        ticker="300724",
+        trade_date=trade_date,
+        candidate_source="layer_b_boundary",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="near_miss",
+            score_target=0.52,
+            preferred_entry_mode="confirm_then_hold_breakout",
+            positive_tags=["fresh_catalyst_support"],
+            gate_status={"execution": "pass"},
+            blockers=[],
+            metrics_payload={
+                "thresholds": {
+                    "market_state_threshold_adjustment": {
+                        "enabled": True,
+                        "risk_level": "risk_off",
+                        "regime_gate_level": "risk_off",
+                        "execution_hard_gate": True,
+                    }
+                }
+            },
+            explainability_payload={
+                "market_state_threshold_adjustment": {
+                    "enabled": True,
+                    "risk_level": "risk_off",
+                    "regime_gate_level": "risk_off",
+                    "execution_hard_gate": True,
+                },
+                "historical_prior": {
+                    "execution_quality_label": "close_continuation",
+                    "evaluable_count": 5,
+                    "next_close_positive_rate": 0.70,
+                    "next_high_hit_rate_at_threshold": 0.80,
+                },
+            },
+        ),
+    )
+
+    candidate_context = daily_pipeline_module.PostMarketCandidateContext(
+        candidates=[],
+        shadow_candidates=[],
+        candidate_pool_shadow_summary={},
+        market_state=MarketState(state_type=MarketStateType.TREND, adjusted_weights={}),
+        fused=[],
+        shadow_fused=[],
+        high_pool=[],
+        top_precise_pool=[],
+        layer_c_results=list(legacy_watchlist),
+        logic_scores={},
+        merge_approved_breakout_signal_uplift={},
+        merge_approved_layer_c_alignment_uplift={},
+        merge_approved_sector_resonance_uplift={},
+    )
+    watchlist_context = daily_pipeline_module.PostMarketWatchlistContext(
+        watchlist=list(legacy_watchlist),
+        layer_b_filter_diagnostics={},
+        watchlist_filter_diagnostics={},
+        historical_prior_by_ticker={},
+        short_trade_candidate_diagnostics={},
+        catalyst_theme_candidate_diagnostics={},
+        candidate_by_ticker={
+            "300724": CandidateStock(
+                ticker="300724",
+                name="捷佳伟创",
+                industry_sw="电力设备",
+                avg_volume_20d=1_500_000,
+                market_cap=100,
+                listing_date="20180810",
+            )
+        },
+        price_map={"300408": 12.5, "300724": 142.71},
+    )
+    order_context = daily_pipeline_module.PostMarketOrderContext(
+        prebuy_selection_targets={},
+        buy_orders=[],
+        buy_order_filter_diagnostics={"reason_counts": {}, "tickers": [], "selected_tickers": []},
+        sell_orders=[],
+        sell_order_diagnostics={},
+    )
+    diagnostics_aggregation = daily_pipeline_module.PostMarketDiagnosticsAggregation(
+        counts={"buy_order_count": 0},
+        funnel_diagnostics={"filters": {}},
+        timing_seconds={},
+    )
+    selection_resolution = daily_pipeline_module.PostMarketSelectionResolution(
+        counts={"buy_order_count": 0},
+        funnel_diagnostics={"filters": {}},
+        selection_targets={"300724": promoted_selection_target},
+        dual_target_summary=daily_pipeline_module.DualTargetSummary(target_mode="short_trade_only"),
+        resolved_watchlist=list(legacy_watchlist),
+        resolved_rejected_entries=[],
+        resolved_supplemental_short_trade_entries=[dict(promoted_entry)],
+    )
+
+    monkeypatch.setattr(pipeline, "_collect_post_market_candidate_context", lambda trade_date: (candidate_context, {}))
+    monkeypatch.setattr(pipeline, "_build_post_market_watchlist_context", lambda candidate_context, trade_date: watchlist_context)
+    monkeypatch.setattr(
+        pipeline,
+        "_build_post_market_order_context",
+        lambda **kwargs: (
+            order_context,
+            {"build_buy_orders_seconds": 0.0, "sell_check_seconds": 0.0},
+        ),
+    )
+    monkeypatch.setattr(daily_pipeline_module, "aggregate_post_market_diagnostics", lambda **kwargs: diagnostics_aggregation)
+    monkeypatch.setattr(daily_pipeline_module, "resolve_post_market_selection_targets", lambda **kwargs: selection_resolution)
+
+    def _build_plan(**kwargs):
+        return ExecutionPlan(
+            date=trade_date,
+            market_state=candidate_context.market_state,
+            logic_scores={},
+            buy_orders=[],
+            sell_orders=[],
+            portfolio_snapshot={"cash": 200_000, "positions": {}},
+            risk_metrics={
+                "counts": {"buy_order_count": 0},
+                "funnel_diagnostics": {"filters": {}},
+                "selection_target_shell_inputs": {
+                    "rejected_entries": [],
+                    "supplemental_short_trade_entries": [dict(promoted_entry)],
+                },
+                "btst_regime_gate": {"gate": "halt"},
+            },
+            watchlist=list(legacy_watchlist),
+            selection_targets={"300724": promoted_selection_target},
+            target_mode="short_trade_only",
+            dual_target_summary=daily_pipeline_module.DualTargetSummary(target_mode="short_trade_only"),
+        )
+
+    monkeypatch.setattr(daily_pipeline_module, "build_post_market_execution_plan", _build_plan)
+
+    plan = pipeline.run_post_market(trade_date, portfolio_snapshot={"cash": 200_000, "positions": {}})
+
+    assert [order.ticker for order in plan.buy_orders] == ["300724"]
+    assert "300724" in {item.ticker for item in plan.watchlist}
+
+
+def test_run_post_market_backfill_uses_short_trade_score_target_when_shell_score_is_too_low(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
+    monkeypatch.delenv("BTST_0422_P6_RISK_BUDGET_MODE", raising=False)
+
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    trade_date = "20260313"
+    legacy_watchlist = [
+        LayerCResult(
+            ticker="300408",
+            score_c=0.2,
+            score_final=0.29,
+            score_b=0.58,
+            quality_score=0.61,
+            decision="watch",
+        )
+    ]
+    promoted_entry = {
+        "ticker": "002371",
+        "score_c": 0.0,
+        "score_final": -0.0375,
+        "score_b": -0.0375,
+        "quality_score": 0.5,
+        "candidate_source": "short_trade_boundary",
+    }
+    promoted_selection_target = DualTargetEvaluation(
+        ticker="002371",
+        trade_date=trade_date,
+        candidate_source="short_trade_boundary",
+        short_trade=TargetEvaluationResult(
+            target_type="short_trade",
+            decision="near_miss",
+            score_target=0.5136,
+            confidence=0.5425,
+            preferred_entry_mode="confirm_then_hold_breakout",
+            positive_tags=["fresh_catalyst_support"],
+            gate_status={"execution": "pass"},
+            blockers=[],
+            metrics_payload={
+                "thresholds": {
+                    "market_state_threshold_adjustment": {
+                        "enabled": True,
+                        "risk_level": "risk_off",
+                        "regime_gate_level": "risk_off",
+                        "execution_hard_gate": True,
+                    }
+                }
+            },
+            explainability_payload={
+                "market_state_threshold_adjustment": {
+                    "enabled": True,
+                    "risk_level": "risk_off",
+                    "regime_gate_level": "risk_off",
+                    "execution_hard_gate": True,
+                },
+                "historical_prior": {
+                    "execution_quality_label": "close_continuation",
+                    "evaluable_count": 5,
+                    "next_close_positive_rate": 0.70,
+                    "next_high_hit_rate_at_threshold": 0.80,
+                },
+            },
+        ),
+    )
+
+    candidate_context = daily_pipeline_module.PostMarketCandidateContext(
+        candidates=[],
+        shadow_candidates=[],
+        candidate_pool_shadow_summary={},
+        market_state=MarketState(state_type=MarketStateType.TREND, adjusted_weights={}),
+        fused=[],
+        shadow_fused=[],
+        high_pool=[],
+        top_precise_pool=[],
+        layer_c_results=list(legacy_watchlist),
+        logic_scores={},
+        merge_approved_breakout_signal_uplift={},
+        merge_approved_layer_c_alignment_uplift={},
+        merge_approved_sector_resonance_uplift={},
+    )
+    watchlist_context = daily_pipeline_module.PostMarketWatchlistContext(
+        watchlist=list(legacy_watchlist),
+        layer_b_filter_diagnostics={},
+        watchlist_filter_diagnostics={},
+        historical_prior_by_ticker={},
+        short_trade_candidate_diagnostics={},
+        catalyst_theme_candidate_diagnostics={},
+        candidate_by_ticker={
+            "002371": CandidateStock(
+                ticker="002371",
+                name="北方华创",
+                industry_sw="电子",
+                avg_volume_20d=1_500_000,
+                market_cap=100,
+                listing_date="20040416",
+            )
+        },
+        price_map={"300408": 12.5, "002371": 28.66},
+    )
+    order_context = daily_pipeline_module.PostMarketOrderContext(
+        prebuy_selection_targets={},
+        buy_orders=[],
+        buy_order_filter_diagnostics={"reason_counts": {}, "tickers": [], "selected_tickers": []},
+        sell_orders=[],
+        sell_order_diagnostics={},
+    )
+    diagnostics_aggregation = daily_pipeline_module.PostMarketDiagnosticsAggregation(
+        counts={"buy_order_count": 0},
+        funnel_diagnostics={"filters": {}},
+        timing_seconds={},
+    )
+    selection_resolution = daily_pipeline_module.PostMarketSelectionResolution(
+        counts={"buy_order_count": 0},
+        funnel_diagnostics={"filters": {}},
+        selection_targets={"002371": promoted_selection_target},
+        dual_target_summary=daily_pipeline_module.DualTargetSummary(target_mode="short_trade_only"),
+        resolved_watchlist=list(legacy_watchlist),
+        resolved_rejected_entries=[],
+        resolved_supplemental_short_trade_entries=[dict(promoted_entry)],
+    )
+
+    monkeypatch.setattr(pipeline, "_collect_post_market_candidate_context", lambda trade_date: (candidate_context, {}))
+    monkeypatch.setattr(pipeline, "_build_post_market_watchlist_context", lambda candidate_context, trade_date: watchlist_context)
+    monkeypatch.setattr(
+        pipeline,
+        "_build_post_market_order_context",
+        lambda **kwargs: (
+            order_context,
+            {"build_buy_orders_seconds": 0.0, "sell_check_seconds": 0.0},
+        ),
+    )
+    monkeypatch.setattr(daily_pipeline_module, "aggregate_post_market_diagnostics", lambda **kwargs: diagnostics_aggregation)
+    monkeypatch.setattr(daily_pipeline_module, "resolve_post_market_selection_targets", lambda **kwargs: selection_resolution)
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "build_post_market_execution_plan",
+        lambda **kwargs: ExecutionPlan(
+            date=trade_date,
+            market_state=candidate_context.market_state,
+            logic_scores={},
+            buy_orders=[],
+            sell_orders=[],
+            portfolio_snapshot={"cash": 200_000, "positions": {}},
+            risk_metrics={
+                "counts": {"buy_order_count": 0},
+                "funnel_diagnostics": {"filters": {}},
+                "selection_target_shell_inputs": {
+                    "rejected_entries": [],
+                    "supplemental_short_trade_entries": [dict(promoted_entry)],
+                },
+                "btst_regime_gate": {"gate": "halt"},
+            },
+            watchlist=list(legacy_watchlist),
+            selection_targets={"002371": promoted_selection_target},
+            target_mode="short_trade_only",
+            dual_target_summary=daily_pipeline_module.DualTargetSummary(target_mode="short_trade_only"),
+        ),
+    )
+
+    plan = pipeline.run_post_market(trade_date, portfolio_snapshot={"cash": 200_000, "positions": {}})
+
+    assert [order.ticker for order in plan.buy_orders] == ["002371"]
 
 
 def test_build_buy_orders_allows_candidate_exactly_at_theme_exposure_cap():
@@ -5623,6 +6058,7 @@ def test_build_buy_orders_prioritizes_incremental_theme_cap_when_both_caps_excee
 # Task B tests: sector_resonance in boundary candidate score + metrics payload
 # ---------------------------------------------------------------------------
 
+
 def test_boundary_candidate_score_includes_sector_resonance() -> None:
     """sector_resonance contributes to boundary candidate score and improves ranking when high."""
     from src.execution.daily_pipeline_upstream_shadow_helpers import _compute_short_trade_boundary_candidate_score
@@ -5685,6 +6121,7 @@ def test_build_short_trade_boundary_metrics_payload_preserves_sector_resonance()
 # ---------------------------------------------------------------------------
 # Task C tests: runner_escape_stats surfaced in selection artifact
 # ---------------------------------------------------------------------------
+
 
 def test_runner_escape_stats_included_in_candidate_diagnostics_payload() -> None:
     """build_short_trade_candidate_diagnostics_payload includes runner_escape_stats."""

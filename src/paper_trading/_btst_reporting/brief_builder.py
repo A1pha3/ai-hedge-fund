@@ -35,6 +35,7 @@ from src.paper_trading._btst_reporting.entry_builders import (
 )
 from src.paper_trading._btst_reporting.historical_prior import (
     _enrich_btst_brief_entries_with_history,
+    _enrich_upstream_shadow_entries_with_history,
     _extract_excluded_research_entry,
 )
 
@@ -176,6 +177,7 @@ def analyze_btst_next_day_trade_brief(
     ]
     brief_frontier_context = _build_btst_brief_frontier_context(
         report_dir=report_dir,
+        actual_trade_date=actual_trade_date,
         catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
         selection_targets=selection_targets,
         replay_input=brief_inputs["replay_input"],
@@ -376,6 +378,7 @@ def _build_btst_brief_recommendation_lines(
 def _build_btst_brief_frontier_context(
     *,
     report_dir: Path,
+    actual_trade_date: str | None,
     catalyst_theme_shadow_entries: list[dict[str, Any]],
     selection_targets: dict[str, Any],
     replay_input: dict[str, Any],
@@ -387,6 +390,11 @@ def _build_btst_brief_frontier_context(
     upstream_shadow_entries = _build_upstream_shadow_entries(
         selection_targets=selection_targets,
         replay_input=replay_input,
+    )
+    upstream_shadow_entries = _enrich_upstream_shadow_entries_with_history(
+        report_dir=report_dir,
+        actual_trade_date=actual_trade_date,
+        upstream_shadow_entries=upstream_shadow_entries,
     )
     return {
         "catalyst_theme_frontier_summary": catalyst_theme_frontier_summary,

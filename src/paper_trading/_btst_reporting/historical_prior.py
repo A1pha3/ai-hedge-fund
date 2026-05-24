@@ -963,6 +963,26 @@ def _enrich_btst_brief_entries_with_history(
     )
 
 
+def _enrich_upstream_shadow_entries_with_history(
+    *,
+    report_dir: Path,
+    actual_trade_date: str | None,
+    upstream_shadow_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not upstream_shadow_entries:
+        return []
+    historical_payload = _collect_historical_watch_candidate_rows(
+        report_dir, actual_trade_date
+    )
+    price_cache: dict[tuple[str, str], pd.DataFrame] = {}
+    return _apply_historical_prior_to_entries(
+        upstream_shadow_entries,
+        historical_rows=historical_payload["rows"],
+        price_cache=price_cache,
+        family="upstream_shadow",
+    )
+
+
 def _build_empty_btst_candidate_historical_context() -> dict[str, Any]:
     return {
         "lookback_report_limit": OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,

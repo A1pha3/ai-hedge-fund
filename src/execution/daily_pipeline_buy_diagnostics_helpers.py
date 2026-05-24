@@ -4,26 +4,32 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from src.execution.btst_shadow_promotion_helpers import resolve_btst_shadow_five_day_quality_signal, resolve_btst_shadow_promotion_payload
 from src.portfolio.position_calculator import enforce_daily_trade_limit
 
 BTST_0422_P6_RISK_BUDGET_MODE_ENV = "BTST_0422_P6_RISK_BUDGET_MODE"
 BTST_0422_P6_RISK_BUDGET_MODES = frozenset({"off", "enforce"})
 _P6_RISK_BUDGET_MATRIX = {
     "halt": {"formal_full": 0.0, "formal_capped": 0.0},
+    "halt_relief": {"halt_promoted": 0.10},
     "shadow_only": {"formal_full": 0.0, "formal_capped": 0.0},
+    "shadow_promotion": {"shadow_promoted": 0.25},
     "normal_trade": {"formal_full": 1.0, "formal_capped": 0.6},
     "aggressive_trade": {"formal_full": 1.15, "formal_capped": 0.75},
 }
-
 _BTST_DAILY_LIMIT_RULES = {
     "normal_trade": {"limit_ratio": 0.25, "max_new_positions": 2},
     "aggressive_trade": {"limit_ratio": 0.25, "max_new_positions": 3},
+    "halt_relief": {"limit_ratio": 0.10, "max_new_positions": 2},
+    "shadow_promotion": {"limit_ratio": 0.10, "max_new_positions": 1},
     "shadow_only": {"limit_ratio": 0.0, "max_new_positions": 0},
     "halt": {"limit_ratio": 0.0, "max_new_positions": 0},
 }
 _BTST_GATE_RESTRICTIVENESS = {
     "halt": 0,
+    "halt_relief": 0.5,
     "shadow_only": 1,
+    "shadow_promotion": 1.5,
     "normal_trade": 2,
     "aggressive_trade": 3,
 }
@@ -103,10 +109,71 @@ def _resolve_btst_prior_quality_label(*, item: Any, selection_target: Any, short
     return "execution_ready"
 
 
+def _resolve_short_trade_historical_prior(short_trade_result: Any) -> dict[str, Any]:
+    metrics_payload = dict(getattr(short_trade_result, "metrics_payload", {}) or {}) if short_trade_result is not None else {}
+    explainability_payload = dict(getattr(short_trade_result, "explainability_payload", {}) or {}) if short_trade_result is not None else {}
+    return dict(
+        metrics_payload.get("historical_prior")
+        or explainability_payload.get("historical_prior")
+        or {}
+    )
+
+
+def _resolve_btst_daily_limit_priority(*, item: Any, selection_target: Any, budget: dict[str, Any]) -> float:
+    base_priority = float(getattr(item, "score_final", 0.0) or 0.0)
+    risk_budget_gate = str(budget.get("risk_budget_gate") or "").strip().lower()
+    if risk_budget_gate not in {"halt_relief", "shadow_promotion"}:
+        return base_priority
+
+    short_trade_result = _resolve_short_trade_target_result(selection_target)
+    historical_prior = _resolve_short_trade_historical_prior(short_trade_result)
+    if risk_budget_gate == "shadow_promotion":
+        five_day_quality_signal = resolve_btst_shadow_five_day_quality_signal(historical_prior=historical_prior)
+        priority_penalty = float(five_day_quality_signal.get("priority_penalty") or 0.0)
+        if priority_penalty <= 0.0:
+            return base_priority
+        return round(max(0.0, base_priority - priority_penalty), 4)
+
+    next_high_hit_rate = _safe_float(
+        _first_non_none(
+            historical_prior.get("effective_next_high_hit_rate_at_threshold"),
+            historical_prior.get("shrunk_high_hit_rate"),
+            historical_prior.get("next_high_hit_rate_at_threshold"),
+            historical_prior.get("raw_next_high_hit_rate_at_threshold"),
+        )
+    )
+    next_close_positive_rate = _safe_float(
+        _first_non_none(
+            historical_prior.get("effective_next_close_positive_rate"),
+            historical_prior.get("shrunk_close_positive_rate"),
+            historical_prior.get("next_close_positive_rate"),
+            historical_prior.get("raw_next_close_positive_rate"),
+        )
+    )
+    evaluable_count = _safe_int(
+        _first_non_none(
+            historical_prior.get("prior_evidence_count"),
+            historical_prior.get("evaluable_count"),
+            historical_prior.get("same_ticker_sample_count"),
+            historical_prior.get("n_selected"),
+        )
+    )
+    if next_high_hit_rate is None or next_close_positive_rate is None or evaluable_count is None or evaluable_count <= 0:
+        return base_priority
+    evidence_score = min(float(evaluable_count), 50.0) / 50.0
+    return round((next_high_hit_rate * 0.6) + (next_close_positive_rate * 0.3) + (evidence_score * 0.1), 4)
+
+
 def _resolve_btst_execution_contract_bucket(*, item: Any, selection_target: Any, prior_quality_label: str, candidate: Any = None) -> str:
     short_trade_result = _resolve_short_trade_target_result(selection_target)
     candidate_source = str(getattr(selection_target, "candidate_source", None) or "").strip().lower()
     execution_eligible = bool(getattr(selection_target, "execution_eligible", False))
+    shadow_promotion = resolve_btst_shadow_promotion_payload(
+        evaluation=selection_target,
+        short_trade_result=short_trade_result,
+    )
+    if shadow_promotion.get("eligible"):
+        return str(shadow_promotion.get("execution_contract_bucket") or "shadow_promoted")
     if candidate_source in {"upgrade_only", "research_only"}:
         return "research_only"
     if prior_quality_label in {"watch_only", "reject"}:
@@ -164,6 +231,10 @@ def _normalize_btst_risk_budget_gate(*values: Any) -> str:
 def _resolve_btst_formal_risk_budget(*, item: Any, selection_target: Any, regime_gate_level: str, candidate: Any = None) -> dict[str, Any]:
     short_trade_result = _resolve_short_trade_target_result(selection_target)
     prior_quality_label = _resolve_btst_prior_quality_label(item=item, selection_target=selection_target, short_trade_result=short_trade_result)
+    shadow_promotion = resolve_btst_shadow_promotion_payload(
+        evaluation=selection_target,
+        short_trade_result=short_trade_result,
+    )
     execution_contract_bucket = _resolve_btst_execution_contract_bucket(
         item=item,
         selection_target=selection_target,
@@ -175,6 +246,8 @@ def _resolve_btst_formal_risk_budget(*, item: Any, selection_target: Any, regime
         getattr(selection_target, "btst_regime_gate", None),
         regime_gate_level,
     )
+    if shadow_promotion.get("eligible"):
+        gate_key = str(shadow_promotion.get("risk_budget_gate") or gate_key)
     ratio = 1.0
 
     if mode == "enforce":
@@ -321,11 +394,7 @@ def _build_btst_risk_budget_overlay_summary(*, candidate_plans: list[Any], filte
 def _enforce_btst_daily_trade_limit(plans: list[Any], portfolio_nav: float) -> list[Any]:
     if _resolve_btst_risk_budget_p6_mode() != "enforce":
         return enforce_daily_trade_limit(plans, portfolio_nav)
-    gates = {
-        str(getattr(plan, "risk_budget_gate", "") or "").strip().lower()
-        for plan in list(plans or [])
-        if str(getattr(plan, "risk_budget_gate", "") or "").strip()
-    }
+    gates = {str(getattr(plan, "risk_budget_gate", "") or "").strip().lower() for plan in list(plans or []) if str(getattr(plan, "risk_budget_gate", "") or "").strip()}
     if not gates:
         return enforce_daily_trade_limit(plans, portfolio_nav)
     supported_gates = [gate for gate in gates if gate in _BTST_GATE_RESTRICTIVENESS]
@@ -457,6 +526,14 @@ def build_short_trade_execution_gate_filter_payload(
     breakout_trap_penalty = float(breakout_trap_guard.get("penalty", 0.0) or 0.0)
     risk_level = str(market_state_threshold_adjustment.get("risk_level") or "unknown").strip().lower()
     regime_gate_level = str(market_state_threshold_adjustment.get("regime_gate_level") or risk_level or "unknown").strip().lower()
+    regime_relief = resolve_btst_shadow_promotion_payload(
+        evaluation=selection_target,
+        short_trade_result=short_trade_result,
+        gate=_normalize_btst_risk_budget_gate(
+            getattr(selection_target, "btst_regime_gate", None),
+            regime_gate_level,
+        ),
+    )
 
     projected_theme_exposure = float(committee_components.get("projected_theme_exposure", 0.0) or 0.0)
     theme_exposure_cap = float(committee_thresholds.get("theme_exposure_cap") or 0.25)
@@ -469,7 +546,7 @@ def build_short_trade_execution_gate_filter_payload(
         reason = "blocked_by_theme_exposure_cap"
     elif bool(breakout_trap_guard.get("blocked")) or bool(breakout_trap_guard.get("execution_blocked")) or "breakout_trap_risk" in blockers or "breakout_trap_execution_hard_gate" in blockers:
         reason = "blocked_by_breakout_trap_risk"
-    elif bool(market_state_threshold_adjustment.get("execution_hard_gate")):
+    elif bool(market_state_threshold_adjustment.get("execution_hard_gate")) and not bool(regime_relief.get("eligible")):
         reason = "blocked_by_market_regime_gate"
     elif decision == "blocked" or gate_status.get("execution") == "fail":
         reason = "blocked_by_short_trade_target"
@@ -623,6 +700,15 @@ def process_buy_order_watchlist_item(
         plan=plan,
         budget=budget,
         current_price=current_price,
+    )
+    plan = plan.model_copy(
+        update={
+            "daily_limit_priority": _resolve_btst_daily_limit_priority(
+                item=item,
+                selection_target=selection_target,
+                budget=budget,
+            )
+        }
     )
     if plan.shares > 0:
         return {"buy_plan": plan, "filtered_entry": None}

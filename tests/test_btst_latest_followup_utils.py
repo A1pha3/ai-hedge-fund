@@ -661,3 +661,100 @@ def test_load_latest_btst_historical_prior_by_ticker_recognizes_real_scope_alias
 
     assert priors_by_ticker["688498"]["applied_scope"] == "family_source_score_catalyst"
     assert priors_by_ticker["688498"]["execution_quality_label"] == "close_continuation"
+
+
+def test_load_latest_btst_historical_prior_by_ticker_merges_runtime_5d_fields(tmp_path):
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_20260514_short_trade"
+
+    _write_followup_report(
+        report_dir,
+        trade_date="2026-05-14",
+        selection_target="short_trade_only",
+        brief_payload={
+            "selected_entries": [
+                {
+                    "ticker": "300054",
+                    "decision": "selected",
+                    "candidate_source": "catalyst_theme",
+                    "historical_prior": {
+                        "applied_scope": "same_ticker",
+                        "sample_count": 6,
+                        "evaluable_count": 6,
+                        "execution_quality_label": "balanced_confirmation",
+                        "entry_timing_bias": "confirm_then_review",
+                        "next_close_positive_rate": 0.5,
+                    },
+                }
+            ]
+        },
+        mtime=200,
+    )
+    (reports_root / "btst_5d_15pct_boundary_contract_inspection_latest.json").write_text(
+        json.dumps(
+            {
+                "boundary_rows": [
+                    {
+                        "ticker": "300054",
+                        "trade_date": "2026-05-12",
+                        "cycle_status": "closed_cycle",
+                        "future_high_hit_15pct_2_5d": True,
+                        "max_future_high_return_2_5d": 0.202,
+                        "time_to_hit_15pct": 3,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (reports_root / "btst_5d_15pct_trend_gate_oos_validation_latest.json").write_text(
+        json.dumps(
+            {
+                "candidate_manifest": [
+                    {
+                        "ticker": "300054",
+                        "trade_date": "2026-05-14",
+                        "future_high_hit_15pct_2_5d": False,
+                        "max_future_high_return_2_5d": 0.1005,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    priors_by_ticker = load_latest_btst_historical_prior_by_ticker(reports_root)
+
+    assert priors_by_ticker["300054"]["five_day_evaluable_count"] == 2
+    assert priors_by_ticker["300054"]["five_day_hit_rate_at_15pct"] == 0.5
+    assert priors_by_ticker["300054"]["five_day_mean_max_future_high_return_2_5d"] == 0.1512
+    assert priors_by_ticker["300054"]["five_day_time_to_hit_15pct_median"] == 3.0
+    assert priors_by_ticker["300054"]["five_day_prior_sources"] == "boundary_contract_inspection,trend_gate_oos_validation"
+    assert priors_by_ticker["300054"]["next_close_positive_rate"] == 0.5
+
+
+def test_load_latest_btst_historical_prior_by_ticker_skips_5d_only_rows_without_runtime_prior(tmp_path):
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir(parents=True)
+    (reports_root / "btst_5d_15pct_trend_gate_oos_validation_latest.json").write_text(
+        json.dumps(
+            {
+                "candidate_manifest": [
+                    {
+                        "ticker": "688008",
+                        "trade_date": "2026-05-01",
+                        "future_high_hit_15pct_2_5d": True,
+                        "max_future_high_return_2_5d": 0.456,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    priors_by_ticker = load_latest_btst_historical_prior_by_ticker(reports_root)
+
+    assert "688008" not in priors_by_ticker

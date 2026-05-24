@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.execution.models import ExecutionPlan
@@ -118,3 +119,85 @@ def load_frozen_post_market_plans(daily_events_path: str | Path) -> dict[str, Ex
         raise ValueError(f"No current_plan records found in frozen replay source: {source_path}")
 
     return plans_by_date
+
+
+def _build_recent_generated_buy_blocks(*, latest_buy_trade_by_ticker: dict[str, str], current_trade_date: str, cooldown_calendar_days: int = 2) -> dict[str, dict]:
+    current_dt = datetime.strptime(_normalize_frozen_trade_date_key(current_trade_date), "%Y%m%d")
+    blocked_until = (current_dt + timedelta(days=1)).strftime("%Y%m%d")
+    blocked: dict[str, dict] = {}
+    for ticker, buy_trade_date in dict(latest_buy_trade_by_ticker or {}).items():
+        normalized_buy_trade_date = _normalize_frozen_trade_date_key(buy_trade_date)
+        if len(normalized_buy_trade_date) != 8:
+            continue
+        buy_dt = datetime.strptime(normalized_buy_trade_date, "%Y%m%d")
+        calendar_day_gap = (current_dt - buy_dt).days
+        if calendar_day_gap <= 0 or calendar_day_gap > cooldown_calendar_days:
+            continue
+        blocked[str(ticker)] = {
+            "trigger_reason": "recent_formal_buy_cooldown",
+            "exit_trade_date": normalized_buy_trade_date,
+            "blocked_until": blocked_until,
+        }
+    return blocked
+
+
+def _reset_frozen_buy_order_filter_summary(plan: ExecutionPlan) -> ExecutionPlan:
+    normalized_plan = plan.model_copy(deep=True)
+    risk_metrics = dict(getattr(normalized_plan, "risk_metrics", {}) or {})
+    counts = dict(risk_metrics.get("counts", {}) or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+    filters = dict(funnel_diagnostics.get("filters", {}) or {})
+    filters["buy_orders"] = {
+        "filtered_count": 0,
+        "reason_counts": {},
+        "tickers": [],
+        "selected_tickers": [str(getattr(order, "ticker", "") or "").strip() for order in list(getattr(normalized_plan, "buy_orders", []) or []) if str(getattr(order, "ticker", "") or "").strip()],
+    }
+    funnel_diagnostics["filters"] = filters
+    counts["buy_order_count"] = len(list(getattr(normalized_plan, "buy_orders", []) or []))
+    risk_metrics["counts"] = counts
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    normalized_plan.risk_metrics = risk_metrics
+    return normalized_plan
+
+
+def replay_frozen_post_market_sequence(
+    daily_events_path: str | Path,
+    *,
+    target_mode: str = "short_trade_only",
+    base_model_name: str = "gpt-4.1",
+    base_model_provider: str = "OpenAI",
+) -> dict[str, ExecutionPlan]:
+    from src.execution.daily_pipeline import DailyPipeline
+
+    frozen_plan_source = Path(daily_events_path).resolve()
+    frozen_plans = {
+        trade_date: _reset_frozen_buy_order_filter_summary(plan)
+        for trade_date, plan in load_frozen_post_market_plans(frozen_plan_source).items()
+    }
+    pipeline = DailyPipeline(
+        frozen_post_market_plans=frozen_plans,
+        frozen_plan_source=str(frozen_plan_source),
+        target_mode=target_mode,
+        base_model_name=base_model_name,
+        base_model_provider=base_model_provider,
+    )
+    replayed_plans: dict[str, ExecutionPlan] = {}
+    latest_buy_trade_by_ticker: dict[str, str] = {}
+    for trade_date in sorted(frozen_plans):
+        blocked_buy_tickers = _build_recent_generated_buy_blocks(
+            latest_buy_trade_by_ticker=latest_buy_trade_by_ticker,
+            current_trade_date=trade_date,
+        )
+        frozen_plan = frozen_plans[trade_date]
+        replayed_plan = pipeline.run_post_market(
+            trade_date,
+            portfolio_snapshot=dict(getattr(frozen_plan, "portfolio_snapshot", {}) or {}),
+            blocked_buy_tickers=blocked_buy_tickers,
+        )
+        replayed_plans[trade_date] = replayed_plan
+        for order in list(getattr(replayed_plan, "buy_orders", []) or []):
+            ticker = str(getattr(order, "ticker", "") or "").strip()
+            if ticker:
+                latest_buy_trade_by_ticker[ticker] = trade_date
+    return replayed_plans

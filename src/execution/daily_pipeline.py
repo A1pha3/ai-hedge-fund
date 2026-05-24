@@ -12,8 +12,10 @@ from typing import Any
 
 from scripts.btst_latest_followup_utils import (
     load_latest_btst_historical_prior_by_ticker,
+    load_recent_btst_buy_order_cooldowns,
 )
 from src.execution.crisis_handler import evaluate_crisis_response
+from src.execution.btst_shadow_promotion_helpers import resolve_btst_shadow_promotion_payload
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     _enforce_btst_daily_trade_limit,
     build_buy_orders_with_diagnostics as build_buy_orders_with_diagnostics_impl,
@@ -349,11 +351,7 @@ def _attach_btst_runtime_exit_metrics_to_portfolio_snapshot(portfolio_snapshot: 
     if not positions or not layer_c_results:
         return portfolio_snapshot
 
-    runtime_metrics_by_ticker = {
-        result.ticker: extracted_metrics
-        for result in layer_c_results
-        if (extracted_metrics := _extract_btst_runtime_exit_metrics(result))
-    }
+    runtime_metrics_by_ticker = {result.ticker: extracted_metrics for result in layer_c_results if (extracted_metrics := _extract_btst_runtime_exit_metrics(result))}
     if not runtime_metrics_by_ticker:
         return portfolio_snapshot
 
@@ -490,22 +488,32 @@ def _enforce_btst_regime_gate_p2(plan: ExecutionPlan) -> ExecutionPlan:
     funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
 
     if gate in _P2_BLOCKED_GATES:
-        cleared_count = len(plan.buy_orders)
+        selection_targets = dict(plan.selection_targets or {})
+        shadow_promotion_tickers = {str(ticker) for ticker, evaluation in selection_targets.items() if resolve_btst_shadow_promotion_payload(evaluation=evaluation, gate=gate).get("eligible")}
+        original_buy_orders = list(plan.buy_orders or [])
+        retained_orders = [order for order in original_buy_orders if order.ticker in shadow_promotion_tickers]
+        cleared_count = max(0, len(original_buy_orders) - len(retained_orders))
         cleared = cleared_count > 0
-        plan.buy_orders = []
+        plan.buy_orders = retained_orders
         enforcement_payload: dict[str, Any] = {
             "enforced": True,
             "gate": gate,
             "mode": "enforce",
             "buy_orders_cleared": cleared,
             "buy_orders_cleared_count": cleared_count,
+            "shadow_promotion_count": len(shadow_promotion_tickers),
+            "shadow_promotion_tickers": sorted(shadow_promotion_tickers),
         }
         counts = dict(risk_metrics.get("counts", {}))
-        counts["buy_order_count"] = 0
+        counts["buy_order_count"] = len(plan.buy_orders)
         risk_metrics["counts"] = counts
         # Router-level: mark formal execution eligibility as blocked in selection_targets.
         if plan.selection_targets:
-            apply_p2_regime_gate_enforcement_to_selection_targets(plan.selection_targets, gate=gate)
+            apply_p2_regime_gate_enforcement_to_selection_targets(
+                plan.selection_targets,
+                gate=gate,
+                allowed_tickers=shadow_promotion_tickers,
+            )
     else:
         enforcement_payload = {
             "enforced": False,
@@ -513,6 +521,8 @@ def _enforce_btst_regime_gate_p2(plan: ExecutionPlan) -> ExecutionPlan:
             "mode": "enforce",
             "buy_orders_cleared": False,
             "buy_orders_cleared_count": 0,
+            "shadow_promotion_count": 0,
+            "shadow_promotion_tickers": [],
         }
 
     risk_metrics["btst_regime_gate_enforcement"] = enforcement_payload
@@ -535,11 +545,7 @@ def _extract_frozen_prior_by_ticker(plan: ExecutionPlan) -> dict[str, dict[str, 
     risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
     explicit_mapping = dict(risk_metrics.get("historical_prior_by_ticker", {}) or {})
     if explicit_mapping:
-        return {
-            str(ticker): dict(payload or {})
-            for ticker, payload in explicit_mapping.items()
-            if str(ticker or "").strip() and isinstance(payload, dict)
-        }
+        return {str(ticker): dict(payload or {}) for ticker, payload in explicit_mapping.items() if str(ticker or "").strip() and isinstance(payload, dict)}
 
     recovered: dict[str, dict[str, Any]] = {}
     for ticker, evaluation in dict(getattr(plan, "selection_targets", {}) or {}).items():
@@ -625,7 +631,7 @@ def _resolve_btst_execution_contract_p5_mode() -> str:
 
 def _resolve_btst_win_rate_first_precision_mode() -> bool:
     """Resolve win-rate-first precision mode from environment.
-    
+
     When enabled, tightens P5 enforcement to downgrade any candidate without
     execution_ready prior quality. This mode requires P5 enforce mode to be active.
     Default: False (off) to preserve baseline behavior.
@@ -654,29 +660,41 @@ def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
     for ticker, evaluation in selection_targets.items():
         short_trade_result = evaluation.short_trade
         prior_quality_level = str(evaluation.p3_prior_quality_label or evaluation.historical_prior_quality_level or "").strip() or None
+        shadow_promotion = resolve_btst_shadow_promotion_payload(
+            evaluation=evaluation,
+            short_trade_result=short_trade_result,
+            gate=gate,
+        )
+        shadow_promotion_applied = bool(shadow_promotion.get("eligible"))
+        if short_trade_result is not None and shadow_promotion.get("promoted_from_near_miss"):
+            short_trade_result.decision = "selected"
+            positive_tags = [str(tag) for tag in list(short_trade_result.positive_tags or []) if str(tag or "").strip()]
+            if "shadow_promotion_lane" not in positive_tags:
+                positive_tags.append("shadow_promotion_lane")
+            short_trade_result.positive_tags = positive_tags
         downgrade_reasons: list[str] = []
-        
+
         # Check if this is already formally blocked (P2/P3/P5/P6)
         # If so, we must NOT downgrade it - preserve the raw selected decision for correct blocked-selected provenance
         formal_execution_block_flags = collect_formal_execution_block_flags(evaluation, short_trade_result)
         is_formally_blocked = bool(formal_execution_block_flags)
-        
+
         if short_trade_result is not None and short_trade_result.decision == "selected":
             # CRITICAL: Do NOT collect downgrade reasons if already formally blocked
             # Formal blocks are upstream hard stops - we don't need to re-reason about them
             if not is_formally_blocked:
-                if not allowed_gate:
+                if not (allowed_gate or shadow_promotion_applied):
                     downgrade_reasons.append("btst_regime_gate_not_tradeable")
-                
+
                 if win_rate_first_precision_mode:
-                    if prior_quality_level != "execution_ready":
+                    if prior_quality_level != "execution_ready" and not shadow_promotion_applied:
                         downgrade_reasons.append("win_rate_first_precision_prior_not_execution_ready")
                 else:
-                    if prior_quality_level not in {None, "", "execution_ready"}:
+                    if prior_quality_level not in {None, "", "execution_ready"} and not shadow_promotion_applied:
                         downgrade_reasons.append("historical_prior_not_execution_ready")
                 if str(evaluation.candidate_source or "").strip() in {"upgrade_only", "research_only"}:
                     downgrade_reasons.append("research_only_source_not_formal_execution")
-        
+
             # CRITICAL: Only apply downgrade if NOT already formally blocked
             # Formally-blocked names must preserve their raw "selected" decision for correct reporting
             # (blocked-selected provenance in build_reporting_target_summary)
@@ -689,8 +707,7 @@ def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
         # 1. short_trade decision is "selected" (raw or preserved)
         # 2. AND NOT formally blocked (p2/p3/p5/p6_execution_blocked)
         # 3. AND has no downgrade reasons (gate, prior quality, source)
-        execution_eligible = bool(short_trade_result is not None and short_trade_result.decision == "selected" 
-                                  and not is_formally_blocked and not downgrade_reasons)
+        execution_eligible = bool(short_trade_result is not None and short_trade_result.decision == "selected" and not is_formally_blocked and not downgrade_reasons)
         evaluation.execution_eligible = execution_eligible
         evaluation.downgrade_reasons = list(downgrade_reasons)
         evaluation.historical_prior_quality_level = prior_quality_level
@@ -709,6 +726,7 @@ def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
                     "downgrade_reasons": list(downgrade_reasons),
                     "historical_prior_quality_level": prior_quality_level,
                     "btst_regime_gate": gate or None,
+                    "shadow_promotion": dict(shadow_promotion),
                 }
             )
             explainability_payload.update(
@@ -717,6 +735,7 @@ def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
                     "downgrade_reasons": list(downgrade_reasons),
                     "historical_prior_quality_level": prior_quality_level,
                     "btst_regime_gate": gate or None,
+                    "shadow_promotion": dict(shadow_promotion),
                 }
             )
             short_trade_result.metrics_payload = metrics_payload
@@ -824,6 +843,148 @@ def _attach_btst_risk_budget_p6(plan: ExecutionPlan) -> ExecutionPlan:
     return plan
 
 
+def _serialize_market_state_for_backfill(market_state: Any | None) -> dict[str, Any]:
+    if market_state is None:
+        return {}
+    if hasattr(market_state, "model_dump"):
+        return dict(market_state.model_dump(mode="json") or {})
+    if isinstance(market_state, dict):
+        return dict(market_state)
+    return {}
+
+
+def _build_btst_post_p5_watchlist_shell(
+    *,
+    ticker: str,
+    selection_target: DualTargetEvaluation | None,
+    shell_entry: dict[str, Any] | None,
+    market_state: Any | None,
+) -> LayerCResult:
+    entry = dict(shell_entry or {})
+    short_trade_result = getattr(selection_target, "short_trade", None)
+    execution_eligible = bool(getattr(selection_target, "execution_eligible", False))
+    shell_score_b = float(entry.get("score_b", entry.get("score_final", 0.0)) or 0.0)
+    shell_score_final = float(entry.get("score_final", entry.get("score_b", 0.0)) or 0.0)
+    shell_quality_score = float(entry.get("quality_score", 0.5) or 0.5)
+    target_score = float(getattr(short_trade_result, "score_target", 0.0) or 0.0)
+    target_confidence = float(getattr(short_trade_result, "confidence", 0.0) or 0.0)
+    resolved_score_final = max(shell_score_final, target_score) if execution_eligible else shell_score_final
+    resolved_quality_score = max(shell_quality_score, target_confidence) if execution_eligible else shell_quality_score
+    return LayerCResult(
+        ticker=str(ticker),
+        score_c=float(entry.get("score_c", 0.0) or 0.0),
+        score_final=resolved_score_final,
+        score_b=max(shell_score_b, target_score) if execution_eligible else shell_score_b,
+        quality_score=resolved_quality_score,
+        market_state=dict(entry.get("market_state") or _serialize_market_state_for_backfill(market_state)),
+        candidate_source=str(entry.get("candidate_source") or getattr(selection_target, "candidate_source", None) or getattr(short_trade_result, "candidate_source", None) or "selection_target_backfill"),
+        candidate_reason_codes=[str(code) for code in list(entry.get("candidate_reason_codes", [])) if str(code or "").strip()],
+        metrics=dict(entry.get("metrics") or {}),
+        decision=str(entry.get("layer_c_decision") or entry.get("decision") or "watch"),
+        theme_name=str(entry.get("theme_name") or ""),
+        theme_category=str(entry.get("theme_category") or ""),
+        is_new_theme=bool(entry.get("is_new_theme")),
+        projected_theme_exposure=float(entry.get("projected_theme_exposure", 0.0) or 0.0),
+        incremental_theme_exposure=float(entry.get("incremental_theme_exposure", 0.0) or 0.0),
+    )
+
+
+def _backfill_btst_post_p5_buy_orders(
+    plan: ExecutionPlan,
+    *,
+    trade_date: str,
+    candidate_by_ticker: dict[str, CandidateStock] | None = None,
+    price_map: dict[str, float] | None = None,
+    blocked_buy_tickers: dict[str, dict[str, Any]] | None = None,
+) -> ExecutionPlan:
+    selection_targets = dict(getattr(plan, "selection_targets", {}) or {})
+    if not selection_targets:
+        return plan
+
+    existing_buy_orders = list(getattr(plan, "buy_orders", []) or [])
+    existing_buy_order_tickers = {str(order.ticker) for order in existing_buy_orders}
+    execution_eligible_tickers = {str(ticker) for ticker, evaluation in selection_targets.items() if getattr(evaluation, "execution_eligible", False)}
+    missing_order_tickers = sorted(execution_eligible_tickers - existing_buy_order_tickers)
+    if not missing_order_tickers:
+        return plan
+
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    shell_inputs = dict(risk_metrics.get("selection_target_shell_inputs", {}) or {})
+    shell_entries = [
+        *list(shell_inputs.get("supplemental_short_trade_entries", []) or []),
+        *list(shell_inputs.get("rejected_entries", []) or []),
+    ]
+    shell_entry_by_ticker = {str(entry.get("ticker") or "").strip(): dict(entry) for entry in shell_entries if str(dict(entry).get("ticker") or "").strip()}
+    watchlist = list(getattr(plan, "watchlist", []) or [])
+    watchlist_by_ticker = {str(item.ticker): item for item in watchlist}
+    for ticker in missing_order_tickers:
+        if ticker in watchlist_by_ticker:
+            continue
+        shell_entry = shell_entry_by_ticker.get(ticker)
+        if shell_entry is None:
+            continue
+        watch_item = _build_btst_post_p5_watchlist_shell(
+            ticker=ticker,
+            selection_target=selection_targets.get(ticker),
+            shell_entry=shell_entry,
+            market_state=getattr(plan, "market_state", None),
+        )
+        watchlist.append(watch_item)
+        watchlist_by_ticker[ticker] = watch_item
+
+    rebuild_watchlist = [item for item in watchlist if str(item.ticker) in execution_eligible_tickers]
+    if not rebuild_watchlist:
+        return plan
+
+    resolved_price_map = {str(ticker): float(value) for ticker, value in dict(price_map or {}).items() if value is not None}
+    for ticker in execution_eligible_tickers:
+        if ticker in resolved_price_map:
+            continue
+        shell_entry = shell_entry_by_ticker.get(ticker, {})
+        for price_key in ("close", "current_price", "last_price", "price"):
+            raw_price = shell_entry.get(price_key)
+            try:
+                if raw_price is not None and raw_price != "":
+                    resolved_price_map[ticker] = float(raw_price)
+                    break
+            except (TypeError, ValueError):
+                continue
+
+    rebuilt_buy_orders, rebuilt_buy_order_diagnostics = build_buy_orders_with_diagnostics(
+        rebuild_watchlist,
+        dict(getattr(plan, "portfolio_snapshot", {}) or {}),
+        trade_date=trade_date,
+        candidate_by_ticker=dict(candidate_by_ticker or {}),
+        price_map=resolved_price_map,
+        blocked_buy_tickers=blocked_buy_tickers,
+        selection_targets=selection_targets,
+    )
+    rebuilt_buy_order_tickers = {str(order.ticker) for order in rebuilt_buy_orders}
+    backfilled_tickers = sorted(rebuilt_buy_order_tickers - existing_buy_order_tickers)
+    if not backfilled_tickers and len(rebuilt_buy_orders) == len(existing_buy_orders):
+        return plan
+
+    counts = dict(risk_metrics.get("counts", {}) or {})
+    counts["buy_order_count"] = len(rebuilt_buy_orders)
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+    filters = dict(funnel_diagnostics.get("filters", {}) or {})
+    filters["buy_orders"] = rebuilt_buy_order_diagnostics
+    funnel_diagnostics["filters"] = filters
+    backfill_payload = {
+        "attempted_tickers": missing_order_tickers,
+        "backfilled_tickers": backfilled_tickers,
+        "eligible_missing_order_count": len(missing_order_tickers),
+        "backfilled_count": len(backfilled_tickers),
+    }
+    risk_metrics["counts"] = counts
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    risk_metrics["btst_post_p5_buy_order_backfill"] = backfill_payload
+    plan.risk_metrics = risk_metrics
+    plan.watchlist = watchlist
+    plan.buy_orders = rebuilt_buy_orders
+    return plan
+
+
 def _default_exit_checker(portfolio_snapshot: dict, trade_date: str, logic_scores: dict[str, float] | None = None) -> list:
     return _default_exit_checker_impl(
         portfolio_snapshot,
@@ -877,14 +1038,6 @@ def _build_watchlist_filter_diagnostics_wrapper(
     )
 
 
-from src.execution.daily_pipeline_historical_prior_attachment import (
-    attach_historical_prior_to_entries as _attach_historical_prior_to_entries_impl,
-)
-from src.execution.daily_pipeline_historical_prior_attachment import (
-    attach_historical_prior_to_watchlist as _attach_historical_prior_to_watchlist,
-)
-
-
 def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_by_ticker: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     return _attach_historical_prior_to_entries_impl(
         entries,
@@ -905,6 +1058,18 @@ def _normalize_blocked_buy_tickers(blocked_buy_tickers: dict[str, dict] | None) 
     for ticker, payload in (blocked_buy_tickers or {}).items():
         normalized[str(ticker)] = dict(payload or {})
     return normalized
+
+
+def _merge_recent_formal_buy_cooldowns(trade_date: str, blocked_buy_tickers: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    recent_cooldowns = load_recent_btst_buy_order_cooldowns(
+        BTST_REPORTS_ROOT,
+        trade_date=trade_date,
+    )
+    if not recent_cooldowns:
+        return blocked_buy_tickers
+    merged = dict(recent_cooldowns)
+    merged.update(blocked_buy_tickers)
+    return merged
 
 
 def _selection_target_has_weak_confirmation_reentry_risk(selection_target: DualTargetEvaluation | None) -> bool:
@@ -1315,10 +1480,7 @@ class DailyPipeline:
         selection_targets = dict(plan.selection_targets or {})
         watchlist_by_ticker = {item.ticker: item for item in plan.watchlist}
         nav = float((plan.portfolio_snapshot or {}).get("cash", 0.0) or 0.0)
-        nav += sum(
-            float(position.get("long", 0) or 0) * float(position.get("long_cost_basis", 0.0) or 0.0)
-            for position in dict((plan.portfolio_snapshot or {}).get("positions", {}) or {}).values()
-        )
+        nav += sum(float(position.get("long", 0) or 0) * float(position.get("long_cost_basis", 0.0) or 0.0) for position in dict((plan.portfolio_snapshot or {}).get("positions", {}) or {}).values())
         nav = nav if nav > 0 else 1.0
 
         filtered_entries: list[dict[str, Any]] = []
@@ -1393,6 +1555,7 @@ class DailyPipeline:
     def run_post_market(self, trade_date: str, portfolio_snapshot: dict | None = None, blocked_buy_tickers: dict[str, dict] | None = None) -> ExecutionPlan:
         sync_phase4_test_overrides(globals())
         blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
+        blocked_buy_tickers = _merge_recent_formal_buy_cooldowns(trade_date, blocked_buy_tickers)
         if self.frozen_post_market_plans is not None:
             frozen_plan = self.frozen_post_market_plans.get(trade_date)
             if frozen_plan is None:
@@ -1402,6 +1565,11 @@ class DailyPipeline:
             plan = _enforce_btst_prior_quality_p3(
                 plan,
                 prior_by_ticker=_extract_frozen_prior_by_ticker(plan),
+            )
+            plan = _backfill_btst_post_p5_buy_orders(
+                _enforce_btst_execution_contract_p5(plan),
+                trade_date=trade_date,
+                blocked_buy_tickers=blocked_buy_tickers,
             )
             return self._apply_frozen_p6_risk_budget_overlay(plan)
 
@@ -1490,20 +1658,22 @@ class DailyPipeline:
             generate_execution_plan_fn=generate_execution_plan,
         )
         plan = _attach_btst_risk_budget_p6(
-            _enforce_btst_execution_contract_p5(
-            _enforce_btst_prior_quality_p3(
-                _enforce_btst_regime_gate_p2(_attach_btst_regime_gate_shadow(plan)),
-                prior_by_ticker=watchlist_context.historical_prior_by_ticker,
-            )
+            _backfill_btst_post_p5_buy_orders(
+                _enforce_btst_execution_contract_p5(
+                    _enforce_btst_prior_quality_p3(
+                        _enforce_btst_regime_gate_p2(_attach_btst_regime_gate_shadow(plan)),
+                        prior_by_ticker=watchlist_context.historical_prior_by_ticker,
+                    )
+                ),
+                trade_date=trade_date,
+                candidate_by_ticker=watchlist_context.candidate_by_ticker,
+                price_map=watchlist_context.price_map,
+                blocked_buy_tickers=blocked_buy_tickers,
             )
         )
         if watchlist_context.historical_prior_by_ticker:
             risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
-            risk_metrics["historical_prior_by_ticker"] = {
-                str(ticker): dict(payload or {})
-                for ticker, payload in watchlist_context.historical_prior_by_ticker.items()
-                if str(ticker or "").strip() and isinstance(payload, dict)
-            }
+            risk_metrics["historical_prior_by_ticker"] = {str(ticker): dict(payload or {}) for ticker, payload in watchlist_context.historical_prior_by_ticker.items() if str(ticker or "").strip() and isinstance(payload, dict)}
             plan.risk_metrics = risk_metrics
         return plan
 

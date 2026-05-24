@@ -364,7 +364,12 @@ def _summarize_focus_row(
 
 
 def _analyze_report_dir(report_dir: Path, focus_ticker: str, *, profile_name: str = "default") -> dict[str, Any]:
-    baseline = analyze_selection_target_replay_inputs(report_dir, profile_name=profile_name, focus_tickers=[focus_ticker])
+    baseline = analyze_selection_target_replay_inputs(
+        report_dir,
+        profile_name=profile_name,
+        focus_tickers=[focus_ticker],
+        refresh_latest_historical_prior=True,
+    )
     merge_sources = [
         (path, _inject_merge_approved_context(payload, focus_ticker))
         for path, payload in load_selection_target_replay_sources(report_dir)
@@ -373,6 +378,7 @@ def _analyze_report_dir(report_dir: Path, focus_ticker: str, *, profile_name: st
         merge_sources,
         profile_name=profile_name,
         focus_tickers=[focus_ticker],
+        refresh_latest_historical_prior=True,
     )
     baseline_by_trade_date = {str(row.get("trade_date") or ""): row for row in list(baseline.get("focused_score_diagnostics") or [])}
     merge_by_trade_date = {str(row.get("trade_date") or ""): row for row in list(merge.get("focused_score_diagnostics") or [])}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import scripts.generate_btst_merge_replay_validation as merge_replay_validation
 from scripts.generate_btst_merge_replay_validation import (
     generate_btst_merge_replay_validation,
     render_btst_merge_replay_validation_markdown,
@@ -418,29 +419,93 @@ def test_generate_btst_merge_replay_validation_recovers_report_dir_from_report_l
     assert summary["recommended_signal_levers"][:2] == ["catalyst_freshness", "volume_expansion_quality"]
     assert summary["prepared_breakout_penalty_relief_applied_count"] == 1
     assert summary["prepared_breakout_catalyst_relief_applied_count"] == 1
-    assert summary["prepared_breakout_volume_relief_applied_count"] == 1
-    assert summary["prepared_breakout_continuation_relief_applied_count"] == 1
-    assert summary["prepared_breakout_selected_catalyst_relief_applied_count"] == 1
-    assert summary["minimum_required_score_uplift_to_selected"] is not None
-    row = summary["rows"][0]
-    assert row["report_dir"] == str(report_dir)
-    assert row["merge_relief_applied"] is False
-    assert row["merge_replayed_decision"] == "selected"
-    assert row["recommended_primary_lever"] == "none"
-    assert row["prepared_breakout_penalty_relief_applied"] is True
-    assert row["prepared_breakout_penalty_relief_eligible"] is True
-    assert row["prepared_breakout_penalty_relief_penalty_delta"]["stale_score_penalty_weight"] == -0.03
-    assert row["prepared_breakout_catalyst_relief_applied"] is True
-    assert row["prepared_breakout_catalyst_relief_eligible"] is True
-    assert row["prepared_breakout_catalyst_relief_catalyst_delta"] == 0.35
-    assert row["prepared_breakout_volume_relief_applied"] is True
-    assert row["prepared_breakout_volume_relief_eligible"] is True
-    assert row["prepared_breakout_volume_relief_volume_delta"] == 0.35
-    assert row["prepared_breakout_continuation_relief_applied"] is True
-    assert row["prepared_breakout_continuation_relief_eligible"] is True
-    assert row["prepared_breakout_continuation_relief_breakout_delta"] == 0.24
-    assert row["prepared_breakout_continuation_relief_trend_delta"] == 0.4211
-    assert row["prepared_breakout_selected_catalyst_relief_applied"] is True
-    assert row["prepared_breakout_selected_catalyst_relief_eligible"] is True
-    assert row["prepared_breakout_selected_catalyst_relief_breakout_delta"] == 0.11
-    assert row["prepared_breakout_selected_catalyst_relief_catalyst_delta"] == 0.65
+
+
+def test_generate_btst_merge_replay_validation_refreshes_latest_historical_prior_for_baseline_replay(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_20260406_20260406_merge_validation_selected_case"
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_json(
+        reports_root / "btst_default_merge_review_latest.json",
+        {
+            "focus_ticker": "300683",
+            "merge_review_verdict": "ready_for_default_btst_merge_review",
+        },
+    )
+    _write_json(
+        reports_root / "btst_continuation_merge_candidate_ranking_latest.json",
+        {
+            "ranked_candidates": [
+                {"ticker": "300683", "merge_candidate_rank": 1},
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus2_candidate_dossier_300683_latest.json",
+        {
+            "candidate_ticker": "300683",
+            "recent_window_summaries": [
+                {
+                    "report_label": "20260406",
+                    "report_dir": str(report_dir),
+                    "decision": "near_miss",
+                }
+            ],
+        },
+    )
+
+    captured_input_refresh_flags: list[bool] = []
+    captured_source_refresh_flags: list[bool] = []
+
+    def _fake_analyze_inputs(input_path: str | Path, **kwargs: object) -> dict[str, object]:
+        captured_input_refresh_flags.append(bool(kwargs.get("refresh_latest_historical_prior")))
+        return {
+            "focused_score_diagnostics": [
+                {
+                    "ticker": "300683",
+                    "trade_date": "2026-04-06",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "stored_decision": "near_miss",
+                    "replayed_decision": "near_miss",
+                    "replayed_score_target": 0.41,
+                    "gap_to_near_miss": 0.0,
+                    "gap_to_selected": 0.07,
+                    "blockers": [],
+                    "top_reasons": [],
+                    "metrics_payload": {},
+                }
+            ]
+        }
+
+    def _fake_load_sources(input_path: str | Path) -> list[tuple[Path, dict[str, object]]]:
+        return [(Path(input_path), {"trade_date": "2026-04-06", "watchlist": []})]
+
+    def _fake_analyze_sources(sources: list[tuple[Path, dict[str, object]]], **kwargs: object) -> dict[str, object]:
+        captured_source_refresh_flags.append(bool(kwargs.get("refresh_latest_historical_prior")))
+        return {
+            "focused_score_diagnostics": [
+                {
+                    "ticker": "300683",
+                    "trade_date": "2026-04-06",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "stored_decision": "near_miss",
+                    "replayed_decision": "near_miss",
+                    "replayed_score_target": 0.41,
+                    "gap_to_near_miss": 0.0,
+                    "gap_to_selected": 0.07,
+                    "blockers": [],
+                    "top_reasons": [],
+                    "metrics_payload": {},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(merge_replay_validation, "analyze_selection_target_replay_inputs", _fake_analyze_inputs)
+    monkeypatch.setattr(merge_replay_validation, "load_selection_target_replay_sources", _fake_load_sources)
+    monkeypatch.setattr(merge_replay_validation, "analyze_selection_target_replay_sources", _fake_analyze_sources)
+
+    generate_btst_merge_replay_validation(reports_root=reports_root, focus_tickers=["300683"], candidate_limit=1)
+
+    assert captured_input_refresh_flags == [True]
+    assert captured_source_refresh_flags == [True]

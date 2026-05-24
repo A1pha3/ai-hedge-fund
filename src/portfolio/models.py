@@ -20,6 +20,7 @@ class PositionPlan(BaseModel):
     formal_exposure_bucket: str = ""
     risk_budget_gate: str = ""
     execution_contract_bucket: str = ""
+    daily_limit_priority: float = 0.0
 
 
 class ExitSignal(BaseModel):

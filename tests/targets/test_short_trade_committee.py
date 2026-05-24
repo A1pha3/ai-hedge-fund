@@ -339,6 +339,77 @@ def test_retention_group_penalizes_negative_payoff_continuation_history() -> Non
     assert adverse_snapshot["committee_component_sources"]["retention_raw_100"] == "raw:retention_metrics"
 
 
+def test_retention_group_softly_penalizes_weak_five_day_payoff_history_when_sample_is_robust() -> None:
+    baseline_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=_make_committee_entry(
+            metrics={
+                "retention_proxy": 0.78,
+                "supply_pressure_60": 0.08,
+            }
+        ),
+        profile_overrides=_base_profile_overrides(),
+    )
+    adverse_entry = _make_committee_entry(
+        metrics={
+            "retention_proxy": 0.78,
+            "supply_pressure_60": 0.08,
+        }
+    )
+    adverse_entry["historical_prior"].update(
+        {
+            "five_day_evaluable_count": 9,
+            "five_day_hit_rate_at_15pct": 0.3333,
+            "five_day_mean_max_future_high_return_2_5d": 0.1003,
+        }
+    )
+    adverse_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=adverse_entry,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert adverse_snapshot["committee_components"]["retention_raw_100"] < baseline_snapshot["committee_components"]["retention_raw_100"]
+    assert adverse_snapshot["beta_execution_score"] < baseline_snapshot["beta_execution_score"]
+    assert adverse_snapshot["committee_component_sources"]["retention_raw_100"] == "raw:retention_metrics"
+
+
+def test_retention_group_ignores_weak_five_day_payoff_history_when_sample_is_thin() -> None:
+    baseline_entry = _make_committee_entry(
+        metrics={
+            "retention_proxy": 0.78,
+            "supply_pressure_60": 0.08,
+        }
+    )
+    thin_sample_entry = _make_committee_entry(
+        metrics={
+            "retention_proxy": 0.78,
+            "supply_pressure_60": 0.08,
+        }
+    )
+    thin_sample_entry["historical_prior"].update(
+        {
+            "five_day_evaluable_count": 1,
+            "five_day_hit_rate_at_15pct": 0.0,
+            "five_day_mean_max_future_high_return_2_5d": 0.0596,
+        }
+    )
+
+    baseline_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=baseline_entry,
+        profile_overrides=_base_profile_overrides(),
+    )
+    thin_sample_snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=thin_sample_entry,
+        profile_overrides=_base_profile_overrides(),
+    )
+
+    assert thin_sample_snapshot["committee_components"]["retention_raw_100"] == pytest.approx(baseline_snapshot["committee_components"]["retention_raw_100"])
+    assert thin_sample_snapshot["beta_execution_score"] == pytest.approx(baseline_snapshot["beta_execution_score"])
+
+
 def test_flow_group_uses_persist_metric_when_present() -> None:
     baseline_snapshot = build_short_trade_target_snapshot_from_entry(
         trade_date="20260328",

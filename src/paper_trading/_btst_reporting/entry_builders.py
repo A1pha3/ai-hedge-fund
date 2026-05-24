@@ -158,6 +158,11 @@ def _extract_upstream_shadow_entry(
         "gate_status": dict(short_trade_entry.get("gate_status") or {}),
         "promotion_trigger": promotion_trigger,
         "metrics": _extract_short_trade_core_metrics(metrics_payload),
+        "historical_prior": dict(
+            short_trade_entry.get("historical_prior")
+            or explainability_payload.get("historical_prior")
+            or {}
+        ),
     }
 
 

@@ -45,6 +45,20 @@ def _serialize_market_state(item: Any) -> dict[str, Any]:
     return dict(market_state or {})
 
 
+def _build_catalyst_theme_origin_metadata(item: Any, *, reason: str) -> tuple[str, list[str]]:
+    upstream_candidate_source = str(getattr(item, "candidate_source", "") or "").strip() or "layer_b_fused_universe"
+    candidate_reason_codes = [
+        str(code).strip()
+        for code in list(getattr(item, "candidate_reason_codes", []) or [])
+        if str(code or "").strip()
+    ]
+    merged_reason_codes = []
+    for code in [*candidate_reason_codes, reason, "catalyst_theme_research_candidate"]:
+        if code not in merged_reason_codes:
+            merged_reason_codes.append(code)
+    return upstream_candidate_source, merged_reason_codes
+
+
 def _build_catalyst_theme_agent_contribution_summary(item: Any) -> tuple[float, dict[str, Any]]:
     strategy_signals = dict(getattr(item, "strategy_signals", {}) or {})
     trend_strength = _signal_directional_strength(strategy_signals.get("trend"))
@@ -597,6 +611,7 @@ def build_catalyst_theme_prefilter_thresholds(
 
 def _build_catalyst_theme_entry(*, item: Any, reason: str, rank: int) -> dict[str, Any]:
     score_c, agent_contribution_summary = _build_catalyst_theme_agent_contribution_summary(item)
+    upstream_candidate_source, merged_reason_codes = _build_catalyst_theme_origin_metadata(item, reason=reason)
     return {
         "ticker": item.ticker,
         "decision": "catalyst_theme",
@@ -609,8 +624,8 @@ def _build_catalyst_theme_entry(*, item: Any, reason: str, rank: int) -> dict[st
         "reason": reason,
         "reasons": [reason, "catalyst_theme_research_candidate"],
         "candidate_source": "catalyst_theme",
-        "upstream_candidate_source": "layer_b_fused_universe",
-        "candidate_reason_codes": [reason, "catalyst_theme_research_candidate"],
+        "upstream_candidate_source": upstream_candidate_source,
+        "candidate_reason_codes": merged_reason_codes,
         "strategy_signals": {name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {}) for name, signal in dict(item.strategy_signals or {}).items()},
         "agent_contribution_summary": agent_contribution_summary,
         "theme_name": str(getattr(item, "theme_name", "") or ""),

@@ -6,6 +6,7 @@ import pandas as pd
 
 from scripts.generate_btst_next_day_trade_brief import analyze_btst_next_day_trade_brief, render_btst_next_day_trade_brief_markdown
 import src.paper_trading.btst_reporting as btst_reporting
+import src.paper_trading._btst_reporting.entry_builders as entry_builders
 import src.paper_trading._btst_reporting.pool_classifiers as pool_classifiers
 import src.paper_trading._btst_reporting.historical_prior as historical_prior
 from src.paper_trading.btst_reporting import infer_next_trade_date
@@ -240,6 +241,90 @@ def test_enrich_btst_brief_entries_with_history_threads_helpers_and_context(monk
     assert result[6] == [{"ticker": "RK"}]
     assert result[7] == [{"ticker": "PR"}]
     assert result[8] == {"report_count": 2}
+
+
+def test_enrich_upstream_shadow_entries_with_history_threads_helpers(monkeypatch, tmp_path):
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+
+    monkeypatch.setattr(
+        historical_prior,
+        "_collect_historical_watch_candidate_rows",
+        lambda report_dir, actual_trade_date: {"rows": [{"ticker": "hist"}]},
+    )
+    monkeypatch.setattr(
+        historical_prior,
+        "_apply_historical_prior_to_entries",
+        lambda entries, historical_rows, price_cache, family: [
+            {**entry, "family": family, "hist_rows": len(historical_rows)}
+            for entry in entries
+        ],
+    )
+
+    result = historical_prior._enrich_upstream_shadow_entries_with_history(
+        report_dir=report_dir,
+        actual_trade_date="2026-04-03",
+        upstream_shadow_entries=[{"ticker": "300683"}],
+    )
+
+    assert result == [{"ticker": "300683", "family": "upstream_shadow", "hist_rows": 1}]
+
+
+def test_extract_upstream_shadow_entry_preserves_historical_prior() -> None:
+    entry = entry_builders._extract_upstream_shadow_entry(
+        {
+            "ticker": "300683",
+            "candidate_source": "upstream_liquidity_corridor_shadow",
+            "short_trade": {
+                "decision": "near_miss",
+                "score_target": 0.4182,
+                "confidence": 0.4471,
+                "preferred_entry_mode": "next_day_breakout_confirmation",
+                "positive_tags": ["trend_acceleration_confirmed"],
+                "top_reasons": ["profitability_hard_cliff"],
+                "rejection_reasons": ["breakout_trap_execution_hard_gate"],
+                "gate_status": {"execution": "fail"},
+                "metrics_payload": {
+                    "breakout_freshness": 0.4,
+                    "trend_acceleration": 0.7872,
+                    "volume_expansion_quality": 0.25,
+                    "close_strength": 0.8809,
+                    "catalyst_freshness": 0.0,
+                },
+                "explainability_payload": {
+                    "replay_context": {
+                        "source": "upstream_liquidity_corridor_shadow",
+                        "candidate_pool_lane": "layer_a_liquidity_corridor",
+                        "candidate_pool_rank": 1902,
+                        "candidate_reason_codes": [
+                            "upstream_base_liquidity_uplift_shadow",
+                            "candidate_pool_truncated_after_filters",
+                            "layer_a_liquidity_corridor",
+                            "upstream_shadow_release_candidate",
+                        ],
+                    },
+                    "historical_prior": {
+                        "execution_quality_label": "close_continuation",
+                        "evaluable_count": 3,
+                        "next_close_positive_rate": 0.67,
+                    },
+                },
+            },
+        },
+        {
+            "ticker": "300683",
+            "candidate_pool_lane": "layer_a_liquidity_corridor",
+            "candidate_pool_rank": 1902,
+            "upstream_candidate_source": "candidate_pool_truncated_after_filters",
+        },
+    )
+
+    assert entry is not None
+    assert entry["historical_prior"] == {
+        "execution_quality_label": "close_continuation",
+        "evaluable_count": 3,
+        "next_close_positive_rate": 0.67,
+    }
 
 
 def test_append_brief_opportunity_pool_markdown_emits_metrics_and_history():

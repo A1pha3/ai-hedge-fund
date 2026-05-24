@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import datetime, timedelta
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 
@@ -113,6 +115,24 @@ def _historical_prior_merge_rank(prior: dict[str, Any]) -> tuple[int, int, int, 
     )
 
 
+def _safe_optional_float(value: Any) -> float | None:
+    if value in (None, "", [], {}):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_optional_int(value: Any) -> int | None:
+    if value in (None, "", [], {}):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _choose_preferred_historical_prior(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     if not current:
         return dict(incoming)
@@ -147,6 +167,21 @@ def _apply_historical_prior_fields(current: dict[str, Any], historical_prior: di
     historical_execution_note = historical_prior.get("execution_note")
     if historical_execution_note not in (None, "", [], {}):
         current["historical_execution_note"] = historical_execution_note
+    historical_five_day_evaluable_count = historical_prior.get("five_day_evaluable_count")
+    if historical_five_day_evaluable_count not in (None, "", [], {}):
+        current["historical_five_day_evaluable_count"] = historical_five_day_evaluable_count
+    historical_five_day_hit_rate_at_15pct = historical_prior.get("five_day_hit_rate_at_15pct")
+    if historical_five_day_hit_rate_at_15pct not in (None, "", [], {}):
+        current["historical_five_day_hit_rate_at_15pct"] = historical_five_day_hit_rate_at_15pct
+    historical_five_day_mean_max_future_high_return_2_5d = historical_prior.get("five_day_mean_max_future_high_return_2_5d")
+    if historical_five_day_mean_max_future_high_return_2_5d not in (None, "", [], {}):
+        current["historical_five_day_mean_max_future_high_return_2_5d"] = historical_five_day_mean_max_future_high_return_2_5d
+    historical_five_day_time_to_hit_15pct_median = historical_prior.get("five_day_time_to_hit_15pct_median")
+    if historical_five_day_time_to_hit_15pct_median not in (None, "", [], {}):
+        current["historical_five_day_time_to_hit_15pct_median"] = historical_five_day_time_to_hit_15pct_median
+    historical_five_day_prior_sources = historical_prior.get("five_day_prior_sources")
+    if historical_five_day_prior_sources not in (None, "", [], {}):
+        current["historical_five_day_prior_sources"] = historical_five_day_prior_sources
 
 
 def _discover_report_dirs(reports_root: Path) -> list[Path]:
@@ -372,6 +407,87 @@ def load_latest_btst_followup_by_ticker(reports_root: str | Path) -> dict[str, d
     return merged_by_ticker
 
 
+def _iter_btst_runtime_5d_prior_rows(reports_root: Path):
+    artifact_specs = (
+        ("btst_5d_15pct_boundary_contract_inspection_latest.json", "boundary_rows", "boundary_contract_inspection"),
+        ("btst_5d_15pct_trend_gate_oos_validation_latest.json", "candidate_manifest", "trend_gate_oos_validation"),
+    )
+    for file_name, rows_key, source_name in artifact_specs:
+        artifact = _safe_load_json(reports_root / file_name)
+        for row in list(artifact.get(rows_key) or []):
+            if not isinstance(row, dict):
+                continue
+            ticker = str(row.get("ticker") or "").strip()
+            trade_date = _compact_trade_date(row.get("trade_date"))
+            if not ticker or len(trade_date) != 8:
+                continue
+            cycle_status = str(row.get("cycle_status") or "").strip().lower()
+            if cycle_status and cycle_status != "closed_cycle":
+                continue
+            max_future_high_return_2_5d = _safe_optional_float(row.get("max_future_high_return_2_5d"))
+            future_high_hit_15pct_2_5d = row.get("future_high_hit_15pct_2_5d")
+            explicit_hit = isinstance(future_high_hit_15pct_2_5d, bool)
+            if explicit_hit:
+                hit_15pct = bool(future_high_hit_15pct_2_5d)
+            elif max_future_high_return_2_5d is not None:
+                hit_15pct = max_future_high_return_2_5d >= 0.15
+            else:
+                continue
+            yield {
+                "ticker": ticker,
+                "trade_date": trade_date,
+                "source_name": source_name,
+                "max_future_high_return_2_5d": max_future_high_return_2_5d,
+                "future_high_hit_15pct_2_5d": hit_15pct,
+                "explicit_hit": explicit_hit,
+                "time_to_hit_15pct": _safe_optional_int(row.get("time_to_hit_15pct")),
+            }
+
+
+def _load_btst_runtime_5d_prior_by_ticker(reports_root: Path) -> dict[str, dict[str, Any]]:
+    rows_by_ticker_and_trade_date: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in _iter_btst_runtime_5d_prior_rows(reports_root):
+        ticker = str(row["ticker"])
+        trade_date = str(row["trade_date"])
+        bucket = rows_by_ticker_and_trade_date.setdefault(ticker, {})
+        current = bucket.get(trade_date)
+        if current is None:
+            bucket[trade_date] = {
+                "max_future_high_return_2_5d": row.get("max_future_high_return_2_5d"),
+                "future_high_hit_15pct_2_5d": row.get("future_high_hit_15pct_2_5d"),
+                "explicit_hit": bool(row.get("explicit_hit")),
+                "time_to_hit_15pct": row.get("time_to_hit_15pct"),
+                "sources": {str(row["source_name"])},
+            }
+            continue
+        current["sources"].add(str(row["source_name"]))
+        if current.get("max_future_high_return_2_5d") is None and row.get("max_future_high_return_2_5d") is not None:
+            current["max_future_high_return_2_5d"] = row.get("max_future_high_return_2_5d")
+        if current.get("time_to_hit_15pct") is None and row.get("time_to_hit_15pct") is not None:
+            current["time_to_hit_15pct"] = row.get("time_to_hit_15pct")
+        if not bool(current.get("explicit_hit")) and bool(row.get("explicit_hit")):
+            current["future_high_hit_15pct_2_5d"] = row.get("future_high_hit_15pct_2_5d")
+            current["explicit_hit"] = True
+
+    prior_by_ticker: dict[str, dict[str, Any]] = {}
+    for ticker, trade_date_rows in rows_by_ticker_and_trade_date.items():
+        deduped_rows = list(trade_date_rows.values())
+        if not deduped_rows:
+            continue
+        hit_values = [1.0 if bool(row.get("future_high_hit_15pct_2_5d")) else 0.0 for row in deduped_rows]
+        max_returns = [float(value) for value in (row.get("max_future_high_return_2_5d") for row in deduped_rows) if value is not None]
+        time_to_hit_values = [int(value) for value in (row.get("time_to_hit_15pct") for row in deduped_rows) if value is not None]
+        source_names = sorted({source for row in deduped_rows for source in set(row.get("sources") or set())})
+        prior_by_ticker[ticker] = {
+            "five_day_evaluable_count": len(deduped_rows),
+            "five_day_hit_rate_at_15pct": round(sum(hit_values) / len(hit_values), 4),
+            "five_day_mean_max_future_high_return_2_5d": round(sum(max_returns) / len(max_returns), 4) if max_returns else None,
+            "five_day_time_to_hit_15pct_median": round(float(median(time_to_hit_values)), 4) if time_to_hit_values else None,
+            "five_day_prior_sources": ",".join(source_names),
+        }
+    return prior_by_ticker
+
+
 def load_latest_btst_historical_prior_by_ticker(reports_root: str | Path) -> dict[str, dict[str, Any]]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     priors_by_ticker: dict[str, dict[str, Any]] = {}
@@ -400,7 +516,59 @@ def load_latest_btst_historical_prior_by_ticker(reports_root: str | Path) -> dic
             if ticker not in ranked_rows_by_ticker or rank > ranked_rows_by_ticker[ticker]:
                 ranked_rows_by_ticker[ticker] = rank
                 priors_by_ticker[ticker] = historical_prior
+    runtime_5d_prior_by_ticker = _load_btst_runtime_5d_prior_by_ticker(resolved_reports_root)
+    for ticker, historical_prior in list(priors_by_ticker.items()):
+        runtime_5d_prior = dict(runtime_5d_prior_by_ticker.get(ticker) or {})
+        if not runtime_5d_prior:
+            continue
+        merged_prior = dict(historical_prior)
+        for key, value in runtime_5d_prior.items():
+            if value in (None, "", [], {}):
+                continue
+            merged_prior[str(key)] = value
+        priors_by_ticker[ticker] = merged_prior
     return priors_by_ticker
+
+
+def load_recent_btst_buy_order_cooldowns(
+    reports_root: str | Path,
+    *,
+    trade_date: str,
+    cooldown_calendar_days: int = 2,
+) -> dict[str, dict[str, Any]]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    current_trade_date = _compact_trade_date(trade_date)
+    if len(current_trade_date) != 8:
+        return {}
+    current_trade_dt = datetime.strptime(current_trade_date, "%Y%m%d")
+    blocked_until = (current_trade_dt + timedelta(days=1)).strftime("%Y%m%d")
+    cooldowns_by_ticker: dict[str, dict[str, Any]] = {}
+    latest_trade_by_ticker: dict[str, str] = {}
+    for snapshot_path in resolved_reports_root.glob("**/selection_snapshot.json"):
+        if "live_m2_7_short_trade_only" not in snapshot_path.as_posix():
+            continue
+        snapshot = _safe_load_json(snapshot_path)
+        snapshot_trade_date = _compact_trade_date(snapshot.get("trade_date") or snapshot_path.parent.name)
+        if len(snapshot_trade_date) != 8 or snapshot_trade_date >= current_trade_date:
+            continue
+        snapshot_trade_dt = datetime.strptime(snapshot_trade_date, "%Y%m%d")
+        gap_days = (current_trade_dt - snapshot_trade_dt).days
+        if gap_days <= 0 or gap_days > cooldown_calendar_days:
+            continue
+        for order in list(snapshot.get("buy_orders") or []):
+            ticker = str((order or {}).get("ticker") or "").strip()
+            if not ticker:
+                continue
+            previous_trade_date = latest_trade_by_ticker.get(ticker)
+            if previous_trade_date is not None and previous_trade_date >= snapshot_trade_date:
+                continue
+            latest_trade_by_ticker[ticker] = snapshot_trade_date
+            cooldowns_by_ticker[ticker] = {
+                "trigger_reason": "recent_formal_buy_cooldown",
+                "exit_trade_date": snapshot_trade_date,
+                "blocked_until": blocked_until,
+            }
+    return cooldowns_by_ticker
 
 
 def _is_upstream_shadow_followup_row(ticker: str, row: dict[str, Any], *, focus_tickers: list[str]) -> bool:

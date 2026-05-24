@@ -2129,6 +2129,81 @@ def test_short_trade_rank_decision_cap_rejects_deep_rank_near_miss_entries() -> 
     assert "near_miss_rank_cap_exceeded" in deep_rank_result.rejection_reasons
 
 
+def test_short_trade_rank_decision_cap_enables_upstream_shadow_source_specific_caps_with_quality_support() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry["candidate_source"] = "upstream_liquidity_corridor_shadow"
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "liquidity_shadow_selected_rank_cap_ratio": 0.05,
+            "liquidity_shadow_near_miss_rank_cap_ratio": 0.10,
+            "liquidity_shadow_source_specific_rank_cap_require_relief_applied": False,
+            "upstream_shadow_source_specific_rank_cap_trend_acceleration_min": 0.80,
+            "upstream_shadow_source_specific_rank_cap_close_strength_min": 0.85,
+        },
+    ):
+        result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=15,
+            rank_population=100,
+        )
+
+    cap_state = result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert cap_state["shadow_source_specific_rank_cap_guard_active"] is True
+    assert cap_state["upstream_shadow_source_specific_rank_cap_trend_acceleration_min"] == 0.8
+    assert cap_state["upstream_shadow_source_specific_rank_cap_close_strength_min"] == 0.85
+    assert cap_state["upstream_shadow_source_specific_rank_cap_trend_acceleration_pass"] is True
+    assert cap_state["upstream_shadow_source_specific_rank_cap_close_strength_pass"] is True
+    assert cap_state["upstream_shadow_source_specific_rank_cap_support_pass"] is True
+    assert cap_state["shadow_source_specific_caps_enabled"] is True
+    assert cap_state["selected_rank_cap_ratio"] == 0.05
+    assert cap_state["near_miss_rank_cap_ratio"] == 0.10
+    assert result.decision == "rejected"
+
+
+def test_short_trade_rank_decision_cap_keeps_upstream_shadow_source_specific_caps_disabled_without_quality_support() -> None:
+    entry = _make_prepared_breakout_entry()
+    entry["candidate_source"] = "upstream_liquidity_corridor_shadow"
+    entry["reason"] = "upstream_shadow_release_candidate"
+    entry["reasons"] = ["upstream_shadow_release_candidate"]
+    entry["candidate_reason_codes"] = ["upstream_shadow_release_candidate"]
+    entry["historical_prior"] = {
+        "execution_quality_label": "close_continuation",
+        "evaluable_count": 4,
+        "next_close_positive_rate": 0.75,
+        "next_open_to_close_return_mean": 0.03,
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "liquidity_shadow_selected_rank_cap_ratio": 0.05,
+            "liquidity_shadow_near_miss_rank_cap_ratio": 0.10,
+            "liquidity_shadow_source_specific_rank_cap_require_relief_applied": False,
+            "upstream_shadow_source_specific_rank_cap_trend_acceleration_min": 0.80,
+            "upstream_shadow_source_specific_rank_cap_close_strength_min": 0.85,
+        },
+    ):
+        result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=15,
+            rank_population=100,
+        )
+
+    cap_state = result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert cap_state["shadow_source_specific_rank_cap_guard_active"] is True
+    assert cap_state["upstream_shadow_source_specific_rank_cap_trend_acceleration_pass"] is False
+    assert cap_state["upstream_shadow_source_specific_rank_cap_close_strength_pass"] is False
+    assert cap_state["upstream_shadow_source_specific_rank_cap_support_pass"] is False
+    assert cap_state["shadow_source_specific_caps_enabled"] is False
+    assert cap_state["selected_rank_cap_ratio"] is None
+    assert cap_state["near_miss_rank_cap_ratio"] is None
+    assert result.decision == "near_miss"
+
+
 def test_short_trade_rank_decision_cap_downgrades_selected_to_near_miss() -> None:
     entry = _make_catalyst_theme_short_trade_carryover_entry()
 
