@@ -18,6 +18,12 @@ BLOCKER_SEVERITY_WEIGHTS = {
     "weak_close_confirmation": 2,
     "late_extension": 1,
 }
+PENALTY_FIELDS = (
+    "stale_trend_repair_penalty",
+    "overhead_supply_penalty",
+    "extension_without_room_penalty",
+    "layer_c_avoid_penalty",
+)
 
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
@@ -85,6 +91,10 @@ def _blocker_severity_score(row: dict[str, Any]) -> int:
     return sum(BLOCKER_SEVERITY_WEIGHTS.get(blocker, 1) for blocker in blockers)
 
 
+def _penalty_severity_score(row: dict[str, Any]) -> float:
+    return sum(_safe_float(row.get(field_name), 0.0) or 0.0 for field_name in PENALTY_FIELDS)
+
+
 def _build_upstream_shadow_row(row: dict[str, Any], price_cache: dict[tuple[str, str], Any]) -> dict[str, Any]:
     short_trade = dict(row.get("short_trade") or {})
     metrics_payload = dict(short_trade.get("metrics_payload") or {})
@@ -106,6 +116,10 @@ def _build_upstream_shadow_row(row: dict[str, Any], price_cache: dict[tuple[str,
         "historical_next_close_positive_rate": historical_prior.get("next_close_positive_rate"),
         "trend_acceleration": metrics_payload.get("trend_acceleration"),
         "close_strength": metrics_payload.get("close_strength"),
+        "stale_trend_repair_penalty": round(_safe_float(metrics_payload.get("stale_trend_repair_penalty"), 0.0) or 0.0, 4),
+        "overhead_supply_penalty": round(_safe_float(metrics_payload.get("overhead_supply_penalty"), 0.0) or 0.0, 4),
+        "extension_without_room_penalty": round(_safe_float(metrics_payload.get("extension_without_room_penalty"), 0.0) or 0.0, 4),
+        "layer_c_avoid_penalty": round(_safe_float(metrics_payload.get("layer_c_avoid_penalty"), 0.0) or 0.0, 4),
         **outcome,
     }
 
@@ -115,6 +129,7 @@ def _classify_upstream_shadow_row(row: dict[str, Any]) -> str | None:
     next_close_return = _safe_float(row.get("next_close_return"))
     t_plus_2_close_return = _safe_float(row.get("t_plus_2_close_return"))
     quality_label = str(row.get("historical_execution_quality_label") or "unknown")
+    has_observed_outcome = next_close_return is not None or t_plus_2_close_return is not None
     has_clearly_positive_follow_through = (t_plus_2_close_return is not None and t_plus_2_close_return >= 0.05) or (next_close_return is not None and next_close_return >= 0.03)
     has_weak_or_poor_follow_through = (next_close_return is None or next_close_return < 0.03) and (t_plus_2_close_return is None or t_plus_2_close_return < 0.05)
 
@@ -122,7 +137,7 @@ def _classify_upstream_shadow_row(row: dict[str, Any]) -> str | None:
         return "false_negative"
     if decision in {"selected", "near_miss"} and (
         ((next_close_return is not None and next_close_return <= 0.0) and (t_plus_2_close_return is None or t_plus_2_close_return <= 0.0))
-        or (quality_label == "balanced_confirmation" and has_weak_or_poor_follow_through and not has_clearly_positive_follow_through)
+        or (quality_label == "balanced_confirmation" and has_observed_outcome and has_weak_or_poor_follow_through and not has_clearly_positive_follow_through)
     ):
         return "false_positive"
     return None
@@ -155,6 +170,7 @@ def analyze_btst_upstream_shadow_fnfp_dossier(reports_root: str | Path) -> dict[
     false_positive_rows.sort(
         key=lambda row: (
             _blocker_severity_score(row),
+            _penalty_severity_score(row),
             1 if str(row.get("decision") or "") == "selected" else 0,
             -(_safe_float(row.get("t_plus_2_close_return"), 999.0) or 999.0),
             1 if str(row.get("historical_execution_quality_label") or "") == "balanced_confirmation" else 0,

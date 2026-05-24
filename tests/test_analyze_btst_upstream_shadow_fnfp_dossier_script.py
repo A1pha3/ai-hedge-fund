@@ -37,6 +37,20 @@ def test_classify_upstream_shadow_row_flags_balanced_confirmation_when_follow_th
     )
 
 
+def test_classify_upstream_shadow_row_does_not_flag_balanced_confirmation_without_outcomes():
+    assert (
+        _classify_upstream_shadow_row(
+            {
+                "decision": "selected",
+                "historical_execution_quality_label": "balanced_confirmation",
+                "data_status": "missing_price_frame",
+                "cycle_status": "missing_next_day",
+            }
+        )
+        is None
+    )
+
+
 def test_analyze_btst_upstream_shadow_fnfp_dossier_splits_false_negative_and_false_positive(monkeypatch, tmp_path):
     report_dir = tmp_path / "report"
     selection_root = report_dir / "selection_artifacts" / "2026-04-01"
@@ -451,3 +465,118 @@ def test_analyze_btst_upstream_shadow_fnfp_dossier_ranks_false_positives_by_bloc
     analysis = analyze_btst_upstream_shadow_fnfp_dossier(tmp_path)
 
     assert [row["ticker"] for row in analysis["false_positive_rows"]] == ["300111", "301188"]
+
+
+def test_analyze_btst_upstream_shadow_fnfp_dossier_ranks_false_positives_by_penalty_severity(monkeypatch, tmp_path):
+    report_dir = tmp_path / "report"
+    selection_root = report_dir / "selection_artifacts" / "2026-04-04"
+    selection_root.mkdir(parents=True)
+    (selection_root / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-04-04",
+                "selection_targets": {
+                    "300123": {
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "short_trade": {
+                            "decision": "selected",
+                            "score_target": 0.62,
+                            "blockers": ["late_extension"],
+                            "top_reasons": ["score_short=0.62"],
+                            "metrics_payload": {
+                                "trend_acceleration": 0.45,
+                                "close_strength": 0.57,
+                                "overhead_supply_penalty": 0.18,
+                                "extension_without_room_penalty": 0.24,
+                            },
+                            "historical_prior": {"execution_quality_label": "balanced_confirmation", "evaluable_count": 4, "next_close_positive_rate": 0.31},
+                        },
+                    },
+                    "300456": {
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "short_trade": {
+                            "decision": "selected",
+                            "score_target": 0.61,
+                            "blockers": ["late_extension"],
+                            "top_reasons": ["score_short=0.61"],
+                            "metrics_payload": {
+                                "trend_acceleration": 0.44,
+                                "close_strength": 0.56,
+                                "overhead_supply_penalty": 0.05,
+                                "extension_without_room_penalty": 0.08,
+                            },
+                            "historical_prior": {"execution_quality_label": "balanced_confirmation", "evaluable_count": 5, "next_close_positive_rate": 0.29},
+                        },
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def _fake_extract_btst_price_outcome(ticker: str, trade_date: str, price_cache):
+        outcomes = {
+            ("300123", "2026-04-04"): {"next_close_return": -0.02, "t_plus_2_close_return": -0.03, "cycle_status": "closed"},
+            ("300456", "2026-04-04"): {"next_close_return": -0.02, "t_plus_2_close_return": -0.03, "cycle_status": "closed"},
+        }
+        return outcomes[(ticker, trade_date)]
+
+    monkeypatch.setattr(
+        "scripts.analyze_btst_upstream_shadow_fnfp_dossier.extract_btst_price_outcome",
+        _fake_extract_btst_price_outcome,
+    )
+
+    analysis = analyze_btst_upstream_shadow_fnfp_dossier(tmp_path)
+
+    assert [row["ticker"] for row in analysis["false_positive_rows"]] == ["300123", "300456"]
+    assert analysis["false_positive_rows"][0]["overhead_supply_penalty"] == 0.18
+    assert analysis["false_positive_rows"][0]["extension_without_room_penalty"] == 0.24
+
+
+def test_analyze_btst_upstream_shadow_fnfp_dossier_keeps_missing_outcome_balanced_confirmation_out_of_false_positives(monkeypatch, tmp_path):
+    report_dir = tmp_path / "report"
+    selection_root = report_dir / "selection_artifacts" / "2026-04-05"
+    selection_root.mkdir(parents=True)
+    (selection_root / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-04-05",
+                "selection_targets": {
+                    "301188": {
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "short_trade": {
+                            "decision": "selected",
+                            "score_target": 0.63,
+                            "blockers": ["late_extension"],
+                            "top_reasons": ["score_short=0.63"],
+                            "metrics_payload": {
+                                "trend_acceleration": 0.48,
+                                "close_strength": 0.58,
+                                "overhead_supply_penalty": 0.17,
+                                "extension_without_room_penalty": 0.19,
+                            },
+                            "historical_prior": {"execution_quality_label": "balanced_confirmation", "evaluable_count": 4, "next_close_positive_rate": 0.31},
+                        },
+                    }
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "scripts.analyze_btst_upstream_shadow_fnfp_dossier.extract_btst_price_outcome",
+        lambda ticker, trade_date, price_cache: {"data_status": "missing_price_frame", "cycle_status": "missing_next_day"},
+    )
+
+    analysis = analyze_btst_upstream_shadow_fnfp_dossier(tmp_path)
+
+    assert analysis["cohort_count"] == 1
+    assert analysis["quality_label_split"] == {"balanced_confirmation": 1}
+    assert analysis["false_positive_count"] == 0
+    assert analysis["false_positive_rows"] == []
+    assert analysis["recommendation"] == "Collect more upstream-shadow outcome history before ranking FN/FP rows."
