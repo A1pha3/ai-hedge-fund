@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import scripts.analyze_short_trade_blockers as blockers_module
-from scripts.analyze_short_trade_blockers import analyze_short_trade_blockers
+from scripts.analyze_short_trade_blockers import analyze_short_trade_blockers, collect_short_trade_rows
 
 
 def test_analyze_short_trade_blockers_aggregates_decisions_and_sources(tmp_path):
@@ -247,6 +247,53 @@ def test_analyze_short_trade_blockers_includes_upstream_shadow_observation_entri
     assert analysis["candidate_source_breakdown"]["upstream_liquidity_corridor_shadow"]["blocker_counts"] == {"trend_not_constructive": 1}
     assert analysis["top_near_threshold_examples"][0]["ticker"] == "301188"
     assert analysis["recommended_focus_areas"][0]["focus_area"] == "trend_not_constructive_shadow_review"
+
+
+def test_collect_short_trade_rows_preserves_upstream_shadow_observation_entries(tmp_path):
+    report_dir = tmp_path / "report"
+    selection_root = report_dir / "selection_artifacts" / "2026-03-30"
+    selection_root.mkdir(parents=True)
+
+    (selection_root / "selection_snapshot.json").write_text(
+        json.dumps({"trade_date": "2026-03-30", "selection_targets": {}}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (selection_root / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "upstream_shadow_observation_entries": [
+                    {
+                        "ticker": "301188",
+                        "decision": "observation",
+                        "score_target": 0.18,
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "candidate_reason_codes": ["upstream_base_liquidity_uplift_shadow"],
+                        "blockers": ["trend_not_constructive"],
+                        "top_reasons": ["candidate_score=0.18", "filter_reason=structural_prefilter_fail"],
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                        "strategy_signals": {"trend": {}},
+                        "short_trade_boundary_metrics": {
+                            "candidate_score": 0.18,
+                            "trend_acceleration": 0.0,
+                            "close_strength": 0.4,
+                            "gate_status": {"data": "pass", "structural": "fail", "score": "shadow_observation"},
+                            "blockers": ["trend_not_constructive"],
+                        },
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows = collect_short_trade_rows(report_dir)
+
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "301188"
+    assert rows[0]["candidate_source"] == "upstream_liquidity_corridor_shadow"
+    assert rows[0]["short_trade"]["decision"] == "observation"
 
 
 def test_analyze_short_trade_blockers_recomputes_missing_observation_blockers(tmp_path):

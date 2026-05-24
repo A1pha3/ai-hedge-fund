@@ -220,6 +220,14 @@ def _iter_short_trade_rows(selection_root: Path, *, trade_dates: set[str] | None
                 yield normalized
 
 
+def collect_short_trade_rows(report_dir: str | Path, *, trade_dates: set[str] | None = None) -> list[dict[str, Any]]:
+    resolved_report_dir = Path(report_dir).expanduser().resolve()
+    selection_root = resolved_report_dir / "selection_artifacts"
+    if not selection_root.exists():
+        return []
+    return list(_iter_short_trade_rows(selection_root, trade_dates=trade_dates))
+
+
 def _classify_failure_mechanism(*, decision: str, candidate_source: str, blockers: list[str], gate_status: dict[str, Any]) -> str:
     normalized_blockers = {str(blocker) for blocker in blockers if str(blocker or "").strip()}
     normalized_gate_status = {str(key): str(value) for key, value in gate_status.items()}
@@ -471,7 +479,9 @@ def analyze_short_trade_blockers(report_dir: str | Path, *, trade_dates: set[str
 
     day_counters: dict[str, Counter[str]] = defaultdict(Counter)
 
-    for row in _iter_short_trade_rows(selection_root, trade_dates=active_trade_dates):
+    short_trade_rows = collect_short_trade_rows(report_path, trade_dates=active_trade_dates)
+
+    for row in short_trade_rows:
         trade_date = str(row.get("trade_date") or "")
         ticker = str(row.get("ticker") or "")
         short_trade = dict(row.get("short_trade") or {})
