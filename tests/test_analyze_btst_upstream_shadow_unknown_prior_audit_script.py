@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+from __future__ import annotations
 import json
 import pytest
-
-# Step 1: Write the failing report-helper test
+import sys
 from scripts.btst_latest_followup_utils import load_upstream_shadow_followup_rows_for_report
+from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import (
+    analyze_btst_upstream_shadow_unknown_prior_audit,
+    render_btst_upstream_shadow_unknown_prior_audit_markdown,
+)
+
+# Patch sys.modules for test isolation
+sys.modules["scripts.analyze_btst_upstream_shadow_unknown_prior_audit"] = __import__("types").SimpleNamespace()
 
 def test_load_upstream_shadow_followup_rows_for_report_returns_rows_with_report_metadata(tmp_path) -> None:
     report_dir = tmp_path / "report-20260520"
