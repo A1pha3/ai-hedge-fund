@@ -22,6 +22,14 @@ def test_append_opening_watch_focus_items_markdown_emits_focus_fields():
                 "why_now": "fresh breakout",
                 "opening_plan": "only buy on confirming push",
                 "historical_summary": "close continuation supportive",
+                "next_close_positive_rate": 0.5,
+                "next_close_positive_count": 1,
+                "next_close_negative_count": 1,
+                "next_close_average_win": 0.02,
+                "next_close_average_loss_abs": 0.02,
+                "next_close_payoff_ratio": 1.0,
+                "next_close_profit_factor": 1.0,
+                "next_close_expectancy": 0.0,
                 "execution_note": "avoid weak open",
             }
         ],
@@ -33,6 +41,8 @@ def test_append_opening_watch_focus_items_markdown_emits_focus_fields():
     assert "- focus_tier: primary" in markdown
     assert "- execution_posture: breakout_confirmation" in markdown
     assert "- opening_plan: only buy on confirming push" in markdown
+    assert "- historical_win_rate_payoff: 胜率=0.5000" in markdown
+    assert "盈亏比(平均盈/平均亏)=1.0000" in markdown
     assert "- execution_note: avoid weak open" in markdown
 
 

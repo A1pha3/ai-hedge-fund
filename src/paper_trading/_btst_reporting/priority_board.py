@@ -21,6 +21,7 @@ from src.paper_trading._btst_reporting.entry_transforms import (
 )
 from src.paper_trading.btst_reporting_utils import (
     _as_float,
+    _copy_historical_payoff_fields,
     _entry_mode_action_guidance,
     _execution_priority_rank,
     _monitor_priority_rank,
@@ -74,6 +75,7 @@ def _build_priority_board_row(
         "why_now": ", ".join(entry.get("top_reasons") or []) or default_why_now,
         "suggested_action": suggested_action,
         "historical_summary": historical_prior.get("summary"),
+        **_copy_historical_payoff_fields(historical_prior),
         "execution_note": execution_note,
     }
 

@@ -187,6 +187,62 @@ def _format_float(value: Any, digits: int = 4) -> str:
     return "n/a"
 
 
+HISTORICAL_PAYOFF_FIELD_KEYS = (
+    "next_close_positive_rate",
+    "next_close_positive_count",
+    "next_close_negative_count",
+    "next_close_average_win",
+    "next_close_average_loss_abs",
+    "next_close_payoff_ratio",
+    "next_close_profit_factor",
+    "next_close_expectancy",
+    "win_rate_payoff_divergence",
+)
+
+
+def _copy_historical_payoff_fields(source: dict[str, Any]) -> dict[str, Any]:
+    return {key: source.get(key) for key in HISTORICAL_PAYOFF_FIELD_KEYS}
+
+
+def _format_historical_payoff_note(source: dict[str, Any]) -> str | None:
+    if not source:
+        return None
+    if not _has_historical_payoff_signal(source):
+        return None
+    parts = [
+        f"胜率={_format_float(source.get('next_close_positive_rate'))}",
+        _format_historical_payoff_sample_counts(source),
+        f"平均盈利={_format_float(source.get('next_close_average_win'))}",
+        f"平均亏损={_format_float(source.get('next_close_average_loss_abs'))}",
+        f"盈亏比(平均盈/平均亏)={_format_float(source.get('next_close_payoff_ratio'))}",
+        f"profit_factor={_format_float(source.get('next_close_profit_factor'))}",
+        f"期望={_format_float(source.get('next_close_expectancy'))}",
+    ]
+    if source.get("win_rate_payoff_divergence"):
+        parts.append("提示=胜率与盈亏比/期望背离，需降级确认")
+    return ", ".join(part for part in parts if part)
+
+
+def _has_historical_payoff_signal(source: dict[str, Any]) -> bool:
+    signal_keys = (
+        "next_close_positive_rate",
+        "next_close_average_win",
+        "next_close_average_loss_abs",
+        "next_close_payoff_ratio",
+        "next_close_profit_factor",
+        "next_close_expectancy",
+    )
+    return any(source.get(key) is not None for key in signal_keys)
+
+
+def _format_historical_payoff_sample_counts(source: dict[str, Any]) -> str | None:
+    positive_count = source.get("next_close_positive_count")
+    negative_count = source.get("next_close_negative_count")
+    if positive_count is None and negative_count is None:
+        return None
+    return f"正/负样本={int(positive_count or 0)}/{int(negative_count or 0)}"
+
+
 def _as_float(value: Any) -> float:
     if isinstance(value, (int, float)):
         return float(value)

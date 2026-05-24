@@ -488,6 +488,9 @@ def _build_historical_opportunity_summary_payload(
     next_high_hit_rate: float | None,
     next_close_positive_rate: float | None,
 ) -> dict[str, Any]:
+    payoff_stats = _summarize_next_close_payoff(
+        next_close_values, next_close_positive_rate=next_close_positive_rate
+    )
     return {
         "sample_count": len(rows),
         "evaluable_count": len(evaluated_rows),
@@ -495,11 +498,69 @@ def _build_historical_opportunity_summary_payload(
         "next_open_return_mean": _mean_or_none(next_open_values),
         "next_high_hit_rate_at_threshold": next_high_hit_rate,
         "next_close_positive_rate": next_close_positive_rate,
+        **payoff_stats,
         "next_high_return_mean": _mean_or_none(next_high_values),
         "next_close_return_mean": _mean_or_none(next_close_values),
         "next_open_to_close_return_mean": _mean_or_none(next_open_to_close_values),
         "recent_examples": evaluated_rows[:3],
     }
+
+
+def _summarize_next_close_payoff(
+    next_close_values: list[float],
+    *,
+    next_close_positive_rate: float | None,
+) -> dict[str, Any]:
+    wins = [value for value in next_close_values if value > 0]
+    losses = [abs(value) for value in next_close_values if value < 0]
+    average_win = _mean_or_none(wins)
+    average_loss_abs = _mean_or_none(losses)
+    payoff_ratio = _compute_payoff_ratio(average_win, average_loss_abs)
+    profit_factor = _compute_profit_factor(wins, losses)
+    expectancy = _mean_or_none(next_close_values)
+    return {
+        "next_close_positive_count": len(wins),
+        "next_close_negative_count": len(losses),
+        "next_close_average_win": average_win,
+        "next_close_average_loss_abs": average_loss_abs,
+        "next_close_payoff_ratio": payoff_ratio,
+        "next_close_profit_factor": profit_factor,
+        "next_close_expectancy": expectancy,
+        "win_rate_payoff_divergence": _detect_win_rate_payoff_divergence(
+            next_close_positive_rate=next_close_positive_rate,
+            payoff_ratio=payoff_ratio,
+            expectancy=expectancy,
+        ),
+    }
+
+
+def _compute_payoff_ratio(
+    average_win: float | None, average_loss_abs: float | None
+) -> float | None:
+    if average_win is None or average_loss_abs is None or average_loss_abs <= 0:
+        return None
+    return _round_or_none(average_win / average_loss_abs)
+
+
+def _compute_profit_factor(wins: list[float], losses: list[float]) -> float | None:
+    total_loss = sum(losses)
+    if not wins or total_loss <= 0:
+        return None
+    return _round_or_none(sum(wins) / total_loss)
+
+
+def _detect_win_rate_payoff_divergence(
+    *,
+    next_close_positive_rate: float | None,
+    payoff_ratio: float | None,
+    expectancy: float | None,
+) -> bool:
+    if next_close_positive_rate is None or next_close_positive_rate < 0.6:
+        return False
+    return bool(
+        (payoff_ratio is not None and payoff_ratio < 1.0)
+        or (expectancy is not None and expectancy <= 0)
+    )
 
 
 # ---------------------------------------------------------------------------

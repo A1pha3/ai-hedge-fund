@@ -10,6 +10,7 @@ from src.paper_trading.btst_reporting_utils import (
     OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
     _compact_trade_date,
     _format_float,
+    _format_historical_payoff_note,
     _load_json,
     _normalize_trade_date,
     _resolve_followup_trade_dates,
@@ -759,6 +760,11 @@ def _append_premarket_action_block(
     lines.append(
         f"{prefix}historical_summary: {(entry.get('historical_prior') or {}).get('summary') or 'n/a'}"
     )
+    payoff_note = _format_historical_payoff_note(
+        dict(entry.get("historical_prior") or {})
+    )
+    if payoff_note:
+        lines.append(f"{prefix}historical_win_rate_payoff: {payoff_note}")
     lines.append(f"{prefix}evidence: {', '.join(entry.get('evidence') or []) or 'n/a'}")
     lines.append("- trigger_rules:")
     lines.extend(f"  - {item}" for item in entry.get("trigger_rules") or [])

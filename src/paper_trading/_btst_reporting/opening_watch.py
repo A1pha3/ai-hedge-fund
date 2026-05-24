@@ -18,6 +18,7 @@ from src.paper_trading._btst_reporting.entry_transforms import (
 )
 from src.paper_trading.btst_reporting_utils import (
     _as_float,
+    _copy_historical_payoff_fields,
     _entry_mode_action_guidance,
     _execution_priority_rank,
     _monitor_priority_rank,
@@ -48,6 +49,7 @@ def _build_opening_primary_focus_item(
         or "当前 short-trade 正式 selected。",
         "opening_plan": trigger_rules[0] if trigger_rules else "只在确认出现后执行。",
         "historical_summary": historical_prior.get("summary"),
+        **_copy_historical_payoff_fields(historical_prior),
         "execution_note": _augment_execution_note(
             primary_entry.get("preferred_entry_mode"), historical_prior
         ),
@@ -86,6 +88,7 @@ def _build_opening_focus_item(
         "why_now": ", ".join(entry.get("top_reasons") or []) or default_why_now,
         "opening_plan": opening_plan,
         "historical_summary": historical_prior.get("summary"),
+        **_copy_historical_payoff_fields(historical_prior),
         "execution_note": execution_note,
     }
 

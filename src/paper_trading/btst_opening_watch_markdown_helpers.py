@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from src.paper_trading.btst_reporting_utils import _format_historical_payoff_note
+
 
 RenderTickerItem = Callable[[list[str], dict[str, Any]], None]
 RenderTickerSection = Callable[[list[str], list[dict[str, Any]], RenderTickerItem], None]
@@ -24,6 +26,9 @@ def append_opening_watch_focus_items_markdown(
         inner_lines.append(f"- why_now: {item.get('why_now')}")
         inner_lines.append(f"- opening_plan: {item.get('opening_plan')}")
         inner_lines.append(f"- historical_summary: {item.get('historical_summary') or 'n/a'}")
+        payoff_note = _format_historical_payoff_note(item)
+        if payoff_note:
+            inner_lines.append(f"- historical_win_rate_payoff: {payoff_note}")
         inner_lines.append(f"- execution_note: {item.get('execution_note') or 'n/a'}")
 
     append_titled_indexed_ticker_section(

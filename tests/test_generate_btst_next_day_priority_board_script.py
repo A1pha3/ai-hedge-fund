@@ -37,6 +37,14 @@ def test_render_btst_next_day_priority_board_markdown_emits_sections_and_catalys
                     "why_now": "breakout_freshness=0.94",
                     "suggested_action": "盘中确认后再执行。",
                     "historical_summary": "close continuation supportive",
+                    "next_close_positive_rate": 0.5,
+                    "next_close_positive_count": 1,
+                    "next_close_negative_count": 1,
+                    "next_close_average_win": 0.02,
+                    "next_close_average_loss_abs": 0.02,
+                    "next_close_payoff_ratio": 1.0,
+                    "next_close_profit_factor": 1.0,
+                    "next_close_expectancy": 0.0,
                     "execution_note": "avoid weak open",
                 }
             ],
@@ -104,6 +112,8 @@ def test_render_btst_next_day_priority_board_markdown_emits_sections_and_catalys
     assert "## Overview" in markdown
     assert "### 1. 300757" in markdown
     assert "- execution_quality_label: balanced_confirmation" in markdown
+    assert "- historical_win_rate_payoff: 胜率=0.5000" in markdown
+    assert "盈亏比(平均盈/平均亏)=1.0000" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "- threshold_shortfalls: candidate_score=0.0600" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown
@@ -358,9 +368,12 @@ def test_generate_btst_next_day_priority_board_orders_trade_watch_opportunity_an
     assert payload["catalyst_theme_frontier_priority"]["promoted_tickers"] == ["301001"]
     assert payload["catalyst_theme_shadow_watch"][0]["ticker"] == "301001"
     assert payload["priority_rows"][0]["execution_quality_label"] == "balanced_confirmation"
+    assert payload["priority_rows"][0]["next_close_positive_rate"] == 1.0
+    assert payload["priority_rows"][0]["next_close_average_win"] == 0.014
     assert payload["priority_rows"][3]["actionability"] == "non_trade_learning_only"
     assert "# BTST Next-Day Priority Board" in markdown
     assert "### 1. 300757" in markdown
+    assert "historical_win_rate_payoff: 胜率=1.0000" in markdown
     assert "### 4. 002001" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown

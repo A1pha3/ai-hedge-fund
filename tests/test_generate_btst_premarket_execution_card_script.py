@@ -115,7 +115,17 @@ def test_render_btst_premarket_execution_card_markdown_emits_sections_and_source
                 "watch_priority": "highest",
                 "execution_quality_label": "balanced_confirmation",
                 "preferred_entry_mode": "next_day_breakout_confirmation",
-                "historical_prior": {"summary": "close continuation supportive"},
+                "historical_prior": {
+                    "summary": "close continuation supportive",
+                    "next_close_positive_rate": 0.5,
+                    "next_close_positive_count": 1,
+                    "next_close_negative_count": 1,
+                    "next_close_average_win": 0.02,
+                    "next_close_average_loss_abs": 0.02,
+                    "next_close_payoff_ratio": 1.0,
+                    "next_close_profit_factor": 1.0,
+                    "next_close_expectancy": 0.0,
+                },
                 "evidence": ["breakout_freshness=0.94"],
                 "trigger_rules": ["盘中确认后再执行。"],
                 "avoid_rules": ["弱开不追。"],
@@ -218,6 +228,8 @@ def test_render_btst_premarket_execution_card_markdown_emits_sections_and_source
     assert "# BTST Premarket Execution Card" in markdown
     assert "## Primary Action" in markdown
     assert "## Watchlist Actions" in markdown
+    assert "- historical_win_rate_payoff: 胜率=0.5000" in markdown
+    assert "盈亏比(平均盈/平均亏)=1.0000" in markdown
     assert "### 1. 601869" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown

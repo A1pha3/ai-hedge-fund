@@ -135,6 +135,14 @@ def test_summarize_historical_opportunity_rows_skips_missing_and_aggregates_mean
     assert summary["evaluable_count"] == 2
     assert summary["next_high_hit_rate_at_threshold"] == 0.5
     assert summary["next_close_positive_rate"] == 0.5
+    assert summary["next_close_positive_count"] == 1
+    assert summary["next_close_negative_count"] == 1
+    assert summary["next_close_average_win"] == 0.02
+    assert summary["next_close_average_loss_abs"] == 0.02
+    assert summary["next_close_payoff_ratio"] == 1.0
+    assert summary["next_close_profit_factor"] == 1.0
+    assert summary["next_close_expectancy"] == 0.0
+    assert summary["win_rate_payoff_divergence"] is False
     assert summary["next_open_return_mean"] == 0.0
     assert summary["next_close_return_mean"] == 0.0
     assert len(summary["recent_examples"]) == 2
@@ -155,6 +163,14 @@ def test_summarize_historical_opportunity_rows_returns_empty_summary_without_val
     assert summary["evaluable_count"] == 0
     assert summary["next_high_hit_rate_at_threshold"] is None
     assert summary["next_close_positive_rate"] is None
+    assert summary["next_close_positive_count"] == 0
+    assert summary["next_close_negative_count"] == 0
+    assert summary["next_close_average_win"] is None
+    assert summary["next_close_average_loss_abs"] is None
+    assert summary["next_close_payoff_ratio"] is None
+    assert summary["next_close_profit_factor"] is None
+    assert summary["next_close_expectancy"] is None
+    assert summary["win_rate_payoff_divergence"] is False
     assert summary["recent_examples"] == []
 
 

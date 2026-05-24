@@ -10,7 +10,10 @@ from __future__ import annotations
 from typing import Any
 from collections.abc import Callable
 
-from src.paper_trading.btst_reporting_utils import _format_float
+from src.paper_trading.btst_reporting_utils import (
+    _format_float,
+    _format_historical_payoff_note,
+)
 from src.paper_trading._btst_reporting.catalyst_render_helpers import (
     _append_threshold_shortfalls_line,
     _append_catalyst_watch_metrics,
@@ -103,6 +106,9 @@ def _append_brief_historical_prior_fields(
         lines.append(
             f"- historical_summary: {historical_prior.get('summary') or 'n/a'}"
         )
+    payoff_note = _format_historical_payoff_note(historical_prior)
+    if payoff_note:
+        lines.append(f"- historical_win_rate_payoff: {payoff_note}")
     if include_execution_quality:
         lines.append(
             f"- historical_execution_quality: {historical_prior.get('execution_quality_label') or 'n/a'}"
