@@ -1,0 +1,608 @@
+# BTST 提前发现主升浪股票研究方案 v2
+
+> 研究日期：2026-05-25  
+> 关联报告：`data/reports/btst_full_report_20260525.md`  
+> 用途：把“已经涨很多才看见”的问题，拆成可回测、可上线观察、可控制风险的早期预警方案。  
+> 边界：本文是策略研究文档，不构成任何个股投资建议。
+
+## 学习目标
+
+读完这份文档后，应该能回答 4 个问题：
+
+1. 为什么当前 BTST 完整报告会偏向“强势确认”，而不是“起涨前发现”。
+2. 未来 5 日大涨、10 日继续加速的股票，起涨前更可能有哪些共性。
+3. 如何在现有 BTST 链路前面加一层早期预警，而不是简单追高或放宽门槛。
+4. 如何用回测标签、执行确认和风控规则，把“提前布局”变成可验证的流程。
+
+## 核心判断
+
+你看到的担心是对的：在 `btst_full_report_20260525.md` 里，很多高分股已经进入了主升段中后部。比如 Top 40 中至少有 17 只股票 5 日涨幅超过 30%，Top 10 里索辰科技 10 日涨幅达到 +90.7%，威龙股份达到 +98.9%。这些票当然强，但对“新开仓”来说，很多已经不再是赔率最好的位置。
+
+最好的处理办法不是追更强的票，也不是把现有 selected 阈值一味降低，而是在 full report 前面新增一层“早期主升浪预警池”：
+
+- 先用趋势加速和题材共振找出正在蓄势的票。
+- 再用过热惩罚排除 5 日、10 日已经严重透支的票。
+- 最后只允许通过次日盘中确认的股票，从预警池升级为主执行候选。
+
+这套方案的目标不是保证每笔 5 日 +15%、10 日 +50%。那会把系统逼成高风险追涨器。更合理的目标是提高右尾行情的捕捉概率，同时让亏损样本可控。
+
+## 当前报告暴露出的迟到问题
+
+`btst_full_report_20260525.md` 的 Top 40 里，5 日涨幅超过 30% 的股票包括：
+
+| 代码 | 名称 | 5 日涨幅 | 当日状态 |
+| --- | --- | ---: | --- |
+| 002421 | 达实智能 | +36.0% | 日涨 +10.1%，量比 2.65 |
+| 688507 | 索辰科技 | +44.6% | 日涨 +14.5%，量比 2.66 |
+| 000518 | 四环生物 | +40.6% | 日涨 +9.9%，量比 3.14 |
+| 600888 | 新疆众和 | +30.9% | 日涨 +7.2%，量比 2.21 |
+| 688079 | 美迪凯 | +31.7% | 日涨 +3.2%，量比 1.95 |
+| 688360 | 德马科技 | +35.9% | 日涨 +2.2%，量比 2.90 |
+| 301269 | 华大九天 | +32.3% | 日涨 +15.0%，量比 1.80 |
+| 300715 | 凯伦股份 | +34.0% | 日涨 +7.3%，量比 1.92 |
+| 688419 | 耐科装备 | +38.9% | 日涨 +5.6%，量比 1.90 |
+| 603989 | 艾华集团 | +39.6% | 日涨 +8.0%，量比 2.10 |
+| 300939 | 秋田微 | +41.4% | 日涨 +20.0%，量比 1.66 |
+| 000417 | 合百集团 | +31.5% | 日涨 +1.1%，量比 2.76 |
+| 603005 | 晶方科技 | +30.3% | 日涨 +10.0%，量比 1.80 |
+| 688082 | 盛美上海 | +35.5% | 日涨 +17.7%，量比 1.64 |
+| 688362 | 甬矽电子 | +42.2% | 日涨 +20.0%，量比 1.50 |
+| 688072 | 拓荆科技 | +37.3% | 日涨 +16.9%，量比 1.53 |
+| 688981 | 中芯国际 | +32.6% | 日涨 +18.8%，量比 1.58 |
+
+Top 10 深度分析里，索辰科技的 10 日涨幅为 +90.7%，威龙股份为 +98.9%。这些数字说明当前榜单已经非常擅长识别“已经被市场确认的强势”，但它不是专门为“主升浪前夜”设计的。
+
+当前报告里 Top 10 的共性也很清楚：
+
+- `close_strength` 大多已经打满到 1.0。
+- `catalyst_freshness` 大多接近或等于 1.0。
+- `volume_expansion_quality`、`momentum_strength`、`layer_c_alignment` 同时贡献。
+- 量比普遍在 1.7 到 3.1 附近。
+
+这是一组确认型特征。它适合判断“今天很强”，但新开仓时容易遇到三个问题：
+
+- 入场位置离起涨点太远。
+- 次日稍微低开或冲高回落，盈亏比立刻变差。
+- 模型容易把“后验好看”误当成“前瞻可买”。
+
+## 先把 3 种信号分清
+
+提前发现不是把现有分数提前一天看，而是把不同信号的职责拆开。
+
+| 层级 | 要回答的问题 | 典型信号 | 交易含义 |
+| --- | --- | --- | --- |
+| 早期预警 | 哪些票可能正在起势，但还没彻底拥挤？ | 趋势加速、题材共振、温和放量、未过热 | 收盘后进观察池，不直接重仓 |
+| 强势确认 | 哪些票已经被市场确认？ | 高 `close_strength`、高 `breakout_freshness`、高量比 | 适合做次日确认交易，不适合无条件追 |
+| 风险降级 | 哪些票虽然强，但新入场赔率差？ | 5 日涨幅过高、10 日涨幅过高、逼近涨停、上影线放量 | 降为观察或等待二买 |
+
+真正的主升浪早期系统，要把第一层做强；当前 full report 主要强在第二层。
+
+```mermaid
+flowchart LR
+  A["全市场候选池"] --> B["主题/行业热度雷达"]
+  B --> C["早期趋势预警池"]
+  C --> D["过热与可交易性过滤"]
+  D --> E["次日盘中确认"]
+  E --> F["升级主执行候选"]
+  E --> G["未确认：继续观察或剔除"]
+  F --> H["T+1 / T+2 风控与止盈"]
+```
+
+## 仓库里已经给出的关键证据
+
+### 1. `trend_continuation` 比“盲猜点火”更可靠
+
+在 `data/reports/btst_5d_15pct_factor_research_round1_latest.md` 里，`trend_continuation` 样本的 5 日内 +15% 命中率为 25.87%，平均最大收益为 10.50%。它不是完美信号，但比无结构地押突然点火更像可研究的底座。
+
+`data/reports/btst_5d_15pct_trend_breakout_drilldown_latest.md` 进一步显示：
+
+| 切片 | closed 样本 | 5 日内 +15% 命中率 | 平均最大收益 | 判断 |
+| --- | ---: | ---: | ---: | --- |
+| `trend_continuation` 基线 | 656 | 27.44% | 10.06% | 可作为底层雷达 |
+| `trend_acceleration_top_20pct` | 278 | 34.53% | 13.44% | 有提升，但仍需过滤 |
+| `trend_acceleration_top_20pct_gap_le_3pct` | 243 | 36.21% | 13.79% | 最适合做早期预警池 |
+| `trend_acceleration_top_20pct_selected_only` | 114 | 23.68% | 9.43% | 已进 selected 反而不一定更好 |
+
+这组数据的重点是：趋势加速有效，但 selected-only 不一定有效。换句话说，“太早没有确认”不行，“太晚全市场都看见”也不行，中间那段才是赔率区。
+
+### 2. `close_strength` 太高未必是好事
+
+`data/reports/btst_5d_15pct_trend_top20_gate_diagnostics_latest.md` 里，`close_strength_ge_0_90` 被降级：raw 命中率只有 20.11%，去重后也只有 20.48%。这和直觉相反，但对交易很重要。
+
+`close_strength` 高说明股票已经站在短期区间高位。对确认趋势有用，但对提前布局未必有利。早期预警池更应该找“接近强势，但尚未完全打满”的状态，而不是等它已经成为全场最亮。
+
+### 3. 最像早期 alpha 的窄门：题材催化 + close 未打满
+
+同一份 diagnostics 里，最值得跟踪的是：
+
+- `catalyst_theme_close_strength_lt_0_90`
+- closed=62，raw 命中率 83.87%，平均最大收益 32.90%
+- 去重后 closed=10，命中率 50.00%，去重提升仍然明显，但样本太小
+
+这个结果不能直接上线成主策略，因为样本少、稳定性还不够。但它非常像“提前发现”的正确方向：有题材、有趋势，但还没被 `close_strength=1.0` 完全确认。
+
+### 4. OOS 稳定性还不够，不能把研究信号当成确定性
+
+`data/reports/btst_5d_15pct_trend_gate_oos_validation_latest.md` 给出的 OOS 结论是 `continue_research_not_rollout`。其中：
+
+- 2026-04 的 hit_rate_15pct 为 62.50%。
+- 2026-05 的 hit_rate_15pct 降到 30.43%。
+- stable_oos_test_month_count 为 0。
+
+这说明研究方向有价值，但还不能直接升级为默认买入规则。它应该先作为“早期预警层”，继续积累样本。
+
+## 起涨前画像：最值得盯的 7 个特征
+
+下面这些特征更接近“起涨前”，不是“已经大涨后”。
+
+### 1. 趋势已经抬头，但涨幅还没有透支
+
+核心不是 5 日涨幅越高越好，而是：
+
+- `trend_acceleration` 进入当日前 20%，或绝对值接近 0.80。
+- 5 日涨幅最好在 3% 到 18% 之间。
+- 10 日涨幅最好在 5% 到 35% 之间。
+- 如果 5 日已经超过 25% 到 30%，新开仓要默认降级。
+
+强势股可以继续强，但从新开仓角度看，过高涨幅会明显压缩盈亏比。
+
+### 2. 题材或行业有共振，但个股还不是最拥挤
+
+优先找：
+
+- 行业均涨幅、行业入选率正在抬升。
+- 个股属于当日强主题，但还不是全市场最拥挤的高位票。
+- `candidate_source` 优先看 `catalyst_theme`、`catalyst_theme_shadow`、上游影子召回，而不是只看 selected 排名前列。
+
+这点和动量研究一致：单票动量更容易受噪音影响，题材和行业共振能过滤掉一部分孤立脉冲。
+
+### 3. `close_strength` 不能太低，也不能太满
+
+建议早期池把 `close_strength` 分成三段：
+
+| 区间 | 含义 | 动作 |
+| --- | --- | --- |
+| < 0.60 | 结构还没站稳 | 观察，不急 |
+| 0.65 - 0.90 | 最适合提前预警 | 重点跟踪 |
+| >= 0.90 | 已经强势确认 | 只做确认交易，避免追高 |
+
+特别是 `catalyst_theme + close_strength < 0.90`，目前是最值得继续扩样本的窄门。
+
+### 4. 放量要健康，不要爆量失控
+
+起涨前更理想的是第一次或第二次放量，而不是连续放量后的情绪高潮。
+
+优先：
+
+- 量比 1.2 到 2.5。
+- `amount_ratio_5` 逐渐上升。
+- 放量时收盘靠近当日高位，而不是长上影。
+- 量价背离低，放量不是出货形态。
+
+降级：
+
+- 量比突然超过 4，且上影线明显。
+- 当日涨幅很大，但收盘弱于 VWAP。
+- 连续几天放量，价格却开始走平。
+
+### 5. 突破要新鲜，但不要太远
+
+早期预警不是等价格离 20 日高点很远，也不是等它已经连板后再看。
+
+可用的结构指标包括：
+
+- `breakout_quality_20_atr`：收盘相对过去 20 日高点的 ATR 距离。
+- `breakout_freshness`：突破或催化的新鲜度。
+- `failed_breakout_10`：最近 10 日失败突破次数。
+- `supply_pressure_60`：当前价附近是否有密集套牢盘。
+
+理想状态是“刚过或将过关键区间”，不是“已经远离所有参照物”。
+
+### 6. 次日可交易性必须放在信号之前
+
+A 股主板通常有 10% 日涨跌幅限制，科创板和创业板通常为 20%。这会让强票出现“看对但买不到”“买到就是最高”的执行问题。
+
+所以早期预警池必须加执行过滤：
+
+- 次日高开超过 3% 先降级观察。
+- 接近涨停或一字开，不能追。
+- 开盘 30 分钟不能站稳 VWAP，不升级。
+- 盘中冲高后快速跌破开盘价，取消升级。
+
+### 7. 历史先验要参与，但不能盲信
+
+现有 `btst_next_day_trade_brief_latest.json` 已经会给同票历史、同层同源历史、next_high 命中率、next_close 正收益率等信息。例如 2026-05-25 的正式主票 688008，同票历史 29 例中 next_high>=2% 命中率为 86.21%，next_close 正收益率为 68.97%。
+
+这类历史先验很有用，但它只能回答“相似样本过去怎么样”，不能保证这次也一样。最好的用法是：
+
+- 作为仓位大小和优先级调整。
+- 不作为绕过盘中确认的理由。
+- 样本数不足时自动收缩，不给高权重。
+
+## 推荐方案：Early Runner 四层模型
+
+我建议把方案命名为 `early_runner_v1`，它不是替代当前 BTST，而是插在 full report 前面的预警层。
+
+### 第 1 层：主题与行业雷达
+
+每天收盘后，先生成主题热度列表。
+
+入池条件：
+
+- 行业或题材当日强度位于市场前 20%。
+- 行业内上涨占比高于全市场。
+- 行业内至少有 2 到 3 只股票同时出现趋势加速或突破结构。
+- 排除只靠单只大票拉动的孤立行业。
+
+输出：
+
+- `hot_theme_board`
+- `theme_breadth_score`
+- `theme_leader_count`
+- `theme_midfield_candidates`
+
+这一层的作用是先找“风往哪里吹”，不要一开始就从 5000 多只股票里硬挑个股。
+
+### 第 2 层：早期趋势预警池
+
+从热主题和全市场趋势样本里筛出还没过热的票。
+
+建议入池条件：
+
+```text
+trend_acceleration_rank_pct <= 20%
+ret_5d between 3% and 18%
+ret_10d between 5% and 35%
+close_strength between 0.65 and 0.90
+volume_expansion_quality between 0.20 and 0.80
+failed_breakout_10 == 0
+supply_pressure_60 <= 0.12
+```
+
+如果数据暂时不齐，可以先用已有字段做降级版本：
+
+```text
+trend_acceleration >= 0.78
+close_strength < 0.90
+ret_5d <= 18%
+gap_to_limit >= 1%
+```
+
+输出：
+
+- `early_runner_watchlist`
+- 每日最多 30 只
+- 每个行业最多 3 到 5 只
+- 同一股票连续出现时合并为一个 run，不重复计数
+
+### 第 3 层：窄门提纯池
+
+这是最接近“提前布局”的部分。
+
+优先条件：
+
+```text
+candidate_source in {catalyst_theme, catalyst_theme_shadow, upstream_liquidity_corridor_shadow}
+trend_acceleration >= 0.75
+0.65 <= close_strength < 0.90
+ret_5d <= 18%
+ret_10d <= 35%
+volume_expansion_quality >= 0.20
+sector_resonance >= 0.28
+```
+
+降级条件：
+
+```text
+ret_5d > 25%
+ret_10d > 50%
+close_strength >= 0.95
+gap_to_limit <= 1%
+failed_breakout_10 >= 1
+```
+
+输出：
+
+- `early_runner_priority`
+- 每天最多 10 只
+- 用于次日重点盯盘，不等于直接买入
+
+### 第 4 层：次日确认与升级
+
+开盘后不急着买，先用 30 到 60 分钟确认。
+
+升级条件：
+
+- 高开不超过 3%，或高开后能回踩 VWAP 不破。
+- 前 30 分钟价格不跌破昨收太多，且能重新站上 VWAP。
+- 成交额节奏健康，不是开盘爆量后快速衰竭。
+- 同主题至少仍有 1 到 2 只票同步强势。
+- 没有长上影、炸板、冲高回落等失败突破信号。
+
+通过后，才从 `early_runner_priority` 升级为 `short_trade_candidate`。
+
+## 打分公式建议
+
+先用规则分，不急着上复杂模型。规则分透明，便于定位误伤。
+
+```text
+early_runner_score =
+  0.22 * trend_acceleration
++ 0.16 * breakout_proximity
++ 0.14 * volume_expansion_quality
++ 0.14 * close_structure
++ 0.12 * sector_resonance
++ 0.10 * catalyst_theme_score
++ 0.08 * retention_proxy
++ 0.04 * historical_prior_score
+- overheat_penalty
+- execution_penalty
+```
+
+其中：
+
+```text
+overheat_penalty =
+  0.10 if ret_5d > 18%
++ 0.18 if ret_5d > 25%
++ 0.25 if ret_10d > 50%
++ 0.10 if close_strength >= 0.95
++ 0.10 if volume_ratio > 4 and upper_shadow_ratio high
+
+execution_penalty =
+  0.12 if next_open_gap_estimate > 3%
++ 0.10 if gap_to_limit <= 1%
++ 0.10 if failed_breakout_10 >= 1
++ 0.08 if supply_pressure_60 > 0.18
+```
+
+分层建议：
+
+| 分数 | 分层 | 动作 |
+| ---: | --- | --- |
+| >= 0.72 | A 级预警 | 次日重点盯盘，允许确认后升级 |
+| 0.62 - 0.72 | B 级预警 | 观察，只有强确认才升级 |
+| 0.52 - 0.62 | C 级观察 | 记录，不主动交易 |
+| < 0.52 | 剔除 | 不进入次日盘中卡片 |
+
+## 回测标签设计
+
+为了避免“看了未来才觉得它早”的问题，必须重新做标签。
+
+### 主标签
+
+```text
+future_5d_hit_15 = max(high[t+1:t+5]) / close[t] - 1 >= 15%
+future_10d_hit_50 = max(high[t+1:t+10]) / close[t] - 1 >= 50%
+```
+
+如果要更贴近真实交易，可以再加执行标签：
+
+```text
+tradable_entry = next_open_gap <= 3% and next_open_not_limit_up
+confirmed_entry = first_30m_vwap_hold and theme_breadth_not_collapse
+```
+
+### 负标签
+
+不能只看没涨，还要看风险：
+
+```text
+future_3d_drawdown_8 = min(low[t+1:t+3]) / close[t] - 1 <= -8%
+next_day_failed_breakout = high[t+1] breaks prior high but close[t+1] < open[t+1]
+```
+
+### 训练样本必须排除的后验污染
+
+如果目标是“提前发现”，训练时要剔除这些日子：
+
+```text
+ret_5d > 25%
+ret_10d > 50%
+close_strength >= 0.98 and pct_chg_today >= 8%
+limit_up_memory_259 very high and already extended
+```
+
+否则模型会学成“追已经涨完的强票”。
+
+## 验证指标
+
+不要只看命中率。右尾策略很容易被少数大牛股欺骗。
+
+必须同时看：
+
+| 指标 | 作用 |
+| --- | --- |
+| daily_top20_hit_rate_5d15 | 每天前 20 只里，5 日 +15% 的命中率 |
+| deduped_runner_hit_rate | 去重后是否仍有效，防止同一股票重复贡献 |
+| mean_max_future_return | 捕捉右尾能力 |
+| median_max_future_return | 防止均值被极端值拉高 |
+| t_plus_1_drawdown_p10 | 次日最差 10% 风险 |
+| false_positive_rate | 看起来很强但很快失败的比例 |
+| tradeable_rate | 看对后能不能买到 |
+| sector_concentration_hhi | 是否过度押一个板块 |
+| month_oos_pass_count | 是否跨月份稳定 |
+
+最低晋升门槛建议：
+
+```text
+deduped_closed >= 60
+month_oos_pass_count >= 2
+daily_top20_hit_rate_5d15 >= baseline + 8pct
+median_max_future_return > 6%
+t_plus_1_drawdown_p10 > -6%
+tradeable_rate >= 80%
+```
+
+如果达不到这些条件，只能做预警池，不能变成默认交易池。
+
+## 一次完整任务流案例
+
+假设某天收盘后，系统发现半导体板块继续走强，但板块前排已有多只股票 5 日涨幅超过 30%。旧逻辑容易把最强的几只推到 full report 前列；新逻辑会这样处理：
+
+1. 主题雷达确认半导体是强主题，但先不追板块最高涨幅股票。
+2. 早期趋势池在半导体中寻找 `trend_acceleration` 高、`close_strength` 低于 0.90、5 日涨幅未透支的股票。
+3. 窄门池优先保留 `catalyst_theme` 来源、量能刚开始扩张、没有失败突破的票。
+4. 次日开盘如果高开超过 5%，不追；如果回踩 VWAP 后再次放量站上，才升级。
+5. 入场后按 T+1 / T+2 管理，不预设一定拿到 T+10 +50%。如果 2 日内没有继续创新高，主动降级。
+
+这个流程的关键不是“猜中哪只会翻倍”，而是让系统在大涨前夜先看见它，并且只在执行条件成立时下注。
+
+## 实盘执行规则
+
+### 入场
+
+只允许 3 种入场：
+
+1. 收盘预警后，次日回踩 VWAP 不破，再重新上穿分时均线。
+2. 开盘不高于 3%，前 30 分钟放量但不冲高回落。
+3. 强主题内，非最高位候选率先完成换手确认。
+
+禁止：
+
+- 高开 5% 以上直接追。
+- 5 日涨幅超过 30% 还按首买处理。
+- 接近涨停时用市价单抢。
+- 仅因为 full report 排名很高就买。
+
+### 仓位
+
+早期预警票要小仓试错：
+
+- A 级预警：单票 0.5R 到 0.8R。
+- B 级预警：单票 0.25R 到 0.5R。
+- 同一主题最多 2 只。
+- 全部 early runner 仓位不超过短线资金的 30%。
+
+### 止损与降级
+
+硬规则：
+
+- 入场后跌破确认低点，退出。
+- 收盘跌回前一日突破位下方，退出。
+- 次日不能维持 VWAP，降级。
+- 3 日内没有新高，降为普通观察。
+
+盈利管理：
+
+- +8% 到 +12% 可先减一部分。
+- +15% 后用 5 日均线或前一日低点做跟踪止盈。
+- 如果 2 日内出现连续放量上影，按右侧衰竭处理。
+
+## 对当前 2026-05-25 报告的具体建议
+
+对今天报告里已经 5 日 +30%、10 日 +50% 以上的股票，不建议作为“提前布局”的首买对象。它们应该被放入“强势确认 / 高位风险观察”层：
+
+- 如果已有底仓，可以用分时强弱和 T+1 / T+2 规则管理。
+- 如果没有持仓，只能等回踩、换手、再确认，不做无条件开盘追价。
+- 如果次日高开过大，直接放弃首买，不为了错过而交易。
+
+真正该新增的是另一张表：`early_runner_priority_YYYYMMDD`。它不和 full report 争排名，只回答“明天哪些还没完全涨出来的票值得盯”。
+
+## 可以直接给 agent 的研究提示词
+
+下面这段可以作为后续自动研究任务的提示词。
+
+```markdown
+请基于本仓库 BTST 历史报告和 data_snapshots，构建 early_runner_v1 预警研究。
+
+目标：
+1. 发现买入后 5 个交易日内最高涨幅 >= 15% 的股票；
+2. 额外标记 10 个交易日内最高涨幅 >= 50% 的右尾样本；
+3. 重点提前发现，不允许模型只学习已经 5 日涨幅 > 25% 的追高样本。
+
+数据：
+- 使用 paper_trading_window、btst_full_report、btst_next_day_trade_brief、data_snapshots 中的已有字段；
+- 字段优先包括 trend_acceleration、breakout_freshness、volume_expansion_quality、close_strength、sector_resonance、catalyst_freshness、layer_c_alignment、ret_5d、ret_10d、gap_to_limit、failed_breakout_10、supply_pressure_60、retention_proxy、historical_prior；
+- 按股票 run 去重，避免同一股票连续多天重复贡献。
+
+标签：
+- future_5d_hit_15：t+1 到 t+5 最高价相对 t 日收盘 >= 15%；
+- future_10d_hit_50：t+1 到 t+10 最高价相对 t 日收盘 >= 50%；
+- tradable_entry：次日高开 <= 3%，且非一字涨停；
+- failed_entry：次日或 3 日内触发 -6% 到 -8% 风险。
+
+候选规则：
+- trend_acceleration 位于当日前 20%，或 >= 0.78；
+- 0.65 <= close_strength < 0.90；
+- 3% <= ret_5d <= 18%；
+- 5% <= ret_10d <= 35%；
+- volume_expansion_quality 在 0.20 到 0.80；
+- candidate_source 优先 catalyst_theme / catalyst_theme_shadow / upstream_shadow；
+- 排除 ret_5d > 25%、ret_10d > 50%、close_strength >= 0.95 的追高样本。
+
+输出：
+- 每日 early_runner_watchlist top30；
+- early_runner_priority top10；
+- 每月 OOS 验证；
+- 去重前后命中率、平均最大收益、中位数最大收益、t+1 drawdown p10、tradeable_rate、行业集中度；
+- 明确写出不能上线的原因，除非满足 deduped_closed >= 60、至少 2 个 OOS 月稳定通过。
+```
+
+## 三种备选方案对比
+
+| 方案 | 做法 | 优点 | 缺点 | 建议 |
+| --- | --- | --- | --- | --- |
+| 直接追 full report Top 强票 | 继续买高分、高涨幅股票 | 简单，容易解释 | 入场晚，盈亏比差，回撤大 | 不建议作为主方案 |
+| 放宽 selected / near-miss 阈值 | 把更多边界票纳入 | 能提高覆盖率 | 噪音大，误买弱结构样本 | 只适合辅助研究 |
+| 新增 early_runner 预警层 | 趋势加速 + 题材共振 + 未过热 + 次日确认 | 更接近提前发现，风险可控 | 需要额外回测和样本积累 | 推荐 |
+
+## 采用顺序
+
+第一步，立刻在每日文档中增加 `early_runner_watchlist` 和 `early_runner_priority` 两张表，但不改变主交易名单。
+
+第二步，用 2026-03 到 2026-05 的已有闭环样本做去重回测，先验证 5 日 +15% 的命中率和次日回撤。
+
+第三步，只把通过盘中确认的 early runner 写入执行卡，不允许因为预警分高而直接买。
+
+第四步，等至少 2 个 OOS 月稳定通过后，再考虑把其中某个窄门从预警层升级到 shadow rollout。
+
+## 什么时候不要用这套方案
+
+以下情况应该暂停或大幅降权：
+
+- 市场整体大跌、波动率急升，动量容易发生 crash。
+- 板块已经连续多日高潮，前排大量一字或 20cm 涨停。
+- 候选股 5 日涨幅已经超过 30%，但没有新的低风险入场结构。
+- 样本数不足，只有少数个股贡献了全部收益。
+- 次日可交易性差，理论收益无法真实执行。
+
+## 最终建议
+
+如果只保留一个动作：不要把当前 full report 的强票榜当成“提前发现大牛股”的主入口。它应该继续做强势确认；新增的 `early_runner_v1` 才负责找“还没完全涨出来”的票。
+
+最值得优先实现的窄门是：
+
+```text
+trend_acceleration top 20%
++ catalyst_theme / catalyst_theme_shadow
++ 0.65 <= close_strength < 0.90
++ ret_5d <= 18%
++ ret_10d <= 35%
++ 次日 gap <= 3% 后确认
+```
+
+这条路不会每次都抓到 10 日 +50%，但它比追 5 日已涨 30% 的股票更接近你要的提前布局，也更容易把亏损控制在可承受范围内。
+
+## 参考资料
+
+### 本仓库证据
+
+- `data/reports/btst_full_report_20260525.md`
+- `data/reports/btst_5d_15pct_factor_research_round1_latest.md`
+- `data/reports/btst_5d_15pct_trend_breakout_drilldown_latest.md`
+- `data/reports/btst_5d_15pct_trend_top20_gate_diagnostics_latest.md`
+- `data/reports/btst_5d_15pct_trend_gate_oos_validation_latest.md`
+- `data/reports/btst_latest_close_validation_latest.md`
+- `src/screening/strategy_scorer_trend.py`
+- `src/targets/short_trade_target_signal_snapshot_helpers.py`
+- `src/targets/short_trade_target_committee_helpers.py`
+
+### 外部研究和制度资料
+
+- Jegadeesh 与 Titman 的横截面动量研究：<https://ideas.repec.org/a/bla/jfinan/v48y1993i1p65-91.html>
+- George 与 Hwang 的 52 周新高动量研究：<https://doi.org/10.1111/j.1540-6261.2004.00695.x>
+- Moskowitz、Ooi 与 Pedersen 的时间序列动量研究：<https://w4.stern.nyu.edu/facdir/lpederse/papers/TimeSeriesMomentum.pdf>
+- Daniel 与 Moskowitz 的 momentum crash 研究：<https://econpapers.repec.org/paper/nbrnberwo/20439.htm>
+- 上海证券交易所交易机制说明：<https://english.sse.com.cn/start/trading/mechanism/>
+- 深圳证券交易所创业板特别交易规则：<https://www.szse.cn/English/rules/siteRule/P020200811392728112984.pdf>
