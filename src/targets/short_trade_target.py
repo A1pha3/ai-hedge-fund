@@ -765,6 +765,10 @@ def _resolve_short_trade_decision(
     rank_decision_cap: dict[str, Any],
     carryover_evidence_deficiency: dict[str, Any],
     selected_historical_proof_deficiency: dict[str, Any],
+    candidate_source: str,
+    profitability_hard_cliff: bool,
+    extension_without_room_penalty: float,
+    trend_acceleration: float,
 ) -> str:
     from src.targets.short_trade_target_evaluation_helpers import (
         _resolve_short_trade_decision as _helper,
@@ -782,6 +786,10 @@ def _resolve_short_trade_decision(
         rank_decision_cap=rank_decision_cap,
         carryover_evidence_deficiency=carryover_evidence_deficiency,
         selected_historical_proof_deficiency=selected_historical_proof_deficiency,
+        candidate_source=candidate_source,
+        profitability_hard_cliff=profitability_hard_cliff,
+        extension_without_room_penalty=extension_without_room_penalty,
+        trend_acceleration=trend_acceleration,
     )
 
 

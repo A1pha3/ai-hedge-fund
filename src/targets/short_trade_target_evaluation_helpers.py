@@ -328,6 +328,10 @@ def _resolve_short_trade_decision(
     rank_decision_cap: dict[str, Any],
     carryover_evidence_deficiency: dict[str, Any],
     selected_historical_proof_deficiency: dict[str, Any],
+    candidate_source: str,
+    profitability_hard_cliff: bool,
+    extension_without_room_penalty: float,
+    trend_acceleration: float,
 ) -> str:
     decision = _determine_initial_decision(
         blockers=blockers,
@@ -358,6 +362,25 @@ def _resolve_short_trade_decision(
     if selected_historical_proof_deficiency["proof_missing"] and decision == "selected":
         gate_status["score"] = "near_miss"
         return "near_miss"
+    if (
+        decision == "near_miss"
+        and candidate_source == "upstream_liquidity_corridor_shadow"
+        and profitability_hard_cliff
+        and selected_historical_proof_deficiency["proof_missing"]
+        and extension_without_room_penalty >= 0.40
+    ):
+        blockers.append("profitability_unknown_extension_penalty")
+        gate_status["score"] = "fail"
+        return "rejected"
+    if (
+        decision == "near_miss"
+        and candidate_source == "upstream_liquidity_corridor_shadow"
+        and selected_historical_proof_deficiency["proof_missing"]
+        and trend_acceleration < 0.65
+    ):
+        blockers.append("selected_historical_proof_low_trend_acceleration")
+        gate_status["score"] = "fail"
+        return "rejected"
     return decision
 
 
@@ -1139,6 +1162,10 @@ def _build_short_trade_decision_stage(
         rank_decision_cap=dict(snapshot.get("rank_decision_cap") or {}),
         carryover_evidence_deficiency=context.carryover_evidence_deficiency,
         selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
+        candidate_source=str(snapshot.get("candidate_source") or input_data.replay_context.get("source") or ""),
+        profitability_hard_cliff=bool(snapshot.get("profitability_hard_cliff")),
+        extension_without_room_penalty=float(snapshot.get("extension_without_room_penalty") or 0.0),
+        trend_acceleration=float(snapshot.get("trend_acceleration") or 0.0),
     )
     annotate_short_trade_tags(
         positive_tags=decision_snapshot.positive_tags,

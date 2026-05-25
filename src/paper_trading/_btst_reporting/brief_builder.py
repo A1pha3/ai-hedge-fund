@@ -34,6 +34,7 @@ from src.paper_trading._btst_reporting.entry_builders import (
     _resolve_snapshot_path as _resolve_snapshot_path_eb,
 )
 from src.paper_trading._btst_reporting.historical_prior import (
+    _build_empty_btst_candidate_historical_context,
     _enrich_btst_brief_entries_with_history,
     _enrich_upstream_shadow_entries_with_history,
     _extract_excluded_research_entry,
@@ -154,6 +155,16 @@ def analyze_btst_next_day_trade_brief(
     next_trade_date: str | None = None,
 ) -> dict[str, Any]:
     brief_inputs = _load_btst_brief_inputs(input_path=input_path, trade_date=trade_date)
+    if brief_inputs.get("legacy_mode"):
+        return _build_legacy_btst_next_day_trade_brief_payload(
+            report_dir=brief_inputs["report_dir"],
+            snapshot_path=brief_inputs["snapshot_path"],
+            session_summary_path=brief_inputs["session_summary_path"],
+            session_summary=brief_inputs["session_summary"],
+            actual_trade_date=brief_inputs["actual_trade_date"],
+            next_trade_date=next_trade_date or brief_inputs.get("legacy_next_trade_date"),
+            legacy_brief=brief_inputs["legacy_brief"],
+        )
     snapshot_path = brief_inputs["snapshot_path"]
     report_dir = brief_inputs["report_dir"]
     snapshot = brief_inputs["snapshot"]
@@ -464,6 +475,57 @@ def _build_btst_next_day_trade_brief_payload(
     }
 
 
+def _build_legacy_btst_next_day_trade_brief_payload(
+    *,
+    report_dir: Path,
+    snapshot_path: Path,
+    session_summary_path: Path,
+    session_summary: dict[str, Any],
+    actual_trade_date: str | None,
+    next_trade_date: str | None,
+    legacy_brief: dict[str, Any],
+) -> dict[str, Any]:
+    upstream_shadow_entries = _enrich_upstream_shadow_entries_with_history(
+        report_dir=report_dir,
+        actual_trade_date=actual_trade_date,
+        upstream_shadow_entries=list(legacy_brief.get("upstream_shadow_entries") or []),
+    )
+    catalyst_theme_frontier_summary = _load_catalyst_theme_frontier_summary(report_dir)
+    brief_frontier_context = {
+        "catalyst_theme_frontier_summary": catalyst_theme_frontier_summary,
+        "catalyst_theme_frontier_priority": _build_catalyst_theme_frontier_priority(
+            catalyst_theme_frontier_summary, []
+        ),
+        "upstream_shadow_entries": upstream_shadow_entries,
+        "upstream_shadow_summary": _build_upstream_shadow_summary(
+            upstream_shadow_entries
+        ),
+    }
+    return _build_btst_next_day_trade_brief_payload(
+        report_dir=report_dir,
+        snapshot_path=snapshot_path,
+        session_summary_path=session_summary_path,
+        actual_trade_date=actual_trade_date,
+        next_trade_date=next_trade_date,
+        snapshot={},
+        session_summary=session_summary,
+        selection_targets={},
+        selected_entries=[],
+        near_miss_entries=[],
+        opportunity_pool_entries=[],
+        no_history_observer_entries=[],
+        risky_observer_entries=[],
+        weak_history_pruned_entries=[],
+        research_upside_radar_entries=[],
+        catalyst_theme_entries=[],
+        catalyst_theme_shadow_entries=[],
+        btst_candidate_historical_context=_build_empty_btst_candidate_historical_context(),
+        excluded_research_entries=[],
+        recommendation_lines=[],
+        brief_frontier_context=brief_frontier_context,
+    )
+
+
 def _build_btst_next_day_trade_brief_content(
     *,
     snapshot: dict[str, Any],
@@ -595,21 +657,51 @@ def _build_btst_next_day_trade_brief_sections(
 def _load_btst_brief_inputs(
     input_path: str | Path, trade_date: str | None
 ) -> dict[str, Any]:
-    snapshot_path, report_dir = _resolve_snapshot_path(input_path, trade_date)
-    snapshot = _load_json(snapshot_path)
-    replay_input = _load_selection_replay_input(snapshot_path)
+    try:
+        snapshot_path, report_dir = _resolve_snapshot_path(input_path, trade_date)
+        snapshot = _load_json(snapshot_path)
+        replay_input = _load_selection_replay_input(snapshot_path)
+        legacy_mode = False
+        legacy_brief: dict[str, Any] = {}
+        legacy_next_trade_date: str | None = None
+    except FileNotFoundError as exc:
+        resolved_input = Path(input_path).expanduser().resolve()
+        if (
+            not resolved_input.is_dir()
+            or "selection_artifacts directory not found under"
+            not in str(exc)
+        ):
+            raise
+        report_dir = resolved_input
+        snapshot_path = report_dir / "btst_next_day_trade_brief_latest.json"
+        if not snapshot_path.exists():
+            raise
+        legacy_brief = _load_json(snapshot_path)
+        if not list(legacy_brief.get("upstream_shadow_entries") or []):
+            raise
+        snapshot = {}
+        replay_input = {}
+        legacy_mode = True
+        legacy_next_trade_date = _normalize_trade_date(
+            legacy_brief.get("next_trade_date")
+        )
     session_summary_path = report_dir / "session_summary.json"
     return {
         "snapshot_path": snapshot_path,
         "report_dir": report_dir,
         "snapshot": snapshot,
         "replay_input": replay_input,
+        "legacy_mode": legacy_mode,
+        "legacy_brief": legacy_brief,
+        "legacy_next_trade_date": legacy_next_trade_date,
         "session_summary_path": session_summary_path,
         "session_summary": _load_json(session_summary_path)
         if session_summary_path.exists()
         else {},
         "actual_trade_date": _normalize_trade_date(
-            snapshot.get("trade_date") or trade_date
+            snapshot.get("trade_date")
+            or legacy_brief.get("trade_date")
+            or trade_date
         ),
         "selection_targets": snapshot.get("selection_targets") or {},
     }

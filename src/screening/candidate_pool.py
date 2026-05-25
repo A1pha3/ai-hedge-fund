@@ -81,6 +81,7 @@ _SNAPSHOT_DIR = _PROJECT_ROOT / "data" / "snapshots"
 _COOLDOWN_FILE = _SNAPSHOT_DIR / "cooldown_registry.json"
 _CORRIDOR_SHADOW_PACK_PATH = _PROJECT_ROOT / "data" / "reports" / "btst_candidate_pool_corridor_shadow_pack_latest.json"
 _UPSTREAM_HANDOFF_BOARD_PATH = _PROJECT_ROOT / "data" / "reports" / "btst_candidate_pool_upstream_handoff_board_latest.json"
+_UPSTREAM_REPEAT_SATURATION_BOARD_PATH = _PROJECT_ROOT / "data" / "reports" / "btst_upstream_shadow_repeat_saturation_board_latest.json"
 
 # 常量
 MIN_LISTING_DAYS = 60
@@ -153,6 +154,19 @@ def _load_upstream_handoff_shadow_focus_tickers(board_path: Path) -> set[str]:
     return set()
 
 
+def _load_upstream_repeat_saturation_blocked_tickers(board_path: Path) -> set[str]:
+    try:
+        data = json.loads(board_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return set()
+        blocked = data.get("focus_blocked_tickers")
+        if not isinstance(blocked, list):
+            return set()
+        return {str(item).strip() for item in blocked if str(item or "").strip()}
+    except (OSError, json.JSONDecodeError, ValueError):
+        return set()
+
+
 def _candidate_pool_snapshot_path(trade_date: str, pool_size: int | None = None) -> Path:
     resolved_pool_size = MAX_CANDIDATE_POOL_SIZE if pool_size is None else int(pool_size)
     return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}_top{resolved_pool_size}.json"
@@ -208,10 +222,13 @@ def _candidate_liquidity_sort_key(candidate: CandidateStock) -> tuple[int, float
 
 def _shadow_focus_payload() -> dict[str, list[str]]:
     pack_primary_focus = _load_active_corridor_primary_shadow_focus(_CORRIDOR_SHADOW_PACK_PATH)
+    repeat_saturation_blocked = _load_upstream_repeat_saturation_blocked_tickers(_UPSTREAM_REPEAT_SATURATION_BOARD_PATH)
+    corridor_focus = (set(SHADOW_FOCUS_TICKERS) | set(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS) | set(pack_primary_focus)) - repeat_saturation_blocked
     return {
         "all": sorted(SHADOW_FOCUS_TICKERS),
-        "layer_a_liquidity_corridor": sorted(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS | pack_primary_focus),
+        "layer_a_liquidity_corridor": sorted(corridor_focus),
         "post_gate_liquidity_competition": sorted(SHADOW_FOCUS_REBUCKET_TICKERS),
+        "repeat_saturation_blocked": sorted(repeat_saturation_blocked),
         "visibility_gap_all": sorted(SHADOW_VISIBILITY_GAP_TICKERS),
         "visibility_gap_layer_a_liquidity_corridor": sorted(SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS),
         "visibility_gap_post_gate_liquidity_competition": sorted(SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS),
@@ -227,12 +244,15 @@ def _shadow_focus_signature() -> str:
 
 
 def _resolve_shadow_focus_tickers(*, lane: str) -> set[str]:
+    base_focus = set(SHADOW_FOCUS_TICKERS)
     lane_specific_focus: set[str] = set()
     if lane == "layer_a_liquidity_corridor":
         lane_specific_focus = SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS | _load_active_corridor_primary_shadow_focus(_CORRIDOR_SHADOW_PACK_PATH)
+        blocked_tickers = _load_upstream_repeat_saturation_blocked_tickers(_UPSTREAM_REPEAT_SATURATION_BOARD_PATH)
+        return (base_focus | lane_specific_focus) - blocked_tickers
     elif lane == "post_gate_liquidity_competition":
         lane_specific_focus = SHADOW_FOCUS_REBUCKET_TICKERS
-    return set(SHADOW_FOCUS_TICKERS) | set(lane_specific_focus)
+    return base_focus | lane_specific_focus
 
 
 def _resolve_shadow_visibility_gap_tickers(*, lane: str) -> set[str]:

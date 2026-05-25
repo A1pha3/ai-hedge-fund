@@ -1823,6 +1823,70 @@ def test_generate_btst_next_day_trade_brief_demotes_weak_historical_near_miss_in
     assert analysis["weak_history_pruned_entries"][0]["historical_prior"]["execution_priority"] == "low"
 
 
+def test_analyze_btst_next_day_trade_brief_recovers_upstream_shadow_from_legacy_brief(tmp_path, monkeypatch):
+    report_dir = tmp_path / "legacy-report"
+    report_dir.mkdir()
+    (report_dir / "session_summary.json").write_text("{}", encoding="utf-8")
+    (report_dir / "btst_next_day_trade_brief_latest.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260421",
+                "next_trade_date": "20260422",
+                "selected": [],
+                "near_miss": [],
+                "opportunity_pool": [],
+                "research_upside_radar": [],
+                "catalyst_theme_frontier": [],
+                "upstream_shadow_entries": [
+                    {
+                        "ticker": "000546",
+                        "decision": "rejected",
+                        "score_target": 0.4333,
+                        "confidence": 0.4394,
+                        "preferred_entry_mode": "next_day_breakout_confirmation",
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "candidate_pool_lane": "layer_a_liquidity_corridor",
+                        "candidate_pool_lane_display": "layer_a_liquidity_corridor",
+                        "candidate_pool_rank": 1611,
+                        "candidate_reason_codes": [
+                            "upstream_base_liquidity_uplift_shadow",
+                            "candidate_pool_truncated_after_filters",
+                        ],
+                        "top_reasons": ["trend_acceleration_supportive"],
+                        "rejection_reasons": ["selected_rank_cap_exceeded"],
+                        "positive_tags": ["trend_acceleration_confirmed"],
+                        "gate_status": {"data": "pass", "structural": "pass", "score": "fail"},
+                        "promotion_trigger": "影子召回样本尚未进入可执行层，只有盘中新强度确认后才允许升级。",
+                        "metrics": {
+                            "breakout_freshness": 0.3952,
+                            "trend_acceleration": 0.7244,
+                            "volume_expansion_quality": 0.247,
+                            "close_strength": 0.8804,
+                            "catalyst_freshness": 0.0,
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "src.paper_trading._btst_reporting.brief_builder._enrich_upstream_shadow_entries_with_history",
+        lambda **kwargs: [
+            {
+                **kwargs["upstream_shadow_entries"][0],
+                "historical_prior": {"sample_count": 9, "applied_scope": "candidate_source"},
+            }
+        ],
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(report_dir)
+
+    assert [entry["ticker"] for entry in analysis["upstream_shadow_entries"]] == ["000546"]
+    assert analysis["upstream_shadow_entries"][0]["historical_prior"]["sample_count"] == 9
+
+
 def test_generate_btst_next_day_trade_brief_rebuckets_intraday_selected_and_reorders_opportunity_pool(tmp_path, monkeypatch):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-04-06"

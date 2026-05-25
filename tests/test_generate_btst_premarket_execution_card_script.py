@@ -768,3 +768,44 @@ def test_generate_btst_premarket_execution_card_supports_confirm_then_hold_break
     assert any("持有到收盘" in rule for rule in payload["primary_action"]["trigger_rules"])
     assert any("T+2 bias" in rule for rule in payload["primary_action"]["trigger_rules"])
     assert "confirm_then_hold" in markdown
+
+
+def test_generate_btst_premarket_execution_card_works_with_legacy_brief_fallback(tmp_path):
+    report_dir = tmp_path / "legacy-report"
+    report_dir.mkdir()
+    (report_dir / "session_summary.json").write_text("{}", encoding="utf-8")
+    (report_dir / "btst_next_day_trade_brief_latest.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260421",
+                "next_trade_date": "20260422",
+                "selected": [],
+                "near_miss": [],
+                "opportunity_pool": [],
+                "research_upside_radar": [],
+                "catalyst_theme_frontier": [],
+                "upstream_shadow_entries": [
+                    {
+                        "ticker": "000546",
+                        "decision": "rejected",
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "top_reasons": ["trend_acceleration_supportive"],
+                        "rejection_reasons": ["selected_rank_cap_exceeded"],
+                        "positive_tags": ["trend_acceleration_confirmed"],
+                        "gate_status": {"data": "pass", "structural": "pass", "score": "fail"},
+                        "historical_prior": {
+                            "sample_count": 9,
+                            "execution_quality_label": "balanced_confirmation",
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    payload = btst_reporting.analyze_btst_premarket_execution_card(report_dir)
+
+    assert [entry["ticker"] for entry in payload["upstream_shadow_entries"]] == ["000546"]
+    assert payload["upstream_shadow_entries"][0]["historical_prior"]["sample_count"] == 9

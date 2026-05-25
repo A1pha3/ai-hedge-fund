@@ -15,6 +15,7 @@ from src.targets import build_short_trade_target_profile, get_short_trade_target
 from src.targets.router import build_selection_targets
 from src.targets.short_trade_target_evaluation_helpers import (
     _preferred_entry_mode_from_historical_prior,
+    _resolve_short_trade_decision,
 )
 from src.targets.short_trade_target import (
     _resolve_selected_score_tolerance,
@@ -4427,10 +4428,63 @@ def test_upstream_shadow_selected_without_historical_proof_downgrades_to_near_mi
         profile_overrides={"select_threshold": 0.43, "near_miss_threshold": 0.40},
     )
 
-    assert result.decision in {"near_miss", "selected"}
+    assert result.decision == "near_miss"
     assert "selected_historical_proof_missing" in result.negative_tags
     assert result.metrics_payload["selected_historical_proof_deficiency"]["proof_missing"] is True
     assert result.explainability_payload["selected_historical_proof_deficiency"]["candidate_source"] == "post_gate_liquidity_competition_shadow"
+
+
+def test_resolve_short_trade_decision_rejects_proof_missing_low_trend_corridor_near_miss() -> None:
+    blockers: list[str] = []
+    gate_status = {"data": "pass", "execution": "proxy_only", "structural": "pass", "score": "near_miss", "committee_veto": "pass", "committee": "pass"}
+
+    decision = _resolve_short_trade_decision(
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=0.439,
+        effective_near_miss_threshold=0.40,
+        effective_select_threshold=0.60,
+        selected_score_tolerance=0.001,
+        selected_breakout_gate_pass=False,
+        near_miss_breakout_gate_pass=True,
+        rank_decision_cap={},
+        carryover_evidence_deficiency={"evidence_deficient": False},
+        selected_historical_proof_deficiency={"proof_missing": True},
+        candidate_source="upstream_liquidity_corridor_shadow",
+        profitability_hard_cliff=False,
+        extension_without_room_penalty=0.0422,
+        trend_acceleration=0.581,
+    )
+
+    assert decision == "rejected"
+    assert gate_status["score"] == "fail"
+    assert "selected_historical_proof_low_trend_acceleration" in blockers
+
+
+def test_resolve_short_trade_decision_keeps_proof_missing_corridor_near_miss_when_trend_is_supportive() -> None:
+    blockers: list[str] = []
+    gate_status = {"data": "pass", "execution": "proxy_only", "structural": "pass", "score": "near_miss", "committee_veto": "pass", "committee": "pass"}
+
+    decision = _resolve_short_trade_decision(
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=0.3734,
+        effective_near_miss_threshold=0.34,
+        effective_select_threshold=0.60,
+        selected_score_tolerance=0.001,
+        selected_breakout_gate_pass=False,
+        near_miss_breakout_gate_pass=True,
+        rank_decision_cap={},
+        carryover_evidence_deficiency={"evidence_deficient": False},
+        selected_historical_proof_deficiency={"proof_missing": True},
+        candidate_source="upstream_liquidity_corridor_shadow",
+        profitability_hard_cliff=True,
+        extension_without_room_penalty=0.3155,
+        trend_acceleration=0.7421,
+    )
+
+    assert decision == "near_miss"
+    assert "selected_historical_proof_low_trend_acceleration" not in blockers
 
 
 def test_upstream_shadow_catalyst_relief_requires_close_continuation_history_support() -> None:
@@ -4465,6 +4519,45 @@ def test_upstream_shadow_catalyst_relief_keeps_profitability_hard_cliff_sample_r
     assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["no_profitability_hard_cliff"] is False
     assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.34
     assert "upstream_shadow_catalyst_relief_not_triggered" in result.negative_tags
+
+
+def test_upstream_shadow_near_miss_profitability_hard_cliff_with_heavy_extension_rejects() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry(include_profitability_hard_cliff=True)
+    entry["candidate_source"] = "upstream_liquidity_corridor_shadow"
+    entry.pop("short_trade_catalyst_relief", None)
+    entry["historical_prior"] = {"execution_quality_label": "unknown", "sample_count": 0, "evaluable_count": 0}
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        profile_overrides={"select_threshold": 0.60, "near_miss_threshold": 0.40},
+    )
+
+    assert round(result.score_target, 4) == pytest.approx(0.4304, abs=1e-4)
+    assert result.metrics_payload["profitability_hard_cliff"] is True
+    assert result.metrics_payload["extension_without_room_penalty"] == pytest.approx(0.42, abs=1e-4)
+    assert result.decision == "rejected"
+    assert result.gate_status["score"] == "fail"
+    assert "profitability_unknown_extension_penalty" in result.rejection_reasons
+
+
+def test_upstream_shadow_near_miss_profitability_hard_cliff_with_moderate_extension_stays_near_miss() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry(include_profitability_hard_cliff=True)
+    entry["candidate_source"] = "upstream_liquidity_corridor_shadow"
+    entry.pop("short_trade_catalyst_relief", None)
+    entry["historical_prior"] = {"execution_quality_label": "unknown", "sample_count": 0, "evaluable_count": 0}
+    entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["confidence"] = 40.0
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        profile_overrides={"select_threshold": 0.60, "near_miss_threshold": 0.40},
+    )
+
+    assert result.metrics_payload["profitability_hard_cliff"] is True
+    assert result.metrics_payload["extension_without_room_penalty"] == pytest.approx(0.285, abs=1e-4)
+    assert result.decision == "near_miss"
+    assert "profitability_unknown_extension_penalty" not in result.rejection_reasons
 
 
 def test_upstream_shadow_catalyst_relief_can_promote_corridor_profitability_hard_cliff_sample_when_gate_relaxed() -> None:

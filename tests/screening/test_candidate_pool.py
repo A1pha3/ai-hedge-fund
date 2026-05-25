@@ -687,6 +687,13 @@ class TestExcludeRules:
 
         with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
              patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", snapshot_dir / "no_pack.json"), \
+             patch("src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", snapshot_dir / "no_repeat_saturation_board.json"), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_REBUCKET_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", set()), \
              patch("src.screening.candidate_pool._compute_candidate_pool_candidates", return_value=([], [])):
             selected_candidates, shadow_candidates, shadow_summary = build_candidate_pool_with_shadow("20260305", use_cache=True)
 
@@ -715,6 +722,13 @@ class TestExcludeRules:
 
         with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
              patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", snapshot_dir / "no_pack.json"), \
+             patch("src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", snapshot_dir / "no_repeat_saturation_board.json"), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_REBUCKET_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", set()), \
              patch("src.screening.candidate_pool._compute_candidate_pool_candidates") as mock_compute:
             selected_candidates, shadow_candidates, shadow_summary = build_candidate_pool_with_shadow("20260305", use_cache=True)
 
@@ -956,6 +970,18 @@ class TestExcludeRules:
 
         assert focus_tickers == {"688796", "300683", "688383"}
 
+    def test_load_upstream_repeat_saturation_blocked_tickers_ignores_non_dict_json(self):
+        reports_dir = Path(tempfile.mkdtemp())
+        saturation_board_path = reports_dir / "btst_upstream_shadow_repeat_saturation_board_latest.json"
+        saturation_board_path.write_text(
+            json.dumps(["300683", "688383"], ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        blocked_tickers = candidate_pool_module._load_upstream_repeat_saturation_blocked_tickers(saturation_board_path)
+
+        assert blocked_tickers == set()
+
     @patch("src.screening.candidate_pool.get_sw_industry_classification")
     @patch("src.screening.candidate_pool.get_daily_basic_batch")
     @patch("src.screening.candidate_pool.get_limit_list")
@@ -1048,6 +1074,7 @@ class TestExcludeRules:
              patch("src.screening.candidate_pool.SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS", 1), \
              patch("src.screening.candidate_pool.SHADOW_REBUCKET_MAX_TICKERS", 1), \
              patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", snapshot_dir / "no_pack.json"), \
+             patch("src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", snapshot_dir / "no_repeat_saturation_board.json"), \
              patch("src.screening.candidate_pool._get_avg_amount_20d_map", return_value=avg_amount_map):
             _, baseline_shadow_candidates, baseline_shadow_summary = build_candidate_pool_with_shadow(
                 "20260305",
@@ -1878,14 +1905,17 @@ class TestActiveCorridorPrimaryFocusLoader:
     def test_shadow_focus_payload_includes_pack_primary_in_corridor_layer_key(self, tmp_path):
         """When the shadow pack has a ready primary, _shadow_focus_payload must include it
         under the 'layer_a_liquidity_corridor' key so the focus signature changes."""
-        from src.screening.candidate_pool import _shadow_focus_payload, _CORRIDOR_SHADOW_PACK_PATH
+        from src.screening.candidate_pool import _shadow_focus_payload, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+        saturation_board = tmp_path / "repeat_saturation_board.json"
         pack_path.write_text(json.dumps({
             "shadow_status": "ready_for_primary_shadow_replay",
             "primary_shadow_replay": {"ticker": "300683"},
         }))
+        saturation_board.write_text(json.dumps({"focus_blocked_tickers": []}))
         with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", pack_path), \
+             patch("src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", saturation_board), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_REBUCKET_TICKERS", set()), \
@@ -1894,18 +1924,22 @@ class TestActiveCorridorPrimaryFocusLoader:
              patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", set()):
             payload = _shadow_focus_payload()
         assert "300683" in payload["layer_a_liquidity_corridor"]
+        assert payload["repeat_saturation_blocked"] == []
 
     def test_resolve_shadow_focus_tickers_includes_pack_primary_for_corridor_lane(self, tmp_path):
         """_resolve_shadow_focus_tickers for corridor lane must include the pack primary
         so that classify_overflow_candidate applies the focus-relaxed gate to 300683."""
-        from src.screening.candidate_pool import _resolve_shadow_focus_tickers, _CORRIDOR_SHADOW_PACK_PATH
+        from src.screening.candidate_pool import _resolve_shadow_focus_tickers, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+        saturation_board = tmp_path / "repeat_saturation_board.json"
         pack_path.write_text(json.dumps({
             "shadow_status": "ready_for_primary_shadow_replay",
             "primary_shadow_replay": {"ticker": "300683"},
         }))
+        saturation_board.write_text(json.dumps({"focus_blocked_tickers": []}))
         with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", pack_path), \
+             patch("src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", saturation_board), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()):
             focus_tickers = _resolve_shadow_focus_tickers(lane="layer_a_liquidity_corridor")
@@ -1913,14 +1947,17 @@ class TestActiveCorridorPrimaryFocusLoader:
 
     def test_resolve_shadow_focus_tickers_includes_diagnostic_pack_primary_for_corridor_lane(self, tmp_path):
         """Diagnostic-only primary replay must still activate the corridor lane focus-relaxed path."""
-        from src.screening.candidate_pool import _resolve_shadow_focus_tickers, _CORRIDOR_SHADOW_PACK_PATH
+        from src.screening.candidate_pool import _resolve_shadow_focus_tickers, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+        saturation_board = tmp_path / "repeat_saturation_board.json"
         pack_path.write_text(json.dumps({
             "shadow_status": "diagnostic_primary_shadow_replay_only",
             "primary_shadow_replay": {"ticker": "300683"},
         }))
+        saturation_board.write_text(json.dumps({"focus_blocked_tickers": []}))
         with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", pack_path), \
+             patch("src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", saturation_board), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()):
             focus_tickers = _resolve_shadow_focus_tickers(lane="layer_a_liquidity_corridor")
@@ -1944,11 +1981,14 @@ class TestActiveCorridorPrimaryFocusLoader:
     def test_shadow_focus_signature_changes_when_pack_primary_is_set(self, tmp_path):
         """Focus signature must differ when the corridor pack has a ready primary so the
         cache path is unique and 300683 gets a fresh shadow pool computation."""
-        from src.screening.candidate_pool import _shadow_focus_signature, _CORRIDOR_SHADOW_PACK_PATH
+        from src.screening.candidate_pool import _shadow_focus_signature, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+        saturation_board = tmp_path / "repeat_saturation_board.json"
+        saturation_board.write_text(json.dumps({"focus_blocked_tickers": []}))
 
         with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", pack_path), \
+             patch("src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", saturation_board), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()), \
              patch("src.screening.candidate_pool.SHADOW_FOCUS_REBUCKET_TICKERS", set()), \
@@ -1973,3 +2013,161 @@ class TestActiveCorridorPrimaryFocusLoader:
 
         assert sig_without_pack == ""
         assert sig_with_pack != ""
+
+    def test_shadow_focus_signature_changes_when_repeat_saturation_board_changes(self, tmp_path):
+        """Changing repeat-saturation blocked tickers must change the focus signature so cached shadow snapshots are invalidated."""
+        from src.screening.candidate_pool import _shadow_focus_signature, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
+
+        pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+        saturation_board = tmp_path / "repeat_saturation_board.json"
+        pack_path.write_text(json.dumps({
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "primary_shadow_replay": {"ticker": "300683"},
+        }))
+        saturation_board.write_text(json.dumps({"focus_blocked_tickers": []}))
+
+        with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", pack_path), \
+             patch("src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", saturation_board), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_REBUCKET_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", set()):
+            sig_without_block = _shadow_focus_signature()
+
+        saturation_board.write_text(json.dumps({"focus_blocked_tickers": ["300683"]}))
+
+        with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", pack_path), \
+             patch("src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", saturation_board), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_FOCUS_REBUCKET_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS", set()), \
+             patch("src.screening.candidate_pool.SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", set()):
+            sig_with_block = _shadow_focus_signature()
+
+        assert sig_without_block != ""
+        assert sig_with_block != ""
+        assert sig_without_block != sig_with_block
+
+    def test_resolve_shadow_focus_tickers_excludes_repeat_saturation_blocked_primary(self, tmp_path):
+        """Tickers listed in the repeat-saturation board must be excluded from corridor focus."""
+        from src.screening.candidate_pool import _resolve_shadow_focus_tickers
+
+        corridor_pack = tmp_path / "corridor_shadow_pack.json"
+        saturation_board = tmp_path / "repeat_saturation_board.json"
+        corridor_pack.write_text(
+            json.dumps(
+                {
+                    "shadow_status": "diagnostic_primary_shadow_replay_only",
+                    "primary_shadow_replay": {"ticker": "300683"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        saturation_board.write_text(
+            json.dumps({"focus_blocked_tickers": ["300683"]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", corridor_pack), patch(
+            "src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", saturation_board
+        ), patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), patch(
+            "src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()
+        ):
+            focus_tickers = _resolve_shadow_focus_tickers(lane="layer_a_liquidity_corridor")
+
+        assert "300683" not in focus_tickers
+
+    def test_resolve_shadow_focus_tickers_excludes_repeat_saturation_blocked_global_focus_ticker(self, tmp_path):
+        """Repeat-saturation blocking must also override global focus tickers for the corridor lane."""
+        from src.screening.candidate_pool import _resolve_shadow_focus_tickers
+
+        corridor_pack = tmp_path / "corridor_shadow_pack.json"
+        saturation_board = tmp_path / "repeat_saturation_board.json"
+        corridor_pack.write_text(
+            json.dumps(
+                {
+                    "shadow_status": "ready_for_primary_shadow_replay",
+                    "primary_shadow_replay": {"ticker": "300683"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        saturation_board.write_text(
+            json.dumps({"focus_blocked_tickers": ["300683"]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", corridor_pack), patch(
+            "src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", saturation_board
+        ), patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), patch(
+            "src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", {"300683"}
+        ):
+            focus_tickers = _resolve_shadow_focus_tickers(lane="layer_a_liquidity_corridor")
+
+        assert "300683" not in focus_tickers
+
+    def test_classify_overflow_candidate_does_not_use_focus_relaxation_for_blocked_repeat_ticker(self, tmp_path):
+        """Repeat-saturation blocking must remove 300683 from corridor focus before overflow classification."""
+        from src.screening.candidate_pool import _resolve_shadow_focus_tickers
+
+        corridor_pack = tmp_path / "corridor_shadow_pack.json"
+        saturation_board = tmp_path / "repeat_saturation_board.json"
+        corridor_pack.write_text(
+            json.dumps(
+                {
+                    "shadow_status": "diagnostic_primary_shadow_replay_only",
+                    "primary_shadow_replay": {"ticker": "300683"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        saturation_board.write_text(
+            json.dumps({"focus_blocked_tickers": ["300683"]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        candidate = CandidateStock(
+            ticker="300683",
+            name="示例",
+            industry_sw="电子",
+            avg_volume_20d=900.0,
+            market_cap=80.0,
+            listing_date="20180101",
+        )
+
+        with patch("src.screening.candidate_pool._CORRIDOR_SHADOW_PACK_PATH", corridor_pack), patch(
+            "src.screening.candidate_pool._UPSTREAM_REPEAT_SATURATION_BOARD_PATH", saturation_board
+        ), patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", set()), patch(
+            "src.screening.candidate_pool.SHADOW_FOCUS_TICKERS", set()
+        ):
+            corridor_focus_tickers = _resolve_shadow_focus_tickers(lane="layer_a_liquidity_corridor")
+            result = candidate_pool_module.classify_overflow_candidate(
+                candidate=candidate,
+                rank=1600,
+                cutoff_share=0.28,
+                min_gate_share=2.6,
+                corridor_focus_tickers=corridor_focus_tickers,
+                rebucket_focus_tickers=set(),
+                corridor_visibility_gap_tickers=set(),
+                rebucket_visibility_gap_tickers=set(),
+                corridor_min_gate_share=3.0,
+                corridor_max_cutoff_share=0.20,
+                corridor_focus_min_gate_share=2.5,
+                corridor_focus_max_cutoff_share=0.30,
+                corridor_focus_low_gate_max_cutoff_share=0.075,
+                corridor_visibility_gap_max_cutoff_share=0.35,
+                rebucket_min_gate_share=8.0,
+                rebucket_min_cutoff_share=0.35,
+                rebucket_max_cutoff_share=0.80,
+                rebucket_focus_min_cutoff_share=0.25,
+                rebucket_visibility_gap_min_cutoff_share=0.25,
+            )
+        assert "300683" not in corridor_focus_tickers
+        assert result is None
