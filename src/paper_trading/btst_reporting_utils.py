@@ -33,7 +33,11 @@ RESEARCH_UPSIDE_RADAR_MAX_ENTRIES = 3
 CATALYST_THEME_MAX_ENTRIES = 5
 CATALYST_THEME_SHADOW_MAX_ENTRIES = 5
 CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES = 3
-RISKY_OBSERVER_EXECUTION_QUALITY_LABELS = {"gap_chase_risk", "intraday_only"}
+RISKY_OBSERVER_EXECUTION_QUALITY_LABELS = {
+    "gap_chase_risk",
+    "intraday_only",
+    "payoff_divergence_risk",
+}
 UPSTREAM_SHADOW_CANDIDATE_SOURCES = {
     "upstream_liquidity_corridor_shadow": "layer_a_liquidity_corridor",
     "post_gate_liquidity_competition_shadow": "post_gate_liquidity_competition",
@@ -366,6 +370,15 @@ def _build_execution_quality_gap_chase_risk_result() -> dict[str, str]:
         "execution_priority": "low",
         "entry_timing_bias": "avoid_open_chase",
         "execution_note": "历史上更像高开后回落，避免开盘直接追价。",
+    }
+
+
+def _build_execution_quality_payoff_divergence_risk_result() -> dict[str, str]:
+    return {
+        "execution_quality_label": "payoff_divergence_risk",
+        "execution_priority": "low",
+        "entry_timing_bias": "payoff_reconfirmation_required",
+        "execution_note": "历史胜率看起来不低，但盈亏比或期望值不配合，不能按高优先级执行，必须等待新的强确认。",
     }
 
 

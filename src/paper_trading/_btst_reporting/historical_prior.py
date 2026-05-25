@@ -591,6 +591,11 @@ def _build_opportunity_pool_historical_prior(
         stats.get("next_close_positive_rate"),
         int(stats.get("evaluable_count") or 0),
     )
+    bias_label, monitor_priority = _apply_payoff_divergence_monitor_guardrail(
+        bias_label=bias_label,
+        monitor_priority=monitor_priority,
+        stats=stats,
+    )
     execution_quality = _classify_execution_quality_prior(
         stats.get("next_open_return_mean"),
         stats.get("next_open_to_close_return_mean"),
@@ -599,6 +604,7 @@ def _build_opportunity_pool_historical_prior(
         stats.get("next_high_hit_rate_at_threshold"),
         stats.get("next_close_positive_rate"),
         int(stats.get("evaluable_count") or 0),
+        bool(stats.get("win_rate_payoff_divergence")),
     )
     return _build_opportunity_pool_historical_prior_payload(
         same_ticker_rows=same_ticker_rows,
@@ -679,6 +685,11 @@ def _build_watch_candidate_historical_prior(
         stats.get("next_close_positive_rate"),
         int(stats.get("evaluable_count") or 0),
     )
+    bias_label, monitor_priority = _apply_payoff_divergence_monitor_guardrail(
+        bias_label=bias_label,
+        monitor_priority=monitor_priority,
+        stats=stats,
+    )
     execution_quality = _classify_execution_quality_prior(
         stats.get("next_open_return_mean"),
         stats.get("next_open_to_close_return_mean"),
@@ -687,6 +698,7 @@ def _build_watch_candidate_historical_prior(
         stats.get("next_high_hit_rate_at_threshold"),
         stats.get("next_close_positive_rate"),
         int(stats.get("evaluable_count") or 0),
+        bool(stats.get("win_rate_payoff_divergence")),
     )
     return _build_watch_candidate_historical_prior_payload(
         family=family,
@@ -738,6 +750,18 @@ def _build_watch_candidate_historical_prior_payload(
             scope_label=scope_label,
         ),
     }
+
+
+def _apply_payoff_divergence_monitor_guardrail(
+    *,
+    bias_label: str,
+    monitor_priority: str,
+    stats: dict[str, Any],
+) -> tuple[str, str]:
+    if not stats.get("win_rate_payoff_divergence"):
+        return bias_label, monitor_priority
+    guarded_priority = "medium" if monitor_priority == "high" else monitor_priority
+    return "mixed", guarded_priority
 
 
 def _build_watch_candidate_historical_row_buckets(

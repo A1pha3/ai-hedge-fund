@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 from collections.abc import Callable
 
+EXACT_UPSTREAM_SOURCE = "upstream_liquidity_corridor_shadow"
+EXACT_UPSTREAM_SOURCE_SCOPES = {"candidate_source", "same_source_score", "source_score"}
+
 
 def load_candidate_pool_bundle(
     trade_date: str,
@@ -152,11 +155,33 @@ def _historical_prior_merge_rank(prior: dict[str, Any]) -> tuple[int, int, int, 
     )
 
 
+def _should_preserve_exact_upstream_embedded_prior(
+    *,
+    candidate_source: str | None,
+    embedded_historical_prior: dict[str, Any],
+    latest_historical_prior: dict[str, Any],
+) -> bool:
+    if str(candidate_source or "").strip() != EXACT_UPSTREAM_SOURCE:
+        return False
+    embedded_scope = str(embedded_historical_prior.get("applied_scope") or "").strip()
+    latest_scope = str(latest_historical_prior.get("applied_scope") or "").strip()
+    if embedded_scope not in EXACT_UPSTREAM_SOURCE_SCOPES or latest_scope in EXACT_UPSTREAM_SOURCE_SCOPES:
+        return False
+    embedded_label = str(embedded_historical_prior.get("execution_quality_label") or "").strip()
+    latest_label = str(latest_historical_prior.get("execution_quality_label") or "").strip()
+    if not embedded_label or embedded_label == "unknown":
+        return False
+    if not latest_label or latest_label == embedded_label:
+        return False
+    return True
+
+
 def resolve_historical_prior_for_ticker(
     *,
     ticker: str,
     historical_prior: dict[str, Any] | None,
     prior_by_ticker: dict[str, dict[str, Any]],
+    candidate_source: str | None = None,
 ) -> dict[str, Any]:
     embedded_historical_prior = dict(historical_prior or {})
     latest_historical_prior = dict(prior_by_ticker.get(ticker) or {})
@@ -165,10 +190,18 @@ def resolve_historical_prior_for_ticker(
     if not latest_historical_prior:
         return embedded_historical_prior
 
-    embedded_rank = _historical_prior_merge_rank(embedded_historical_prior)
-    latest_rank = _historical_prior_merge_rank(latest_historical_prior)
-    preferred_historical_prior = embedded_historical_prior if embedded_rank >= latest_rank else latest_historical_prior
-    fallback_historical_prior = latest_historical_prior if preferred_historical_prior is embedded_historical_prior else embedded_historical_prior
+    if _should_preserve_exact_upstream_embedded_prior(
+        candidate_source=candidate_source,
+        embedded_historical_prior=embedded_historical_prior,
+        latest_historical_prior=latest_historical_prior,
+    ):
+        preferred_historical_prior = embedded_historical_prior
+        fallback_historical_prior = latest_historical_prior
+    else:
+        embedded_rank = _historical_prior_merge_rank(embedded_historical_prior)
+        latest_rank = _historical_prior_merge_rank(latest_historical_prior)
+        preferred_historical_prior = embedded_historical_prior if embedded_rank >= latest_rank else latest_historical_prior
+        fallback_historical_prior = latest_historical_prior if preferred_historical_prior is embedded_historical_prior else embedded_historical_prior
 
     resolved_historical_prior = dict(preferred_historical_prior)
     for key, value in fallback_historical_prior.items():

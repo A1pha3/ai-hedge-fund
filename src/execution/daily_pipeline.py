@@ -1007,11 +1007,18 @@ def _load_latest_btst_historical_prior_by_ticker() -> dict[str, dict[str, Any]]:
     )
 
 
-def _resolve_historical_prior_for_ticker(*, ticker: str, historical_prior: dict[str, Any] | None, prior_by_ticker: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _resolve_historical_prior_for_ticker(
+    *,
+    ticker: str,
+    historical_prior: dict[str, Any] | None,
+    prior_by_ticker: dict[str, dict[str, Any]],
+    candidate_source: str | None = None,
+) -> dict[str, Any]:
     return _resolve_historical_prior_for_ticker_impl(
         ticker=ticker,
         historical_prior=historical_prior,
         prior_by_ticker=prior_by_ticker,
+        candidate_source=candidate_source,
     )
 
 

@@ -174,6 +174,47 @@ def test_summarize_historical_opportunity_rows_returns_empty_summary_without_val
     assert summary["recent_examples"] == []
 
 
+def test_opportunity_pool_prior_downgrades_high_win_rate_negative_payoff(monkeypatch):
+    outcomes = {
+        ("300001", f"2026-04-{day:02d}"): {
+            "data_status": "ok",
+            "next_open_return": 0.001,
+            "next_high_return": 0.03,
+            "next_close_return": close_return,
+            "next_open_to_close_return": close_return,
+        }
+        for day, close_return in zip(range(1, 6), [0.005, 0.005, 0.005, 0.005, -0.04])
+    }
+    monkeypatch.setattr(
+        historical_prior,
+        "_extract_next_day_outcome",
+        lambda ticker, trade_date, price_cache: outcomes[(ticker, trade_date)],
+    )
+
+    prior = historical_prior._build_opportunity_pool_historical_prior(
+        {"ticker": "300001", "candidate_source": "short_trade_boundary"},
+        [
+            {
+                "ticker": "300001",
+                "trade_date": f"2026-04-{day:02d}",
+                "candidate_source": "short_trade_boundary",
+                "score_target": 0.5,
+            }
+            for day in range(1, 6)
+        ],
+        {},
+    )
+
+    assert prior["next_close_positive_rate"] == 0.8
+    assert prior["next_close_payoff_ratio"] == 0.125
+    assert prior["next_close_expectancy"] == -0.004
+    assert prior["win_rate_payoff_divergence"] is True
+    assert prior["bias_label"] == "mixed"
+    assert prior["monitor_priority"] == "medium"
+    assert prior["execution_quality_label"] == "payoff_divergence_risk"
+    assert prior["execution_priority"] == "low"
+
+
 def test_partition_opportunity_pool_entries_routes_entries_into_expected_buckets(monkeypatch):
     def fake_bucket_entry(updated_entry, historical_prior, **kwargs):
         return {**updated_entry, "reporting_bucket": kwargs["bucket"], "reason_value": kwargs["reason_value"]}
@@ -191,6 +232,7 @@ def test_partition_opportunity_pool_entries_routes_entries_into_expected_buckets
             {"ticker": "300002", "historical_prior": {"marker": "rebucket"}},
             {"ticker": "300003", "historical_prior": {"execution_quality_label": "gap_chase_risk"}},
             {"ticker": "300004", "historical_prior": {"execution_quality_label": "close_continuation"}},
+            {"ticker": "300005", "historical_prior": {"execution_quality_label": "payoff_divergence_risk"}},
         ]
     )
 
@@ -198,7 +240,7 @@ def test_partition_opportunity_pool_entries_routes_entries_into_expected_buckets
     assert pruned[0]["reporting_bucket"] == "weak_history_pruned"
     assert [entry["ticker"] for entry in no_history] == ["300002"]
     assert no_history[0]["reporting_bucket"] == "no_history_observer"
-    assert [entry["ticker"] for entry in risky] == ["300003"]
+    assert [entry["ticker"] for entry in risky] == ["300003", "300005"]
     assert risky[0]["reporting_bucket"] == "risky_observer"
     assert [entry["ticker"] for entry in retained] == ["300004"]
 

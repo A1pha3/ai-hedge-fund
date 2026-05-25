@@ -3347,6 +3347,50 @@ def test_attach_historical_prior_to_entries_prefers_stronger_latest_prior_over_e
     ]
 
 
+def test_attach_historical_prior_to_entries_preserves_exact_upstream_embedded_prior_over_cross_source_latest_prior():
+    attached_entries = daily_pipeline_module._attach_historical_prior_to_entries(
+        [
+            {
+                "ticker": "300683",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "historical_prior": {
+                    "applied_scope": "candidate_source",
+                    "sample_count": 4,
+                    "evaluable_count": 4,
+                    "execution_quality_label": "close_continuation",
+                    "next_close_positive_rate": 0.75,
+                    "execution_note": "exact upstream evidence",
+                },
+            }
+        ],
+        prior_by_ticker={
+            "300683": {
+                "applied_scope": "same_ticker",
+                "sample_count": 15,
+                "evaluable_count": 15,
+                "execution_quality_label": "balanced_confirmation",
+                "next_close_positive_rate": 0.4,
+                "execution_note": "cross-source latest prior",
+            }
+        },
+    )
+
+    assert attached_entries == [
+        {
+            "ticker": "300683",
+            "candidate_source": "upstream_liquidity_corridor_shadow",
+            "historical_prior": {
+                "applied_scope": "candidate_source",
+                "sample_count": 4,
+                "evaluable_count": 4,
+                "execution_quality_label": "close_continuation",
+                "next_close_positive_rate": 0.75,
+                "execution_note": "exact upstream evidence",
+            },
+        }
+    ]
+
+
 def test_attach_historical_prior_to_entries_refreshes_stale_upstream_shadow_relief_after_backfill():
     attached_entries = daily_pipeline_module._attach_historical_prior_to_entries(
         [

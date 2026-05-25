@@ -40,6 +40,7 @@ def attach_historical_prior_to_entries(
             ticker=ticker,
             historical_prior=dict(updated_entry.get("historical_prior") or {}),
             prior_by_ticker=prior_by_ticker,
+            candidate_source=str(updated_entry.get("candidate_source") or ""),
         )
         if historical_prior:
             updated_entry["historical_prior"] = historical_prior

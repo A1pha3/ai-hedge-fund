@@ -11,6 +11,7 @@ from src.paper_trading.btst_reporting_utils import (
     _build_execution_quality_close_continuation_result,
     _build_execution_quality_gap_chase_risk_result,
     _build_execution_quality_intraday_only_result,
+    _build_execution_quality_payoff_divergence_risk_result,
     _build_execution_quality_unknown_result,
     _build_execution_quality_zero_follow_through_result,
 )
@@ -40,6 +41,7 @@ def _classify_execution_quality_prior(
     next_high_hit_rate: float | None,
     next_close_positive_rate: float | None,
     evaluable_count: int,
+    win_rate_payoff_divergence: bool = False,
 ) -> dict[str, str]:
     if evaluable_count <= 0:
         return _build_execution_quality_unknown_result()
@@ -60,6 +62,8 @@ def _classify_execution_quality_prior(
 
     if open_mean >= 0.02 and open_to_close_mean < 0:
         return _build_execution_quality_gap_chase_risk_result()
+    if win_rate_payoff_divergence:
+        return _build_execution_quality_payoff_divergence_risk_result()
     if close_mean >= 0.02 and open_to_close_mean >= 0:
         return _build_execution_quality_close_continuation_result()
     if high_mean >= 0.03 and close_mean <= 0:

@@ -121,6 +121,23 @@ def test_render_btst_next_day_priority_board_markdown_emits_sections_and_catalys
     assert "## Source Paths" in markdown
 
 
+def test_apply_execution_quality_entry_mode_requires_reconfirmation_for_payoff_divergence():
+    updated = btst_reporting._apply_execution_quality_entry_mode(
+        {
+            "ticker": "300001",
+            "preferred_entry_mode": "next_day_breakout_confirmation",
+            "top_reasons": ["breakout_freshness=0.80"],
+            "historical_prior": {
+                "execution_quality_label": "payoff_divergence_risk",
+            },
+        }
+    )
+
+    assert updated["preferred_entry_mode"] == "strong_reconfirmation_only"
+    assert updated["promotion_trigger"] == "历史胜率与盈亏比/期望背离，只有新的强确认才能重新升级。"
+    assert "historical_payoff_divergence_risk" in updated["top_reasons"]
+
+
 def test_generate_btst_next_day_priority_board_orders_trade_watch_opportunity_and_radar(tmp_path, monkeypatch):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-03-27"
