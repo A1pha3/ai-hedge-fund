@@ -1941,6 +1941,10 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert btst_precision_v2_profile.near_miss_threshold == 0.26
     assert btst_precision_v2_profile.selected_rank_cap_ratio == 0.12
     assert btst_precision_v2_profile.near_miss_rank_cap_ratio == 0.24
+    assert btst_precision_v2_profile.liquidity_shadow_near_miss_rank_cap_ratio == 1.0
+    assert btst_precision_v2_profile.liquidity_shadow_source_specific_rank_cap_require_relief_applied is False
+    assert btst_precision_v2_profile.upstream_shadow_source_specific_rank_cap_trend_acceleration_min == 0.80
+    assert btst_precision_v2_profile.upstream_shadow_source_specific_rank_cap_close_strength_min == 0.80
     assert btst_precision_v2_profile.selected_rank_cap_relief_score_margin_min == 0.02
     assert btst_precision_v2_profile.selected_rank_cap_relief_rank_buffer_ratio == 0.003
     assert btst_precision_v2_profile.selected_rank_cap_relief_close_strength_max == 1.0
@@ -2794,7 +2798,9 @@ def test_liquidity_shadow_release_probe_releases_corridor_shadow_from_selected_c
     assert baseline_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.12)
     assert baseline_cap_state["selected_rank_cap"] == 3
     assert baseline_cap_state["selected_cap_exceeded_effective"] is True
-    assert baseline_cap_state["shadow_source_specific_caps_enabled"] is False
+    assert baseline_cap_state["shadow_source_specific_caps_enabled"] is True
+    assert baseline_cap_state["liquidity_shadow_near_miss_rank_cap_ratio"] == pytest.approx(1.0)
+    assert baseline_cap_state["near_miss_rank_cap"] == 20
     assert probe_result.decision == "selected"
     assert probe_cap_state["liquidity_shadow_selected_rank_cap_ratio"] == pytest.approx(0.18)
     assert probe_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.18)
@@ -2803,6 +2809,37 @@ def test_liquidity_shadow_release_probe_releases_corridor_shadow_from_selected_c
     assert probe_cap_state["shadow_source_specific_rank_cap_guard_active"] is True
     assert probe_cap_state["shadow_source_specific_rank_cap_relief_applied"] is True
     assert probe_cap_state["shadow_source_specific_caps_enabled"] is True
+
+
+def test_btst_precision_v2_releases_deep_upstream_shadow_release_candidate_to_near_miss_without_relief() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry["candidate_source"] = "upstream_liquidity_corridor_shadow"
+    entry["candidate_pool_lane"] = "layer_a_liquidity_corridor"
+    entry.pop("short_trade_catalyst_relief", None)
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=15,
+            rank_population=15,
+        )
+
+    cap_state = result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert result.decision == "near_miss"
+    assert result.gate_status.get("score") == "near_miss"
+    assert "selected_rank_cap_exceeded" not in result.rejection_reasons
+    assert cap_state["shadow_source_specific_rank_cap_guard_active"] is True
+    assert cap_state["shadow_source_specific_caps_enabled"] is True
+    assert cap_state["liquidity_shadow_near_miss_rank_cap_ratio"] == pytest.approx(1.0)
+    assert cap_state["near_miss_rank_cap"] == 15
+    assert cap_state["near_miss_cap_exceeded"] is False
 
 
 def test_liquidity_shadow_release_probe_releases_post_gate_shadow_from_selected_cap_pressure() -> None:
