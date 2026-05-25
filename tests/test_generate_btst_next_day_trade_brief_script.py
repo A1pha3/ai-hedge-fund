@@ -242,6 +242,7 @@ def test_partition_opportunity_pool_entries_routes_entries_into_expected_buckets
     assert no_history[0]["reporting_bucket"] == "no_history_observer"
     assert [entry["ticker"] for entry in risky] == ["300003", "300005"]
     assert risky[0]["reporting_bucket"] == "risky_observer"
+    assert "胜率与盈亏比/期望背离" in risky[1]["promotion_trigger"]
     assert [entry["ticker"] for entry in retained] == ["300004"]
 
 

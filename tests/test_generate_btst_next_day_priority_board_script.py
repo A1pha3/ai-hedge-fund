@@ -133,7 +133,7 @@ def test_apply_execution_quality_entry_mode_requires_reconfirmation_for_payoff_d
         }
     )
 
-    assert updated["preferred_entry_mode"] == "strong_reconfirmation_only"
+    assert updated["preferred_entry_mode"] == "payoff_reconfirmation_only"
     assert updated["promotion_trigger"] == "历史胜率与盈亏比/期望背离，只有新的强确认才能重新升级。"
     assert "historical_payoff_divergence_risk" in updated["top_reasons"]
 

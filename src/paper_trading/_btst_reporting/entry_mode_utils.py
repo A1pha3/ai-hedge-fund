@@ -49,6 +49,14 @@ def _selected_action_posture(preferred_entry_mode: str | None) -> tuple[str, lis
                 "没有新增强度时，不把它当成可执行 BTST 对象。",
             ],
         )
+    if preferred_entry_mode == "payoff_reconfirmation_only":
+        return (
+            "reconfirm_payoff",
+            [
+                "历史胜率与盈亏比/期望背离，只有出现新的强确认时才允许重新评估。",
+                "没有新增强度时，不把表面胜率当成可执行 BTST 依据。",
+            ],
+        )
     return (
         "manual_review",
         [

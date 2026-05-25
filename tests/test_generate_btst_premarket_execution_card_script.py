@@ -4,6 +4,7 @@ import json
 
 from scripts.generate_btst_premarket_execution_card import generate_btst_premarket_execution_card_artifacts
 import src.paper_trading.btst_reporting as btst_reporting
+from src.paper_trading.btst_reporting_utils import _entry_mode_action_guidance
 
 
 def test_append_premarket_shadow_watch_markdown_emits_thresholds_and_rules():
@@ -236,6 +237,22 @@ def test_render_btst_premarket_execution_card_markdown_emits_sections_and_source
     assert "## Upstream Shadow Recall" in markdown
     assert "- candidate_source: upstream_liquidity_corridor_shadow" in markdown
     assert "## Source Paths" in markdown
+
+
+def test_premarket_action_guidance_names_payoff_reconfirmation_mode():
+    posture, trigger_rules = btst_reporting._selected_action_posture(
+        "payoff_reconfirmation_only"
+    )
+    _, action_guidance = _entry_mode_action_guidance(
+        "payoff_reconfirmation_only",
+        default_action="默认动作",
+    )
+
+    assert posture == "reconfirm_payoff"
+    assert "历史胜率与盈亏比/期望背离" in trigger_rules[0]
+    assert "历史胜率与盈亏比/期望背离" in action_guidance
+    assert "历史兑现极弱" not in trigger_rules[0]
+    assert "历史兑现极弱" not in action_guidance
 
 
 def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_trade_sections(tmp_path):

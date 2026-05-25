@@ -360,17 +360,29 @@ def _classify_risky_opportunity_pool_entry(
     updated_entry: dict[str, Any],
     historical_prior: dict[str, Any],
 ) -> tuple[str, dict[str, Any]] | None:
-    if (
-        str(historical_prior.get("execution_quality_label") or "unknown")
-        in RISKY_OBSERVER_EXECUTION_QUALITY_LABELS
-    ):
+    execution_quality_label = str(
+        historical_prior.get("execution_quality_label") or "unknown"
+    )
+    if execution_quality_label in RISKY_OBSERVER_EXECUTION_QUALITY_LABELS:
         risky_entry = dict(updated_entry)
         risky_entry["reporting_bucket"] = "risky_observer"
-        risky_entry["promotion_trigger"] = (
-            "只做高风险盘中确认观察，不作为标准 BTST 机会池升级对象。"
+        risky_entry["promotion_trigger"] = _risky_observer_promotion_trigger(
+            execution_quality_label
         )
         return "risky_observer", risky_entry
     return None
+
+
+def _risky_observer_promotion_trigger(execution_quality_label: str) -> str:
+    if execution_quality_label == "payoff_divergence_risk":
+        return (
+            "历史胜率与盈亏比/期望背离，只做风险观察；只有新的强确认能覆盖该背离时，才允许重新评估。"
+        )
+    if execution_quality_label == "gap_chase_risk":
+        return "历史更像高开回落，只做回踩后二次确认观察，不作为标准 BTST 机会池升级对象。"
+    if execution_quality_label == "intraday_only":
+        return "历史更像盘中机会，只做 intraday 确认观察，不预设隔夜 BTST 升级。"
+    return "只做高风险盘中确认观察，不作为标准 BTST 机会池升级对象。"
 
 
 # ---------------------------------------------------------------------------

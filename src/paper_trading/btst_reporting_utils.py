@@ -455,6 +455,8 @@ def _entry_mode_action_guidance(preferred_entry_mode: str | None, *, default_act
         return "confirm_then_hold", "先等盘中 continuation 确认，再决定是否入场；若确认质量足够，允许把 follow-through 持有到收盘而不是机械快进快出。"
     if preferred_entry_mode == "strong_reconfirmation_only":
         return "reconfirm_only", "历史兑现极弱，只有出现新的强确认时才允许重新评估。"
+    if preferred_entry_mode == "payoff_reconfirmation_only":
+        return "reconfirm_payoff", "历史胜率与盈亏比/期望背离，只有出现新的强确认时才允许重新评估。"
     return "standard_confirmation", default_action
 
 

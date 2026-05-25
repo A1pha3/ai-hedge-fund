@@ -59,7 +59,7 @@ def _apply_execution_quality_entry_mode(entry: dict[str, Any]) -> dict[str, Any]
         if "historical_zero_follow_through" not in top_reasons:
             top_reasons.append("historical_zero_follow_through")
     elif execution_quality_label == "payoff_divergence_risk":
-        updated_entry["preferred_entry_mode"] = "strong_reconfirmation_only"
+        updated_entry["preferred_entry_mode"] = "payoff_reconfirmation_only"
         updated_entry["promotion_trigger"] = (
             "历史胜率与盈亏比/期望背离，只有新的强确认才能重新升级。"
         )
