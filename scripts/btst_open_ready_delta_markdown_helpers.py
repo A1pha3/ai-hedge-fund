@@ -241,6 +241,42 @@ def append_top_priority_action_delta_markdown(lines: list[str], delta: dict[str,
     lines.append("")
 
 
+def append_early_runner_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Early Runner Delta")
+    if not delta.get("available"):
+        lines.append(f"- unavailable: {delta.get('reason')}")
+    else:
+        fields = [
+            "previous_deployment_mode",
+            "current_deployment_mode",
+            "previous_ready_for_shadow_rollout",
+            "current_ready_for_shadow_rollout",
+            "previous_trade_date",
+            "current_trade_date",
+            "previous_btst_regime_gate",
+            "current_btst_regime_gate",
+            "previous_gate_action",
+            "current_gate_action",
+            "previous_priority_tickers",
+            "current_priority_tickers",
+            "previous_promotion_blockers",
+            "current_promotion_blockers",
+        ]
+        for field in fields:
+            lines.append(f"- {field}: {delta.get(field) or 'n/a'}")
+        for ticker in list(delta.get("added_priority_tickers") or []):
+            lines.append(f"- added_priority_ticker: {ticker}")
+        for ticker in list(delta.get("removed_priority_tickers") or []):
+            lines.append(f"- removed_priority_ticker: {ticker}")
+        for blocker in list(delta.get("added_promotion_blockers") or []):
+            lines.append(f"- added_promotion_blocker: {blocker}")
+        for blocker in list(delta.get("removed_promotion_blockers") or []):
+            lines.append(f"- removed_promotion_blocker: {blocker}")
+        if not delta.get("has_changes"):
+            lines.append("- no_early_runner_change_detected")
+    lines.append("")
+
+
 def append_selected_outcome_contract_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
     lines.append("## Selected Outcome Contract Delta")
     if not delta.get("available"):
@@ -427,6 +463,7 @@ def render_btst_open_ready_delta_markdown(
     current_reference = dict(payload.get("current_reference") or {})
     previous_reference = dict(payload.get("previous_reference") or {})
     priority_delta = dict(payload.get("priority_delta") or {})
+    early_runner_delta = dict(payload.get("early_runner_delta") or {})
     catalyst_frontier_delta = dict(payload.get("catalyst_frontier_delta") or {})
     score_fail_frontier_delta = dict(payload.get("score_fail_frontier_delta") or {})
     top_priority_action_delta = dict(payload.get("top_priority_action_delta") or {})
@@ -442,6 +479,7 @@ def render_btst_open_ready_delta_markdown(
     append_open_ready_overview_markdown(lines, payload, current_reference, previous_reference)
     append_material_change_anchor_markdown(lines, material_change_anchor, resolved_output_parent, relative_link=relative_link)
     append_priority_delta_markdown(lines, priority_delta)
+    append_early_runner_delta_markdown(lines, early_runner_delta)
     append_catalyst_frontier_delta_markdown(lines, catalyst_frontier_delta)
     append_score_fail_frontier_delta_markdown(lines, score_fail_frontier_delta)
     append_top_priority_action_delta_markdown(lines, top_priority_action_delta)

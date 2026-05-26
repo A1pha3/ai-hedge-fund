@@ -13,6 +13,7 @@ READING_ORDER_ENTRY_IDS: tuple[str, ...] = (
     "btst_governance_synthesis_latest",
     "btst_tplus1_tplus2_objective_monitor_latest",
     "btst_independent_window_monitor_latest",
+    "btst_early_runner_v1_latest",
     "btst_default_merge_review_latest",
     "btst_default_merge_historical_counterfactual_latest",
     "btst_continuation_merge_candidate_ranking_latest",
@@ -52,6 +53,7 @@ REPORT_ROOT_SOURCE_FILES: tuple[tuple[str, str], ...] = (
 MANIFEST_SOURCE_PATHS: tuple[tuple[str, str], ...] = (
     ("governance_synthesis_markdown", "btst_governance_synthesis_latest"),
     ("governance_validation_markdown", "btst_governance_validation_latest"),
+    ("early_runner_markdown", "btst_early_runner_v1_latest"),
     ("default_merge_review_markdown", "btst_default_merge_review_latest"),
     ("default_merge_historical_counterfactual_markdown", "btst_default_merge_historical_counterfactual_latest"),
     ("continuation_merge_candidate_ranking_markdown", "btst_continuation_merge_candidate_ranking_latest"),
@@ -166,6 +168,7 @@ def build_nightly_control_tower_analysis(
         "latest_btst_run": manifest.get("latest_btst_run"),
         "refresh_status": build_nightly_refresh_status(manifest),
         "control_tower_snapshot": control_tower_snapshot,
+        "early_runner_summary": dict(control_tower_snapshot.get("early_runner_summary") or {}),
         "merge_replay_validation_summary": dict(control_tower_snapshot.get("merge_replay_validation_summary") or {}),
         "prepared_breakout_relief_validation_summary": dict(control_tower_snapshot.get("prepared_breakout_relief_validation_summary") or {}),
         "prepared_breakout_cohort_summary": dict(control_tower_snapshot.get("prepared_breakout_cohort_summary") or {}),

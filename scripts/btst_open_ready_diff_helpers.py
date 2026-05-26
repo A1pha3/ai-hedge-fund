@@ -540,6 +540,123 @@ def diff_score_fail_frontier(current_payload: dict[str, Any], previous_payload: 
     }
 
 
+def _resolve_early_runner_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    control_tower_snapshot = dict(payload.get("control_tower_snapshot") or {})
+    return dict(control_tower_snapshot.get("early_runner_summary") or payload.get("early_runner_summary") or {})
+
+
+def diff_early_runner(current_payload: dict[str, Any], previous_payload: dict[str, Any]) -> dict[str, Any]:
+    if not previous_payload:
+        return {
+            "available": False,
+            "reason": "no_previous_nightly_snapshot",
+            "has_changes": False,
+        }
+
+    current_summary = _resolve_early_runner_summary(current_payload)
+    previous_summary = _resolve_early_runner_summary(previous_payload)
+    if not current_summary and not previous_summary:
+        return {
+            "available": False,
+            "reason": "no_early_runner_summary",
+            "has_changes": False,
+        }
+
+    current_board = dict(current_summary.get("latest_daily_board") or {})
+    previous_board = dict(previous_summary.get("latest_daily_board") or {})
+
+    current_watchlist_tickers = list(current_board.get("watchlist_tickers") or [])
+    previous_watchlist_tickers = list(previous_board.get("watchlist_tickers") or [])
+    current_priority_tickers = list(current_board.get("priority_tickers") or [])
+    previous_priority_tickers = list(previous_board.get("priority_tickers") or [])
+    current_second_entry_tickers = list(current_board.get("second_entry_tickers") or [])
+    previous_second_entry_tickers = list(previous_board.get("second_entry_tickers") or [])
+    current_confirmed_tickers = list(current_board.get("confirmed_tickers") or [])
+    previous_confirmed_tickers = list(previous_board.get("confirmed_tickers") or [])
+    current_promotion_blockers = list(current_summary.get("promotion_blockers") or [])
+    previous_promotion_blockers = list(previous_summary.get("promotion_blockers") or [])
+    current_failed_items = list(current_summary.get("failed_items") or [])
+    previous_failed_items = list(previous_summary.get("failed_items") or [])
+
+    watchlist_ticker_delta = diff_ticker_lists(current_watchlist_tickers, previous_watchlist_tickers)
+    priority_ticker_delta = diff_ticker_lists(current_priority_tickers, previous_priority_tickers)
+    second_entry_ticker_delta = diff_ticker_lists(current_second_entry_tickers, previous_second_entry_tickers)
+    confirmed_ticker_delta = diff_ticker_lists(current_confirmed_tickers, previous_confirmed_tickers)
+    promotion_blocker_delta = diff_ticker_lists(current_promotion_blockers, previous_promotion_blockers)
+    failed_item_delta = diff_ticker_lists(current_failed_items, previous_failed_items)
+
+    deployment_mode_changed = str(current_summary.get("deployment_mode") or "") != str(previous_summary.get("deployment_mode") or "")
+    ready_for_shadow_rollout_changed = bool(current_summary.get("ready_for_shadow_rollout")) != bool(previous_summary.get("ready_for_shadow_rollout"))
+    trade_date_changed = str(current_board.get("trade_date") or "") != str(previous_board.get("trade_date") or "")
+    btst_regime_gate_changed = str(current_board.get("btst_regime_gate") or "") != str(previous_board.get("btst_regime_gate") or "")
+    gate_action_changed = str(current_board.get("gate_action") or "") != str(previous_board.get("gate_action") or "")
+
+    has_changes = any(
+        [
+            deployment_mode_changed,
+            ready_for_shadow_rollout_changed,
+            trade_date_changed,
+            btst_regime_gate_changed,
+            gate_action_changed,
+            bool(watchlist_ticker_delta["added"]),
+            bool(watchlist_ticker_delta["removed"]),
+            bool(priority_ticker_delta["added"]),
+            bool(priority_ticker_delta["removed"]),
+            bool(second_entry_ticker_delta["added"]),
+            bool(second_entry_ticker_delta["removed"]),
+            bool(confirmed_ticker_delta["added"]),
+            bool(confirmed_ticker_delta["removed"]),
+            bool(promotion_blocker_delta["added"]),
+            bool(promotion_blocker_delta["removed"]),
+            bool(failed_item_delta["added"]),
+            bool(failed_item_delta["removed"]),
+        ]
+    )
+    return {
+        "available": True,
+        "previous_deployment_mode": previous_summary.get("deployment_mode"),
+        "current_deployment_mode": current_summary.get("deployment_mode"),
+        "deployment_mode_changed": deployment_mode_changed,
+        "previous_ready_for_shadow_rollout": bool(previous_summary.get("ready_for_shadow_rollout")),
+        "current_ready_for_shadow_rollout": bool(current_summary.get("ready_for_shadow_rollout")),
+        "ready_for_shadow_rollout_changed": ready_for_shadow_rollout_changed,
+        "previous_trade_date": previous_board.get("trade_date"),
+        "current_trade_date": current_board.get("trade_date"),
+        "trade_date_changed": trade_date_changed,
+        "previous_btst_regime_gate": previous_board.get("btst_regime_gate"),
+        "current_btst_regime_gate": current_board.get("btst_regime_gate"),
+        "btst_regime_gate_changed": btst_regime_gate_changed,
+        "previous_gate_action": previous_board.get("gate_action"),
+        "current_gate_action": current_board.get("gate_action"),
+        "gate_action_changed": gate_action_changed,
+        "previous_watchlist_tickers": previous_watchlist_tickers,
+        "current_watchlist_tickers": current_watchlist_tickers,
+        "added_watchlist_tickers": watchlist_ticker_delta["added"],
+        "removed_watchlist_tickers": watchlist_ticker_delta["removed"],
+        "previous_priority_tickers": previous_priority_tickers,
+        "current_priority_tickers": current_priority_tickers,
+        "added_priority_tickers": priority_ticker_delta["added"],
+        "removed_priority_tickers": priority_ticker_delta["removed"],
+        "previous_second_entry_tickers": previous_second_entry_tickers,
+        "current_second_entry_tickers": current_second_entry_tickers,
+        "added_second_entry_tickers": second_entry_ticker_delta["added"],
+        "removed_second_entry_tickers": second_entry_ticker_delta["removed"],
+        "previous_confirmed_tickers": previous_confirmed_tickers,
+        "current_confirmed_tickers": current_confirmed_tickers,
+        "added_confirmed_tickers": confirmed_ticker_delta["added"],
+        "removed_confirmed_tickers": confirmed_ticker_delta["removed"],
+        "previous_promotion_blockers": previous_promotion_blockers,
+        "current_promotion_blockers": current_promotion_blockers,
+        "added_promotion_blockers": promotion_blocker_delta["added"],
+        "removed_promotion_blockers": promotion_blocker_delta["removed"],
+        "previous_failed_items": previous_failed_items,
+        "current_failed_items": current_failed_items,
+        "added_failed_items": failed_item_delta["added"],
+        "removed_failed_items": failed_item_delta["removed"],
+        "has_changes": has_changes,
+    }
+
+
 def build_carryover_promotion_gate_field_changes(current_summary: dict[str, Any], previous_summary: dict[str, Any]) -> dict[str, bool]:
     return {
         "focus_ticker_changed": str(current_summary.get("focus_ticker") or "") != str(previous_summary.get("focus_ticker") or ""),

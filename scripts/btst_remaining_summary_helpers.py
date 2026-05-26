@@ -40,6 +40,21 @@ def extract_default_merge_review_summary(
     )
 
 
+def extract_early_runner_summary(
+    manifest: dict[str, Any],
+    *,
+    entry_by_id: EntryById,
+    safe_load_json: SafeLoadJson,
+) -> dict[str, Any]:
+    return _load_entry_backed_summary(
+        manifest,
+        summary_key="early_runner_summary",
+        entry_id="btst_early_runner_v1_latest",
+        entry_by_id=entry_by_id,
+        safe_load_json=safe_load_json,
+    )
+
+
 def extract_default_merge_historical_counterfactual_summary(
     manifest: dict[str, Any],
     *,

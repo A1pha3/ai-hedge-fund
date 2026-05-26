@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import scripts.generate_reports_manifest as manifest_script
+
 from scripts.generate_reports_manifest import (
     _build_carryover_aligned_peer_harvest_summary,
     _build_carryover_aligned_peer_proof_summary,
@@ -336,6 +338,40 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     )
     (reports_root / "btst_selected_outcome_refresh_board_latest.md").write_text("# selected refresh board\n", encoding="utf-8")
     _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {
+            "report_dir_count": 3,
+            "row_count": 12,
+            "daily_boards": [
+                {
+                    "trade_date": "2026-04-09",
+                    "btst_regime_gate": "normal_trade",
+                    "gate_action": "tradable",
+                    "deployment_mode": "shadow_only",
+                    "early_runner_watchlist": [{"ticker": "300001"}, {"ticker": "300505"}],
+                    "early_runner_priority": [{"ticker": "300001"}],
+                    "second_entry_reentry": [{"ticker": "300505"}],
+                    "confirmed_entries": [],
+                }
+            ],
+            "validation": {
+                "tradable_after_cost_expectancy": 0.0123,
+                "month_oos_pass_count": 2,
+                "failure_log_coverage": 1.0,
+                "max_single_theme_exposure": 0.2,
+                "max_single_theme_exposure_cap": 0.25,
+            },
+            "acceptance_checklist": {
+                "ready_for_shadow_rollout": False,
+                "failed_items": ["promotion_blockers"],
+            },
+            "deployment_mode": "shadow_only",
+            "promotion_blockers": ["theme_exposure_cap_breach"],
+            "failure_log": [{"ticker": "300620"}],
+        },
+    )
+    (reports_root / "btst_early_runner_v1_latest.md").write_text("# btst early runner v1\n", encoding="utf-8")
+    _write_json(
         reports_root / "btst_carryover_multiday_continuation_audit_latest.json",
         {
             "selected_ticker": "002001",
@@ -481,12 +517,16 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     manifest = generate_reports_manifest(reports_root=reports_root)
 
     entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
+    assert entries_by_id["btst_early_runner_v1_latest"]["report_path"] == "data/reports/btst_early_runner_v1_latest.md"
     assert entries_by_id["btst_default_merge_review_latest"]["report_path"] == "data/reports/btst_default_merge_review_latest.md"
     assert entries_by_id["btst_default_merge_historical_counterfactual_latest"]["report_path"] == "data/reports/btst_default_merge_historical_counterfactual_latest.md"
     assert entries_by_id["btst_continuation_merge_candidate_ranking_latest"]["report_path"] == "data/reports/btst_continuation_merge_candidate_ranking_latest.md"
     assert entries_by_id["btst_default_merge_strict_counterfactual_latest"]["report_path"] == "data/reports/btst_default_merge_strict_counterfactual_latest.md"
     assert entries_by_id["btst_merge_replay_validation_latest"]["report_path"] == "data/reports/btst_merge_replay_validation_latest.md"
     assert entries_by_id["btst_prepared_breakout_relief_validation_latest"]["report_path"] == "data/reports/btst_prepared_breakout_relief_validation_latest.md"
+    assert manifest["early_runner_summary"]["deployment_mode"] == "shadow_only"
+    assert manifest["early_runner_summary"]["ready_for_shadow_rollout"] is False
+    assert manifest["early_runner_summary"]["latest_daily_board"]["watchlist_tickers"] == ["300001", "300505"]
     assert manifest["default_merge_review_summary"]["focus_ticker"] == "300720"
     assert manifest["default_merge_review_summary"]["counterfactual_validation"]["counterfactual_verdict"] == "supports_default_btst_merge"
     assert manifest["default_merge_historical_counterfactual_summary"]["counterfactual_verdict"] == "merged_default_btst_uplift_positive"
@@ -529,6 +569,7 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     assert manifest["carryover_peer_promotion_gate_summary"]["focus_gate_verdict"] == "blocked_selected_contract_open"
     assert manifest["carryover_peer_promotion_gate_summary"]["blocked_open_tickers"] == ["301396"]
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
+    assert "btst_early_runner_v1_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_default_merge_review_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_default_merge_historical_counterfactual_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_continuation_merge_candidate_ranking_latest" in reading_paths["btst_control_tower"]["entry_ids"]
@@ -541,6 +582,7 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     assert "btst_candidate_pool_corridor_window_command_board_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_candidate_pool_corridor_window_diagnostics_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_candidate_pool_corridor_narrow_probe_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_early_runner_v1_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_default_merge_review_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_default_merge_historical_counterfactual_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_continuation_merge_candidate_ranking_latest" in reading_paths["nightly_review"]["entry_ids"]
@@ -622,6 +664,57 @@ def test_build_selected_outcome_refresh_summary_prefers_violated_focus(tmp_path:
     assert summary["focus_ticker"] == "002001"
     assert summary["focus_cycle_status"] == "t1_only"
     assert summary["focus_overall_contract_verdict"] == "next_close_violated"
+
+
+def test_generate_reports_manifest_artifacts_refreshes_missing_early_runner_latest(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    reports_root = repo_root / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+
+    fake_analysis = {
+        "report_dir_count": 2,
+        "row_count": 6,
+        "daily_boards": [
+            {
+                "trade_date": "2026-05-26",
+                "btst_regime_gate": "normal_trade",
+                "gate_action": "tradable",
+                "deployment_mode": "shadow_only",
+                "early_runner_watchlist": [{"ticker": "300001"}, {"ticker": "300505"}],
+                "early_runner_priority": [{"ticker": "300001"}],
+                "second_entry_reentry": [{"ticker": "300505"}],
+                "confirmed_entries": [],
+            }
+        ],
+        "validation": {
+            "tradable_after_cost_expectancy": 0.0123,
+            "month_oos_pass_count": 2,
+            "failure_log_coverage": 1.0,
+            "max_single_theme_exposure": 0.2,
+            "max_single_theme_exposure_cap": 0.25,
+        },
+        "acceptance_checklist": {
+            "ready_for_shadow_rollout": True,
+            "failed_items": [],
+        },
+        "deployment_mode": "shadow_only",
+        "promotion_blockers": [],
+        "failure_log": [],
+    }
+
+    monkeypatch.setattr(manifest_script, "analyze_btst_early_runner_v1", lambda reports_root, report_name_contains="paper_trading_window": fake_analysis)
+    monkeypatch.setattr(manifest_script, "render_btst_early_runner_v1_markdown", lambda analysis: "# BTST Early Runner V1\n")
+
+    result = generate_reports_manifest_artifacts(reports_root=reports_root)
+
+    assert result["btst_early_runner_refresh"]["status"] == "refreshed"
+    assert result["manifest"]["early_runner_summary"]["deployment_mode"] == "shadow_only"
+    assert result["manifest"]["early_runner_summary"]["ready_for_shadow_rollout"] is True
+    assert result["manifest"]["early_runner_summary"]["latest_daily_board"]["watchlist_tickers"] == ["300001", "300505"]
+
+    early_runner_json = json.loads((reports_root / "btst_early_runner_v1_latest.json").read_text(encoding="utf-8"))
+    assert early_runner_json["deployment_mode"] == "shadow_only"
+    assert (reports_root / "btst_early_runner_v1_latest.md").read_text(encoding="utf-8") == "# BTST Early Runner V1\n"
 
 
 def test_build_carryover_multiday_continuation_audit_summary(tmp_path: Path) -> None:
@@ -1094,6 +1187,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_open_ready_delta_latest.md",
         "btst_nightly_control_tower_latest.md",
         "btst_latest_close_validation_latest.md",
+        "btst_early_runner_v1_latest.md",
         "btst_micro_window_regression_march_refresh.md",
         "btst_profile_frontier_20260330.md",
         "btst_score_construction_frontier_20260330.md",
@@ -1134,6 +1228,39 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
                 "focus_tradeable_cases": [],
             },
             "recommendation": "当前窗口 broad penalty relief 不构成 rollout 路线。",
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {
+            "report_dir_count": 2,
+            "row_count": 8,
+            "daily_boards": [
+                {
+                    "trade_date": "2026-03-30",
+                    "btst_regime_gate": "normal_trade",
+                    "gate_action": "tradable",
+                    "deployment_mode": "shadow_only",
+                    "early_runner_watchlist": [{"ticker": "300383"}, {"ticker": "002015"}],
+                    "early_runner_priority": [{"ticker": "300383"}],
+                    "second_entry_reentry": [{"ticker": "002015"}],
+                    "confirmed_entries": [],
+                }
+            ],
+            "validation": {
+                "tradable_after_cost_expectancy": 0.011,
+                "month_oos_pass_count": 2,
+                "failure_log_coverage": 1.0,
+                "max_single_theme_exposure": 0.2,
+                "max_single_theme_exposure_cap": 0.25,
+            },
+            "acceptance_checklist": {
+                "ready_for_shadow_rollout": False,
+                "failed_items": ["promotion_blockers"],
+            },
+            "deployment_mode": "shadow_only",
+            "promotion_blockers": ["theme_exposure_cap_breach"],
+            "failure_log": [],
         },
     )
 
@@ -1411,6 +1538,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert entries_by_id["p9_candidate_entry_rollout_governance"]["report_path"] == "data/reports/p9_candidate_entry_rollout_governance_20260330.md"
     assert entries_by_id["p5_rollout_governance_board"]["report_path"] == "data/reports/p5_btst_rollout_governance_board_20260401.json"
     assert entries_by_id["btst_open_ready_delta_latest"]["report_path"] == "data/reports/btst_open_ready_delta_latest.md"
+    assert entries_by_id["btst_early_runner_v1_latest"]["report_path"] == "data/reports/btst_early_runner_v1_latest.md"
     assert entries_by_id["btst_nightly_control_tower_latest"]["report_path"] == "data/reports/btst_nightly_control_tower_latest.md"
     assert entries_by_id["btst_governance_synthesis_latest"]["report_path"] == "data/reports/btst_governance_synthesis_latest.md"
     assert entries_by_id["btst_governance_validation_latest"]["report_path"] == "data/reports/btst_governance_validation_latest.md"
@@ -1431,6 +1559,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert reading_paths["btst_control_tower"]["entry_ids"] == [
         "btst_open_ready_delta_latest",
         "btst_latest_close_validation_latest",
+        "btst_early_runner_v1_latest",
         "btst_nightly_control_tower_latest",
         "btst_governance_synthesis_latest",
         "btst_tplus1_tplus2_objective_monitor_latest",
@@ -1469,6 +1598,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert reading_paths["nightly_review"]["entry_ids"] == [
         "btst_open_ready_delta_latest",
         "btst_latest_close_validation_latest",
+        "btst_early_runner_v1_latest",
         "btst_tplus1_tplus2_objective_monitor_latest",
         "btst_candidate_pool_lane_objective_support_latest",
         "btst_candidate_pool_rebucket_objective_validation_latest",

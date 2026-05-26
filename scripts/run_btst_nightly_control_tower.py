@@ -57,6 +57,7 @@ from scripts.btst_remaining_summary_helpers import (
     extract_default_merge_historical_counterfactual_summary as _extract_default_merge_historical_counterfactual_summary_impl,
     extract_default_merge_review_summary as _extract_default_merge_review_summary_impl,
     extract_default_merge_strict_counterfactual_summary as _extract_default_merge_strict_counterfactual_summary_impl,
+    extract_early_runner_summary as _extract_early_runner_summary_impl,
     extract_merge_replay_validation_summary as _extract_merge_replay_validation_summary_impl,
     extract_prepared_breakout_cohort_summary as _extract_prepared_breakout_cohort_summary_impl,
     extract_prepared_breakout_relief_validation_summary as _extract_prepared_breakout_relief_validation_summary_impl,
@@ -136,6 +137,7 @@ from scripts.btst_open_ready_diff_helpers import (
     diff_carryover_peer_proof as _diff_carryover_peer_proof_impl,
     diff_carryover_promotion_gate as _diff_carryover_promotion_gate_impl,
     diff_catalyst_frontier as _diff_catalyst_frontier_impl,
+    diff_early_runner as _diff_early_runner_impl,
     diff_governance as _diff_governance_impl,
     diff_priority_board as _diff_priority_board_impl,
     diff_replay as _diff_replay_impl,
@@ -420,6 +422,14 @@ def _extract_default_merge_review_summary(manifest: dict[str, Any]) -> dict[str,
     )
 
 
+def _extract_early_runner_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    return _extract_early_runner_summary_impl(
+        manifest,
+        entry_by_id=_entry_by_id,
+        safe_load_json=_safe_load_json,
+    )
+
+
 def _extract_selected_outcome_refresh_summary(manifest: dict[str, Any]) -> dict[str, Any]:
     return _extract_selected_outcome_refresh_summary_impl(
         manifest,
@@ -581,6 +591,7 @@ def _extract_control_tower_snapshot_sections(manifest: dict[str, Any]) -> dict[s
         extract_no_candidate_entry_failure_dossier_summary=_extract_no_candidate_entry_failure_dossier_summary,
         extract_watchlist_recall_dossier_summary=_extract_watchlist_recall_dossier_summary,
         extract_candidate_pool_recall_dossier_summary=_extract_candidate_pool_recall_dossier_summary,
+        extract_early_runner_summary=_extract_early_runner_summary,
         extract_selected_outcome_refresh_summary=_extract_selected_outcome_refresh_summary,
         extract_carryover_multiday_continuation_audit_summary=_extract_carryover_multiday_continuation_audit_summary,
         extract_carryover_aligned_peer_harvest_summary=_extract_carryover_aligned_peer_harvest_summary,
@@ -1635,6 +1646,10 @@ def _diff_score_fail_frontier(current_payload: dict[str, Any], previous_payload:
     return _diff_score_fail_frontier_impl(current_payload, previous_payload)
 
 
+def _diff_early_runner(current_payload: dict[str, Any], previous_payload: dict[str, Any]) -> dict[str, Any]:
+    return _diff_early_runner_impl(current_payload, previous_payload)
+
+
 def _extract_score_fail_frontier_summaries(
     current_payload: dict[str, Any],
     previous_payload: dict[str, Any],
@@ -1674,6 +1689,8 @@ def _list_changed_delta_sections(delta_payload: dict[str, Any]) -> list[str]:
     changed_sections: list[str] = []
     if dict(delta_payload.get("priority_delta") or {}).get("has_changes"):
         changed_sections.append("priority")
+    if dict(delta_payload.get("early_runner_delta") or {}).get("has_changes"):
+        changed_sections.append("early_runner")
     if dict(delta_payload.get("catalyst_frontier_delta") or {}).get("has_changes"):
         changed_sections.append("catalyst_frontier")
     if dict(delta_payload.get("score_fail_frontier_delta") or {}).get("has_changes"):
@@ -1768,6 +1785,7 @@ def _build_open_ready_delta_sections(
     return {
         "priority_delta": _diff_priority_board(current_priority_snapshot, previous_priority_board, previous_summary_source=previous_summary_source),
         "governance_delta": _diff_governance(current_payload, previous_payload),
+        "early_runner_delta": _diff_early_runner(current_payload, previous_payload),
         "replay_delta": _diff_replay(current_payload, previous_payload, previous_report_snapshot),
         "catalyst_frontier_delta": _diff_catalyst_frontier(current_payload, previous_payload, previous_report_snapshot),
         "score_fail_frontier_delta": _diff_score_fail_frontier(current_payload, previous_payload),

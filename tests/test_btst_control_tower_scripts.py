@@ -158,6 +158,7 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
             {"id": "btst_governance_synthesis_latest", "report_path": "data/reports/btst_governance_synthesis_latest.md", "question": "gov", "absolute_path": "/tmp/reports/btst_governance_synthesis_latest.md"},
             {"id": "btst_tplus1_tplus2_objective_monitor_latest", "report_path": "data/reports/btst_tplus1_tplus2_objective_monitor_latest.md", "question": "obj", "absolute_path": "/tmp/reports/btst_tplus1_tplus2_objective_monitor_latest.md"},
             {"id": "btst_independent_window_monitor_latest", "report_path": "data/reports/btst_independent_window_monitor_latest.md", "question": "window", "absolute_path": "/tmp/reports/btst_independent_window_monitor_latest.md"},
+            {"id": "btst_early_runner_v1_latest", "report_path": "data/reports/btst_early_runner_v1_latest.md", "question": "early-runner", "absolute_path": "/tmp/reports/btst_early_runner_v1_latest.md"},
             {"id": "btst_default_merge_review_latest", "report_path": "data/reports/btst_default_merge_review_latest.md", "question": "merge", "absolute_path": "/tmp/reports/btst_default_merge_review_latest.md"},
             {"id": "btst_default_merge_historical_counterfactual_latest", "report_path": "data/reports/btst_default_merge_historical_counterfactual_latest.md", "question": "merge-historical", "absolute_path": "/tmp/reports/btst_default_merge_historical_counterfactual_latest.md"},
             {"id": "btst_continuation_merge_candidate_ranking_latest", "report_path": "data/reports/btst_continuation_merge_candidate_ranking_latest.md", "question": "merge-ranking", "absolute_path": "/tmp/reports/btst_continuation_merge_candidate_ranking_latest.md"},
@@ -182,6 +183,20 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
                 "counterfactual_verdict": "supports_default_btst_merge",
                 "t_plus_2_positive_rate_margin_vs_threshold": 0.2961,
                 "t_plus_2_mean_return_margin_vs_threshold": 0.0644,
+            },
+        },
+        "early_runner_summary": {
+            "deployment_mode": "shadow_only",
+            "ready_for_shadow_rollout": False,
+            "failed_items": ["promotion_blockers"],
+            "promotion_blockers": ["theme_exposure_cap_breach"],
+            "latest_daily_board": {
+                "trade_date": "2026-04-10",
+                "btst_regime_gate": "normal_trade",
+                "gate_action": "tradable",
+                "watchlist_tickers": ["300505", "300720"],
+                "priority_tickers": ["300505"],
+                "second_entry_tickers": ["300720"],
             },
         },
         "default_merge_historical_counterfactual_summary": {
@@ -271,18 +286,21 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
 
     payload = build_btst_nightly_control_tower_payload(manifest)
 
-    assert payload["recommended_reading_order"][3]["entry_id"] == "btst_default_merge_review_latest"
-    assert payload["recommended_reading_order"][4]["entry_id"] == "btst_default_merge_historical_counterfactual_latest"
-    assert payload["recommended_reading_order"][5]["entry_id"] == "btst_continuation_merge_candidate_ranking_latest"
-    assert payload["recommended_reading_order"][6]["entry_id"] == "btst_default_merge_strict_counterfactual_latest"
-    assert payload["recommended_reading_order"][7]["entry_id"] == "btst_merge_replay_validation_latest"
-    assert payload["recommended_reading_order"][8]["entry_id"] == "btst_prepared_breakout_relief_validation_latest"
-    assert payload["recommended_reading_order"][9]["entry_id"] == "btst_prepared_breakout_cohort_latest"
-    assert payload["recommended_reading_order"][10]["entry_id"] == "btst_prepared_breakout_residual_surface_latest"
-    assert payload["recommended_reading_order"][11]["entry_id"] == "btst_candidate_pool_corridor_persistence_dossier_latest"
-    assert payload["recommended_reading_order"][12]["entry_id"] == "btst_candidate_pool_corridor_window_command_board_latest"
-    assert payload["recommended_reading_order"][13]["entry_id"] == "btst_candidate_pool_corridor_window_diagnostics_latest"
-    assert payload["recommended_reading_order"][14]["entry_id"] == "btst_candidate_pool_corridor_narrow_probe_latest"
+    assert payload["recommended_reading_order"][3]["entry_id"] == "btst_early_runner_v1_latest"
+    assert payload["recommended_reading_order"][4]["entry_id"] == "btst_default_merge_review_latest"
+    assert payload["recommended_reading_order"][5]["entry_id"] == "btst_default_merge_historical_counterfactual_latest"
+    assert payload["recommended_reading_order"][6]["entry_id"] == "btst_continuation_merge_candidate_ranking_latest"
+    assert payload["recommended_reading_order"][7]["entry_id"] == "btst_default_merge_strict_counterfactual_latest"
+    assert payload["recommended_reading_order"][8]["entry_id"] == "btst_merge_replay_validation_latest"
+    assert payload["recommended_reading_order"][9]["entry_id"] == "btst_prepared_breakout_relief_validation_latest"
+    assert payload["recommended_reading_order"][10]["entry_id"] == "btst_prepared_breakout_cohort_latest"
+    assert payload["recommended_reading_order"][11]["entry_id"] == "btst_prepared_breakout_residual_surface_latest"
+    assert payload["recommended_reading_order"][12]["entry_id"] == "btst_candidate_pool_corridor_persistence_dossier_latest"
+    assert payload["recommended_reading_order"][13]["entry_id"] == "btst_candidate_pool_corridor_window_command_board_latest"
+    assert payload["recommended_reading_order"][14]["entry_id"] == "btst_candidate_pool_corridor_window_diagnostics_latest"
+    assert payload["recommended_reading_order"][15]["entry_id"] == "btst_candidate_pool_corridor_narrow_probe_latest"
+    assert payload["control_tower_snapshot"]["early_runner_summary"]["deployment_mode"] == "shadow_only"
+    assert payload["control_tower_snapshot"]["early_runner_summary"]["latest_daily_board"]["watchlist_tickers"] == ["300505", "300720"]
     assert payload["control_tower_snapshot"]["default_merge_review_summary"]["focus_ticker"] == "300720"
     assert payload["control_tower_snapshot"]["default_merge_review_summary"]["counterfactual_validation"]["counterfactual_verdict"] == "supports_default_btst_merge"
     assert payload["control_tower_snapshot"]["default_merge_historical_counterfactual_summary"]["counterfactual_verdict"] == "merged_default_btst_uplift_positive"
@@ -303,6 +321,7 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
     assert payload["control_tower_snapshot"]["candidate_pool_corridor_window_command_board_summary"]["focus_ticker"] == "300720"
     assert payload["control_tower_snapshot"]["candidate_pool_corridor_window_diagnostics_summary"]["focus_ticker"] == "300720"
     assert payload["control_tower_snapshot"]["candidate_pool_corridor_narrow_probe_summary"]["verdict"] == "lane_specific_select_threshold_override_gap"
+    assert payload["early_runner_summary"]["promotion_blockers"] == ["theme_exposure_cap_breach"]
     assert payload["merge_replay_validation_summary"]["overall_verdict"] == "merge_replay_promotes_selected"
     assert payload["merge_replay_validation_summary"]["relief_actionable_applied_count"] == 1
     assert payload["merge_replay_validation_summary"]["relief_already_selected_count"] == 1
@@ -383,6 +402,81 @@ def test_build_btst_open_ready_delta_payload_surfaces_carryover_promotion_gate_c
     assert any("carryover promotion gate" in item and "pending_next_day" in item and "pending_t_plus_2" in item for item in delta_payload["operator_focus"])
 
 
+def test_build_btst_open_ready_delta_payload_surfaces_early_runner_rollout_changes(tmp_path: Path) -> None:
+    current_payload = {
+        "generated_at": "2026-04-10T08:00:00",
+        "latest_btst_run": {
+            "report_dir": "data/reports/report_b",
+            "report_dir_abs": str(tmp_path / "data" / "reports" / "report_b"),
+            "selection_target": "short_trade_only",
+        },
+        "latest_priority_board_snapshot": {"headline": "headline-b"},
+        "latest_btst_snapshot": {},
+        "control_tower_snapshot": {
+            "early_runner_summary": {
+                "deployment_mode": "formal_buy_candidate",
+                "ready_for_shadow_rollout": True,
+                "failed_items": [],
+                "promotion_blockers": [],
+                "latest_daily_board": {
+                    "trade_date": "2026-04-10",
+                    "btst_regime_gate": "normal_trade",
+                    "gate_action": "tradable",
+                    "watchlist_tickers": ["300001", "300505"],
+                    "priority_tickers": ["300001", "300505"],
+                    "second_entry_tickers": ["300720"],
+                    "confirmed_tickers": ["300001"],
+                },
+            }
+        },
+        "source_paths": {},
+    }
+    previous_payload = {
+        "generated_at": "2026-04-10T07:30:00",
+        "latest_btst_run": {
+            "report_dir": "data/reports/report_a",
+            "report_dir_abs": str(tmp_path / "data" / "reports" / "report_a"),
+            "selection_target": "short_trade_only",
+        },
+        "latest_priority_board_snapshot": {"headline": "headline-a"},
+        "latest_btst_snapshot": {},
+        "control_tower_snapshot": {
+            "early_runner_summary": {
+                "deployment_mode": "shadow_only",
+                "ready_for_shadow_rollout": False,
+                "failed_items": ["promotion_blockers"],
+                "promotion_blockers": ["theme_exposure_cap_breach"],
+                "latest_daily_board": {
+                    "trade_date": "2026-04-09",
+                    "btst_regime_gate": "normal_trade",
+                    "gate_action": "tradable",
+                    "watchlist_tickers": ["300001"],
+                    "priority_tickers": ["300001"],
+                    "second_entry_tickers": [],
+                    "confirmed_tickers": [],
+                },
+            }
+        },
+        "source_paths": {},
+    }
+
+    delta_payload = build_btst_open_ready_delta_payload(
+        current_payload,
+        reports_root=tmp_path / "data" / "reports",
+        current_nightly_json_path=tmp_path / "data" / "reports" / "btst_nightly_control_tower_latest.json",
+        previous_payload=previous_payload,
+        previous_payload_path=str(tmp_path / "data" / "reports" / "history.json"),
+        historical_payload_candidates=[],
+    )
+
+    assert delta_payload["overall_delta_verdict"] == "changed"
+    assert delta_payload["early_runner_delta"]["previous_deployment_mode"] == "shadow_only"
+    assert delta_payload["early_runner_delta"]["current_deployment_mode"] == "formal_buy_candidate"
+    assert delta_payload["early_runner_delta"]["added_priority_tickers"] == ["300505"]
+    assert delta_payload["early_runner_delta"]["removed_promotion_blockers"] == ["theme_exposure_cap_breach"]
+    assert any("early runner" in item and "shadow_only" in item and "formal_buy_candidate" in item for item in delta_payload["operator_focus"])
+
+
 def test_render_btst_open_ready_delta_markdown_surfaces_phase_aware_carryover_promotion_gate_delta(tmp_path: Path) -> None:
     payload = {
         "generated_at": "2026-04-10T08:00:00",
@@ -423,6 +517,49 @@ def test_render_btst_open_ready_delta_markdown_surfaces_phase_aware_carryover_pr
     assert "- current_default_expansion_status: pending_peer_proof" in markdown
     assert "- added_pending_next_day_ticker: 600989" in markdown
     assert "- removed_pending_next_day_ticker: 301396" in markdown
+
+
+def test_render_btst_open_ready_delta_markdown_surfaces_early_runner_rollout_delta(tmp_path: Path) -> None:
+    payload = {
+        "generated_at": "2026-04-10T08:00:00",
+        "comparison_basis": "previous_btst_report",
+        "comparison_scope": "previous_btst_report",
+        "overall_delta_verdict": "changed",
+        "current_reference": {"report_dir": "data/reports/report_b", "trade_date": "2026-04-10"},
+        "previous_reference": {"report_dir": "data/reports/report_a", "trade_date": "2026-04-09", "generated_at": "2026-04-10T07:30:00"},
+        "operator_focus": [],
+        "early_runner_delta": {
+            "available": True,
+            "has_changes": True,
+            "previous_deployment_mode": "shadow_only",
+            "current_deployment_mode": "formal_buy_candidate",
+            "previous_ready_for_shadow_rollout": False,
+            "current_ready_for_shadow_rollout": True,
+            "previous_trade_date": "2026-04-09",
+            "current_trade_date": "2026-04-10",
+            "previous_btst_regime_gate": "normal_trade",
+            "current_btst_regime_gate": "normal_trade",
+            "previous_gate_action": "tradable",
+            "current_gate_action": "tradable",
+            "previous_priority_tickers": ["300001"],
+            "current_priority_tickers": ["300001", "300505"],
+            "added_priority_tickers": ["300505"],
+            "removed_priority_tickers": [],
+            "previous_promotion_blockers": ["theme_exposure_cap_breach"],
+            "current_promotion_blockers": [],
+            "added_promotion_blockers": [],
+            "removed_promotion_blockers": ["theme_exposure_cap_breach"],
+        },
+        "source_paths": {},
+    }
+
+    markdown = render_btst_open_ready_delta_markdown(payload, output_parent=tmp_path)
+
+    assert "## Early Runner Delta" in markdown
+    assert "- previous_deployment_mode: shadow_only" in markdown
+    assert "- current_deployment_mode: formal_buy_candidate" in markdown
+    assert "- added_priority_ticker: 300505" in markdown
+    assert "- removed_promotion_blocker: theme_exposure_cap_breach" in markdown
 
 
 def test_render_btst_nightly_control_tower_markdown_surfaces_pending_peer_promotion_contract(tmp_path: Path) -> None:
@@ -3179,13 +3316,14 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["recommended_reading_order"][0]["entry_id"] == "btst_governance_synthesis_latest"
     assert payload["recommended_reading_order"][1]["entry_id"] == "btst_tplus1_tplus2_objective_monitor_latest"
     assert payload["recommended_reading_order"][2]["entry_id"] == "btst_independent_window_monitor_latest"
-    assert payload["recommended_reading_order"][3]["entry_id"] == "btst_tradeable_opportunity_pool_march"
-    assert payload["recommended_reading_order"][4]["entry_id"] == "btst_no_candidate_entry_action_board_latest"
-    assert payload["recommended_reading_order"][5]["entry_id"] == "btst_no_candidate_entry_replay_bundle_latest"
-    assert payload["recommended_reading_order"][6]["entry_id"] == "btst_no_candidate_entry_failure_dossier_latest"
-    assert payload["recommended_reading_order"][7]["entry_id"] == "btst_watchlist_recall_dossier_latest"
-    assert payload["recommended_reading_order"][8]["entry_id"] == "btst_candidate_pool_recall_dossier_latest"
-    assert payload["recommended_reading_order"][9]["entry_id"] == "btst_tradeable_opportunity_reason_waterfall_march"
+    assert payload["recommended_reading_order"][3]["entry_id"] == "btst_early_runner_v1_latest"
+    assert payload["recommended_reading_order"][4]["entry_id"] == "btst_tradeable_opportunity_pool_march"
+    assert payload["recommended_reading_order"][5]["entry_id"] == "btst_no_candidate_entry_action_board_latest"
+    assert payload["recommended_reading_order"][6]["entry_id"] == "btst_no_candidate_entry_replay_bundle_latest"
+    assert payload["recommended_reading_order"][7]["entry_id"] == "btst_no_candidate_entry_failure_dossier_latest"
+    assert payload["recommended_reading_order"][8]["entry_id"] == "btst_watchlist_recall_dossier_latest"
+    assert payload["recommended_reading_order"][9]["entry_id"] == "btst_candidate_pool_recall_dossier_latest"
+    assert payload["recommended_reading_order"][10]["entry_id"] == "btst_tradeable_opportunity_reason_waterfall_march"
     assert payload["control_tower_snapshot"]["independent_window_ready_lane_count"] == 0
     assert payload["control_tower_snapshot"]["independent_window_waiting_lane_count"] == 0
     assert payload["control_tower_snapshot"]["independent_window_monitor"]["report_dir_count"] == 0

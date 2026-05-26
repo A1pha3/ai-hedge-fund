@@ -110,6 +110,7 @@ def build_open_ready_delta_analysis(
         "previous_reference": previous_reference,
         "operator_focus": operator_focus[:6],
         "priority_delta": delta_sections["priority_delta"],
+        "early_runner_delta": delta_sections["early_runner_delta"],
         "catalyst_frontier_delta": delta_sections["catalyst_frontier_delta"],
         "score_fail_frontier_delta": delta_sections["score_fail_frontier_delta"],
         "top_priority_action_delta": delta_sections["top_priority_action_delta"],

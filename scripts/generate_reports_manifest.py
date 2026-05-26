@@ -50,6 +50,10 @@ from scripts.analyze_btst_tplus1_tplus2_objective_monitor import (
     analyze_btst_tplus1_tplus2_objective_monitor,
     render_btst_tplus1_tplus2_objective_monitor_markdown,
 )
+from scripts.analyze_btst_early_runner_v1 import (
+    analyze_btst_early_runner_v1,
+    render_btst_early_runner_v1_markdown,
+)
 from scripts.analyze_multi_window_short_trade_role_candidates import (
     analyze_multi_window_short_trade_role_candidates,
     render_multi_window_short_trade_role_candidates_markdown,
@@ -675,6 +679,58 @@ def _build_default_merge_review_summary(reports_root: Path) -> dict[str, Any]:
     return _optional_report_json(reports_root / "btst_default_merge_review_latest.json")
 
 
+def _build_early_runner_summary(reports_root: Path) -> dict[str, Any]:
+    analysis = _optional_report_json(reports_root / "btst_early_runner_v1_latest.json")
+    if not analysis:
+        return {}
+    daily_boards = [dict(board or {}) for board in list(analysis.get("daily_boards") or [])]
+    latest_board = daily_boards[-1] if daily_boards else {}
+    acceptance_checklist = dict(analysis.get("acceptance_checklist") or {})
+    validation = dict(analysis.get("validation") or {})
+
+    def _ticker_list(entries: list[dict[str, Any]]) -> list[str]:
+        return [str(dict(entry or {}).get("ticker") or "") for entry in entries if str(dict(entry or {}).get("ticker") or "").strip()]
+
+    watchlist_entries = [dict(entry or {}) for entry in list(latest_board.get("early_runner_watchlist") or [])]
+    priority_entries = [dict(entry or {}) for entry in list(latest_board.get("early_runner_priority") or [])]
+    second_entry_rows = [dict(entry or {}) for entry in list(latest_board.get("second_entry_reentry") or [])]
+    confirmed_entries = [dict(entry or {}) for entry in list(latest_board.get("confirmed_entries") or [])]
+    watchlist_tickers = _ticker_list(watchlist_entries)
+    priority_tickers = _ticker_list(priority_entries)
+    second_entry_tickers = _ticker_list(second_entry_rows)
+    confirmed_tickers = _ticker_list(confirmed_entries)
+    return {
+        "report_dir_count": analysis.get("report_dir_count"),
+        "row_count": analysis.get("row_count"),
+        "board_count": len(daily_boards),
+        "trade_dates": [str(board.get("trade_date") or "") for board in daily_boards if str(board.get("trade_date") or "").strip()],
+        "deployment_mode": analysis.get("deployment_mode"),
+        "ready_for_shadow_rollout": acceptance_checklist.get("ready_for_shadow_rollout"),
+        "failed_items": list(acceptance_checklist.get("failed_items") or []),
+        "promotion_blockers": list(analysis.get("promotion_blockers") or []),
+        "tradable_after_cost_expectancy": validation.get("tradable_after_cost_expectancy"),
+        "month_oos_pass_count": validation.get("month_oos_pass_count"),
+        "failure_log_coverage": validation.get("failure_log_coverage"),
+        "max_single_theme_exposure": validation.get("max_single_theme_exposure"),
+        "max_single_theme_exposure_cap": validation.get("max_single_theme_exposure_cap"),
+        "failure_log_count": len(list(analysis.get("failure_log") or [])),
+        "latest_daily_board": {
+            "trade_date": latest_board.get("trade_date"),
+            "btst_regime_gate": latest_board.get("btst_regime_gate"),
+            "gate_action": latest_board.get("gate_action"),
+            "deployment_mode": latest_board.get("deployment_mode") or analysis.get("deployment_mode"),
+            "watchlist_tickers": watchlist_tickers,
+            "priority_tickers": priority_tickers,
+            "second_entry_tickers": second_entry_tickers,
+            "confirmed_tickers": confirmed_tickers,
+            "watchlist_count": len(watchlist_tickers),
+            "priority_count": len(priority_tickers),
+            "second_entry_count": len(second_entry_tickers),
+            "confirmed_count": len(confirmed_tickers),
+        },
+    }
+
+
 def _build_selected_outcome_refresh_summary(reports_root: Path) -> dict[str, Any]:
     refresh_board = _optional_report_json(reports_root / "btst_selected_outcome_refresh_board_latest.json")
     if not refresh_board:
@@ -949,6 +1005,8 @@ BTST_INDEPENDENT_WINDOW_MONITOR_JSON = "btst_independent_window_monitor_latest.j
 BTST_INDEPENDENT_WINDOW_MONITOR_MD = "btst_independent_window_monitor_latest.md"
 BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_JSON = "btst_tplus1_tplus2_objective_monitor_latest.json"
 BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_MD = "btst_tplus1_tplus2_objective_monitor_latest.md"
+BTST_EARLY_RUNNER_V1_JSON = "btst_early_runner_v1_latest.json"
+BTST_EARLY_RUNNER_V1_MD = "btst_early_runner_v1_latest.md"
 BTST_TRADEABLE_OPPORTUNITY_POOL_JSON = "btst_tradeable_opportunity_pool_march.json"
 BTST_TRADEABLE_OPPORTUNITY_POOL_MD = "btst_tradeable_opportunity_pool_march.md"
 BTST_TRADEABLE_OPPORTUNITY_POOL_CSV = "btst_tradeable_opportunity_pool_march.csv"
@@ -1100,6 +1158,19 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "priority": 1,
         "is_latest": True,
         "question": "当前 formal selected 的实时兑现状态与历史 proof 是否一致",
+        "view_order": 3,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_early_runner_v1_latest",
+        "path": "data/reports/btst_early_runner_v1_latest.md",
+        "report_type": "btst_early_runner_v1",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "当前 early runner 的治理 readiness、watchlist 与 priority 焦点是什么",
         "view_order": 3,
         "time_scope": {"label": "rolling"},
         "source_kind": "generated_runtime_artifact",
@@ -1874,6 +1945,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "entry_ids": [
             "btst_open_ready_delta_latest",
             "btst_latest_close_validation_latest",
+            "btst_early_runner_v1_latest",
             "btst_selected_outcome_refresh_board_latest",
             "btst_default_merge_review_latest",
             "btst_default_merge_historical_counterfactual_latest",
@@ -1930,6 +2002,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "entry_ids": [
             "btst_open_ready_delta_latest",
             "btst_latest_close_validation_latest",
+            "btst_early_runner_v1_latest",
             "btst_selected_outcome_refresh_board_latest",
             "btst_default_merge_review_latest",
             "btst_default_merge_historical_counterfactual_latest",
@@ -2581,6 +2654,7 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
 def _build_candidate_entry_shadow_rollup_summaries() -> dict[str, Any]:
     return {
         "continuation_focus_summary": _build_continuation_focus_summary,
+        "early_runner_summary": _build_early_runner_summary,
         "selected_outcome_refresh_summary": _build_selected_outcome_refresh_summary,
         "carryover_multiday_continuation_audit_summary": _build_carryover_multiday_continuation_audit_summary,
         "carryover_aligned_peer_harvest_summary": _build_carryover_aligned_peer_harvest_summary,
@@ -3069,6 +3143,35 @@ def refresh_btst_independent_window_monitor_artifacts(reports_root: str | Path) 
     }
 
 
+def refresh_btst_early_runner_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    output_json_path = resolved_reports_root / BTST_EARLY_RUNNER_V1_JSON
+    output_md_path = resolved_reports_root / BTST_EARLY_RUNNER_V1_MD
+    try:
+        analysis = analyze_btst_early_runner_v1(resolved_reports_root)
+        output_json_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_md_path.write_text(render_btst_early_runner_v1_markdown(analysis), encoding="utf-8")
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "error": str(exc),
+            "report_dir_count": 0,
+        }
+
+    latest_board = dict(list(analysis.get("daily_boards") or [])[-1] or {}) if list(analysis.get("daily_boards") or []) else {}
+    acceptance_checklist = dict(analysis.get("acceptance_checklist") or {})
+    return {
+        "status": "refreshed",
+        "report_dir_count": analysis.get("report_dir_count"),
+        "row_count": analysis.get("row_count"),
+        "deployment_mode": analysis.get("deployment_mode"),
+        "ready_for_shadow_rollout": acceptance_checklist.get("ready_for_shadow_rollout"),
+        "latest_trade_date": latest_board.get("trade_date"),
+        "output_json": output_json_path.as_posix(),
+        "output_markdown": output_md_path.as_posix(),
+    }
+
+
 def refresh_btst_tplus1_tplus2_objective_monitor_artifacts(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     output_json_path = resolved_reports_root / BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_JSON
@@ -3275,6 +3378,7 @@ def _build_reports_manifest_payload(
         "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
         "btst_tradeable_opportunity_pool_refresh": btst_tradeable_opportunity_pool_refresh,
         "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
+        "early_runner_summary": _build_early_runner_summary(resolved_reports_root),
         "selected_outcome_refresh_summary": _build_selected_outcome_refresh_summary(resolved_reports_root),
         "carryover_multiday_continuation_audit_summary": _build_carryover_multiday_continuation_audit_summary(resolved_reports_root),
         "carryover_aligned_peer_harvest_summary": _build_carryover_aligned_peer_harvest_summary(resolved_reports_root),
@@ -3521,6 +3625,10 @@ def _manifest_summary_section_specs() -> tuple[tuple[str, Any], ...]:
             lambda summary: f"- continuation_focus_summary: focus_ticker={summary.get('focus_ticker')} promotion_review_verdict={summary.get('promotion_review_verdict')} promotion_gate_verdict={summary.get('promotion_gate_verdict')} watchlist_execution_verdict={summary.get('watchlist_execution_verdict')} focus_watch_validation_status={summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={summary.get('eligible_gate_verdict')} execution_gate_verdict={summary.get('execution_gate_verdict')} execution_gate_blockers={summary.get('execution_gate_blockers')} execution_overlay_verdict={summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={summary.get('execution_overlay_lane_support_ratio')} governance_status={summary.get('governance_status')}",
         ),
         (
+            "early_runner_summary",
+            lambda summary: f"- early_runner_summary: deployment_mode={summary.get('deployment_mode')} ready_for_shadow_rollout={summary.get('ready_for_shadow_rollout')} failed_items={summary.get('failed_items')} promotion_blockers={summary.get('promotion_blockers')} latest_trade_date={dict(summary.get('latest_daily_board') or {}).get('trade_date')} latest_gate={dict(summary.get('latest_daily_board') or {}).get('btst_regime_gate')} latest_action={dict(summary.get('latest_daily_board') or {}).get('gate_action')} latest_watchlist={dict(summary.get('latest_daily_board') or {}).get('watchlist_tickers')} latest_priority={dict(summary.get('latest_daily_board') or {}).get('priority_tickers')} latest_second_entry={dict(summary.get('latest_daily_board') or {}).get('second_entry_tickers')}",
+        ),
+        (
             "selected_outcome_refresh_summary",
             lambda summary: f"- selected_outcome_refresh_summary: trade_date={summary.get('trade_date')} selected_count={summary.get('selected_count')} focus_ticker={summary.get('focus_ticker')} focus_cycle_status={summary.get('focus_cycle_status')} focus_data_status={summary.get('focus_data_status')} focus_next_close_return={summary.get('focus_next_close_return')} focus_t_plus_2_close_return={summary.get('focus_t_plus_2_close_return')} focus_historical_next_close_positive_rate={summary.get('focus_historical_next_close_positive_rate')} focus_historical_t_plus_2_close_positive_rate={summary.get('focus_historical_t_plus_2_close_positive_rate')} focus_next_day_contract_verdict={summary.get('focus_next_day_contract_verdict')} focus_t_plus_2_contract_verdict={summary.get('focus_t_plus_2_contract_verdict')} focus_overall_contract_verdict={summary.get('focus_overall_contract_verdict')}",
         ),
@@ -3701,6 +3809,7 @@ def _build_reports_manifest_refresh_bundle(
     btst_window_evidence_refresh = refresh_btst_window_evidence_artifacts(resolved_reports_root)
     btst_independent_window_monitor_refresh = refresh_btst_independent_window_monitor_artifacts(resolved_reports_root)
     btst_tplus1_tplus2_objective_monitor_refresh = refresh_btst_tplus1_tplus2_objective_monitor_artifacts(resolved_reports_root)
+    btst_early_runner_refresh = refresh_btst_early_runner_artifacts(resolved_reports_root)
     btst_tradeable_opportunity_pool_refresh = refresh_btst_tradeable_opportunity_pool_artifacts(resolved_reports_root)
     candidate_entry_shadow_refresh = refresh_btst_candidate_entry_shadow_lane_artifacts(resolved_reports_root)
     btst_score_fail_frontier_refresh = refresh_btst_score_fail_frontier_artifacts(
@@ -3726,6 +3835,7 @@ def _build_reports_manifest_refresh_bundle(
         "btst_replay_cohort_refresh": btst_replay_cohort_refresh,
         "btst_independent_window_monitor_refresh": btst_independent_window_monitor_refresh,
         "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
+        "btst_early_runner_refresh": btst_early_runner_refresh,
         "btst_tradeable_opportunity_pool_refresh": btst_tradeable_opportunity_pool_refresh,
     }
 

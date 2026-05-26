@@ -37,6 +37,7 @@ def extract_control_tower_snapshot(
     no_candidate_entry_failure_dossier = snapshot_sections["no_candidate_entry_failure_dossier"]
     watchlist_recall_dossier = snapshot_sections["watchlist_recall_dossier"]
     candidate_pool_recall_dossier = snapshot_sections["candidate_pool_recall_dossier"]
+    early_runner_summary = snapshot_sections["early_runner_summary"]
     selected_outcome_refresh_summary = snapshot_sections["selected_outcome_refresh_summary"]
     carryover_multiday_continuation_audit_summary = snapshot_sections["carryover_multiday_continuation_audit_summary"]
     carryover_aligned_peer_harvest_summary = snapshot_sections["carryover_aligned_peer_harvest_summary"]
@@ -94,6 +95,7 @@ def extract_control_tower_snapshot(
         "no_candidate_entry_failure_dossier": no_candidate_entry_failure_dossier,
         "watchlist_recall_dossier": watchlist_recall_dossier,
         "candidate_pool_recall_dossier": candidate_pool_recall_dossier,
+        "early_runner_summary": early_runner_summary,
         "selected_outcome_refresh_summary": selected_outcome_refresh_summary,
         "carryover_multiday_continuation_audit_summary": carryover_multiday_continuation_audit_summary,
         "carryover_aligned_peer_harvest_summary": carryover_aligned_peer_harvest_summary,

@@ -168,6 +168,10 @@ def append_nightly_overview_candidate_pool_followup_tail_markdown(
     score_fail_frontier_summary: dict[str, Any],
     llm_error_digest: dict[str, Any],
 ) -> None:
+    early_runner_summary = dict(control_tower_snapshot.get("early_runner_summary") or {})
+    if early_runner_summary:
+        latest_daily_board = dict(early_runner_summary.get("latest_daily_board") or {})
+        lines.append(f"- early_runner_summary: deployment_mode={early_runner_summary.get('deployment_mode')} ready_for_shadow_rollout={early_runner_summary.get('ready_for_shadow_rollout')} failed_items={early_runner_summary.get('failed_items')} promotion_blockers={early_runner_summary.get('promotion_blockers')} latest_trade_date={latest_daily_board.get('trade_date')} latest_gate={latest_daily_board.get('btst_regime_gate')} latest_action={latest_daily_board.get('gate_action')} latest_watchlist={latest_daily_board.get('watchlist_tickers')} latest_priority={latest_daily_board.get('priority_tickers')} latest_second_entry={latest_daily_board.get('second_entry_tickers')}")
     continuation_merge_candidate_ranking_summary = dict(control_tower_snapshot.get("continuation_merge_candidate_ranking_summary") or {})
     if continuation_merge_candidate_ranking_summary:
         top_candidate = dict(continuation_merge_candidate_ranking_summary.get("top_candidate") or {})

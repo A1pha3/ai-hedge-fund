@@ -32,6 +32,17 @@ def append_open_ready_governance_focus(operator_focus: list[str], governance_del
         operator_focus.append("治理 lane 发生变化: " + ", ".join(change.get("lane_id") or "" for change in governance_delta.get("lane_changes") or []))
 
 
+def append_open_ready_early_runner_focus(operator_focus: list[str], early_runner_delta: dict[str, Any]) -> None:
+    if not (early_runner_delta.get("available") and early_runner_delta.get("has_changes")):
+        return
+    operator_focus.append(
+        f"early runner 变化: deployment_mode {early_runner_delta.get('previous_deployment_mode') or 'n/a'} -> {early_runner_delta.get('current_deployment_mode') or 'n/a'}, "
+        f"ready_for_shadow_rollout {early_runner_delta.get('previous_ready_for_shadow_rollout')} -> {early_runner_delta.get('current_ready_for_shadow_rollout')}, "
+        f"priority {early_runner_delta.get('previous_priority_tickers') or []} -> {early_runner_delta.get('current_priority_tickers') or []}, "
+        f"promotion_blockers {early_runner_delta.get('previous_promotion_blockers') or []} -> {early_runner_delta.get('current_promotion_blockers') or []}。"
+    )
+
+
 def append_open_ready_replay_focus(operator_focus: list[str], replay_delta: dict[str, Any]) -> None:
     if not (replay_delta.get("available") and replay_delta.get("has_changes")):
         return
@@ -103,7 +114,7 @@ def append_open_ready_score_fail_focus(operator_focus: list[str], score_fail_del
 def append_open_ready_stability_focus(operator_focus: list[str]) -> None:
     if not operator_focus:
         operator_focus.append(
-            "本轮相对上一轮没有检测到 priority / governance / replay / score-fail frontier / top priority action / selected contract / carryover peer proof / carryover promotion gate 的结构变化，可视为稳定复跑。"
+            "本轮相对上一轮没有检测到 priority / governance / early runner / replay / score-fail frontier / top priority action / selected contract / carryover peer proof / carryover promotion gate 的结构变化，可视为稳定复跑。"
         )
 
 
@@ -112,6 +123,7 @@ def build_open_ready_operator_focus(comparison_basis: str, comparison_scope: str
     append_open_ready_basis_focus(operator_focus, comparison_basis, comparison_scope)
     append_open_ready_priority_focus(operator_focus, dict(delta_sections.get("priority_delta") or {}))
     append_open_ready_governance_focus(operator_focus, dict(delta_sections.get("governance_delta") or {}))
+    append_open_ready_early_runner_focus(operator_focus, dict(delta_sections.get("early_runner_delta") or {}))
     append_open_ready_replay_focus(operator_focus, dict(delta_sections.get("replay_delta") or {}))
     append_open_ready_frontier_focus(
         operator_focus,
@@ -142,6 +154,7 @@ def resolve_open_ready_overall_delta_verdict(comparison_basis: str, delta_sectio
         for section in [
             "priority_delta",
             "governance_delta",
+            "early_runner_delta",
             "replay_delta",
             "catalyst_frontier_delta",
             "score_fail_frontier_delta",
