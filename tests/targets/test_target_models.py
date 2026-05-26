@@ -4498,6 +4498,38 @@ def test_resolve_short_trade_decision_rejects_proof_missing_low_trend_corridor_n
     assert "selected_historical_proof_low_trend_acceleration" in blockers
 
 
+def test_resolve_short_trade_decision_rejects_proof_missing_low_trend_after_selected_cap_soft_relief() -> None:
+    blockers: list[str] = []
+    gate_status = {"data": "pass", "execution": "proxy_only", "structural": "pass", "score": "pass", "committee_veto": "pass", "committee": "shadow_only"}
+
+    decision = _resolve_short_trade_decision(
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=0.3850410205683788,
+        effective_near_miss_threshold=0.26,
+        effective_select_threshold=0.35,
+        selected_score_tolerance=0.001,
+        selected_breakout_gate_pass=True,
+        near_miss_breakout_gate_pass=True,
+        rank_decision_cap={
+            "selected_cap_exceeded_effective": False,
+            "selected_cap_soft_relief_applied": True,
+            "near_miss_cap_exceeded": True,
+        },
+        carryover_evidence_deficiency={"evidence_deficient": False},
+        selected_historical_proof_deficiency={"proof_missing": True},
+        candidate_source="upstream_liquidity_corridor_shadow",
+        profitability_hard_cliff=False,
+        extension_without_room_penalty=0.0422,
+        trend_acceleration=0.581,
+    )
+
+    assert decision == "rejected"
+    assert gate_status["score"] == "fail"
+    assert gate_status["rank"] == "selected_cap_soft_relief"
+    assert "selected_historical_proof_low_trend_acceleration" in blockers
+
+
 def test_resolve_short_trade_decision_keeps_proof_missing_corridor_near_miss_when_trend_is_supportive() -> None:
     blockers: list[str] = []
     gate_status = {"data": "pass", "execution": "proxy_only", "structural": "pass", "score": "near_miss", "committee_veto": "pass", "committee": "pass"}
@@ -4576,6 +4608,70 @@ def test_upstream_shadow_near_miss_profitability_hard_cliff_with_heavy_extension
     assert result.decision == "rejected"
     assert result.gate_status["score"] == "fail"
     assert "profitability_unknown_extension_penalty" in result.rejection_reasons
+
+
+def test_resolve_short_trade_decision_rejects_unknown_extension_after_selected_cap_downgrade() -> None:
+    blockers: list[str] = []
+    gate_status = {"data": "pass", "execution": "proxy_only", "structural": "pass", "score": "pass", "committee_veto": "pass", "committee": "shadow_only"}
+
+    decision = _resolve_short_trade_decision(
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=0.4384822011301026,
+        effective_near_miss_threshold=0.26,
+        effective_select_threshold=0.35,
+        selected_score_tolerance=0.001,
+        selected_breakout_gate_pass=True,
+        near_miss_breakout_gate_pass=True,
+        rank_decision_cap={
+            "selected_cap_exceeded_effective": True,
+            "near_miss_cap_exceeded": False,
+            "selected_cap_soft_relief_applied": False,
+        },
+        carryover_evidence_deficiency={"evidence_deficient": False},
+        selected_historical_proof_deficiency={"proof_missing": True},
+        candidate_source="upstream_liquidity_corridor_shadow",
+        profitability_hard_cliff=True,
+        extension_without_room_penalty=0.45,
+        trend_acceleration=0.8373,
+    )
+
+    assert decision == "rejected"
+    assert gate_status["score"] == "fail"
+    assert gate_status["rank"] == "selected_cap_exceeded"
+    assert "profitability_unknown_extension_penalty" in blockers
+
+
+def test_resolve_short_trade_decision_rejects_unknown_extension_after_selected_cap_downgrade_even_with_historical_proof() -> None:
+    blockers: list[str] = []
+    gate_status = {"data": "pass", "execution": "proxy_only", "structural": "pass", "score": "pass", "committee_veto": "pass", "committee": "pass"}
+
+    decision = _resolve_short_trade_decision(
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=0.5893950172417591,
+        effective_near_miss_threshold=0.26,
+        effective_select_threshold=0.35,
+        selected_score_tolerance=0.001,
+        selected_breakout_gate_pass=True,
+        near_miss_breakout_gate_pass=True,
+        rank_decision_cap={
+            "selected_cap_exceeded_effective": True,
+            "near_miss_cap_exceeded": False,
+            "selected_cap_soft_relief_applied": False,
+        },
+        carryover_evidence_deficiency={"evidence_deficient": False},
+        selected_historical_proof_deficiency={"proof_missing": False},
+        candidate_source="upstream_liquidity_corridor_shadow",
+        profitability_hard_cliff=True,
+        extension_without_room_penalty=0.4352,
+        trend_acceleration=0.8578,
+    )
+
+    assert decision == "rejected"
+    assert gate_status["score"] == "fail"
+    assert gate_status["rank"] == "selected_cap_exceeded"
+    assert "profitability_unknown_extension_penalty" in blockers
 
 
 def test_upstream_shadow_near_miss_profitability_hard_cliff_with_moderate_extension_stays_near_miss() -> None:

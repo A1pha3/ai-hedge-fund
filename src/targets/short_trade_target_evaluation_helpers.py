@@ -354,20 +354,23 @@ def _resolve_short_trade_decision(
         rank_decision_cap=rank_decision_cap,
     )
     if cap_override is not None:
-        return cap_override
+        decision = cap_override
 
     if carryover_evidence_deficiency["evidence_deficient"] and decision in {"selected", "near_miss"}:
         gate_status["score"] = "fail"
         return "rejected"
     if selected_historical_proof_deficiency["proof_missing"] and decision == "selected":
         gate_status["score"] = "near_miss"
-        return "near_miss"
+        decision = "near_miss"
     if (
         decision == "near_miss"
         and candidate_source == "upstream_liquidity_corridor_shadow"
         and profitability_hard_cliff
-        and selected_historical_proof_deficiency["proof_missing"]
         and extension_without_room_penalty >= 0.40
+        and (
+            selected_historical_proof_deficiency["proof_missing"]
+            or gate_status.get("rank") == "selected_cap_exceeded"
+        )
     ):
         blockers.append("profitability_unknown_extension_penalty")
         gate_status["score"] = "fail"
