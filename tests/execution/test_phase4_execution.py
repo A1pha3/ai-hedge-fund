@@ -1494,6 +1494,64 @@ def test_run_post_market_keeps_failed_upstream_shadow_as_observation_lane():
     assert "301292" not in plan.selection_targets
 
 
+def test_build_post_market_watchlist_context_injects_early_runner_runtime_entries(monkeypatch):
+    """Early runner runtime entries are appended once and tracked separately for downstream selection."""
+    pipeline = DailyPipeline(
+        agent_runner=lambda tickers, trade_date, model: {},
+        exit_checker=lambda portfolio, trade_date: [],
+        target_mode="short_trade_only",
+    )
+    candidate_context = daily_pipeline_module.PostMarketCandidateContext(
+        candidates=[],
+        shadow_candidates=[],
+        candidate_pool_shadow_summary={},
+        market_state=MarketState(state_type=MarketStateType.TREND, adjusted_weights={}),
+        fused=[],
+        shadow_fused=[],
+        high_pool=[],
+        top_precise_pool=[],
+        layer_c_results=[],
+        logic_scores={},
+        merge_approved_breakout_signal_uplift={},
+        merge_approved_layer_c_alignment_uplift={},
+        merge_approved_sector_resonance_uplift={},
+    )
+
+    monkeypatch.setattr(daily_pipeline_module, "_build_merge_approved_watchlist", lambda *args, **kwargs: [])
+    monkeypatch.setattr(daily_pipeline_module, "_build_layer_b_filter_diagnostics_wrapper", lambda *args, **kwargs: {})
+    monkeypatch.setattr(daily_pipeline_module, "_build_watchlist_filter_diagnostics_wrapper", lambda *args, **kwargs: {})
+    monkeypatch.setattr(daily_pipeline_module, "_load_latest_btst_historical_prior_by_ticker", lambda: {})
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "_build_short_trade_candidate_diagnostics",
+        lambda *args, **kwargs: {
+            "tickers": [{"ticker": "300001", "candidate_source": "existing_short_trade"}],
+            "released_shadow_entries": [],
+            "shadow_observation_entries": [],
+            "selected_tickers": ["300001"],
+        },
+    )
+    monkeypatch.setattr(daily_pipeline_module, "_select_upstream_shadow_watchlist_entries", lambda *args, **kwargs: [])
+    monkeypatch.setattr(daily_pipeline_module, "_attach_historical_prior_to_watchlist", lambda watchlist, prior_by_ticker: watchlist)
+    monkeypatch.setattr(daily_pipeline_module, "_build_catalyst_theme_candidate_diagnostics", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "_load_early_runner_runtime_entries",
+        lambda trade_date: [
+            {"ticker": "300001", "candidate_source": "early_runner_runtime_adapter", "score_final": 0.91},
+            {"ticker": "300383", "candidate_source": "early_runner_runtime_adapter", "score_final": 0.88},
+        ],
+    )
+    monkeypatch.setattr(daily_pipeline_module, "build_watchlist_price_map", lambda trade_date, tickers: {})
+
+    watchlist_context = pipeline._build_post_market_watchlist_context(candidate_context, "20260330")
+
+    diagnostics = watchlist_context.short_trade_candidate_diagnostics
+    assert [entry["ticker"] for entry in diagnostics["tickers"]] == ["300001", "300383"]
+    assert [entry["ticker"] for entry in diagnostics["early_runner_promoted_entries"]] == ["300001", "300383"]
+    assert diagnostics["tickers"][1]["candidate_source"] == "early_runner_runtime_adapter"
+
+
 def test_qualifies_short_trade_boundary_candidate_keeps_structural_blockers_in_metrics_payload():
     original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
     try:

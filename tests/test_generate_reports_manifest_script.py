@@ -717,6 +717,92 @@ def test_generate_reports_manifest_artifacts_refreshes_missing_early_runner_late
     assert (reports_root / "btst_early_runner_v1_latest.md").read_text(encoding="utf-8") == "# BTST Early Runner V1\n"
 
 
+def test_generate_reports_manifest_registers_early_runner_daily_tables(tmp_path: Path) -> None:
+    """Manifest summary exposes early-runner radar/runtime fields and per-trade-date daily tables."""
+    repo_root = tmp_path / "repo"
+    reports_root = repo_root / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {
+            "report_dir_count": 1,
+            "row_count": 3,
+            "runtime_candidate_entries": [{"ticker": "300383"}, {"ticker": "002015"}],
+            "daily_boards": [
+                {
+                    "trade_date": "2026-03-30",
+                    "btst_regime_gate": "normal_trade",
+                    "gate_action": "tradable",
+                    "deployment_mode": "shadow_only",
+                    "early_runner_watchlist": [{"ticker": "300383"}, {"ticker": "002015"}],
+                    "early_runner_priority": [{"ticker": "300383"}],
+                    "second_entry_reentry": [{"ticker": "002015"}],
+                    "confirmed_entries": [{"ticker": "300383"}],
+                    "theme_radar": {"top_active_themes": ["AI Agent", "Chiplet"]},
+                    "industry_radar": {"top_industries": ["Electronics", "Computer"]},
+                    "theme_radar_ready": True,
+                }
+            ],
+            "validation": {
+                "tradable_after_cost_expectancy": 0.011,
+                "month_oos_pass_count": 2,
+                "failure_log_coverage": 1.0,
+                "max_single_theme_exposure": 0.2,
+                "max_single_theme_exposure_cap": 0.25,
+            },
+            "acceptance_checklist": {
+                "ready_for_shadow_rollout": False,
+                "failed_items": ["promotion_blockers"],
+            },
+            "deployment_mode": "shadow_only",
+            "promotion_blockers": ["theme_exposure_cap_breach"],
+            "failure_log": [],
+        },
+    )
+    (reports_root / "btst_early_runner_v1_latest.md").write_text("# early runner\n", encoding="utf-8")
+    daily_table_dir = reports_root / "early_runner_daily_tables"
+    _write_json(
+        daily_table_dir / "btst_early_runner_watchlist_2026-03-30.json",
+        {
+            "trade_date": "2026-03-30",
+            "table_key": "early_runner_watchlist",
+            "entry_count": 2,
+        },
+    )
+    (daily_table_dir / "btst_early_runner_watchlist_2026-03-30.md").write_text("# watchlist\n", encoding="utf-8")
+    _write_json(
+        daily_table_dir / "btst_early_runner_priority_2026-03-30.json",
+        {
+            "trade_date": "2026-03-30",
+            "table_key": "early_runner_priority",
+            "entry_count": 1,
+        },
+    )
+    (daily_table_dir / "btst_early_runner_priority_2026-03-30.md").write_text("# priority\n", encoding="utf-8")
+    _write_json(
+        daily_table_dir / "btst_second_entry_reentry_2026-03-30.json",
+        {
+            "trade_date": "2026-03-30",
+            "table_key": "second_entry_reentry",
+            "entry_count": 1,
+        },
+    )
+    (daily_table_dir / "btst_second_entry_reentry_2026-03-30.md").write_text("# second entry\n", encoding="utf-8")
+
+    manifest = generate_reports_manifest(reports_root)
+
+    assert manifest["early_runner_summary"]["theme_radar_top"] == ["AI Agent", "Chiplet"]
+    assert manifest["early_runner_summary"]["industry_radar_top"] == ["Electronics", "Computer"]
+    assert manifest["early_runner_summary"]["runtime_candidate_count"] == 2
+    assert manifest["early_runner_summary"]["daily_tables"]["latest_trade_date"] == "2026-03-30"
+    assert manifest["early_runner_summary"]["latest_daily_board"]["daily_table_paths"]["early_runner_watchlist"]["entry_count"] == 2
+    entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
+    assert entries_by_id["early_runner_daily_table_early_runner_watchlist_2026-03-30"]["report_path"] == "data/reports/early_runner_daily_tables/btst_early_runner_watchlist_2026-03-30.md"
+    assert entries_by_id["early_runner_daily_table_early_runner_priority_2026-03-30"]["report_path"] == "data/reports/early_runner_daily_tables/btst_early_runner_priority_2026-03-30.md"
+    assert entries_by_id["early_runner_daily_table_second_entry_reentry_2026-03-30"]["report_path"] == "data/reports/early_runner_daily_tables/btst_second_entry_reentry_2026-03-30.md"
+
+
 def test_build_carryover_multiday_continuation_audit_summary(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     _write_json(
@@ -1167,6 +1253,7 @@ def _write_tradeable_opportunity_artifacts(reports_root: Path) -> None:
 
 
 def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entries(tmp_path: Path) -> None:
+    """Manifest refresh registers latest BTST follow-up artifacts and early-runner daily tables."""
     repo_root = tmp_path / "repo"
     reports_root = repo_root / "data" / "reports"
     docs_root = repo_root / "docs" / "zh-cn"
@@ -1235,6 +1322,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         {
             "report_dir_count": 2,
             "row_count": 8,
+            "runtime_candidate_entries": [{"ticker": "300383"}, {"ticker": "002015"}],
             "daily_boards": [
                 {
                     "trade_date": "2026-03-30",
@@ -1245,6 +1333,9 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
                     "early_runner_priority": [{"ticker": "300383"}],
                     "second_entry_reentry": [{"ticker": "002015"}],
                     "confirmed_entries": [],
+                    "theme_radar": {"top_active_themes": ["AI Agent", "Chiplet"]},
+                    "industry_radar": {"top_industries": ["Electronics", "Computer"]},
+                    "theme_radar_ready": True,
                 }
             ],
             "validation": {
@@ -1263,6 +1354,37 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
             "failure_log": [],
         },
     )
+    early_runner_daily_table_dir = reports_root / "early_runner_daily_tables"
+    _write_json(
+        early_runner_daily_table_dir / "btst_early_runner_watchlist_2026-03-30.json",
+        {
+            "trade_date": "2026-03-30",
+            "table_key": "early_runner_watchlist",
+            "entry_count": 2,
+            "rows": [{"ticker": "300383"}, {"ticker": "002015"}],
+        },
+    )
+    (early_runner_daily_table_dir / "btst_early_runner_watchlist_2026-03-30.md").write_text("# early runner watchlist\n", encoding="utf-8")
+    _write_json(
+        early_runner_daily_table_dir / "btst_early_runner_priority_2026-03-30.json",
+        {
+            "trade_date": "2026-03-30",
+            "table_key": "early_runner_priority",
+            "entry_count": 1,
+            "rows": [{"ticker": "300383"}],
+        },
+    )
+    (early_runner_daily_table_dir / "btst_early_runner_priority_2026-03-30.md").write_text("# early runner priority\n", encoding="utf-8")
+    _write_json(
+        early_runner_daily_table_dir / "btst_second_entry_reentry_2026-03-30.json",
+        {
+            "trade_date": "2026-03-30",
+            "table_key": "second_entry_reentry",
+            "entry_count": 1,
+            "rows": [{"ticker": "002015"}],
+        },
+    )
+    (early_runner_daily_table_dir / "btst_second_entry_reentry_2026-03-30.md").write_text("# second entry reentry\n", encoding="utf-8")
 
     older_report = reports_root / "paper_trading_20260329_20260329_live_m2_7_short_trade_only_20260329"
     older_trade_dir = older_report / "selection_artifacts" / "2026-03-29"
@@ -1539,6 +1661,9 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert entries_by_id["p5_rollout_governance_board"]["report_path"] == "data/reports/p5_btst_rollout_governance_board_20260401.json"
     assert entries_by_id["btst_open_ready_delta_latest"]["report_path"] == "data/reports/btst_open_ready_delta_latest.md"
     assert entries_by_id["btst_early_runner_v1_latest"]["report_path"] == "data/reports/btst_early_runner_v1_latest.md"
+    assert entries_by_id["early_runner_daily_table_early_runner_watchlist_2026-03-30"]["report_path"] == "data/reports/early_runner_daily_tables/btst_early_runner_watchlist_2026-03-30.md"
+    assert entries_by_id["early_runner_daily_table_early_runner_priority_2026-03-30"]["report_path"] == "data/reports/early_runner_daily_tables/btst_early_runner_priority_2026-03-30.md"
+    assert entries_by_id["early_runner_daily_table_second_entry_reentry_2026-03-30"]["report_path"] == "data/reports/early_runner_daily_tables/btst_second_entry_reentry_2026-03-30.md"
     assert entries_by_id["btst_nightly_control_tower_latest"]["report_path"] == "data/reports/btst_nightly_control_tower_latest.md"
     assert entries_by_id["btst_governance_synthesis_latest"]["report_path"] == "data/reports/btst_governance_synthesis_latest.md"
     assert entries_by_id["btst_governance_validation_latest"]["report_path"] == "data/reports/btst_governance_validation_latest.md"

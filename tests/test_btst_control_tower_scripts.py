@@ -593,6 +593,50 @@ def test_render_btst_nightly_control_tower_markdown_surfaces_pending_peer_promot
     assert "carryover_peer_promotion_gate_focus: focus_ticker=301396 focus_gate_verdict=blocked_selected_contract_open default_expansion_status=pending_peer_proof" in markdown
 
 
+def test_render_btst_nightly_control_tower_markdown_surfaces_early_runner_radar_and_daily_tables(tmp_path: Path) -> None:
+    """Nightly markdown should expose early-runner radar, runtime, and daily-table summaries."""
+    payload = {
+        "latest_btst_run": {"report_dir": "data/reports/report_a", "trade_date": "2026-04-10"},
+        "control_tower_snapshot": {
+            "early_runner_summary": {
+                "deployment_mode": "shadow_only",
+                "ready_for_shadow_rollout": False,
+                "failed_items": ["promotion_blockers"],
+                "promotion_blockers": ["theme_exposure_cap_breach"],
+                "runtime_candidate_count": 2,
+                "latest_daily_board": {
+                    "trade_date": "2026-04-10",
+                    "btst_regime_gate": "normal_trade",
+                    "gate_action": "tradable",
+                    "watchlist_tickers": ["300505", "300720"],
+                    "priority_tickers": ["300505"],
+                    "second_entry_tickers": ["300720"],
+                    "theme_radar_top": ["AI Agent", "Chiplet"],
+                    "industry_radar_top": ["Electronics", "Computer"],
+                    "daily_table_paths": {
+                        "early_runner_watchlist": {"markdown_path": "data/reports/early_runner_daily_tables/btst_early_runner_watchlist_2026-04-10.md"},
+                        "early_runner_priority": {"markdown_path": "data/reports/early_runner_daily_tables/btst_early_runner_priority_2026-04-10.md"},
+                    },
+                },
+            },
+            "closed_frontiers": [],
+            "next_actions": [],
+        },
+        "latest_priority_board_snapshot": {},
+        "replay_cohort_snapshot": {},
+        "latest_btst_snapshot": {},
+        "recommended_reading_order": [],
+        "source_paths": {},
+    }
+
+    markdown = render_btst_nightly_control_tower_markdown(payload, output_parent=tmp_path)
+
+    assert "latest_theme_radar_top=['AI Agent', 'Chiplet']" in markdown
+    assert "latest_industry_radar_top=['Electronics', 'Computer']" in markdown
+    assert "runtime_candidate_count=2" in markdown
+    assert "daily_table_paths={'early_runner_watchlist': {'markdown_path': 'data/reports/early_runner_daily_tables/btst_early_runner_watchlist_2026-04-10.md'}" in markdown
+
+
 def test_build_btst_open_ready_delta_payload_surfaces_selected_contract_changes(tmp_path: Path) -> None:
     current_payload = {
         "generated_at": "2026-04-10T08:00:00",
