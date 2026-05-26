@@ -801,6 +801,11 @@ def _build_intraday_short_trade_metrics(ticker: str, trade_date: str) -> dict[st
     return metrics
 
 
+def build_intraday_short_trade_metrics(ticker: str, trade_date: str) -> dict[str, float]:
+    """Expose the shared intraday short-trade metrics builder for downstream adapters."""
+    return _build_intraday_short_trade_metrics(ticker, trade_date)
+
+
 def _build_intraday_short_trade_metrics_from_bars(intraday_bars: pd.DataFrame | None) -> dict[str, float]:
     required_columns = {"时间", "收盘", "成交额"}
     if intraday_bars is None or intraday_bars.empty or not required_columns.issubset(intraday_bars.columns):

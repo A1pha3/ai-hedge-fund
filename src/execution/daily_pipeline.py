@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from inspect import signature
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
@@ -218,6 +220,7 @@ from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import _build_intraday_short_trade_metrics
 from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
+from src.targets.early_runner_runtime_adapter import build_runtime_supplemental_entries
 from src.targets.profiles import (
     build_short_trade_target_profile,
     use_short_trade_target_profile,
@@ -237,6 +240,19 @@ from src.tools.tushare_api import get_daily_basic_batch
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
 ExitChecker = Callable[..., list]
 _ORIGINAL_BUILD_CANDIDATE_POOL = build_candidate_pool
+_EARLY_RUNNER_RUNTIME_ARTIFACT = Path("data/reports/btst_early_runner_v1_latest.json")
+
+
+def _load_early_runner_runtime_entries(trade_date: str) -> list[dict[str, Any]]:
+    """Load confirmed early-runner entries and adapt them into runtime supplemental entries."""
+    artifact_path = _EARLY_RUNNER_RUNTIME_ARTIFACT.expanduser().resolve()
+    if not artifact_path.exists():
+        return []
+    try:
+        analysis = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return build_runtime_supplemental_entries(analysis, trade_date=trade_date, require_tradeable_gate=True)
 _ORIGINAL_BUILD_CANDIDATE_POOL_WITH_SHADOW = build_candidate_pool_with_shadow
 WEAK_CONFIRMATION_REENTRY_NEGATIVE_TAGS = frozenset(
     {
@@ -1828,6 +1844,24 @@ class DailyPipeline:
             short_trade_candidate_diagnostics,
             trade_date,
         )
+        early_runner_runtime_entries = _load_early_runner_runtime_entries(trade_date)
+        if early_runner_runtime_entries:
+            existing_short_trade_tickers = {
+                str(dict(entry).get("ticker") or "").strip()
+                for entry in list((short_trade_candidate_diagnostics or {}).get("tickers", []) or [])
+            }
+            short_trade_candidate_diagnostics = {
+                **dict(short_trade_candidate_diagnostics or {}),
+                "tickers": [
+                    *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
+                    *[
+                        dict(entry)
+                        for entry in early_runner_runtime_entries
+                        if str(dict(entry).get("ticker") or "").strip() not in existing_short_trade_tickers
+                    ],
+                ],
+                "early_runner_promoted_entries": [dict(entry) for entry in early_runner_runtime_entries],
+            }
         return PostMarketWatchlistContext(
             watchlist=watchlist,
             layer_b_filter_diagnostics=layer_b_filter_diagnostics,

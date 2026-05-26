@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 import scripts.analyze_btst_early_runner_v1 as early_runner
 
 
-def _write_snapshot(report_dir: Path, trade_date: str, selection_targets: dict[str, object], *, market_state: dict[str, object] | None = None) -> None:
+def _write_snapshot(
+    report_dir: Path,
+    trade_date: str,
+    selection_targets: dict[str, object],
+    *,
+    market_state: dict[str, object] | None = None,
+    catalyst_theme_candidates: list[dict[str, Any]] | None = None,
+    catalyst_theme_shadow_candidates: list[dict[str, Any]] | None = None,
+) -> None:
     snapshot_dir = report_dir / "selection_artifacts" / trade_date
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     snapshot_dir.joinpath("selection_snapshot.json").write_text(
@@ -17,6 +26,8 @@ def _write_snapshot(report_dir: Path, trade_date: str, selection_targets: dict[s
                 "trade_date": trade_date.replace("-", ""),
                 "market_state": market_state or {},
                 "selection_targets": selection_targets,
+                "catalyst_theme_candidates": catalyst_theme_candidates or [],
+                "catalyst_theme_shadow_candidates": catalyst_theme_shadow_candidates or [],
             },
             ensure_ascii=False,
             indent=2,
@@ -154,7 +165,19 @@ def test_analyze_btst_early_runner_v1_builds_ledgers_profiles_and_daily_boards(t
             },
         ),
     }
-    _write_snapshot(report_dir, "2026-03-24", selection_targets, market_state=market_state)
+    _write_snapshot(
+        report_dir,
+        "2026-03-24",
+        selection_targets,
+        market_state=market_state,
+        catalyst_theme_candidates=[
+            {"ticker": "300001", "theme_name": "AI Agent", "theme_category": "AI", "candidate_source": "catalyst_theme", "is_new_theme": True},
+            {"ticker": "300002", "theme_name": "AI Agent", "theme_category": "AI", "candidate_source": "catalyst_theme", "is_new_theme": True},
+        ],
+        catalyst_theme_shadow_candidates=[
+            {"ticker": "600003", "theme_name": "AI Agent", "theme_category": "AI", "candidate_source": "catalyst_theme_shadow", "is_new_theme": False},
+        ],
+    )
 
     monkeypatch.setattr(early_runner, "discover_report_dirs", lambda roots, report_name_contains="paper_trading_window": [report_dir])
     monkeypatch.setattr(early_runner, "get_all_stock_basic", _stock_basic_frame)
@@ -204,6 +227,33 @@ def test_analyze_btst_early_runner_v1_builds_ledgers_profiles_and_daily_boards(t
 
     analysis = early_runner.analyze_btst_early_runner_v1(reports_root)
 
+    assert set(analysis.keys()) == {
+        "generated_at",
+        "reports_root",
+        "report_dir_count",
+        "row_count",
+        "feature_time_map",
+        "feature_time_validation",
+        "limit_rule_profile",
+        "universe_filter",
+        "universe_filter_summary",
+        "cost_profile",
+        "thresholds",
+        "daily_boards",
+        "theme_radar_by_trade_date",
+        "industry_radar_by_trade_date",
+        "failure_log",
+        "walk_forward_threshold_report",
+        "validation",
+        "acceptance_checklist",
+        "deployment_mode",
+        "runtime_candidate_entries",
+        "promotion_blockers",
+        "early_runner_first_entry_ledger",
+        "second_entry_reentry_ledger",
+        "full_report_confirmation_ledger",
+        "implementation_notes",
+    }
     assert analysis["feature_time_validation"]["no_lookahead_fields_in_pre_score"] is True
     assert analysis["feature_time_map"]["trend_acceleration"]["allowed_in_pre_score"] is True
     assert analysis["feature_time_map"]["next_open_return"]["allowed_in_pre_score"] is False
@@ -218,13 +268,49 @@ def test_analyze_btst_early_runner_v1_builds_ledgers_profiles_and_daily_boards(t
     assert "deduped_closed" in analysis["acceptance_checklist"]["failed_items"]
 
     daily_board = analysis["daily_boards"][0]
+    assert set(daily_board.keys()) == {
+        "trade_date",
+        "btst_regime_gate",
+        "gate_action",
+        "early_runner_watchlist",
+        "early_runner_priority",
+        "second_entry_reentry",
+        "full_report_confirmation",
+        "confirmed_entries",
+        "theme_radar",
+        "industry_radar",
+        "theme_radar_ready",
+        "runtime_candidate_entries",
+        "deployment_mode",
+    }
     assert daily_board["btst_regime_gate"] == "normal_trade"
     assert daily_board["deployment_mode"] == "shadow_only"
     assert [entry["ticker"] for entry in daily_board["early_runner_watchlist"]] == ["300001"]
     assert [entry["ticker"] for entry in daily_board["early_runner_priority"]] == ["300001"]
     assert [entry["ticker"] for entry in daily_board["second_entry_reentry"]] == ["300002"]
-    assert daily_board["confirmed_entries"] == []
+    assert [entry["ticker"] for entry in daily_board["confirmed_entries"]] == ["300001"]
+    assert daily_board["theme_radar_ready"] is True
+    assert daily_board["theme_radar"]["top_active_themes"] == ["AI Agent"]
+    assert daily_board["runtime_candidate_entries"] == []
 
+    assert set(analysis["acceptance_checklist"]["items"].keys()) == {
+        "feature_time_map_coverage",
+        "no_lookahead_fields_in_pre_score",
+        "universe_filter_applied",
+        "limit_rule_profile_version_logged",
+        "cost_profile_version_logged",
+        "tradable_after_cost_expectancy",
+        "month_oos_pass_count",
+        "deduped_closed",
+        "unfilled_rate",
+        "abandoned_gap_rate",
+        "t_plus_1_drawdown_p10",
+        "max_single_theme_exposure",
+        "failure_log_coverage",
+        "ledgers_separated",
+        "halt_trade_count",
+        "promotion_blockers",
+    }
     assert analysis["early_runner_first_entry_ledger"]["sample_count"] == 1
     assert analysis["second_entry_reentry_ledger"]["sample_count"] == 1
     assert analysis["full_report_confirmation_ledger"]["sample_count"] == 1

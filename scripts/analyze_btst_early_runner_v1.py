@@ -5,7 +5,6 @@ import json
 from collections import Counter, defaultdict
 from copy import deepcopy
 from datetime import datetime
-from itertools import product
 from math import floor
 from pathlib import Path
 from statistics import mean
@@ -21,8 +20,22 @@ from scripts.btst_analysis_utils import (
     safe_float as _safe_float,
 )
 from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
+from src.backtesting.early_runner_walk_forward import build_early_runner_walk_forward_summary
 from src.backtesting.trading_constraints import TradeExecutionInputs, TradingConstraints, resolve_trade_constraints
 from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state_metrics
+from src.targets.early_runner_intraday_confirmation import compute_confirm_assessment, compute_confirm_score
+from src.targets.early_runner_runtime_adapter import build_runtime_supplemental_entry, derive_entry_status, derive_failure_reason, resolve_gate_action, select_confirmed_entries
+from src.targets.early_runner_theme_radar import (
+    build_theme_radar_context_by_ticker,
+    compute_breakout_proximity,
+    compute_catalyst_theme_score,
+    compute_close_structure,
+    compute_historical_prior_score,
+    compute_overheat_penalty,
+    compute_pre_score,
+    compute_regime_penalty,
+    compute_retention_proxy,
+)
 from src.targets.profiles import get_short_trade_target_profile
 from src.tools.tushare_api import (
     get_all_stock_basic,
@@ -99,6 +112,20 @@ _FEATURE_TIME_MAP: dict[str, dict[str, Any]] = {
         "allowed_in_confirm_score": True,
         "allowed_as_label": False,
         "source_module": "scripts.analyze_btst_early_runner_v1",
+    },
+    "theme_breadth_score": {
+        "available_at": "t_post_close_derived",
+        "allowed_in_pre_score": True,
+        "allowed_in_confirm_score": True,
+        "allowed_as_label": False,
+        "source_module": "src.targets.early_runner_theme_radar",
+    },
+    "theme_leader_count": {
+        "available_at": "t_post_close_derived",
+        "allowed_in_pre_score": True,
+        "allowed_in_confirm_score": False,
+        "allowed_as_label": False,
+        "source_module": "src.targets.early_runner_theme_radar",
     },
     "retention_proxy": {
         "available_at": "t_post_close_derived",
@@ -201,10 +228,11 @@ _FEATURE_TIME_MAP: dict[str, dict[str, Any]] = {
 }
 
 _LIMIT_RULE_PROFILE: dict[str, Any] = {
-    "version": "cn_equity_v1",
-    "main_board": {"daily_limit_pct": 10, "risk_warning_limit_pct": 5},
-    "star_market": {"daily_limit_pct": 20, "ipo_no_limit_days": 5},
-    "chinext": {"daily_limit_pct": 20, "ipo_no_limit_days": 5},
+    "version": "cn_equity_v2",
+    "main_board": {"daily_limit_pct": 10, "risk_warning_limit_pct": 5, "ipo_no_limit_days": 0},
+    "star_market": {"daily_limit_pct": 20, "risk_warning_limit_pct": 20, "ipo_no_limit_days": 5},
+    "chinext": {"daily_limit_pct": 20, "risk_warning_limit_pct": 20, "ipo_no_limit_days": 5},
+    "risk_warning_overlay": {"daily_limit_pct": 5},
 }
 
 _UNIVERSE_FILTER: dict[str, Any] = {
@@ -322,11 +350,32 @@ def _is_st_or_risk_warning(name: str) -> bool:
 
 
 def _limit_rule_profile_for_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Build the effective CN daily-limit profile for one row."""
     board = str(row.get("board") or "main_board")
     profile = dict(_LIMIT_RULE_PROFILE.get(board) or _LIMIT_RULE_PROFILE["main_board"])
+    if bool(row.get("is_st_or_risk_warning")):
+        profile["daily_limit_pct"] = int(dict(_LIMIT_RULE_PROFILE.get("risk_warning_overlay") or {}).get("daily_limit_pct") or profile.get("risk_warning_limit_pct") or 5)
+        profile["profile_label"] = "risk_warning"
+    elif int(row.get("listed_days") or 0) <= int(profile.get("ipo_no_limit_days") or 0):
+        profile["profile_label"] = "ipo_no_limit"
+    else:
+        profile["profile_label"] = board
     profile["board"] = board
     profile["version"] = _LIMIT_RULE_PROFILE["version"]
     return profile
+
+
+def _resolve_next_trade_date(trade_date: str) -> str | None:
+    """Resolve the next open trade date for T+1 confirmation lookups."""
+    compact = _compact_trade_date(trade_date)
+    if len(compact) != 8:
+        return None
+    query_end = (pd.Timestamp(datetime.strptime(compact, "%Y%m%d")) + pd.Timedelta(days=10)).strftime("%Y%m%d")
+    open_dates = list(get_open_trade_dates(compact, query_end) or [])
+    for open_date in open_dates:
+        if str(open_date) > compact:
+            return datetime.strptime(str(open_date), "%Y%m%d").strftime("%Y-%m-%d")
+    return None
 
 
 def _collect_gate(snapshot: dict[str, Any]) -> str:
@@ -340,192 +389,83 @@ def _collect_gate(snapshot: dict[str, Any]) -> str:
 
 
 def _catalyst_theme_score(candidate_source: str) -> float:
-    normalized = str(candidate_source or "")
-    if normalized == "catalyst_theme":
-        return 1.0
-    if normalized == "catalyst_theme_shadow":
-        return 0.88
-    if normalized == "upstream_liquidity_corridor_shadow":
-        return 0.78
-    return 0.42
+    return compute_catalyst_theme_score(candidate_source)
 
 
 def _historical_prior_score(historical_prior: dict[str, Any]) -> float:
-    if not historical_prior:
-        return 0.0
-    hit_rate = _as_float(historical_prior.get("next_high_hit_rate_at_threshold"), 0.0)
-    positive_rate = _as_float(historical_prior.get("next_close_positive_rate"), 0.0)
-    sample_count = _as_float(historical_prior.get("sample_count"), 0.0)
-    shrinkage = _clamp_unit_interval(sample_count / 12.0)
-    return round(_clamp_unit_interval(((hit_rate * 0.55) + (positive_rate * 0.45)) * (0.40 + (0.60 * shrinkage))), 4)
+    return compute_historical_prior_score(historical_prior)
 
 
 def _retention_proxy(preferred_entry_mode: str) -> float:
-    normalized = str(preferred_entry_mode or "")
-    if "hold" in normalized:
-        return 0.85
-    if "review" in normalized or "reconfirm" in normalized:
-        return 0.55
-    if "avoid_open_chase" in normalized:
-        return 0.45
-    return 0.50
+    return compute_retention_proxy(preferred_entry_mode)
 
 
 def _breakout_proximity(row: dict[str, Any]) -> float:
-    breakout_freshness = _as_float(row.get("breakout_freshness"), 0.0)
-    gap_to_limit = _as_float(row.get("gap_to_limit"), 0.05)
-    supply_pressure_60 = _as_float(row.get("supply_pressure_60"), 0.10)
-    gap_room = _clamp_unit_interval((gap_to_limit - 0.01) / 0.09)
-    supply_relief = 1.0 - _clamp_unit_interval(supply_pressure_60 / 0.25)
-    return round(_clamp_unit_interval((0.45 * breakout_freshness) + (0.30 * gap_room) + (0.25 * supply_relief)), 4)
+    return compute_breakout_proximity(row)
 
 
 def _close_structure(row: dict[str, Any]) -> float:
-    return round(_clamp_unit_interval(_as_float(row.get("close_strength"), 0.0)), 4)
+    return compute_close_structure(row)
 
 
 def _overheat_penalty(row: dict[str, Any]) -> float:
-    penalty = 0.0
-    ret_5d = _as_float(row.get("ret_5d"), 0.0)
-    ret_10d = _as_float(row.get("ret_10d"), 0.0)
-    close_strength = _as_float(row.get("close_strength"), 0.0)
-    volume_ratio = _as_float(row.get("vol_ratio"), 0.0)
-    upper_shadow = _as_float(row.get("upper_shadow"), 0.0)
-    if ret_5d > 0.18:
-        penalty += 0.10
-    if ret_5d > 0.25:
-        penalty += 0.18
-    if ret_10d > 0.50:
-        penalty += 0.25
-    if close_strength >= 0.95:
-        penalty += 0.10
-    if volume_ratio > 4.0 and upper_shadow >= 0.04:
-        penalty += 0.10
-    return round(penalty, 4)
+    return compute_overheat_penalty(row)
 
 
 def _regime_penalty(row: dict[str, Any]) -> float:
-    gate = str(row.get("btst_regime_gate") or "normal_trade")
-    penalty = 0.0
-    if gate == "shadow_only":
-        penalty += 0.10
-    elif gate == "halt":
-        penalty += 0.25
-    if _as_float(row.get("supply_pressure_60"), 0.0) > 0.18:
-        penalty += 0.08
-    return round(penalty, 4)
+    return compute_regime_penalty(row)
 
 
 def _compute_pre_score(row: dict[str, Any]) -> float:
-    score = (
-        (0.22 * _as_float(row.get("trend_acceleration"), 0.0))
-        + (0.16 * _as_float(row.get("breakout_proximity"), 0.0))
-        + (0.14 * _as_float(row.get("volume_expansion_quality"), 0.0))
-        + (0.14 * _as_float(row.get("close_structure"), 0.0))
-        + (0.12 * _as_float(row.get("sector_resonance"), 0.0))
-        + (0.10 * _as_float(row.get("catalyst_theme_score"), 0.0))
-        + (0.08 * _as_float(row.get("retention_proxy"), 0.0))
-        + (0.04 * _as_float(row.get("historical_prior_score"), 0.0))
-        - _as_float(row.get("overheat_penalty"), 0.0)
-        - _as_float(row.get("regime_penalty"), 0.0)
-    )
-    return round(_clamp_unit_interval(score), 4)
+    return compute_pre_score(row)
 
 
 def _open_gap_quality(next_open_return: float) -> float:
-    if next_open_return > _MAX_OPEN_GAP:
-        return 0.0
-    if next_open_return < -0.03:
-        return 0.2
-    if next_open_return <= 0.02:
-        return 1.0
-    return round(_clamp_unit_interval(1.0 - ((next_open_return - 0.02) / max(0.0001, _MAX_OPEN_GAP - 0.02))), 4)
+    from src.targets.early_runner_intraday_confirmation import compute_open_gap_quality
+
+    return compute_open_gap_quality(next_open_return, max_open_gap=_MAX_OPEN_GAP)
 
 
 def _vwap_proxy(next_open_to_close_return: float) -> float:
-    return round(_clamp_unit_interval((next_open_to_close_return + 0.03) / 0.06), 4)
+    from src.targets.early_runner_intraday_confirmation import compute_vwap_proxy
+
+    return compute_vwap_proxy(next_open_to_close_return)
 
 
 def _intraday_volume_rhythm(next_high_return: float, next_close_return: float) -> float:
-    if next_high_return <= 0.0:
-        return 0.0
-    pullback = max(0.0, next_high_return - max(next_close_return, 0.0))
-    base = _clamp_unit_interval(next_high_return / 0.12)
-    exhaustion_penalty = _clamp_unit_interval(pullback / 0.12)
-    return round(_clamp_unit_interval((0.60 * base) + (0.40 * (1.0 - exhaustion_penalty))), 4)
+    from src.targets.early_runner_intraday_confirmation import compute_intraday_volume_rhythm
+
+    return compute_intraday_volume_rhythm(next_high_return, next_close_return)
 
 
 def _liquidity_score(estimated_amount_1d_wan_yuan: float | None) -> float:
-    if estimated_amount_1d_wan_yuan is None:
-        return 0.0
-    return round(_clamp_unit_interval(float(estimated_amount_1d_wan_yuan) / (_LOW_LIQUIDITY_THRESHOLD_WAN_YUAN * 2.0)), 4)
+    from src.targets.early_runner_intraday_confirmation import compute_liquidity_score
+
+    return compute_liquidity_score(
+        estimated_amount_1d_wan_yuan,
+        low_liquidity_threshold_wan_yuan=_LOW_LIQUIDITY_THRESHOLD_WAN_YUAN,
+    )
 
 
 def _compute_confirm_score(row: dict[str, Any]) -> float:
-    next_open_return = _as_float(row.get("next_open_return"), 0.0)
-    next_open_to_close_return = _as_float(row.get("next_open_to_close_return"), 0.0)
-    next_high_return = _as_float(row.get("next_high_return"), 0.0)
-    next_close_return = _as_float(row.get("next_close_return"), 0.0)
-    gap_to_limit = _as_float(row.get("gap_to_limit"), 0.10)
-    open_gap_quality = _open_gap_quality(next_open_return)
-    vwap_reclaim_or_hold = _vwap_proxy(next_open_to_close_return)
-    intraday_volume_rhythm = _intraday_volume_rhythm(next_high_return, next_close_return)
-    theme_continuation = round(_clamp_unit_interval((0.60 * _as_float(row.get("sector_resonance"), 0.0)) + (0.40 * _as_float(row.get("catalyst_theme_score"), 0.0))), 4)
-    no_failed_breakout_intraday = 1.0 if next_close_return >= 0.0 and (next_high_return - next_close_return) <= 0.05 else 0.0
-    tradable_liquidity = _liquidity_score(row.get("estimated_amount_1d_wan_yuan"))
-    pre_score_rank_quality = _as_float(row.get("pre_score_rank_quality"), 0.0)
-
-    execution_penalty = 0.0
-    if next_open_return > _MAX_OPEN_GAP:
-        execution_penalty += 0.18
-    if next_open_to_close_return < 0.0:
-        execution_penalty += 0.15
-    if next_high_return - next_close_return > 0.08 and next_close_return < 0.02:
-        execution_penalty += 0.12
-    if gap_to_limit <= 0.01:
-        execution_penalty += 0.10
-
-    score = (
-        (0.25 * open_gap_quality)
-        + (0.22 * vwap_reclaim_or_hold)
-        + (0.16 * intraday_volume_rhythm)
-        + (0.14 * theme_continuation)
-        + (0.10 * no_failed_breakout_intraday)
-        + (0.08 * tradable_liquidity)
-        + (0.05 * pre_score_rank_quality)
-        - execution_penalty
+    return compute_confirm_score(
+        row,
+        max_open_gap=_MAX_OPEN_GAP,
+        low_liquidity_threshold_wan_yuan=_LOW_LIQUIDITY_THRESHOLD_WAN_YUAN,
     )
-    return round(_clamp_unit_interval(score), 4)
 
 
 def _entry_status(row: dict[str, Any], *, gate_action: str) -> str:
-    if gate_action == "research_only":
-        return "research_only"
-    if _as_float(row.get("next_open_return"), 0.0) > _MAX_OPEN_GAP:
-        return "abandoned_gap"
-    if _as_float(row.get("gap_to_limit"), 1.0) <= 0.01:
-        return "unfilled"
-    if _as_float(row.get("confirm_score"), 0.0) >= _CONFIRM_SCORE_MIN:
-        return "filled"
-    return "not_confirmed"
+    return derive_entry_status(
+        row,
+        gate_action=gate_action,
+        max_open_gap=_MAX_OPEN_GAP,
+        confirm_score_min=_CONFIRM_SCORE_MIN,
+    )
 
 
 def _failure_reason(row: dict[str, Any], *, entry_status: str) -> str:
-    if entry_status == "abandoned_gap":
-        return "gap_trap"
-    if entry_status == "unfilled":
-        return "liquidity_unfilled"
-    if _as_float(row.get("ret_5d"), 0.0) > 0.25 or _as_float(row.get("ret_10d"), 0.0) > 0.50:
-        return "overheated_entry"
-    if _as_float(row.get("next_high_return"), 0.0) > 0.02 and _as_float(row.get("next_close_return"), 0.0) < 0.0:
-        return "fake_breakout"
-    if _as_float(row.get("volume_expansion_quality"), 0.0) > 0.80 and _as_float(row.get("next_open_to_close_return"), 0.0) < 0.0:
-        return "volume_exhaustion"
-    if _as_float(row.get("sector_resonance"), 0.0) < 0.28:
-        return "theme_collapse"
-    if str(row.get("btst_regime_gate") or "") == "halt":
-        return "btst_regime_halt"
-    return "unknown"
+    return derive_failure_reason(row, entry_status=entry_status)
 
 
 def _future_hit_15(row: dict[str, Any]) -> bool:
@@ -608,68 +548,7 @@ def _month_key(trade_date: str) -> str:
 
 
 def _walk_forward_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    candidate_rows = [row for row in rows if row.get("bucket") == "early_runner_first_entry"]
-    grid_keys = list(_WALK_FORWARD_GRID.keys())
-    grid_values = list(_WALK_FORWARD_GRID.values())
-    param_sets = [dict(zip(grid_keys, combo)) for combo in product(*grid_values)]
-    by_month: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in candidate_rows:
-        by_month[_month_key(str(row.get("trade_date") or ""))].append(row)
-
-    best_param_set_by_window: dict[str, dict[str, Any]] = {}
-    param_counter: Counter[str] = Counter()
-    month_oos_pass_count = 0
-
-    for month, month_rows in sorted(by_month.items()):
-        best_summary: dict[str, Any] | None = None
-        for param_set in param_sets:
-            filtered = [
-                row
-                for row in month_rows
-                if _as_float(row.get("ret_5d"), 0.0) <= float(param_set["ret_5d_max"])
-                and _as_float(row.get("ret_10d"), 0.0) <= float(param_set["ret_10d_max"])
-                and _as_float(row.get("next_open_return"), 0.0) <= float(param_set["gap_max"])
-                and _as_float(row.get("close_strength"), 0.0) <= float(param_set["close_strength_max"])
-                and _as_float(row.get("volume_expansion_quality"), 0.0) <= float(param_set["volume_quality_max"])
-                and _as_float(row.get("confirm_score"), 0.0) >= float(param_set["confirm_score_min"])
-            ]
-            after_cost_returns = [float(row.get("next_close_return_after_cost") or 0.0) for row in filtered if row.get("next_close_return_after_cost") is not None]
-            drawdowns = [float(row.get("next_low_return") or 0.0) for row in filtered if row.get("next_low_return") is not None]
-            summary = {
-                "param_set": dict(param_set),
-                "row_count": len(filtered),
-                "hit_rate_5d15": _safe_ratio(sum(1 for row in filtered if _future_hit_15(row)), len(filtered)),
-                "after_cost_expectancy": _round_or_none(mean(after_cost_returns)) if after_cost_returns else None,
-                "unfilled_rate": _safe_ratio(sum(1 for row in filtered if row.get("entry_status") == "unfilled"), len(filtered)),
-                "drawdown_p10": _distribution_p10(drawdowns),
-            }
-            ranking_key = (
-                float(summary.get("after_cost_expectancy") or -999.0),
-                float(summary.get("hit_rate_5d15") or -999.0),
-                -float(summary.get("unfilled_rate") or 999.0),
-                int(summary.get("row_count") or 0),
-            )
-            if best_summary is None or ranking_key > (
-                float(best_summary.get("after_cost_expectancy") or -999.0),
-                float(best_summary.get("hit_rate_5d15") or -999.0),
-                -float(best_summary.get("unfilled_rate") or 999.0),
-                int(best_summary.get("row_count") or 0),
-            ):
-                best_summary = summary
-        if best_summary is None:
-            continue
-        best_param_set_by_window[month] = best_summary
-        param_counter[json.dumps(best_summary["param_set"], sort_keys=True)] += 1
-        if (best_summary.get("after_cost_expectancy") or 0.0) > 0 and (best_summary.get("hit_rate_5d15") or 0.0) >= 0.55:
-            month_oos_pass_count += 1
-
-    return {
-        "candidate_grid_size": len(param_sets),
-        "best_param_set_by_window": best_param_set_by_window,
-        "param_set_frequency": {key: int(value) for key, value in param_counter.items()},
-        "median_rank_of_chosen_param": 1 if best_param_set_by_window else None,
-        "month_oos_pass_count": month_oos_pass_count,
-    }
+    return build_early_runner_walk_forward_summary(rows, walk_forward_grid=_WALK_FORWARD_GRID)
 
 
 def _validation_payload(
@@ -729,6 +608,7 @@ def _validation_payload(
 
 
 def _build_acceptance_checklist(validation: dict[str, Any], promotion_blockers: list[str]) -> dict[str, Any]:
+    """Build the governance checklist and rollout stage for early runner."""
     items = {
         "feature_time_map_coverage": {
             "value": validation.get("feature_time_map_coverage"),
@@ -831,7 +711,7 @@ def _build_acceptance_checklist(validation: dict[str, Any], promotion_blockers: 
     ready_for_shadow_rollout = not failed_items
     return {
         "ready_for_shadow_rollout": ready_for_shadow_rollout,
-        "deployment_mode": "formal_buy_candidate" if ready_for_shadow_rollout else "shadow_only",
+        "deployment_mode": "formal_runtime_pilot_ready" if ready_for_shadow_rollout else "shadow_only",
         "failed_items": failed_items,
         "items": items,
     }
@@ -887,9 +767,11 @@ def _row_from_snapshot(
     suspended: set[str],
     price_cache: dict[tuple[str, str], pd.DataFrame],
 ) -> dict[str, Any]:
+    """Normalize one selection-target snapshot row into the early-runner analysis schema."""
     metrics = _extract_metrics(evaluation)
     stock_row = dict(stock_lookup.get(ticker) or {})
     daily_basic_row = dict(daily_basic_lookup.get(ticker) or {})
+    short_trade = dict((evaluation or {}).get("short_trade") or {})
     industry = str(stock_row.get("industry") or "unknown")
     name = str(stock_row.get("name") or ticker)
     listed_days = _estimate_listed_days(stock_row.get("list_date"), trade_date)
@@ -921,9 +803,13 @@ def _row_from_snapshot(
         "is_st_or_risk_warning": _is_st_or_risk_warning(name),
         "is_suspended": ticker in suspended,
         "candidate_source": str((evaluation or {}).get("candidate_source") or metrics.get("candidate_source") or "unknown"),
+        "candidate_reason_codes": list((evaluation or {}).get("candidate_reason_codes") or metrics.get("candidate_reason_codes") or []),
         "decision": str(dict((evaluation or {}).get("short_trade") or {}).get("decision") or "unknown"),
         "score_target": _as_float(metrics.get("score_target"), 0.0),
         "preferred_entry_mode": str(metrics.get("preferred_entry_mode") or ""),
+        "theme_name": str((evaluation or {}).get("theme_name") or metrics.get("theme_name") or ""),
+        "theme_category": str((evaluation or {}).get("theme_category") or metrics.get("theme_category") or ""),
+        "is_new_theme": bool((evaluation or {}).get("is_new_theme") or metrics.get("is_new_theme")),
         "trend_acceleration": _as_float(metrics.get("trend_acceleration"), 0.0),
         "breakout_freshness": _as_float(metrics.get("breakout_freshness"), 0.0),
         "volume_expansion_quality": _as_float(metrics.get("volume_expansion_quality"), 0.0),
@@ -945,11 +831,17 @@ def _row_from_snapshot(
         "resolved_slippage_rate": resolved_constraints.constraints.base_slippage_rate,
         "capacity_penalty_ratio": resolved_constraints.capacity_penalty_ratio,
         "round_trip_cost_rate": round_trip_cost_rate,
+        "market_state": dict((evaluation or {}).get("market_state") or {}),
+        "next_trade_date": _resolve_next_trade_date(trade_date),
         **price_outcome,
     }
     row["breakout_proximity"] = _breakout_proximity(row)
     row["close_structure"] = _close_structure(row)
     row["catalyst_theme_score"] = _catalyst_theme_score(str(row.get("candidate_source") or ""))
+    row["theme_breadth_score"] = _as_float(metrics.get("theme_breadth_score"), 0.0)
+    row["theme_leader_count"] = int(_as_float(metrics.get("theme_leader_count"), 0.0))
+    row["theme_midfield_candidates"] = list(metrics.get("theme_midfield_candidates") or [])
+    row["hot_theme_board"] = str(metrics.get("hot_theme_board") or "")
     row["retention_proxy"] = _retention_proxy(str(row.get("preferred_entry_mode") or ""))
     row["historical_prior_score"] = _historical_prior_score(dict(row.get("historical_prior") or {}))
     row["overheat_penalty"] = _overheat_penalty(row)
@@ -1019,8 +911,16 @@ def _rank_rows(rows: list[dict[str, Any]], score_key: str) -> list[dict[str, Any
     return ranked
 
 
-def _collect_daily_board(trade_date: str, rows: list[dict[str, Any]], *, gate: str) -> dict[str, Any]:
-    gate_action = "tradeable" if gate in _TRADEABLE_GATES else "research_only"
+def _collect_daily_board(
+    trade_date: str,
+    rows: list[dict[str, Any]],
+    *,
+    gate: str,
+    theme_radar: dict[str, Any] | None = None,
+    industry_radar: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build one trade-date board with theme radar and T+1 confirmation diagnostics."""
+    gate_action = resolve_gate_action(gate, tradeable_gates=_TRADEABLE_GATES)
     first_entry_rows = [dict(row) for row in rows if row.get("bucket") == "early_runner_first_entry"]
     second_entry_rows = [dict(row) for row in rows if row.get("bucket") == "second_entry_reentry"]
     confirmation_rows = [dict(row) for row in rows if row.get("bucket") == "full_report_confirmation"]
@@ -1029,12 +929,24 @@ def _collect_daily_board(trade_date: str, rows: list[dict[str, Any]], *, gate: s
     priority = _rank_rows([row for row in watchlist if _as_float(row.get("pre_score"), 0.0) >= _FIRST_ENTRY_PRIORITY_MIN], "pre_score")[:10]
 
     for row in priority + second_entry_rows + confirmation_rows:
-        row["confirm_score"] = _compute_confirm_score(row)
+        confirm_assessment = compute_confirm_assessment(
+            row,
+            ticker=str(row.get("ticker") or ""),
+            confirm_trade_date=_compact_trade_date(row.get("next_trade_date")) if row.get("next_trade_date") else None,
+            max_open_gap=_MAX_OPEN_GAP,
+            low_liquidity_threshold_wan_yuan=_LOW_LIQUIDITY_THRESHOLD_WAN_YUAN,
+        )
+        row["confirm_score"] = float(confirm_assessment.get("score") or 0.0)
+        row["confirm_score_provenance"] = str(confirm_assessment.get("provenance") or "proxy_fallback")
+        row["confirm_checks"] = dict(confirm_assessment.get("checks") or {})
+        row["confirm_hard_failures"] = dict(confirm_assessment.get("hard_failures") or {})
+        row["intraday_confirmation_inputs"] = dict(confirm_assessment.get("inputs") or {})
+        row["intraday_metrics"] = dict(confirm_assessment.get("intraday_metrics") or {})
         row["entry_status"] = _entry_status(row, gate_action=gate_action)
         if row["entry_status"] != "filled":
             row["failure_reason"] = _failure_reason(row, entry_status=row["entry_status"])
 
-    confirmed_entries = [row for row in priority if row.get("entry_status") == "filled" and _as_float(row.get("confirm_score"), 0.0) >= _CONFIRM_SCORE_MIN]
+    confirmed_entries = select_confirmed_entries(priority, confirm_score_min=_CONFIRM_SCORE_MIN)
 
     return {
         "trade_date": trade_date,
@@ -1045,6 +957,9 @@ def _collect_daily_board(trade_date: str, rows: list[dict[str, Any]], *, gate: s
         "second_entry_reentry": _rank_rows(second_entry_rows, "score_target")[:10],
         "full_report_confirmation": _rank_rows(confirmation_rows, "score_target")[:10],
         "confirmed_entries": confirmed_entries,
+        "theme_radar": dict(theme_radar or {}),
+        "industry_radar": dict(industry_radar or {}),
+        "theme_radar_ready": bool(list(dict(theme_radar or {}).get("hot_theme_board") or [])),
     }
 
 
@@ -1058,6 +973,8 @@ def analyze_btst_early_runner_v1(
     stock_lookup = _build_stock_lookup(get_all_stock_basic())
     price_cache: dict[tuple[str, str], pd.DataFrame] = {}
     rows: list[dict[str, Any]] = []
+    daily_catalyst_candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    daily_catalyst_shadow_candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
     universe_filter_summary = Counter(
         {
             "total_row_count": 0,
@@ -1077,6 +994,8 @@ def analyze_btst_early_runner_v1(
             trade_date = _normalize_trade_date(snapshot.get("trade_date"))
             gate = _collect_gate(snapshot)
             gate_by_trade_date[trade_date] = gate
+            daily_catalyst_candidates[trade_date].extend([dict(entry or {}) for entry in list(snapshot.get("catalyst_theme_candidates") or [])])
+            daily_catalyst_shadow_candidates[trade_date].extend([dict(entry or {}) for entry in list(snapshot.get("catalyst_theme_shadow_candidates") or [])])
             daily_basic_lookup = _build_daily_basic_lookup(get_daily_basic_batch(_compact_trade_date(trade_date)))
             suspended = _suspended_tickers(get_suspend_list(_compact_trade_date(trade_date)))
             _ = get_limit_list(_compact_trade_date(trade_date))
@@ -1117,13 +1036,37 @@ def analyze_btst_early_runner_v1(
                     daily_rows[trade_date].append(row)
 
     daily_boards = []
+    theme_radar_by_trade_date: dict[str, dict[str, Any]] = {}
+    industry_radar_by_trade_date: dict[str, dict[str, Any]] = {}
     first_entry_rows: list[dict[str, Any]] = []
     second_entry_rows: list[dict[str, Any]] = []
     confirmation_rows: list[dict[str, Any]] = []
     failure_log: list[dict[str, Any]] = []
 
     for trade_date in sorted(daily_rows):
-        board = _collect_daily_board(trade_date, daily_rows[trade_date], gate=gate_by_trade_date.get(trade_date, "normal_trade"))
+        radar_context, theme_radar, industry_radar = build_theme_radar_context_by_ticker(
+            trade_date=trade_date,
+            rows=daily_rows[trade_date],
+            catalyst_theme_candidates=daily_catalyst_candidates.get(trade_date, []),
+            catalyst_theme_shadow_candidates=daily_catalyst_shadow_candidates.get(trade_date, []),
+        )
+        for row in daily_rows[trade_date]:
+            context = dict(radar_context.get(str(row.get("ticker") or "").strip()) or {})
+            row["hot_theme_board"] = str(context.get("hot_theme_board") or row.get("hot_theme_board") or "")
+            row["theme_breadth_score"] = float(context.get("theme_breadth_score") or row.get("theme_breadth_score") or 0.0)
+            row["theme_leader_count"] = int(context.get("theme_leader_count") or row.get("theme_leader_count") or 0)
+            row["theme_midfield_candidates"] = list(context.get("theme_midfield_candidates") or row.get("theme_midfield_candidates") or [])
+            row["catalyst_theme_score"] = round(_clamp_unit_interval((0.60 * _as_float(row.get("catalyst_theme_score"), 0.0)) + (0.40 * _as_float(row.get("theme_breadth_score"), 0.0))), 4)
+            row["pre_score"] = _compute_pre_score(row)
+        theme_radar_by_trade_date[trade_date] = theme_radar
+        industry_radar_by_trade_date[trade_date] = industry_radar
+        board = _collect_daily_board(
+            trade_date,
+            daily_rows[trade_date],
+            gate=gate_by_trade_date.get(trade_date, "normal_trade"),
+            theme_radar=theme_radar,
+            industry_radar=industry_radar,
+        )
         daily_boards.append(board)
         first_entry_rows.extend(dict(row) for row in board["early_runner_priority"])
         second_entry_rows.extend(dict(row) for row in board["second_entry_reentry"])
@@ -1133,7 +1076,7 @@ def analyze_btst_early_runner_v1(
                 failure_log.append(
                     {
                         "signal_date": trade_date,
-                        "confirm_date": trade_date,
+                        "confirm_date": row.get("next_trade_date") or trade_date,
                         "ticker": row.get("ticker"),
                         "pre_score": row.get("pre_score"),
                         "confirm_score": row.get("confirm_score"),
@@ -1151,6 +1094,7 @@ def analyze_btst_early_runner_v1(
         "version": "trading_constraints_v1",
         "commission_rate": _BASE_CONSTRAINTS.commission_rate,
         "stamp_duty_rate": _BASE_CONSTRAINTS.stamp_duty_rate,
+        "stamp_duty_side": "sell_only_cn_equity",
         "base_slippage_rate": _BASE_CONSTRAINTS.base_slippage_rate,
         "low_liquidity_slippage_rate": _BASE_CONSTRAINTS.low_liquidity_slippage_rate,
         "low_liquidity_turnover_threshold_wan_yuan": _BASE_CONSTRAINTS.low_liquidity_turnover_threshold / 10000.0,
@@ -1172,15 +1116,22 @@ def analyze_btst_early_runner_v1(
         ledgers=ledgers,
     )
     acceptance_checklist = _build_acceptance_checklist(validation, promotion_blockers)
+    if not daily_boards:
+        acceptance_checklist["deployment_mode"] = "research_only"
+    runtime_candidate_entries: list[dict[str, Any]] = []
 
     for board in daily_boards:
         if str(board.get("gate_action") or "") == "research_only":
             board["deployment_mode"] = "research_only"
             board["confirmed_entries"] = []
+            board["runtime_candidate_entries"] = []
             continue
         board["deployment_mode"] = str(acceptance_checklist.get("deployment_mode") or "shadow_only")
-        if board["deployment_mode"] != "formal_buy_candidate":
-            board["confirmed_entries"] = []
+        if board["deployment_mode"] == "formal_runtime_pilot_ready":
+            board["runtime_candidate_entries"] = [build_runtime_supplemental_entry(row) for row in list(board.get("confirmed_entries") or [])]
+            runtime_candidate_entries.extend(list(board["runtime_candidate_entries"]))
+        else:
+            board["runtime_candidate_entries"] = []
 
     analysis = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -1201,15 +1152,19 @@ def analyze_btst_early_runner_v1(
             **{key: list(values) for key, values in _WALK_FORWARD_GRID.items()},
         },
         "daily_boards": daily_boards,
+        "theme_radar_by_trade_date": theme_radar_by_trade_date,
+        "industry_radar_by_trade_date": industry_radar_by_trade_date,
         "failure_log": sorted(failure_log, key=lambda row: (str(row.get("signal_date") or ""), str(row.get("ticker") or ""))),
         "walk_forward_threshold_report": walk_forward_threshold_report,
         "validation": validation,
         "acceptance_checklist": acceptance_checklist,
         "deployment_mode": acceptance_checklist.get("deployment_mode"),
+        "runtime_candidate_entries": runtime_candidate_entries,
         "promotion_blockers": promotion_blockers,
         **ledgers,
         "implementation_notes": [
-            "confirm_score currently uses T+1 open and close proxies because intraday 30m VWAP fields are not persisted in selection_snapshot artifacts.",
+            "confirm_score now prefers live first-30-minute intraday confirmation and falls back to T+1 close proxies only when minute bars are unavailable.",
+            "theme radar is derived from catalyst_theme_candidates and shadow_candidates already persisted in selection snapshots.",
             "future_10d_hit_50 remains unavailable unless upstream price-outcome extraction is extended beyond the current 2-5 day runner horizon.",
         ],
     }

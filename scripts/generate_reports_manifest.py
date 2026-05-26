@@ -54,6 +54,7 @@ from scripts.analyze_btst_early_runner_v1 import (
     analyze_btst_early_runner_v1,
     render_btst_early_runner_v1_markdown,
 )
+from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
 from scripts.analyze_multi_window_short_trade_role_candidates import (
     analyze_multi_window_short_trade_role_candidates,
     render_multi_window_short_trade_role_candidates_markdown,
@@ -679,6 +680,38 @@ def _build_default_merge_review_summary(reports_root: Path) -> dict[str, Any]:
     return _optional_report_json(reports_root / "btst_default_merge_review_latest.json")
 
 
+def _discover_early_runner_daily_tables(reports_root: Path) -> dict[str, Any]:
+    """Discover generated early-runner daily tables keyed by trade date."""
+    output_dir = reports_root / BTST_EARLY_RUNNER_DAILY_TABLE_DIR
+    if not output_dir.exists():
+        return {}
+    tables: dict[str, dict[str, Any]] = {}
+    for json_path in sorted(output_dir.glob("btst_*.json")):
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        trade_date = str(payload.get("trade_date") or "").strip()
+        table_key = str(payload.get("table_key") or "").strip()
+        if not trade_date or not table_key:
+            continue
+        tables.setdefault(trade_date, {})[table_key] = {
+            "json_path": json_path.as_posix(),
+            "markdown_path": json_path.with_suffix(".md").as_posix(),
+            "entry_count": int(payload.get("entry_count") or 0),
+        }
+    if not tables:
+        return {}
+    latest_trade_date = sorted(tables)[-1]
+    return {
+        "output_dir": output_dir.as_posix(),
+        "trade_date_count": len(tables),
+        "latest_trade_date": latest_trade_date,
+        "latest_tables": tables.get(latest_trade_date, {}),
+        "tables_by_trade_date": tables,
+    }
+
+
 def _build_early_runner_summary(reports_root: Path) -> dict[str, Any]:
     analysis = _optional_report_json(reports_root / "btst_early_runner_v1_latest.json")
     if not analysis:
@@ -687,6 +720,9 @@ def _build_early_runner_summary(reports_root: Path) -> dict[str, Any]:
     latest_board = daily_boards[-1] if daily_boards else {}
     acceptance_checklist = dict(analysis.get("acceptance_checklist") or {})
     validation = dict(analysis.get("validation") or {})
+    theme_radar = dict(latest_board.get("theme_radar") or {})
+    industry_radar = dict(latest_board.get("industry_radar") or {})
+    daily_tables = _discover_early_runner_daily_tables(reports_root)
 
     def _ticker_list(entries: list[dict[str, Any]]) -> list[str]:
         return [str(dict(entry or {}).get("ticker") or "") for entry in entries if str(dict(entry or {}).get("ticker") or "").strip()]
@@ -713,6 +749,7 @@ def _build_early_runner_summary(reports_root: Path) -> dict[str, Any]:
         "failure_log_coverage": validation.get("failure_log_coverage"),
         "max_single_theme_exposure": validation.get("max_single_theme_exposure"),
         "max_single_theme_exposure_cap": validation.get("max_single_theme_exposure_cap"),
+        "runtime_candidate_count": len(list(analysis.get("runtime_candidate_entries") or [])),
         "failure_log_count": len(list(analysis.get("failure_log") or [])),
         "latest_daily_board": {
             "trade_date": latest_board.get("trade_date"),
@@ -727,7 +764,14 @@ def _build_early_runner_summary(reports_root: Path) -> dict[str, Any]:
             "priority_count": len(priority_tickers),
             "second_entry_count": len(second_entry_tickers),
             "confirmed_count": len(confirmed_tickers),
+            "theme_radar_top": list(theme_radar.get("top_active_themes") or []),
+            "industry_radar_top": list(industry_radar.get("top_industries") or []),
+            "theme_radar_ready": latest_board.get("theme_radar_ready"),
+            "daily_table_paths": dict(daily_tables.get("latest_tables") or {}),
         },
+        "theme_radar_top": list(theme_radar.get("top_active_themes") or []),
+        "industry_radar_top": list(industry_radar.get("top_industries") or []),
+        "daily_tables": daily_tables,
     }
 
 
@@ -1007,6 +1051,7 @@ BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_JSON = "btst_tplus1_tplus2_objective_monito
 BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_MD = "btst_tplus1_tplus2_objective_monitor_latest.md"
 BTST_EARLY_RUNNER_V1_JSON = "btst_early_runner_v1_latest.json"
 BTST_EARLY_RUNNER_V1_MD = "btst_early_runner_v1_latest.md"
+BTST_EARLY_RUNNER_DAILY_TABLE_DIR = "early_runner_daily_tables"
 BTST_TRADEABLE_OPPORTUNITY_POOL_JSON = "btst_tradeable_opportunity_pool_march.json"
 BTST_TRADEABLE_OPPORTUNITY_POOL_MD = "btst_tradeable_opportunity_pool_march.md"
 BTST_TRADEABLE_OPPORTUNITY_POOL_CSV = "btst_tradeable_opportunity_pool_march.csv"
@@ -2330,6 +2375,33 @@ def _build_static_entries(repo_root: Path) -> list[dict[str, Any]]:
     return entries
 
 
+def _build_early_runner_daily_table_entries(repo_root: Path) -> list[dict[str, Any]]:
+    """Register per-trade-date early-runner daily tables as manifest entries."""
+    reports_root = repo_root / "data" / "reports"
+    daily_tables = _discover_early_runner_daily_tables(reports_root)
+    entries: list[dict[str, Any]] = []
+    for trade_date, table_map in sorted(dict(daily_tables.get("tables_by_trade_date") or {}).items()):
+        for table_key, payload in sorted(dict(table_map or {}).items()):
+            markdown_path = Path(str(dict(payload or {}).get("markdown_path") or ""))
+            entry = _build_entry(
+                entry_id=f"early_runner_daily_table_{table_key}_{trade_date}",
+                absolute_path=markdown_path,
+                repo_root=repo_root,
+                report_type="btst_early_runner_daily_table",
+                topic="btst_followup",
+                usage="nightly_review",
+                priority=2,
+                is_latest=str(trade_date) == str(daily_tables.get("latest_trade_date") or ""),
+                question=f"early runner {table_key} 在 {trade_date} 的逐票表是什么",
+                view_order=6,
+                time_scope={"label": "trade_date", "trade_date": trade_date},
+                source_kind="generated_runtime_artifact",
+            )
+            if entry:
+                entries.append(entry)
+    return entries
+
+
 def _build_dynamic_latest_btst_entries(latest_btst_run: dict[str, Any] | None, repo_root: Path) -> list[dict[str, Any]]:
     if not latest_btst_run:
         return []
@@ -3172,6 +3244,19 @@ def refresh_btst_early_runner_artifacts(reports_root: str | Path) -> dict[str, A
     }
 
 
+def refresh_btst_early_runner_daily_tables_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    """Refresh per-trade-date early-runner daily tables."""
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    try:
+        return generate_btst_early_runner_daily_tables(resolved_reports_root)
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "error": str(exc),
+            "table_count": 0,
+        }
+
+
 def refresh_btst_tplus1_tplus2_objective_monitor_artifacts(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     output_json_path = resolved_reports_root / BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_JSON
@@ -3283,13 +3368,14 @@ def generate_reports_manifest(
     btst_replay_cohort_refresh: dict[str, Any] | None = None,
     btst_independent_window_monitor_refresh: dict[str, Any] | None = None,
     btst_tplus1_tplus2_objective_monitor_refresh: dict[str, Any] | None = None,
+    btst_early_runner_daily_tables_refresh: dict[str, Any] | None = None,
     btst_tradeable_opportunity_pool_refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     repo_root = _resolve_repo_root(resolved_reports_root)
     latest_btst_run = latest_btst_run or _select_latest_btst_candidate(resolved_reports_root, repo_root)
 
-    entries = _build_static_entries(repo_root) + _build_dynamic_latest_btst_entries(latest_btst_run, repo_root)
+    entries = _build_static_entries(repo_root) + _build_early_runner_daily_table_entries(repo_root) + _build_dynamic_latest_btst_entries(latest_btst_run, repo_root)
     entries.sort(key=lambda entry: (entry["usage"], entry["priority"], entry["view_order"], entry["id"]))
     reading_paths = _build_manifest_reading_paths(entries)
     entry_count_by_usage = _count_manifest_entries_by_usage(entries)
@@ -3310,6 +3396,7 @@ def generate_reports_manifest(
         btst_replay_cohort_refresh=btst_replay_cohort_refresh,
         btst_independent_window_monitor_refresh=btst_independent_window_monitor_refresh,
         btst_tplus1_tplus2_objective_monitor_refresh=btst_tplus1_tplus2_objective_monitor_refresh,
+        btst_early_runner_daily_tables_refresh=btst_early_runner_daily_tables_refresh,
         btst_tradeable_opportunity_pool_refresh=btst_tradeable_opportunity_pool_refresh,
     )
 
@@ -3357,6 +3444,7 @@ def _build_reports_manifest_payload(
     btst_replay_cohort_refresh: dict[str, Any] | None,
     btst_independent_window_monitor_refresh: dict[str, Any] | None,
     btst_tplus1_tplus2_objective_monitor_refresh: dict[str, Any] | None,
+    btst_early_runner_daily_tables_refresh: dict[str, Any] | None,
     btst_tradeable_opportunity_pool_refresh: dict[str, Any] | None,
 ) -> dict[str, Any]:
     manifest: dict[str, Any] = {
@@ -3376,6 +3464,7 @@ def _build_reports_manifest_payload(
         "btst_replay_cohort_refresh": btst_replay_cohort_refresh,
         "btst_independent_window_monitor_refresh": btst_independent_window_monitor_refresh,
         "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
+        "btst_early_runner_daily_tables_refresh": btst_early_runner_daily_tables_refresh,
         "btst_tradeable_opportunity_pool_refresh": btst_tradeable_opportunity_pool_refresh,
         "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
         "early_runner_summary": _build_early_runner_summary(resolved_reports_root),
@@ -3773,6 +3862,7 @@ def generate_reports_manifest_artifacts(
         btst_replay_cohort_refresh=refresh_bundle["btst_replay_cohort_refresh"],
         btst_independent_window_monitor_refresh=refresh_bundle["btst_independent_window_monitor_refresh"],
         btst_tplus1_tplus2_objective_monitor_refresh=refresh_bundle["btst_tplus1_tplus2_objective_monitor_refresh"],
+        btst_early_runner_daily_tables_refresh=refresh_bundle["btst_early_runner_daily_tables_refresh"],
         btst_tradeable_opportunity_pool_refresh=refresh_bundle["btst_tradeable_opportunity_pool_refresh"],
     )
     _write_reports_manifest_artifacts(
@@ -3810,6 +3900,7 @@ def _build_reports_manifest_refresh_bundle(
     btst_independent_window_monitor_refresh = refresh_btst_independent_window_monitor_artifacts(resolved_reports_root)
     btst_tplus1_tplus2_objective_monitor_refresh = refresh_btst_tplus1_tplus2_objective_monitor_artifacts(resolved_reports_root)
     btst_early_runner_refresh = refresh_btst_early_runner_artifacts(resolved_reports_root)
+    btst_early_runner_daily_tables_refresh = refresh_btst_early_runner_daily_tables_artifacts(resolved_reports_root)
     btst_tradeable_opportunity_pool_refresh = refresh_btst_tradeable_opportunity_pool_artifacts(resolved_reports_root)
     candidate_entry_shadow_refresh = refresh_btst_candidate_entry_shadow_lane_artifacts(resolved_reports_root)
     btst_score_fail_frontier_refresh = refresh_btst_score_fail_frontier_artifacts(
@@ -3836,6 +3927,7 @@ def _build_reports_manifest_refresh_bundle(
         "btst_independent_window_monitor_refresh": btst_independent_window_monitor_refresh,
         "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
         "btst_early_runner_refresh": btst_early_runner_refresh,
+        "btst_early_runner_daily_tables_refresh": btst_early_runner_daily_tables_refresh,
         "btst_tradeable_opportunity_pool_refresh": btst_tradeable_opportunity_pool_refresh,
     }
 
