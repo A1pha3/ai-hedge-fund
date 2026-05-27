@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.generate_btst_doc_bundle import generate_btst_doc_bundle
+from scripts.generate_btst_doc_bundle import (
+    compare_btst_doc_bundle_profiles,
+    generate_btst_doc_bundle,
+)
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -265,6 +268,71 @@ def test_generate_btst_doc_bundle_supports_named_threshold_profiles(tmp_path: Pa
     assert result["strategy_thresholds"]["min_recent_exact_streak"] == 2
     llm_doc = (output_dir / "BTST-LLM-20260526.md").read_text(encoding="utf-8")
     assert "profile：`aggressive`" in llm_doc
+
+
+def test_compare_btst_doc_bundle_profiles_writes_comparison_outputs(tmp_path: Path, monkeypatch) -> None:
+    """Generate daily bundle outputs for multiple profiles and write one comparison summary."""
+    output_dir = tmp_path / "outputs"
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text(
+            f"# BTST {kwargs['strategy_thresholds_profile']}\n",
+            encoding="utf-8",
+        )
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text(
+            f"# BTST-LLM {kwargs['strategy_thresholds_profile']}\n",
+            encoding="utf-8",
+        )
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [str(profile_output_dir / f"BTST-{signal_date}.md"), str(profile_output_dir / f"BTST-LLM-{signal_date}.md")] * (4 if kwargs["strategy_thresholds_profile"] == "conservative" else 3),
+            "early_runner_status": "exact",
+            "early_runner_intersection_count": 2 if kwargs["strategy_thresholds_profile"] == "conservative" else 1,
+            "early_runner_only_count": 1 if kwargs["strategy_thresholds_profile"] == "conservative" else 3,
+            "early_runner_second_entry_count": 0 if kwargs["strategy_thresholds_profile"] == "conservative" else 1,
+        }
+
+    monkeypatch.setattr(
+        "scripts.generate_btst_doc_bundle.generate_btst_doc_bundle",
+        _fake_generate,
+    )
+
+    result = compare_btst_doc_bundle_profiles(
+        "20260526",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    assert result["status"] == "compared"
+    assert result["comparison"]["recommended_profile"] == "conservative"
+    assert Path(result["json_path"]).exists()
+    assert Path(result["md_path"]).exists()
+    assert Path(result["decision_card_json_path"]).exists()
+    assert Path(result["decision_card_md_path"]).exists()
+    assert len(result["bridge_updated_files"]) == 4
+    payload = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+    assert payload["comparison"]["recommended_profile"] == "conservative"
+    assert payload["decision_card"]["recommended_profile"] == "conservative"
+    assert len(payload["bridge_updated_files"]) == 4
+    markdown = Path(result["md_path"]).read_text(encoding="utf-8")
+    assert "Profile 文档包对照" in markdown
+    assert "conservative" in markdown
+    assert "aggressive" in markdown
+    card_payload = json.loads(Path(result["decision_card_json_path"]).read_text(encoding="utf-8"))
+    assert card_payload["action_bias"] == "偏保守执行"
+    assert card_payload["intersection_delta_vs_runner_up"] == 1
+    card_markdown = Path(result["decision_card_md_path"]).read_text(encoding="utf-8")
+    assert "交易前决策卡" in card_markdown
+    assert "推荐 profile：`conservative`" in card_markdown
+    bridge_doc = (output_dir / "conservative" / "BTST-20260526.md").read_text(encoding="utf-8")
+    assert "## 今日执行倾向" in bridge_doc
+    assert "今日更偏：`conservative`" in bridge_doc
+    bridge_llm_doc = (output_dir / "aggressive" / "BTST-LLM-20260526.md").read_text(encoding="utf-8")
+    assert "## 今日执行倾向" in bridge_llm_doc
 
 
 def test_generate_btst_doc_bundle_marks_stale_overlap_as_reference_only(tmp_path: Path) -> None:

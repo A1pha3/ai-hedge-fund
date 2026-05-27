@@ -754,6 +754,237 @@ def generate_btst_doc_bundle(
     }
 
 
+def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Compare daily BTST bundle outputs across multiple threshold profiles."""
+    profiles = [
+        {
+            "profile": profile,
+            "output_dir": result.get("output_dir"),
+            "written_file_count": len(list(result.get("written_files") or [])),
+            "early_runner_status": result.get("early_runner_status"),
+            "intersection_count": int(result.get("early_runner_intersection_count") or 0),
+            "only_early_runner_count": int(result.get("early_runner_only_count") or 0),
+            "second_entry_count": int(result.get("early_runner_second_entry_count") or 0),
+        }
+        for profile, result in profile_results.items()
+    ]
+    ranked_profiles = sorted(
+        profiles,
+        key=lambda item: (
+            int(item.get("intersection_count") or 0),
+            -int(item.get("only_early_runner_count") or 0),
+            -int(item.get("second_entry_count") or 0),
+        ),
+        reverse=True,
+    )
+    recommended_profile = ranked_profiles[0]["profile"] if ranked_profiles else None
+    reasons: list[str] = []
+    if len(ranked_profiles) >= 2:
+        top = ranked_profiles[0]
+        runner_up = ranked_profiles[1]
+        reasons.append(
+            f"`{top['profile']}` 的交集票更多：`{top['intersection_count']}` vs `{runner_up['intersection_count']}`。"
+        )
+        reasons.append(
+            f"`{top['profile']}` 的 only early-runner 更少：`{top['only_early_runner_count']}` vs `{runner_up['only_early_runner_count']}`。"
+        )
+    return {
+        "profiles": sorted(profiles, key=lambda item: str(item["profile"])),
+        "recommended_profile": recommended_profile,
+        "recommendation_reasons": reasons,
+    }
+
+
+def _render_profile_doc_bundle_comparison_markdown(signal_date_compact: str, comparison: dict[str, Any]) -> str:
+    """Render one markdown summary for daily BTST bundle profile comparison."""
+    lines = [
+        f"# BTST {signal_date_compact} Profile 文档包对照",
+        "",
+        f"- 推荐 profile：`{comparison.get('recommended_profile') or 'n/a'}`",
+        "",
+        "## 总览",
+        "",
+        "| profile | early_runner_status | intersection_count | only_early_runner_count | second_entry_count | written_file_count | output_dir |",
+        "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for item in list(comparison.get("profiles") or []):
+        lines.append(
+            f"| {item['profile']} | {item.get('early_runner_status')} | {item.get('intersection_count')} | {item.get('only_early_runner_count')} | {item.get('second_entry_count')} | {item.get('written_file_count')} | {item.get('output_dir')} |"
+        )
+    lines.extend(["", "## 推荐理由", ""])
+    if list(comparison.get("recommendation_reasons") or []):
+        for reason in list(comparison.get("recommendation_reasons") or []):
+            lines.append(f"- {reason}")
+    else:
+        lines.append("- 当前样本不足，尚未形成明显 profile 差异。")
+    return "\n".join(lines) + "\n"
+
+
+def _build_profile_doc_bundle_decision_card(comparison: dict[str, Any]) -> dict[str, Any]:
+    """Build one compact pre-trade decision card from the daily profile comparison."""
+    profiles = list(comparison.get("profiles") or [])
+    recommended_profile = comparison.get("recommended_profile")
+    recommended = next(
+        (item for item in profiles if item.get("profile") == recommended_profile),
+        None,
+    )
+    alternatives = [item for item in profiles if item.get("profile") != recommended_profile]
+    challenger = alternatives[0] if alternatives else None
+    action_bias = "偏保守执行" if recommended_profile == "conservative" else "偏激进执行"
+    return {
+        "recommended_profile": recommended_profile,
+        "action_bias": action_bias,
+        "early_runner_status": recommended.get("early_runner_status") if recommended else None,
+        "intersection_count": int(recommended.get("intersection_count") or 0) if recommended else 0,
+        "only_early_runner_count": int(recommended.get("only_early_runner_count") or 0) if recommended else 0,
+        "second_entry_count": int(recommended.get("second_entry_count") or 0) if recommended else 0,
+        "intersection_delta_vs_runner_up": (
+            int(recommended.get("intersection_count") or 0) - int(challenger.get("intersection_count") or 0)
+            if recommended and challenger
+            else 0
+        ),
+        "only_early_runner_delta_vs_runner_up": (
+            int(recommended.get("only_early_runner_count") or 0) - int(challenger.get("only_early_runner_count") or 0)
+            if recommended and challenger
+            else 0
+        ),
+        "second_entry_delta_vs_runner_up": (
+            int(recommended.get("second_entry_count") or 0) - int(challenger.get("second_entry_count") or 0)
+            if recommended and challenger
+            else 0
+        ),
+        "recommendation_reasons": list(comparison.get("recommendation_reasons") or []),
+    }
+
+
+def _render_profile_doc_bundle_decision_card_markdown(signal_date_compact: str, decision_card: dict[str, Any]) -> str:
+    """Render one compact pre-trade decision card for fast profile selection."""
+    lines = [
+        f"# BTST {signal_date_compact} 交易前决策卡",
+        "",
+        f"- 推荐 profile：`{decision_card.get('recommended_profile') or 'n/a'}`",
+        f"- 执行倾向：`{decision_card.get('action_bias') or 'n/a'}`",
+        f"- early-runner 状态：`{decision_card.get('early_runner_status') or 'n/a'}`",
+        f"- 交集票：`{decision_card.get('intersection_count')}`；相对次优差值：`{decision_card.get('intersection_delta_vs_runner_up'):+d}`",
+        f"- only early-runner：`{decision_card.get('only_early_runner_count')}`；相对次优差值：`{decision_card.get('only_early_runner_delta_vs_runner_up'):+d}`",
+        f"- second-entry：`{decision_card.get('second_entry_count')}`；相对次优差值：`{decision_card.get('second_entry_delta_vs_runner_up'):+d}`",
+        "",
+        "## 快速判断",
+        "",
+    ]
+    if list(decision_card.get("recommendation_reasons") or []):
+        for reason in list(decision_card.get("recommendation_reasons") or []):
+            lines.append(f"- {reason}")
+    else:
+        lines.append("- 当前样本不足，暂不偏向单一 profile。")
+    return "\n".join(lines) + "\n"
+
+
+def _render_profile_decision_bridge_lines(decision_card: dict[str, Any]) -> list[str]:
+    """Render one shared conclusion block that can be injected into final BTST docs."""
+    return [
+        "## 今日执行倾向",
+        "",
+        f"- 今日更偏：`{decision_card.get('recommended_profile') or 'n/a'}`，执行倾向：`{decision_card.get('action_bias') or 'n/a'}`。",
+        f"- 交集票：`{decision_card.get('intersection_count')}`；相对次优差值：`{int(decision_card.get('intersection_delta_vs_runner_up') or 0):+d}`。",
+        f"- only early-runner：`{decision_card.get('only_early_runner_count')}`；相对次优差值：`{int(decision_card.get('only_early_runner_delta_vs_runner_up') or 0):+d}`。",
+        f"- second-entry：`{decision_card.get('second_entry_count')}`；相对次优差值：`{int(decision_card.get('second_entry_delta_vs_runner_up') or 0):+d}`。",
+    ] + [
+        f"- {reason}" for reason in list(decision_card.get("recommendation_reasons") or [])
+    ]
+
+
+def _append_profile_decision_bridge(
+    output_dir: Path,
+    signal_date_compact: str,
+    decision_card: dict[str, Any],
+) -> list[str]:
+    """Append one shared profile-decision bridge section into the main BTST docs."""
+    bridge = "\n" + "\n".join(_render_profile_decision_bridge_lines(decision_card)) + "\n"
+    updated_files: list[str] = []
+    for file_name in (
+        f"BTST-{signal_date_compact}.md",
+        f"BTST-LLM-{signal_date_compact}.md",
+    ):
+        target_path = output_dir / file_name
+        if not target_path.exists():
+            continue
+        original = target_path.read_text(encoding="utf-8")
+        if "## 今日执行倾向" in original:
+            continue
+        target_path.write_text(original.rstrip() + bridge, encoding="utf-8")
+        updated_files.append(target_path.as_posix())
+    return updated_files
+
+
+def compare_btst_doc_bundle_profiles(
+    signal_date: str,
+    *,
+    profiles: list[str] | tuple[str, ...],
+    reports_root: str | Path = REPORTS_DIR,
+    output_dir: str | Path | None = None,
+    report_dir: str | Path | None = None,
+    refresh_early_runner: bool = True,
+    include_extra_warning_docs: bool = True,
+) -> dict[str, Any]:
+    """Generate daily BTST bundles for multiple profiles and write one comparison report."""
+    signal_date_compact, _ = _normalize_signal_date(signal_date)
+    resolved_output_dir = Path(output_dir).expanduser().resolve() if output_dir else (OUTPUTS_DIR / signal_date_compact[:6] / f"{signal_date_compact}_profile_compare").resolve()
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+    profile_results: dict[str, dict[str, Any]] = {}
+    for profile in profiles:
+        profile_output_dir = resolved_output_dir / str(profile)
+        profile_results[str(profile)] = generate_btst_doc_bundle(
+            signal_date_compact,
+            reports_root=reports_root,
+            output_dir=profile_output_dir,
+            report_dir=report_dir,
+            refresh_early_runner=refresh_early_runner,
+            include_extra_warning_docs=include_extra_warning_docs,
+            strategy_thresholds_profile=str(profile),
+        )
+    comparison = _build_profile_doc_bundle_comparison(profile_results)
+    decision_card = _build_profile_doc_bundle_decision_card(comparison)
+    bridge_updated_files: list[str] = []
+    for profile, result in profile_results.items():
+        bridge_updated_files.extend(
+            _append_profile_decision_bridge(
+                Path(result["output_dir"]),
+                signal_date_compact,
+                decision_card,
+            )
+        )
+    json_path = resolved_output_dir / f"{signal_date_compact}-btst-doc-bundle-profile-comparison.json"
+    md_path = resolved_output_dir / f"{signal_date_compact}-btst-doc-bundle-profile-comparison.md"
+    card_json_path = resolved_output_dir / f"{signal_date_compact}-btst-pretrade-decision-card.json"
+    card_md_path = resolved_output_dir / f"{signal_date_compact}-btst-pretrade-decision-card.md"
+    payload = {
+        "signal_date": signal_date_compact,
+        "profiles": list(profiles),
+        "comparison": comparison,
+        "decision_card": decision_card,
+        "bridge_updated_files": bridge_updated_files,
+        "profile_results": profile_results,
+    }
+    _write_text(json_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    _write_text(md_path, _render_profile_doc_bundle_comparison_markdown(signal_date_compact, comparison))
+    _write_text(card_json_path, json.dumps(decision_card, ensure_ascii=False, indent=2) + "\n")
+    _write_text(card_md_path, _render_profile_doc_bundle_decision_card_markdown(signal_date_compact, decision_card))
+    return {
+        "status": "compared",
+        "signal_date": signal_date_compact,
+        "output_dir": resolved_output_dir.as_posix(),
+        "json_path": json_path.as_posix(),
+        "md_path": md_path.as_posix(),
+        "decision_card_json_path": card_json_path.as_posix(),
+        "decision_card_md_path": card_md_path.as_posix(),
+        "comparison": comparison,
+        "decision_card": decision_card,
+        "bridge_updated_files": bridge_updated_files,
+        "profile_results": profile_results,
+    }
+
+
 def main() -> None:
     """CLI entrypoint for generating the BTST reading bundle."""
     parser = argparse.ArgumentParser(description="Generate BTST reading docs with scheme-A early-runner sections.")
@@ -765,7 +996,20 @@ def main() -> None:
     parser.add_argument("--core-only", action="store_true", help="Generate only the 5 canonical BTST docs.")
     parser.add_argument("--strategy-thresholds-config", default="")
     parser.add_argument("--strategy-thresholds-profile", default=DEFAULT_STRATEGY_THRESHOLDS_PROFILE)
+    parser.add_argument("--compare-profiles", nargs="*", default=[])
     args = parser.parse_args()
+    if list(args.compare_profiles):
+        result = compare_btst_doc_bundle_profiles(
+            args.signal_date,
+            profiles=list(args.compare_profiles),
+            reports_root=args.reports_root,
+            output_dir=args.output_dir or None,
+            report_dir=args.report_dir or None,
+            refresh_early_runner=not args.no_refresh_early_runner,
+            include_extra_warning_docs=not args.core_only,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     result = generate_btst_doc_bundle(
         args.signal_date,
         reports_root=args.reports_root,

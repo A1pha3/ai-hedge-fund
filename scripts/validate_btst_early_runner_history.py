@@ -593,6 +593,80 @@ def _render_markdown(month_prefix: str, summary: dict[str, Any], rows: list[dict
     return "\n".join(lines) + "\n"
 
 
+def _build_profile_comparison(profile_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Compare multiple profile summaries and highlight the strongest edges."""
+    profiles = [
+        {
+            "profile": profile,
+            "exact_rate": dict(result.get("summary") or {}).get("exact_rate", 0.0),
+            "intersection_positive_rate": dict(result.get("summary") or {}).get("intersection_positive_rate", 0.0),
+            "only_early_runner_positive_rate": dict(result.get("summary") or {}).get("only_early_runner_positive_rate", 0.0),
+            "intersection_next_close_positive_rate": dict(dict(result.get("summary") or {}).get("intersection_outcome_summary") or {}).get("next_close_positive_rate", 0.0),
+            "intersection_next_close_mean_return": dict(dict(result.get("summary") or {}).get("intersection_outcome_summary") or {}).get("next_close_mean_return"),
+            "only_early_runner_next_close_mean_return": dict(dict(result.get("summary") or {}).get("only_early_runner_outcome_summary") or {}).get("next_close_mean_return"),
+            "second_entry_t_plus_2_mean_return": dict(dict(result.get("summary") or {}).get("second_entry_outcome_summary") or {}).get("t_plus_2_mean_return"),
+            "meets_minimum_directory_switch_gate": bool(dict(result.get("summary") or {}).get("meets_minimum_directory_switch_gate")),
+            "json_path": result.get("json_path"),
+            "md_path": result.get("md_path"),
+        }
+        for profile, result in profile_results.items()
+    ]
+    sorted_profiles = sorted(profiles, key=lambda item: str(item["profile"]))
+    recommended_profile = None
+    reasons: list[str] = []
+    if sorted_profiles:
+        ranked_profiles = sorted(
+            sorted_profiles,
+            key=lambda item: (
+                float(item.get("intersection_next_close_positive_rate") or 0.0),
+                float(item.get("intersection_next_close_mean_return") or -999.0),
+                float(item.get("exact_rate") or 0.0),
+                -float(item.get("only_early_runner_positive_rate") or 0.0),
+            ),
+            reverse=True,
+        )
+        recommended_profile = ranked_profiles[0]["profile"]
+        if len(ranked_profiles) >= 2:
+            top = ranked_profiles[0]
+            runner_up = ranked_profiles[1]
+            reasons.append(
+                f"`{top['profile']}` 的交集层 next_close 正收益率更高：`{_fmt_pct(top.get('intersection_next_close_positive_rate'))}` vs `{_fmt_pct(runner_up.get('intersection_next_close_positive_rate'))}`。"
+            )
+            reasons.append(
+                f"`{top['profile']}` 的交集层平均收益更好：`{_fmt_return(top.get('intersection_next_close_mean_return'))}` vs `{_fmt_return(runner_up.get('intersection_next_close_mean_return'))}`。"
+            )
+    return {
+        "profiles": sorted_profiles,
+        "recommended_profile": recommended_profile,
+        "recommendation_reasons": reasons,
+    }
+
+
+def _render_profile_comparison_markdown(month_prefix: str, comparison: dict[str, Any]) -> str:
+    """Render one markdown report that compares multiple strategy-threshold profiles."""
+    lines = [
+        f"# {month_prefix} BTST Profile 对照复盘",
+        "",
+        f"- 推荐 profile：`{comparison.get('recommended_profile') or 'n/a'}`",
+        "",
+        "## 总览",
+        "",
+        "| profile | exact_rate | intersection_positive_rate | only_early_runner_positive_rate | intersection_next_close_positive_rate | intersection_next_close_mean_return | second_entry_t_plus_2_mean_return | directory_switch_gate |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for item in list(comparison.get("profiles") or []):
+        lines.append(
+            f"| {item['profile']} | {_fmt_pct(item.get('exact_rate'))} | {_fmt_pct(item.get('intersection_positive_rate'))} | {_fmt_pct(item.get('only_early_runner_positive_rate'))} | {_fmt_pct(item.get('intersection_next_close_positive_rate'))} | {_fmt_return(item.get('intersection_next_close_mean_return'))} | {_fmt_return(item.get('second_entry_t_plus_2_mean_return'))} | {item.get('meets_minimum_directory_switch_gate')} |"
+        )
+    lines.extend(["", "## 推荐理由", ""])
+    if list(comparison.get("recommendation_reasons") or []):
+        for reason in list(comparison.get("recommendation_reasons") or []):
+            lines.append(f"- {reason}")
+    else:
+        lines.append("- 当前样本不足，尚未形成明显 profile 优势。")
+    return "\n".join(lines) + "\n"
+
+
 
 def validate_btst_early_runner_history(
     month_prefix: str,
@@ -643,6 +717,47 @@ def validate_btst_early_runner_history(
     }
 
 
+def compare_btst_early_runner_profiles(
+    month_prefix: str,
+    *,
+    profiles: list[str] | tuple[str, ...],
+    reports_root: str | Path = REPORTS_DIR,
+    output_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Run monthly validation for multiple profiles and write one comparison report."""
+    resolved_output_dir = Path(output_dir).expanduser().resolve() if output_dir else (OUTPUTS_DIR / month_prefix / "validation_scheme_a_profiles").resolve()
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+    profile_results: dict[str, dict[str, Any]] = {}
+    for profile in profiles:
+        profile_output_dir = resolved_output_dir / str(profile)
+        profile_results[str(profile)] = validate_btst_early_runner_history(
+            month_prefix,
+            reports_root=reports_root,
+            output_dir=profile_output_dir,
+            strategy_thresholds_profile=str(profile),
+        )
+    comparison = _build_profile_comparison(profile_results)
+    json_path = resolved_output_dir / f"{month_prefix}-btst-profile-comparison.json"
+    md_path = resolved_output_dir / f"{month_prefix}-btst-profile-comparison.md"
+    payload = {
+        "month_prefix": month_prefix,
+        "profiles": list(profiles),
+        "comparison": comparison,
+        "profile_results": profile_results,
+    }
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    md_path.write_text(_render_profile_comparison_markdown(month_prefix, comparison), encoding="utf-8")
+    return {
+        "status": "compared",
+        "month_prefix": month_prefix,
+        "output_dir": resolved_output_dir.as_posix(),
+        "json_path": json_path.as_posix(),
+        "md_path": md_path.as_posix(),
+        "comparison": comparison,
+        "profile_results": profile_results,
+    }
+
+
 def main() -> None:
     """CLI entrypoint for monthly early-runner history validation."""
     parser = argparse.ArgumentParser(description="Replay BTST historical dates and validate scheme-A early-runner behavior.")
@@ -651,6 +766,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--strategy-thresholds-config", default="")
     parser.add_argument("--strategy-thresholds-profile", default=DEFAULT_STRATEGY_THRESHOLDS_PROFILE)
+    parser.add_argument("--compare-profiles", nargs="*", default=[])
     parser.add_argument("--min-recent-exact-streak", type=int, default=_default_strategy_thresholds()["min_recent_exact_streak"])
     parser.add_argument("--min-intersection-positive-days", type=int, default=_default_strategy_thresholds()["min_intersection_positive_days"])
     parser.add_argument("--allow-unavailable-days-for-directory-switch", action="store_true")
@@ -659,6 +775,15 @@ def main() -> None:
     parser.add_argument("--only-early-runner-max-positive-rate", type=float, default=_default_strategy_thresholds()["only_early_runner_max_positive_rate"])
     parser.add_argument("--second-entry-t2-advantage-threshold", type=float, default=_default_strategy_thresholds()["second_entry_t2_advantage_threshold"])
     args = parser.parse_args()
+    if list(args.compare_profiles):
+        result = compare_btst_early_runner_profiles(
+            args.month_prefix,
+            profiles=list(args.compare_profiles),
+            reports_root=args.reports_root,
+            output_dir=args.output_dir or None,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     result = validate_btst_early_runner_history(
         args.month_prefix,
         reports_root=args.reports_root,

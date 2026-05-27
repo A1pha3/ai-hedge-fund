@@ -33,6 +33,7 @@ Use the signal date YYYYMMDD in every filename:
 - Do not dump the full universe of candidates when a practical main list and watch list are enough.
 - Keep the tone factual and calm; no hype, certainty claims, or inciting language.
 - If early-runner is integrated, state whether overlap highlighting is based on the exact trade date or only on stale fallback.
+- If a same-day profile comparison and pretrade decision card exist, BTST-YYYYMMDD.md and BTST-LLM-YYYYMMDD.md must both include the same one-paragraph Chinese conclusion about whether today leans conservative or aggressive.
 
 ## Document-specific boundaries
 
@@ -43,3 +44,4 @@ Use the signal date YYYYMMDD in every filename:
 - For older runs without optimization_profile_resolution, use legacy short_trade_target_profile_name and short_trade_target_profile_overrides when they exist. If those legacy fields are the only profile evidence, disclose the known profile/overrides and describe provenance as unavailable or not explicit rather than fabricated.
 - The forum short version must be directly postable, but still reflect the current run rather than yesterday's wording.
 - The execution checklist must follow the multi-agent hierarchy, not a blended or manually re-ranked list.
+- When a decision card exists, the shared bridge conclusion may guide framing, but it must not overwrite rule provenance in BTST-YYYYMMDD.md or silently upgrade names in BTST-LLM-YYYYMMDD.md.

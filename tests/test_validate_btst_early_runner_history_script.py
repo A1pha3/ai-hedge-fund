@@ -209,6 +209,53 @@ def test_build_summary_records_profile_and_resolved_config_path() -> None:
     )
 
 
+def test_build_profile_comparison_prefers_stronger_intersection_profile() -> None:
+    """Recommend the profile with stronger intersection outcomes."""
+    comparison = history_script._build_profile_comparison(
+        {
+            "conservative": {
+                "summary": {
+                    "exact_rate": 0.5,
+                    "intersection_positive_rate": 0.4,
+                    "only_early_runner_positive_rate": 0.3,
+                    "meets_minimum_directory_switch_gate": False,
+                    "intersection_outcome_summary": {
+                        "next_close_positive_rate": 0.5,
+                        "next_close_mean_return": 0.01,
+                    },
+                    "only_early_runner_outcome_summary": {
+                        "next_close_mean_return": -0.01,
+                    },
+                    "second_entry_outcome_summary": {
+                        "t_plus_2_mean_return": 0.01,
+                    },
+                }
+            },
+            "aggressive": {
+                "summary": {
+                    "exact_rate": 0.6,
+                    "intersection_positive_rate": 0.5,
+                    "only_early_runner_positive_rate": 0.35,
+                    "meets_minimum_directory_switch_gate": True,
+                    "intersection_outcome_summary": {
+                        "next_close_positive_rate": 0.7,
+                        "next_close_mean_return": 0.03,
+                    },
+                    "only_early_runner_outcome_summary": {
+                        "next_close_mean_return": -0.02,
+                    },
+                    "second_entry_outcome_summary": {
+                        "t_plus_2_mean_return": 0.02,
+                    },
+                }
+            },
+        }
+    )
+
+    assert comparison["recommended_profile"] == "aggressive"
+    assert comparison["recommendation_reasons"]
+
+
 def test_build_bucket_outcome_stats_tracks_realized_returns(monkeypatch) -> None:
     """Aggregate realized outcomes for one bucket by ticker."""
     monkeypatch.setattr(
@@ -296,6 +343,55 @@ def test_render_markdown_includes_second_entry_and_gate_fields() -> None:
     assert "next_close 正收益率 / 平均收益" in markdown
     assert "second_entry_count" in markdown
     assert "300002" in markdown
+
+
+def test_compare_btst_early_runner_profiles_writes_outputs(tmp_path: Path, monkeypatch) -> None:
+    """Write one comparison report that aggregates conservative and aggressive runs."""
+    output_dir = tmp_path / "outputs"
+
+    monkeypatch.setattr(
+        history_script,
+        "validate_btst_early_runner_history",
+        lambda month_prefix, **kwargs: {
+            "status": "validated",
+            "month_prefix": month_prefix,
+            "json_path": f"/tmp/{kwargs['strategy_thresholds_profile']}.json",
+            "md_path": f"/tmp/{kwargs['strategy_thresholds_profile']}.md",
+            "summary": {
+                "exact_rate": 0.4 if kwargs["strategy_thresholds_profile"] == "conservative" else 0.6,
+                "intersection_positive_rate": 0.3 if kwargs["strategy_thresholds_profile"] == "conservative" else 0.5,
+                "only_early_runner_positive_rate": 0.2 if kwargs["strategy_thresholds_profile"] == "conservative" else 0.35,
+                "meets_minimum_directory_switch_gate": kwargs["strategy_thresholds_profile"] == "aggressive",
+                "intersection_outcome_summary": {
+                    "next_close_positive_rate": 0.5 if kwargs["strategy_thresholds_profile"] == "conservative" else 0.7,
+                    "next_close_mean_return": 0.01 if kwargs["strategy_thresholds_profile"] == "conservative" else 0.03,
+                },
+                "only_early_runner_outcome_summary": {
+                    "next_close_mean_return": -0.01,
+                },
+                "second_entry_outcome_summary": {
+                    "t_plus_2_mean_return": 0.01 if kwargs["strategy_thresholds_profile"] == "conservative" else 0.02,
+                },
+            },
+        },
+    )
+
+    result = history_script.compare_btst_early_runner_profiles(
+        "202605",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    assert result["status"] == "compared"
+    assert result["comparison"]["recommended_profile"] == "aggressive"
+    assert Path(result["json_path"]).exists()
+    assert Path(result["md_path"]).exists()
+    payload = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+    assert payload["comparison"]["recommended_profile"] == "aggressive"
+    markdown = Path(result["md_path"]).read_text(encoding="utf-8")
+    assert "BTST Profile 对照复盘" in markdown
+    assert "aggressive" in markdown
+    assert "conservative" in markdown
 
 
 def test_validate_btst_early_runner_history_writes_upgraded_outputs(tmp_path: Path, monkeypatch) -> None:
