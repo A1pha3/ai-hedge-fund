@@ -1520,6 +1520,93 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
     assert analysis["selected_entries"][0]["historical_prior"]["execution_quality_label"] == "balanced_confirmation"
 
 
+def test_generate_btst_next_day_trade_brief_surfaces_payoff_first_runner_recall_review(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-05-22"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"plan_generation": {"selection_target": "short_trade_only"}}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260522",
+                "target_mode": "short_trade_only",
+                "selection_targets": {
+                    "300757": {
+                        "ticker": "300757",
+                        "short_trade": {
+                            "decision": "selected",
+                            "score_target": 0.5907,
+                            "confidence": 0.935,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_breakout_candidate"],
+                            "top_reasons": ["breakout_freshness=0.94"],
+                            "gate_status": {"score": "pass", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.935,
+                                "trend_acceleration": 0.7275,
+                                "volume_expansion_quality": 0.398,
+                                "close_strength": 0.9019,
+                                "catalyst_freshness": 0.8793,
+                            },
+                            "explainability_payload": {
+                                "candidate_source": "short_trade_boundary",
+                            },
+                        },
+                    },
+                    "688183": {
+                        "ticker": "688183",
+                        "research": {
+                            "decision": "selected",
+                            "score_target": 0.4182,
+                        },
+                        "short_trade": {
+                            "decision": "rejected",
+                            "score_target": 0.3364,
+                            "confidence": 0.7288,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_catalyst_support", "delayed_breakout_watch"],
+                            "top_reasons": ["close_strength=0.86", "catalyst_freshness=0.82"],
+                            "rejection_reasons": ["score_short_below_threshold"],
+                            "gate_status": {"data": "pass", "structural": "pass", "score": "fail"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.588,
+                                "trend_acceleration": 0.612,
+                                "volume_expansion_quality": 0.302,
+                                "close_strength": 0.861,
+                                "catalyst_freshness": 0.824,
+                            },
+                            "explainability_payload": {
+                                "candidate_source": "watchlist_filter_diagnostics",
+                            },
+                        },
+                        "delta_summary": ["research target selected while short trade target stays rejected"],
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(
+        report_dir, trade_date="2026-05-22", next_trade_date="2026-05-23"
+    )
+    markdown = render_btst_next_day_trade_brief_markdown(analysis)
+
+    assert [entry["ticker"] for entry in analysis["runner_recall_review_entries"]] == ["688183"]
+    assert analysis["runner_recall_review_entries"][0]["candidate_source"] == "watchlist_filter_diagnostics"
+    assert analysis["summary"]["runner_recall_review_count"] == 1
+    assert "## Payoff-First Runner Recall Review" in markdown
+    assert "### 688183" in markdown
+
+
 def test_generate_btst_next_day_trade_brief_includes_replay_only_upstream_shadow_observation_entries(tmp_path):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-04-01"

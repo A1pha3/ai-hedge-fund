@@ -5,8 +5,10 @@ from typing import Any
 
 from src.paper_trading.btst_reporting_utils import (
     OPPORTUNITY_POOL_MAX_ENTRIES,
+    OPPORTUNITY_POOL_MIN_SCORE_TARGET,
     _as_float,
     _load_json,
+    _monitor_priority_rank,
     _load_selection_replay_input,
     _normalize_trade_date,
     _resolve_replay_input_path,
@@ -39,6 +41,11 @@ from src.paper_trading._btst_reporting.historical_prior import (
     _enrich_upstream_shadow_entries_with_history,
     _extract_excluded_research_entry,
 )
+
+
+RUNNER_RECALL_REVIEW_MAX_ENTRIES = 5
+RUNNER_RECALL_REVIEW_SOURCE = "watchlist_filter_diagnostics"
+RUNNER_RECALL_REVIEW_EXCLUDED_EXECUTION_QUALITY_LABELS = {"payoff_divergence_risk"}
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +220,12 @@ def analyze_btst_next_day_trade_brief(
     btst_candidate_historical_context = history_context[
         "btst_candidate_historical_context"
     ]
+    runner_recall_review_entries = _build_runner_recall_review_entries(
+        opportunity_pool_entries=opportunity_pool_entries,
+        no_history_observer_entries=no_history_observer_entries,
+        risky_observer_entries=risky_observer_entries,
+        research_upside_radar_entries=research_upside_radar_entries,
+    )
 
     excluded_research_entries = _build_excluded_research_entries(selection_targets)
     recommendation_lines = _build_btst_brief_recommendation_lines(
@@ -227,6 +240,7 @@ def analyze_btst_next_day_trade_brief(
         catalyst_theme_entries=catalyst_theme_entries,
         catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
         excluded_research_entries=excluded_research_entries,
+        runner_recall_review_entries=runner_recall_review_entries,
         brief_frontier_context=brief_frontier_context,
     )
 
@@ -246,6 +260,7 @@ def analyze_btst_next_day_trade_brief(
         risky_observer_entries=risky_observer_entries,
         weak_history_pruned_entries=weak_history_pruned_entries,
         research_upside_radar_entries=research_upside_radar_entries,
+        runner_recall_review_entries=runner_recall_review_entries,
         catalyst_theme_entries=catalyst_theme_entries,
         catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
         btst_candidate_historical_context=btst_candidate_historical_context,
@@ -356,6 +371,7 @@ def _build_btst_brief_recommendation_lines(
     catalyst_theme_entries: list[dict[str, Any]],
     catalyst_theme_shadow_entries: list[dict[str, Any]],
     excluded_research_entries: list[dict[str, Any]],
+    runner_recall_review_entries: list[dict[str, Any]],
     brief_frontier_context: dict[str, Any],
 ) -> list[str]:
     selected_entries = _filter_execution_ready_entries(selected_entries)
@@ -383,6 +399,11 @@ def _build_btst_brief_recommendation_lines(
         )
         if blocked_line:
             recommendation_lines.insert(0, blocked_line)
+    runner_recall_line = _build_runner_recall_review_recommendation_line(
+        runner_recall_review_entries
+    )
+    if runner_recall_line:
+        recommendation_lines.append(runner_recall_line)
     return recommendation_lines
 
 
@@ -434,6 +455,7 @@ def _build_btst_next_day_trade_brief_payload(
     risky_observer_entries: list[dict[str, Any]],
     weak_history_pruned_entries: list[dict[str, Any]],
     research_upside_radar_entries: list[dict[str, Any]],
+    runner_recall_review_entries: list[dict[str, Any]],
     catalyst_theme_entries: list[dict[str, Any]],
     catalyst_theme_shadow_entries: list[dict[str, Any]],
     btst_candidate_historical_context: dict[str, Any],
@@ -465,6 +487,7 @@ def _build_btst_next_day_trade_brief_payload(
             risky_observer_entries=risky_observer_entries,
             weak_history_pruned_entries=weak_history_pruned_entries,
             research_upside_radar_entries=research_upside_radar_entries,
+            runner_recall_review_entries=runner_recall_review_entries,
             catalyst_theme_entries=catalyst_theme_entries,
             catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
             btst_candidate_historical_context=btst_candidate_historical_context,
@@ -517,6 +540,7 @@ def _build_legacy_btst_next_day_trade_brief_payload(
         risky_observer_entries=[],
         weak_history_pruned_entries=[],
         research_upside_radar_entries=[],
+        runner_recall_review_entries=[],
         catalyst_theme_entries=[],
         catalyst_theme_shadow_entries=[],
         btst_candidate_historical_context=_build_empty_btst_candidate_historical_context(),
@@ -538,6 +562,7 @@ def _build_btst_next_day_trade_brief_content(
     risky_observer_entries: list[dict[str, Any]],
     weak_history_pruned_entries: list[dict[str, Any]],
     research_upside_radar_entries: list[dict[str, Any]],
+    runner_recall_review_entries: list[dict[str, Any]],
     catalyst_theme_entries: list[dict[str, Any]],
     catalyst_theme_shadow_entries: list[dict[str, Any]],
     btst_candidate_historical_context: dict[str, Any],
@@ -556,6 +581,7 @@ def _build_btst_next_day_trade_brief_content(
             risky_observer_entries=risky_observer_entries,
             weak_history_pruned_entries=weak_history_pruned_entries,
             research_upside_radar_entries=research_upside_radar_entries,
+            runner_recall_review_entries=runner_recall_review_entries,
             catalyst_theme_entries=catalyst_theme_entries,
             catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
             catalyst_theme_frontier_priority=brief_frontier_context[
@@ -572,6 +598,7 @@ def _build_btst_next_day_trade_brief_content(
             risky_observer_entries=risky_observer_entries,
             weak_history_pruned_entries=weak_history_pruned_entries,
             research_upside_radar_entries=research_upside_radar_entries,
+            runner_recall_review_entries=runner_recall_review_entries,
             catalyst_theme_entries=catalyst_theme_entries,
             catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
             btst_candidate_historical_context=btst_candidate_historical_context,
@@ -622,6 +649,7 @@ def _build_btst_next_day_trade_brief_sections(
     risky_observer_entries: list[dict[str, Any]],
     weak_history_pruned_entries: list[dict[str, Any]],
     research_upside_radar_entries: list[dict[str, Any]],
+    runner_recall_review_entries: list[dict[str, Any]],
     catalyst_theme_entries: list[dict[str, Any]],
     catalyst_theme_shadow_entries: list[dict[str, Any]],
     btst_candidate_historical_context: dict[str, Any],
@@ -637,6 +665,7 @@ def _build_btst_next_day_trade_brief_sections(
         "risky_observer_entries": risky_observer_entries,
         "weak_history_pruned_entries": weak_history_pruned_entries,
         "research_upside_radar_entries": research_upside_radar_entries,
+        "runner_recall_review_entries": runner_recall_review_entries,
         "catalyst_theme_entries": catalyst_theme_entries,
         "catalyst_theme_shadow_entries": catalyst_theme_shadow_entries,
         "catalyst_theme_frontier_summary": brief_frontier_context[
@@ -966,6 +995,7 @@ def _build_btst_brief_summary(
     risky_observer_entries: list[dict[str, Any]],
     weak_history_pruned_entries: list[dict[str, Any]],
     research_upside_radar_entries: list[dict[str, Any]],
+    runner_recall_review_entries: list[dict[str, Any]],
     catalyst_theme_entries: list[dict[str, Any]],
     catalyst_theme_shadow_entries: list[dict[str, Any]],
     catalyst_theme_frontier_priority: dict[str, Any],
@@ -994,6 +1024,7 @@ def _build_btst_brief_summary(
         "risky_observer_count": len(risky_observer_entries),
         "weak_history_pruned_count": len(weak_history_pruned_entries),
         "research_upside_radar_count": len(research_upside_radar_entries),
+        "runner_recall_review_count": len(runner_recall_review_entries),
         "catalyst_theme_count": len(catalyst_theme_entries),
         "catalyst_theme_shadow_count": len(catalyst_theme_shadow_entries),
         "catalyst_theme_frontier_promoted_count": len(
@@ -1034,6 +1065,91 @@ def _build_btst_brief_summary(
         "execution_blocked_candidate_count": execution_blocked_summary["count"],
         "execution_blocked_tickers": execution_blocked_summary["tickers"],
     }
+
+
+def _build_runner_recall_review_entries(
+    *,
+    opportunity_pool_entries: list[dict[str, Any]],
+    no_history_observer_entries: list[dict[str, Any]],
+    risky_observer_entries: list[dict[str, Any]],
+    research_upside_radar_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    candidate_entries_by_ticker: dict[str, dict[str, Any]] = {}
+    for bucket_name, entries in (
+        ("research_upside_radar", research_upside_radar_entries),
+        ("opportunity_pool", opportunity_pool_entries),
+        ("no_history_observer", no_history_observer_entries),
+        ("risky_observer", risky_observer_entries),
+    ):
+        for entry in entries:
+            candidate = _build_runner_recall_review_entry(entry, bucket_name)
+            ticker = str(candidate.get("ticker") or "") if candidate else ""
+            if not ticker:
+                continue
+            existing = candidate_entries_by_ticker.get(ticker)
+            if existing is None or _runner_recall_review_sort_key(candidate) < _runner_recall_review_sort_key(existing):
+                candidate_entries_by_ticker[ticker] = candidate
+    runner_recall_review_entries = list(candidate_entries_by_ticker.values())
+    runner_recall_review_entries.sort(key=_runner_recall_review_sort_key)
+    return runner_recall_review_entries[:RUNNER_RECALL_REVIEW_MAX_ENTRIES]
+
+
+def _build_runner_recall_review_entry(
+    entry: dict[str, Any], bucket_name: str
+) -> dict[str, Any] | None:
+    candidate_source = str(entry.get("candidate_source") or "")
+    if candidate_source != RUNNER_RECALL_REVIEW_SOURCE:
+        return None
+    historical_prior = dict(entry.get("historical_prior") or {})
+    if (
+        str(historical_prior.get("execution_quality_label") or "")
+        in RUNNER_RECALL_REVIEW_EXCLUDED_EXECUTION_QUALITY_LABELS
+    ):
+        return None
+    if (
+        _as_float(entry.get("research_score_target")) <= 0
+        and _as_float(entry.get("score_target")) < OPPORTUNITY_POOL_MIN_SCORE_TARGET
+    ):
+        return None
+    return {
+        **dict(entry),
+        "runner_recall_bucket": bucket_name,
+        "runner_recall_note": (
+            "来源于 watchlist_filter_diagnostics 的 payoff-first runner recall 复审层；"
+            "只做影子复审，不直接加入 formal BTST 执行名单。"
+        ),
+    }
+
+
+def _runner_recall_review_sort_key(entry: dict[str, Any]) -> tuple[Any, ...]:
+    historical_prior = dict(entry.get("historical_prior") or {})
+    metrics = dict(entry.get("metrics") or {})
+    return (
+        _monitor_priority_rank(historical_prior.get("monitor_priority")),
+        0 if entry.get("research_score_target") is not None else 1,
+        -(entry.get("research_score_target") or 0.0),
+        -(entry.get("score_target") or 0.0),
+        -_as_float(metrics.get("catalyst_freshness")),
+        -_as_float(metrics.get("close_strength")),
+        str(entry.get("ticker") or ""),
+    )
+
+
+def _build_runner_recall_review_recommendation_line(
+    runner_recall_review_entries: list[dict[str, Any]],
+) -> str | None:
+    if not runner_recall_review_entries:
+        return None
+    preview = ", ".join(
+        str(entry.get("ticker") or "")
+        for entry in runner_recall_review_entries[:3]
+        if entry.get("ticker")
+    )
+    suffix = " 等" if len(runner_recall_review_entries) > 3 else ""
+    return (
+        f"payoff-first runner recall 复审层优先回看 {preview}{suffix}；"
+        "这些票来自 watchlist_filter_diagnostics，只做影子复审，不直接并入 formal BTST 执行名单。"
+    )
 
 
 def _build_btst_brief_decision_counts(

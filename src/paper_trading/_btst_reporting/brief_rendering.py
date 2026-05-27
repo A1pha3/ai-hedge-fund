@@ -306,6 +306,35 @@ def _append_brief_research_radar_markdown(
     )
 
 
+def _append_brief_runner_recall_review_markdown(
+    lines: list[str], entries: list[dict[str, Any]]
+) -> None:
+    def render_entry(inner_lines: list[str], entry: dict[str, Any]) -> None:
+        historical_prior = dict(entry.get("historical_prior") or {})
+        inner_lines.append(f"- runner_recall_bucket: {entry.get('runner_recall_bucket')}")
+        inner_lines.append(f"- research_score_target: {_format_float(entry.get('research_score_target'))}")
+        inner_lines.append(f"- short_trade_score_target: {_format_float(entry.get('score_target'))}")
+        inner_lines.append(f"- preferred_entry_mode: {entry.get('preferred_entry_mode')}")
+        inner_lines.append(f"- candidate_source: {entry.get('candidate_source')}")
+        inner_lines.append(f"- runner_recall_note: {entry.get('runner_recall_note') or 'n/a'}")
+        _append_brief_historical_prior_fields(
+            inner_lines,
+            historical_prior,
+            include_monitor_priority=True,
+            include_execution_quality=True,
+            include_execution_note=True,
+        )
+        inner_lines.append(f"- top_reasons: {', '.join(entry.get('top_reasons') or []) or 'n/a'}")
+        inner_lines.append(f"- rejection_reasons: {', '.join(entry.get('rejection_reasons') or []) or 'n/a'}")
+
+    _append_brief_ticker_section(
+        lines,
+        title="Payoff-First Runner Recall Review",
+        entries=entries,
+        render_entry=render_entry,
+    )
+
+
 def _append_brief_catalyst_theme_markdown(
     lines: list[str], entries: list[dict[str, Any]]
 ) -> None:
@@ -440,6 +469,9 @@ def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) 
     lines.append(
         f"- research_upside_radar_count: {summary.get('research_upside_radar_count')}"
     )
+    lines.append(
+        f"- runner_recall_review_count: {summary.get('runner_recall_review_count')}"
+    )
     lines.append(f"- catalyst_theme_count: {summary.get('catalyst_theme_count')}")
     lines.append(
         f"- catalyst_theme_shadow_count: {summary.get('catalyst_theme_shadow_count')}"
@@ -519,6 +551,9 @@ def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
     )
     _append_brief_research_radar_markdown(
         lines, list(analysis.get("research_upside_radar_entries") or [])
+    )
+    _append_brief_runner_recall_review_markdown(
+        lines, list(analysis.get("runner_recall_review_entries") or [])
     )
     _append_brief_catalyst_theme_markdown(
         lines, list(analysis.get("catalyst_theme_entries") or [])

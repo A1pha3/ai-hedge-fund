@@ -447,6 +447,63 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     assert "002002" in markdown
 
 
+def test_analyze_btst_premarket_execution_card_surfaces_runner_recall_review_actions():
+    payload = btst_reporting.analyze_btst_premarket_execution_card(
+        {
+            "trade_date": "2026-05-22",
+            "next_trade_date": "2026-05-23",
+            "selection_target": "short_trade_only",
+            "summary": {},
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "no_history_observer_entries": [],
+            "risky_observer_entries": [],
+            "research_upside_radar_entries": [],
+            "runner_recall_review_entries": [
+                {
+                    "ticker": "688183",
+                    "score_target": 0.3364,
+                    "research_score_target": 0.4182,
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "candidate_source": "watchlist_filter_diagnostics",
+                    "top_reasons": ["close_strength=0.86", "catalyst_freshness=0.82"],
+                    "rejection_reasons": ["score_short_below_threshold"],
+                    "metrics": {
+                        "breakout_freshness": 0.588,
+                        "trend_acceleration": 0.612,
+                        "close_strength": 0.861,
+                        "catalyst_freshness": 0.824,
+                    },
+                    "historical_prior": {
+                        "summary": "延迟爆发型观察样本偏少，只保留 payoff-first 复审。",
+                        "monitor_priority": "high",
+                        "execution_quality_label": "unknown",
+                    },
+                }
+            ],
+            "catalyst_theme_shadow_entries": [],
+            "excluded_research_entries": [],
+            "upstream_shadow_entries": [],
+            "upstream_shadow_summary": {
+                "shadow_candidate_count": 0,
+                "promotable_count": 0,
+                "lane_counts": {},
+                "decision_counts": {},
+                "top_focus_tickers": [],
+            },
+        }
+    )
+    markdown = btst_reporting.render_btst_premarket_execution_card_markdown(payload)
+
+    assert [entry["ticker"] for entry in payload["runner_recall_review_actions"]] == ["688183"]
+    assert payload["runner_recall_review_actions"][0]["action_tier"] == "runner_recall_review"
+    assert payload["runner_recall_review_actions"][0]["execution_posture"] == "shadow_review_only"
+    assert payload["summary"]["runner_recall_review_count"] == 1
+    assert "## Runner Recall Review Actions" in markdown
+    assert "### 1. 688183" in markdown
+
+
 def test_generate_btst_premarket_execution_card_uses_execution_quality_specific_watch_rules(tmp_path):
     result = generate_btst_premarket_execution_card_artifacts(
         input_path={

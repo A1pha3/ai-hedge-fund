@@ -120,6 +120,9 @@ def _build_premarket_action_context(brief: dict[str, Any]) -> dict[str, Any]:
     risky_observer_entries = _filter_execution_ready_entries(
         list(brief.get("risky_observer_entries") or [])
     )
+    runner_recall_review_entries = _filter_execution_ready_entries(
+        list(brief.get("runner_recall_review_entries") or [])
+    )
     primary_candidates = _filter_execution_ready_entries(
         [brief.get("primary_entry")] if brief.get("primary_entry") else []
     )
@@ -137,6 +140,9 @@ def _build_premarket_action_context(brief: dict[str, Any]) -> dict[str, Any]:
         "primary_action": _build_premarket_primary_action(primary_entry),
         "watch_actions": _build_watch_actions(near_miss_entries),
         "opportunity_actions": _build_opportunity_actions(opportunity_pool_entries),
+        "runner_recall_review_actions": _build_runner_recall_review_actions(
+            runner_recall_review_entries
+        ),
         "no_history_observer_actions": _build_no_history_observer_actions(
             no_history_observer_entries
         ),
@@ -210,6 +216,26 @@ def _build_no_history_observer_actions(
     ]
 
 
+def _build_runner_recall_review_actions(
+    runner_recall_review_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        _build_premarket_observer_action(
+            entry,
+            action_tier="runner_recall_review",
+            execution_posture="shadow_review_only",
+            default_action="只做 payoff-first runner recall 复审，不直接加入当日 BTST 交易名单。",
+            secondary_rule="只有盘中出现延迟爆发/催化共振/收盘强确认时，才允许人工复审是否提升观察优先级。",
+            avoid_rules=[
+                "runner recall 复审层不等于 formal BTST 执行名单。",
+                "没有新增确认前，不把 watchlist_filter_diagnostics 漏票直接升级为主票。",
+            ],
+            include_rejection_reasons=True,
+        )
+        for entry in runner_recall_review_entries
+    ]
+
+
 def _build_risky_observer_actions(
     risky_observer_entries: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -236,6 +262,7 @@ def _build_premarket_card_summary(
     primary_action: dict[str, Any] | None,
     watch_actions: list[dict[str, Any]],
     opportunity_actions: list[dict[str, Any]],
+    runner_recall_review_actions: list[dict[str, Any]],
     no_history_observer_actions: list[dict[str, Any]],
     risky_observer_actions: list[dict[str, Any]],
     catalyst_theme_frontier_priority: dict[str, Any],
@@ -245,6 +272,7 @@ def _build_premarket_card_summary(
         "primary_count": 1 if primary_action else 0,
         "watch_count": len(watch_actions),
         "opportunity_pool_count": len(opportunity_actions),
+        "runner_recall_review_count": len(runner_recall_review_actions),
         "no_history_observer_count": len(no_history_observer_actions),
         "risky_observer_count": len(risky_observer_actions),
         "catalyst_theme_frontier_promoted_count": len(
@@ -285,6 +313,7 @@ def analyze_btst_premarket_execution_card(
     primary_action = action_context["primary_action"]
     watch_actions = action_context["watch_actions"]
     opportunity_actions = action_context["opportunity_actions"]
+    runner_recall_review_actions = action_context["runner_recall_review_actions"]
     no_history_observer_actions = action_context["no_history_observer_actions"]
     risky_observer_actions = action_context["risky_observer_actions"]
     upstream_shadow_summary = action_context["upstream_shadow_summary"]
@@ -298,6 +327,7 @@ def analyze_btst_premarket_execution_card(
             primary_action=primary_action,
             watch_actions=watch_actions,
             opportunity_actions=opportunity_actions,
+            runner_recall_review_actions=runner_recall_review_actions,
             no_history_observer_actions=no_history_observer_actions,
             risky_observer_actions=risky_observer_actions,
             catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
@@ -307,6 +337,7 @@ def analyze_btst_premarket_execution_card(
         "primary_action": primary_action,
         "watch_actions": watch_actions,
         "opportunity_actions": opportunity_actions,
+        "runner_recall_review_actions": runner_recall_review_actions,
         "no_history_observer_actions": no_history_observer_actions,
         "risky_observer_actions": risky_observer_actions,
         "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,
@@ -318,6 +349,7 @@ def analyze_btst_premarket_execution_card(
             "主执行名单只认 short-trade selected，不把 research selected 自动等价成短线可交易票。",
             "near-miss 默认只做观察，不预设与主票同级的买入动作。",
             "机会池只用于补充盯盘覆盖面，不自动升级为正式交易对象。",
+            "runner recall 复审层只做影子复审，不把 watchlist_filter_diagnostics 漏票直接并入正式交易名单。",
             "题材催化影子池只做研究跟踪，不进入当日 BTST 交易名单。",
             "若 selected 当日没有出现确认信号，则允许空仓而不是强行交易。",
         ],

@@ -49,6 +49,7 @@ from src.tools.tushare_api import (
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_early_runner_v1_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_early_runner_v1_latest.md"
+DEFAULT_REPORT_NAME_CONTAINS = "paper_trading_"
 
 _BASE_CONSTRAINTS = TradingConstraints()
 _DEFAULT_SHORT_TRADE_PROFILE = get_short_trade_target_profile("default")
@@ -994,7 +995,7 @@ def _collect_daily_board(
 def analyze_btst_early_runner_v1(
     reports_root: str | Path,
     *,
-    report_name_contains: str = "paper_trading_window",
+    report_name_contains: str = DEFAULT_REPORT_NAME_CONTAINS,
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     report_dirs = discover_report_dirs([resolved_reports_root], report_name_contains=report_name_contains)
@@ -1284,14 +1285,14 @@ def render_btst_early_runner_v1_markdown(analysis: dict[str, Any]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build BTST early runner v1 research artifacts from selection snapshots.")
     parser.add_argument("--reports-root", default=str(REPORTS_DIR))
-    parser.add_argument("--report-name-contains", default="paper_trading_window")
+    parser.add_argument("--report-name-contains", default=DEFAULT_REPORT_NAME_CONTAINS)
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
 
     analysis = analyze_btst_early_runner_v1(
         args.reports_root,
-        report_name_contains=str(args.report_name_contains or "paper_trading_window"),
+        report_name_contains=str(args.report_name_contains or DEFAULT_REPORT_NAME_CONTAINS),
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_md = Path(args.output_md).expanduser().resolve()

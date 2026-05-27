@@ -721,6 +721,9 @@ def _append_premarket_overview_markdown(lines: list[str], card: dict[str, Any]) 
     lines.append(f"- watch_count: {summary.get('watch_count')}")
     lines.append(f"- opportunity_pool_count: {summary.get('opportunity_pool_count')}")
     lines.append(
+        f"- runner_recall_review_count: {summary.get('runner_recall_review_count')}"
+    )
+    lines.append(
         f"- no_history_observer_count: {summary.get('no_history_observer_count')}"
     )
     lines.append(f"- risky_observer_count: {summary.get('risky_observer_count')}")
@@ -970,6 +973,11 @@ def render_btst_premarket_execution_card_markdown(card: dict[str, Any]) -> str:
     )
     _append_premarket_action_section(
         lines, "Opportunity Pool Actions", list(card.get("opportunity_actions") or [])
+    )
+    _append_premarket_action_section(
+        lines,
+        "Runner Recall Review Actions",
+        list(card.get("runner_recall_review_actions") or []),
     )
     _append_premarket_action_section(
         lines, "Risky Observer Actions", list(card.get("risky_observer_actions") or [])

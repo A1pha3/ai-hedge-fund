@@ -80,6 +80,23 @@ def _daily_basic_frame() -> pd.DataFrame:
     )
 
 
+def test_analyze_btst_early_runner_v1_default_filter_includes_current_paper_trading_dirs(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_discover_report_dirs(roots, report_name_contains="paper_trading_window"):
+        captured["roots"] = list(roots)
+        captured["report_name_contains"] = report_name_contains
+        return []
+
+    monkeypatch.setattr(early_runner, "discover_report_dirs", _fake_discover_report_dirs)
+    monkeypatch.setattr(early_runner, "get_all_stock_basic", lambda: pd.DataFrame(columns=["ts_code", "symbol", "name", "industry", "market", "list_date"]))
+
+    analysis = early_runner.analyze_btst_early_runner_v1(tmp_path / "data" / "reports")
+
+    assert analysis["report_dir_count"] == 0
+    assert captured["report_name_contains"] == "paper_trading_"
+
+
 def test_analyze_btst_early_runner_v1_builds_ledgers_profiles_and_daily_boards(tmp_path: Path, monkeypatch) -> None:
     reports_root = tmp_path / "data" / "reports"
     report_dir = reports_root / "paper_trading_window_20260323_20260326_early_runner"
