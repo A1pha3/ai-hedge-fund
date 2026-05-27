@@ -15,6 +15,17 @@ def _write_json(path: Path, payload: object) -> None:
 def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -> None:
     """Generate a compact BTST bundle and verify early-runner sections are included."""
     reports_root = tmp_path / "data" / "reports"
+    strategy_thresholds_path = tmp_path / "config" / "btst_strategy_thresholds.json"
+    _write_json(
+        strategy_thresholds_path,
+        {
+            "min_recent_exact_streak": 4,
+            "min_intersection_positive_days": 3,
+            "intersection_uplift_rate_threshold": 0.2,
+            "only_early_runner_max_positive_rate": 0.4,
+            "second_entry_t2_advantage_threshold": 0.015,
+        },
+    )
     report_dir = reports_root / "paper_trading_20260526_20260526_live_m2_7_short_trade_only_20260527_plan"
     brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
     _write_json(
@@ -161,6 +172,7 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
         reports_root=reports_root,
         output_dir=output_dir,
         refresh_early_runner=False,
+        strategy_thresholds_config_path=strategy_thresholds_path,
     )
 
     assert result["status"] == "generated"
@@ -168,8 +180,13 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert result["early_runner_intersection_count"] == 1
     assert result["early_runner_only_count"] == 1
     assert result["early_runner_second_entry_count"] == 1
+    assert result["strategy_thresholds_config_path"] == strategy_thresholds_path.resolve().as_posix()
+    assert result["strategy_thresholds"]["min_recent_exact_streak"] == 4
     assert len(result["written_files"]) == 7
     llm_doc = (output_dir / "BTST-LLM-20260526.md").read_text(encoding="utf-8")
+    assert "## 当前策略阈值基线" in llm_doc
+    assert strategy_thresholds_path.resolve().as_posix() in llm_doc
+    assert "exact 连续门槛：`4`" in llm_doc
     assert "## Early Runner 章节" in llm_doc
     assert "## 交集票高亮" in llm_doc
     assert "交集优先复审" in llm_doc
@@ -178,15 +195,76 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "与正式 BTST 的重合票" in llm_doc
     assert "603725" in llm_doc
     checklist_doc = (output_dir / "BTST-20260526-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
+    assert "## 当前策略阈值基线" in checklist_doc
     assert "## 交集优先复审" in checklist_doc
     assert "## 回补机会层" in checklist_doc
     assert "交集优先：`300054 鼎龙股份`" in checklist_doc
     assert "Early Runner 补充复审：`603725 天安新材`" in checklist_doc
     assert "Second Entry / Reentry：`605500 森林包装`" in checklist_doc
     early_warning_doc = (output_dir / "BTST-20260526-EARLY-WARNING.md").read_text(encoding="utf-8")
+    assert "## 当前策略阈值基线" in early_warning_doc
     assert "## 交集票高亮" in early_warning_doc
     assert "## Priority" in early_warning_doc
     assert "605500" in early_warning_doc
+
+
+def test_generate_btst_doc_bundle_supports_named_threshold_profiles(tmp_path: Path) -> None:
+    """Resolve one named threshold profile and surface it in the generated docs."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260526_20260526_live_m2_7_short_trade_only_20260527_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-26",
+            "selection_target": "short_trade_only",
+            "btst_followup": {"brief_json": brief_path.as_posix()},
+        },
+    )
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-26",
+            "next_trade_date": "2026-05-27",
+            "selection_target": "short_trade_only",
+            "selected_actions": [],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260526.json",
+        {
+            "trade_date": "20260526",
+            "next_date": "20260527",
+            "pool_size": 10,
+            "selected_count": 0,
+            "near_miss_count": 0,
+            "high_confidence": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {"daily_boards": [{"trade_date": "2026-05-26"}]},
+    )
+
+    output_dir = tmp_path / "outputs"
+    result = generate_btst_doc_bundle(
+        "20260526",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+        include_extra_warning_docs=False,
+        strategy_thresholds_profile="aggressive",
+    )
+
+    assert result["strategy_thresholds_profile"] == "aggressive"
+    assert result["strategy_thresholds_config_path"].endswith(
+        "config/btst_strategy_thresholds_aggressive.json"
+    )
+    assert result["strategy_thresholds"]["min_recent_exact_streak"] == 2
+    llm_doc = (output_dir / "BTST-LLM-20260526.md").read_text(encoding="utf-8")
+    assert "profile：`aggressive`" in llm_doc
 
 
 def test_generate_btst_doc_bundle_marks_stale_overlap_as_reference_only(tmp_path: Path) -> None:

@@ -33,6 +33,7 @@ from src.paper_trading._btst_reporting.entry_transforms import (
     CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES,
     _build_catalyst_theme_shadow_watch_rows as _build_catalyst_theme_shadow_watch_rows_direct,
 )
+from scripts.btst_strategy_thresholds import resolve_strategy_thresholds
 from scripts.btst_latest_followup_utils import _choose_preferred_historical_prior
 from src.tools.akshare_api import get_prices_robust
 from src.tools.api import get_price_data, prices_to_df
@@ -47,6 +48,27 @@ FORMAL_EXECUTION_BLOCK_FLAGS = (
     "p5_execution_blocked",
     "p6_execution_blocked",
 )
+
+
+def _resolve_selected_execution_quality_thresholds() -> dict[str, Any]:
+    """Load selected-entry demotion thresholds from the shared BTST strategy config."""
+    thresholds = resolve_strategy_thresholds()
+    return {
+        "selected_zero_follow_through_min_evaluable_count": int(
+            thresholds.get("selected_zero_follow_through_min_evaluable_count")
+            or WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
+        ),
+        "selected_intraday_only_min_evaluable_count": int(
+            thresholds.get("selected_intraday_only_min_evaluable_count")
+            or WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
+        ),
+        "selected_intraday_only_max_next_close_positive_rate": float(
+            thresholds.get("selected_intraday_only_max_next_close_positive_rate")
+            if thresholds.get("selected_intraday_only_max_next_close_positive_rate")
+            is not None
+            else 0.0
+        ),
+    }
 
 
 def _collect_formal_execution_block_flags(
@@ -581,6 +603,7 @@ def _reclassify_selected_execution_quality_entries(
     near_miss_entries: list[dict[str, Any]],
     opportunity_pool_entries: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    demotion_thresholds = _resolve_selected_execution_quality_thresholds()
     retained_selected_entries: list[dict[str, Any]] = []
     updated_near_miss_entries = list(near_miss_entries)
     updated_opportunity_pool_entries = list(opportunity_pool_entries)
@@ -598,7 +621,12 @@ def _reclassify_selected_execution_quality_entries(
 
         if (
             execution_quality_label == "zero_follow_through"
-            and evaluable_count >= WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
+            and evaluable_count
+            >= int(
+                demotion_thresholds[
+                    "selected_zero_follow_through_min_evaluable_count"
+                ]
+            )
         ):
             demoted_entry = dict(updated_entry)
             demoted_entry["demoted_from_decision"] = "selected"
@@ -620,8 +648,16 @@ def _reclassify_selected_execution_quality_entries(
 
         if (
             execution_quality_label == "intraday_only"
-            and evaluable_count >= WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
-            and next_close_positive_rate <= 0.0
+            and evaluable_count
+            >= int(
+                demotion_thresholds["selected_intraday_only_min_evaluable_count"]
+            )
+            and next_close_positive_rate
+            <= float(
+                demotion_thresholds[
+                    "selected_intraday_only_max_next_close_positive_rate"
+                ]
+            )
         ):
             demoted_entry = dict(updated_entry)
             demoted_entry["demoted_from_decision"] = "selected"

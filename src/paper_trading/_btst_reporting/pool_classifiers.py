@@ -8,8 +8,10 @@ historical execution quality metrics.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
+from scripts.btst_strategy_thresholds import resolve_strategy_thresholds
 from src.paper_trading.btst_reporting_utils import (
     LOW_SCORE_NO_HISTORY_UPSTREAM_MAX_SCORE_TARGET,
     MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_BREAKOUT_FRESHNESS,
@@ -31,14 +33,113 @@ from src.paper_trading.btst_reporting_utils import (
 # Near-miss demotion
 # ---------------------------------------------------------------------------
 
+
+@lru_cache(maxsize=1)
+def _resolve_pool_rebucket_thresholds() -> dict[str, float | int]:
+    """Load near-miss/opportunity rebucket thresholds from the shared BTST strategy config."""
+    thresholds = resolve_strategy_thresholds()
+    return {
+        "near_miss_zero_follow_through_min_evaluable_count": int(
+            thresholds.get("near_miss_zero_follow_through_min_evaluable_count")
+            or WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
+        ),
+        "near_miss_zero_follow_through_max_next_high_hit_rate": float(
+            thresholds.get("near_miss_zero_follow_through_max_next_high_hit_rate")
+            if thresholds.get("near_miss_zero_follow_through_max_next_high_hit_rate")
+            is not None
+            else 0.0
+        ),
+        "near_miss_zero_follow_through_max_next_close_positive_rate": float(
+            thresholds.get("near_miss_zero_follow_through_max_next_close_positive_rate")
+            if thresholds.get("near_miss_zero_follow_through_max_next_close_positive_rate")
+            is not None
+            else 0.0
+        ),
+        "opportunity_zero_follow_through_prune_min_evaluable_count": int(
+            thresholds.get("opportunity_zero_follow_through_prune_min_evaluable_count")
+            or WEAK_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT
+        ),
+        "opportunity_zero_follow_through_max_next_high_hit_rate": float(
+            thresholds.get("opportunity_zero_follow_through_max_next_high_hit_rate")
+            if thresholds.get("opportunity_zero_follow_through_max_next_high_hit_rate")
+            is not None
+            else 0.0
+        ),
+        "opportunity_zero_follow_through_max_next_close_positive_rate": float(
+            thresholds.get("opportunity_zero_follow_through_max_next_close_positive_rate")
+            if thresholds.get("opportunity_zero_follow_through_max_next_close_positive_rate")
+            is not None
+            else 0.0
+        ),
+        "opportunity_zero_follow_through_max_next_open_to_close_return_mean": float(
+            thresholds.get("opportunity_zero_follow_through_max_next_open_to_close_return_mean")
+            if thresholds.get("opportunity_zero_follow_through_max_next_open_to_close_return_mean")
+            is not None
+            else -0.0001
+        ),
+        "opportunity_balanced_prune_min_evaluable_count": int(
+            thresholds.get("opportunity_balanced_prune_min_evaluable_count")
+            or WEAK_BALANCED_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT
+        ),
+        "opportunity_balanced_max_next_high_hit_rate": float(
+            thresholds.get("opportunity_balanced_max_next_high_hit_rate")
+            if thresholds.get("opportunity_balanced_max_next_high_hit_rate")
+            is not None
+            else WEAK_BALANCED_OPPORTUNITY_POOL_MAX_NEXT_HIGH_HIT_RATE
+        ),
+        "opportunity_balanced_max_next_close_positive_rate": float(
+            thresholds.get("opportunity_balanced_max_next_close_positive_rate")
+            if thresholds.get("opportunity_balanced_max_next_close_positive_rate")
+            is not None
+            else WEAK_BALANCED_OPPORTUNITY_POOL_MAX_NEXT_CLOSE_POSITIVE_RATE
+        ),
+        "opportunity_balanced_max_next_open_to_close_return_mean": float(
+            thresholds.get("opportunity_balanced_max_next_open_to_close_return_mean")
+            if thresholds.get("opportunity_balanced_max_next_open_to_close_return_mean")
+            is not None
+            else -0.0001
+        ),
+        "mixed_boundary_prune_min_evaluable_count": int(
+            thresholds.get("mixed_boundary_prune_min_evaluable_count")
+            or MIXED_BOUNDARY_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT
+        ),
+        "mixed_boundary_max_score_target": float(
+            thresholds.get("mixed_boundary_max_score_target")
+            if thresholds.get("mixed_boundary_max_score_target") is not None
+            else MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_SCORE_TARGET
+        ),
+        "mixed_boundary_max_breakout_freshness": float(
+            thresholds.get("mixed_boundary_max_breakout_freshness")
+            if thresholds.get("mixed_boundary_max_breakout_freshness") is not None
+            else MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_BREAKOUT_FRESHNESS
+        ),
+        "mixed_boundary_max_next_high_hit_rate": float(
+            thresholds.get("mixed_boundary_max_next_high_hit_rate")
+            if thresholds.get("mixed_boundary_max_next_high_hit_rate") is not None
+            else MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_NEXT_HIGH_HIT_RATE
+        ),
+        "mixed_boundary_max_next_close_positive_rate": float(
+            thresholds.get("mixed_boundary_max_next_close_positive_rate")
+            if thresholds.get("mixed_boundary_max_next_close_positive_rate")
+            is not None
+            else MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_NEXT_CLOSE_POSITIVE_RATE
+        ),
+    }
+
 def _should_demote_weak_near_miss(historical_prior: dict[str, Any] | None) -> bool:
     prior = dict(historical_prior or {})
+    thresholds = _resolve_pool_rebucket_thresholds()
     evaluable_count = int(prior.get("evaluable_count") or 0)
-    if evaluable_count < WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT:
+    if evaluable_count < int(thresholds["near_miss_zero_follow_through_min_evaluable_count"]):
         return False
     next_high_hit_rate = _as_float(prior.get("next_high_hit_rate_at_threshold"))
     next_close_positive_rate = _as_float(prior.get("next_close_positive_rate"))
-    return next_high_hit_rate <= 0.0 and next_close_positive_rate <= 0.0
+    return (
+        next_high_hit_rate
+        <= float(thresholds["near_miss_zero_follow_through_max_next_high_hit_rate"])
+        and next_close_positive_rate
+        <= float(thresholds["near_miss_zero_follow_through_max_next_close_positive_rate"])
+    )
 
 
 def _demote_weak_near_miss_entries(
@@ -87,9 +188,10 @@ def _demote_weak_near_miss_entries(
 
 def _should_prune_weak_opportunity_pool_entry(historical_prior: dict[str, Any]) -> bool:
     prior = dict(historical_prior or {})
+    thresholds = _resolve_pool_rebucket_thresholds()
     execution_quality_label = str(prior.get("execution_quality_label") or "unknown")
     evaluable_count = int(prior.get("evaluable_count") or 0)
-    if evaluable_count < WEAK_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT:
+    if evaluable_count < int(thresholds["opportunity_zero_follow_through_prune_min_evaluable_count"]):
         return False
     next_high_hit_rate = _as_float(prior.get("next_high_hit_rate_at_threshold"))
     next_close_positive_rate = _as_float(prior.get("next_close_positive_rate"))
@@ -97,18 +199,26 @@ def _should_prune_weak_opportunity_pool_entry(historical_prior: dict[str, Any]) 
         prior.get("next_open_to_close_return_mean")
     )
     if (
-        next_high_hit_rate <= 0.0
-        and next_close_positive_rate <= 0.0
-        and next_open_to_close_return_mean < 0.0
+        next_high_hit_rate
+        <= float(thresholds["opportunity_zero_follow_through_max_next_high_hit_rate"])
+        and next_close_positive_rate
+        <= float(thresholds["opportunity_zero_follow_through_max_next_close_positive_rate"])
+        and next_open_to_close_return_mean
+        <= float(
+            thresholds["opportunity_zero_follow_through_max_next_open_to_close_return_mean"]
+        )
     ):
         return True
     return (
         execution_quality_label == "balanced_confirmation"
-        and evaluable_count >= WEAK_BALANCED_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT
-        and next_high_hit_rate <= WEAK_BALANCED_OPPORTUNITY_POOL_MAX_NEXT_HIGH_HIT_RATE
+        and evaluable_count
+        >= int(thresholds["opportunity_balanced_prune_min_evaluable_count"])
+        and next_high_hit_rate
+        <= float(thresholds["opportunity_balanced_max_next_high_hit_rate"])
         and next_close_positive_rate
-        < WEAK_BALANCED_OPPORTUNITY_POOL_MAX_NEXT_CLOSE_POSITIVE_RATE
-        and next_open_to_close_return_mean < 0.0
+        < float(thresholds["opportunity_balanced_max_next_close_positive_rate"])
+        and next_open_to_close_return_mean
+        <= float(thresholds["opportunity_balanced_max_next_open_to_close_return_mean"])
     )
 
 
@@ -116,6 +226,7 @@ def _should_prune_mixed_boundary_opportunity_pool_entry(
     entry: dict[str, Any], historical_prior: dict[str, Any]
 ) -> bool:
     prior = dict(historical_prior or {})
+    thresholds = _resolve_pool_rebucket_thresholds()
     if str(entry.get("candidate_source") or "") != "short_trade_boundary":
         return False
     if (
@@ -126,7 +237,7 @@ def _should_prune_mixed_boundary_opportunity_pool_entry(
     if str(prior.get("applied_scope") or "none") != "family_source_score_catalyst":
         return False
     evaluable_count = int(prior.get("evaluable_count") or 0)
-    if evaluable_count < MIXED_BOUNDARY_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT:
+    if evaluable_count < int(thresholds["mixed_boundary_prune_min_evaluable_count"]):
         return False
     top_reasons = {
         str(reason or "").strip()
@@ -137,7 +248,7 @@ def _should_prune_mixed_boundary_opportunity_pool_entry(
         return False
     if (
         _as_float(entry.get("score_target"))
-        >= MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_SCORE_TARGET
+        >= float(thresholds["mixed_boundary_max_score_target"])
     ):
         return False
     breakout_freshness = _as_float(
@@ -146,10 +257,11 @@ def _should_prune_mixed_boundary_opportunity_pool_entry(
     next_high_hit_rate = _as_float(prior.get("next_high_hit_rate_at_threshold"))
     next_close_positive_rate = _as_float(prior.get("next_close_positive_rate"))
     return (
-        breakout_freshness < MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_BREAKOUT_FRESHNESS
-        and next_high_hit_rate <= MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_NEXT_HIGH_HIT_RATE
+        breakout_freshness < float(thresholds["mixed_boundary_max_breakout_freshness"])
+        and next_high_hit_rate
+        <= float(thresholds["mixed_boundary_max_next_high_hit_rate"])
         and next_close_positive_rate
-        <= MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_NEXT_CLOSE_POSITIVE_RATE
+        <= float(thresholds["mixed_boundary_max_next_close_positive_rate"])
     )
 
 

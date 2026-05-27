@@ -5,6 +5,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.btst_strategy_thresholds import (
+    DEFAULT_STRATEGY_THRESHOLDS_PROFILE,
+    default_strategy_thresholds,
+    resolve_strategy_thresholds,
+    resolve_strategy_thresholds_config_path,
+)
 from scripts.analyze_btst_selected_outcome_proof import _extract_holding_outcome
 from scripts.generate_btst_doc_bundle import (
     _build_intersection_summary,
@@ -20,46 +26,20 @@ from scripts.generate_btst_doc_bundle import (
 
 REPORTS_DIR = Path("data/reports")
 OUTPUTS_DIR = Path("outputs")
-DEFAULT_STRATEGY_THRESHOLDS_CONFIG = Path("config/btst_strategy_thresholds.json")
 
 
 def _default_strategy_thresholds() -> dict[str, Any]:
     """Return the default conservative thresholds for scheme-A strategy suggestions."""
-    return {
-        "min_recent_exact_streak": 3,
-        "min_intersection_positive_days": 2,
-        "require_zero_unavailable_days_for_directory_switch": True,
-        "intersection_min_candidate_count": 2,
-        "intersection_uplift_rate_threshold": 0.15,
-        "intersection_uplift_mean_return_threshold": 0.02,
-        "only_early_runner_min_candidate_count": 2,
-        "only_early_runner_max_positive_rate": 0.45,
-        "second_entry_min_candidate_count": 2,
-        "second_entry_t2_advantage_threshold": 0.01,
-    }
-
-
-def _load_strategy_thresholds_config(config_path: str | Path | None = None) -> dict[str, Any]:
-    """Load one repository-level strategy-threshold config file when it exists."""
-    resolved_path = Path(config_path).expanduser().resolve() if config_path else DEFAULT_STRATEGY_THRESHOLDS_CONFIG.expanduser().resolve()
-    if not resolved_path.exists():
-        return {}
-    payload = json.loads(resolved_path.read_text(encoding="utf-8"))
-    return dict(payload or {})
-
+    return default_strategy_thresholds()
 
 def _resolve_strategy_thresholds(
     overrides: dict[str, Any] | None = None,
     *,
     config_path: str | Path | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Merge default values, repository config values, and runtime overrides in that order."""
-    resolved = _default_strategy_thresholds()
-    resolved.update(_load_strategy_thresholds_config(config_path))
-    for key, value in dict(overrides or {}).items():
-        if value is not None:
-            resolved[key] = value
-    return resolved
+    return resolve_strategy_thresholds(overrides, config_path=config_path, profile=profile)
 
 
 def _safe_ratio(numerator: int, denominator: int) -> float:
@@ -372,7 +352,14 @@ def _discover_signal_dates(reports_root: Path, month_prefix: str) -> list[str]:
     return sorted(signal_dates)
 
 
-def _build_row(reports_root: Path, signal_date: str, bundle_root: Path) -> dict[str, Any]:
+def _build_row(
+    reports_root: Path,
+    signal_date: str,
+    bundle_root: Path,
+    *,
+    strategy_thresholds_config_path: str | Path | None = None,
+    strategy_thresholds_profile: str = DEFAULT_STRATEGY_THRESHOLDS_PROFILE,
+) -> dict[str, Any]:
     """Replay one signal date with the scheme-A bundle and collect validation metrics."""
     signal_date_compact, signal_date_iso = _normalize_signal_date(signal_date)
     output_dir = bundle_root / signal_date_compact
@@ -381,6 +368,8 @@ def _build_row(reports_root: Path, signal_date: str, bundle_root: Path) -> dict[
         reports_root=reports_root,
         output_dir=output_dir,
         refresh_early_runner=False,
+        strategy_thresholds_config_path=strategy_thresholds_config_path,
+        strategy_thresholds_profile=strategy_thresholds_profile,
     )
     report_dir = _discover_report_dir(reports_root, signal_date_iso, None)
     session_summary = _read_json(report_dir / "session_summary.json")
@@ -429,9 +418,14 @@ def _build_summary(
     strategy_thresholds: dict[str, Any] | None = None,
     *,
     strategy_thresholds_config_path: str | Path | None = None,
+    strategy_thresholds_profile: str = DEFAULT_STRATEGY_THRESHOLDS_PROFILE,
 ) -> dict[str, Any]:
     """Aggregate monthly validation metrics from per-day rows."""
-    thresholds = _resolve_strategy_thresholds(strategy_thresholds, config_path=strategy_thresholds_config_path)
+    thresholds = _resolve_strategy_thresholds(
+        strategy_thresholds,
+        config_path=strategy_thresholds_config_path,
+        profile=strategy_thresholds_profile,
+    )
     total_runs = len(rows)
     exact_count = sum(1 for row in rows if row.get("early_runner_status") == "exact")
     stale_fallback_count = sum(1 for row in rows if row.get("early_runner_status") == "stale_fallback")
@@ -477,10 +471,12 @@ def _build_summary(
         "meets_recent_exact_gate": meets_recent_exact_gate,
         "meets_minimum_directory_switch_gate": meets_minimum_directory_switch_gate,
         "strategy_thresholds_config_path": (
-            Path(strategy_thresholds_config_path).expanduser().resolve().as_posix()
-            if strategy_thresholds_config_path
-            else DEFAULT_STRATEGY_THRESHOLDS_CONFIG.expanduser().resolve().as_posix()
+            resolve_strategy_thresholds_config_path(
+                strategy_thresholds_config_path,
+                profile=strategy_thresholds_profile,
+            ).as_posix()
         ),
+        "strategy_thresholds_profile": strategy_thresholds_profile,
         "strategy_thresholds": thresholds,
         "intersection_outcome_summary": intersection_outcome_summary,
         "only_early_runner_outcome_summary": only_early_runner_outcome_summary,
@@ -556,7 +552,7 @@ def _render_markdown(month_prefix: str, summary: dict[str, Any], rows: list[dict
         "",
         "## 建议阈值",
         "",
-        f"- 配置文件：`{summary.get('strategy_thresholds_config_path')}`。",
+        f"- profile：`{summary.get('strategy_thresholds_profile')}`；配置文件：`{summary.get('strategy_thresholds_config_path')}`。",
         f"- exact 连续门槛：`{dict(summary.get('strategy_thresholds') or {}).get('min_recent_exact_streak')}`；交集出现天数门槛：`{dict(summary.get('strategy_thresholds') or {}).get('min_intersection_positive_days')}`。",
         f"- 交集层 uplift 门槛：胜率差 `+{_fmt_pct(dict(summary.get('strategy_thresholds') or {}).get('intersection_uplift_rate_threshold'))}`；均值差 `+{_fmt_return(dict(summary.get('strategy_thresholds') or {}).get('intersection_uplift_mean_return_threshold'))}`。",
         f"- 补充层最大容忍正收益率：`{_fmt_pct(dict(summary.get('strategy_thresholds') or {}).get('only_early_runner_max_positive_rate'))}`；回补层 T+2 优势门槛：`+{_fmt_return(dict(summary.get('strategy_thresholds') or {}).get('second_entry_t2_advantage_threshold'))}`。",
@@ -605,18 +601,33 @@ def validate_btst_early_runner_history(
     output_dir: str | Path | None = None,
     strategy_thresholds: dict[str, Any] | None = None,
     strategy_thresholds_config_path: str | Path | None = None,
+    strategy_thresholds_profile: str = DEFAULT_STRATEGY_THRESHOLDS_PROFILE,
 ) -> dict[str, Any]:
     """Replay one month of BTST outputs with scheme-A early-runner validation enabled."""
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     resolved_output_dir = Path(output_dir).expanduser().resolve() if output_dir else (OUTPUTS_DIR / month_prefix / "validation_scheme_a").resolve()
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
     signal_dates = _discover_signal_dates(resolved_reports_root, month_prefix)
-    rows = [_build_row(resolved_reports_root, signal_date, resolved_output_dir) for signal_date in signal_dates]
-    resolved_thresholds = _resolve_strategy_thresholds(strategy_thresholds, config_path=strategy_thresholds_config_path)
+    rows = [
+        _build_row(
+            resolved_reports_root,
+            signal_date,
+            resolved_output_dir,
+            strategy_thresholds_config_path=strategy_thresholds_config_path,
+            strategy_thresholds_profile=strategy_thresholds_profile,
+        )
+        for signal_date in signal_dates
+    ]
+    resolved_thresholds = _resolve_strategy_thresholds(
+        strategy_thresholds,
+        config_path=strategy_thresholds_config_path,
+        profile=strategy_thresholds_profile,
+    )
     summary = _build_summary(
         rows,
         strategy_thresholds=resolved_thresholds,
         strategy_thresholds_config_path=strategy_thresholds_config_path,
+        strategy_thresholds_profile=strategy_thresholds_profile,
     )
     json_path = resolved_output_dir / f"{month_prefix}-early-runner-validation.json"
     md_path = resolved_output_dir / f"{month_prefix}-early-runner-validation.md"
@@ -638,7 +649,8 @@ def main() -> None:
     parser.add_argument("--month-prefix", required=True, help="Month prefix like 202605.")
     parser.add_argument("--reports-root", default=str(REPORTS_DIR))
     parser.add_argument("--output-dir", default="")
-    parser.add_argument("--strategy-thresholds-config", default=str(DEFAULT_STRATEGY_THRESHOLDS_CONFIG))
+    parser.add_argument("--strategy-thresholds-config", default="")
+    parser.add_argument("--strategy-thresholds-profile", default=DEFAULT_STRATEGY_THRESHOLDS_PROFILE)
     parser.add_argument("--min-recent-exact-streak", type=int, default=_default_strategy_thresholds()["min_recent_exact_streak"])
     parser.add_argument("--min-intersection-positive-days", type=int, default=_default_strategy_thresholds()["min_intersection_positive_days"])
     parser.add_argument("--allow-unavailable-days-for-directory-switch", action="store_true")
@@ -652,6 +664,7 @@ def main() -> None:
         reports_root=args.reports_root,
         output_dir=args.output_dir or None,
         strategy_thresholds_config_path=args.strategy_thresholds_config or None,
+        strategy_thresholds_profile=args.strategy_thresholds_profile,
         strategy_thresholds={
             "min_recent_exact_streak": args.min_recent_exact_streak,
             "min_intersection_positive_days": args.min_intersection_positive_days,

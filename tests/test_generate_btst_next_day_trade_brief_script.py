@@ -246,6 +246,195 @@ def test_partition_opportunity_pool_entries_routes_entries_into_expected_buckets
     assert [entry["ticker"] for entry in retained] == ["300004"]
 
 
+def test_near_miss_demotion_respects_strategy_thresholds(monkeypatch):
+    entry = {
+        "ticker": "300001",
+        "top_reasons": [],
+        "historical_prior": {
+            "evaluable_count": 4,
+            "next_high_hit_rate_at_threshold": 0.05,
+            "next_close_positive_rate": 0.0,
+        },
+    }
+
+    monkeypatch.setattr(
+        pool_classifiers,
+        "_resolve_pool_rebucket_thresholds",
+        lambda: {
+            "near_miss_zero_follow_through_min_evaluable_count": 3,
+            "near_miss_zero_follow_through_max_next_high_hit_rate": 0.0,
+            "near_miss_zero_follow_through_max_next_close_positive_rate": 0.0,
+            "opportunity_zero_follow_through_prune_min_evaluable_count": 3,
+            "opportunity_zero_follow_through_max_next_high_hit_rate": 0.0,
+            "opportunity_zero_follow_through_max_next_close_positive_rate": 0.0,
+            "opportunity_zero_follow_through_max_next_open_to_close_return_mean": -0.0001,
+            "opportunity_balanced_prune_min_evaluable_count": 5,
+            "opportunity_balanced_max_next_high_hit_rate": 0.2,
+            "opportunity_balanced_max_next_close_positive_rate": 0.35,
+            "opportunity_balanced_max_next_open_to_close_return_mean": -0.0001,
+            "mixed_boundary_prune_min_evaluable_count": 4,
+            "mixed_boundary_max_score_target": 0.5,
+            "mixed_boundary_max_breakout_freshness": 0.5,
+            "mixed_boundary_max_next_high_hit_rate": 0.25,
+            "mixed_boundary_max_next_close_positive_rate": 0.4,
+        },
+    )
+    retained_entries, opportunity_pool_entries = pool_classifiers._demote_weak_near_miss_entries(
+        [entry],
+        [],
+    )
+
+    assert retained_entries == [entry]
+    assert opportunity_pool_entries == []
+
+    monkeypatch.setattr(
+        pool_classifiers,
+        "_resolve_pool_rebucket_thresholds",
+        lambda: {
+            "near_miss_zero_follow_through_min_evaluable_count": 3,
+            "near_miss_zero_follow_through_max_next_high_hit_rate": 0.05,
+            "near_miss_zero_follow_through_max_next_close_positive_rate": 0.0,
+            "opportunity_zero_follow_through_prune_min_evaluable_count": 3,
+            "opportunity_zero_follow_through_max_next_high_hit_rate": 0.0,
+            "opportunity_zero_follow_through_max_next_close_positive_rate": 0.0,
+            "opportunity_zero_follow_through_max_next_open_to_close_return_mean": -0.0001,
+            "opportunity_balanced_prune_min_evaluable_count": 5,
+            "opportunity_balanced_max_next_high_hit_rate": 0.2,
+            "opportunity_balanced_max_next_close_positive_rate": 0.35,
+            "opportunity_balanced_max_next_open_to_close_return_mean": -0.0001,
+            "mixed_boundary_prune_min_evaluable_count": 4,
+            "mixed_boundary_max_score_target": 0.5,
+            "mixed_boundary_max_breakout_freshness": 0.5,
+            "mixed_boundary_max_next_high_hit_rate": 0.25,
+            "mixed_boundary_max_next_close_positive_rate": 0.4,
+        },
+    )
+    retained_entries, opportunity_pool_entries = pool_classifiers._demote_weak_near_miss_entries(
+        [entry],
+        [],
+    )
+
+    assert retained_entries == []
+    assert [item["ticker"] for item in opportunity_pool_entries] == ["300001"]
+    assert "historical_zero_follow_through_demoted" in opportunity_pool_entries[0]["top_reasons"]
+
+
+def test_opportunity_pool_prune_respects_strategy_thresholds(monkeypatch):
+    historical_prior = {
+        "execution_quality_label": "balanced_confirmation",
+        "evaluable_count": 5,
+        "next_high_hit_rate_at_threshold": 0.24,
+        "next_close_positive_rate": 0.34,
+        "next_open_to_close_return_mean": -0.01,
+    }
+
+    monkeypatch.setattr(
+        pool_classifiers,
+        "_resolve_pool_rebucket_thresholds",
+        lambda: {
+            "near_miss_zero_follow_through_min_evaluable_count": 3,
+            "near_miss_zero_follow_through_max_next_high_hit_rate": 0.0,
+            "near_miss_zero_follow_through_max_next_close_positive_rate": 0.0,
+            "opportunity_zero_follow_through_prune_min_evaluable_count": 3,
+            "opportunity_zero_follow_through_max_next_high_hit_rate": 0.0,
+            "opportunity_zero_follow_through_max_next_close_positive_rate": 0.0,
+            "opportunity_zero_follow_through_max_next_open_to_close_return_mean": -0.0001,
+            "opportunity_balanced_prune_min_evaluable_count": 5,
+            "opportunity_balanced_max_next_high_hit_rate": 0.2,
+            "opportunity_balanced_max_next_close_positive_rate": 0.35,
+            "opportunity_balanced_max_next_open_to_close_return_mean": -0.0001,
+            "mixed_boundary_prune_min_evaluable_count": 4,
+            "mixed_boundary_max_score_target": 0.5,
+            "mixed_boundary_max_breakout_freshness": 0.5,
+            "mixed_boundary_max_next_high_hit_rate": 0.25,
+            "mixed_boundary_max_next_close_positive_rate": 0.4,
+        },
+    )
+    assert pool_classifiers._should_prune_weak_opportunity_pool_entry(historical_prior) is False
+
+    monkeypatch.setattr(
+        pool_classifiers,
+        "_resolve_pool_rebucket_thresholds",
+        lambda: {
+            "near_miss_zero_follow_through_min_evaluable_count": 3,
+            "near_miss_zero_follow_through_max_next_high_hit_rate": 0.0,
+            "near_miss_zero_follow_through_max_next_close_positive_rate": 0.0,
+            "opportunity_zero_follow_through_prune_min_evaluable_count": 3,
+            "opportunity_zero_follow_through_max_next_high_hit_rate": 0.0,
+            "opportunity_zero_follow_through_max_next_close_positive_rate": 0.0,
+            "opportunity_zero_follow_through_max_next_open_to_close_return_mean": -0.0001,
+            "opportunity_balanced_prune_min_evaluable_count": 5,
+            "opportunity_balanced_max_next_high_hit_rate": 0.25,
+            "opportunity_balanced_max_next_close_positive_rate": 0.35,
+            "opportunity_balanced_max_next_open_to_close_return_mean": -0.0001,
+            "mixed_boundary_prune_min_evaluable_count": 4,
+            "mixed_boundary_max_score_target": 0.5,
+            "mixed_boundary_max_breakout_freshness": 0.5,
+            "mixed_boundary_max_next_high_hit_rate": 0.25,
+            "mixed_boundary_max_next_close_positive_rate": 0.4,
+        },
+    )
+    assert pool_classifiers._should_prune_weak_opportunity_pool_entry(historical_prior) is True
+
+
+def test_selected_execution_reclassification_respects_strategy_thresholds(monkeypatch):
+    selected_entries = [
+        {
+            "ticker": "300720",
+            "reporting_decision": "selected",
+            "top_reasons": [],
+            "historical_prior": {
+                "execution_quality_label": "intraday_only",
+                "evaluable_count": 4,
+                "next_close_positive_rate": 0.05,
+            },
+        }
+    ]
+
+    monkeypatch.setattr(
+        entry_builders,
+        "_resolve_selected_execution_quality_thresholds",
+        lambda: {
+            "selected_zero_follow_through_min_evaluable_count": 3,
+            "selected_intraday_only_min_evaluable_count": 3,
+            "selected_intraday_only_max_next_close_positive_rate": 0.0,
+        },
+    )
+    retained_selected, near_miss_entries, opportunity_pool_entries = (
+        entry_builders._reclassify_selected_execution_quality_entries(
+            selected_entries,
+            [],
+            [],
+        )
+    )
+
+    assert retained_selected == selected_entries
+    assert near_miss_entries == []
+    assert opportunity_pool_entries == []
+
+    monkeypatch.setattr(
+        entry_builders,
+        "_resolve_selected_execution_quality_thresholds",
+        lambda: {
+            "selected_zero_follow_through_min_evaluable_count": 3,
+            "selected_intraday_only_min_evaluable_count": 3,
+            "selected_intraday_only_max_next_close_positive_rate": 0.05,
+        },
+    )
+    retained_selected, near_miss_entries, opportunity_pool_entries = (
+        entry_builders._reclassify_selected_execution_quality_entries(
+            selected_entries,
+            [],
+            [],
+        )
+    )
+
+    assert retained_selected == []
+    assert opportunity_pool_entries == []
+    assert [entry["ticker"] for entry in near_miss_entries] == ["300720"]
+    assert "historical_intraday_only_selected_demoted" in near_miss_entries[0]["top_reasons"]
+
+
 def test_enrich_btst_brief_entries_with_history_threads_helpers_and_context(monkeypatch, tmp_path):
     report_dir = tmp_path / "report"
     report_dir.mkdir()

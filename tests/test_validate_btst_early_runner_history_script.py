@@ -144,6 +144,15 @@ def test_resolve_strategy_thresholds_prefers_runtime_overrides(tmp_path: Path) -
     assert thresholds["second_entry_t2_advantage_threshold"] == 0.01
 
 
+def test_resolve_strategy_thresholds_supports_named_profiles() -> None:
+    """Load aggressive profile thresholds from the shared preset config."""
+    thresholds = history_script._resolve_strategy_thresholds(profile="aggressive")
+
+    assert thresholds["min_recent_exact_streak"] == 2
+    assert thresholds["require_zero_unavailable_days_for_directory_switch"] is False
+    assert thresholds["intersection_uplift_rate_threshold"] == 0.05
+
+
 def test_build_summary_respects_custom_strategy_thresholds() -> None:
     """Apply custom thresholds to gates and recommendation routing."""
     rows = [
@@ -185,6 +194,19 @@ def test_build_summary_respects_custom_strategy_thresholds() -> None:
     assert "tighten-only-early-runner" in recommendation_ids
     assert "delay-second-entry-confirmation" in recommendation_ids
     assert "raise-intersection-priority" not in recommendation_ids
+
+
+def test_build_summary_records_profile_and_resolved_config_path() -> None:
+    """Expose the selected threshold profile in monthly summary output."""
+    summary = history_script._build_summary(
+        [],
+        strategy_thresholds_profile="aggressive",
+    )
+
+    assert summary["strategy_thresholds_profile"] == "aggressive"
+    assert summary["strategy_thresholds_config_path"].endswith(
+        "config/btst_strategy_thresholds_aggressive.json"
+    )
 
 
 def test_build_bucket_outcome_stats_tracks_realized_returns(monkeypatch) -> None:
@@ -285,7 +307,7 @@ def test_validate_btst_early_runner_history_writes_upgraded_outputs(tmp_path: Pa
     monkeypatch.setattr(
         history_script,
         "_build_row",
-        lambda reports_root, signal_date, bundle_root: {
+            lambda reports_root, signal_date, bundle_root, **kwargs: {
             "signal_date": signal_date,
             "next_trade_date": "2026-05-03",
             "report_dir": f"report-{signal_date}",

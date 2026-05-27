@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_btst_early_runner_v1 import analyze_btst_early_runner_v1
+from scripts.btst_strategy_thresholds import (
+    DEFAULT_STRATEGY_THRESHOLDS_PROFILE,
+    resolve_strategy_thresholds,
+    resolve_strategy_thresholds_config_path,
+)
 from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
 
 REPORTS_DIR = Path("data/reports")
@@ -68,6 +73,15 @@ def _fmt_num(value: Any, digits: int = 4) -> str:
         return f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
         return "n/a"
+
+
+def _resolve_thresholds_config_path(
+    config_path: str | Path | None = None,
+    *,
+    profile: str | None = None,
+) -> str:
+    """Return the visible BTST strategy-threshold config path for generated docs."""
+    return resolve_strategy_thresholds_config_path(config_path, profile=profile).as_posix()
 
 
 def _stock_label(entry: dict[str, Any]) -> str:
@@ -345,7 +359,34 @@ def _render_early_runner_overlay(context: dict[str, Any], formal_rows: list[dict
     return lines
 
 
-def _render_rule_doc(signal_date_compact: str, rule_report: dict[str, Any], brief: dict[str, Any], priority_board: dict[str, Any], early_runner: dict[str, Any], rule_report_path: Path, report_dir: Path) -> str:
+def _render_strategy_threshold_lines(
+    strategy_thresholds: dict[str, Any],
+    strategy_thresholds_config_path: str,
+    strategy_thresholds_profile: str,
+) -> list[str]:
+    """Render the shared BTST strategy-threshold baseline into generated documents."""
+    return [
+        "## 当前策略阈值基线",
+        "",
+        f"- profile：`{strategy_thresholds_profile}`；配置文件：`{strategy_thresholds_config_path}`。",
+        f"- exact 连续门槛：`{strategy_thresholds.get('min_recent_exact_streak')}`；交集出现天数门槛：`{strategy_thresholds.get('min_intersection_positive_days')}`。",
+        f"- 交集层 uplift 门槛：胜率差 `+{_fmt_pct(strategy_thresholds.get('intersection_uplift_rate_threshold'))}`；均值差 `+{_fmt_num(strategy_thresholds.get('intersection_uplift_mean_return_threshold'), 2)}`。",
+        f"- 补充层最大容忍正收益率：`{_fmt_pct(strategy_thresholds.get('only_early_runner_max_positive_rate'))}`；回补层 T+2 优势门槛：`+{_fmt_num(strategy_thresholds.get('second_entry_t2_advantage_threshold'), 3)}`。",
+    ]
+
+
+def _render_rule_doc(
+    signal_date_compact: str,
+    rule_report: dict[str, Any],
+    brief: dict[str, Any],
+    priority_board: dict[str, Any],
+    early_runner: dict[str, Any],
+    rule_report_path: Path,
+    report_dir: Path,
+    strategy_thresholds: dict[str, Any],
+    strategy_thresholds_config_path: str,
+    strategy_thresholds_profile: str,
+) -> str:
     """Render the rule-based document and append early-runner status as an overlay section."""
     high_confidence = _safe_rows(rule_report.get("high_confidence"))
     selected_actions = _resolve_selected_rows(brief, priority_board)
@@ -361,9 +402,9 @@ def _render_rule_doc(signal_date_compact: str, rule_report: dict[str, Any], brie
         f"- 规则报告来源：`{rule_report_path}`。",
         f"- 多智能体运行目录：`{report_dir}`。",
         "",
-        "## 规则前排",
-        "",
     ]
+    lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    lines.extend(["", "## 规则前排", ""])
     lines.extend(_stock_bullets(high_confidence, limit=8))
     lines.extend(
         [
@@ -384,7 +425,17 @@ def _render_rule_doc(signal_date_compact: str, rule_report: dict[str, Any], brie
     return "\n".join(lines) + "\n"
 
 
-def _render_llm_doc(signal_date_compact: str, brief: dict[str, Any], priority_board: dict[str, Any], session_summary: dict[str, Any], early_runner: dict[str, Any], report_dir: Path) -> str:
+def _render_llm_doc(
+    signal_date_compact: str,
+    brief: dict[str, Any],
+    priority_board: dict[str, Any],
+    session_summary: dict[str, Any],
+    early_runner: dict[str, Any],
+    report_dir: Path,
+    strategy_thresholds: dict[str, Any],
+    strategy_thresholds_config_path: str,
+    strategy_thresholds_profile: str,
+) -> str:
     """Render the multi-agent document and add early-runner overlaps plus watch-only context."""
     selected_actions = _resolve_selected_rows(brief, priority_board)
     watch_actions = _resolve_watch_rows(brief, priority_board)
@@ -402,9 +453,9 @@ def _render_llm_doc(signal_date_compact: str, brief: dict[str, Any], priority_bo
         f"- 选股模式：`{brief.get('selection_target')}`；profile：`{profile_name or 'n/a'}`。",
         f"- selected 数量：`{len(selected_actions)}`；watch 数量：`{len(watch_actions)}`；机会池数量：`{len(opportunity_actions)}`。",
         "",
-        "## 正式执行层",
-        "",
     ]
+    lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    lines.extend(["", "## 正式执行层", ""])
     lines.extend(_stock_bullets(selected_actions, limit=5, include_payoff=True))
     lines.extend(["", "## 观察层", ""])
     lines.extend(_stock_bullets(watch_actions, limit=8, include_payoff=True))
@@ -518,7 +569,15 @@ def _render_forum_doc(signal_date_compact: str, brief: dict[str, Any], priority_
     return "\n".join(lines) + "\n"
 
 
-def _render_checklist_doc(signal_date_compact: str, brief: dict[str, Any], priority_board: dict[str, Any], early_runner: dict[str, Any]) -> str:
+def _render_checklist_doc(
+    signal_date_compact: str,
+    brief: dict[str, Any],
+    priority_board: dict[str, Any],
+    early_runner: dict[str, Any],
+    strategy_thresholds: dict[str, Any],
+    strategy_thresholds_config_path: str,
+    strategy_thresholds_profile: str,
+) -> str:
     """Render the next-morning checklist and append early-runner watch-only checkpoints."""
     selected_actions = _resolve_selected_rows(brief, priority_board)
     watch_actions = _resolve_watch_rows(brief, priority_board)
@@ -528,9 +587,9 @@ def _render_checklist_doc(signal_date_compact: str, brief: dict[str, Any], prior
         "",
         f"信号日：`{brief.get('trade_date')}`；目标交易日：`{brief.get('next_trade_date')}`。",
         "",
-        "## 正式执行顺序",
-        "",
     ]
+    lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    lines.extend(["", "## 正式执行顺序", ""])
     for row in selected_actions[:3]:
         lines.append(f"- [ ] 正式执行：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，收盘胜率 `{_fmt_pct(dict(row.get('historical_prior') or {}).get('next_close_positive_rate'))}`。")
     lines.extend(["", "## 正式观察顺序", ""])
@@ -564,7 +623,14 @@ def _render_checklist_doc(signal_date_compact: str, brief: dict[str, Any], prior
     return "\n".join(lines) + "\n"
 
 
-def _render_early_warning_doc(signal_date_compact: str, early_runner: dict[str, Any], formal_rows: list[dict[str, Any]]) -> str:
+def _render_early_warning_doc(
+    signal_date_compact: str,
+    early_runner: dict[str, Any],
+    formal_rows: list[dict[str, Any]],
+    strategy_thresholds: dict[str, Any],
+    strategy_thresholds_config_path: str,
+    strategy_thresholds_profile: str,
+) -> str:
     """Render the dedicated early-warning document from early-runner watchlists and second-entry rows."""
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     lines = [
@@ -577,6 +643,8 @@ def _render_early_warning_doc(signal_date_compact: str, early_runner: dict[str, 
         "## 状态",
         "",
     ]
+    lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    lines.extend([""])
     lines.extend(_render_early_runner_status(early_runner))
     lines.extend([""])
     lines.extend(_render_intersection_highlights(intersection_summary))
@@ -625,6 +693,8 @@ def generate_btst_doc_bundle(
     report_dir: str | Path | None = None,
     refresh_early_runner: bool = True,
     include_extra_warning_docs: bool = True,
+    strategy_thresholds_config_path: str | Path | None = None,
+    strategy_thresholds_profile: str = DEFAULT_STRATEGY_THRESHOLDS_PROFILE,
 ) -> dict[str, Any]:
     """Generate the final BTST reading bundle and append scheme-A early-runner sections."""
     signal_date_compact, signal_date_iso = _normalize_signal_date(signal_date)
@@ -637,6 +707,14 @@ def generate_btst_doc_bundle(
     rule_report_path = resolved_reports_root / f"btst_full_report_{signal_date_compact}.json"
     rule_report = _read_json(rule_report_path)
     early_runner = _load_early_runner_context(resolved_reports_root, signal_date_iso, refresh=refresh_early_runner)
+    resolved_strategy_thresholds = resolve_strategy_thresholds(
+        config_path=strategy_thresholds_config_path,
+        profile=strategy_thresholds_profile,
+    )
+    resolved_strategy_thresholds_config_path = _resolve_thresholds_config_path(
+        strategy_thresholds_config_path,
+        profile=strategy_thresholds_profile,
+    )
     selected_rows = _resolve_selected_rows(brief, priority_board)
     watch_rows = _resolve_watch_rows(brief, priority_board)
     opportunity_rows = _resolve_opportunity_rows(brief, priority_board)
@@ -644,14 +722,14 @@ def generate_btst_doc_bundle(
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     target_output_dir = Path(output_dir).expanduser().resolve() if output_dir else (OUTPUTS_DIR / signal_date_compact[:6] / brief.get("next_trade_date", signal_date_iso).replace("-", "")).resolve()
     docs = {
-        f"BTST-{signal_date_compact}.md": _render_rule_doc(signal_date_compact, rule_report, brief, priority_board, early_runner, rule_report_path, resolved_report_dir),
-        f"BTST-LLM-{signal_date_compact}.md": _render_llm_doc(signal_date_compact, brief, priority_board, session_summary, early_runner, resolved_report_dir),
+        f"BTST-{signal_date_compact}.md": _render_rule_doc(signal_date_compact, rule_report, brief, priority_board, early_runner, rule_report_path, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
+        f"BTST-LLM-{signal_date_compact}.md": _render_llm_doc(signal_date_compact, brief, priority_board, session_summary, early_runner, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
         f"{signal_date_compact}-两套交易计划通俗说明.md": _render_plain_language_doc(signal_date_compact, brief, priority_board, early_runner),
         f"{signal_date_compact}-两套交易计划论坛短版.md": _render_forum_doc(signal_date_compact, brief, priority_board, early_runner),
-        f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, early_runner),
+        f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, early_runner, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
     }
     if include_extra_warning_docs:
-        docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, early_runner, formal_rows)
+        docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, early_runner, formal_rows, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile)
         docs[f"BTST-{signal_date_compact}-EARLY-WARNING-CARD.md"] = _render_early_warning_card_doc(signal_date_compact, early_runner, formal_rows)
     written_files = []
     for name, content in docs.items():
@@ -670,6 +748,9 @@ def generate_btst_doc_bundle(
         "early_runner_intersection_count": len(_safe_rows(intersection_summary.get("overlap_rows"))),
         "early_runner_only_count": len(_safe_rows(intersection_summary.get("only_early_runner_rows"))),
         "early_runner_second_entry_count": len(_safe_rows(intersection_summary.get("second_entry_rows"))),
+        "strategy_thresholds_config_path": resolved_strategy_thresholds_config_path,
+        "strategy_thresholds_profile": strategy_thresholds_profile,
+        "strategy_thresholds": resolved_strategy_thresholds,
     }
 
 
@@ -682,6 +763,8 @@ def main() -> None:
     parser.add_argument("--report-dir", default="")
     parser.add_argument("--no-refresh-early-runner", action="store_true")
     parser.add_argument("--core-only", action="store_true", help="Generate only the 5 canonical BTST docs.")
+    parser.add_argument("--strategy-thresholds-config", default="")
+    parser.add_argument("--strategy-thresholds-profile", default=DEFAULT_STRATEGY_THRESHOLDS_PROFILE)
     args = parser.parse_args()
     result = generate_btst_doc_bundle(
         args.signal_date,
@@ -690,6 +773,8 @@ def main() -> None:
         report_dir=args.report_dir or None,
         refresh_early_runner=not args.no_refresh_early_runner,
         include_extra_warning_docs=not args.core_only,
+        strategy_thresholds_config_path=args.strategy_thresholds_config or None,
+        strategy_thresholds_profile=args.strategy_thresholds_profile,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
