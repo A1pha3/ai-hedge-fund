@@ -78,6 +78,113 @@ def test_build_summary_tracks_rates_and_recent_exact_streak() -> None:
     assert summary["intersection_outcome_summary"]["next_close_positive_rate"] == 2 / 3
     assert summary["only_early_runner_outcome_summary"]["next_close_positive_rate"] == 0.5
     assert summary["second_entry_outcome_summary"]["next_close_violated_count"] == 1
+    recommendation_ids = {item["id"] for item in summary["strategy_recommendations"]}
+    assert "directory-switch-trial" in recommendation_ids
+    assert "raise-intersection-priority" in recommendation_ids
+    assert "tighten-only-early-runner" in recommendation_ids
+    assert "delay-second-entry-confirmation" in recommendation_ids
+
+
+def test_build_strategy_recommendations_tightens_weak_only_layer_and_delays_second_entry() -> None:
+    """Emit stronger actions when only-early-runner is weak and second-entry favors delayed confirmation."""
+    summary = {
+        "meets_minimum_directory_switch_gate": False,
+        "intersection_outcome_summary": {
+            "candidate_count": 3,
+            "next_close_positive_rate": 0.67,
+            "next_close_mean_return": 0.03,
+        },
+        "only_early_runner_outcome_summary": {
+            "candidate_count": 3,
+            "next_close_positive_rate": 0.33,
+            "next_close_mean_return": -0.02,
+        },
+        "second_entry_outcome_summary": {
+            "candidate_count": 3,
+            "next_close_mean_return": -0.01,
+            "t_plus_2_mean_return": 0.03,
+        },
+    }
+
+    recommendations = history_script._build_strategy_recommendations(summary, history_script._default_strategy_thresholds())
+    recommendation_ids = {item["id"] for item in recommendations}
+
+    assert "stay-scheme-a" in recommendation_ids
+    assert "raise-intersection-priority" in recommendation_ids
+    assert "tighten-only-early-runner" in recommendation_ids
+    assert "delay-second-entry-confirmation" in recommendation_ids
+
+
+def test_resolve_strategy_thresholds_prefers_runtime_overrides(tmp_path: Path) -> None:
+    """Merge defaults, config file values, and runtime overrides in the correct order."""
+    config_path = tmp_path / "btst_strategy_thresholds.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "min_recent_exact_streak": 5,
+                "intersection_uplift_rate_threshold": 0.25,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    thresholds = history_script._resolve_strategy_thresholds(
+        {
+            "intersection_uplift_rate_threshold": 0.4,
+            "only_early_runner_max_positive_rate": 0.35,
+        },
+        config_path=config_path,
+    )
+
+    assert thresholds["min_recent_exact_streak"] == 5
+    assert thresholds["intersection_uplift_rate_threshold"] == 0.4
+    assert thresholds["only_early_runner_max_positive_rate"] == 0.35
+    assert thresholds["second_entry_t2_advantage_threshold"] == 0.01
+
+
+def test_build_summary_respects_custom_strategy_thresholds() -> None:
+    """Apply custom thresholds to gates and recommendation routing."""
+    rows = [
+        {
+            "signal_date": "20260501",
+            "early_runner_status": "exact",
+            "intersection_count": 1,
+            "only_early_runner_count": 1,
+            "second_entry_count": 1,
+            "outcome_attribution": {
+                "intersection": {"candidate_count": 1, "next_close_available_count": 1, "next_close_positive_count": 1, "next_close_mean_return": 0.02, "t_plus_2_available_count": 0, "t_plus_2_positive_count": 0, "t_plus_2_mean_return": None, "next_close_expectation_count": 1, "next_close_matched_count": 1, "next_close_violated_count": 0, "next_close_observed_without_positive_expectation_count": 0},
+                "only_early_runner": {"candidate_count": 2, "next_close_available_count": 2, "next_close_positive_count": 1, "next_close_mean_return": 0.005, "t_plus_2_available_count": 0, "t_plus_2_positive_count": 0, "t_plus_2_mean_return": None, "next_close_expectation_count": 2, "next_close_matched_count": 1, "next_close_violated_count": 1, "next_close_observed_without_positive_expectation_count": 0},
+                "second_entry": {"candidate_count": 1, "next_close_available_count": 1, "next_close_positive_count": 1, "next_close_mean_return": 0.0, "t_plus_2_available_count": 1, "t_plus_2_positive_count": 1, "t_plus_2_mean_return": 0.005, "next_close_expectation_count": 0, "next_close_matched_count": 0, "next_close_violated_count": 0, "next_close_observed_without_positive_expectation_count": 0},
+            },
+        }
+    ]
+
+    summary = history_script._build_summary(
+        rows,
+        strategy_thresholds={
+            "min_recent_exact_streak": 1,
+            "min_intersection_positive_days": 1,
+            "only_early_runner_min_candidate_count": 1,
+            "intersection_min_candidate_count": 1,
+            "second_entry_min_candidate_count": 1,
+            "intersection_uplift_rate_threshold": 0.6,
+            "intersection_uplift_mean_return_threshold": 0.02,
+            "only_early_runner_max_positive_rate": 0.6,
+            "second_entry_t2_advantage_threshold": 0.001,
+        },
+    )
+
+    assert summary["meets_recent_exact_gate"] is True
+    assert summary["meets_minimum_directory_switch_gate"] is True
+    assert summary["strategy_thresholds"]["min_recent_exact_streak"] == 1
+    assert summary["strategy_thresholds_config_path"].endswith("btst_strategy_thresholds.json")
+    recommendation_ids = {item["id"] for item in summary["strategy_recommendations"]}
+    assert "directory-switch-trial" in recommendation_ids
+    assert "tighten-only-early-runner" in recommendation_ids
+    assert "delay-second-entry-confirmation" in recommendation_ids
+    assert "raise-intersection-priority" not in recommendation_ids
 
 
 def test_build_bucket_outcome_stats_tracks_realized_returns(monkeypatch) -> None:
@@ -133,6 +240,8 @@ def test_render_markdown_includes_second_entry_and_gate_fields() -> None:
         "recent_exact_streak": 1,
         "meets_recent_exact_gate": False,
         "meets_minimum_directory_switch_gate": False,
+        "strategy_thresholds_config_path": "/tmp/btst_strategy_thresholds.json",
+        "strategy_thresholds": history_script._default_strategy_thresholds(),
         "intersection_outcome_summary": {"candidate_count": 1, "next_close_available_count": 1, "next_close_positive_rate": 1.0, "next_close_mean_return": 0.03, "t_plus_2_available_count": 1, "t_plus_2_positive_rate": 1.0, "t_plus_2_mean_return": 0.04, "next_close_matched_count": 1, "next_close_expectation_count": 1, "next_close_violated_count": 0, "next_close_observed_without_positive_expectation_count": 0},
         "only_early_runner_outcome_summary": {"candidate_count": 2, "next_close_available_count": 2, "next_close_positive_rate": 0.5, "next_close_mean_return": 0.01, "t_plus_2_available_count": 1, "t_plus_2_positive_rate": 0.0, "t_plus_2_mean_return": -0.01, "next_close_matched_count": 0, "next_close_expectation_count": 1, "next_close_violated_count": 1, "next_close_observed_without_positive_expectation_count": 1},
         "second_entry_outcome_summary": {"candidate_count": 1, "next_close_available_count": 1, "next_close_positive_rate": 0.0, "next_close_mean_return": -0.02, "t_plus_2_available_count": 0, "t_plus_2_positive_rate": 0.0, "t_plus_2_mean_return": None, "next_close_matched_count": 0, "next_close_expectation_count": 1, "next_close_violated_count": 1, "next_close_observed_without_positive_expectation_count": 0},
@@ -159,6 +268,8 @@ def test_render_markdown_includes_second_entry_and_gate_fields() -> None:
     assert "最小目录切换 gate" in markdown
     assert "## 策略体检" in markdown
     assert "## 结果归因" in markdown
+    assert "## 自动策略建议" in markdown
+    assert "## 建议阈值" in markdown
     assert "交集优先复审层" in markdown
     assert "next_close 正收益率 / 平均收益" in markdown
     assert "second_entry_count" in markdown
@@ -211,7 +322,14 @@ def test_validate_btst_early_runner_history_writes_upgraded_outputs(tmp_path: Pa
     assert payload["summary"]["total_second_entry_count"] == 2
     assert payload["summary"]["intersection_outcome_summary"]["next_close_positive_count"] == 1
     assert payload["summary"]["second_entry_outcome_summary"]["next_close_positive_rate"] == 1.0
+    assert payload["summary"]["strategy_recommendations"]
+    assert payload["summary"]["strategy_thresholds"]["min_recent_exact_streak"] == 3
+    assert payload["summary"]["strategy_thresholds_config_path"].endswith("config/btst_strategy_thresholds.json")
     markdown = Path(result["md_path"]).read_text(encoding="utf-8")
     assert "## 策略体检" in markdown
     assert "## 结果归因" in markdown
+    assert "## 自动策略建议" in markdown
+    assert "## 建议阈值" in markdown
+    assert "config/btst_strategy_thresholds.json" in markdown
+    assert "300003" in markdown
     assert "300003" in markdown

@@ -1,0 +1,12 @@
+{
+  "min_recent_exact_streak": 3,
+  "min_intersection_positive_days": 2,
+  "require_zero_unavailable_days_for_directory_switch": true,
+  "intersection_min_candidate_count": 2,
+  "intersection_uplift_rate_threshold": 0.15,
+  "intersection_uplift_mean_return_threshold": 0.02,
+  "only_early_runner_min_candidate_count": 2,
+  "only_early_runner_max_positive_rate": 0.45,
+  "second_entry_min_candidate_count": 2,
+  "second_entry_t2_advantage_threshold": 0.01
+}

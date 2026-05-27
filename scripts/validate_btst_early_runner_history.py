@@ -20,6 +20,46 @@ from scripts.generate_btst_doc_bundle import (
 
 REPORTS_DIR = Path("data/reports")
 OUTPUTS_DIR = Path("outputs")
+DEFAULT_STRATEGY_THRESHOLDS_CONFIG = Path("config/btst_strategy_thresholds.json")
+
+
+def _default_strategy_thresholds() -> dict[str, Any]:
+    """Return the default conservative thresholds for scheme-A strategy suggestions."""
+    return {
+        "min_recent_exact_streak": 3,
+        "min_intersection_positive_days": 2,
+        "require_zero_unavailable_days_for_directory_switch": True,
+        "intersection_min_candidate_count": 2,
+        "intersection_uplift_rate_threshold": 0.15,
+        "intersection_uplift_mean_return_threshold": 0.02,
+        "only_early_runner_min_candidate_count": 2,
+        "only_early_runner_max_positive_rate": 0.45,
+        "second_entry_min_candidate_count": 2,
+        "second_entry_t2_advantage_threshold": 0.01,
+    }
+
+
+def _load_strategy_thresholds_config(config_path: str | Path | None = None) -> dict[str, Any]:
+    """Load one repository-level strategy-threshold config file when it exists."""
+    resolved_path = Path(config_path).expanduser().resolve() if config_path else DEFAULT_STRATEGY_THRESHOLDS_CONFIG.expanduser().resolve()
+    if not resolved_path.exists():
+        return {}
+    payload = json.loads(resolved_path.read_text(encoding="utf-8"))
+    return dict(payload or {})
+
+
+def _resolve_strategy_thresholds(
+    overrides: dict[str, Any] | None = None,
+    *,
+    config_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Merge default values, repository config values, and runtime overrides in that order."""
+    resolved = _default_strategy_thresholds()
+    resolved.update(_load_strategy_thresholds_config(config_path))
+    for key, value in dict(overrides or {}).items():
+        if value is not None:
+            resolved[key] = value
+    return resolved
 
 
 def _safe_ratio(numerator: int, denominator: int) -> float:
@@ -191,6 +231,135 @@ def _build_group_summary(rows: list[dict[str, Any]], group_key: str) -> dict[str
     }
 
 
+def _build_strategy_recommendations(summary: dict[str, Any], thresholds: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build conservative strategy actions from attribution metrics and observation stability."""
+    recommendations: list[dict[str, Any]] = []
+    intersection = dict(summary.get("intersection_outcome_summary") or {})
+    only_early_runner = dict(summary.get("only_early_runner_outcome_summary") or {})
+    second_entry = dict(summary.get("second_entry_outcome_summary") or {})
+
+    if summary.get("meets_minimum_directory_switch_gate"):
+        recommendations.append(
+            {
+                "id": "directory-switch-trial",
+                "level": "medium",
+                "action": "开始准备正式目录试运行",
+                "reason": "最近 exact 稳定且交集样本已连续出现，可考虑保留 scheme_a 并行观察的同时，试运行切回正式目录。",
+            }
+        )
+    else:
+        recommendations.append(
+            {
+                "id": "stay-scheme-a",
+                "level": "high",
+                "action": "继续保留 scheme_a 观察目录",
+                "reason": "观察期稳定性或交集覆盖仍不足，当前不建议切回正式目录。",
+            }
+        )
+
+    intersection_rate = float(intersection.get("next_close_positive_rate") or 0.0)
+    only_rate = float(only_early_runner.get("next_close_positive_rate") or 0.0)
+    intersection_mean = intersection.get("next_close_mean_return")
+    only_mean = only_early_runner.get("next_close_mean_return")
+    if int(intersection.get("candidate_count") or 0) >= int(thresholds["intersection_min_candidate_count"]) and (
+        intersection_rate >= only_rate + float(thresholds["intersection_uplift_rate_threshold"])
+        or (
+            intersection_mean is not None
+            and only_mean is not None
+            and float(intersection_mean) >= float(only_mean) + float(thresholds["intersection_uplift_mean_return_threshold"])
+        )
+    ):
+        recommendations.append(
+            {
+                "id": "raise-intersection-priority",
+                "level": "high",
+                "action": "提高交集优先复审层权重",
+                "reason": (
+                    f"交集层 next_close 正收益率 `{intersection_rate:.2%}`，"
+                    f"相对补充层 `{only_rate:.2%}` 已出现明显优势。"
+                ),
+            }
+        )
+    elif int(intersection.get("candidate_count") or 0) == 0:
+        recommendations.append(
+            {
+                "id": "wait-intersection-evidence",
+                "level": "medium",
+                "action": "继续等待交集层样本积累",
+                "reason": "当前还没有足够交集样本，不适合提前提高交集层权重。",
+            }
+        )
+
+    if int(only_early_runner.get("candidate_count") or 0) >= int(thresholds["only_early_runner_min_candidate_count"]) and (
+        only_rate < float(thresholds["only_early_runner_max_positive_rate"])
+        or (only_mean is not None and float(only_mean) < 0)
+        or (
+            int(intersection.get("candidate_count") or 0) >= int(thresholds["intersection_min_candidate_count"])
+            and intersection_rate >= only_rate + float(thresholds["intersection_uplift_rate_threshold"])
+        )
+    ):
+        recommendations.append(
+            {
+                "id": "tighten-only-early-runner",
+                "level": "high",
+                "action": "收紧 only early-runner 曝光",
+                "reason": (
+                    f"补充层 next_close 正收益率 `{only_rate:.2%}`，"
+                    f"平均收益 `{_fmt_return(only_mean)}`，更像补充观察而不是主执行来源。"
+                ),
+            }
+        )
+    elif int(only_early_runner.get("candidate_count") or 0) > 0:
+        recommendations.append(
+            {
+                "id": "keep-only-early-runner-shadow",
+                "level": "low",
+                "action": "保留 only early-runner 影子观察",
+                "reason": "补充层仍有一定存在价值，但暂不建议升级成正式主层。",
+            }
+        )
+
+    second_next_close_mean = second_entry.get("next_close_mean_return")
+    second_t2_mean = second_entry.get("t_plus_2_mean_return")
+    if int(second_entry.get("candidate_count") or 0) >= int(thresholds["second_entry_min_candidate_count"]) and second_t2_mean is not None and (
+        second_next_close_mean is None or float(second_t2_mean) > float(second_next_close_mean) + float(thresholds["second_entry_t2_advantage_threshold"])
+    ):
+        recommendations.append(
+            {
+                "id": "delay-second-entry-confirmation",
+                "level": "medium",
+                "action": "保留 second-entry，但只用于延后确认/回补",
+                "reason": (
+                    f"回补层 T+2 平均收益 `{_fmt_return(second_t2_mean)}`"
+                    f" 高于 next_close `{_fmt_return(second_next_close_mean)}`，更适合延后确认。"
+                ),
+            }
+        )
+    elif int(second_entry.get("candidate_count") or 0) >= int(thresholds["second_entry_min_candidate_count"]) and (
+        (second_next_close_mean is not None and float(second_next_close_mean) < 0)
+        and (second_t2_mean is None or float(second_t2_mean) <= 0)
+    ):
+        recommendations.append(
+            {
+                "id": "shrink-second-entry",
+                "level": "medium",
+                "action": "压缩 second-entry 触发频率",
+                "reason": "回补层在 next_close 和 T+2 上都没有体现优势，应该继续收窄触发条件。",
+            }
+        )
+    elif int(second_entry.get("candidate_count") or 0) > 0:
+        recommendations.append(
+            {
+                "id": "keep-second-entry-isolated",
+                "level": "low",
+                "action": "继续单独隔离 second-entry",
+                "reason": "回补层已有样本，但还不足以升级为更高优先级，只适合保持独立跟踪。",
+            }
+        )
+
+    return recommendations
+
+
 def _discover_signal_dates(reports_root: Path, month_prefix: str) -> list[str]:
     """Discover unique signal dates for one month from short-trade session summaries."""
     session_paths = sorted(reports_root.glob(f"paper_trading_{month_prefix}*_short_trade_only_*_plan/session_summary.json"))
@@ -255,8 +424,14 @@ def _count_recent_exact_streak(rows: list[dict[str, Any]]) -> int:
     return streak
 
 
-def _build_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_summary(
+    rows: list[dict[str, Any]],
+    strategy_thresholds: dict[str, Any] | None = None,
+    *,
+    strategy_thresholds_config_path: str | Path | None = None,
+) -> dict[str, Any]:
     """Aggregate monthly validation metrics from per-day rows."""
+    thresholds = _resolve_strategy_thresholds(strategy_thresholds, config_path=strategy_thresholds_config_path)
     total_runs = len(rows)
     exact_count = sum(1 for row in rows if row.get("early_runner_status") == "exact")
     stale_fallback_count = sum(1 for row in rows if row.get("early_runner_status") == "stale_fallback")
@@ -268,12 +443,19 @@ def _build_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total_only_early_runner_count = sum(int(row.get("only_early_runner_count") or 0) for row in rows)
     total_second_entry_count = sum(int(row.get("second_entry_count") or 0) for row in rows)
     recent_exact_streak = _count_recent_exact_streak(rows)
-    meets_recent_exact_gate = recent_exact_streak >= 3
-    meets_minimum_directory_switch_gate = meets_recent_exact_gate and intersection_positive_count >= 2 and unavailable_count == 0
+    meets_recent_exact_gate = recent_exact_streak >= int(thresholds["min_recent_exact_streak"])
+    meets_minimum_directory_switch_gate = (
+        meets_recent_exact_gate
+        and intersection_positive_count >= int(thresholds["min_intersection_positive_days"])
+        and (
+            not bool(thresholds["require_zero_unavailable_days_for_directory_switch"])
+            or unavailable_count == 0
+        )
+    )
     intersection_outcome_summary = _build_group_summary(rows, "intersection")
     only_early_runner_outcome_summary = _build_group_summary(rows, "only_early_runner")
     second_entry_outcome_summary = _build_group_summary(rows, "second_entry")
-    return {
+    summary = {
         "total_runs": total_runs,
         "exact_count": exact_count,
         "stale_fallback_count": stale_fallback_count,
@@ -294,10 +476,18 @@ def _build_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "recent_exact_streak": recent_exact_streak,
         "meets_recent_exact_gate": meets_recent_exact_gate,
         "meets_minimum_directory_switch_gate": meets_minimum_directory_switch_gate,
+        "strategy_thresholds_config_path": (
+            Path(strategy_thresholds_config_path).expanduser().resolve().as_posix()
+            if strategy_thresholds_config_path
+            else DEFAULT_STRATEGY_THRESHOLDS_CONFIG.expanduser().resolve().as_posix()
+        ),
+        "strategy_thresholds": thresholds,
         "intersection_outcome_summary": intersection_outcome_summary,
         "only_early_runner_outcome_summary": only_early_runner_outcome_summary,
         "second_entry_outcome_summary": second_entry_outcome_summary,
     }
+    summary["strategy_recommendations"] = _build_strategy_recommendations(summary, thresholds)
+    return summary
 
 
 def _fmt_pct(value: Any) -> str:
@@ -364,6 +554,13 @@ def _render_markdown(month_prefix: str, summary: dict[str, Any], rows: list[dict
         f"- 最近 exact gate：`{summary['meets_recent_exact_gate']}`",
         f"- 最小目录切换 gate：`{summary['meets_minimum_directory_switch_gate']}`",
         "",
+        "## 建议阈值",
+        "",
+        f"- 配置文件：`{summary.get('strategy_thresholds_config_path')}`。",
+        f"- exact 连续门槛：`{dict(summary.get('strategy_thresholds') or {}).get('min_recent_exact_streak')}`；交集出现天数门槛：`{dict(summary.get('strategy_thresholds') or {}).get('min_intersection_positive_days')}`。",
+        f"- 交集层 uplift 门槛：胜率差 `+{_fmt_pct(dict(summary.get('strategy_thresholds') or {}).get('intersection_uplift_rate_threshold'))}`；均值差 `+{_fmt_return(dict(summary.get('strategy_thresholds') or {}).get('intersection_uplift_mean_return_threshold'))}`。",
+        f"- 补充层最大容忍正收益率：`{_fmt_pct(dict(summary.get('strategy_thresholds') or {}).get('only_early_runner_max_positive_rate'))}`；回补层 T+2 优势门槛：`+{_fmt_return(dict(summary.get('strategy_thresholds') or {}).get('second_entry_t2_advantage_threshold'))}`。",
+        "",
         "## 策略体检",
         "",
         f"- 近期状态稳定性：{'已达到观察期最近 exact 最小门槛' if summary['meets_recent_exact_gate'] else '尚未达到观察期最近 exact 最小门槛'}。",
@@ -377,6 +574,14 @@ def _render_markdown(month_prefix: str, summary: dict[str, Any], rows: list[dict
     lines.extend(_render_group_outcome_lines("交集优先复审层", dict(summary.get("intersection_outcome_summary") or {})))
     lines.extend(_render_group_outcome_lines("补充复审层", dict(summary.get("only_early_runner_outcome_summary") or {})))
     lines.extend(_render_group_outcome_lines("回补机会层", dict(summary.get("second_entry_outcome_summary") or {})))
+    lines.extend(["## 自动策略建议", ""])
+    for item in list(summary.get("strategy_recommendations") or []):
+        lines.append(
+            f"- [{item.get('level')}] {item.get('action')}：{item.get('reason')}"
+        )
+    if not list(summary.get("strategy_recommendations") or []):
+        lines.append("- 当前样本不足，暂不输出自动策略建议。")
+    lines.append("")
     lines.extend(
         [
             "## 每日结果",
@@ -398,6 +603,8 @@ def validate_btst_early_runner_history(
     *,
     reports_root: str | Path = REPORTS_DIR,
     output_dir: str | Path | None = None,
+    strategy_thresholds: dict[str, Any] | None = None,
+    strategy_thresholds_config_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Replay one month of BTST outputs with scheme-A early-runner validation enabled."""
     resolved_reports_root = Path(reports_root).expanduser().resolve()
@@ -405,7 +612,12 @@ def validate_btst_early_runner_history(
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
     signal_dates = _discover_signal_dates(resolved_reports_root, month_prefix)
     rows = [_build_row(resolved_reports_root, signal_date, resolved_output_dir) for signal_date in signal_dates]
-    summary = _build_summary(rows)
+    resolved_thresholds = _resolve_strategy_thresholds(strategy_thresholds, config_path=strategy_thresholds_config_path)
+    summary = _build_summary(
+        rows,
+        strategy_thresholds=resolved_thresholds,
+        strategy_thresholds_config_path=strategy_thresholds_config_path,
+    )
     json_path = resolved_output_dir / f"{month_prefix}-early-runner-validation.json"
     md_path = resolved_output_dir / f"{month_prefix}-early-runner-validation.md"
     json_path.write_text(json.dumps({"summary": summary, "rows": rows}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -426,11 +638,29 @@ def main() -> None:
     parser.add_argument("--month-prefix", required=True, help="Month prefix like 202605.")
     parser.add_argument("--reports-root", default=str(REPORTS_DIR))
     parser.add_argument("--output-dir", default="")
+    parser.add_argument("--strategy-thresholds-config", default=str(DEFAULT_STRATEGY_THRESHOLDS_CONFIG))
+    parser.add_argument("--min-recent-exact-streak", type=int, default=_default_strategy_thresholds()["min_recent_exact_streak"])
+    parser.add_argument("--min-intersection-positive-days", type=int, default=_default_strategy_thresholds()["min_intersection_positive_days"])
+    parser.add_argument("--allow-unavailable-days-for-directory-switch", action="store_true")
+    parser.add_argument("--intersection-uplift-rate-threshold", type=float, default=_default_strategy_thresholds()["intersection_uplift_rate_threshold"])
+    parser.add_argument("--intersection-uplift-mean-return-threshold", type=float, default=_default_strategy_thresholds()["intersection_uplift_mean_return_threshold"])
+    parser.add_argument("--only-early-runner-max-positive-rate", type=float, default=_default_strategy_thresholds()["only_early_runner_max_positive_rate"])
+    parser.add_argument("--second-entry-t2-advantage-threshold", type=float, default=_default_strategy_thresholds()["second_entry_t2_advantage_threshold"])
     args = parser.parse_args()
     result = validate_btst_early_runner_history(
         args.month_prefix,
         reports_root=args.reports_root,
         output_dir=args.output_dir or None,
+        strategy_thresholds_config_path=args.strategy_thresholds_config or None,
+        strategy_thresholds={
+            "min_recent_exact_streak": args.min_recent_exact_streak,
+            "min_intersection_positive_days": args.min_intersection_positive_days,
+            "require_zero_unavailable_days_for_directory_switch": not args.allow_unavailable_days_for_directory_switch,
+            "intersection_uplift_rate_threshold": args.intersection_uplift_rate_threshold,
+            "intersection_uplift_mean_return_threshold": args.intersection_uplift_mean_return_threshold,
+            "only_early_runner_max_positive_rate": args.only_early_runner_max_positive_rate,
+            "second_entry_t2_advantage_threshold": args.second_entry_t2_advantage_threshold,
+        },
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
