@@ -138,6 +138,26 @@ def _candidate_theme_label(entry: dict[str, Any]) -> str:
     return _normalize_theme_label(candidate.get("theme_name") or candidate.get("theme_category") or candidate.get("industry"))
 
 
+def _backfill_candidate_theme_labels(entries: list[dict[str, Any]], *, rows_by_ticker: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Backfill empty catalyst-theme labels from row-level industry/theme context."""
+    enriched_entries: list[dict[str, Any]] = []
+    for entry in [dict(item or {}) for item in list(entries or [])]:
+        if _candidate_theme_label(entry) != "unknown":
+            enriched_entries.append(entry)
+            continue
+        ticker = str(entry.get("ticker") or "").strip()
+        row = dict(rows_by_ticker.get(ticker) or {})
+        if row:
+            if not str(entry.get("theme_name") or "").strip():
+                entry["theme_name"] = str(row.get("theme_name") or row.get("theme_category") or row.get("industry") or "")
+            if not str(entry.get("theme_category") or "").strip():
+                entry["theme_category"] = str(row.get("theme_category") or row.get("industry") or "")
+            if not str(entry.get("industry") or "").strip():
+                entry["industry"] = str(row.get("industry") or "")
+        enriched_entries.append(entry)
+    return enriched_entries
+
+
 def build_theme_radar_summary(
     *,
     trade_date: str,
@@ -254,10 +274,15 @@ def build_theme_radar_context_by_ticker(
     catalyst_theme_shadow_candidates: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any], dict[str, Any]]:
     """Build per-ticker radar context plus theme/industry summaries for a trade date."""
+    rows_by_ticker = {
+        str(dict(row or {}).get("ticker") or "").strip(): dict(row or {})
+        for row in list(rows or [])
+        if str(dict(row or {}).get("ticker") or "").strip()
+    }
     theme_summary = build_theme_radar_summary(
         trade_date=trade_date,
-        catalyst_theme_candidates=catalyst_theme_candidates,
-        catalyst_theme_shadow_candidates=catalyst_theme_shadow_candidates,
+        catalyst_theme_candidates=_backfill_candidate_theme_labels(catalyst_theme_candidates, rows_by_ticker=rows_by_ticker),
+        catalyst_theme_shadow_candidates=_backfill_candidate_theme_labels(catalyst_theme_shadow_candidates, rows_by_ticker=rows_by_ticker),
     )
     industry_summary = build_industry_radar_summary(rows, trade_date=trade_date)
     by_theme = {str(row.get("theme_label") or ""): dict(row) for row in list(theme_summary.get("theme_boards") or [])}

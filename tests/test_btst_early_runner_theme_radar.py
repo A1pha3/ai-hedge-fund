@@ -58,6 +58,29 @@ def test_build_theme_radar_context_by_ticker_promotes_multi_name_theme_breadth()
     assert industry_summary["top_industries"] == ["Computer"]
 
 
+def test_build_theme_radar_context_by_ticker_backfills_unknown_theme_labels_from_row_industry() -> None:
+    """Missing catalyst-theme labels should fall back to row-level industry instead of staying unknown."""
+    rows = [
+        {"ticker": "300001", "industry": "Computer", "theme_name": "", "theme_category": "", "bucket": "full_report_confirmation"},
+        {"ticker": "300002", "industry": "Computer", "theme_name": "", "theme_category": "", "bucket": "full_report_confirmation"},
+    ]
+
+    radar_context, theme_summary, _ = build_theme_radar_context_by_ticker(
+        trade_date="2026-03-30",
+        rows=rows,
+        catalyst_theme_candidates=[
+            {"ticker": "300001", "theme_name": "", "theme_category": "", "candidate_source": "catalyst_theme"},
+            {"ticker": "300002", "theme_name": "", "theme_category": "", "candidate_source": "catalyst_theme"},
+        ],
+        catalyst_theme_shadow_candidates=[],
+    )
+
+    assert theme_summary["top_active_themes"] == ["Computer"]
+    assert theme_summary["hot_theme_board"] == ["Computer"]
+    assert radar_context["300001"]["theme_label"] == "Computer"
+    assert radar_context["300001"]["hot_theme_board"] == "Computer"
+
+
 def test_build_industry_radar_summary_prioritizes_first_entry_leaders() -> None:
     """Industry breadth should rank buckets with more first-entry leaders ahead of passive members."""
     summary = build_industry_radar_summary(

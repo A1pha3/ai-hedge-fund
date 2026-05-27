@@ -506,3 +506,115 @@ def test_analyze_btst_early_runner_v1_respects_shadow_gate_and_universe_filter(t
     assert universe_summary["excluded_st_or_risk_warning_count"] == 1
     assert universe_summary["excluded_new_listing_count"] == 1
     assert analysis["validation"]["halt_trade_count"] == 0
+
+
+def test_analyze_btst_early_runner_v1_uses_watchlist_cohort_for_first_entry_validation(tmp_path: Path, monkeypatch) -> None:
+    """First-entry validation should count watchlist samples even when no row reaches priority threshold."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_window_20260407_20260408_early_runner"
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    selection_targets = {
+        "300001": _selection_target(
+            candidate_source="catalyst_theme",
+            decision="near_miss",
+            score_target=0.46,
+            preferred_entry_mode="confirm_then_hold_breakout",
+            metrics={
+                "trend_acceleration": 0.79,
+                "breakout_freshness": 0.58,
+                "volume_expansion_quality": 0.34,
+                "close_strength": 0.88,
+                "sector_resonance": 0.18,
+                "catalyst_freshness": 0.0,
+                "layer_c_alignment": 0.49,
+                "ret_5d": 0.0,
+                "ret_10d": 0.0,
+                "gap_to_limit": 0.10,
+                "failed_breakout_10": 0,
+                "supply_pressure_60": 0.10,
+                "projected_theme_exposure": 0.12,
+            },
+        ),
+        "300002": _selection_target(
+            candidate_source="catalyst_theme",
+            decision="near_miss",
+            score_target=0.45,
+            preferred_entry_mode="confirm_then_hold_breakout",
+            metrics={
+                "trend_acceleration": 0.81,
+                "breakout_freshness": 0.56,
+                "volume_expansion_quality": 0.32,
+                "close_strength": 0.87,
+                "sector_resonance": 0.17,
+                "catalyst_freshness": 0.0,
+                "layer_c_alignment": 0.48,
+                "ret_5d": 0.0,
+                "ret_10d": 0.0,
+                "gap_to_limit": 0.10,
+                "failed_breakout_10": 0,
+                "supply_pressure_60": 0.10,
+                "projected_theme_exposure": 0.10,
+            },
+        ),
+    }
+    _write_snapshot(
+        report_dir,
+        "2026-04-07",
+        selection_targets,
+        catalyst_theme_candidates=[
+            {"ticker": "300001", "theme_name": "", "theme_category": "", "candidate_source": "catalyst_theme"},
+            {"ticker": "300002", "theme_name": "", "theme_category": "", "candidate_source": "catalyst_theme"},
+        ],
+    )
+
+    monkeypatch.setattr(early_runner, "discover_report_dirs", lambda roots, report_name_contains="paper_trading_window": [report_dir])
+    monkeypatch.setattr(
+        early_runner,
+        "get_all_stock_basic",
+        lambda: pd.DataFrame(
+            [
+                {"ts_code": "300001.SZ", "symbol": "300001", "name": "EarlyOne", "industry": "AI", "market": "SZ", "list_date": "20200101"},
+                {"ts_code": "300002.SZ", "symbol": "300002", "name": "ThemeMate", "industry": "AI", "market": "SZ", "list_date": "20200101"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(early_runner, "get_daily_basic_batch", lambda trade_date: _daily_basic_frame())
+    monkeypatch.setattr(early_runner, "get_suspend_list", lambda trade_date: pd.DataFrame(columns=["ts_code"]))
+    monkeypatch.setattr(early_runner, "get_limit_list", lambda trade_date: pd.DataFrame(columns=["ts_code", "limit"]))
+    monkeypatch.setattr(early_runner, "get_open_trade_dates", lambda start_date, end_date: ["20260407", "20260408", "20260409"])
+    monkeypatch.setattr(
+        early_runner,
+        "compute_confirm_assessment",
+        lambda *args, **kwargs: {
+            "score": 0.55,
+            "provenance": "proxy_fallback",
+            "checks": {},
+            "hard_failures": {},
+            "inputs": {},
+            "intraday_metrics": {},
+        },
+    )
+    monkeypatch.setattr(
+        early_runner,
+        "_extract_btst_price_outcome",
+        lambda ticker, trade_date, price_cache: {
+            "cycle_status": "closed_cycle",
+            "next_open_return": 0.01,
+            "next_high_return": 0.06,
+            "next_low_return": -0.02,
+            "next_close_return": 0.03,
+            "next_open_to_close_return": 0.02,
+            "t_plus_2_close_return": 0.05,
+            "max_future_high_return_2_5d": 0.07,
+            "future_high_hit_15pct_2_5d": False,
+        },
+    )
+
+    analysis = early_runner.analyze_btst_early_runner_v1(reports_root)
+
+    daily_board = analysis["daily_boards"][0]
+    assert [entry["ticker"] for entry in daily_board["early_runner_watchlist"]] == ["300001", "300002"]
+    assert analysis["theme_radar_by_trade_date"]["2026-04-07"]["top_active_themes"] == ["AI"]
+    assert analysis["early_runner_first_entry_ledger"]["sample_count"] == len(daily_board["early_runner_watchlist"])
+    assert analysis["early_runner_first_entry_ledger"]["deduped_sample_count"] == len(daily_board["early_runner_watchlist"])

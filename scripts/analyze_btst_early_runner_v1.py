@@ -57,6 +57,9 @@ _ALLOWED_BOARDS = frozenset({"main_board", "star_market", "chinext"})
 _TRADEABLE_GATES = frozenset({"normal_trade", "aggressive_trade"})
 _FIRST_ENTRY_PRIORITY_MIN = 0.62
 _FIRST_ENTRY_WATCHLIST_MIN = 0.52
+_FIRST_ENTRY_THEME_BREADTH_MIN = 0.55
+_FIRST_ENTRY_SCORE_TARGET_MIN = 0.42
+_FIRST_ENTRY_SECTOR_RESONANCE_FALLBACK_MIN = 0.12
 _CONFIRM_SCORE_MIN = 0.70
 _MAX_OPEN_GAP = 0.03
 _MIN_LISTED_DAYS = 60
@@ -870,16 +873,41 @@ def _universe_filter_decision(row: dict[str, Any]) -> tuple[bool, str | None]:
 
 
 def _is_first_entry_candidate(row: dict[str, Any]) -> bool:
+    """Identify first-entry setups while allowing radar-backed catalyst candidates with sparse momentum stats."""
+    candidate_source = str(row.get("candidate_source") or "")
+    if candidate_source not in _ALLOWED_FIRST_ENTRY_SOURCES:
+        return False
+
+    trend_acceleration = _as_float(row.get("trend_acceleration"), 0.0)
+    close_strength = _as_float(row.get("close_strength"), 0.0)
+    ret_5d = _as_float(row.get("ret_5d"), 0.0)
+    ret_10d = _as_float(row.get("ret_10d"), 0.0)
+    volume_expansion_quality = _as_float(row.get("volume_expansion_quality"), 0.0)
+    sector_resonance = _as_float(row.get("sector_resonance"), 0.0)
+    failed_breakout_10 = _as_float(row.get("failed_breakout_10"), 0.0)
+    supply_pressure_60 = _as_float(row.get("supply_pressure_60"), 0.0)
+
+    base_eligible = (
+        trend_acceleration >= 0.75
+        and 0.65 <= close_strength < 0.95
+        and volume_expansion_quality >= 0.20
+        and failed_breakout_10 <= 0.0
+        and supply_pressure_60 <= 0.12
+    )
+    if not base_eligible:
+        return False
+
+    if 0.03 <= ret_5d <= 0.18 and 0.05 <= ret_10d <= 0.35 and sector_resonance >= 0.28:
+        return True
+
     return (
-        str(row.get("candidate_source") or "") in _ALLOWED_FIRST_ENTRY_SOURCES
-        and _as_float(row.get("trend_acceleration"), 0.0) >= 0.75
-        and 0.65 <= _as_float(row.get("close_strength"), 0.0) < 0.90
-        and 0.03 <= _as_float(row.get("ret_5d"), 0.0) <= 0.18
-        and 0.05 <= _as_float(row.get("ret_10d"), 0.0) <= 0.35
-        and _as_float(row.get("volume_expansion_quality"), 0.0) >= 0.20
-        and _as_float(row.get("sector_resonance"), 0.0) >= 0.28
-        and _as_float(row.get("failed_breakout_10"), 0.0) <= 0.0
-        and _as_float(row.get("supply_pressure_60"), 0.0) <= 0.12
+        candidate_source in {"catalyst_theme", "catalyst_theme_shadow"}
+        and _as_float(row.get("score_target"), 0.0) >= _FIRST_ENTRY_SCORE_TARGET_MIN
+        and _as_float(row.get("catalyst_theme_score"), 0.0) >= 0.50
+        and (_as_float(row.get("theme_breadth_score"), 0.0) >= _FIRST_ENTRY_THEME_BREADTH_MIN or bool(str(row.get("hot_theme_board") or "").strip()))
+        and sector_resonance >= _FIRST_ENTRY_SECTOR_RESONANCE_FALLBACK_MIN
+        and ret_5d <= 0.25
+        and ret_10d <= 0.50
     )
 
 
@@ -1057,6 +1085,7 @@ def analyze_btst_early_runner_v1(
             row["theme_leader_count"] = int(context.get("theme_leader_count") or row.get("theme_leader_count") or 0)
             row["theme_midfield_candidates"] = list(context.get("theme_midfield_candidates") or row.get("theme_midfield_candidates") or [])
             row["catalyst_theme_score"] = round(_clamp_unit_interval((0.60 * _as_float(row.get("catalyst_theme_score"), 0.0)) + (0.40 * _as_float(row.get("theme_breadth_score"), 0.0))), 4)
+            row["bucket"] = _bucket_for_row(row)
             row["pre_score"] = _compute_pre_score(row)
         theme_radar_by_trade_date[trade_date] = theme_radar
         industry_radar_by_trade_date[trade_date] = industry_radar
@@ -1068,7 +1097,7 @@ def analyze_btst_early_runner_v1(
             industry_radar=industry_radar,
         )
         daily_boards.append(board)
-        first_entry_rows.extend(dict(row) for row in board["early_runner_priority"])
+        first_entry_rows.extend(dict(row) for row in board["early_runner_watchlist"])
         second_entry_rows.extend(dict(row) for row in board["second_entry_reentry"])
         confirmation_rows.extend(dict(row) for row in board["full_report_confirmation"])
         for row in list(board["early_runner_priority"]) + list(board["second_entry_reentry"]):
