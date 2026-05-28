@@ -1458,6 +1458,50 @@ def test_short_trade_boundary_selected_only_shrink_lifts_selected_threshold() ->
     assert guard["reason_code"] == "short_trade_boundary_selected_only_shrink"
 
 
+def test_layer_c_watchlist_selected_only_shrink_applies_to_effective_select_threshold() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["candidate_source"] = "layer_c_watchlist"
+
+    with _register_short_trade_target_profile_proxy(
+        profile_name="runner_payoff_realign_shadow_without_layer_c_shrink",
+        base_profile_name="runner_payoff_realign_shadow",
+        layer_c_watchlist_selected_only_shrink_enabled=False,
+    ):
+        with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow_without_layer_c_shrink"):
+            baseline_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        shrink_enabled_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    assert baseline_result.decision == "selected"
+    assert baseline_result.effective_select_threshold < baseline_result.score_target < baseline_result.effective_select_threshold + 0.04
+    assert shrink_enabled_result.decision == "near_miss"
+    assert shrink_enabled_result.effective_select_threshold == pytest.approx(baseline_result.effective_select_threshold + 0.04)
+    assert shrink_enabled_result.effective_near_miss_threshold == pytest.approx(baseline_result.effective_near_miss_threshold)
+
+
+def test_short_trade_boundary_selected_only_shrink_applies_to_effective_select_threshold() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["candidate_source"] = "short_trade_boundary"
+
+    with _register_short_trade_target_profile_proxy(
+        profile_name="runner_payoff_realign_shadow_without_boundary_shrink",
+        base_profile_name="runner_payoff_realign_shadow",
+        short_trade_boundary_selected_only_shrink_enabled=False,
+    ):
+        with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow_without_boundary_shrink"):
+            baseline_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        shrink_enabled_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    assert baseline_result.decision == "selected"
+    assert baseline_result.effective_select_threshold < baseline_result.score_target < baseline_result.effective_select_threshold + 0.03
+    assert shrink_enabled_result.decision == "near_miss"
+    assert shrink_enabled_result.effective_select_threshold == pytest.approx(baseline_result.effective_select_threshold + 0.03)
+    assert shrink_enabled_result.effective_near_miss_threshold == pytest.approx(baseline_result.effective_near_miss_threshold)
+
+
 def test_offline_runner_payoff_profile_exposes_source_shrink_and_recall_fields() -> None:
     profile = short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES["runner_payoff_realign_shadow"]
 
