@@ -94,6 +94,8 @@ def _build_short_trade_snapshot_payload_views(
         "watchlist_zero_catalyst_flat_trend_penalty": dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
         "watchlist_filter_diagnostics_flat_trend_penalty": dict(relief_snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]),
         "watchlist_filter_diagnostics_selected_only_shrink_guard": dict(relief_snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
+        "layer_c_watchlist_selected_only_shrink_guard": dict(relief_snapshot["layer_c_watchlist_selected_only_shrink_guard"]),
+        "short_trade_boundary_selected_only_shrink_guard": dict(relief_snapshot["short_trade_boundary_selected_only_shrink_guard"]),
     }
 
 
@@ -146,6 +148,8 @@ def _build_watchlist_snapshot_payload(
         "watchlist_filter_diagnostics_flat_trend_guard": snapshot_views["watchlist_filter_diagnostics_flat_trend_penalty"],
         "watchlist_filter_diagnostics_flat_trend_penalty": relief_snapshot["watchlist_filter_diagnostics_flat_trend_penalty_effective"],
         "watchlist_filter_diagnostics_selected_only_shrink_guard": snapshot_views["watchlist_filter_diagnostics_selected_only_shrink_guard"],
+        "layer_c_watchlist_selected_only_shrink_guard": snapshot_views["layer_c_watchlist_selected_only_shrink_guard"],
+        "short_trade_boundary_selected_only_shrink_guard": snapshot_views["short_trade_boundary_selected_only_shrink_guard"],
     }
 
 

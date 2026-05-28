@@ -30,6 +30,7 @@ from src.targets.short_trade_target_prior_helpers import (
     calibrate_short_trade_historical_prior,
     score_short_trade_historical_continuation_prior,
 )
+from src.targets.short_trade_target_watchlist_helpers import resolve_short_trade_boundary_selected_only_shrink_impl
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
@@ -1440,6 +1441,23 @@ def test_watchlist_filter_diagnostics_selected_only_shrink_profile_contract() ->
     assert profile.watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift == pytest.approx(0.05)
 
 
+def test_short_trade_boundary_selected_only_shrink_lifts_selected_threshold() -> None:
+    profile = short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES["runner_payoff_realign_shadow"]
+
+    guard = resolve_short_trade_boundary_selected_only_shrink_impl(
+        profile=profile,
+        source="short_trade_boundary",
+        close_strength=0.61,
+        catalyst_freshness=0.18,
+        trend_acceleration=0.41,
+        clamp_unit_interval_fn=lambda value: max(0.0, min(1.0, value)),
+    )
+
+    assert guard["eligible"] is True
+    assert guard["select_threshold_lift"] == 0.03
+    assert guard["reason_code"] == "short_trade_boundary_selected_only_shrink"
+
+
 def test_offline_runner_payoff_profile_exposes_source_shrink_and_recall_fields() -> None:
     profile = short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES["runner_payoff_realign_shadow"]
 
@@ -1549,6 +1567,8 @@ def test_selected_only_shrink_snapshot_negative_tags_report_guard_application() 
 
     assert snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]["applied"] is True
     assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in snapshot["negative_tags"]
+    assert snapshot["layer_c_watchlist_selected_only_shrink_guard"]["applied"] is False
+    assert snapshot["short_trade_boundary_selected_only_shrink_guard"]["applied"] is False
 
 
 def test_selected_only_shrink_snapshot_tag_does_not_displace_prior_verdict_negative_tags() -> None:
