@@ -465,3 +465,35 @@ gamma 侧的 rollout 纪律固定为：
 - `data/reports/btst_5d_15pct_trend_breakout_drilldown_latest.json`
 - `data/reports/btst_5d_15pct_scoped_missing_price_manifest_latest.json`
 - `data/reports/btst_weekly_validation_20260518_20260522.json`
+
+## 最新 analyzer artifact 输出
+
+这轮又把 payoff / runner 诊断单独固化成了两份 JSON：
+
+- `data/reports/btst_runner_payoff_realignment_20260518_20260522.json`
+- `data/reports/btst_runner_payoff_realignment_20260506_20260522.json`
+
+对应输出把当前结论重新钉实了一遍：
+
+### 周度窗口 `2026-05-18 ~ 2026-05-22`
+
+- `primary_problem = formal_selected_target_misalignment`
+- `selected_hit_rate_15pct = 0.2000`
+- `near_miss_hit_rate_15pct = 0.4507`
+- `payoff_gap_vs_near_miss_15pct = 0.2507`
+- `watchlist_filter_diagnostics_false_negatives = 6`
+- `formal_source_drag_count = 2`
+- `recommendation = staged_formal_shrink_plus_runner_recall`
+
+### 扩窗 `2026-05-06 ~ 2026-05-22`
+
+- `primary_problem = formal_selected_target_misalignment`
+- `selected_hit_rate_15pct = 0.3077`
+- `near_miss_hit_rate_15pct = 0.3564`
+- `payoff_gap_vs_near_miss_15pct = 0.0487`
+- `watchlist_filter_diagnostics_false_negatives = 13`
+- `formal_source_drag_count = 1`
+- `recommendation = staged_formal_shrink_plus_runner_recall`
+
+这一步的意义在于：  
+现在不只是长文里“解释为什么要这么做”，而是已经有独立 analyzer artifact 明确给出同一句建议——**先做 formal-source shrink，再做 payoff-first runner recall**。这让后续 rollout 文档、周度复盘和 profile 讨论都能直接引用同一组机器产出的结论。
