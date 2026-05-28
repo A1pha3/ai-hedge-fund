@@ -1417,6 +1417,27 @@ SHORT_TRADE_TARGET_PROFILES["trend_continuation_strength_v3"] = replace(
     watchlist_filter_diagnostics_selected_only_shrink_close_strength_max=0.58,
 )
 
+# Offline-only BTST shadow profile: runner payoff realign (source shrink + runner recall)
+SHORT_TRADE_TARGET_PROFILES["runner_payoff_realign_shadow"] = replace(
+    SHORT_TRADE_TARGET_PROFILES["trend_continuation_strength_v3"],
+    name="runner_payoff_realign_shadow",
+    layer_c_watchlist_selected_only_shrink_enabled=True,
+    layer_c_watchlist_selected_only_shrink_select_threshold_lift=0.04,
+    layer_c_watchlist_selected_only_shrink_catalyst_freshness_max=0.18,
+    layer_c_watchlist_selected_only_shrink_trend_acceleration_max=0.48,
+    layer_c_watchlist_selected_only_shrink_close_strength_max=0.62,
+    short_trade_boundary_selected_only_shrink_enabled=True,
+    short_trade_boundary_selected_only_shrink_select_threshold_lift=0.03,
+    short_trade_boundary_selected_only_shrink_catalyst_freshness_max=0.22,
+    short_trade_boundary_selected_only_shrink_trend_acceleration_max=0.52,
+    short_trade_boundary_selected_only_shrink_close_strength_max=0.66,
+    payoff_first_runner_recall_enabled=True,
+    payoff_first_runner_recall_close_strength_min=0.78,
+    payoff_first_runner_recall_catalyst_freshness_min=0.70,
+    payoff_first_runner_recall_trend_acceleration_max=0.45,
+    payoff_first_runner_recall_score_target_max=0.30,
+)
+
 # ============================================================
 # Round 89 Task 2: trend_continuation 权重网格变体
 # 基于 trend_corrected_v1，系统搜索最优 tc_w × tc2d_w 组合

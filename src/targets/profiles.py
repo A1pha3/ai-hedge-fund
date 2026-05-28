@@ -190,6 +190,26 @@ class ShortTradeTargetProfile:
     watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max: float = 0.0
     watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max: float = 1.0
     watchlist_filter_diagnostics_selected_only_shrink_close_strength_max: float = 1.0
+
+    # BTST Round: formal-source shrink knobs (offline-only)
+    layer_c_watchlist_selected_only_shrink_enabled: bool = False
+    layer_c_watchlist_selected_only_shrink_select_threshold_lift: float = 0.0
+    layer_c_watchlist_selected_only_shrink_catalyst_freshness_max: float = 0.0
+    layer_c_watchlist_selected_only_shrink_trend_acceleration_max: float = 1.0
+    layer_c_watchlist_selected_only_shrink_close_strength_max: float = 1.0
+
+    short_trade_boundary_selected_only_shrink_enabled: bool = False
+    short_trade_boundary_selected_only_shrink_select_threshold_lift: float = 0.0
+    short_trade_boundary_selected_only_shrink_catalyst_freshness_max: float = 0.0
+    short_trade_boundary_selected_only_shrink_trend_acceleration_max: float = 1.0
+    short_trade_boundary_selected_only_shrink_close_strength_max: float = 1.0
+
+    # BTST Round: payoff-first runner recall (offline-only)
+    payoff_first_runner_recall_enabled: bool = False
+    payoff_first_runner_recall_close_strength_min: float = 1.0
+    payoff_first_runner_recall_catalyst_freshness_min: float = 1.0
+    payoff_first_runner_recall_trend_acceleration_max: float = 1.0
+    payoff_first_runner_recall_score_target_max: float = 1.0
     t_plus_2_continuation_enabled: bool = False
     t_plus_2_continuation_catalyst_freshness_max: float = 0.0
     t_plus_2_continuation_breakout_freshness_min: float = 1.0
