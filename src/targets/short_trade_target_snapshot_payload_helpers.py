@@ -94,6 +94,8 @@ def _build_short_trade_snapshot_payload_views(
         "watchlist_zero_catalyst_flat_trend_penalty": dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
         "watchlist_filter_diagnostics_flat_trend_penalty": dict(relief_snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]),
         "watchlist_filter_diagnostics_selected_only_shrink_guard": dict(relief_snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
+        "layer_c_watchlist_selected_only_shrink_guard": dict(relief_snapshot["layer_c_watchlist_selected_only_shrink_guard"]),
+        "short_trade_boundary_selected_only_shrink_guard": dict(relief_snapshot["short_trade_boundary_selected_only_shrink_guard"]),
     }
 
 
@@ -146,6 +148,8 @@ def _build_watchlist_snapshot_payload(
         "watchlist_filter_diagnostics_flat_trend_guard": snapshot_views["watchlist_filter_diagnostics_flat_trend_penalty"],
         "watchlist_filter_diagnostics_flat_trend_penalty": relief_snapshot["watchlist_filter_diagnostics_flat_trend_penalty_effective"],
         "watchlist_filter_diagnostics_selected_only_shrink_guard": snapshot_views["watchlist_filter_diagnostics_selected_only_shrink_guard"],
+        "layer_c_watchlist_selected_only_shrink_guard": snapshot_views["layer_c_watchlist_selected_only_shrink_guard"],
+        "short_trade_boundary_selected_only_shrink_guard": snapshot_views["short_trade_boundary_selected_only_shrink_guard"],
     }
 
 
@@ -155,6 +159,8 @@ def _build_snapshot_labels_payload(labels_and_gates: dict[str, Any]) -> dict[str
         "negative_tags": labels_and_gates["negative_tags"],
         "blockers": labels_and_gates["blockers"],
         "gate_status": labels_and_gates["gate_status"],
+        "candidate_reason_codes": list(labels_and_gates.get("candidate_reason_codes") or []),
+        "payoff_first_runner_recall_candidate": bool(labels_and_gates.get("payoff_first_runner_recall_candidate")),
     }
 
 

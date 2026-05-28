@@ -19,8 +19,8 @@ def append_source_paths_section(
     replay_input_path: Any | None = None,
 ) -> None:
     lines.append("## Source Paths")
-    lines.append(f"- report_dir: {report_dir}")
-    lines.append(f"- snapshot_path: {snapshot_path}")
+    lines.append(f"- report_dir: {report_dir or 'n/a'}")
+    lines.append(f"- snapshot_path: {snapshot_path or 'n/a'}")
     if replay_input_path is not None:
         lines.append(f"- replay_input_path: {replay_input_path or 'n/a'}")
     lines.append(f"- session_summary_path: {session_summary_path or 'n/a'}")

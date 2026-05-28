@@ -13,6 +13,7 @@ from collections.abc import Callable
 from src.paper_trading.btst_reporting_utils import (
     _format_float,
     _format_historical_payoff_note,
+    _format_rollout_value,
 )
 from src.paper_trading._btst_reporting.catalyst_render_helpers import (
     _append_threshold_shortfalls_line,
@@ -414,6 +415,22 @@ def _append_brief_source_paths_markdown(
     )
 
 
+def _append_rollout_validation_section(lines: list[str], rollout_validation: dict[str, Any]) -> None:
+    lines.append("## Governed Rollout 观察")
+    lines.append(f"- status: {rollout_validation.get('status') or 'unavailable'}")
+    lines.append(f"- primary_lane: {rollout_validation.get('primary_lane') or 'n/a'}")
+    lines.append(f"- summary: {rollout_validation.get('summary') or 'n/a'}")
+    lines.append(
+        f"- selected_hit_rate_15pct: {_format_rollout_value(rollout_validation.get('selected_hit_rate_15pct'), 4)} -> {_format_rollout_value(rollout_validation.get('shadow_hit_rate_15pct'), 4)}"
+    )
+    lines.append(f"- selected_count_delta: {_format_rollout_value(rollout_validation.get('selected_count_delta'))}")
+    lines.append(f"- execution_eligible_delta: {_format_rollout_value(rollout_validation.get('execution_eligible_delta'))}")
+    lines.append(f"- buy_order_delta: {_format_rollout_value(rollout_validation.get('buy_order_delta'))}")
+    if rollout_validation.get("source_json_path"):
+        lines.append(f"- rollout_source_json: {rollout_validation['source_json_path']}")
+    lines.append("")
+
+
 # ---------------------------------------------------------------------------
 # Top-level brief overview (large pure markdown generator)
 # ---------------------------------------------------------------------------
@@ -572,5 +589,6 @@ def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
         dict(analysis.get("upstream_shadow_summary") or {}),
         list(analysis.get("upstream_shadow_entries") or []),
     )
+    _append_rollout_validation_section(lines, dict(analysis.get("rollout_validation") or {}))
     _append_brief_source_paths_markdown(lines, analysis)
     return "\n".join(lines) + "\n"

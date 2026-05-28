@@ -94,6 +94,8 @@ def _append_short_trade_snapshot_penalty_tags(
     watchlist_zero_catalyst_flat_trend_penalty: dict[str, Any],
     watchlist_filter_diagnostics_flat_trend_penalty: dict[str, Any],
     watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
+    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any],
+    short_trade_boundary_selected_only_shrink_guard: dict[str, Any],
     breakout_trap_guard: dict[str, Any],
     t_plus_2_continuation_candidate: dict[str, Any],
     positive_tags: list[str],
@@ -111,6 +113,10 @@ def _append_short_trade_snapshot_penalty_tags(
         negative_tags.append("watchlist_filter_diagnostics_flat_trend_penalty_applied")
     if watchlist_filter_diagnostics_selected_only_shrink_guard["applied"]:
         negative_tags.append("watchlist_filter_diagnostics_selected_only_shrink_applied")
+    if layer_c_watchlist_selected_only_shrink_guard["applied"]:
+        negative_tags.append("layer_c_watchlist_selected_only_shrink_applied")
+    if short_trade_boundary_selected_only_shrink_guard["applied"]:
+        negative_tags.append("short_trade_boundary_selected_only_shrink_applied")
     if breakout_trap_guard["applied"]:
         negative_tags.append("breakout_trap_penalty_applied")
     if breakout_trap_guard["execution_blocked"]:
@@ -239,6 +245,8 @@ def _build_short_trade_snapshot_label_inputs(
         "watchlist_zero_catalyst_flat_trend_penalty": dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
         "watchlist_filter_diagnostics_flat_trend_penalty": dict(relief_snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]),
         "watchlist_filter_diagnostics_selected_only_shrink_guard": dict(relief_snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
+        "layer_c_watchlist_selected_only_shrink_guard": dict(relief_snapshot["layer_c_watchlist_selected_only_shrink_guard"]),
+        "short_trade_boundary_selected_only_shrink_guard": dict(relief_snapshot["short_trade_boundary_selected_only_shrink_guard"]),
         "breakout_trap_guard": dict(relief_snapshot["breakout_trap_guard"]),
         "t_plus_2_continuation_candidate": dict(relief_snapshot["t_plus_2_continuation_candidate"]),
         "stale_trend_repair_penalty": float(relief_snapshot["stale_trend_repair_penalty"]),
@@ -261,6 +269,33 @@ def _initialize_short_trade_snapshot_label_state(input_data: TargetEvaluationInp
             "score": "fail",
         },
     )
+
+
+def _resolve_short_trade_snapshot_candidate_reason_codes(
+    *,
+    input_data: TargetEvaluationInput,
+    profile: Any,
+    score_target: float,
+    close_strength: float,
+    catalyst_freshness: float,
+    trend_acceleration: float,
+) -> tuple[list[str], bool]:
+    candidate_reason_codes = [
+        str(code)
+        for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
+        if str(code or "").strip()
+    ]
+    payoff_first_runner_recall_candidate = (
+        bool(getattr(profile, "payoff_first_runner_recall_enabled", False))
+        and str(input_data.replay_context.get("source") or "") == "watchlist_filter_diagnostics"
+        and score_target <= float(getattr(profile, "payoff_first_runner_recall_score_target_max", 1.0) or 1.0)
+        and close_strength >= float(getattr(profile, "payoff_first_runner_recall_close_strength_min", 1.0) or 1.0)
+        and catalyst_freshness >= float(getattr(profile, "payoff_first_runner_recall_catalyst_freshness_min", 1.0) or 1.0)
+        and trend_acceleration <= float(getattr(profile, "payoff_first_runner_recall_trend_acceleration_max", 1.0) or 1.0)
+    )
+    if payoff_first_runner_recall_candidate and "payoff_first_runner_recall_candidate" not in candidate_reason_codes:
+        candidate_reason_codes.append("payoff_first_runner_recall_candidate")
+    return candidate_reason_codes, payoff_first_runner_recall_candidate
 
 
 def collect_short_trade_snapshot_labels_and_gates(
@@ -312,6 +347,8 @@ def collect_short_trade_snapshot_labels_and_gates(
         watchlist_zero_catalyst_flat_trend_penalty=inputs["watchlist_zero_catalyst_flat_trend_penalty"],
         watchlist_filter_diagnostics_flat_trend_penalty=inputs["watchlist_filter_diagnostics_flat_trend_penalty"],
         watchlist_filter_diagnostics_selected_only_shrink_guard=inputs["watchlist_filter_diagnostics_selected_only_shrink_guard"],
+        layer_c_watchlist_selected_only_shrink_guard=inputs["layer_c_watchlist_selected_only_shrink_guard"],
+        short_trade_boundary_selected_only_shrink_guard=inputs["short_trade_boundary_selected_only_shrink_guard"],
         breakout_trap_guard=inputs["breakout_trap_guard"],
         t_plus_2_continuation_candidate=inputs["t_plus_2_continuation_candidate"],
         positive_tags=positive_tags,
@@ -343,10 +380,20 @@ def collect_short_trade_snapshot_labels_and_gates(
         positive_tags=positive_tags,
         negative_tags=negative_tags,
     )
+    candidate_reason_codes, payoff_first_runner_recall_candidate = _resolve_short_trade_snapshot_candidate_reason_codes(
+        input_data=input_data,
+        profile=profile,
+        score_target=float(relief_snapshot["score_target"]),
+        close_strength=float(signal_snapshot["close_strength"]),
+        catalyst_freshness=inputs["catalyst_freshness"],
+        trend_acceleration=inputs["trend_acceleration"],
+    )
 
     return {
         "positive_tags": positive_tags,
         "negative_tags": negative_tags,
         "blockers": blockers,
         "gate_status": gate_status,
+        "candidate_reason_codes": candidate_reason_codes,
+        "payoff_first_runner_recall_candidate": payoff_first_runner_recall_candidate,
     }

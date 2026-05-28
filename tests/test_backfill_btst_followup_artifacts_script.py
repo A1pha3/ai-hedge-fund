@@ -43,6 +43,29 @@ def test_backfill_btst_followup_artifacts_supports_report_root_discovery(tmp_pat
         + "\n",
         encoding="utf-8",
     )
+    (report_root / "btst_layer_c_rollout_validation_20260506_20260522.json").write_text(
+        json.dumps(
+            {
+                "payoff_summary": {
+                    "selected_hit_rate_15pct": 0.3077,
+                    "shadow_hit_rate_15pct": 0.3333,
+                },
+                "replay_summary": {
+                    "selected_count_delta": -5,
+                    "execution_eligible_delta": -3,
+                    "buy_order_delta": -3,
+                },
+                "recommendation": {
+                    "status": "governed_shadow_ready",
+                    "primary_lane": "layer_c_formal_precision_tightening",
+                    "summary": "先收 formal buy。",
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     discovered = _discover_report_dirs(report_root, "paper_trading_window_")
 
@@ -53,6 +76,9 @@ def test_backfill_btst_followup_artifacts_supports_report_root_discovery(tmp_pat
     assert result["execution_card_json"].endswith("btst_premarket_execution_card_latest.json")
     assert result["opening_watch_card_json"].endswith("btst_opening_watch_card_latest.json")
     assert result["priority_board_json"].endswith("btst_next_day_priority_board_latest.json")
+    assert result["rollout_validation_json"].endswith(
+        "btst_layer_c_rollout_validation_20260506_20260522.json"
+    )
     assert (report_dir / "btst_opening_watch_card_latest.json").exists()
     assert (report_dir / "btst_next_day_priority_board_latest.json").exists()
 
@@ -61,6 +87,7 @@ def test_backfill_btst_followup_artifacts_supports_report_root_discovery(tmp_pat
     assert session_summary["btst_followup"]["execution_card_json"] == result["execution_card_json"]
     assert session_summary["btst_followup"]["opening_watch_card_json"] == result["opening_watch_card_json"]
     assert session_summary["btst_followup"]["priority_board_json"] == result["priority_board_json"]
+    assert session_summary["btst_followup"]["rollout_validation_json"] == result["rollout_validation_json"]
 
 
 def test_backfill_btst_followup_artifacts_registers_trade_dates_when_not_explicitly_provided(tmp_path):

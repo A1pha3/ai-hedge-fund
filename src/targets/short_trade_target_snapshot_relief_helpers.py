@@ -12,7 +12,9 @@ from src.targets.short_trade_target_prior_helpers import (
     score_short_trade_historical_continuation_prior,
 )
 from src.targets.short_trade_target_watchlist_helpers import (
+    resolve_layer_c_watchlist_selected_only_shrink_impl,
     resolve_watchlist_filter_diagnostics_selected_only_shrink_impl,
+    resolve_short_trade_boundary_selected_only_shrink_impl,
 )
 
 BREAKOUT_TRAP_PENALTY_WEIGHT = 0.10
@@ -92,6 +94,8 @@ class WatchlistPenaltyState:
     watchlist_zero_catalyst_flat_trend_penalty: dict[str, Any]
     watchlist_filter_diagnostics_flat_trend_penalty: dict[str, Any]
     watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any]
+    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any]
+    short_trade_boundary_selected_only_shrink_guard: dict[str, Any]
     t_plus_2_continuation_candidate: dict[str, Any]
     effective_catalyst_theme_penalty: float
     effective_watchlist_zero_catalyst_penalty: float
@@ -99,6 +103,8 @@ class WatchlistPenaltyState:
     effective_watchlist_zero_catalyst_flat_trend_penalty: float
     effective_watchlist_filter_diagnostics_flat_trend_penalty: float
     effective_watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift: float
+    effective_layer_c_watchlist_selected_only_shrink_select_threshold_lift: float
+    effective_short_trade_boundary_selected_only_shrink_select_threshold_lift: float
 
 
 @dataclass(frozen=True)
@@ -895,6 +901,22 @@ def _resolve_watchlist_penalty_state(
         profile=profile,
         clamp_unit_interval_fn=lambda value: max(0.0, min(1.0, float(value))),
     )
+    layer_c_watchlist_selected_only_shrink_guard = resolve_layer_c_watchlist_selected_only_shrink_impl(
+        source=str(input_data.replay_context.get("source") or "").strip(),
+        catalyst_freshness=state.raw_catalyst_freshness,
+        close_strength=state.close_strength,
+        trend_acceleration=threshold_state.trend_acceleration,
+        profile=profile,
+        clamp_unit_interval_fn=lambda value: max(0.0, min(1.0, float(value))),
+    )
+    short_trade_boundary_selected_only_shrink_guard = resolve_short_trade_boundary_selected_only_shrink_impl(
+        profile=profile,
+        source=str(input_data.replay_context.get("source") or "").strip(),
+        catalyst_freshness=state.raw_catalyst_freshness,
+        close_strength=state.close_strength,
+        trend_acceleration=threshold_state.trend_acceleration,
+        clamp_unit_interval_fn=lambda value: max(0.0, min(1.0, float(value))),
+    )
     t_plus_2_continuation_candidate = resolve_t_plus_2_continuation_candidate(
         input_data=input_data,
         raw_catalyst_freshness=state.raw_catalyst_freshness,
@@ -912,6 +934,8 @@ def _resolve_watchlist_penalty_state(
         watchlist_zero_catalyst_flat_trend_penalty=watchlist_zero_catalyst_flat_trend_penalty,
         watchlist_filter_diagnostics_flat_trend_penalty=watchlist_filter_diagnostics_flat_trend_penalty,
         watchlist_filter_diagnostics_selected_only_shrink_guard=watchlist_filter_diagnostics_selected_only_shrink_guard,
+        layer_c_watchlist_selected_only_shrink_guard=layer_c_watchlist_selected_only_shrink_guard,
+        short_trade_boundary_selected_only_shrink_guard=short_trade_boundary_selected_only_shrink_guard,
         t_plus_2_continuation_candidate=t_plus_2_continuation_candidate,
         effective_catalyst_theme_penalty=float(catalyst_theme_penalty["effective_penalty"]),
         effective_watchlist_zero_catalyst_penalty=float(watchlist_zero_catalyst_penalty["effective_penalty"]),
@@ -919,6 +943,8 @@ def _resolve_watchlist_penalty_state(
         effective_watchlist_zero_catalyst_flat_trend_penalty=float(watchlist_zero_catalyst_flat_trend_penalty["effective_penalty"]),
         effective_watchlist_filter_diagnostics_flat_trend_penalty=float(watchlist_filter_diagnostics_flat_trend_penalty["effective_penalty"]),
         effective_watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift=float(watchlist_filter_diagnostics_selected_only_shrink_guard["select_threshold_lift"]),
+        effective_layer_c_watchlist_selected_only_shrink_select_threshold_lift=float(layer_c_watchlist_selected_only_shrink_guard["select_threshold_lift"]),
+        effective_short_trade_boundary_selected_only_shrink_select_threshold_lift=float(short_trade_boundary_selected_only_shrink_guard["select_threshold_lift"]),
     )
 
 
@@ -1323,9 +1349,10 @@ def _finalize_short_trade_snapshot_relief_resolution(
         effective_select_threshold=core_state.threshold_state.effective_select_threshold,
         effective_near_miss_threshold=core_state.score_penalty_state.effective_near_miss_threshold,
     )
-    effective_watchlist_selected_only_shrink_select_threshold = (
-        float(market_state_threshold_adjustment["effective_select_threshold"])
-        + core_state.watchlist_penalty_state.effective_watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift
+    effective_watchlist_selected_only_shrink_select_threshold = float(market_state_threshold_adjustment["effective_select_threshold"]) + (
+        core_state.watchlist_penalty_state.effective_watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift
+        + core_state.watchlist_penalty_state.effective_layer_c_watchlist_selected_only_shrink_select_threshold_lift
+        + core_state.watchlist_penalty_state.effective_short_trade_boundary_selected_only_shrink_select_threshold_lift
     )
     selected_close_retention_adjustment = _resolve_selected_close_retention_adjustment(
         profile=core_state.profile,
@@ -1421,6 +1448,8 @@ def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolu
         "watchlist_zero_catalyst_flat_trend_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_flat_trend_penalty,
         "watchlist_filter_diagnostics_flat_trend_penalty": resolution.watchlist_penalty_state.watchlist_filter_diagnostics_flat_trend_penalty,
         "watchlist_filter_diagnostics_selected_only_shrink_guard": resolution.watchlist_penalty_state.watchlist_filter_diagnostics_selected_only_shrink_guard,
+        "layer_c_watchlist_selected_only_shrink_guard": resolution.watchlist_penalty_state.layer_c_watchlist_selected_only_shrink_guard,
+        "short_trade_boundary_selected_only_shrink_guard": resolution.watchlist_penalty_state.short_trade_boundary_selected_only_shrink_guard,
         "t_plus_2_continuation_candidate": resolution.watchlist_penalty_state.t_plus_2_continuation_candidate,
         "breakout_trap_guard": resolution.score_penalty_state.breakout_trap_guard,
         "breakout_trap_risk": resolution.score_penalty_state.breakout_trap_risk,
