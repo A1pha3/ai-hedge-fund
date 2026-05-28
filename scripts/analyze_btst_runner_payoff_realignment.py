@@ -68,12 +68,78 @@ def _extract_runner_recall_summary(payload: dict[str, Any]) -> tuple[float, int]
     )
 
 
+def _extract_formal_payoff_drag_candidate_sources(
+    payload: dict[str, Any],
+    *,
+    formal_source_summary: dict[str, dict[str, Any]],
+    selected_hit_rate: float,
+) -> list[str]:
+    source_diagnosis = dict(payload.get("source_diagnosis") or {})
+    if "formal_payoff_drag_candidate_sources" in source_diagnosis:
+        return sorted(
+            str(source)
+            for source in list(source_diagnosis.get("formal_payoff_drag_candidate_sources") or [])
+            if str(source or "")
+        )
+
+    if "selected_payoff_drag_candidate_sources" in payload:
+        return sorted(
+            str(source)
+            for source in list(payload.get("selected_payoff_drag_candidate_sources") or [])
+            if str(source or "")
+        )
+
+    return sorted(
+        source
+        for source, source_metrics in formal_source_summary.items()
+        if _as_int(source_metrics.get("count")) > 0 and _as_float(source_metrics.get("hit_rate_15pct")) <= selected_hit_rate
+    )
+
+
+def _normalize_artifactized_report(payload: dict[str, Any]) -> dict[str, Any]:
+    diagnosis = dict(payload.get("diagnosis") or {})
+    recommendation = dict(payload.get("recommendation") or {})
+    source_diagnosis = dict(payload.get("source_diagnosis") or {})
+    if "selected_payoff_drag_candidate_sources" in payload:
+        raise ValueError("Artifactized runner-payoff report must not include legacy selected_payoff_drag_candidate_sources")
+    if "formal_payoff_drag_candidate_sources" not in source_diagnosis:
+        raise ValueError("Artifactized runner-payoff report is missing source_diagnosis.formal_payoff_drag_candidate_sources")
+    formal_payoff_drag_candidate_sources = sorted(
+        str(source)
+        for source in list(source_diagnosis.get("formal_payoff_drag_candidate_sources") or [])
+        if str(source or "")
+    )
+    return {
+        "diagnosis": {
+            "primary_problem": str(diagnosis.get("primary_problem") or "selected_payoff_not_underperforming_near_miss"),
+            "selected_hit_rate_15pct": round(_as_float(diagnosis.get("selected_hit_rate_15pct")), 4),
+            "near_miss_hit_rate_15pct": round(_as_float(diagnosis.get("near_miss_hit_rate_15pct")), 4),
+            "payoff_gap_vs_near_miss_15pct": round(_as_float(diagnosis.get("payoff_gap_vs_near_miss_15pct")), 4),
+            "runner_recall_hit_rate_15pct": round(_as_float(diagnosis.get("runner_recall_hit_rate_15pct")), 4),
+            "watchlist_filter_diagnostics_false_negatives": _as_int(diagnosis.get("watchlist_filter_diagnostics_false_negatives")),
+            "formal_source_drag_count": _as_int(diagnosis.get("formal_source_drag_count")),
+        },
+        "recommendation": recommendation,
+        "source_diagnosis": {
+            "formal_payoff_drag_candidate_sources": formal_payoff_drag_candidate_sources,
+        },
+    }
+
+
 def analyze_btst_runner_payoff_realignment(*, weekly_validation_json: str | Path) -> dict[str, Any]:
     payload = json.loads(Path(weekly_validation_json).read_text(encoding="utf-8"))
+    if isinstance(payload.get("diagnosis"), dict) and isinstance(payload.get("recommendation"), dict):
+        return _normalize_artifactized_report(payload)
+
     selected_hit_rate = _extract_surface_hit_rate(payload, decision="selected")
     near_miss_hit_rate = _extract_surface_hit_rate(payload, decision="near_miss")
     formal_source_summary = _extract_formal_source_summary(payload)
     runner_recall_hit_rate, false_negatives = _extract_runner_recall_summary(payload)
+    formal_payoff_drag_candidate_sources = _extract_formal_payoff_drag_candidate_sources(
+        payload,
+        formal_source_summary=formal_source_summary,
+        selected_hit_rate=selected_hit_rate,
+    )
     payoff_gap = round(near_miss_hit_rate - selected_hit_rate, 4)
     if "selected_payoff_drag_candidate_sources" in payload:
         formal_source_drag_count = len(list(payload.get("selected_payoff_drag_candidate_sources") or []))
@@ -115,8 +181,77 @@ def analyze_btst_runner_payoff_realignment(*, weekly_validation_json: str | Path
             "formal_source_drag_count": formal_source_drag_count,
         },
         "recommendation": recommendation,
+        "source_diagnosis": {
+            "formal_payoff_drag_candidate_sources": formal_payoff_drag_candidate_sources,
+        },
     }
     return report
+
+
+def compare_btst_runner_payoff_realignment_windows(*, weekly_validation_jsons: list[str | Path]) -> dict[str, Any]:
+    if not weekly_validation_jsons:
+        raise ValueError("weekly_validation_jsons must not be empty")
+
+    window_reports: list[dict[str, Any]] = []
+    drag_source_windows: dict[str, int] = {}
+    recommendation_statuses: list[str] = []
+    for weekly_validation_json in weekly_validation_jsons:
+        report = analyze_btst_runner_payoff_realignment(weekly_validation_json=weekly_validation_json)
+        window_reports.append(
+            {
+                "weekly_validation_json": str(Path(weekly_validation_json)),
+                "report": report,
+            }
+        )
+        recommendation_statuses.append(str(report.get("recommendation", {}).get("status") or "unknown"))
+        for source in list(report.get("source_diagnosis", {}).get("formal_payoff_drag_candidate_sources") or []):
+            drag_source_windows[str(source)] = int(drag_source_windows.get(str(source), 0)) + 1
+
+    window_count = len(window_reports)
+    overall_recommendation_status = recommendation_statuses[0] if len(set(recommendation_statuses)) == 1 else "mixed"
+    shrink_supporting_statuses = {"staged_formal_shrink_plus_runner_recall", "formal_shrink_only"}
+    all_windows_support_shrink = all(status in shrink_supporting_statuses for status in recommendation_statuses)
+
+    if all_windows_support_shrink:
+        stable_sources = sorted(source for source, count in drag_source_windows.items() if count == window_count)
+        conditional_sources = sorted(source for source, count in drag_source_windows.items() if 0 < count < window_count)
+    else:
+        stable_sources = []
+        conditional_sources = []
+
+    if "layer_c_watchlist" in stable_sources:
+        stable_formal_shrink_lane: str | None = "layer_c_watchlist"
+    elif len(stable_sources) == 1:
+        stable_formal_shrink_lane = stable_sources[0]
+    else:
+        stable_formal_shrink_lane = None
+
+    if "layer_c_watchlist" in stable_sources:
+        layer_c_watchlist_policy = "stable_formal_shrink_lane"
+    elif "layer_c_watchlist" in conditional_sources:
+        layer_c_watchlist_policy = "conditional_only"
+    else:
+        layer_c_watchlist_policy = "hold_current_path"
+
+    if "short_trade_boundary" in stable_sources:
+        short_trade_boundary_policy = "stable_formal_shrink_lane"
+    elif "short_trade_boundary" in conditional_sources:
+        short_trade_boundary_policy = "conditional_only"
+    else:
+        short_trade_boundary_policy = "hold_current_path"
+
+    return {
+        "window_count": window_count,
+        "overall_recommendation_status": overall_recommendation_status,
+        "window_reports": window_reports,
+        "source_lane_recommendation": {
+            "stable_formal_shrink_lane": stable_formal_shrink_lane,
+            "stable_formal_shrink_sources": stable_sources,
+            "conditional_formal_shrink_sources": conditional_sources,
+            "layer_c_watchlist_policy": layer_c_watchlist_policy,
+            "short_trade_boundary_policy": short_trade_boundary_policy,
+        },
+    }
 
 
 def parse_args() -> argparse.Namespace:
