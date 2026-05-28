@@ -190,6 +190,7 @@ def _build_watchlist_metrics_payload(
         "watchlist_zero_catalyst_crowded_penalty": round(float(snapshot["watchlist_zero_catalyst_crowded_penalty"]), 4),
         "watchlist_zero_catalyst_flat_trend_penalty": round(float(snapshot["watchlist_zero_catalyst_flat_trend_penalty"]), 4),
         "watchlist_filter_diagnostics_flat_trend_penalty": round(float(snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]), 4),
+        "payoff_first_runner_recall_candidate": bool(snapshot.get("payoff_first_runner_recall_candidate")),
         "t_plus_2_continuation_candidate": _build_t_plus_2_continuation_candidate_metrics_payload(t_plus_2_continuation_candidate),
         "catalyst_theme_guard": _build_watchlist_guard_metrics_payload(catalyst_theme_guard),
         "watchlist_zero_catalyst_guard": _build_watchlist_guard_metrics_payload(watchlist_zero_catalyst_guard),

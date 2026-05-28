@@ -1607,6 +1607,104 @@ def test_generate_btst_next_day_trade_brief_surfaces_payoff_first_runner_recall_
     assert "### 688183" in markdown
 
 
+def test_generate_btst_next_day_trade_brief_prefers_payoff_first_runner_recall_candidates(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-05-22"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"trade_date": "2026-05-22", "selection_target": "short_trade_only"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260522",
+                "target_mode": "short_trade_only",
+                "selection_targets": {
+                    "300757": {
+                        "ticker": "300757",
+                        "candidate_reason_codes": ["watchlist_filter_diagnostics"],
+                        "research": {
+                            "decision": "selected",
+                            "score_target": 0.462,
+                        },
+                        "short_trade": {
+                            "decision": "rejected",
+                            "score_target": 0.352,
+                            "confidence": 0.741,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_breakout_candidate"],
+                            "top_reasons": ["close_strength=0.88", "catalyst_freshness=0.79"],
+                            "rejection_reasons": ["score_short_below_threshold"],
+                            "gate_status": {"data": "pass", "structural": "pass", "score": "fail"},
+                            "historical_prior": {
+                                "monitor_priority": "high",
+                                "execution_quality_label": "close_continuation",
+                            },
+                            "metrics_payload": {
+                                "breakout_freshness": 0.612,
+                                "trend_acceleration": 0.521,
+                                "volume_expansion_quality": 0.344,
+                                "close_strength": 0.882,
+                                "catalyst_freshness": 0.791,
+                            },
+                            "explainability_payload": {
+                                "candidate_source": "watchlist_filter_diagnostics",
+                            },
+                        },
+                    },
+                    "688183": {
+                        "ticker": "688183",
+                        "candidate_reason_codes": [
+                            "watchlist_filter_diagnostics",
+                            "payoff_first_runner_recall_candidate",
+                        ],
+                        "research": {
+                            "decision": "selected",
+                            "score_target": 0.401,
+                        },
+                        "short_trade": {
+                            "decision": "rejected",
+                            "score_target": 0.338,
+                            "confidence": 0.729,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_catalyst_support"],
+                            "top_reasons": ["close_strength=0.86", "catalyst_freshness=0.82"],
+                            "rejection_reasons": ["score_short_below_threshold"],
+                            "gate_status": {"data": "pass", "structural": "pass", "score": "fail"},
+                            "historical_prior": {
+                                "monitor_priority": "medium",
+                                "execution_quality_label": "close_continuation",
+                            },
+                            "metrics_payload": {
+                                "breakout_freshness": 0.588,
+                                "trend_acceleration": 0.341,
+                                "volume_expansion_quality": 0.302,
+                                "close_strength": 0.861,
+                                "catalyst_freshness": 0.824,
+                            },
+                            "explainability_payload": {
+                                "candidate_source": "watchlist_filter_diagnostics",
+                            },
+                        },
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(
+        report_dir, trade_date="2026-05-22", next_trade_date="2026-05-23"
+    )
+
+    assert analysis["runner_recall_review_entries"][0]["candidate_reason_codes"][-1] == "payoff_first_runner_recall_candidate"
+
+
 def test_generate_btst_next_day_trade_brief_surfaces_rollout_validation(tmp_path):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-03-27"

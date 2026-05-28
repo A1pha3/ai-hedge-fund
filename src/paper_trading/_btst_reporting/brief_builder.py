@@ -1093,10 +1093,10 @@ def _build_runner_recall_review_entries(
             if not ticker:
                 continue
             existing = candidate_entries_by_ticker.get(ticker)
-            if existing is None or _runner_recall_review_sort_key(candidate) < _runner_recall_review_sort_key(existing):
+            if existing is None or _runner_recall_review_priority_key(candidate) < _runner_recall_review_priority_key(existing):
                 candidate_entries_by_ticker[ticker] = candidate
     runner_recall_review_entries = list(candidate_entries_by_ticker.values())
-    runner_recall_review_entries.sort(key=_runner_recall_review_sort_key)
+    runner_recall_review_entries.sort(key=_runner_recall_review_priority_key)
     return runner_recall_review_entries[:RUNNER_RECALL_REVIEW_MAX_ENTRIES]
 
 
@@ -1138,6 +1138,14 @@ def _runner_recall_review_sort_key(entry: dict[str, Any]) -> tuple[Any, ...]:
         -_as_float(metrics.get("catalyst_freshness")),
         -_as_float(metrics.get("close_strength")),
         str(entry.get("ticker") or ""),
+    )
+
+
+def _runner_recall_review_priority_key(entry: dict[str, Any]) -> tuple[Any, ...]:
+    candidate_reason_codes = list(entry.get("candidate_reason_codes") or [])
+    return (
+        0 if "payoff_first_runner_recall_candidate" in candidate_reason_codes else 1,
+        *_runner_recall_review_sort_key(entry),
     )
 
 

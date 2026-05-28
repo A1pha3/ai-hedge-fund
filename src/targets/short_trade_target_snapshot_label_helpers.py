@@ -271,6 +271,33 @@ def _initialize_short_trade_snapshot_label_state(input_data: TargetEvaluationInp
     )
 
 
+def _resolve_short_trade_snapshot_candidate_reason_codes(
+    *,
+    input_data: TargetEvaluationInput,
+    profile: Any,
+    score_target: float,
+    close_strength: float,
+    catalyst_freshness: float,
+    trend_acceleration: float,
+) -> tuple[list[str], bool]:
+    candidate_reason_codes = [
+        str(code)
+        for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
+        if str(code or "").strip()
+    ]
+    payoff_first_runner_recall_candidate = (
+        bool(getattr(profile, "payoff_first_runner_recall_enabled", False))
+        and str(input_data.replay_context.get("source") or "") == "watchlist_filter_diagnostics"
+        and score_target <= float(getattr(profile, "payoff_first_runner_recall_score_target_max", 1.0) or 1.0)
+        and close_strength >= float(getattr(profile, "payoff_first_runner_recall_close_strength_min", 1.0) or 1.0)
+        and catalyst_freshness >= float(getattr(profile, "payoff_first_runner_recall_catalyst_freshness_min", 1.0) or 1.0)
+        and trend_acceleration <= float(getattr(profile, "payoff_first_runner_recall_trend_acceleration_max", 1.0) or 1.0)
+    )
+    if payoff_first_runner_recall_candidate and "payoff_first_runner_recall_candidate" not in candidate_reason_codes:
+        candidate_reason_codes.append("payoff_first_runner_recall_candidate")
+    return candidate_reason_codes, payoff_first_runner_recall_candidate
+
+
 def collect_short_trade_snapshot_labels_and_gates(
     input_data: TargetEvaluationInput,
     *,
@@ -353,10 +380,20 @@ def collect_short_trade_snapshot_labels_and_gates(
         positive_tags=positive_tags,
         negative_tags=negative_tags,
     )
+    candidate_reason_codes, payoff_first_runner_recall_candidate = _resolve_short_trade_snapshot_candidate_reason_codes(
+        input_data=input_data,
+        profile=profile,
+        score_target=float(relief_snapshot["score_target"]),
+        close_strength=float(signal_snapshot["close_strength"]),
+        catalyst_freshness=inputs["catalyst_freshness"],
+        trend_acceleration=inputs["trend_acceleration"],
+    )
 
     return {
         "positive_tags": positive_tags,
         "negative_tags": negative_tags,
         "blockers": blockers,
         "gate_status": gate_status,
+        "candidate_reason_codes": candidate_reason_codes,
+        "payoff_first_runner_recall_candidate": payoff_first_runner_recall_candidate,
     }

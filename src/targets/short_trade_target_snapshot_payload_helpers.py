@@ -159,6 +159,8 @@ def _build_snapshot_labels_payload(labels_and_gates: dict[str, Any]) -> dict[str
         "negative_tags": labels_and_gates["negative_tags"],
         "blockers": labels_and_gates["blockers"],
         "gate_status": labels_and_gates["gate_status"],
+        "candidate_reason_codes": list(labels_and_gates.get("candidate_reason_codes") or []),
+        "payoff_first_runner_recall_candidate": bool(labels_and_gates.get("payoff_first_runner_recall_candidate")),
     }
 
 
