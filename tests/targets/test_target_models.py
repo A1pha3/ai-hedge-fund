@@ -1589,6 +1589,7 @@ def test_selected_only_shrink_watchlist_filter_diagnostics_payload_reports_guard
     assert result.metrics_payload["watchlist_filter_diagnostics_selected_only_shrink_guard"]["applied"] is True
     assert result.metrics_payload["watchlist_filter_diagnostics_selected_only_shrink_guard"]["select_threshold_lift"] == pytest.approx(0.05)
     assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in result.negative_tags
+    assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in result.top_reasons
 
 
 def test_layer_c_watchlist_selected_only_shrink_reason_surfaces_in_explainability() -> None:

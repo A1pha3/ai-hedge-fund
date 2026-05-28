@@ -501,11 +501,33 @@ def _collect_short_trade_penalty_reasons(
     ]
 
 
+def _collect_selected_only_shrink_top_reasons(
+    *,
+    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
+    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any],
+    short_trade_boundary_selected_only_shrink_guard: dict[str, Any],
+) -> list[str]:
+    return [
+        reason
+        for reason in [
+        "watchlist_filter_diagnostics_selected_only_shrink_applied" if watchlist_filter_diagnostics_selected_only_shrink_guard.get("applied") else None,
+        "layer_c_watchlist_selected_only_shrink_applied" if layer_c_watchlist_selected_only_shrink_guard.get("applied") else None,
+        "short_trade_boundary_selected_only_shrink_applied" if short_trade_boundary_selected_only_shrink_guard.get("applied") else None,
+        ]
+        if reason is not None
+    ]
+
+
 def _build_short_trade_top_reasons(
     *,
     state: ShortTradeTopReasonsState,
 ) -> list[str]:
     reasons = [
+        *_collect_selected_only_shrink_top_reasons(
+            watchlist_filter_diagnostics_selected_only_shrink_guard=state.watchlist_filter_diagnostics_selected_only_shrink_guard,
+            layer_c_watchlist_selected_only_shrink_guard=state.layer_c_watchlist_selected_only_shrink_guard,
+            short_trade_boundary_selected_only_shrink_guard=state.short_trade_boundary_selected_only_shrink_guard,
+        ),
         _summarize_positive_factor("breakout_freshness", state.breakout_freshness),
         _summarize_positive_factor("trend_acceleration", state.trend_acceleration),
         _summarize_positive_factor("catalyst_freshness", state.raw_catalyst_freshness),
@@ -1116,8 +1138,6 @@ def _build_short_trade_decision_reasoning(
             thresholds=thresholds,
         ),
     )
-    if dict(snapshot.get("watchlist_filter_diagnostics_selected_only_shrink_guard") or {}).get("applied"):
-        top_reasons = trim_reasons([*top_reasons, "watchlist_filter_diagnostics_selected_only_shrink_applied"])
     rejection_reasons = build_short_trade_rejection_reasons(
         decision=decision,
         blockers=decision_snapshot.blockers,
