@@ -12,6 +12,7 @@ from scripts.btst_strategy_thresholds import (
     resolve_strategy_thresholds_config_path,
 )
 from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
+from src.paper_trading.btst_reporting_utils import _format_rollout_value
 
 REPORTS_DIR = Path("data/reports")
 OUTPUTS_DIR = Path("outputs")
@@ -425,6 +426,27 @@ def _render_rule_doc(
     return "\n".join(lines) + "\n"
 
 
+def _render_rollout_validation_lines(brief: dict[str, Any]) -> list[str]:
+    rollout_validation = {
+        "status": "unavailable",
+        **dict(brief.get("rollout_validation") or {}),
+    }
+    lines = [
+        "## Governed Rollout 观察",
+        "",
+        f"- status: `{rollout_validation.get('status') or 'unavailable'}`",
+        f"- primary_lane: `{rollout_validation.get('primary_lane') or 'n/a'}`",
+        f"- summary: {rollout_validation.get('summary') or 'n/a'}",
+        f"- selected_hit_rate_15pct: `{_format_rollout_value(rollout_validation.get('selected_hit_rate_15pct'), 4)}` -> `{_format_rollout_value(rollout_validation.get('shadow_hit_rate_15pct'), 4)}`",
+        f"- selected_count_delta: `{_format_rollout_value(rollout_validation.get('selected_count_delta'))}`",
+        f"- execution_eligible_delta: `{_format_rollout_value(rollout_validation.get('execution_eligible_delta'))}`",
+        f"- buy_order_delta: `{_format_rollout_value(rollout_validation.get('buy_order_delta'))}`",
+    ]
+    if rollout_validation.get("source_json_path"):
+        lines.append(f"- rollout_source_json: `{rollout_validation.get('source_json_path')}`")
+    return lines
+
+
 def _render_llm_doc(
     signal_date_compact: str,
     brief: dict[str, Any],
@@ -455,6 +477,10 @@ def _render_llm_doc(
         "",
     ]
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    rollout_lines = _render_rollout_validation_lines(brief)
+    if rollout_lines:
+        lines.extend([""])
+        lines.extend(rollout_lines)
     lines.extend(["", "## 正式执行层", ""])
     lines.extend(_stock_bullets(selected_actions, limit=5, include_payoff=True))
     lines.extend(["", "## 观察层", ""])
@@ -589,6 +615,10 @@ def _render_checklist_doc(
         "",
     ]
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    rollout_lines = _render_rollout_validation_lines(brief)
+    if rollout_lines:
+        lines.extend([""])
+        lines.extend(rollout_lines)
     lines.extend(["", "## 正式执行顺序", ""])
     for row in selected_actions[:3]:
         lines.append(f"- [ ] 正式执行：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，收盘胜率 `{_fmt_pct(dict(row.get('historical_prior') or {}).get('next_close_positive_rate'))}`。")

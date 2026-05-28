@@ -1607,6 +1607,63 @@ def test_generate_btst_next_day_trade_brief_surfaces_payoff_first_runner_recall_
     assert "### 688183" in markdown
 
 
+def test_generate_btst_next_day_trade_brief_surfaces_rollout_validation(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-03-27"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"trade_date": "2026-03-27", "selection_target": "short_trade_only"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260327",
+                "target_mode": "short_trade_only",
+                "selection_targets": {},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir.parent / "btst_layer_c_rollout_validation_20260506_20260522.json").write_text(
+        json.dumps(
+            {
+                "payoff_summary": {
+                    "selected_hit_rate_15pct": 0.3077,
+                    "shadow_hit_rate_15pct": 0.3333,
+                },
+                "replay_summary": {
+                    "selected_count_delta": -5,
+                    "execution_eligible_delta": -3,
+                    "buy_order_delta": -3,
+                },
+                "recommendation": {
+                    "status": "governed_shadow_ready",
+                    "primary_lane": "layer_c_formal_precision_tightening",
+                    "summary": "先收 formal buy。",
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(
+        report_dir, trade_date="2026-03-27", next_trade_date="2026-03-30"
+    )
+    markdown = render_btst_next_day_trade_brief_markdown(analysis)
+
+    assert analysis["rollout_validation"]["status"] == "governed_shadow_ready"
+    assert analysis["rollout_validation"]["execution_eligible_delta"] == -3
+    assert "## Governed Rollout 观察" in markdown
+    assert "layer_c_formal_precision_tightening" in markdown
+
+
 def test_generate_btst_next_day_trade_brief_includes_replay_only_upstream_shadow_observation_entries(tmp_path):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-04-01"
@@ -2550,6 +2607,69 @@ def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_exclude
     assert "Opportunity Expansion Pool" in markdown
     assert "Research Picks Excluded From Short-Trade Brief" in markdown
     assert "candidate_pool_lane: layer_a_liquidity_corridor" in markdown
+
+
+def test_render_btst_next_day_trade_brief_markdown_handles_missing_rollout_validation():
+    markdown = btst_reporting.render_btst_next_day_trade_brief_markdown(
+        {
+            "trade_date": "2026-03-27",
+            "next_trade_date": "2026-03-30",
+            "target_mode": "short_trade_only",
+            "selection_target": "short_trade_only",
+            "recommendation": "先看 selected，再看 near-miss 和机会池。",
+            "summary": {
+                "short_trade_selected_count": 0,
+                "short_trade_near_miss_count": 0,
+                "short_trade_blocked_count": 0,
+                "short_trade_rejected_count": 0,
+                "short_trade_formal_blocked_selected_count": 0,
+                "short_trade_formal_block_flag_counts": {},
+                "short_trade_formal_non_halt_blocked_selected_count": 0,
+                "short_trade_formal_non_halt_gate_counts": {},
+                "short_trade_formal_non_halt_prior_quality_counts": {},
+                "short_trade_opportunity_pool_count": 0,
+                "no_history_observer_count": 0,
+                "research_upside_radar_count": 0,
+                "runner_recall_review_count": 0,
+                "catalyst_theme_count": 0,
+                "catalyst_theme_shadow_count": 0,
+                "catalyst_theme_frontier_promoted_count": 0,
+                "upstream_shadow_candidate_count": 0,
+                "upstream_shadow_promotable_count": 0,
+            },
+            "btst_candidate_historical_context": {
+                "historical_report_count": 0,
+                "historical_btst_candidate_count": 0,
+                "historical_watch_candidate_count": 0,
+                "historical_selected_candidate_count": 0,
+                "historical_near_miss_candidate_count": 0,
+                "historical_opportunity_candidate_count": 0,
+                "historical_research_upside_radar_count": 0,
+                "historical_catalyst_theme_count": 0,
+            },
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "risky_observer_entries": [],
+            "no_history_observer_entries": [],
+            "weak_history_pruned_entries": [],
+            "research_upside_radar_entries": [],
+            "runner_recall_review_entries": [],
+            "catalyst_theme_entries": [],
+            "catalyst_theme_frontier_priority": {},
+            "catalyst_theme_shadow_entries": [],
+            "excluded_research_entries": [],
+            "upstream_shadow_summary": {},
+            "upstream_shadow_entries": [],
+            "rollout_validation": {"status": "unavailable"},
+        }
+    )
+
+    assert "## Governed Rollout 观察" in markdown
+    assert "- status: unavailable" in markdown
+    assert "- selected_hit_rate_15pct: n/a -> n/a" in markdown
+    assert "- selected_count_delta: n/a" in markdown
+    assert "None" not in markdown
 
 
 def test_generate_btst_next_day_trade_brief_prunes_balanced_confirmation_opportunity_with_zero_follow_through(tmp_path, monkeypatch):
