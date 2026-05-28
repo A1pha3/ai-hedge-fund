@@ -1122,6 +1122,44 @@ def test_ensure_plan_target_shells_clears_selection_targets_for_frozen_replay_wh
     assert updated.selection_targets == {}
 
 
+def test_ensure_plan_target_shells_clears_selection_targets_for_frozen_replay_when_sidecar_watchlist_can_rebuild(monkeypatch) -> None:
+    requested_profile = build_short_trade_target_profile("default")
+    plan = ExecutionPlan.model_construct(
+        date="20260506",
+        watchlist=[],
+        selection_targets={"000807": {"short_trade": {"decision": "selected"}}},
+        risk_metrics={
+            "frozen_selection_target_replay_input": {
+                "watchlist": [
+                    {
+                        "ticker": "000807",
+                        "score_b": 0.4316,
+                        "score_c": 0.2261,
+                        "score_final": 0.2775,
+                        "quality_score": 0.8083,
+                        "decision": "watch",
+                        "candidate_source": "layer_c_watchlist",
+                        "strategy_signals": {},
+                        "agent_contribution_summary": {},
+                    }
+                ]
+            }
+        },
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_config=_serialize_short_trade_target_profile(requested_profile),
+    )
+    monkeypatch.setattr(daily_pipeline_module, "ensure_plan_target_shells_impl", lambda **kwargs: kwargs["plan"])
+
+    updated = daily_pipeline_module._ensure_plan_target_shells(
+        plan,
+        target_mode="short_trade_only",
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={},
+    )
+
+    assert updated.selection_targets == {}
+
+
 def test_ensure_plan_target_shells_normalizes_watchlist_market_state_from_plan(monkeypatch) -> None:
     requested_profile = build_short_trade_target_profile("default")
     stale_watchlist_item = LayerCResult(
@@ -1227,6 +1265,97 @@ def test_build_plan_target_shell_inputs_attaches_plan_market_state_to_entries() 
         assert entry["market_state"]["breadth_ratio"] == 0.67
         assert entry["market_state"]["style_dispersion"] == 0.18
         assert entry["historical_prior"]["btst_regime_gate"] == "aggressive_trade"
+
+
+def test_build_plan_target_shell_inputs_prefers_frozen_replay_sidecar_watchlist() -> None:
+    plan_market_state = MarketState(
+        breadth_ratio=0.67,
+        daily_return=-0.003,
+        limit_up_down_ratio=1.25,
+        adx=27.0,
+        style_dispersion=0.18,
+        regime_flip_risk=0.09,
+        regime_gate_level="normal",
+    )
+    sparse_plan_watchlist = [
+        LayerCResult(
+            ticker="300054",
+            score_b=0.0,
+            score_c=0.0,
+            score_final=0.0,
+            quality_score=0.5,
+            decision="watch",
+            candidate_source="layer_c_watchlist",
+            strategy_signals={},
+            agent_contribution_summary={},
+        )
+    ]
+    sidecar_watchlist = [
+        {
+            "ticker": "605117",
+            "score_b": 0.6124,
+            "score_c": 0.7525,
+            "score_final": 0.7315,
+            "quality_score": 0.8167,
+            "decision": "watch",
+            "candidate_source": "layer_c_watchlist",
+            "strategy_signals": {
+                "trend": StrategySignal(
+                    direction=1,
+                    confidence=79.8765,
+                    completeness=1.0,
+                    sub_factors={
+                        "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                        "adx_strength": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+                "event_sentiment": StrategySignal(
+                    direction=1,
+                    confidence=83.0,
+                    completeness=1.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+            },
+            "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.52, "investor": 0.21}},
+            "market_state": {
+                "breadth_ratio": 0.67,
+                "daily_return": -0.003,
+                "style_dispersion": 0.18,
+                "regime_flip_risk": 0.09,
+                "regime_gate_level": "normal",
+            },
+        }
+    ]
+    plan = ExecutionPlan.model_construct(
+        date="20260506",
+        market_state=plan_market_state,
+        watchlist=sparse_plan_watchlist,
+        buy_orders=[],
+        risk_metrics={
+            "frozen_selection_target_replay_input": {
+                "watchlist": sidecar_watchlist,
+                "rejected_entries": [],
+                "supplemental_short_trade_entries": [],
+                "buy_order_tickers": [],
+            }
+        },
+    )
+
+    shell_inputs = build_plan_target_shell_inputs(
+        plan=plan,
+        target_mode="short_trade_only",
+        historical_prior_by_ticker={},
+        attach_historical_prior_to_entries_fn=lambda entries, prior_by_ticker: entries,
+        attach_historical_prior_to_watchlist_fn=lambda watchlist, prior_by_ticker: watchlist,
+    )
+
+    assert len(shell_inputs.watchlist) == 1
+    assert shell_inputs.watchlist[0].ticker == "605117"
+    assert shell_inputs.watchlist[0].score_final == pytest.approx(0.7315)
+    assert shell_inputs.watchlist[0].strategy_signals["trend"].direction == 1
 
 
 def test_attach_btst_regime_gate_shadow_is_noop_when_flag_off(monkeypatch) -> None:

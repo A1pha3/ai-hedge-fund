@@ -47,6 +47,44 @@
 
 也就是说，本周一旦把这两类边界/观察池样本抬成正式票，**5日赔率基本立刻塌掉**。
 
+### 最新 shadow 剔除验证结果
+
+基于刚更新的 `data/reports/btst_weekly_validation_20260518_20260522.json`，这周已经把
+
+- `short_trade_boundary`
+- `layer_c_watchlist`
+
+从正式 `selected` 里做了一次 **shadow-only 剔除情景**，结果如下：
+
+| 情景 | selected 样本数 | 5日内最高涨幅 >=15% 命中率 | T+2 收盘正收益率 |
+| --- | ---: | ---: | ---: |
+| 原始 `selected` | 15 | **20.00%** | **73.33%** |
+| shadow 剔除 `short_trade_boundary + layer_c_watchlist` 后 | 10 | **30.00%** | 70.00% |
+
+这条结果很重要，因为它说明：
+
+1. 现在已经有周度回测证明，**先把这两类来源从正式层降权/剔除，5D/+15% 命中率能从 `0.20` 提升到 `0.30`**；
+2. 代价相对可控：`T+2` 正收益率只从 `0.7333` 回落到 `0.70`；
+3. 所以下一步最值得做的，不是扩大候选池，而是把这条 **formal-source downrank / exclusion shadow** 做成受控 admission backtest。
+
+### 扩窗后的收敛结论
+
+为了避免只被单周样本误导，这轮又把窗口扩到 **2026-05-06 ~ 2026-05-22**（无缺日报，共 `13` 个完整日报）重新验证：
+
+| 情景 | selected 样本数 | 5日内最高涨幅 >=15% 命中率 | T+2 收盘正收益率 |
+| --- | ---: | ---: | ---: |
+| 原始 `selected` | 26 | **30.77%** | **65.38%** |
+| shadow 剔除 `layer_c_watchlist` 后 | 24 | **33.33%** | 62.50% |
+
+这一步把结论收敛得更清楚了：
+
+1. **`layer_c_watchlist` 是更稳定的 formal payoff drag**，因为扩窗后它仍然是唯一保持 `5D/+15% = 0%` 的正式层来源；
+2. `short_trade_boundary` 在单周窗口里很差，但扩到 13 个日报后，`5D/+15% hit_rate = 33.33%`，说明它更像**周度波动较大的次级问题**，还不适合直接全局剔除；
+3. 因此更合理的执行顺序应该改成：
+   - 先做 `layer_c_watchlist` 的正式层降权 / admission shadow；
+   - 再单独验证 `short_trade_boundary` 是否只在某些市场窗口里需要收紧；
+   - `watchlist_filter_diagnostics` 继续沿 runner recall 复审线推进，而不是简单抬升为正式票。
+
 ### 被系统漏掉的强 runner 长什么样
 
 本周被 `blocked/rejected`、但后验上真实达到 `5D/+15%` 的 false negative 一共 `6` 只，全部来自：
@@ -200,6 +238,9 @@ alpha 侧新增一条明确的排序纪律：
    - `short_trade_boundary`
    - `layer_c_watchlist`
    这两类没有 `5D/+15%` 证据的样本；
+   - 单周 shadow 剔除已经验证：移除这两类来源后，`selected` 的 `5D/+15%` 命中率能从 `20%` 提升到 `30%`；
+   - 但扩窗后更稳定的 drag 只剩 `layer_c_watchlist`，因此 admission shadow 的第一优先级应该先落在它身上；
+   - 仓库里已经补出一个**默认不生效**的命名 shadow profile：`btst_precision_v2_layer_c_watchlist_shadow`，它通过 `layer_c_watchlist_selected_rank_cap=0` 把 layer C 来源从正式 `selected` 里降到非正式层，方便后续 replay / backtest 直接验证；
 2. `candidate_source = catalyst_theme` 单独做 payoff-first 优先级加成；
 3. 对 `watchlist_filter_diagnostics` 的低分拒绝带，新增 **runner recall review**，不再把它们统一视为低价值噪音。
 
@@ -237,11 +278,89 @@ gamma 侧的 rollout 纪律固定为：
 当前最稳的推进方式是：
 
 - 先把 `payoff-first selected 重排` 做成周度 shadow 评估项；
+- frozen replay 侧现在优先走 manifest-driven 入口：`uv run python scripts/analyze_btst_shadow_profile_replay.py --weekly-validation-json data/reports/btst_weekly_validation_20260506_20260522.json --baseline-profile btst_precision_v2 --baseline-overrides '{}' --shadow-profile btst_precision_v2_layer_c_watchlist_shadow --shadow-overrides '{}'`，不再手工拼 `daily_events.jsonl` 列表；
+- rollout 结论统一回收到 `data/reports/btst_layer_c_rollout_validation_20260506_20260522.{json,md}`；
 - 连续观察：
   - 正式层 `5D/+15% hit_rate`
   - runner recall 层 `5D/+15% hit_rate`
   - false negative 回收数
   - continuation 主链是否被明显污染
+
+### 最新 sidecar-aware replay 结果
+
+这轮把 frozen replay 再往前推进了一步：
+
+- `build_plan_target_shell_inputs()` 现在会优先消费 `frozen_selection_target_replay_input` 的 watchlist / rejected / supplemental sidecar；
+- `_ensure_plan_target_shells()` 会把 sidecar shell 认定为 **可重建输入**，不再在 sidecar 存在时错误保留旧 `selection_targets`；
+- `scripts/analyze_btst_shadow_profile_replay.py` 新增了 `baseline/shadow overrides`，可以直接复现真实 live 基线。
+
+对应的真实周级 sidecar-aware replay 证据：
+
+- `data/reports/btst_shadow_profile_replay_sidecar_aware_20260518_20260522.json`
+- `data/reports/btst_shadow_profile_replay_sidecar_aware_20260518_20260522.md`
+
+在真实 live 基线 `momentum_optimized + {"select_threshold": 0.5}` 下，`layer_c_watchlist_selected_rank_cap=0` 的 shadow 结果是：
+
+| 指标 | Baseline | Shadow | Delta |
+| --- | ---: | ---: | ---: |
+| `selected_count` | 22 | 18 | **-4** |
+| `near_miss_count` | 64 | 68 | **+4** |
+| `execution_eligible_count` | 2 | 0 | **-2** |
+| `buy_order_count` | 2 | 0 | **-2** |
+
+被 shadow 从正式 `selected` 层移除的是真实 `layer_c_watchlist` 名字：
+
+- `20260518`：`605117`
+- `20260522`：`002222`、`300054`、`600176`
+
+这条结果的意义很明确：
+
+1. **`layer_c_watchlist` 的 admission shadow 已经在真实周 replay 上打到了 selected 层**，不再只是停留在周度统计假设；
+2. 这次新增被 shadow 移除的 `002222 / 300054` 也证明：在给稀疏 replay-input 行补齐 `selection_snapshot` rich row，并保留 sidecar 里的原始 formal buy bridge 后，`20260522` 的 **selected-layer + execution-layer fidelity 都已经明显提高**；
+3. 真实周级 replay 现在第一次出现了 execution 层 delta：`20260522` 的 `002222 / 300054` 在 baseline 里仍是 formal `execution_eligible + buy_order`，而 shadow 会把它们一起打掉；
+4. 因此当前可以确认的不再只是“selected 层结构被纠偏”，而是 **本周 formal buy 收缩也已经能被 frozen replay 复现出来**；
+5. 但这仍然是 **shadow-only / governed follow-up** 证据，不等于默认 live 升级完成；下一步仍要扩窗、回测和样本外验证。
+
+### 扩窗后的 execution replay 结果
+
+这轮又把同一套 sidecar-aware shadow replay 扩到 **2026-05-06 ~ 2026-05-22** 的 13 个完整日报窗口，新增证据：
+
+- `data/reports/btst_shadow_profile_replay_sidecar_aware_20260506_20260522.json`
+- `data/reports/btst_shadow_profile_replay_sidecar_aware_20260506_20260522.md`
+
+扩窗后的核心结果是：
+
+| 指标 | Baseline | Shadow | Delta |
+| --- | ---: | ---: | ---: |
+| `selected_count` | 79 | 74 | **-5** |
+| `near_miss_count` | 145 | 150 | **+5** |
+| `execution_eligible_count` | 3 | 0 | **-3** |
+| `buy_order_count` | 3 | 0 | **-3** |
+
+其中 execution / buy 层被 shadow 打掉的正式票来自两天：
+
+1. `20260508`：`688183`
+2. `20260522`：`002222`、`300054`
+
+这说明 `layer_c_watchlist_selected_rank_cap=0` 不只是单周碰巧打掉两只票，而是在更长窗口里也会**稳定收缩 formal buy**。  
+当然，样本量依然不大，所以这条证据现在最适合用来支撑 **governed replay rollout**，还不够直接升级成默认 live admission。
+
+### 当前正式 rollout 口径
+
+这一步现在已经不需要继续靠手工口述汇总，统一口径已经收敛到：
+
+- `data/reports/btst_layer_c_rollout_validation_20260506_20260522.json`
+- `data/reports/btst_layer_c_rollout_validation_20260506_20260522.md`
+- `docs/prompt/generate_file/optimize_methord/btst-layer-c-formal-precision-rollout-2026-05-28.md`
+
+对应结论是：
+
+1. `status = governed_shadow_ready`
+2. `primary_lane = layer_c_formal_precision_tightening`
+3. `summary = 先收 formal buy：shadow 把 execution_eligible 收缩 3 个、buy_order 收缩 3 个，同时 5D/+15% 命中率从 0.3077 提升到 0.3333。`
+
+所以这份文档后续更多承担 **runner recall / payoff-first 诊断** 的角色；  
+`layer_c_watchlist` 的 formal 收缩 rollout 结论，统一以新 rollout artifact 和专门文档为准。
 
 ## 为什么这套方案是当前最优，而不是别的方向
 
@@ -322,6 +441,10 @@ gamma 侧的 rollout 纪律固定为：
 3. 只从 `watchlist_filter_diagnostics` 中抽取 recall 候选；
 4. 默认只做 **shadow_review_only**，明确不直接并入 formal BTST 执行名单；
 5. 对明显 `payoff_divergence_risk` 的样本继续排除，避免把坏赔率样本重新包装成 recall 机会。
+6. 周度复盘已经固化成仓库内 artifact：
+   - `scripts/analyze_btst_weekly_validation.py`
+   - `data/reports/btst_weekly_validation_20260518_20260522.json`
+   - `data/reports/btst_weekly_validation_20260518_20260522.md`
 
 这一步的目的不是“把漏票直接升格”，而是先把本周反复出现的 delayed-runner 漏票放进一个可追踪、可复盘、可继续回测验证的影子复审层。
 
@@ -341,4 +464,4 @@ gamma 侧的 rollout 纪律固定为：
 - `data/reports/btst_5d_15pct_trend_gate_confirmation_grid_latest.json`
 - `data/reports/btst_5d_15pct_trend_breakout_drilldown_latest.json`
 - `data/reports/btst_5d_15pct_scoped_missing_price_manifest_latest.json`
-- `/Users/matrix/.copilot/session-state/92e81f7f-f1a5-403e-bbf3-3748d8d414aa/files/weekly_btst_20260518_20260522/weekly_outcome_aggregate.json`
+- `data/reports/btst_weekly_validation_20260518_20260522.json`

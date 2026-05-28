@@ -18,6 +18,8 @@ class ShortTradeTargetProfile:
     near_miss_rank_cap_ratio: float = 0.0
     catalyst_theme_selected_rank_cap_ratio: float | None = None
     catalyst_theme_near_miss_rank_cap_ratio: float | None = None
+    layer_c_watchlist_selected_rank_cap: int | None = None
+    layer_c_watchlist_near_miss_rank_cap: int | None = None
     catalyst_theme_source_specific_rank_cap_trend_acceleration_min: float = 0.0
     catalyst_theme_source_specific_rank_cap_sector_resonance_min: float = 0.0
     catalyst_theme_source_specific_rank_cap_close_strength_min: float = 0.0

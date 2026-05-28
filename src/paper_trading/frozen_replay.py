@@ -61,6 +61,58 @@ def _load_sidecar_prior_by_ticker(source_path: Path, trade_date: str) -> dict[st
 
 
 def _load_sidecar_replay_input_payload(source_path: Path, trade_date: str) -> dict:
+    def _build_snapshot_watchlist_rich_rows(selection_snapshot_payload: dict) -> dict[str, dict]:
+        rich_rows_by_ticker: dict[str, dict] = {}
+        funnel_filters = dict(dict(selection_snapshot_payload.get("funnel_diagnostics") or {}).get("filters") or {})
+        candidate_sections = [
+            list(selection_snapshot_payload.get("catalyst_theme_candidates") or []),
+            list(dict(funnel_filters.get("watchlist") or {}).get("tickers") or []),
+            list(dict(funnel_filters.get("catalyst_theme_candidates") or {}).get("tickers") or []),
+            list(dict(funnel_filters.get("short_trade_candidates") or {}).get("tickers") or []),
+        ]
+        for section in candidate_sections:
+            for raw_row in section:
+                row = dict(raw_row or {})
+                ticker = str(row.get("ticker") or row.get("symbol") or "").strip()
+                if ticker and row.get("strategy_signals"):
+                    rich_rows_by_ticker[ticker] = row
+        return rich_rows_by_ticker
+
+    def _hydrate_sparse_watchlist_rows(*, replay_input_payload: dict, selection_snapshot_payload: dict) -> dict:
+        rich_rows_by_ticker = _build_snapshot_watchlist_rich_rows(selection_snapshot_payload)
+        if not rich_rows_by_ticker:
+            return replay_input_payload
+        hydrated_payload = dict(replay_input_payload or {})
+        hydrated_watchlist: list[dict] = []
+        changed = False
+        for raw_row in list(hydrated_payload.get("watchlist") or []):
+            row = dict(raw_row or {})
+            ticker = str(row.get("ticker") or "").strip()
+            rich_row = rich_rows_by_ticker.get(ticker)
+            if rich_row and not row.get("strategy_signals"):
+                if rich_row.get("strategy_signals"):
+                    row["strategy_signals"] = rich_row["strategy_signals"]
+                    changed = True
+                if not row.get("agent_contribution_summary") and rich_row.get("agent_contribution_summary"):
+                    row["agent_contribution_summary"] = rich_row["agent_contribution_summary"]
+                    changed = True
+                if not row.get("candidate_reason_codes") and rich_row.get("candidate_reason_codes"):
+                    row["candidate_reason_codes"] = rich_row["candidate_reason_codes"]
+                    changed = True
+                if not row.get("theme_name") and rich_row.get("theme_name"):
+                    row["theme_name"] = rich_row["theme_name"]
+                    changed = True
+                if not row.get("theme_category") and rich_row.get("theme_category"):
+                    row["theme_category"] = rich_row["theme_category"]
+                    changed = True
+                if not row.get("metrics") and rich_row.get("metrics"):
+                    row["metrics"] = rich_row["metrics"]
+                    changed = True
+            hydrated_watchlist.append(row)
+        if changed:
+            hydrated_payload["watchlist"] = hydrated_watchlist
+        return hydrated_payload
+
     selection_root = source_path.parent / "selection_artifacts"
     if not selection_root.is_dir():
         return {}
@@ -76,6 +128,13 @@ def _load_sidecar_replay_input_payload(source_path: Path, trade_date: str) -> di
         if not candidate_path.is_file():
             continue
         payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+        selection_snapshot_path = candidate_dir / "selection_snapshot.json"
+        if selection_snapshot_path.is_file():
+            selection_snapshot_payload = json.loads(selection_snapshot_path.read_text(encoding="utf-8"))
+            payload = _hydrate_sparse_watchlist_rows(
+                replay_input_payload=payload,
+                selection_snapshot_payload=selection_snapshot_payload,
+            )
         if isinstance(payload, dict) and payload:
             return payload
     return {}
@@ -143,7 +202,9 @@ def _build_recent_generated_buy_blocks(*, latest_buy_trade_by_ticker: dict[str, 
 
 def _reset_frozen_buy_order_filter_summary(plan: ExecutionPlan) -> ExecutionPlan:
     normalized_plan = plan.model_copy(deep=True)
+    original_buy_order_tickers = [str(getattr(order, "ticker", "") or "").strip() for order in list(getattr(normalized_plan, "buy_orders", []) or []) if str(getattr(order, "ticker", "") or "").strip()]
     risk_metrics = dict(getattr(normalized_plan, "risk_metrics", {}) or {})
+    has_sidecar_replay_input = bool(dict(risk_metrics.get("frozen_selection_target_replay_input", {}) or {}))
     counts = dict(risk_metrics.get("counts", {}) or {})
     funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
@@ -151,12 +212,27 @@ def _reset_frozen_buy_order_filter_summary(plan: ExecutionPlan) -> ExecutionPlan
         "filtered_count": 0,
         "reason_counts": {},
         "tickers": [],
-        "selected_tickers": [str(getattr(order, "ticker", "") or "").strip() for order in list(getattr(normalized_plan, "buy_orders", []) or []) if str(getattr(order, "ticker", "") or "").strip()],
+        "selected_tickers": list(original_buy_order_tickers),
     }
     funnel_diagnostics["filters"] = filters
-    counts["buy_order_count"] = len(list(getattr(normalized_plan, "buy_orders", []) or []))
+    counts["buy_order_count"] = len(original_buy_order_tickers)
     risk_metrics["counts"] = counts
     risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    if has_sidecar_replay_input:
+        risk_metrics["frozen_original_buy_order_tickers"] = list(original_buy_order_tickers)
+    else:
+        risk_metrics.pop("frozen_original_buy_order_tickers", None)
+    normalized_plan.risk_metrics = risk_metrics
+    return normalized_plan
+
+
+def _clear_frozen_buy_orders(plan: ExecutionPlan) -> ExecutionPlan:
+    normalized_plan = _reset_frozen_buy_order_filter_summary(plan)
+    normalized_plan.buy_orders = []
+    risk_metrics = dict(getattr(normalized_plan, "risk_metrics", {}) or {})
+    counts = dict(risk_metrics.get("counts", {}) or {})
+    counts["buy_order_count"] = 0
+    risk_metrics["counts"] = counts
     normalized_plan.risk_metrics = risk_metrics
     return normalized_plan
 
@@ -167,12 +243,15 @@ def replay_frozen_post_market_sequence(
     target_mode: str = "short_trade_only",
     base_model_name: str = "gpt-4.1",
     base_model_provider: str = "OpenAI",
+    short_trade_target_profile_name: str = "default",
+    short_trade_target_profile_overrides: dict[str, object] | None = None,
+    clear_existing_buy_orders: bool = False,
 ) -> dict[str, ExecutionPlan]:
     from src.execution.daily_pipeline import DailyPipeline
 
     frozen_plan_source = Path(daily_events_path).resolve()
     frozen_plans = {
-        trade_date: _reset_frozen_buy_order_filter_summary(plan)
+        trade_date: (_clear_frozen_buy_orders(plan) if clear_existing_buy_orders else _reset_frozen_buy_order_filter_summary(plan))
         for trade_date, plan in load_frozen_post_market_plans(frozen_plan_source).items()
     }
     pipeline = DailyPipeline(
@@ -181,6 +260,8 @@ def replay_frozen_post_market_sequence(
         target_mode=target_mode,
         base_model_name=base_model_name,
         base_model_provider=base_model_provider,
+        short_trade_target_profile_name=short_trade_target_profile_name,
+        short_trade_target_profile_overrides=dict(short_trade_target_profile_overrides or {}),
     )
     replayed_plans: dict[str, ExecutionPlan] = {}
     latest_buy_trade_by_ticker: dict[str, str] = {}

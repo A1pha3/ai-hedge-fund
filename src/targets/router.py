@@ -148,6 +148,13 @@ def _build_selected_evaluation(
         candidate_source=candidate_source,
         candidate_reason_codes=candidate_reason_codes,
     )
+    research_execution_eligible = bool(included_in_buy_orders and research_result is not None and research_result.decision == "selected")
+    short_trade_execution_eligible = bool(included_in_buy_orders and short_trade_result is not None and short_trade_result.decision == "selected")
+    if research_result is not None:
+        research_result.execution_eligible = research_execution_eligible
+    if short_trade_result is not None:
+        short_trade_result.execution_eligible = short_trade_execution_eligible
+    evaluation.execution_eligible = short_trade_execution_eligible if short_trade_result is not None else research_execution_eligible
     evaluation.delta_classification = _classify_delta(evaluation)
     if evaluation.delta_classification == "research_pass_short_reject":
         short_trade_decision = getattr(short_trade_result, "decision", "rejected") if short_trade_result is not None else "rejected"

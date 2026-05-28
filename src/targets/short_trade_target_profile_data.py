@@ -1156,6 +1156,12 @@ SHORT_TRADE_TARGET_PROFILES["btst_precision_v2_watchlist_incumbent_displacement_
     watchlist_zero_catalyst_flat_trend_trend_acceleration_max=0.66,
 )
 
+SHORT_TRADE_TARGET_PROFILES["btst_precision_v2_layer_c_watchlist_shadow"] = replace(
+    SHORT_TRADE_TARGET_PROFILES["btst_precision_v2"],
+    name="btst_precision_v2_layer_c_watchlist_shadow",
+    layer_c_watchlist_selected_rank_cap=0,
+)
+
 # Round 82 - momentum_tuned: optimized select_threshold=0.38 for momentum_optimized
 # Backtest: +0.20% daily return vs +0.128% baseline (momentum_optimized, 0.46 threshold)
 # 20-day backtest: win=48%, payoff=1.39, positive_days=11/18

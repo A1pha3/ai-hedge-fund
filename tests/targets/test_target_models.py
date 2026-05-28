@@ -1884,6 +1884,7 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     btst_precision_v2_profile = get_short_trade_target_profile("btst_precision_v2")
     catalyst_research_rank_probe = get_short_trade_target_profile("btst_precision_v2_catalyst_research_rank_probe")
     watchlist_displacement_probe = get_short_trade_target_profile("btst_precision_v2_watchlist_incumbent_displacement_probe")
+    layer_c_watchlist_shadow = get_short_trade_target_profile("btst_precision_v2_layer_c_watchlist_shadow")
 
     assert conservative_profile.select_threshold > default_profile.select_threshold > aggressive_profile.select_threshold
     assert conservative_profile.layer_c_avoid_penalty > default_profile.layer_c_avoid_penalty > aggressive_profile.layer_c_avoid_penalty
@@ -1972,6 +1973,10 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert catalyst_research_rank_probe.selected_rank_cap_relief_catalyst_theme_carryover_support_enabled is True
     assert catalyst_research_rank_probe.selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count == 3
     assert catalyst_research_rank_probe.selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min == 0.05
+    assert layer_c_watchlist_shadow.select_threshold == btst_precision_v2_profile.select_threshold
+    assert layer_c_watchlist_shadow.near_miss_threshold == btst_precision_v2_profile.near_miss_threshold
+    assert layer_c_watchlist_shadow.selected_rank_cap_ratio == btst_precision_v2_profile.selected_rank_cap_ratio
+    assert layer_c_watchlist_shadow.layer_c_watchlist_selected_rank_cap == 0
 
 
 def test_btst_precision_supply_probe_profiles_rebalance_non_catalyst_signal_mix() -> None:
@@ -3383,6 +3388,78 @@ def test_short_trade_rank_decision_cap_allows_catalyst_theme_ratio_override_to_d
     assert boundary_cap_state["selected_rank_cap_ratio"] == 0.1
     assert boundary_cap_state["near_miss_rank_cap_ratio"] == 0.2
     assert boundary_cap_state["selected_cap_exceeded"] is True
+
+
+def test_short_trade_rank_decision_cap_supports_layer_c_watchlist_selected_cap_override() -> None:
+    layer_c_entry = {
+        **_make_prepared_breakout_entry(),
+        "candidate_source": "layer_c_watchlist",
+        "reason": "layer_c_watchlist_candidate",
+        "reasons": ["layer_c_watchlist_candidate"],
+        "candidate_reason_codes": ["layer_c_watchlist_candidate"],
+    }
+    boundary_entry = {
+        **layer_c_entry,
+        "candidate_source": "short_trade_boundary",
+        "reason": "short_trade_boundary_candidate",
+        "reasons": ["short_trade_boundary_candidate"],
+        "candidate_reason_codes": ["short_trade_boundary_candidate"],
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "select_threshold": 0.30,
+            "near_miss_threshold": 0.20,
+            "selected_rank_cap": 0,
+            "near_miss_rank_cap": 0,
+            "selected_rank_cap_ratio": 0.0,
+            "near_miss_rank_cap_ratio": 0.0,
+        },
+    ):
+        baseline_boundary_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=boundary_entry,
+            rank_hint=1,
+            rank_population=100,
+        )
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "select_threshold": 0.30,
+            "near_miss_threshold": 0.20,
+            "selected_rank_cap": 0,
+            "near_miss_rank_cap": 0,
+            "selected_rank_cap_ratio": 0.0,
+            "near_miss_rank_cap_ratio": 0.0,
+            "layer_c_watchlist_selected_rank_cap": 0,
+        },
+    ):
+        layer_c_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=layer_c_entry,
+            rank_hint=1,
+            rank_population=100,
+        )
+        boundary_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=boundary_entry,
+            rank_hint=1,
+            rank_population=100,
+        )
+
+    layer_c_cap_state = layer_c_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    boundary_cap_state = boundary_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert layer_c_cap_state["layer_c_watchlist_source_specific_cap_guard_active"] is True
+    assert layer_c_cap_state["layer_c_watchlist_selected_rank_cap"] == 0
+    assert layer_c_cap_state["selected_rank_cap"] == 0
+    assert layer_c_cap_state["selected_cap_exceeded_effective"] is True
+    assert layer_c_result.decision == "near_miss"
+    assert boundary_cap_state["layer_c_watchlist_source_specific_cap_guard_active"] is False
+    assert boundary_cap_state["selected_rank_cap"] is None
+    assert boundary_cap_state["selected_cap_exceeded_effective"] is False
+    assert boundary_result.decision == baseline_boundary_result.decision
     assert boundary_cap_state["near_miss_cap_exceeded"] is False
     assert boundary_result.decision == "near_miss"
 

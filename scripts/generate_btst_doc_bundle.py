@@ -105,6 +105,25 @@ def _stock_bullets(rows: list[dict[str, Any]], *, limit: int, include_payoff: bo
     return lines or ["- 无。"]
 
 
+def _rule_stock_bullets(rows: list[dict[str, Any]], *, limit: int) -> list[str]:
+    """Render rule-report high-confidence rows from their native score fields."""
+    lines: list[str] = []
+    for row in rows[:limit]:
+        details = [
+            f"规则分数 `{_fmt_num(_first_non_empty(row.get('score'), row.get('score_target')), 4)}`",
+        ]
+        if row.get("pct_chg") not in (None, ""):
+            details.append(f"当日涨幅 `{_fmt_num(row.get('pct_chg'), 2)}%`")
+        if row.get("close_strength") not in (None, ""):
+            details.append(f"close_strength `{_fmt_num(row.get('close_strength'), 4)}`")
+        if row.get("catalyst_freshness") not in (None, ""):
+            details.append(f"catalyst_freshness `{_fmt_num(row.get('catalyst_freshness'), 4)}`")
+        if row.get("candidate_source") not in (None, ""):
+            details.append(f"来源 `{row.get('candidate_source')}`")
+        lines.append(f"- `{_stock_label(row)}`：" + "，".join(details) + "。")
+    return lines or ["- 无。"]
+
+
 def _first_non_empty(*values: Any) -> Any:
     """Return the first non-empty value from a list of candidates."""
     for value in values:
@@ -186,6 +205,7 @@ def _load_early_runner_context(reports_root: Path, signal_date_iso: str, *, refr
         "watchlist": _tag_rows(_safe_rows(selected_board.get("early_runner_watchlist")), "early_runner_watchlist"),
         "priority": _tag_rows(_safe_rows(selected_board.get("early_runner_priority")), "early_runner_priority"),
         "second_entry": _tag_rows(_safe_rows(selected_board.get("second_entry_reentry")), "second_entry_reentry"),
+        "research_confirmation": _tag_rows(_safe_rows(selected_board.get("full_report_confirmation")), "full_report_confirmation"),
     }
 
 
@@ -327,6 +347,7 @@ def _resolve_primary_action(brief: dict[str, Any], priority_board: dict[str, Any
 def _render_early_runner_status(context: dict[str, Any]) -> list[str]:
     """Render human-readable early-runner availability lines."""
     board = dict(context.get("board") or {})
+    research_confirmation = _safe_rows(context.get("research_confirmation"))
     status = str(context.get("status") or "unavailable")
     requested = str(context.get("requested_trade_date") or "")
     latest = str(context.get("latest_trade_date") or "")
@@ -337,6 +358,13 @@ def _render_early_runner_status(context: dict[str, Any]) -> list[str]:
         lines.append(f"- 当日 early-runner 板缺失，回退到最近可用板：`{latest}`，`deployment_mode={board.get('deployment_mode')}`，`gate_action={board.get('gate_action')}`。")
     else:
         lines.append("- 当前没有可用 early-runner 板，本轮文档只记录缺失状态，不编造观察票。")
+    if research_confirmation:
+        lines.append(
+            f"- 当前板保留 `full_report_confirmation={len(research_confirmation)}` 条研究确认票；它们只用于研究确认，不自动进入 priority/watchlist/second-entry。"
+        )
+        lines.append(
+            f"- 研究确认前排：`{[str(row.get('ticker') or '').strip() for row in research_confirmation[:5]]}`。"
+        )
     return lines
 
 
@@ -345,10 +373,13 @@ def _render_early_runner_overlay(context: dict[str, Any], formal_rows: list[dict
     watchlist = _safe_rows(context.get("watchlist"))
     priority = _safe_rows(context.get("priority"))
     second_entry = _safe_rows(context.get("second_entry"))
+    research_confirmation = _safe_rows(context.get("research_confirmation"))
     intersection_summary = _build_intersection_summary(context, formal_rows)
     lines = []
     lines.extend(_render_early_runner_status(context))
     lines.append(f"- watchlist 数量：`{len(watchlist)}`；priority 数量：`{len(priority)}`；second_entry 数量：`{len(second_entry)}`。")
+    if research_confirmation:
+        lines.append(f"- research-only 确认池数量：`{len(research_confirmation)}`。")
     lines.append(f"- 与正式 BTST 的重合票：`{intersection_summary.get('overlap_tickers')}`。")
     lines.append(
         f"- 仅 early-runner 命中的补充票：`{[str(row.get('ticker') or '').strip() for row in _safe_rows(intersection_summary.get('only_early_runner_rows'))]}`。"
@@ -405,7 +436,7 @@ def _render_rule_doc(
     ]
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
     lines.extend(["", "## 规则前排", ""])
-    lines.extend(_stock_bullets(high_confidence, limit=8))
+    lines.extend(_rule_stock_bullets(high_confidence, limit=8))
     lines.extend(
         [
             "",
@@ -489,8 +520,13 @@ def _render_plain_language_doc(signal_date_compact: str, brief: dict[str, Any], 
     watch_actions = _resolve_watch_rows(brief, priority_board)
     intersection_summary = _build_intersection_summary(early_runner, [*selected_actions, *watch_actions])
     early_status = str(early_runner.get("status") or "unavailable")
+    board = dict(early_runner.get("board") or {})
     status_note = {
-        "exact": "这次文档里已经拿到了当日 early-runner 板，所以它可以作为正式 BTST 旁边的第二观察层使用。",
+        "exact": (
+            "这次文档里已经拿到了当日 early-runner 板，但它当前仍是 `research_only`，只保留研究确认池，不生成可执行观察票。"
+            if str(board.get("gate_action") or "") == "research_only"
+            else "这次文档里已经拿到了当日 early-runner 板，所以它可以作为正式 BTST 旁边的第二观察层使用。"
+        ),
         "stale_fallback": "这次文档没有拿到当日 early-runner 板，只能回退到最近可用板，所以它只能作为参考线索，不能当成当天正式观察单。",
         "unavailable": "这次文档没有拿到可用 early-runner 板，所以只能显式记录缺失状态，不能拿它补出不存在的观察票。",
     }.get(early_status, "当前 early-runner 状态不明确，只能保守处理。")
@@ -555,14 +591,20 @@ def _render_forum_doc(signal_date_compact: str, brief: dict[str, Any], priority_
     intersection_summary = _build_intersection_summary(early_runner, [*selected_actions, *watch_actions])
     priority = _safe_rows(early_runner.get("priority"))
     watchlist = _safe_rows(early_runner.get("watchlist"))
-    extra = [str(row.get("ticker") or "").strip() for row in (priority[:2] or watchlist[:2])]
+    research_confirmation = _safe_rows(early_runner.get("research_confirmation"))
+    extra_rows = priority[:2] or watchlist[:2]
+    extra_label = "补充观察票优先看"
+    if not extra_rows and research_confirmation:
+        extra_rows = research_confirmation[:2]
+        extra_label = "research-only 确认前排"
+    extra = [str(row.get("ticker") or "").strip() for row in extra_rows]
     overlap = [str(row.get("ticker") or "").strip() for row in _safe_rows(intersection_summary.get("overlap_rows"))[:3]]
     lines = [
         f"# {signal_date_compact}-两套交易计划论坛短版",
         "",
         f"明日 BTST 主线还是 `{_stock_label(primary_action)}`，执行模式 `{primary_action.get('preferred_entry_mode') or 'n/a'}`，先确认再决定，不做开盘无脑追价。",
         "",
-        f"这次 early-runner 状态：`{early_runner.get('status')}`；交集高亮 `{overlap}`；补充观察票优先看 `{extra}`。",
+        f"这次 early-runner 状态：`{early_runner.get('status')}`；交集高亮 `{overlap}`；{extra_label} `{extra}`。",
         "",
         "使用顺序：正式 BTST 决定主票，early-runner 只做交集优先和补充复审，不替代正式执行单。",
     ]
@@ -633,6 +675,7 @@ def _render_early_warning_doc(
 ) -> str:
     """Render the dedicated early-warning document from early-runner watchlists and second-entry rows."""
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
+    research_confirmation = _safe_rows(early_runner.get("research_confirmation"))
     lines = [
         f"# BTST 提前预警池（{signal_date_compact}）",
         "",
@@ -640,13 +683,21 @@ def _render_early_warning_doc(
         "",
         "这份文档专门承接方案 A 的 early-runner 观察层，不替代正式 BTST 主计划。",
         "",
-        "## 状态",
-        "",
     ]
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
-    lines.extend([""])
+    lines.extend(
+        [
+            "",
+            "## 状态",
+            "",
+        ]
+    )
     lines.extend(_render_early_runner_status(early_runner))
-    lines.extend([""])
+    lines.extend(
+        [
+            "",
+        ]
+    )
     lines.extend(_render_intersection_highlights(intersection_summary))
     lines.extend(["", "## Priority", ""])
     lines.extend(_stock_bullets(_safe_rows(early_runner.get("priority")), limit=6, include_payoff=True))
@@ -654,6 +705,10 @@ def _render_early_warning_doc(
     lines.extend(_stock_bullets(_safe_rows(early_runner.get("watchlist")), limit=8, include_payoff=True))
     lines.extend(["", "## Second Entry / Reentry", ""])
     lines.extend(_stock_bullets(_safe_rows(early_runner.get("second_entry")), limit=8, include_payoff=True))
+    if research_confirmation:
+        lines.extend(["", "## Research Only 确认池", ""])
+        lines.append("- 当前是 research_only 板，以下确认票只保留为研究确认，不自动升级为可执行 early-runner 观察票。")
+        lines.extend(_stock_bullets(research_confirmation, limit=8, include_payoff=True))
     lines.extend(["", "## 使用原则", ""])
     lines.extend(
         [
@@ -672,6 +727,7 @@ def _render_early_warning_card_doc(signal_date_compact: str, early_runner: dict[
     priority = _safe_rows(early_runner.get("priority"))
     watchlist = _safe_rows(early_runner.get("watchlist"))
     second_entry = _safe_rows(early_runner.get("second_entry"))
+    research_confirmation = _safe_rows(early_runner.get("research_confirmation"))
     lines = [
         f"# BTST 提前预警卡（{signal_date_compact}）",
         "",
@@ -682,6 +738,11 @@ def _render_early_warning_card_doc(signal_date_compact: str, early_runner: dict[
         f"- second_entry：`{[str(row.get('ticker') or '').strip() for row in second_entry[:5]]}`。",
         "- 使用顺序：先看正式 BTST，再看交集优先复审，only early-runner 做补充复审，second-entry 单独看回补机会。",
     ]
+    if research_confirmation:
+        lines.insert(
+            6,
+            f"- research_only 确认池：`{[str(row.get('ticker') or '').strip() for row in research_confirmation[:5]]}`。",
+        )
     return "\n".join(lines) + "\n"
 
 

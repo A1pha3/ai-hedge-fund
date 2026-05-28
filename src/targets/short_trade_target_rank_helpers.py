@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+_UNSET_RANK_CAP = object()
 _UNSET_RANK_CAP_RATIO = object()
 
 
@@ -35,6 +36,18 @@ def _normalize_rank_cap(value: Any) -> int | None:
         return None
     if normalized <= 0:
         return None
+    return normalized
+
+
+def _resolve_rank_cap_override_allow_zero(value: Any) -> int | None | object:
+    if value is None:
+        return _UNSET_RANK_CAP
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return _UNSET_RANK_CAP
+    if normalized < 0:
+        return _UNSET_RANK_CAP
     return normalized
 
 
@@ -221,6 +234,17 @@ def _resolve_rank_decision_cap(
         and catalyst_theme_source_specific_rank_cap_sector_resonance_pass
         and catalyst_theme_source_specific_rank_cap_close_strength_pass
     )
+    layer_c_watchlist_source_specific_cap_guard_active = normalized_candidate_source == "layer_c_watchlist"
+    layer_c_watchlist_selected_rank_cap = _resolve_rank_cap_override_allow_zero(
+        getattr(profile, "layer_c_watchlist_selected_rank_cap", None)
+    )
+    layer_c_watchlist_near_miss_rank_cap = _resolve_rank_cap_override_allow_zero(
+        getattr(profile, "layer_c_watchlist_near_miss_rank_cap", None)
+    )
+    layer_c_watchlist_source_specific_cap_has_override = (
+        layer_c_watchlist_selected_rank_cap is not _UNSET_RANK_CAP
+        or layer_c_watchlist_near_miss_rank_cap is not _UNSET_RANK_CAP
+    )
     selected_rank_cap_hard = _normalize_rank_cap(getattr(profile, "selected_rank_cap", 0))
     near_miss_rank_cap_hard = _normalize_rank_cap(getattr(profile, "near_miss_rank_cap", 0))
     selected_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "selected_rank_cap_ratio", 0.0))
@@ -278,6 +302,13 @@ def _resolve_rank_decision_cap(
         catalyst_theme_near_miss_rank_cap_ratio = _resolve_rank_cap_ratio_override(getattr(profile, "catalyst_theme_near_miss_rank_cap_ratio", None))
         if catalyst_theme_near_miss_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO:
             near_miss_rank_cap_ratio = catalyst_theme_near_miss_rank_cap_ratio
+    if layer_c_watchlist_source_specific_cap_guard_active:
+        if layer_c_watchlist_selected_rank_cap is not _UNSET_RANK_CAP:
+            selected_rank_cap_hard = layer_c_watchlist_selected_rank_cap
+            selected_rank_cap_ratio = None
+        if layer_c_watchlist_near_miss_rank_cap is not _UNSET_RANK_CAP:
+            near_miss_rank_cap_hard = layer_c_watchlist_near_miss_rank_cap
+            near_miss_rank_cap_ratio = None
     selected_rank_cap = _resolve_effective_rank_cap(
         hard_cap=selected_rank_cap_hard,
         cap_ratio=selected_rank_cap_ratio,
@@ -472,6 +503,10 @@ def _resolve_rank_decision_cap(
         "catalyst_theme_source_specific_rank_cap_sector_resonance_pass": catalyst_theme_source_specific_rank_cap_sector_resonance_pass,
         "catalyst_theme_source_specific_rank_cap_close_strength_pass": catalyst_theme_source_specific_rank_cap_close_strength_pass,
         "catalyst_theme_source_specific_caps_enabled": catalyst_theme_source_specific_caps_enabled,
+        "layer_c_watchlist_source_specific_cap_guard_active": layer_c_watchlist_source_specific_cap_guard_active,
+        "layer_c_watchlist_source_specific_cap_has_override": layer_c_watchlist_source_specific_cap_has_override,
+        "layer_c_watchlist_selected_rank_cap": None if layer_c_watchlist_selected_rank_cap is _UNSET_RANK_CAP else layer_c_watchlist_selected_rank_cap,
+        "layer_c_watchlist_near_miss_rank_cap": None if layer_c_watchlist_near_miss_rank_cap is _UNSET_RANK_CAP else layer_c_watchlist_near_miss_rank_cap,
         "rank_hint": normalized_rank if normalized_rank > 0 else None,
         "rank_population": normalized_population,
         "selected_rank_cap_hard": selected_rank_cap_hard,

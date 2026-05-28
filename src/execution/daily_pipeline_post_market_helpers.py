@@ -86,6 +86,7 @@ class PlanTargetShellInputs:
     rejected_entries: list[dict[str, Any]]
     supplemental_short_trade_entries: list[dict[str, Any]]
     buy_order_tickers: set[str]
+    preserved_buy_order_tickers: set[str]
 
 
 _INTRADAY_SHORT_TRADE_METRIC_KEYS = ("flow_60", "close_support_30", "persist_120")
@@ -418,6 +419,26 @@ def _attach_market_state_to_entries(entries: list[dict[str, Any]], *, market_sta
     return attached_entries
 
 
+def _attach_market_state_to_watchlist(
+    watchlist: list[dict[str, Any] | LayerCResult],
+    *,
+    market_state_payload: dict[str, Any],
+) -> list[LayerCResult]:
+    attached_watchlist: list[LayerCResult] = []
+    for entry in list(watchlist or []):
+        if isinstance(entry, LayerCResult):
+            if market_state_payload:
+                attached_watchlist.append(entry.model_copy(update={"market_state": dict(market_state_payload)}))
+            else:
+                attached_watchlist.append(entry)
+            continue
+        entry_payload = dict(entry or {})
+        if market_state_payload:
+            entry_payload["market_state"] = dict(market_state_payload)
+        attached_watchlist.append(LayerCResult.model_validate(entry_payload))
+    return attached_watchlist
+
+
 def _compute_portfolio_nav(portfolio_snapshot: dict[str, Any] | None) -> float:
     snapshot = dict(portfolio_snapshot or {})
     cash = float(snapshot.get("cash") or 0.0)
@@ -654,9 +675,24 @@ def build_plan_target_shell_inputs(
     attach_historical_prior_to_watchlist_fn,
 ) -> PlanTargetShellInputs:
     market_state_payload = _serialize_market_state_payload(getattr(plan, "market_state", None))
-    selection_target_shell_inputs = dict((plan.risk_metrics or {}).get("selection_target_shell_inputs", {}) or {})
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    selection_target_shell_inputs = dict(risk_metrics.get("selection_target_shell_inputs", {}) or {})
+    frozen_replay_input = dict(risk_metrics.get("frozen_selection_target_replay_input", {}) or {})
     persisted_rejected_entries = list(selection_target_shell_inputs.get("rejected_entries", []) or [])
     persisted_supplemental_entries = list(selection_target_shell_inputs.get("supplemental_short_trade_entries", []) or [])
+    replay_input_watchlist = list(frozen_replay_input.get("watchlist", []) or [])
+    replay_input_rejected_entries = list(frozen_replay_input.get("rejected_entries", []) or [])
+    replay_input_supplemental_entries = list(frozen_replay_input.get("supplemental_short_trade_entries", []) or [])
+    preserved_buy_order_tickers = {
+        str(ticker or "").strip()
+        for ticker in list(risk_metrics.get("frozen_original_buy_order_tickers", []) or [])
+        if str(ticker or "").strip()
+    }
+    buy_order_tickers = {order.ticker for order in list(plan.buy_orders or [])}
+    resolved_watchlist = _attach_market_state_to_watchlist(
+        replay_input_watchlist if replay_input_watchlist else list(plan.watchlist or []),
+        market_state_payload=market_state_payload,
+    )
     if persisted_rejected_entries or persisted_supplemental_entries:
         return PlanTargetShellInputs(
             rejected_entries=_attach_market_state_to_entries(
@@ -667,7 +703,7 @@ def build_plan_target_shell_inputs(
                 market_state_payload=market_state_payload,
             ),
             watchlist=attach_historical_prior_to_watchlist_fn(
-                list(plan.watchlist or []),
+                resolved_watchlist,
                 prior_by_ticker=historical_prior_by_ticker,
             ),
             supplemental_short_trade_entries=_attach_market_state_to_entries(
@@ -677,10 +713,34 @@ def build_plan_target_shell_inputs(
                 ),
                 market_state_payload=market_state_payload,
             ),
-            buy_order_tickers={order.ticker for order in list(plan.buy_orders or [])},
+            buy_order_tickers=buy_order_tickers,
+            preserved_buy_order_tickers=preserved_buy_order_tickers,
+        )
+    if replay_input_watchlist or replay_input_rejected_entries or replay_input_supplemental_entries:
+        return PlanTargetShellInputs(
+            rejected_entries=_attach_market_state_to_entries(
+                attach_historical_prior_to_entries_fn(
+                    replay_input_rejected_entries,
+                    prior_by_ticker=historical_prior_by_ticker,
+                ),
+                market_state_payload=market_state_payload,
+            ),
+            watchlist=attach_historical_prior_to_watchlist_fn(
+                resolved_watchlist,
+                prior_by_ticker=historical_prior_by_ticker,
+            ),
+            supplemental_short_trade_entries=_attach_market_state_to_entries(
+                attach_historical_prior_to_entries_fn(
+                    replay_input_supplemental_entries,
+                    prior_by_ticker=historical_prior_by_ticker,
+                ),
+                market_state_payload=market_state_payload,
+            ),
+            buy_order_tickers=buy_order_tickers,
+            preserved_buy_order_tickers=preserved_buy_order_tickers,
         )
 
-    funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
     funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
     watchlist_filter_diagnostics = dict(funnel_filters.get("watchlist", {}) or {})
     short_trade_candidate_diagnostics = dict(funnel_filters.get("short_trade_candidates", {}) or {})
@@ -697,7 +757,7 @@ def build_plan_target_shell_inputs(
             market_state_payload=market_state_payload,
         ),
         watchlist=attach_historical_prior_to_watchlist_fn(
-            list(plan.watchlist or []),
+            resolved_watchlist,
             prior_by_ticker=historical_prior_by_ticker,
         ),
         supplemental_short_trade_entries=_attach_market_state_to_entries(
@@ -712,7 +772,8 @@ def build_plan_target_shell_inputs(
             ),
             market_state_payload=market_state_payload,
         ),
-        buy_order_tickers={order.ticker for order in list(plan.buy_orders or [])},
+        buy_order_tickers=buy_order_tickers,
+        preserved_buy_order_tickers=preserved_buy_order_tickers,
     )
 
 
@@ -750,12 +811,45 @@ def resolve_plan_target_shell_selection(
     build_selection_targets_fn: Callable[..., tuple[dict[str, Any], Any]],
     summarize_selection_targets_fn: Callable[..., Any],
 ) -> tuple[dict[str, Any], Any]:
+    def _apply_preserved_execution_bridge(selection_targets: dict[str, Any], preserved_buy_order_tickers: set[str]) -> dict[str, Any]:
+        preserved = {str(ticker or "").strip() for ticker in list(preserved_buy_order_tickers or set()) if str(ticker or "").strip()}
+        if not preserved:
+            return selection_targets
+        for ticker in preserved:
+            evaluation = selection_targets.get(ticker)
+            if evaluation is None:
+                continue
+            research_result = getattr(evaluation, "research", None)
+            short_trade_result = getattr(evaluation, "short_trade", None)
+            if research_result is not None and str(getattr(research_result, "decision", "") or "").strip() == "selected":
+                research_result.execution_eligible = True
+                gate_status = dict(getattr(research_result, "gate_status", {}) or {})
+                gate_status["execution_bridge"] = "pass"
+                research_result.gate_status = gate_status
+                positive_tags = [str(tag) for tag in list(getattr(research_result, "positive_tags", []) or []) if str(tag or "").strip()]
+                if "buy_order_ready" not in positive_tags:
+                    positive_tags.append("buy_order_ready")
+                research_result.positive_tags = positive_tags
+            if short_trade_result is not None and str(getattr(short_trade_result, "decision", "") or "").strip() == "selected":
+                short_trade_result.execution_eligible = True
+                gate_status = dict(getattr(short_trade_result, "gate_status", {}) or {})
+                gate_status["execution"] = "pass"
+                short_trade_result.gate_status = gate_status
+                positive_tags = [str(tag) for tag in list(getattr(short_trade_result, "positive_tags", []) or []) if str(tag or "").strip()]
+                if "execution_bridge_ready" not in positive_tags:
+                    positive_tags.append("execution_bridge_ready")
+                short_trade_result.positive_tags = positive_tags
+                evaluation.execution_eligible = True
+            elif short_trade_result is None and research_result is not None and str(getattr(research_result, "decision", "") or "").strip() == "selected":
+                evaluation.execution_eligible = True
+        return selection_targets
+
     if not selection_targets and (shell_inputs.watchlist or shell_inputs.rejected_entries or shell_inputs.supplemental_short_trade_entries):
         with use_short_trade_target_profile_fn(
             profile_name=short_trade_target_profile_name,
             overrides=short_trade_target_profile_overrides,
         ):
-            return build_selection_targets_fn(
+            selection_targets, summary = build_selection_targets_fn(
                 trade_date=plan_date,
                 watchlist=shell_inputs.watchlist,
                 rejected_entries=shell_inputs.rejected_entries,
@@ -763,6 +857,12 @@ def resolve_plan_target_shell_selection(
                 buy_order_tickers=shell_inputs.buy_order_tickers,
                 target_mode=target_mode,
             )
+            selection_targets = _apply_preserved_execution_bridge(selection_targets, shell_inputs.preserved_buy_order_tickers)
+            return selection_targets, summarize_selection_targets_fn(
+                selection_targets=selection_targets,
+                target_mode=target_mode,
+            )
+    selection_targets = _apply_preserved_execution_bridge(selection_targets, shell_inputs.preserved_buy_order_tickers)
     return selection_targets, summarize_selection_targets_fn(
         selection_targets=selection_targets,
         target_mode=target_mode,

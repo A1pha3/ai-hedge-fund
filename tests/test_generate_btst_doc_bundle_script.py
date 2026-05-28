@@ -509,3 +509,169 @@ def test_generate_btst_doc_bundle_keeps_second_entry_out_of_only_early_runner_la
     assert "Early Runner 补充复审：`300001 特锐德`" in checklist_doc
     assert "Second Entry / Reentry：`300002 神州泰岳`" in checklist_doc
     assert "Early Runner 补充复审：`300002 神州泰岳`" not in checklist_doc
+
+
+def test_generate_btst_doc_bundle_renders_rule_front_rows_from_rule_report_fields(tmp_path: Path) -> None:
+    """Render rule-front rows from rule-report fields instead of generic action-row fallbacks."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260527_20260527_live_m2_7_short_trade_only_20260528_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-27",
+            "selection_target": "short_trade_only",
+            "btst_followup": {"brief_json": brief_path.as_posix()},
+        },
+    )
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-27",
+            "next_trade_date": "2026-05-28",
+            "selection_target": "short_trade_only",
+            "selected_actions": [],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260527.json",
+        {
+            "trade_date": "20260527",
+            "next_date": "20260528",
+            "pool_size": 3259,
+            "selected_count": 610,
+            "near_miss_count": 633,
+            "high_confidence": [
+                {
+                    "ticker": "002012",
+                    "name": "凯恩股份",
+                    "score": 0.8553,
+                    "pct_chg": 10.03,
+                    "close_strength": 1.0,
+                    "catalyst_freshness": 1.0,
+                }
+            ],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {"daily_boards": [{"trade_date": "2026-05-27"}]},
+    )
+
+    output_dir = tmp_path / "outputs"
+    generate_btst_doc_bundle(
+        "20260527",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+        include_extra_warning_docs=False,
+    )
+
+    rule_doc = (output_dir / "BTST-20260527.md").read_text(encoding="utf-8")
+    assert "002012 凯恩股份" in rule_doc
+    assert "规则分数 `0.8553`" in rule_doc
+    assert "当日涨幅 `10.03%`" in rule_doc
+    assert "层级 `n/a`" not in rule_doc
+
+
+def test_generate_btst_doc_bundle_surfaces_research_only_confirmation_pool(tmp_path: Path) -> None:
+    """Show research-only confirmation rows when the exact-date board has no actionable early-runner lists."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260527_20260527_live_m2_7_short_trade_only_20260528_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-27",
+            "selection_target": "short_trade_only",
+            "btst_followup": {"brief_json": brief_path.as_posix()},
+        },
+    )
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-27",
+            "next_trade_date": "2026-05-28",
+            "selection_target": "short_trade_only",
+            "selected_actions": [
+                {
+                    "ticker": "001309",
+                    "name": "德明利",
+                    "action_tier": "primary_entry",
+                    "preferred_entry_mode": "confirm_then_hold_breakout",
+                    "score_target": 0.5301,
+                }
+            ],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260527.json",
+        {
+            "trade_date": "20260527",
+            "next_date": "20260528",
+            "pool_size": 3259,
+            "selected_count": 610,
+            "near_miss_count": 633,
+            "high_confidence": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {
+            "daily_boards": [
+                {
+                    "trade_date": "2026-05-27",
+                    "btst_regime_gate": "halt",
+                    "gate_action": "research_only",
+                    "deployment_mode": "research_only",
+                    "early_runner_watchlist": [],
+                    "early_runner_priority": [],
+                    "second_entry_reentry": [],
+                    "full_report_confirmation": [
+                        {
+                            "ticker": "300476",
+                            "name": "胜宏科技",
+                            "candidate_source": "short_trade_boundary",
+                            "score_target": 0.4294,
+                            "preferred_entry_mode": "confirm_then_hold_breakout",
+                        },
+                        {
+                            "ticker": "603083",
+                            "name": "剑桥科技",
+                            "candidate_source": "catalyst_theme",
+                            "score_target": 0.4221,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                        },
+                    ],
+                }
+            ]
+        },
+    )
+
+    output_dir = tmp_path / "outputs"
+    generate_btst_doc_bundle(
+        "20260527",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+    )
+
+    early_warning_doc = (output_dir / "BTST-20260527-EARLY-WARNING.md").read_text(encoding="utf-8")
+    assert "## 状态" in early_warning_doc
+    assert "- 请求 trade_date：`2026-05-27`。" in early_warning_doc
+    assert "## Research Only 确认池" in early_warning_doc
+    assert "300476 胜宏科技" in early_warning_doc
+    assert "603083 剑桥科技" in early_warning_doc
+    early_warning_card = (output_dir / "BTST-20260527-EARLY-WARNING-CARD.md").read_text(encoding="utf-8")
+    assert "research_only 确认池" in early_warning_card
+    assert "300476" in early_warning_card
+    forum_doc = (output_dir / "20260527-两套交易计划论坛短版.md").read_text(encoding="utf-8")
+    assert "research-only 确认前排" in forum_doc
+    assert "300476" in forum_doc
+    plain_doc = (output_dir / "20260527-两套交易计划通俗说明.md").read_text(encoding="utf-8")
+    assert "研究确认前排" in plain_doc
+    assert "300476" in plain_doc

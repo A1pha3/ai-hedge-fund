@@ -1222,6 +1222,13 @@ def _has_rebuildable_target_shell_inputs(plan: ExecutionPlan, *, target_mode: Ta
         return True
 
     risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    frozen_selection_target_replay_input = dict(risk_metrics.get("frozen_selection_target_replay_input", {}) or {})
+    if list(frozen_selection_target_replay_input.get("watchlist", []) or []):
+        return True
+    if list(frozen_selection_target_replay_input.get("rejected_entries", []) or []):
+        return True
+    if list(frozen_selection_target_replay_input.get("supplemental_short_trade_entries", []) or []):
+        return True
     funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
     funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
     watchlist_filter_diagnostics = dict(funnel_filters.get("watchlist", {}) or {})
