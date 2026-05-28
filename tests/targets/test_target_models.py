@@ -1591,6 +1591,34 @@ def test_selected_only_shrink_watchlist_filter_diagnostics_payload_reports_guard
     assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in result.negative_tags
 
 
+def test_layer_c_watchlist_selected_only_shrink_reason_surfaces_in_explainability() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["candidate_source"] = "layer_c_watchlist"
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    assert "layer_c_watchlist_selected_only_shrink_applied" in result.negative_tags
+    assert "layer_c_watchlist_selected_only_shrink_applied" in result.top_reasons
+    assert result.metrics_payload["layer_c_watchlist_selected_only_shrink_guard"]["applied"] is True
+    assert result.metrics_payload["layer_c_watchlist_selected_only_shrink_guard"]["reason_code"] == "layer_c_watchlist_selected_only_shrink"
+    assert result.explainability_payload["layer_c_watchlist_selected_only_shrink_guard"]["reason_code"] == "layer_c_watchlist_selected_only_shrink"
+
+
+def test_short_trade_boundary_selected_only_shrink_reason_surfaces_in_explainability() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["candidate_source"] = "short_trade_boundary"
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    assert "short_trade_boundary_selected_only_shrink_applied" in result.negative_tags
+    assert "short_trade_boundary_selected_only_shrink_applied" in result.top_reasons
+    assert result.metrics_payload["short_trade_boundary_selected_only_shrink_guard"]["applied"] is True
+    assert result.metrics_payload["short_trade_boundary_selected_only_shrink_guard"]["reason_code"] == "short_trade_boundary_selected_only_shrink"
+    assert result.explainability_payload["short_trade_boundary_selected_only_shrink_guard"]["reason_code"] == "short_trade_boundary_selected_only_shrink"
+
+
 def test_selected_only_shrink_snapshot_negative_tags_report_guard_application() -> None:
     entry = _make_watchlist_filter_diagnostics_selected_only_shrink_entry()
 

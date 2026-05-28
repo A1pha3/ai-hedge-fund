@@ -139,3 +139,5 @@ def test_build_short_trade_target_snapshot_payload_surfaces_continuation_and_rev
     assert payload["short_term_reversal"] == 0.12
     assert payload["layer_c_watchlist_selected_only_shrink_guard"]["reason_code"] == "layer_c_watchlist_selected_only_shrink"
     assert payload["short_trade_boundary_selected_only_shrink_guard"]["select_threshold_lift"] == 0.03
+    assert payload["layer_c_watchlist_selected_only_shrink_guard"]["applied"] is True
+    assert payload["short_trade_boundary_selected_only_shrink_guard"]["reason_code"] == "short_trade_boundary_selected_only_shrink"

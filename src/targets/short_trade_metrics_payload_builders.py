@@ -120,6 +120,8 @@ def _build_watchlist_guard_metrics_payload(watchlist_guard: dict[str, Any]) -> d
     }
     if "select_threshold_lift" in watchlist_guard:
         payload["select_threshold_lift"] = round(float(watchlist_guard.get("select_threshold_lift", 0.0) or 0.0), 4)
+    if "reason_code" in watchlist_guard:
+        payload["reason_code"] = watchlist_guard.get("reason_code")
     return payload
 
 
@@ -179,6 +181,8 @@ def _build_watchlist_metrics_payload(
     watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
     watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any],
     watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
+    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any],
+    short_trade_boundary_selected_only_shrink_guard: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "catalyst_theme_penalty": round(float(snapshot["catalyst_theme_penalty"]), 4),
@@ -193,6 +197,8 @@ def _build_watchlist_metrics_payload(
         "watchlist_zero_catalyst_flat_trend_guard": _build_watchlist_guard_metrics_payload(watchlist_zero_catalyst_flat_trend_guard),
         "watchlist_filter_diagnostics_flat_trend_guard": _build_watchlist_guard_metrics_payload(watchlist_filter_diagnostics_flat_trend_guard),
         "watchlist_filter_diagnostics_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(watchlist_filter_diagnostics_selected_only_shrink_guard),
+        "layer_c_watchlist_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(layer_c_watchlist_selected_only_shrink_guard),
+        "short_trade_boundary_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(short_trade_boundary_selected_only_shrink_guard),
     }
 
 
@@ -719,6 +725,8 @@ def _collect_short_trade_metrics_payload_inputs(snapshot: dict[str, Any]) -> dic
         "watchlist_zero_catalyst_flat_trend_guard": dict(snapshot["watchlist_zero_catalyst_flat_trend_guard"]),
         "watchlist_filter_diagnostics_flat_trend_guard": dict(snapshot["watchlist_filter_diagnostics_flat_trend_guard"]),
         "watchlist_filter_diagnostics_selected_only_shrink_guard": dict(snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
+        "layer_c_watchlist_selected_only_shrink_guard": dict(snapshot["layer_c_watchlist_selected_only_shrink_guard"]),
+        "short_trade_boundary_selected_only_shrink_guard": dict(snapshot["short_trade_boundary_selected_only_shrink_guard"]),
         "visibility_gap_continuation_relief": dict(snapshot["visibility_gap_continuation_relief"]),
         "merge_approved_continuation_relief": dict(snapshot["merge_approved_continuation_relief"]),
         "prepared_breakout_penalty_relief": dict(snapshot["prepared_breakout_penalty_relief"]),
