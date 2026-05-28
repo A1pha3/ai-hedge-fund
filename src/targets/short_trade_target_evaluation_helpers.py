@@ -681,6 +681,8 @@ def _build_short_trade_core_explainability_payload(
         "layer_c_decision": input_data.layer_c_decision,
         "bc_conflict": input_data.bc_conflict,
         "candidate_source": str(input_data.replay_context.get("source") or ""),
+        "candidate_reason_codes": list(snapshot.get("candidate_reason_codes") or []),
+        "payoff_first_runner_recall_candidate": bool(snapshot.get("payoff_first_runner_recall_candidate")),
         "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {})),
         "profitability_relief": _build_profitability_explainability_payload(snapshot),
         "upstream_shadow_catalyst_relief": _build_upstream_shadow_explainability_payload(snapshot),

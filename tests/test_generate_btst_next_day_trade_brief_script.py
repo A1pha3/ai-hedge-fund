@@ -10,6 +10,8 @@ import src.paper_trading._btst_reporting.entry_builders as entry_builders
 import src.paper_trading._btst_reporting.pool_classifiers as pool_classifiers
 import src.paper_trading._btst_reporting.historical_prior as historical_prior
 from src.paper_trading.btst_reporting import infer_next_trade_date
+from src.targets import use_short_trade_target_profile
+from src.targets.router import build_selection_targets
 
 
 def _write_catalyst_theme_frontier(report_dir, promoted_tickers=None):
@@ -34,6 +36,66 @@ def _write_catalyst_theme_frontier(report_dir, promoted_tickers=None):
         encoding="utf-8",
     )
     (report_dir / "catalyst_theme_frontier_latest.md").write_text("# Catalyst Theme Frontier\n", encoding="utf-8")
+
+
+def _make_watchlist_filter_diagnostics_runner_recall_entry(*, ticker: str, tagged: bool, monitor_priority: str) -> dict:
+    entry = {
+        "ticker": ticker,
+        "candidate_source": "watchlist_filter_diagnostics",
+        "candidate_reason_codes": ["watchlist_filter_diagnostics"],
+        "score_b": 0.40,
+        "score_c": 1.00,
+        "score_final": 0.10,
+        "quality_score": 0.55,
+        "historical_prior": {
+            "monitor_priority": monitor_priority,
+            "execution_quality_label": "close_continuation",
+        },
+        "strategy_signals": {
+            "trend": {
+                "direction": 1,
+                "confidence": 60.0,
+                "completeness": 1.0,
+                "sub_factors": {
+                    "momentum": {"direction": 1, "confidence": 55.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 15.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            },
+            "event_sentiment": {
+                "direction": 1,
+                "confidence": 100.0,
+                "completeness": 1.0,
+                "sub_factors": {
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 28.0, "completeness": 1.0},
+                },
+            },
+            "mean_reversion": {"direction": 0, "confidence": 0.0, "completeness": 1.0, "sub_factors": {}},
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.12, "investor": 0.02}},
+    }
+    if tagged:
+        entry["score_b"] = 1.0
+        entry["score_c"] = -1.0
+        entry["score_final"] = 0.22
+        entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
+        entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 12.0
+        entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["direction"] = 0
+        entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 0.0
+        entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 100.0
+        entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["direction"] = 0
+        entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["confidence"] = 0.0
+        entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["direction"] = 0
+        entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["confidence"] = 0.0
+        entry["strategy_signals"]["event_sentiment"]["confidence"] = 0.0
+        entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["direction"] = 1
+        entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["confidence"] = 55.0
+        entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["direction"] = 1
+        entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 98.0
+    return entry
 
 
 def test_build_watch_candidate_historical_prior_prefers_family_source_score_scope(monkeypatch):
@@ -1617,6 +1679,32 @@ def test_generate_btst_next_day_trade_brief_prefers_payoff_first_runner_recall_c
         encoding="utf-8",
     )
     _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    runtime_entries = [
+        _make_watchlist_filter_diagnostics_runner_recall_entry(
+            ticker="300757",
+            tagged=False,
+            monitor_priority="high",
+        ),
+        _make_watchlist_filter_diagnostics_runner_recall_entry(
+            ticker="688183",
+            tagged=True,
+            monitor_priority="medium",
+        ),
+    ]
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        runtime_selection_targets, _ = build_selection_targets(
+            trade_date="20260522",
+            watchlist=[],
+            rejected_entries=runtime_entries,
+            target_mode="short_trade_only",
+        )
+
+    runtime_reason_codes = {
+        ticker: list(evaluation.candidate_reason_codes)
+        for ticker, evaluation in runtime_selection_targets.items()
+    }
+    assert runtime_reason_codes["300757"] == ["watchlist_filter_diagnostics"]
+    assert runtime_reason_codes["688183"][-1] == "payoff_first_runner_recall_candidate"
     (trade_dir / "selection_snapshot.json").write_text(
         json.dumps(
             {
@@ -1625,7 +1713,7 @@ def test_generate_btst_next_day_trade_brief_prefers_payoff_first_runner_recall_c
                 "selection_targets": {
                     "300757": {
                         "ticker": "300757",
-                        "candidate_reason_codes": ["watchlist_filter_diagnostics"],
+                        "candidate_reason_codes": runtime_reason_codes["300757"],
                         "research": {
                             "decision": "selected",
                             "score_target": 0.462,
@@ -1657,10 +1745,7 @@ def test_generate_btst_next_day_trade_brief_prefers_payoff_first_runner_recall_c
                     },
                     "688183": {
                         "ticker": "688183",
-                        "candidate_reason_codes": [
-                            "watchlist_filter_diagnostics",
-                            "payoff_first_runner_recall_candidate",
-                        ],
+                        "candidate_reason_codes": runtime_reason_codes["688183"],
                         "research": {
                             "decision": "selected",
                             "score_target": 0.401,
@@ -1702,6 +1787,7 @@ def test_generate_btst_next_day_trade_brief_prefers_payoff_first_runner_recall_c
         report_dir, trade_date="2026-05-22", next_trade_date="2026-05-23"
     )
 
+    assert [entry["ticker"] for entry in analysis["runner_recall_review_entries"]] == ["688183", "300757"]
     assert analysis["runner_recall_review_entries"][0]["candidate_reason_codes"][-1] == "payoff_first_runner_recall_candidate"
 
 

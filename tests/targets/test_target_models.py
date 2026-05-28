@@ -1715,6 +1715,44 @@ def test_watchlist_filter_diagnostics_payoff_first_runner_recall_candidate_tagge
     assert snapshot["candidate_reason_codes"][-1] == "payoff_first_runner_recall_candidate"
 
 
+def test_watchlist_filter_diagnostics_payoff_first_runner_recall_candidate_threaded_to_explainability_and_selection_targets() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["score_b"] = 1.0
+    entry["score_c"] = -1.0
+    entry["score_final"] = 0.22
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 12.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["direction"] = 0
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 0.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 100.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["direction"] = 0
+    entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["confidence"] = 0.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["direction"] = 0
+    entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["direction"] = 1
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["confidence"] = 55.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["direction"] = 1
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 98.0
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+        selection_targets, _ = build_selection_targets(
+            trade_date="20260328",
+            watchlist=[],
+            rejected_entries=[entry],
+            target_mode="short_trade_only",
+        )
+
+    assert result.explainability_payload["payoff_first_runner_recall_candidate"] is True
+    assert result.explainability_payload["candidate_reason_codes"][-1] == "payoff_first_runner_recall_candidate"
+    assert selection_targets[entry["ticker"]].candidate_reason_codes[-1] == "payoff_first_runner_recall_candidate"
+
+
 def test_t_plus_2_continuation_candidate_tags_mid_alignment_low_catalyst_watchlist_case() -> None:
     continuation_entry = {
         "ticker": "600988",

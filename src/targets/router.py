@@ -109,6 +109,23 @@ def _merge_reason_codes(*code_lists: list[str]) -> list[str]:
     return merged
 
 
+def _resolve_runtime_candidate_reason_codes(short_trade_result: Any | None) -> list[str]:
+    if short_trade_result is None:
+        return []
+    explainability_payload = dict(getattr(short_trade_result, "explainability_payload", {}) or {})
+    runtime_reason_codes = [
+        str(reason)
+        for reason in list(explainability_payload.get("candidate_reason_codes") or [])
+        if str(reason or "").strip()
+    ]
+    if (
+        explainability_payload.get("payoff_first_runner_recall_candidate")
+        and "payoff_first_runner_recall_candidate" not in runtime_reason_codes
+    ):
+        runtime_reason_codes.append("payoff_first_runner_recall_candidate")
+    return runtime_reason_codes
+
+
 def summarize_selection_targets(*, selection_targets: dict[str, DualTargetEvaluation], target_mode: TargetMode) -> DualTargetSummary:
     return build_dual_target_summary(selection_targets=selection_targets, target_mode=target_mode)
 
@@ -139,6 +156,10 @@ def _build_selected_evaluation(
         )
         if target_mode != "research_only"
         else None
+    )
+    candidate_reason_codes = _merge_reason_codes(
+        candidate_reason_codes,
+        _resolve_runtime_candidate_reason_codes(short_trade_result),
     )
     evaluation = DualTargetEvaluation(
         ticker=item.ticker,
@@ -178,6 +199,10 @@ def _build_rejected_evaluation(
         if target_mode != "research_only"
         else None
     )
+    candidate_reason_codes = _merge_reason_codes(
+        candidate_reason_codes,
+        _resolve_runtime_candidate_reason_codes(short_trade_result),
+    )
     evaluation = DualTargetEvaluation(
         ticker=ticker,
         trade_date=trade_date,
@@ -212,13 +237,18 @@ def _build_rejected_with_supplemental_short_trade_evaluation(
         rank_hint=rank_hint,
         rank_population=rank_population,
     )
+    candidate_reason_codes = _merge_reason_codes(
+        candidate_reason_codes,
+        supplemental_reason_codes,
+        _resolve_runtime_candidate_reason_codes(short_trade_result),
+    )
     evaluation = DualTargetEvaluation(
         ticker=ticker,
         trade_date=trade_date,
         research=research_result,
         short_trade=short_trade_result,
         candidate_source=candidate_source,
-        candidate_reason_codes=_merge_reason_codes(candidate_reason_codes, supplemental_reason_codes),
+        candidate_reason_codes=candidate_reason_codes,
     )
     evaluation.delta_classification = _classify_delta(evaluation)
     if evaluation.delta_classification == "research_reject_short_pass":
@@ -236,6 +266,10 @@ def _build_short_trade_only_evaluation(*, trade_date: str, entry: dict[str, Any]
         entry=entry,
         rank_hint=rank_hint,
         rank_population=rank_population,
+    )
+    candidate_reason_codes = _merge_reason_codes(
+        candidate_reason_codes,
+        _resolve_runtime_candidate_reason_codes(short_trade_result),
     )
     evaluation = DualTargetEvaluation(
         ticker=ticker,
