@@ -1443,11 +1443,28 @@ def test_watchlist_filter_diagnostics_selected_only_shrink_profile_contract() ->
 def test_offline_runner_payoff_profile_exposes_source_shrink_and_recall_fields() -> None:
     profile = short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES["runner_payoff_realign_shadow"]
 
+    # layer_c watchlist selected-only shrink knobs
     assert profile.layer_c_watchlist_selected_only_shrink_enabled is True
+    assert profile.layer_c_watchlist_selected_only_shrink_select_threshold_lift == pytest.approx(0.04)
+    assert profile.layer_c_watchlist_selected_only_shrink_catalyst_freshness_max == pytest.approx(0.18)
+    assert profile.layer_c_watchlist_selected_only_shrink_trend_acceleration_max == pytest.approx(0.48)
+    assert profile.layer_c_watchlist_selected_only_shrink_close_strength_max == pytest.approx(0.62)
+
+    # short_trade_boundary selected-only shrink knobs
     assert profile.short_trade_boundary_selected_only_shrink_enabled is True
+    assert profile.short_trade_boundary_selected_only_shrink_select_threshold_lift == pytest.approx(0.03)
+    assert profile.short_trade_boundary_selected_only_shrink_catalyst_freshness_max == pytest.approx(0.22)
+    assert profile.short_trade_boundary_selected_only_shrink_trend_acceleration_max == pytest.approx(0.52)
+    assert profile.short_trade_boundary_selected_only_shrink_close_strength_max == pytest.approx(0.66)
+
+    # payoff first-runner recall knobs
     assert profile.payoff_first_runner_recall_enabled is True
     assert profile.payoff_first_runner_recall_close_strength_min == 0.78
     assert profile.payoff_first_runner_recall_catalyst_freshness_min == 0.70
+    assert profile.payoff_first_runner_recall_trend_acceleration_max == pytest.approx(0.45)
+    assert profile.payoff_first_runner_recall_score_target_max == pytest.approx(0.30)
+
+    # existing watchlist diagnostics knobs
     assert profile.watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max == pytest.approx(0.10)
     assert profile.watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max == pytest.approx(0.40)
     assert profile.watchlist_filter_diagnostics_selected_only_shrink_close_strength_max == pytest.approx(0.58)
