@@ -32,3 +32,10 @@
 
 - 这不是单周偶发噪音，扩窗后主矛盾仍然没变；
 - 下一阶段最值得做的，仍然是 **先收紧 formal-source，再把 diagnostics delayed-runner 放进 payoff-first recall 复审层**。
+
+再往前走一步，基于上面这两组窗口结果送进 `compare_btst_runner_payoff_realignment_windows()` 之后，当前 source-lane verdict 也已经清楚了：
+
+- `layer_c_watchlist_policy = stable_formal_shrink_lane`
+- `short_trade_boundary_policy = conditional_only`
+
+也就是说，下一阶段不应该把 `short_trade_boundary` 直接写成全局收紧，而应该先把 **`layer_c_watchlist` 作为稳定 formal shrink lane** 固定下来，再观察 `short_trade_boundary` 是否只在局部窗口里需要收紧。

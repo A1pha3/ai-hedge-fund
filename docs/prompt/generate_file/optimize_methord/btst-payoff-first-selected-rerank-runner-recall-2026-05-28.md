@@ -497,3 +497,10 @@ gamma 侧的 rollout 纪律固定为：
 
 这一步的意义在于：  
 现在不只是长文里“解释为什么要这么做”，而是已经有独立 analyzer artifact 明确给出同一句建议——**先做 formal-source shrink，再做 payoff-first runner recall**。这让后续 rollout 文档、周度复盘和 profile 讨论都能直接引用同一组机器产出的结论。
+
+把上面两组窗口结果一起送进 `compare_btst_runner_payoff_realignment_windows()` 后，当前 source-lane 口径也已经固定下来：
+
+- `layer_c_watchlist_policy = stable_formal_shrink_lane`
+- `short_trade_boundary_policy = conditional_only`
+
+这意味着下一步最值得推进的，不是把两类来源一起全局收紧，而是先把 **`layer_c_watchlist` 的 formal shrink** 做成更完整的 governed rollout，再把 `short_trade_boundary` 维持在条件式收紧轨道上继续观察。
