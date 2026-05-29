@@ -54,7 +54,7 @@ def test_enrich_btst_row_caps_grade_when_payoff_diverges() -> None:
         "preferred_entry_mode": "payoff_reconfirmation_only",
         "historical_prior": {
             "applied_scope": "same_ticker",
-            "evaluable_count": 8,
+            "sample_count": 8,
             "next_close_positive_rate": 0.75,
             "next_close_payoff_ratio": 0.9217,
             "next_close_expectancy": 0.0248,

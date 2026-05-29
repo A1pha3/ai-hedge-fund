@@ -56,6 +56,12 @@ def _metric_bundle(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _reliability_count(metrics: dict[str, Any]) -> int | None:
+    if metrics["evaluable_count"] is not None:
+        return metrics["evaluable_count"]
+    return metrics["sample_count"]
+
+
 def classify_data_quality(
     row: dict[str, Any],
     *,
@@ -63,6 +69,7 @@ def classify_data_quality(
     early_runner_status: str,
 ) -> tuple[str, list[str]]:
     metrics = _metric_bundle(row)
+    reliability_count = _reliability_count(metrics)
     notes: list[str] = []
     if role.startswith("early_runner") and early_runner_status == "stale_fallback":
         notes.append("early-runner 非当日板")
@@ -70,10 +77,10 @@ def classify_data_quality(
     if metrics["win_rate"] is None and metrics["payoff_ratio"] is None:
         notes.append("胜率和盈亏比均缺失")
         return "insufficient", notes
-    if metrics["evaluable_count"] is not None and metrics["evaluable_count"] < 5:
+    if reliability_count is not None and reliability_count < 5:
         notes.append("样本不足 5，只能作弱参考")
         return "insufficient", notes
-    if metrics["evaluable_count"] is not None and metrics["evaluable_count"] < 10:
+    if reliability_count is not None and reliability_count < 10:
         notes.append("样本不足 10")
         return "usable_with_warning", notes
     if metrics["payoff_ratio"] is None:
