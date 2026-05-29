@@ -217,6 +217,7 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "- 证据等级：`B`；数据质量：`fresh`；风险姿态：`reduced`。" in llm_doc
     assert "- 必须确认：等待盘中延续确认后再执行，不做开盘无确认追价。" in llm_doc
     assert "- 失效条件：若开盘后无法形成延续确认，或快速冲高回落，则取消正式执行。" in llm_doc
+    assert "证据 `B`，数据 `fresh`，倾向 `confirmation_only`，风险 `reduced`" in llm_doc
     assert "## 当前策略阈值基线" in llm_doc
     assert strategy_thresholds_path.resolve().as_posix() in llm_doc
     assert "exact 连续门槛：`4`" in llm_doc
@@ -233,6 +234,10 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "- 主票：`300054`" in checklist_doc
     assert "- 交易倾向：`confirmation_only`" in checklist_doc
     assert "## 当前策略阈值基线" in checklist_doc
+    assert "## 正式执行动作矩阵" in checklist_doc
+    assert "### 300054 鼎龙股份" in checklist_doc
+    assert "| 开盘强且延续确认 | 等待盘中延续确认后再执行，不做开盘无确认追价。 |" in checklist_doc
+    assert "| 触发失效条件 | 若开盘后无法形成延续确认，或快速冲高回落，则取消正式执行。 |" in checklist_doc
     assert "## 交集优先复审" in checklist_doc
     assert "## 回补机会层" in checklist_doc
     assert "交集优先：`300054 鼎龙股份`" in checklist_doc

@@ -203,6 +203,43 @@ def _stock_bullets(rows: list[dict[str, Any]], *, limit: int, include_payoff: bo
     return lines or ["- 无。"]
 
 
+def _render_enriched_stock_bullets(rows: list[dict[str, Any]], *, limit: int) -> list[str]:
+    lines: list[str] = []
+    for row in rows[:limit]:
+        metrics = dict(row.get("metrics") or {})
+        quality_notes = list(row.get("quality_notes") or [])
+        note_suffix = f"，质量提示：{'；'.join(str(note) for note in quality_notes)}" if quality_notes else ""
+        lines.append(
+            f"- `{_enriched_stock_label(row)}`：模式 `{row.get('preferred_entry_mode')}`，"
+            f"分数 `{_fmt_num(row.get('score_target'), 4)}`，"
+            f"证据 `{row.get('evidence_grade')}`，数据 `{row.get('data_quality')}`，"
+            f"倾向 `{row.get('trade_bias')}`，风险 `{row.get('risk_posture')}`，"
+            f"收盘胜率 `{_fmt_pct(metrics.get('win_rate'))}`，"
+            f"盈亏比 `{_fmt_num(metrics.get('payoff_ratio'), 2)}`{note_suffix}。"
+        )
+    return lines or ["- 无。"]
+
+
+def _render_action_matrix_sections(rows: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
+    lines = ["## 正式执行动作矩阵", ""]
+    if not rows:
+        lines.append("- 当前没有正式执行票。")
+        return lines
+    for row in rows[:limit]:
+        lines.extend(
+            [
+                f"### {_enriched_stock_label(row)}",
+                "",
+                "| 场景 | 动作 |",
+                "| --- | --- |",
+            ]
+        )
+        for item in list(row.get("action_matrix") or []):
+            lines.append(f"| {item.get('scenario')} | {item.get('action')} |")
+        lines.append("")
+    return lines
+
+
 def _rule_stock_bullets(rows: list[dict[str, Any]], *, limit: int) -> list[str]:
     """Render rule-report high-confidence rows from their native score fields."""
     lines: list[str] = []
@@ -581,6 +618,11 @@ def _render_llm_doc(
         role="formal_selected",
         early_runner_status=early_status,
     )
+    enriched_watch = _enrich_formal_rows(
+        watch_actions,
+        role="formal_watch",
+        early_runner_status=early_status,
+    )
     decision_card = build_decision_card(
         selected_rows=enriched_selected,
         early_runner_status=early_status,
@@ -604,9 +646,9 @@ def _render_llm_doc(
     lines.extend([""])
     lines.extend(_render_historical_metric_guide())
     lines.extend(["", "## 正式执行层", ""])
-    lines.extend(_stock_bullets(selected_actions, limit=5, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_selected, limit=5))
     lines.extend(["", "## 观察层", ""])
-    lines.extend(_stock_bullets(watch_actions, limit=8, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_watch, limit=8))
     if opportunity_actions:
         lines.extend(["", "## 机会池", ""])
         lines.extend(_stock_bullets(opportunity_actions, limit=5, include_payoff=True))
@@ -772,6 +814,8 @@ def _render_checklist_doc(
             f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，"
             f"说明：{_historical_reading_note(row)}"
         )
+    lines.extend([""])
+    lines.extend(_render_action_matrix_sections(enriched_selected, limit=3))
     lines.extend(["", "## 正式观察顺序", ""])
     for row in watch_actions[:6]:
         lines.append(f"- [ ] 正式观察：`{_stock_label(row)}`，层级 `{row.get('action_tier') or 'watch_only'}`，必要时盘中再确认。")
