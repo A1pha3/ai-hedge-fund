@@ -12,6 +12,11 @@ from scripts.btst_strategy_thresholds import (
     resolve_strategy_thresholds_config_path,
 )
 from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
+from src.paper_trading.btst_decision_enrichment import (
+    build_decision_card,
+    build_review_ledger_rows,
+    enrich_btst_row,
+)
 
 REPORTS_DIR = Path("data/reports")
 OUTPUTS_DIR = Path("outputs")
@@ -89,6 +94,44 @@ def _stock_label(entry: dict[str, Any]) -> str:
     ticker = str(entry.get("ticker") or "").strip()
     name = str(entry.get("name") or "").strip()
     return f"{ticker} {name}".strip()
+
+
+def _enriched_stock_label(row: dict[str, Any]) -> str:
+    ticker = str(row.get("ticker") or "").strip()
+    name = str(row.get("name") or "").strip()
+    return f"{ticker} {name}".strip()
+
+
+def _enrich_formal_rows(rows: list[dict[str, Any]], *, role: str, early_runner_status: str) -> list[dict[str, Any]]:
+    return [
+        enrich_btst_row(row, role=role, early_runner_status=early_runner_status)
+        for row in rows
+    ]
+
+
+def _enrich_early_runner_rows(
+    rows: list[dict[str, Any]],
+    *,
+    role: str,
+    early_runner_status: str,
+) -> list[dict[str, Any]]:
+    return [
+        enrich_btst_row(row, role=role, early_runner_status=early_runner_status)
+        for row in rows
+    ]
+
+
+def _render_decision_card(card: dict[str, Any]) -> list[str]:
+    return [
+        "## 30 秒决策卡",
+        "",
+        f"- 交易倾向：`{card.get('trade_bias')}`。",
+        f"- 主票：`{card.get('primary_ticker') or 'n/a'}`。",
+        f"- 证据等级：`{card.get('evidence_grade')}`；数据质量：`{card.get('data_quality')}`；风险姿态：`{card.get('risk_posture')}`。",
+        f"- 必须确认：{card.get('must_confirm')}",
+        f"- 失效条件：{card.get('invalidate_if')}",
+        f"- early-runner 状态：`{card.get('early_runner_status')}`。",
+    ]
 
 
 def _row_historical_metric(row: dict[str, Any], key: str) -> Any:
@@ -171,6 +214,53 @@ def _stock_bullets(rows: list[dict[str, Any]], *, limit: int, include_payoff: bo
             continue
         lines.append(base + "。")
     return lines or ["- 无。"]
+
+
+def _render_enriched_stock_bullets(rows: list[dict[str, Any]], *, limit: int) -> list[str]:
+    lines: list[str] = []
+    for row in rows[:limit]:
+        metrics = dict(row.get("metrics") or {})
+        quality_notes = list(row.get("quality_notes") or [])
+        note_suffix = f"质量提示：{'；'.join(str(note) for note in quality_notes)}。" if quality_notes else ""
+        source_row = dict(row.get("source_row") or {})
+        reading_note = _historical_reading_note(source_row or row).rstrip("。")
+        lines.append(
+            f"- `{_enriched_stock_label(row)}`：模式 `{row.get('preferred_entry_mode')}`，"
+            f"分数 `{_fmt_num(row.get('score_target'), 4)}`，"
+            f"证据 `{row.get('evidence_grade')}`，数据 `{row.get('data_quality')}`，"
+            f"倾向 `{row.get('trade_bias')}`，风险 `{row.get('risk_posture')}`，"
+            f"收盘胜率 `{_fmt_pct(metrics.get('win_rate'))}`，"
+            f"盈亏比 `{_fmt_num(metrics.get('payoff_ratio'), 2)}`，"
+            f"说明：{reading_note}。{note_suffix}"
+        )
+    return lines or ["- 无。"]
+
+
+def _markdown_table_cell(value: Any) -> str:
+    text = str(value or "")
+    return text.replace("|", "\\|").replace("\n", "<br>")
+
+
+def _render_action_matrix_sections(rows: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
+    lines = ["## 正式执行动作矩阵", ""]
+    if not rows:
+        lines.append("- 当前没有正式执行票。")
+        return lines
+    for row in rows[:limit]:
+        lines.extend(
+            [
+                f"### {_enriched_stock_label(row)}",
+                "",
+                "| 场景 | 动作 |",
+                "| --- | --- |",
+            ]
+        )
+        for item in list(row.get("action_matrix") or []):
+            scenario = _markdown_table_cell(item.get("scenario"))
+            action = _markdown_table_cell(item.get("action"))
+            lines.append(f"| {scenario} | {action} |")
+        lines.append("")
+    return lines
 
 
 def _rule_stock_bullets(rows: list[dict[str, Any]], *, limit: int) -> list[str]:
@@ -339,7 +429,6 @@ def _render_intersection_highlights(intersection_summary: dict[str, Any]) -> lis
     """Render middle-stage overlap highlights with exact-vs-fallback wording."""
     status = str(intersection_summary.get("status") or "unavailable")
     overlap_rows = _safe_rows(intersection_summary.get("overlap_rows"))
-    only_early_runner_rows = _safe_rows(intersection_summary.get("only_early_runner_rows"))
     lines = ["## 交集票高亮", ""]
     if overlap_rows:
         if status == "exact":
@@ -357,12 +446,6 @@ def _render_intersection_highlights(intersection_summary: dict[str, Any]) -> lis
             )
     else:
         lines.append("- 当前没有可高亮的交集票。")
-    lines.extend(["", "## Only Early Runner", ""])
-    if only_early_runner_rows:
-        lines.append("- 以下股票只出现在 early-runner，不进入正式执行清单，只进入盘中补充复审。")
-        lines.extend(_stock_bullets(only_early_runner_rows, limit=8, include_payoff=True))
-    else:
-        lines.append("- 当前没有 only early-runner 补充票。")
     return lines
 
 
@@ -491,6 +574,17 @@ def _render_rule_doc(
     selected_actions = _resolve_selected_rows(brief, priority_board)
     formal_rows = selected_actions + _resolve_watch_rows(brief, priority_board)
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
+    early_status = str(early_runner.get("status") or "unavailable")
+    enriched_only_early_runner = _enrich_early_runner_rows(
+        _safe_rows(intersection_summary.get("only_early_runner_rows")),
+        role="early_runner_only",
+        early_runner_status=early_status,
+    )
+    enriched_second_entry = _enrich_early_runner_rows(
+        _safe_rows(intersection_summary.get("second_entry_rows")),
+        role="early_runner_second_entry",
+        early_runner_status=early_status,
+    )
     lines = [
         f"# BTST 规则版详细计划（{signal_date_compact}）",
         "",
@@ -520,10 +614,10 @@ def _render_rule_doc(
     lines.extend(_render_intersection_highlights(intersection_summary))
     if _safe_rows(intersection_summary.get("only_early_runner_rows")):
         lines.extend(["", "### 补充复审层", ""])
-        lines.extend(_stock_bullets(_safe_rows(intersection_summary.get("only_early_runner_rows")), limit=5, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_only_early_runner, limit=5))
     if _safe_rows(intersection_summary.get("second_entry_rows")):
         lines.extend(["", "### 回补机会层", ""])
-        lines.extend(_stock_bullets(_safe_rows(intersection_summary.get("second_entry_rows")), limit=5, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_second_entry, limit=5))
     return "\n".join(lines) + "\n"
 
 
@@ -545,6 +639,33 @@ def _render_llm_doc(
     formal_rows = [*selected_actions, *watch_actions, *opportunity_actions]
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     profile_name = _first_non_empty(dict(session_summary.get("optimization_profile_resolution") or {}).get("profile_name"), session_summary.get("short_trade_target_profile_name"))
+    early_status = str(early_runner.get("status") or "unavailable")
+    enriched_selected = _enrich_formal_rows(
+        selected_actions,
+        role="formal_selected",
+        early_runner_status=early_status,
+    )
+    enriched_watch = _enrich_formal_rows(
+        watch_actions,
+        role="formal_watch",
+        early_runner_status=early_status,
+    )
+    enriched_only_early_runner = _enrich_early_runner_rows(
+        _safe_rows(intersection_summary.get("only_early_runner_rows")),
+        role="early_runner_watchlist",
+        early_runner_status=early_status,
+    )
+    enriched_second_entry = _enrich_early_runner_rows(
+        _safe_rows(intersection_summary.get("second_entry_rows")),
+        role="early_runner_second_entry",
+        early_runner_status=early_status,
+    )
+    decision_card = build_decision_card(
+        selected_rows=enriched_selected,
+        early_runner_status=early_status,
+        signal_date=str(brief.get("trade_date") or ""),
+        next_trade_date=str(brief.get("next_trade_date") or ""),
+    )
     lines = [
         f"# BTST 多智能体详细计划（{signal_date_compact}）",
         "",
@@ -556,13 +677,15 @@ def _render_llm_doc(
         f"- selected 数量：`{len(selected_actions)}`；watch 数量：`{len(watch_actions)}`；机会池数量：`{len(opportunity_actions)}`。",
         "",
     ]
+    lines.extend(_render_decision_card(decision_card))
+    lines.extend([""])
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
     lines.extend([""])
     lines.extend(_render_historical_metric_guide())
     lines.extend(["", "## 正式执行层", ""])
-    lines.extend(_stock_bullets(selected_actions, limit=5, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_selected, limit=5))
     lines.extend(["", "## 观察层", ""])
-    lines.extend(_stock_bullets(watch_actions, limit=8, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_watch, limit=8))
     if opportunity_actions:
         lines.extend(["", "## 机会池", ""])
         lines.extend(_stock_bullets(opportunity_actions, limit=5, include_payoff=True))
@@ -579,10 +702,10 @@ def _render_llm_doc(
     lines.append("- second-entry / reentry 单独归入回补机会层，不和普通补充票混用。")
     if _safe_rows(intersection_summary.get("only_early_runner_rows")):
         lines.extend(["", "### 补充复审层", ""])
-        lines.extend(_stock_bullets(_safe_rows(intersection_summary.get("only_early_runner_rows")), limit=5, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_only_early_runner, limit=5))
     if _safe_rows(intersection_summary.get("second_entry_rows")):
         lines.extend(["", "### 回补机会层", ""])
-        lines.extend(_stock_bullets(_safe_rows(intersection_summary.get("second_entry_rows")), limit=5, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_second_entry, limit=5))
     return "\n".join(lines) + "\n"
 
 
@@ -697,12 +820,26 @@ def _render_checklist_doc(
     selected_actions = _resolve_selected_rows(brief, priority_board)
     watch_actions = _resolve_watch_rows(brief, priority_board)
     intersection_summary = _build_intersection_summary(early_runner, [*selected_actions, *watch_actions])
+    early_status = str(early_runner.get("status") or "unavailable")
+    enriched_selected = _enrich_formal_rows(
+        selected_actions,
+        role="formal_selected",
+        early_runner_status=early_status,
+    )
+    decision_card = build_decision_card(
+        selected_rows=enriched_selected,
+        early_runner_status=early_status,
+        signal_date=str(brief.get("trade_date") or ""),
+        next_trade_date=str(brief.get("next_trade_date") or ""),
+    )
     lines = [
         f"# BTST-{signal_date_compact}-EXEC-CHECKLIST",
         "",
         f"信号日：`{brief.get('trade_date')}`；目标交易日：`{brief.get('next_trade_date')}`。",
         "",
     ]
+    lines.extend(_render_decision_card(decision_card))
+    lines.extend([""])
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
     lines.extend([""])
     lines.extend(_render_historical_metric_guide())
@@ -714,6 +851,8 @@ def _render_checklist_doc(
             f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，"
             f"说明：{_historical_reading_note(row)}"
         )
+    lines.extend([""])
+    lines.extend(_render_action_matrix_sections(enriched_selected, limit=3))
     lines.extend(["", "## 正式观察顺序", ""])
     for row in watch_actions[:6]:
         lines.append(f"- [ ] 正式观察：`{_stock_label(row)}`，层级 `{row.get('action_tier') or 'watch_only'}`，必要时盘中再确认。")
@@ -756,6 +895,27 @@ def _render_early_warning_doc(
     """Render the dedicated early-warning document from early-runner watchlists and second-entry rows."""
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     research_confirmation = _safe_rows(early_runner.get("research_confirmation"))
+    early_status = str(early_runner.get("status") or "unavailable")
+    enriched_priority = _enrich_early_runner_rows(
+        _safe_rows(early_runner.get("priority")),
+        role="early_runner_priority",
+        early_runner_status=early_status,
+    )
+    enriched_watchlist = _enrich_early_runner_rows(
+        _safe_rows(early_runner.get("watchlist")),
+        role="early_runner_watchlist",
+        early_runner_status=early_status,
+    )
+    enriched_second_entry = _enrich_early_runner_rows(
+        _safe_rows(early_runner.get("second_entry")),
+        role="early_runner_second_entry",
+        early_runner_status=early_status,
+    )
+    enriched_research = _enrich_early_runner_rows(
+        research_confirmation,
+        role="early_runner_research",
+        early_runner_status=early_status,
+    )
     lines = [
         f"# BTST 提前预警池（{signal_date_compact}）",
         "",
@@ -782,15 +942,15 @@ def _render_early_warning_doc(
     )
     lines.extend(_render_intersection_highlights(intersection_summary))
     lines.extend(["", "## Priority", ""])
-    lines.extend(_stock_bullets(_safe_rows(early_runner.get("priority")), limit=6, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_priority, limit=6))
     lines.extend(["", "## Watchlist", ""])
-    lines.extend(_stock_bullets(_safe_rows(early_runner.get("watchlist")), limit=8, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_watchlist, limit=8))
     lines.extend(["", "## Second Entry / Reentry", ""])
-    lines.extend(_stock_bullets(_safe_rows(early_runner.get("second_entry")), limit=8, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_second_entry, limit=8))
     if research_confirmation:
         lines.extend(["", "## Research Only 确认池", ""])
         lines.append("- 当前是 research_only 板，以下确认票只保留为研究确认，不自动升级为可执行 early-runner 观察票。")
-        lines.extend(_stock_bullets(research_confirmation, limit=8, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_research, limit=8))
     lines.extend(["", "## 使用原则", ""])
     lines.extend(
         [
@@ -838,6 +998,7 @@ def generate_btst_doc_bundle(
     include_extra_warning_docs: bool = True,
     strategy_thresholds_config_path: str | Path | None = None,
     strategy_thresholds_profile: str = DEFAULT_STRATEGY_THRESHOLDS_PROFILE,
+    write_review_ledger: bool = False,
 ) -> dict[str, Any]:
     """Generate the final BTST reading bundle and append scheme-A early-runner sections."""
     signal_date_compact, signal_date_iso = _normalize_signal_date(signal_date)
@@ -879,6 +1040,39 @@ def generate_btst_doc_bundle(
         target_path = target_output_dir / name
         _write_text(target_path, content)
         written_files.append(target_path.as_posix())
+    review_ledger_json_path = None
+    if write_review_ledger:
+        early_status = str(early_runner.get("status") or "unavailable")
+        ledger_selected = _enrich_formal_rows(
+            selected_rows,
+            role="formal_selected",
+            early_runner_status=early_status,
+        )
+        ledger_watch = _enrich_formal_rows(
+            watch_rows,
+            role="formal_watch",
+            early_runner_status=early_status,
+        )
+        ledger_rows = build_review_ledger_rows(
+            signal_date=str(brief.get("trade_date") or signal_date_iso),
+            next_trade_date=str(brief.get("next_trade_date") or ""),
+            rows=[*ledger_selected, *ledger_watch],
+        )
+        review_ledger_json_path = target_output_dir / f"{signal_date_compact}-btst-decision-review-ledger.json"
+        _write_text(
+            review_ledger_json_path,
+            json.dumps(
+                {
+                    "signal_date": str(brief.get("trade_date") or signal_date_iso),
+                    "next_trade_date": str(brief.get("next_trade_date") or ""),
+                    "rows": ledger_rows,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        )
+        written_files.append(review_ledger_json_path.as_posix())
     return {
         "status": "generated",
         "signal_date": signal_date_compact,
@@ -894,6 +1088,7 @@ def generate_btst_doc_bundle(
         "strategy_thresholds_config_path": resolved_strategy_thresholds_config_path,
         "strategy_thresholds_profile": strategy_thresholds_profile,
         "strategy_thresholds": resolved_strategy_thresholds,
+        "review_ledger_json_path": review_ledger_json_path.as_posix() if review_ledger_json_path else None,
     }
 
 
@@ -1140,6 +1335,7 @@ def main() -> None:
     parser.add_argument("--strategy-thresholds-config", default="")
     parser.add_argument("--strategy-thresholds-profile", default=DEFAULT_STRATEGY_THRESHOLDS_PROFILE)
     parser.add_argument("--compare-profiles", nargs="*", default=[])
+    parser.add_argument("--write-review-ledger", action="store_true")
     args = parser.parse_args()
     if list(args.compare_profiles):
         result = compare_btst_doc_bundle_profiles(
@@ -1162,6 +1358,7 @@ def main() -> None:
         include_extra_warning_docs=not args.core_only,
         strategy_thresholds_config_path=args.strategy_thresholds_config or None,
         strategy_thresholds_profile=args.strategy_thresholds_profile,
+        write_review_ledger=args.write_review_ledger,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
