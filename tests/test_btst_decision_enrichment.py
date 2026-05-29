@@ -101,6 +101,22 @@ def test_build_decision_card_selects_first_confirmable_candidate() -> None:
     rows = [
         enrich_btst_row(
             {
+                "ticker": "000000",
+                "preferred_entry_mode": "skip",
+                "historical_prior": {
+                    "applied_scope": "same_ticker",
+                    "evaluable_count": 0,
+                    "next_close_positive_rate": None,
+                    "next_close_payoff_ratio": None,
+                    "next_close_expectancy": None,
+                    "win_rate_payoff_divergence": False,
+                },
+            },
+            role="formal_selected",
+            early_runner_status="exact",
+        ),
+        enrich_btst_row(
+            {
                 "ticker": "002222",
                 "preferred_entry_mode": "confirm_then_hold_breakout",
                 "historical_prior": {
