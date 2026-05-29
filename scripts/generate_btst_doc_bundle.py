@@ -573,6 +573,17 @@ def _render_rule_doc(
     selected_actions = _resolve_selected_rows(brief, priority_board)
     formal_rows = selected_actions + _resolve_watch_rows(brief, priority_board)
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
+    early_status = str(early_runner.get("status") or "unavailable")
+    enriched_only_early_runner = _enrich_early_runner_rows(
+        _safe_rows(intersection_summary.get("only_early_runner_rows")),
+        role="early_runner_only",
+        early_runner_status=early_status,
+    )
+    enriched_second_entry = _enrich_early_runner_rows(
+        _safe_rows(intersection_summary.get("second_entry_rows")),
+        role="early_runner_second_entry",
+        early_runner_status=early_status,
+    )
     lines = [
         f"# BTST 规则版详细计划（{signal_date_compact}）",
         "",
@@ -602,10 +613,10 @@ def _render_rule_doc(
     lines.extend(_render_intersection_highlights(intersection_summary))
     if _safe_rows(intersection_summary.get("only_early_runner_rows")):
         lines.extend(["", "### 补充复审层", ""])
-        lines.extend(_stock_bullets(_safe_rows(intersection_summary.get("only_early_runner_rows")), limit=5, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_only_early_runner, limit=5))
     if _safe_rows(intersection_summary.get("second_entry_rows")):
         lines.extend(["", "### 回补机会层", ""])
-        lines.extend(_stock_bullets(_safe_rows(intersection_summary.get("second_entry_rows")), limit=5, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_second_entry, limit=5))
     return "\n".join(lines) + "\n"
 
 

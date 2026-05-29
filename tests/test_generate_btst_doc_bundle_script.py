@@ -499,6 +499,13 @@ def test_generate_btst_doc_bundle_marks_stale_overlap_as_reference_only(tmp_path
     assert "## Only Early Runner" not in llm_doc
     assert "层级 `early_runner_watchlist`" not in llm_doc
     assert llm_doc.count("300476 胜宏科技") == 1
+    rule_doc = (output_dir / "BTST-20260526.md").read_text(encoding="utf-8")
+    assert "不能直接当成当日交集优先" in rule_doc
+    assert "stale_reference" in rule_doc
+    assert "证据 `D`" in rule_doc
+    assert "倾向 `watch_only`" in rule_doc
+    assert "层级 `early_runner_watchlist`" not in rule_doc
+    assert rule_doc.count("300476 胜宏科技") == 1
 
 
 def test_generate_btst_doc_bundle_keeps_second_entry_out_of_only_early_runner_layer(tmp_path: Path) -> None:
