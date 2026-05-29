@@ -12,6 +12,10 @@ from scripts.btst_strategy_thresholds import (
     resolve_strategy_thresholds_config_path,
 )
 from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
+from src.paper_trading.btst_decision_enrichment import (
+    build_decision_card,
+    enrich_btst_row,
+)
 
 REPORTS_DIR = Path("data/reports")
 OUTPUTS_DIR = Path("outputs")
@@ -89,6 +93,32 @@ def _stock_label(entry: dict[str, Any]) -> str:
     ticker = str(entry.get("ticker") or "").strip()
     name = str(entry.get("name") or "").strip()
     return f"{ticker} {name}".strip()
+
+
+def _enriched_stock_label(row: dict[str, Any]) -> str:
+    ticker = str(row.get("ticker") or "").strip()
+    name = str(row.get("name") or "").strip()
+    return f"{ticker} {name}".strip()
+
+
+def _enrich_formal_rows(rows: list[dict[str, Any]], *, role: str, early_runner_status: str) -> list[dict[str, Any]]:
+    return [
+        enrich_btst_row(row, role=role, early_runner_status=early_runner_status)
+        for row in rows
+    ]
+
+
+def _render_decision_card(card: dict[str, Any]) -> list[str]:
+    return [
+        "## 30 秒决策卡",
+        "",
+        f"- 交易倾向：`{card.get('trade_bias')}`。",
+        f"- 主票：`{card.get('primary_ticker') or 'n/a'}`。",
+        f"- 证据等级：`{card.get('evidence_grade')}`；数据质量：`{card.get('data_quality')}`；风险姿态：`{card.get('risk_posture')}`。",
+        f"- 必须确认：{card.get('must_confirm')}",
+        f"- 失效条件：{card.get('invalidate_if')}",
+        f"- early-runner 状态：`{card.get('early_runner_status')}`。",
+    ]
 
 
 def _row_historical_metric(row: dict[str, Any], key: str) -> Any:
@@ -545,6 +575,18 @@ def _render_llm_doc(
     formal_rows = [*selected_actions, *watch_actions, *opportunity_actions]
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     profile_name = _first_non_empty(dict(session_summary.get("optimization_profile_resolution") or {}).get("profile_name"), session_summary.get("short_trade_target_profile_name"))
+    early_status = str(early_runner.get("status") or "unavailable")
+    enriched_selected = _enrich_formal_rows(
+        selected_actions,
+        role="formal_selected",
+        early_runner_status=early_status,
+    )
+    decision_card = build_decision_card(
+        selected_rows=enriched_selected,
+        early_runner_status=early_status,
+        signal_date=str(brief.get("trade_date") or ""),
+        next_trade_date=str(brief.get("next_trade_date") or ""),
+    )
     lines = [
         f"# BTST 多智能体详细计划（{signal_date_compact}）",
         "",
@@ -556,6 +598,8 @@ def _render_llm_doc(
         f"- selected 数量：`{len(selected_actions)}`；watch 数量：`{len(watch_actions)}`；机会池数量：`{len(opportunity_actions)}`。",
         "",
     ]
+    lines.extend(_render_decision_card(decision_card))
+    lines.extend([""])
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
     lines.extend([""])
     lines.extend(_render_historical_metric_guide())
@@ -697,12 +741,26 @@ def _render_checklist_doc(
     selected_actions = _resolve_selected_rows(brief, priority_board)
     watch_actions = _resolve_watch_rows(brief, priority_board)
     intersection_summary = _build_intersection_summary(early_runner, [*selected_actions, *watch_actions])
+    early_status = str(early_runner.get("status") or "unavailable")
+    enriched_selected = _enrich_formal_rows(
+        selected_actions,
+        role="formal_selected",
+        early_runner_status=early_status,
+    )
+    decision_card = build_decision_card(
+        selected_rows=enriched_selected,
+        early_runner_status=early_status,
+        signal_date=str(brief.get("trade_date") or ""),
+        next_trade_date=str(brief.get("next_trade_date") or ""),
+    )
     lines = [
         f"# BTST-{signal_date_compact}-EXEC-CHECKLIST",
         "",
         f"信号日：`{brief.get('trade_date')}`；目标交易日：`{brief.get('next_trade_date')}`。",
         "",
     ]
+    lines.extend(_render_decision_card(decision_card))
+    lines.extend([""])
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
     lines.extend([""])
     lines.extend(_render_historical_metric_guide())

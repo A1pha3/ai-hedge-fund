@@ -63,8 +63,12 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
                     "preferred_entry_mode": "confirm_then_hold_breakout",
                     "score_target": 0.5588,
                     "historical_prior": {
+                        "applied_scope": "same_ticker",
+                        "evaluable_count": 18,
                         "next_close_positive_rate": 0.6667,
                         "next_close_payoff_ratio": 1.42,
+                        "next_close_expectancy": 0.018,
+                        "sample_count": 21,
                     },
                 }
             ],
@@ -76,8 +80,12 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
                     "preferred_entry_mode": "confirm_then_hold_breakout",
                     "score_target": 0.4308,
                     "historical_prior": {
+                        "applied_scope": "same_ticker",
+                        "evaluable_count": 31,
                         "next_close_positive_rate": 0.9355,
                         "next_close_payoff_ratio": 2.31,
+                        "next_close_expectancy": 0.026,
+                        "sample_count": 34,
                     },
                 }
             ],
@@ -119,8 +127,12 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
                             "confirm_score": 0.82,
                             "preferred_entry_mode": "confirm_then_hold_breakout",
                             "historical_prior": {
+                                "applied_scope": "same_ticker",
+                                "evaluable_count": 18,
                                 "next_close_positive_rate": 0.6667,
                                 "next_close_payoff_ratio": 1.42,
+                                "next_close_expectancy": 0.018,
+                                "sample_count": 21,
                             },
                         }
                     ],
@@ -133,8 +145,12 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
                             "confirm_score": 0.82,
                             "preferred_entry_mode": "confirm_then_hold_breakout",
                             "historical_prior": {
+                                "applied_scope": "same_ticker",
+                                "evaluable_count": 18,
                                 "next_close_positive_rate": 0.6667,
                                 "next_close_payoff_ratio": 1.42,
+                                "next_close_expectancy": 0.018,
+                                "sample_count": 21,
                             },
                         },
                         {
@@ -145,8 +161,12 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
                             "confirm_score": 0.41,
                             "preferred_entry_mode": "next_day_breakout_confirmation",
                             "historical_prior": {
+                                "applied_scope": "same_ticker",
+                                "evaluable_count": 12,
                                 "next_close_positive_rate": 0.58,
                                 "next_close_payoff_ratio": 1.1,
+                                "next_close_expectancy": 0.006,
+                                "sample_count": 14,
                             },
                         },
                     ],
@@ -159,8 +179,12 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
                             "confirm_score": 0.33,
                             "preferred_entry_mode": "second_entry_reentry",
                             "historical_prior": {
+                                "applied_scope": "same_ticker",
+                                "evaluable_count": 11,
                                 "next_close_positive_rate": 0.54,
                                 "next_close_payoff_ratio": 1.08,
+                                "next_close_expectancy": 0.004,
+                                "sample_count": 12,
                             },
                         }
                     ],
@@ -187,6 +211,12 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert result["strategy_thresholds"]["min_recent_exact_streak"] == 4
     assert len(result["written_files"]) == 7
     llm_doc = (output_dir / "BTST-LLM-20260526.md").read_text(encoding="utf-8")
+    assert "## 30 秒决策卡" in llm_doc
+    assert "- 交易倾向：`confirmation_only`" in llm_doc
+    assert "- 主票：`300054`" in llm_doc
+    assert "- 证据等级：`B`；数据质量：`fresh`；风险姿态：`reduced`。" in llm_doc
+    assert "- 必须确认：等待盘中延续确认后再执行，不做开盘无确认追价。" in llm_doc
+    assert "- 失效条件：若开盘后无法形成延续确认，或快速冲高回落，则取消正式执行。" in llm_doc
     assert "## 当前策略阈值基线" in llm_doc
     assert strategy_thresholds_path.resolve().as_posix() in llm_doc
     assert "exact 连续门槛：`4`" in llm_doc
@@ -199,6 +229,9 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "603725" in llm_doc
     assert "说明：胜率中性偏强，盈亏比站上 1.00，赚钱时大体能覆盖亏损。" in llm_doc
     checklist_doc = (output_dir / "BTST-20260526-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
+    assert "## 30 秒决策卡" in checklist_doc
+    assert "- 主票：`300054`" in checklist_doc
+    assert "- 交易倾向：`confirmation_only`" in checklist_doc
     assert "## 当前策略阈值基线" in checklist_doc
     assert "## 交集优先复审" in checklist_doc
     assert "## 回补机会层" in checklist_doc
