@@ -464,6 +464,13 @@ def test_generate_btst_doc_bundle_marks_stale_overlap_as_reference_only(tmp_path
                             "entry_status": "filled",
                             "pre_score": 0.71,
                             "confirm_score": 0.82,
+                        },
+                        {
+                            "ticker": "300476",
+                            "name": "胜宏科技",
+                            "entry_status": "watch_only",
+                            "pre_score": 0.64,
+                            "confirm_score": 0.43,
                         }
                     ],
                     "early_runner_priority": [],
@@ -485,6 +492,9 @@ def test_generate_btst_doc_bundle_marks_stale_overlap_as_reference_only(tmp_path
     checklist_doc = (output_dir / "BTST-20260526-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
     assert "历史交集参考：`300054 鼎龙股份`" in checklist_doc
     llm_doc = (output_dir / "BTST-LLM-20260526.md").read_text(encoding="utf-8")
+    assert "early-runner 状态：`stale_fallback`" in llm_doc
+    assert "stale_reference" in llm_doc
+    assert "不能直接当成当日交集优先" in llm_doc
     assert "只能作为参考高亮" in llm_doc
 
 
@@ -731,6 +741,9 @@ def test_generate_btst_doc_bundle_surfaces_research_only_confirmation_pool(tmp_p
     assert "## Research Only 确认池" in early_warning_doc
     assert "300476 胜宏科技" in early_warning_doc
     assert "603083 剑桥科技" in early_warning_doc
+    assert "证据 `D`" in early_warning_doc
+    assert "数据 `insufficient`" in early_warning_doc
+    assert "倾向 `watch_only`" in early_warning_doc
     assert "说明：胜率和盈亏比暂缺，只能先把它当成轻量历史先验。" in early_warning_doc
     early_warning_card = (output_dir / "BTST-20260527-EARLY-WARNING-CARD.md").read_text(encoding="utf-8")
     assert "research_only 确认池" in early_warning_card

@@ -108,6 +108,18 @@ def _enrich_formal_rows(rows: list[dict[str, Any]], *, role: str, early_runner_s
     ]
 
 
+def _enrich_early_runner_rows(
+    rows: list[dict[str, Any]],
+    *,
+    role: str,
+    early_runner_status: str,
+) -> list[dict[str, Any]]:
+    return [
+        enrich_btst_row(row, role=role, early_runner_status=early_runner_status)
+        for row in rows
+    ]
+
+
 def _render_decision_card(card: dict[str, Any]) -> list[str]:
     return [
         "## 30 秒决策卡",
@@ -208,14 +220,17 @@ def _render_enriched_stock_bullets(rows: list[dict[str, Any]], *, limit: int) ->
     for row in rows[:limit]:
         metrics = dict(row.get("metrics") or {})
         quality_notes = list(row.get("quality_notes") or [])
-        note_suffix = f"，质量提示：{'；'.join(str(note) for note in quality_notes)}" if quality_notes else ""
+        note_suffix = f"质量提示：{'；'.join(str(note) for note in quality_notes)}。" if quality_notes else ""
+        source_row = dict(row.get("source_row") or {})
+        reading_note = _historical_reading_note(source_row or row).rstrip("。")
         lines.append(
             f"- `{_enriched_stock_label(row)}`：模式 `{row.get('preferred_entry_mode')}`，"
             f"分数 `{_fmt_num(row.get('score_target'), 4)}`，"
             f"证据 `{row.get('evidence_grade')}`，数据 `{row.get('data_quality')}`，"
             f"倾向 `{row.get('trade_bias')}`，风险 `{row.get('risk_posture')}`，"
             f"收盘胜率 `{_fmt_pct(metrics.get('win_rate'))}`，"
-            f"盈亏比 `{_fmt_num(metrics.get('payoff_ratio'), 2)}`{note_suffix}。"
+            f"盈亏比 `{_fmt_num(metrics.get('payoff_ratio'), 2)}`，"
+            f"说明：{reading_note}。{note_suffix}"
         )
     return lines or ["- 无。"]
 
@@ -630,6 +645,16 @@ def _render_llm_doc(
         role="formal_watch",
         early_runner_status=early_status,
     )
+    enriched_only_early_runner = _enrich_early_runner_rows(
+        _safe_rows(intersection_summary.get("only_early_runner_rows")),
+        role="early_runner_watchlist",
+        early_runner_status=early_status,
+    )
+    enriched_second_entry = _enrich_early_runner_rows(
+        _safe_rows(intersection_summary.get("second_entry_rows")),
+        role="early_runner_second_entry",
+        early_runner_status=early_status,
+    )
     decision_card = build_decision_card(
         selected_rows=enriched_selected,
         early_runner_status=early_status,
@@ -672,10 +697,10 @@ def _render_llm_doc(
     lines.append("- second-entry / reentry 单独归入回补机会层，不和普通补充票混用。")
     if _safe_rows(intersection_summary.get("only_early_runner_rows")):
         lines.extend(["", "### 补充复审层", ""])
-        lines.extend(_stock_bullets(_safe_rows(intersection_summary.get("only_early_runner_rows")), limit=5, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_only_early_runner, limit=5))
     if _safe_rows(intersection_summary.get("second_entry_rows")):
         lines.extend(["", "### 回补机会层", ""])
-        lines.extend(_stock_bullets(_safe_rows(intersection_summary.get("second_entry_rows")), limit=5, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_second_entry, limit=5))
     return "\n".join(lines) + "\n"
 
 
@@ -865,6 +890,27 @@ def _render_early_warning_doc(
     """Render the dedicated early-warning document from early-runner watchlists and second-entry rows."""
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     research_confirmation = _safe_rows(early_runner.get("research_confirmation"))
+    early_status = str(early_runner.get("status") or "unavailable")
+    enriched_priority = _enrich_early_runner_rows(
+        _safe_rows(early_runner.get("priority")),
+        role="early_runner_priority",
+        early_runner_status=early_status,
+    )
+    enriched_watchlist = _enrich_early_runner_rows(
+        _safe_rows(early_runner.get("watchlist")),
+        role="early_runner_watchlist",
+        early_runner_status=early_status,
+    )
+    enriched_second_entry = _enrich_early_runner_rows(
+        _safe_rows(early_runner.get("second_entry")),
+        role="early_runner_second_entry",
+        early_runner_status=early_status,
+    )
+    enriched_research = _enrich_early_runner_rows(
+        research_confirmation,
+        role="early_runner_research",
+        early_runner_status=early_status,
+    )
     lines = [
         f"# BTST 提前预警池（{signal_date_compact}）",
         "",
@@ -891,15 +937,15 @@ def _render_early_warning_doc(
     )
     lines.extend(_render_intersection_highlights(intersection_summary))
     lines.extend(["", "## Priority", ""])
-    lines.extend(_stock_bullets(_safe_rows(early_runner.get("priority")), limit=6, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_priority, limit=6))
     lines.extend(["", "## Watchlist", ""])
-    lines.extend(_stock_bullets(_safe_rows(early_runner.get("watchlist")), limit=8, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_watchlist, limit=8))
     lines.extend(["", "## Second Entry / Reentry", ""])
-    lines.extend(_stock_bullets(_safe_rows(early_runner.get("second_entry")), limit=8, include_payoff=True))
+    lines.extend(_render_enriched_stock_bullets(enriched_second_entry, limit=8))
     if research_confirmation:
         lines.extend(["", "## Research Only 确认池", ""])
         lines.append("- 当前是 research_only 板，以下确认票只保留为研究确认，不自动升级为可执行 early-runner 观察票。")
-        lines.extend(_stock_bullets(research_confirmation, limit=8, include_payoff=True))
+        lines.extend(_render_enriched_stock_bullets(enriched_research, limit=8))
     lines.extend(["", "## 使用原则", ""])
     lines.extend(
         [
