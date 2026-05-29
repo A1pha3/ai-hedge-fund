@@ -276,6 +276,76 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "说明：胜率中性偏强，盈亏比站上 1.00，赚钱时大体能覆盖亏损。" in early_warning_doc
 
 
+def test_generate_btst_doc_bundle_writes_review_ledger_when_requested(tmp_path: Path) -> None:
+    """Write a machine-readable pre-trade review ledger only when requested."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260526_20260526_live_m2_7_short_trade_only_20260527_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-26",
+            "selection_target": "short_trade_only",
+            "btst_followup": {"brief_json": brief_path.as_posix()},
+        },
+    )
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-26",
+            "next_trade_date": "2026-05-27",
+            "selection_target": "short_trade_only",
+            "selected_actions": [
+                {
+                    "ticker": "300054",
+                    "preferred_entry_mode": "confirm_then_hold_breakout",
+                    "historical_prior": {
+                        "applied_scope": "same_ticker",
+                        "evaluable_count": 18,
+                        "next_close_positive_rate": 0.6667,
+                        "next_close_payoff_ratio": 1.42,
+                    },
+                }
+            ],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260526.json",
+        {
+            "trade_date": "20260526",
+            "next_date": "20260527",
+            "pool_size": 10,
+            "selected_count": 1,
+            "near_miss_count": 0,
+            "high_confidence": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {"daily_boards": [{"trade_date": "2026-05-26"}]},
+    )
+
+    output_dir = tmp_path / "outputs"
+    result = generate_btst_doc_bundle(
+        "20260526",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+        write_review_ledger=True,
+    )
+
+    ledger_path = output_dir / "20260526-btst-decision-review-ledger.json"
+    assert result["review_ledger_json_path"] == ledger_path.as_posix()
+    payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert payload["signal_date"] == "2026-05-26"
+    assert payload["next_trade_date"] == "2026-05-27"
+    assert payload["rows"][0]["ticker"] == "300054"
+    assert payload["rows"][0]["evidence_grade"] == "B"
+    assert payload["rows"][0]["realized_next_close"] is None
+
+
 def test_generate_btst_doc_bundle_supports_named_threshold_profiles(tmp_path: Path) -> None:
     """Resolve one named threshold profile and surface it in the generated docs."""
     reports_root = tmp_path / "data" / "reports"

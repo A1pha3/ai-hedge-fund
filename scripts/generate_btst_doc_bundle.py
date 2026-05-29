@@ -14,6 +14,7 @@ from scripts.btst_strategy_thresholds import (
 from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
 from src.paper_trading.btst_decision_enrichment import (
     build_decision_card,
+    build_review_ledger_rows,
     enrich_btst_row,
 )
 
@@ -997,6 +998,7 @@ def generate_btst_doc_bundle(
     include_extra_warning_docs: bool = True,
     strategy_thresholds_config_path: str | Path | None = None,
     strategy_thresholds_profile: str = DEFAULT_STRATEGY_THRESHOLDS_PROFILE,
+    write_review_ledger: bool = False,
 ) -> dict[str, Any]:
     """Generate the final BTST reading bundle and append scheme-A early-runner sections."""
     signal_date_compact, signal_date_iso = _normalize_signal_date(signal_date)
@@ -1038,6 +1040,39 @@ def generate_btst_doc_bundle(
         target_path = target_output_dir / name
         _write_text(target_path, content)
         written_files.append(target_path.as_posix())
+    review_ledger_json_path = None
+    if write_review_ledger:
+        early_status = str(early_runner.get("status") or "unavailable")
+        ledger_selected = _enrich_formal_rows(
+            selected_rows,
+            role="formal_selected",
+            early_runner_status=early_status,
+        )
+        ledger_watch = _enrich_formal_rows(
+            watch_rows,
+            role="formal_watch",
+            early_runner_status=early_status,
+        )
+        ledger_rows = build_review_ledger_rows(
+            signal_date=str(brief.get("trade_date") or signal_date_iso),
+            next_trade_date=str(brief.get("next_trade_date") or ""),
+            rows=[*ledger_selected, *ledger_watch],
+        )
+        review_ledger_json_path = target_output_dir / f"{signal_date_compact}-btst-decision-review-ledger.json"
+        _write_text(
+            review_ledger_json_path,
+            json.dumps(
+                {
+                    "signal_date": str(brief.get("trade_date") or signal_date_iso),
+                    "next_trade_date": str(brief.get("next_trade_date") or ""),
+                    "rows": ledger_rows,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        )
+        written_files.append(review_ledger_json_path.as_posix())
     return {
         "status": "generated",
         "signal_date": signal_date_compact,
@@ -1053,6 +1088,7 @@ def generate_btst_doc_bundle(
         "strategy_thresholds_config_path": resolved_strategy_thresholds_config_path,
         "strategy_thresholds_profile": strategy_thresholds_profile,
         "strategy_thresholds": resolved_strategy_thresholds,
+        "review_ledger_json_path": review_ledger_json_path.as_posix() if review_ledger_json_path else None,
     }
 
 
@@ -1299,6 +1335,7 @@ def main() -> None:
     parser.add_argument("--strategy-thresholds-config", default="")
     parser.add_argument("--strategy-thresholds-profile", default=DEFAULT_STRATEGY_THRESHOLDS_PROFILE)
     parser.add_argument("--compare-profiles", nargs="*", default=[])
+    parser.add_argument("--write-review-ledger", action="store_true")
     args = parser.parse_args()
     if list(args.compare_profiles):
         result = compare_btst_doc_bundle_profiles(
@@ -1321,6 +1358,7 @@ def main() -> None:
         include_extra_warning_docs=not args.core_only,
         strategy_thresholds_config_path=args.strategy_thresholds_config or None,
         strategy_thresholds_profile=args.strategy_thresholds_profile,
+        write_review_ledger=args.write_review_ledger,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
