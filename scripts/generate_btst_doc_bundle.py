@@ -428,7 +428,6 @@ def _render_intersection_highlights(intersection_summary: dict[str, Any]) -> lis
     """Render middle-stage overlap highlights with exact-vs-fallback wording."""
     status = str(intersection_summary.get("status") or "unavailable")
     overlap_rows = _safe_rows(intersection_summary.get("overlap_rows"))
-    only_early_runner_rows = _safe_rows(intersection_summary.get("only_early_runner_rows"))
     lines = ["## 交集票高亮", ""]
     if overlap_rows:
         if status == "exact":
@@ -446,12 +445,6 @@ def _render_intersection_highlights(intersection_summary: dict[str, Any]) -> lis
             )
     else:
         lines.append("- 当前没有可高亮的交集票。")
-    lines.extend(["", "## Only Early Runner", ""])
-    if only_early_runner_rows:
-        lines.append("- 以下股票只出现在 early-runner，不进入正式执行清单，只进入盘中补充复审。")
-        lines.extend(_stock_bullets(only_early_runner_rows, limit=8, include_payoff=True))
-    else:
-        lines.append("- 当前没有 only early-runner 补充票。")
     return lines
 
 
