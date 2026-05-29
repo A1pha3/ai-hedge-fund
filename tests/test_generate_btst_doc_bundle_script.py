@@ -197,6 +197,7 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "### 回补机会层" in llm_doc
     assert "与正式 BTST 的重合票" in llm_doc
     assert "603725" in llm_doc
+    assert "说明：胜率中性偏强，盈亏比站上 1.00，赚钱时大体能覆盖亏损。" in llm_doc
     checklist_doc = (output_dir / "BTST-20260526-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
     assert "## 当前策略阈值基线" in checklist_doc
     assert "## 交集优先复审" in checklist_doc
@@ -204,11 +205,13 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "交集优先：`300054 鼎龙股份`" in checklist_doc
     assert "Early Runner 补充复审：`603725 天安新材`" in checklist_doc
     assert "Second Entry / Reentry：`605500 森林包装`" in checklist_doc
+    assert "说明：胜率中性偏强，盈亏比站上 1.00，赚钱时大体能覆盖亏损。" in checklist_doc
     early_warning_doc = (output_dir / "BTST-20260526-EARLY-WARNING.md").read_text(encoding="utf-8")
     assert "## 当前策略阈值基线" in early_warning_doc
     assert "## 交集票高亮" in early_warning_doc
     assert "## Priority" in early_warning_doc
     assert "605500" in early_warning_doc
+    assert "说明：胜率中性偏强，盈亏比站上 1.00，赚钱时大体能覆盖亏损。" in early_warning_doc
 
 
 def test_generate_btst_doc_bundle_supports_named_threshold_profiles(tmp_path: Path) -> None:
@@ -666,6 +669,7 @@ def test_generate_btst_doc_bundle_surfaces_research_only_confirmation_pool(tmp_p
     assert "## Research Only 确认池" in early_warning_doc
     assert "300476 胜宏科技" in early_warning_doc
     assert "603083 剑桥科技" in early_warning_doc
+    assert "说明：胜率和盈亏比暂缺，只能先把它当成轻量历史先验。" in early_warning_doc
     early_warning_card = (output_dir / "BTST-20260527-EARLY-WARNING-CARD.md").read_text(encoding="utf-8")
     assert "research_only 确认池" in early_warning_card
     assert "300476" in early_warning_card

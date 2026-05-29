@@ -4,6 +4,7 @@ import json
 import os
 
 from scripts.btst_latest_followup_utils import (
+    _choose_preferred_historical_prior,
     load_btst_followup_by_ticker_for_report,
     load_latest_btst_followup_by_ticker,
     load_latest_btst_historical_prior_by_ticker,
@@ -11,6 +12,143 @@ from scripts.btst_latest_followup_utils import (
     load_latest_upstream_shadow_followup_summary,
     select_latest_btst_followup_candidate,
 )
+
+
+def test_choose_preferred_historical_prior_backfills_payoff_fields_on_equal_rank():
+    current = {
+        "applied_scope": "family_source_score_catalyst",
+        "evaluable_count": 25,
+        "sample_count": 30,
+        "execution_quality_label": "close_continuation",
+        "next_close_positive_rate": 0.52,
+        "summary": "current summary",
+        "next_close_positive_count": None,
+        "next_close_negative_count": None,
+        "next_close_average_win": None,
+        "next_close_average_loss_abs": None,
+        "next_close_payoff_ratio": None,
+        "next_close_profit_factor": None,
+        "next_close_expectancy": None,
+        "win_rate_payoff_divergence": None,
+    }
+    incoming = {
+        "applied_scope": "family_source_score_catalyst",
+        "evaluable_count": 25,
+        "sample_count": 30,
+        "execution_quality_label": "close_continuation",
+        "next_close_positive_rate": 0.52,
+        "summary": "incoming summary",
+        "next_close_positive_count": 13,
+        "next_close_negative_count": 12,
+        "next_close_average_win": 0.0641,
+        "next_close_average_loss_abs": 0.0211,
+        "next_close_payoff_ratio": 3.0379,
+        "next_close_profit_factor": 3.2944,
+        "next_close_expectancy": 0.0234,
+        "win_rate_payoff_divergence": False,
+    }
+
+    merged = _choose_preferred_historical_prior(current, incoming)
+
+    assert merged["summary"] == "current summary"
+    assert merged["next_close_positive_rate"] == 0.52
+    assert merged["next_close_positive_count"] == 13
+    assert merged["next_close_negative_count"] == 12
+    assert merged["next_close_average_win"] == 0.0641
+    assert merged["next_close_average_loss_abs"] == 0.0211
+    assert merged["next_close_payoff_ratio"] == 3.0379
+    assert merged["next_close_profit_factor"] == 3.2944
+    assert merged["next_close_expectancy"] == 0.0234
+    assert merged["win_rate_payoff_divergence"] is False
+
+
+def test_choose_preferred_historical_prior_prefers_more_specific_incoming_when_current_lacks_payoff_cluster():
+    current = {
+        "applied_scope": "family_source_score_catalyst",
+        "evaluable_count": 25,
+        "sample_count": 30,
+        "execution_quality_label": "close_continuation",
+        "next_close_positive_rate": 0.52,
+        "summary": "broad bucket summary",
+        "next_close_positive_count": None,
+        "next_close_negative_count": None,
+        "next_close_average_win": None,
+        "next_close_average_loss_abs": None,
+        "next_close_payoff_ratio": None,
+        "next_close_profit_factor": None,
+        "next_close_expectancy": None,
+        "win_rate_payoff_divergence": None,
+    }
+    incoming = {
+        "applied_scope": "same_ticker",
+        "evaluable_count": 8,
+        "sample_count": 8,
+        "execution_quality_label": "balanced_confirmation",
+        "next_close_positive_rate": 0.75,
+        "summary": "same ticker summary",
+        "next_close_positive_count": 6,
+        "next_close_negative_count": 2,
+        "next_close_average_win": 0.0518,
+        "next_close_average_loss_abs": 0.0562,
+        "next_close_payoff_ratio": 0.9217,
+        "next_close_profit_factor": 2.7633,
+        "next_close_expectancy": 0.0248,
+        "win_rate_payoff_divergence": True,
+    }
+
+    merged = _choose_preferred_historical_prior(current, incoming)
+
+    assert merged["applied_scope"] == "same_ticker"
+    assert merged["summary"] == "same ticker summary"
+    assert merged["next_close_positive_rate"] == 0.75
+    assert merged["next_close_positive_count"] == 6
+    assert merged["next_close_negative_count"] == 2
+    assert merged["next_close_payoff_ratio"] == 0.9217
+    assert merged["win_rate_payoff_divergence"] is True
+
+
+def test_choose_preferred_historical_prior_prefers_same_scope_incoming_when_current_lacks_payoff_cluster():
+    current = {
+        "applied_scope": "same_ticker",
+        "evaluable_count": 50,
+        "sample_count": 50,
+        "execution_quality_label": "close_continuation",
+        "next_close_positive_rate": 0.94,
+        "summary": "stale same ticker summary",
+        "next_close_positive_count": None,
+        "next_close_negative_count": None,
+        "next_close_average_win": None,
+        "next_close_average_loss_abs": None,
+        "next_close_payoff_ratio": None,
+        "next_close_profit_factor": None,
+        "next_close_expectancy": None,
+        "win_rate_payoff_divergence": None,
+    }
+    incoming = {
+        "applied_scope": "same_ticker",
+        "evaluable_count": 13,
+        "sample_count": 13,
+        "execution_quality_label": "balanced_confirmation",
+        "next_close_positive_rate": 0.6154,
+        "summary": "refreshed same ticker summary",
+        "next_close_positive_count": 8,
+        "next_close_negative_count": 5,
+        "next_close_average_win": 0.0441,
+        "next_close_average_loss_abs": 0.0622,
+        "next_close_payoff_ratio": 0.7090,
+        "next_close_profit_factor": 1.1361,
+        "next_close_expectancy": 0.0033,
+        "win_rate_payoff_divergence": True,
+    }
+
+    merged = _choose_preferred_historical_prior(current, incoming)
+
+    assert merged["applied_scope"] == "same_ticker"
+    assert merged["summary"] == "refreshed same ticker summary"
+    assert merged["next_close_positive_rate"] == 0.6154
+    assert merged["next_close_positive_count"] == 8
+    assert merged["next_close_payoff_ratio"] == 0.7090
+    assert merged["win_rate_payoff_divergence"] is True
 
 
 def _write_followup_report(

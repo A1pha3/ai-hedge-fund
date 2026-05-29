@@ -91,16 +91,84 @@ def _stock_label(entry: dict[str, Any]) -> str:
     return f"{ticker} {name}".strip()
 
 
+def _row_historical_metric(row: dict[str, Any], key: str) -> Any:
+    """Return one historical metric from nested prior first, then from the row itself."""
+    prior = dict(row.get("historical_prior") or {})
+    value = prior.get(key)
+    if value not in (None, "", [], {}, ()):
+        return value
+    return row.get(key)
+
+
+def _historical_reading_note(row: dict[str, Any]) -> str:
+    """Explain how to read historical win-rate and payoff numbers for one stock."""
+    rate = _row_historical_metric(row, "next_close_positive_rate")
+    payoff = _row_historical_metric(row, "next_close_payoff_ratio")
+    evaluable = _row_historical_metric(row, "evaluable_count")
+    try:
+        rate_value = None if rate in (None, "") else float(rate)
+    except (TypeError, ValueError):
+        rate_value = None
+    try:
+        payoff_value = None if payoff in (None, "") else float(payoff)
+    except (TypeError, ValueError):
+        payoff_value = None
+    note_parts: list[str] = []
+    if rate_value is None and payoff_value is None:
+        note = "胜率和盈亏比暂缺，只能先把它当成轻量历史先验。"
+    else:
+        if rate_value is None:
+            note_parts.append("胜率暂缺")
+        elif rate_value >= 0.70:
+            note_parts.append("胜率高")
+        elif rate_value >= 0.55:
+            note_parts.append("胜率中性偏强")
+        elif rate_value >= 0.45:
+            note_parts.append("胜率中性")
+        else:
+            note_parts.append("胜率偏弱")
+        if payoff_value is None:
+            note_parts.append("盈亏比暂缺，通常表示历史正负样本拆分不足")
+        elif payoff_value >= 2.0:
+            note_parts.append("盈亏比优秀，赚钱时通常能明显覆盖亏损")
+        elif payoff_value >= 1.0:
+            note_parts.append("盈亏比站上 1.00，赚钱时大体能覆盖亏损")
+        else:
+            note_parts.append("盈亏比低于 1.00，更像靠命中率吃小胜")
+        note = "，".join(note_parts) + "。"
+    try:
+        evaluable_count = None if evaluable in (None, "") else int(evaluable)
+    except (TypeError, ValueError):
+        evaluable_count = None
+    if evaluable_count is not None and evaluable_count < 5:
+        note = note[:-1] + "；样本偏少，只能作弱参考。"
+    elif evaluable_count is not None and evaluable_count < 10:
+        note = note[:-1] + "；样本不大，宜配合盘中确认。"
+    return note
+
+
+def _render_historical_metric_guide() -> list[str]:
+    """Render one shared guide that explains historical win-rate and payoff metrics."""
+    return [
+        "## 指标怎么读",
+        "",
+        "- `收盘胜率` 看的是历史上次日收盘为正的比例，越高代表历史命中率越好。",
+        "- `盈亏比` 大于 `1.00` 才说明平均赚幅大体能覆盖平均亏幅；低于 `1.00` 往往更依赖命中率。",
+        "- 如果文档写 `n/a`，通常表示历史正负样本拆分不足，先验只能轻量参考，不能把空字段误读成强信号。",
+    ]
+
+
 def _stock_bullets(rows: list[dict[str, Any]], *, limit: int, include_payoff: bool = False) -> list[str]:
     """Render compact stock bullets for document sections."""
     lines: list[str] = []
     for row in rows[:limit]:
-        prior = dict(row.get("historical_prior") or {})
-        rate = prior.get("next_close_positive_rate", row.get("next_close_positive_rate"))
-        payoff = prior.get("next_close_payoff_ratio", row.get("next_close_payoff_ratio"))
+        rate = _row_historical_metric(row, "next_close_positive_rate")
+        payoff = _row_historical_metric(row, "next_close_payoff_ratio")
         base = f"- `{_stock_label(row)}`：层级 `{row.get('action_tier') or row.get('lane') or row.get('table_key') or row.get('entry_status') or 'n/a'}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，分数 `{_fmt_num(row.get('score_target', row.get('pre_score')), 4)}`"
         if include_payoff:
-            base += f"，收盘胜率 `{_fmt_pct(rate)}`，盈亏比 `{_fmt_num(payoff, 2)}`"
+            base += f"，收盘胜率 `{_fmt_pct(rate)}`，盈亏比 `{_fmt_num(payoff, 2)}`，说明：{_historical_reading_note(row)}"
+            lines.append(base)
+            continue
         lines.append(base + "。")
     return lines or ["- 无。"]
 
@@ -435,8 +503,11 @@ def _render_rule_doc(
         "",
     ]
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    lines.extend([""])
+    lines.extend(_render_historical_metric_guide())
     lines.extend(["", "## 规则前排", ""])
     lines.extend(_rule_stock_bullets(high_confidence, limit=8))
+    lines.append("- 规则前排这里先看规则分数；若要看 BTST 股票的历史胜率和盈亏比，请以下面的多智能体详细计划与预警文档为准。")
     lines.extend(
         [
             "",
@@ -486,6 +557,8 @@ def _render_llm_doc(
         "",
     ]
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    lines.extend([""])
+    lines.extend(_render_historical_metric_guide())
     lines.extend(["", "## 正式执行层", ""])
     lines.extend(_stock_bullets(selected_actions, limit=5, include_payoff=True))
     lines.extend(["", "## 观察层", ""])
@@ -631,9 +704,16 @@ def _render_checklist_doc(
         "",
     ]
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    lines.extend([""])
+    lines.extend(_render_historical_metric_guide())
     lines.extend(["", "## 正式执行顺序", ""])
     for row in selected_actions[:3]:
-        lines.append(f"- [ ] 正式执行：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，收盘胜率 `{_fmt_pct(dict(row.get('historical_prior') or {}).get('next_close_positive_rate'))}`。")
+        lines.append(
+            f"- [ ] 正式执行：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，"
+            f"收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，"
+            f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，"
+            f"说明：{_historical_reading_note(row)}"
+        )
     lines.extend(["", "## 正式观察顺序", ""])
     for row in watch_actions[:6]:
         lines.append(f"- [ ] 正式观察：`{_stock_label(row)}`，层级 `{row.get('action_tier') or 'watch_only'}`，必要时盘中再确认。")
@@ -685,6 +765,8 @@ def _render_early_warning_doc(
         "",
     ]
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
+    lines.extend([""])
+    lines.extend(_render_historical_metric_guide())
     lines.extend(
         [
             "",

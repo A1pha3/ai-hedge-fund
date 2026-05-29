@@ -8,6 +8,18 @@ from statistics import median
 from typing import Any
 
 
+_HISTORICAL_PRIOR_PAYOFF_KEYS = (
+    "next_close_positive_count",
+    "next_close_negative_count",
+    "next_close_average_win",
+    "next_close_average_loss_abs",
+    "next_close_payoff_ratio",
+    "next_close_profit_factor",
+    "next_close_expectancy",
+    "win_rate_payoff_divergence",
+)
+
+
 def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
     if not path:
         return {}
@@ -133,6 +145,42 @@ def _safe_optional_int(value: Any) -> int | None:
         return None
 
 
+def _historical_prior_value_missing(value: Any) -> bool:
+    return value in (None, "", [], {})
+
+
+def _historical_prior_has_payoff_details(prior: dict[str, Any]) -> bool:
+    return any(
+        not _historical_prior_value_missing(prior.get(key))
+        for key in _HISTORICAL_PRIOR_PAYOFF_KEYS
+        if key != "next_close_positive_rate"
+    )
+
+
+def _backfill_historical_prior_payoff_fields(
+    preferred: dict[str, Any], supplement: dict[str, Any]
+) -> dict[str, Any]:
+    merged = dict(preferred)
+    for key in _HISTORICAL_PRIOR_PAYOFF_KEYS:
+        if _historical_prior_value_missing(merged.get(key)) and not _historical_prior_value_missing(
+            supplement.get(key)
+        ):
+            merged[key] = supplement.get(key)
+    return merged
+
+
+def _should_prefer_more_specific_incoming_prior(
+    current: dict[str, Any], incoming: dict[str, Any]
+) -> bool:
+    if _historical_prior_has_payoff_details(current):
+        return False
+    if not _historical_prior_has_payoff_details(incoming):
+        return False
+    return _historical_prior_scope_rank(incoming) >= _historical_prior_scope_rank(
+        current
+    )
+
+
 def _choose_preferred_historical_prior(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     if not current:
         return dict(incoming)
@@ -141,6 +189,10 @@ def _choose_preferred_historical_prior(current: dict[str, Any], incoming: dict[s
     current_rank = _historical_prior_merge_rank(current)
     incoming_rank = _historical_prior_merge_rank(incoming)
     if incoming_rank > current_rank:
+        return dict(incoming)
+    if incoming_rank == current_rank:
+        return _backfill_historical_prior_payoff_fields(current, incoming)
+    if _should_prefer_more_specific_incoming_prior(current, incoming):
         return dict(incoming)
     return dict(current)
 
@@ -845,4 +897,3 @@ def load_upstream_shadow_followup_rows_for_report(report_dir: str | Path) -> lis
         trade_date=str(candidate.get("trade_date") or ""),
     )
     return [dict(row) for row in list(summary.get("rows") or [])]
-
