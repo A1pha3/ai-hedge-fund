@@ -220,6 +220,11 @@ def _render_enriched_stock_bullets(rows: list[dict[str, Any]], *, limit: int) ->
     return lines or ["- 无。"]
 
 
+def _markdown_table_cell(value: Any) -> str:
+    text = str(value or "")
+    return text.replace("|", "\\|").replace("\n", "<br>")
+
+
 def _render_action_matrix_sections(rows: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
     lines = ["## 正式执行动作矩阵", ""]
     if not rows:
@@ -235,7 +240,9 @@ def _render_action_matrix_sections(rows: list[dict[str, Any]], *, limit: int = 3
             ]
         )
         for item in list(row.get("action_matrix") or []):
-            lines.append(f"| {item.get('scenario')} | {item.get('action')} |")
+            scenario = _markdown_table_cell(item.get("scenario"))
+            action = _markdown_table_cell(item.get("action"))
+            lines.append(f"| {scenario} | {action} |")
         lines.append("")
     return lines
 

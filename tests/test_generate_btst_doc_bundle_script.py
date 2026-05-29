@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from scripts.generate_btst_doc_bundle import (
+    _render_action_matrix_sections,
     compare_btst_doc_bundle_profiles,
     generate_btst_doc_bundle,
 )
@@ -13,6 +14,29 @@ def _write_json(path: Path, payload: object) -> None:
     """Write one JSON fixture file for the document-bundle test."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def test_render_action_matrix_sections_escapes_markdown_table_cells() -> None:
+    """Keep dynamic action-matrix text from breaking Markdown tables."""
+    lines = _render_action_matrix_sections(
+        [
+            {
+                "ticker": "300054",
+                "name": "鼎龙股份",
+                "action_matrix": [
+                    {
+                        "scenario": "强势|确认",
+                        "action": "先等确认\n再执行",
+                    }
+                ],
+            }
+        ]
+    )
+
+    rendered = "\n".join(lines)
+
+    assert "强势\\|确认" in rendered
+    assert "先等确认<br>再执行" in rendered
 
 
 def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -> None:
