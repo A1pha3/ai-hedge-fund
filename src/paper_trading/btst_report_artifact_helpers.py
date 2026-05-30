@@ -205,6 +205,7 @@ def register_btst_followup_artifacts(
         raise FileNotFoundError(f"session_summary.json not found under: {resolved_report_dir}")
 
     summary = load_json(summary_path)
+    brief_analysis = load_json(brief_json_path)
     resolved_trade_date, resolved_next_trade_date = resolve_followup_trade_dates(
         trade_date=trade_date,
         next_trade_date=next_trade_date,
@@ -225,6 +226,17 @@ def register_btst_followup_artifacts(
         priority_board_markdown_path=priority_board_markdown_path,
         sync_text_artifact_alias=sync_text_artifact_alias,
     )
+    rollout_validation = dict(brief_analysis.get("rollout_validation") or {})
+    rollout_validation_json = str(rollout_validation.get("source_json_path") or "").strip()
+    rollout_validation_markdown = str(rollout_validation.get("source_markdown_path") or "").strip()
+    if rollout_validation_json:
+        followup_manifest["rollout_validation_json"] = (
+            Path(rollout_validation_json).expanduser().resolve().as_posix()
+        )
+    if rollout_validation_markdown:
+        followup_manifest["rollout_validation_markdown"] = (
+            Path(rollout_validation_markdown).expanduser().resolve().as_posix()
+        )
     summary["btst_followup"] = followup_manifest
     artifacts = dict(summary.get("artifacts") or {})
     artifacts.update(_build_followup_summary_artifacts(followup_manifest))
@@ -263,7 +275,7 @@ def _build_followup_manifest_paths(
 
 
 def _build_followup_summary_artifacts(followup_manifest: dict[str, Any]) -> dict[str, Any]:
-    return {
+    artifacts = {
         "btst_next_day_trade_brief_json": followup_manifest["brief_json"],
         "btst_next_day_trade_brief_markdown": followup_manifest["brief_markdown"],
         "btst_premarket_execution_card_json": followup_manifest["execution_card_json"],
@@ -273,6 +285,11 @@ def _build_followup_summary_artifacts(followup_manifest: dict[str, Any]) -> dict
         "btst_next_day_priority_board_json": followup_manifest["priority_board_json"],
         "btst_next_day_priority_board_markdown": followup_manifest["priority_board_markdown"],
     }
+    if followup_manifest.get("rollout_validation_json"):
+        artifacts["btst_rollout_validation_json"] = followup_manifest["rollout_validation_json"]
+    if followup_manifest.get("rollout_validation_markdown"):
+        artifacts["btst_rollout_validation_markdown"] = followup_manifest["rollout_validation_markdown"]
+    return artifacts
 
 
 def _build_followup_generation_payload(

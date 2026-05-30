@@ -11,6 +11,7 @@ from src.paper_trading.btst_reporting_utils import (
     _compact_trade_date,
     _format_float,
     _format_historical_payoff_note,
+    _format_rollout_value,
     _load_json,
     _normalize_trade_date,
     _resolve_followup_trade_dates,
@@ -1001,6 +1002,9 @@ def render_btst_premarket_execution_card_markdown(card: dict[str, Any]) -> str:
         dict(card.get("upstream_shadow_summary") or {}),
         list(card.get("upstream_shadow_entries") or []),
     )
+    _append_premarket_rollout_validation_markdown(
+        lines, dict(card.get("rollout_validation") or {})
+    )
     _append_premarket_guardrails_markdown(
         lines, list(card.get("global_guardrails") or [])
     )
@@ -1028,6 +1032,22 @@ def _append_premarket_guardrails_markdown(
     lines: list[str], guardrails: list[str]
 ) -> None:
     _append_guardrail_section(lines, "## Global Guardrails", guardrails)
+
+
+def _append_premarket_rollout_validation_markdown(
+    lines: list[str], rollout_validation: dict[str, Any]
+) -> None:
+    lines.append("## Governed Rollout 观察")
+    lines.append(f"- status: {rollout_validation.get('status') or 'unavailable'}")
+    lines.append(f"- primary_lane: {rollout_validation.get('primary_lane') or 'n/a'}")
+    lines.append(f"- summary: {rollout_validation.get('summary') or 'n/a'}")
+    lines.append(
+        f"- selected_hit_rate_15pct: {_format_rollout_value(rollout_validation.get('selected_hit_rate_15pct'), 4)} -> {_format_rollout_value(rollout_validation.get('shadow_hit_rate_15pct'), 4)}"
+    )
+    lines.append(f"- selected_count_delta: {_format_rollout_value(rollout_validation.get('selected_count_delta'))}")
+    lines.append(f"- execution_eligible_delta: {_format_rollout_value(rollout_validation.get('execution_eligible_delta'))}")
+    lines.append(f"- buy_order_delta: {_format_rollout_value(rollout_validation.get('buy_order_delta'))}")
+    lines.append("")
 
 
 def _append_premarket_source_paths_markdown(

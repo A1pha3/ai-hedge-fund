@@ -447,6 +447,50 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     assert "002002" in markdown
 
 
+def test_render_btst_premarket_execution_card_markdown_handles_missing_rollout_validation():
+    markdown = btst_reporting.render_btst_premarket_execution_card_markdown(
+        {
+            "trade_date": "2026-03-27",
+            "next_trade_date": "2026-03-30",
+            "selection_target": "short_trade_only",
+            "recommendation": "主票优先，其他仅观察。",
+            "summary": {
+                "primary_count": 0,
+                "watch_count": 0,
+                "opportunity_pool_count": 0,
+                "runner_recall_review_count": 0,
+                "no_history_observer_count": 0,
+                "risky_observer_count": 0,
+                "catalyst_theme_frontier_promoted_count": 0,
+                "catalyst_theme_shadow_count": 0,
+                "upstream_shadow_candidate_count": 0,
+                "upstream_shadow_promotable_count": 0,
+                "excluded_research_count": 0,
+            },
+            "primary_action": None,
+            "watch_actions": [],
+            "opportunity_actions": [],
+            "runner_recall_review_actions": [],
+            "risky_observer_actions": [],
+            "no_history_observer_actions": [],
+            "catalyst_theme_frontier_priority": {},
+            "catalyst_theme_shadow_watch": [],
+            "excluded_research_entries": [],
+            "upstream_shadow_summary": {},
+            "upstream_shadow_entries": [],
+            "global_guardrails": [],
+            "rollout_validation": {"status": "unavailable"},
+            "source_paths": {},
+        }
+    )
+
+    assert "## Governed Rollout 观察" in markdown
+    assert "- status: unavailable" in markdown
+    assert "- selected_hit_rate_15pct: n/a -> n/a" in markdown
+    assert "- selected_count_delta: n/a" in markdown
+    assert "None" not in markdown
+
+
 def test_analyze_btst_premarket_execution_card_surfaces_runner_recall_review_actions():
     payload = btst_reporting.analyze_btst_premarket_execution_card(
         {
@@ -502,6 +546,49 @@ def test_analyze_btst_premarket_execution_card_surfaces_runner_recall_review_act
     assert payload["summary"]["runner_recall_review_count"] == 1
     assert "## Runner Recall Review Actions" in markdown
     assert "### 1. 688183" in markdown
+
+
+def test_analyze_btst_premarket_execution_card_surfaces_rollout_validation():
+    payload = btst_reporting.analyze_btst_premarket_execution_card(
+        {
+            "trade_date": "2026-05-22",
+            "next_trade_date": "2026-05-23",
+            "selection_target": "short_trade_only",
+            "summary": {},
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "no_history_observer_entries": [],
+            "risky_observer_entries": [],
+            "research_upside_radar_entries": [],
+            "runner_recall_review_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "excluded_research_entries": [],
+            "upstream_shadow_entries": [],
+            "upstream_shadow_summary": {
+                "shadow_candidate_count": 0,
+                "promotable_count": 0,
+                "lane_counts": {},
+                "decision_counts": {},
+                "top_focus_tickers": [],
+            },
+            "rollout_validation": {
+                "status": "governed_shadow_ready",
+                "primary_lane": "layer_c_formal_precision_tightening",
+                "summary": "先收 formal buy。",
+                "selected_hit_rate_15pct": 0.3077,
+                "shadow_hit_rate_15pct": 0.3333,
+                "execution_eligible_delta": -3,
+                "buy_order_delta": -3,
+            },
+        }
+    )
+    markdown = btst_reporting.render_btst_premarket_execution_card_markdown(payload)
+
+    assert payload["rollout_validation"]["status"] == "governed_shadow_ready"
+    assert payload["rollout_validation"]["execution_eligible_delta"] == -3
+    assert "## Governed Rollout 观察" in markdown
+    assert "layer_c_formal_precision_tightening" in markdown
 
 
 def test_generate_btst_premarket_execution_card_uses_execution_quality_specific_watch_rules(tmp_path):

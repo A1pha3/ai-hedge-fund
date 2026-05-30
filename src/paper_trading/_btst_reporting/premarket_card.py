@@ -134,6 +134,7 @@ def _build_premarket_action_context(brief: dict[str, Any]) -> dict[str, Any]:
         "catalyst_theme_frontier_priority": dict(
             brief.get("catalyst_theme_frontier_priority") or {}
         ),
+        "rollout_validation": dict(brief.get("rollout_validation") or {}),
         "catalyst_theme_shadow_watch": _build_catalyst_theme_shadow_watch_rows(
             list(brief.get("catalyst_theme_shadow_entries") or [])
         ),
@@ -317,6 +318,7 @@ def analyze_btst_premarket_execution_card(
     no_history_observer_actions = action_context["no_history_observer_actions"]
     risky_observer_actions = action_context["risky_observer_actions"]
     upstream_shadow_summary = action_context["upstream_shadow_summary"]
+    rollout_validation = action_context["rollout_validation"]
 
     return {
         "trade_date": brief.get("trade_date"),
@@ -342,6 +344,7 @@ def analyze_btst_premarket_execution_card(
         "risky_observer_actions": risky_observer_actions,
         "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,
         "catalyst_theme_shadow_watch": catalyst_theme_shadow_watch,
+        "rollout_validation": rollout_validation,
         "upstream_shadow_entries": list(brief.get("upstream_shadow_entries") or []),
         "upstream_shadow_summary": upstream_shadow_summary,
         "excluded_research_entries": list(brief.get("excluded_research_entries") or []),

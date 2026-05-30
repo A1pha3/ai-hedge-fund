@@ -10,6 +10,8 @@ import src.paper_trading._btst_reporting.entry_builders as entry_builders
 import src.paper_trading._btst_reporting.pool_classifiers as pool_classifiers
 import src.paper_trading._btst_reporting.historical_prior as historical_prior
 from src.paper_trading.btst_reporting import infer_next_trade_date
+from src.targets import use_short_trade_target_profile
+from src.targets.router import build_selection_targets
 
 
 def _write_catalyst_theme_frontier(report_dir, promoted_tickers=None):
@@ -34,6 +36,66 @@ def _write_catalyst_theme_frontier(report_dir, promoted_tickers=None):
         encoding="utf-8",
     )
     (report_dir / "catalyst_theme_frontier_latest.md").write_text("# Catalyst Theme Frontier\n", encoding="utf-8")
+
+
+def _make_watchlist_filter_diagnostics_runner_recall_entry(*, ticker: str, tagged: bool, monitor_priority: str) -> dict:
+    entry = {
+        "ticker": ticker,
+        "candidate_source": "watchlist_filter_diagnostics",
+        "candidate_reason_codes": ["watchlist_filter_diagnostics"],
+        "score_b": 0.40,
+        "score_c": 1.00,
+        "score_final": 0.10,
+        "quality_score": 0.55,
+        "historical_prior": {
+            "monitor_priority": monitor_priority,
+            "execution_quality_label": "close_continuation",
+        },
+        "strategy_signals": {
+            "trend": {
+                "direction": 1,
+                "confidence": 60.0,
+                "completeness": 1.0,
+                "sub_factors": {
+                    "momentum": {"direction": 1, "confidence": 55.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 15.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            },
+            "event_sentiment": {
+                "direction": 1,
+                "confidence": 100.0,
+                "completeness": 1.0,
+                "sub_factors": {
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 28.0, "completeness": 1.0},
+                },
+            },
+            "mean_reversion": {"direction": 0, "confidence": 0.0, "completeness": 1.0, "sub_factors": {}},
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.12, "investor": 0.02}},
+    }
+    if tagged:
+        entry["score_b"] = 1.0
+        entry["score_c"] = -1.0
+        entry["score_final"] = 0.22
+        entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
+        entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 12.0
+        entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["direction"] = 0
+        entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 0.0
+        entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 100.0
+        entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["direction"] = 0
+        entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["confidence"] = 0.0
+        entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["direction"] = 0
+        entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["confidence"] = 0.0
+        entry["strategy_signals"]["event_sentiment"]["confidence"] = 0.0
+        entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["direction"] = 1
+        entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["confidence"] = 55.0
+        entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["direction"] = 1
+        entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 98.0
+    return entry
 
 
 def test_build_watch_candidate_historical_prior_prefers_family_source_score_scope(monkeypatch):
@@ -1607,6 +1669,185 @@ def test_generate_btst_next_day_trade_brief_surfaces_payoff_first_runner_recall_
     assert "### 688183" in markdown
 
 
+def test_generate_btst_next_day_trade_brief_prefers_payoff_first_runner_recall_candidates(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-05-22"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"trade_date": "2026-05-22", "selection_target": "short_trade_only"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    runtime_entries = [
+        _make_watchlist_filter_diagnostics_runner_recall_entry(
+            ticker="300757",
+            tagged=False,
+            monitor_priority="high",
+        ),
+        _make_watchlist_filter_diagnostics_runner_recall_entry(
+            ticker="688183",
+            tagged=True,
+            monitor_priority="medium",
+        ),
+    ]
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        runtime_selection_targets, _ = build_selection_targets(
+            trade_date="20260522",
+            watchlist=[],
+            rejected_entries=runtime_entries,
+            target_mode="short_trade_only",
+        )
+
+    runtime_reason_codes = {
+        ticker: list(evaluation.candidate_reason_codes)
+        for ticker, evaluation in runtime_selection_targets.items()
+    }
+    assert runtime_reason_codes["300757"] == ["watchlist_filter_diagnostics"]
+    assert runtime_reason_codes["688183"][-1] == "payoff_first_runner_recall_candidate"
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260522",
+                "target_mode": "short_trade_only",
+                "selection_targets": {
+                    "300757": {
+                        "ticker": "300757",
+                        "candidate_reason_codes": runtime_reason_codes["300757"],
+                        "research": {
+                            "decision": "selected",
+                            "score_target": 0.462,
+                        },
+                        "short_trade": {
+                            "decision": "rejected",
+                            "score_target": 0.352,
+                            "confidence": 0.741,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_breakout_candidate"],
+                            "top_reasons": ["close_strength=0.88", "catalyst_freshness=0.79"],
+                            "rejection_reasons": ["score_short_below_threshold"],
+                            "gate_status": {"data": "pass", "structural": "pass", "score": "fail"},
+                            "historical_prior": {
+                                "monitor_priority": "high",
+                                "execution_quality_label": "close_continuation",
+                            },
+                            "metrics_payload": {
+                                "breakout_freshness": 0.612,
+                                "trend_acceleration": 0.521,
+                                "volume_expansion_quality": 0.344,
+                                "close_strength": 0.882,
+                                "catalyst_freshness": 0.791,
+                            },
+                            "explainability_payload": {
+                                "candidate_source": "watchlist_filter_diagnostics",
+                            },
+                        },
+                    },
+                    "688183": {
+                        "ticker": "688183",
+                        "candidate_reason_codes": runtime_reason_codes["688183"],
+                        "research": {
+                            "decision": "selected",
+                            "score_target": 0.401,
+                        },
+                        "short_trade": {
+                            "decision": "rejected",
+                            "score_target": 0.338,
+                            "confidence": 0.729,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_catalyst_support"],
+                            "top_reasons": ["close_strength=0.86", "catalyst_freshness=0.82"],
+                            "rejection_reasons": ["score_short_below_threshold"],
+                            "gate_status": {"data": "pass", "structural": "pass", "score": "fail"},
+                            "historical_prior": {
+                                "monitor_priority": "medium",
+                                "execution_quality_label": "close_continuation",
+                            },
+                            "metrics_payload": {
+                                "breakout_freshness": 0.588,
+                                "trend_acceleration": 0.341,
+                                "volume_expansion_quality": 0.302,
+                                "close_strength": 0.861,
+                                "catalyst_freshness": 0.824,
+                            },
+                            "explainability_payload": {
+                                "candidate_source": "watchlist_filter_diagnostics",
+                            },
+                        },
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(
+        report_dir, trade_date="2026-05-22", next_trade_date="2026-05-23"
+    )
+
+    assert [entry["ticker"] for entry in analysis["runner_recall_review_entries"]] == ["688183", "300757"]
+    assert analysis["runner_recall_review_entries"][0]["candidate_reason_codes"][-1] == "payoff_first_runner_recall_candidate"
+
+
+def test_generate_btst_next_day_trade_brief_surfaces_rollout_validation(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-03-27"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"trade_date": "2026-03-27", "selection_target": "short_trade_only"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260327",
+                "target_mode": "short_trade_only",
+                "selection_targets": {},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir.parent / "btst_layer_c_rollout_validation_20260506_20260522.json").write_text(
+        json.dumps(
+            {
+                "payoff_summary": {
+                    "selected_hit_rate_15pct": 0.3077,
+                    "shadow_hit_rate_15pct": 0.3333,
+                },
+                "replay_summary": {
+                    "selected_count_delta": -5,
+                    "execution_eligible_delta": -3,
+                    "buy_order_delta": -3,
+                },
+                "recommendation": {
+                    "status": "governed_shadow_ready",
+                    "primary_lane": "layer_c_formal_precision_tightening",
+                    "summary": "先收 formal buy。",
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(
+        report_dir, trade_date="2026-03-27", next_trade_date="2026-03-30"
+    )
+    markdown = render_btst_next_day_trade_brief_markdown(analysis)
+
+    assert analysis["rollout_validation"]["status"] == "governed_shadow_ready"
+    assert analysis["rollout_validation"]["execution_eligible_delta"] == -3
+    assert "## Governed Rollout 观察" in markdown
+    assert "layer_c_formal_precision_tightening" in markdown
+
+
 def test_generate_btst_next_day_trade_brief_includes_replay_only_upstream_shadow_observation_entries(tmp_path):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-04-01"
@@ -2550,6 +2791,69 @@ def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_exclude
     assert "Opportunity Expansion Pool" in markdown
     assert "Research Picks Excluded From Short-Trade Brief" in markdown
     assert "candidate_pool_lane: layer_a_liquidity_corridor" in markdown
+
+
+def test_render_btst_next_day_trade_brief_markdown_handles_missing_rollout_validation():
+    markdown = btst_reporting.render_btst_next_day_trade_brief_markdown(
+        {
+            "trade_date": "2026-03-27",
+            "next_trade_date": "2026-03-30",
+            "target_mode": "short_trade_only",
+            "selection_target": "short_trade_only",
+            "recommendation": "先看 selected，再看 near-miss 和机会池。",
+            "summary": {
+                "short_trade_selected_count": 0,
+                "short_trade_near_miss_count": 0,
+                "short_trade_blocked_count": 0,
+                "short_trade_rejected_count": 0,
+                "short_trade_formal_blocked_selected_count": 0,
+                "short_trade_formal_block_flag_counts": {},
+                "short_trade_formal_non_halt_blocked_selected_count": 0,
+                "short_trade_formal_non_halt_gate_counts": {},
+                "short_trade_formal_non_halt_prior_quality_counts": {},
+                "short_trade_opportunity_pool_count": 0,
+                "no_history_observer_count": 0,
+                "research_upside_radar_count": 0,
+                "runner_recall_review_count": 0,
+                "catalyst_theme_count": 0,
+                "catalyst_theme_shadow_count": 0,
+                "catalyst_theme_frontier_promoted_count": 0,
+                "upstream_shadow_candidate_count": 0,
+                "upstream_shadow_promotable_count": 0,
+            },
+            "btst_candidate_historical_context": {
+                "historical_report_count": 0,
+                "historical_btst_candidate_count": 0,
+                "historical_watch_candidate_count": 0,
+                "historical_selected_candidate_count": 0,
+                "historical_near_miss_candidate_count": 0,
+                "historical_opportunity_candidate_count": 0,
+                "historical_research_upside_radar_count": 0,
+                "historical_catalyst_theme_count": 0,
+            },
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "risky_observer_entries": [],
+            "no_history_observer_entries": [],
+            "weak_history_pruned_entries": [],
+            "research_upside_radar_entries": [],
+            "runner_recall_review_entries": [],
+            "catalyst_theme_entries": [],
+            "catalyst_theme_frontier_priority": {},
+            "catalyst_theme_shadow_entries": [],
+            "excluded_research_entries": [],
+            "upstream_shadow_summary": {},
+            "upstream_shadow_entries": [],
+            "rollout_validation": {"status": "unavailable"},
+        }
+    )
+
+    assert "## Governed Rollout 观察" in markdown
+    assert "- status: unavailable" in markdown
+    assert "- selected_hit_rate_15pct: n/a -> n/a" in markdown
+    assert "- selected_count_delta: n/a" in markdown
+    assert "None" not in markdown
 
 
 def test_generate_btst_next_day_trade_brief_prunes_balanced_confirmation_opportunity_with_zero_follow_through(tmp_path, monkeypatch):

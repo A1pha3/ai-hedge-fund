@@ -150,11 +150,22 @@ def _historical_prior_value_missing(value: Any) -> bool:
 
 
 def _historical_prior_has_payoff_details(prior: dict[str, Any]) -> bool:
-    return any(
-        not _historical_prior_value_missing(prior.get(key))
-        for key in _HISTORICAL_PRIOR_PAYOFF_KEYS
-        if key != "next_close_positive_rate"
-    )
+    for key in _HISTORICAL_PRIOR_PAYOFF_KEYS:
+        if key == "next_close_positive_rate":
+            continue
+        value = prior.get(key)
+        if _historical_prior_value_missing(value):
+            continue
+        if key in {"next_close_positive_count", "next_close_negative_count"}:
+            if _historical_prior_int(prior, key) > 0:
+                return True
+            continue
+        if key == "win_rate_payoff_divergence":
+            if bool(value):
+                return True
+            continue
+        return True
+    return False
 
 
 def _backfill_historical_prior_payoff_fields(

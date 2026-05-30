@@ -55,6 +55,46 @@ def _build_default_selected_threshold_lift_result(*, enabled: bool, source: str)
         "candidate_source": source,
         "gate_hits": {},
         "select_threshold_lift": 0.0,
+        "reason_code": None,
+    }
+
+
+def _resolve_selected_only_shrink_guard(
+    *,
+    profile: Any,
+    source: str,
+    eligible_source: str,
+    reason_code: str,
+    select_threshold_lift_attr: str,
+    catalyst_freshness_max_attr: str,
+    trend_acceleration_max_attr: str,
+    close_strength_max_attr: str,
+    catalyst_freshness: float,
+    trend_acceleration: float,
+    close_strength: float,
+    clamp_unit_interval_fn: Callable[[float], float],
+) -> dict[str, Any]:
+    enabled = bool(getattr(profile, f"{eligible_source}_selected_only_shrink_enabled", False))
+    default_result = _build_default_selected_threshold_lift_result(enabled=enabled, source=source)
+    if not enabled or source != eligible_source:
+        return default_result
+
+    gate_hits = {
+        "candidate_source": source == eligible_source,
+        "catalyst_freshness": catalyst_freshness <= clamp_unit_interval_fn(float(getattr(profile, catalyst_freshness_max_attr, 0.0) or 0.0)),
+        "trend_acceleration": trend_acceleration <= clamp_unit_interval_fn(float(getattr(profile, trend_acceleration_max_attr, 0.0) or 0.0)),
+        "close_strength": close_strength <= clamp_unit_interval_fn(float(getattr(profile, close_strength_max_attr, 0.0) or 0.0)),
+    }
+    eligible = all(gate_hits.values())
+    select_threshold_lift = clamp_unit_interval_fn(float(getattr(profile, select_threshold_lift_attr, 0.0) or 0.0)) if eligible else 0.0
+    return {
+        "enabled": True,
+        "eligible": eligible,
+        "applied": eligible and select_threshold_lift > 0.0,
+        "candidate_source": source,
+        "gate_hits": gate_hits,
+        "select_threshold_lift": select_threshold_lift,
+        "reason_code": reason_code if eligible else None,
     }
 
 
@@ -227,27 +267,70 @@ def resolve_watchlist_filter_diagnostics_selected_only_shrink_impl(
     clamp_unit_interval_fn: Callable[[float], float],
 ) -> dict[str, Any]:
     source = str(input_data.replay_context.get("source") or "").strip()
-    enabled = bool(profile.watchlist_filter_diagnostics_selected_only_shrink_enabled)
-    default_result = _build_default_selected_threshold_lift_result(enabled=enabled, source=source)
-    if not enabled or source != "watchlist_filter_diagnostics":
-        return default_result
+    return _resolve_selected_only_shrink_guard(
+        profile=profile,
+        source=source,
+        eligible_source="watchlist_filter_diagnostics",
+        reason_code="watchlist_filter_diagnostics_selected_only_shrink",
+        select_threshold_lift_attr="watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift",
+        catalyst_freshness_max_attr="watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max",
+        trend_acceleration_max_attr="watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max",
+        close_strength_max_attr="watchlist_filter_diagnostics_selected_only_shrink_close_strength_max",
+        catalyst_freshness=catalyst_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        clamp_unit_interval_fn=clamp_unit_interval_fn,
+    )
 
-    gate_hits = {
-        "candidate_source": source == "watchlist_filter_diagnostics",
-        "catalyst_freshness": catalyst_freshness <= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max or 0.0)),
-        "trend_acceleration": trend_acceleration <= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max or 0.0)),
-        "close_strength": close_strength <= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_selected_only_shrink_close_strength_max or 0.0)),
-    }
-    eligible = all(gate_hits.values())
-    select_threshold_lift = clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift or 0.0)) if eligible else 0.0
-    return {
-        "enabled": True,
-        "eligible": eligible,
-        "applied": select_threshold_lift > 0.0,
-        "candidate_source": source,
-        "gate_hits": gate_hits,
-        "select_threshold_lift": select_threshold_lift,
-    }
+
+def resolve_layer_c_watchlist_selected_only_shrink_impl(
+    *,
+    source: str,
+    catalyst_freshness: float,
+    close_strength: float,
+    trend_acceleration: float,
+    profile: Any,
+    clamp_unit_interval_fn: Callable[[float], float],
+) -> dict[str, Any]:
+    return _resolve_selected_only_shrink_guard(
+        profile=profile,
+        source=source,
+        eligible_source="layer_c_watchlist",
+        reason_code="layer_c_watchlist_selected_only_shrink",
+        select_threshold_lift_attr="layer_c_watchlist_selected_only_shrink_select_threshold_lift",
+        catalyst_freshness_max_attr="layer_c_watchlist_selected_only_shrink_catalyst_freshness_max",
+        trend_acceleration_max_attr="layer_c_watchlist_selected_only_shrink_trend_acceleration_max",
+        close_strength_max_attr="layer_c_watchlist_selected_only_shrink_close_strength_max",
+        catalyst_freshness=catalyst_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        clamp_unit_interval_fn=clamp_unit_interval_fn,
+    )
+
+
+def resolve_short_trade_boundary_selected_only_shrink_impl(
+    *,
+    profile: Any,
+    source: str,
+    close_strength: float,
+    catalyst_freshness: float,
+    trend_acceleration: float,
+    clamp_unit_interval_fn: Callable[[float], float],
+) -> dict[str, Any]:
+    return _resolve_selected_only_shrink_guard(
+        profile=profile,
+        source=source,
+        eligible_source="short_trade_boundary",
+        reason_code="short_trade_boundary_selected_only_shrink",
+        select_threshold_lift_attr="short_trade_boundary_selected_only_shrink_select_threshold_lift",
+        catalyst_freshness_max_attr="short_trade_boundary_selected_only_shrink_catalyst_freshness_max",
+        trend_acceleration_max_attr="short_trade_boundary_selected_only_shrink_trend_acceleration_max",
+        close_strength_max_attr="short_trade_boundary_selected_only_shrink_close_strength_max",
+        catalyst_freshness=catalyst_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        clamp_unit_interval_fn=clamp_unit_interval_fn,
+    )
 
 
 def resolve_t_plus_2_continuation_candidate_impl(

@@ -108,6 +108,24 @@ def test_build_short_trade_target_snapshot_payload_surfaces_continuation_and_rev
             "watchlist_filter_diagnostics_flat_trend_penalty": {},
             "watchlist_filter_diagnostics_flat_trend_penalty_effective": 0.0,
             "watchlist_filter_diagnostics_selected_only_shrink_guard": {},
+            "layer_c_watchlist_selected_only_shrink_guard": {
+                "enabled": True,
+                "eligible": True,
+                "applied": True,
+                "candidate_source": "layer_c_watchlist",
+                "gate_hits": {"candidate_source": True},
+                "select_threshold_lift": 0.04,
+                "reason_code": "layer_c_watchlist_selected_only_shrink",
+            },
+            "short_trade_boundary_selected_only_shrink_guard": {
+                "enabled": True,
+                "eligible": True,
+                "applied": True,
+                "candidate_source": "short_trade_boundary",
+                "gate_hits": {"candidate_source": True},
+                "select_threshold_lift": 0.03,
+                "reason_code": "short_trade_boundary_selected_only_shrink",
+            },
         },
         labels_and_gates={
             "positive_tags": [],
@@ -119,3 +137,7 @@ def test_build_short_trade_target_snapshot_payload_surfaces_continuation_and_rev
 
     assert payload["trend_continuation"] == 0.88
     assert payload["short_term_reversal"] == 0.12
+    assert payload["layer_c_watchlist_selected_only_shrink_guard"]["reason_code"] == "layer_c_watchlist_selected_only_shrink"
+    assert payload["short_trade_boundary_selected_only_shrink_guard"]["select_threshold_lift"] == 0.03
+    assert payload["layer_c_watchlist_selected_only_shrink_guard"]["applied"] is True
+    assert payload["short_trade_boundary_selected_only_shrink_guard"]["reason_code"] == "short_trade_boundary_selected_only_shrink"

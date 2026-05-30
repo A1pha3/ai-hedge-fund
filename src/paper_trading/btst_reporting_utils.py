@@ -103,6 +103,66 @@ def _load_selection_replay_input(snapshot_path: str | Path) -> dict[str, Any]:
     return _load_json(replay_input_path)
 
 
+def _resolve_btst_rollout_validation_json_path(
+    *,
+    report_dir: str | Path,
+    explicit_path: str | Path | None = None,
+) -> Path | None:
+    if explicit_path:
+        resolved = Path(explicit_path).expanduser().resolve()
+        return resolved if resolved.exists() else None
+
+    reports_root = Path(report_dir).expanduser().resolve().parent
+    candidates = sorted(
+        reports_root.glob("btst_layer_c_rollout_validation_*.json"),
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def _load_btst_rollout_validation_context(
+    *,
+    report_dir: str | Path,
+    explicit_path: str | Path | None = None,
+) -> dict[str, Any]:
+    json_path = _resolve_btst_rollout_validation_json_path(
+        report_dir=report_dir,
+        explicit_path=explicit_path,
+    )
+    if json_path is None:
+        return {
+            "status": "unavailable",
+            "primary_lane": None,
+            "summary": "rollout artifact missing",
+            "selected_hit_rate_15pct": None,
+            "shadow_hit_rate_15pct": None,
+            "selected_count_delta": None,
+            "execution_eligible_delta": None,
+            "buy_order_delta": None,
+            "source_json_path": None,
+            "source_markdown_path": None,
+        }
+
+    payload = _load_json(json_path)
+    recommendation = dict(payload.get("recommendation") or {})
+    payoff_summary = dict(payload.get("payoff_summary") or {})
+    replay_summary = dict(payload.get("replay_summary") or {})
+    markdown_path = json_path.with_suffix(".md")
+    return {
+        "status": recommendation.get("status") or "unavailable",
+        "primary_lane": recommendation.get("primary_lane"),
+        "summary": recommendation.get("summary") or "invalid rollout artifact",
+        "selected_hit_rate_15pct": payoff_summary.get("selected_hit_rate_15pct"),
+        "shadow_hit_rate_15pct": payoff_summary.get("shadow_hit_rate_15pct"),
+        "selected_count_delta": replay_summary.get("selected_count_delta"),
+        "execution_eligible_delta": replay_summary.get("execution_eligible_delta"),
+        "buy_order_delta": replay_summary.get("buy_order_delta"),
+        "source_json_path": json_path.as_posix(),
+        "source_markdown_path": markdown_path.as_posix() if markdown_path.exists() else None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------
@@ -189,6 +249,16 @@ def _format_float(value: Any, digits: int = 4) -> str:
     if isinstance(value, (int, float)):
         return f"{value:.{digits}f}"
     return "n/a"
+
+
+def _format_rollout_value(value: Any, digits: int | None = None) -> str:
+    if value in (None, ""):
+        return "n/a"
+    if isinstance(value, (int, float)):
+        if digits is None:
+            return str(int(value)) if float(value).is_integer() else str(value)
+        return f"{float(value):.{digits}f}"
+    return str(value)
 
 
 HISTORICAL_PAYOFF_FIELD_KEYS = (

@@ -114,6 +114,15 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
                 }
             ],
             "opportunity_actions": [],
+            "rollout_validation": {
+                "status": "governed_shadow_ready",
+                "primary_lane": "layer_c_formal_precision_tightening",
+                "summary": "先收 formal buy。",
+                "selected_hit_rate_15pct": 0.3077,
+                "shadow_hit_rate_15pct": 0.3333,
+                "execution_eligible_delta": -3,
+                "buy_order_delta": -3,
+            },
         },
     )
     _write_json(
@@ -246,6 +255,9 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert strategy_thresholds_path.resolve().as_posix() in llm_doc
     assert "exact 连续门槛：`4`" in llm_doc
     assert "## Early Runner 章节" in llm_doc
+    assert "## Governed Rollout 观察" in llm_doc
+    assert "governed_shadow_ready" in llm_doc
+    assert "layer_c_formal_precision_tightening" in llm_doc
     assert "## 交集票高亮" in llm_doc
     assert "交集优先复审" in llm_doc
     assert "### 补充复审层" in llm_doc
@@ -262,6 +274,8 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "### 300054 鼎龙股份" in checklist_doc
     assert "| 开盘强且延续确认 | 等待盘中延续确认后再执行，不做开盘无确认追价。 |" in checklist_doc
     assert "| 触发失效条件 | 若开盘后无法形成延续确认，或快速冲高回落，则取消正式执行。 |" in checklist_doc
+    assert "## Governed Rollout 观察" in checklist_doc
+    assert "execution_eligible_delta" in checklist_doc
     assert "## 交集优先复审" in checklist_doc
     assert "## 回补机会层" in checklist_doc
     assert "交集优先：`300054 鼎龙股份`" in checklist_doc
@@ -344,6 +358,62 @@ def test_generate_btst_doc_bundle_writes_review_ledger_when_requested(tmp_path: 
     assert payload["rows"][0]["ticker"] == "300054"
     assert payload["rows"][0]["evidence_grade"] == "B"
     assert payload["rows"][0]["realized_next_close"] is None
+
+
+def test_generate_btst_doc_bundle_surfaces_unavailable_rollout_fallback(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260526_20260526_live_m2_7_short_trade_only_20260527_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-26",
+            "selection_target": "short_trade_only",
+            "btst_followup": {"brief_json": brief_path.as_posix()},
+        },
+    )
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-26",
+            "next_trade_date": "2026-05-27",
+            "selection_target": "short_trade_only",
+            "selected_actions": [],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260526.json",
+        {
+            "trade_date": "20260526",
+            "next_date": "20260527",
+            "pool_size": 10,
+            "selected_count": 0,
+            "near_miss_count": 0,
+            "high_confidence": [],
+        },
+    )
+    _write_json(reports_root / "btst_early_runner_v1_latest.json", {"daily_boards": []})
+
+    output_dir = tmp_path / "outputs"
+    generate_btst_doc_bundle(
+        "20260526",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+    )
+
+    llm_doc = (output_dir / "BTST-LLM-20260526.md").read_text(encoding="utf-8")
+    checklist_doc = (output_dir / "BTST-20260526-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
+
+    assert "## Governed Rollout 观察" in llm_doc
+    assert "status: `unavailable`" in llm_doc
+    assert "selected_hit_rate_15pct: `n/a` -> `n/a`" in llm_doc
+    assert "selected_count_delta: `n/a`" in llm_doc
+    assert "## Governed Rollout 观察" in checklist_doc
+    assert "status: `unavailable`" in checklist_doc
+    assert "selected_count_delta: `n/a`" in checklist_doc
 
 
 def test_generate_btst_doc_bundle_supports_named_threshold_profiles(tmp_path: Path) -> None:

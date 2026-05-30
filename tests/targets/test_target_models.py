@@ -30,6 +30,7 @@ from src.targets.short_trade_target_prior_helpers import (
     calibrate_short_trade_historical_prior,
     score_short_trade_historical_continuation_prior,
 )
+from src.targets.short_trade_target_watchlist_helpers import resolve_short_trade_boundary_selected_only_shrink_impl
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
@@ -1438,6 +1439,94 @@ def test_watchlist_filter_diagnostics_selected_only_shrink_profile_contract() ->
 
     assert profile.watchlist_filter_diagnostics_selected_only_shrink_enabled is True
     assert profile.watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift == pytest.approx(0.05)
+
+
+def test_short_trade_boundary_selected_only_shrink_lifts_selected_threshold() -> None:
+    profile = short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES["runner_payoff_realign_shadow"]
+
+    guard = resolve_short_trade_boundary_selected_only_shrink_impl(
+        profile=profile,
+        source="short_trade_boundary",
+        close_strength=0.61,
+        catalyst_freshness=0.18,
+        trend_acceleration=0.41,
+        clamp_unit_interval_fn=lambda value: max(0.0, min(1.0, value)),
+    )
+
+    assert guard["eligible"] is True
+    assert guard["select_threshold_lift"] == 0.03
+    assert guard["reason_code"] == "short_trade_boundary_selected_only_shrink"
+
+
+def test_layer_c_watchlist_selected_only_shrink_applies_to_effective_select_threshold() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["candidate_source"] = "layer_c_watchlist"
+
+    with _register_short_trade_target_profile_proxy(
+        profile_name="runner_payoff_realign_shadow_without_layer_c_shrink",
+        base_profile_name="runner_payoff_realign_shadow",
+        layer_c_watchlist_selected_only_shrink_enabled=False,
+    ):
+        with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow_without_layer_c_shrink"):
+            baseline_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        shrink_enabled_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    assert baseline_result.decision == "selected"
+    assert baseline_result.effective_select_threshold < baseline_result.score_target < baseline_result.effective_select_threshold + 0.04
+    assert shrink_enabled_result.decision == "near_miss"
+    assert shrink_enabled_result.effective_select_threshold == pytest.approx(baseline_result.effective_select_threshold + 0.04)
+    assert shrink_enabled_result.effective_near_miss_threshold == pytest.approx(baseline_result.effective_near_miss_threshold)
+
+
+def test_short_trade_boundary_selected_only_shrink_applies_to_effective_select_threshold() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["candidate_source"] = "short_trade_boundary"
+
+    with _register_short_trade_target_profile_proxy(
+        profile_name="runner_payoff_realign_shadow_without_boundary_shrink",
+        base_profile_name="runner_payoff_realign_shadow",
+        short_trade_boundary_selected_only_shrink_enabled=False,
+    ):
+        with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow_without_boundary_shrink"):
+            baseline_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        shrink_enabled_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    assert baseline_result.decision == "selected"
+    assert baseline_result.effective_select_threshold < baseline_result.score_target < baseline_result.effective_select_threshold + 0.03
+    assert shrink_enabled_result.decision == "near_miss"
+    assert shrink_enabled_result.effective_select_threshold == pytest.approx(baseline_result.effective_select_threshold + 0.03)
+    assert shrink_enabled_result.effective_near_miss_threshold == pytest.approx(baseline_result.effective_near_miss_threshold)
+
+
+def test_offline_runner_payoff_profile_exposes_source_shrink_and_recall_fields() -> None:
+    profile = short_trade_profiles_module.SHORT_TRADE_TARGET_PROFILES["runner_payoff_realign_shadow"]
+
+    # layer_c watchlist selected-only shrink knobs
+    assert profile.layer_c_watchlist_selected_only_shrink_enabled is True
+    assert profile.layer_c_watchlist_selected_only_shrink_select_threshold_lift == pytest.approx(0.04)
+    assert profile.layer_c_watchlist_selected_only_shrink_catalyst_freshness_max == pytest.approx(0.18)
+    assert profile.layer_c_watchlist_selected_only_shrink_trend_acceleration_max == pytest.approx(0.48)
+    assert profile.layer_c_watchlist_selected_only_shrink_close_strength_max == pytest.approx(0.62)
+
+    # short_trade_boundary selected-only shrink knobs
+    assert profile.short_trade_boundary_selected_only_shrink_enabled is True
+    assert profile.short_trade_boundary_selected_only_shrink_select_threshold_lift == pytest.approx(0.03)
+    assert profile.short_trade_boundary_selected_only_shrink_catalyst_freshness_max == pytest.approx(0.22)
+    assert profile.short_trade_boundary_selected_only_shrink_trend_acceleration_max == pytest.approx(0.52)
+    assert profile.short_trade_boundary_selected_only_shrink_close_strength_max == pytest.approx(0.66)
+
+    # payoff first-runner recall knobs
+    assert profile.payoff_first_runner_recall_enabled is True
+    assert profile.payoff_first_runner_recall_close_strength_min == 0.78
+    assert profile.payoff_first_runner_recall_catalyst_freshness_min == 0.70
+    assert profile.payoff_first_runner_recall_trend_acceleration_max == pytest.approx(0.45)
+    assert profile.payoff_first_runner_recall_score_target_max == pytest.approx(0.30)
+
+    # existing watchlist diagnostics knobs
     assert profile.watchlist_filter_diagnostics_selected_only_shrink_catalyst_freshness_max == pytest.approx(0.10)
     assert profile.watchlist_filter_diagnostics_selected_only_shrink_trend_acceleration_max == pytest.approx(0.40)
     assert profile.watchlist_filter_diagnostics_selected_only_shrink_close_strength_max == pytest.approx(0.58)
@@ -1500,6 +1589,35 @@ def test_selected_only_shrink_watchlist_filter_diagnostics_payload_reports_guard
     assert result.metrics_payload["watchlist_filter_diagnostics_selected_only_shrink_guard"]["applied"] is True
     assert result.metrics_payload["watchlist_filter_diagnostics_selected_only_shrink_guard"]["select_threshold_lift"] == pytest.approx(0.05)
     assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in result.negative_tags
+    assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in result.top_reasons
+
+
+def test_layer_c_watchlist_selected_only_shrink_reason_surfaces_in_explainability() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["candidate_source"] = "layer_c_watchlist"
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    assert "layer_c_watchlist_selected_only_shrink_applied" in result.negative_tags
+    assert "layer_c_watchlist_selected_only_shrink_applied" in result.top_reasons
+    assert result.metrics_payload["layer_c_watchlist_selected_only_shrink_guard"]["applied"] is True
+    assert result.metrics_payload["layer_c_watchlist_selected_only_shrink_guard"]["reason_code"] == "layer_c_watchlist_selected_only_shrink"
+    assert result.explainability_payload["layer_c_watchlist_selected_only_shrink_guard"]["reason_code"] == "layer_c_watchlist_selected_only_shrink"
+
+
+def test_short_trade_boundary_selected_only_shrink_reason_surfaces_in_explainability() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["candidate_source"] = "short_trade_boundary"
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    assert "short_trade_boundary_selected_only_shrink_applied" in result.negative_tags
+    assert "short_trade_boundary_selected_only_shrink_applied" in result.top_reasons
+    assert result.metrics_payload["short_trade_boundary_selected_only_shrink_guard"]["applied"] is True
+    assert result.metrics_payload["short_trade_boundary_selected_only_shrink_guard"]["reason_code"] == "short_trade_boundary_selected_only_shrink"
+    assert result.explainability_payload["short_trade_boundary_selected_only_shrink_guard"]["reason_code"] == "short_trade_boundary_selected_only_shrink"
 
 
 def test_selected_only_shrink_snapshot_negative_tags_report_guard_application() -> None:
@@ -1522,6 +1640,8 @@ def test_selected_only_shrink_snapshot_negative_tags_report_guard_application() 
 
     assert snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]["applied"] is True
     assert "watchlist_filter_diagnostics_selected_only_shrink_applied" in snapshot["negative_tags"]
+    assert snapshot["layer_c_watchlist_selected_only_shrink_guard"]["applied"] is False
+    assert snapshot["short_trade_boundary_selected_only_shrink_guard"]["applied"] is False
 
 
 def test_selected_only_shrink_snapshot_tag_does_not_displace_prior_verdict_negative_tags() -> None:
@@ -1563,6 +1683,74 @@ def test_selected_only_shrink_snapshot_tag_does_not_displace_prior_verdict_negat
         "breakout_trap_penalty_applied",
         "market_state_risk_off",
     ]
+
+
+def test_watchlist_filter_diagnostics_payoff_first_runner_recall_candidate_tagged_in_snapshot_payload() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["score_b"] = 1.0
+    entry["score_c"] = -1.0
+    entry["score_final"] = 0.22
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 12.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["direction"] = 0
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 0.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 100.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["direction"] = 0
+    entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["confidence"] = 0.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["direction"] = 0
+    entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["direction"] = 1
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["confidence"] = 55.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["direction"] = 1
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 98.0
+
+    snapshot = build_short_trade_target_snapshot_from_entry(
+        trade_date="20260328",
+        entry=entry,
+        profile_name="runner_payoff_realign_shadow",
+    )
+
+    assert snapshot["payoff_first_runner_recall_candidate"] is True
+    assert snapshot["candidate_reason_codes"][-1] == "payoff_first_runner_recall_candidate"
+
+
+def test_watchlist_filter_diagnostics_payoff_first_runner_recall_candidate_threaded_to_explainability_and_selection_targets() -> None:
+    entry = deepcopy(_make_watchlist_filter_diagnostics_selected_only_shrink_entry())
+    entry["score_b"] = 1.0
+    entry["score_c"] = -1.0
+    entry["score_final"] = 0.22
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 12.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["direction"] = 0
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 0.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 100.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["direction"] = 0
+    entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["confidence"] = 0.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["direction"] = 0
+    entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["direction"] = 1
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["confidence"] = 55.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["direction"] = 1
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 98.0
+
+    with use_short_trade_target_profile(profile_name="runner_payoff_realign_shadow"):
+        result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+        selection_targets, _ = build_selection_targets(
+            trade_date="20260328",
+            watchlist=[],
+            rejected_entries=[entry],
+            target_mode="short_trade_only",
+        )
+
+    assert result.explainability_payload["payoff_first_runner_recall_candidate"] is True
+    assert result.explainability_payload["candidate_reason_codes"][-1] == "payoff_first_runner_recall_candidate"
+    assert selection_targets[entry["ticker"]].candidate_reason_codes[-1] == "payoff_first_runner_recall_candidate"
 
 
 def test_t_plus_2_continuation_candidate_tags_mid_alignment_low_catalyst_watchlist_case() -> None:

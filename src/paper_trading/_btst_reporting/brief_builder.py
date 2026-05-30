@@ -8,6 +8,7 @@ from src.paper_trading.btst_reporting_utils import (
     OPPORTUNITY_POOL_MIN_SCORE_TARGET,
     _as_float,
     _load_json,
+    _load_btst_rollout_validation_context,
     _monitor_priority_rank,
     _load_selection_replay_input,
     _normalize_trade_date,
@@ -243,6 +244,7 @@ def analyze_btst_next_day_trade_brief(
         runner_recall_review_entries=runner_recall_review_entries,
         brief_frontier_context=brief_frontier_context,
     )
+    rollout_validation = _load_btst_rollout_validation_context(report_dir=report_dir)
 
     return _build_btst_next_day_trade_brief_payload(
         report_dir=report_dir,
@@ -267,6 +269,7 @@ def analyze_btst_next_day_trade_brief(
         excluded_research_entries=excluded_research_entries,
         recommendation_lines=recommendation_lines,
         brief_frontier_context=brief_frontier_context,
+        rollout_validation=rollout_validation,
     )
 
 
@@ -462,6 +465,7 @@ def _build_btst_next_day_trade_brief_payload(
     excluded_research_entries: list[dict[str, Any]],
     recommendation_lines: list[str],
     brief_frontier_context: dict[str, Any],
+    rollout_validation: dict[str, Any],
 ) -> dict[str, Any]:
     selected_entries = _filter_execution_ready_entries(selected_entries)
     near_miss_entries = _filter_execution_ready_entries(near_miss_entries)
@@ -495,6 +499,7 @@ def _build_btst_next_day_trade_brief_payload(
             recommendation_lines=recommendation_lines,
             brief_frontier_context=brief_frontier_context,
         ),
+        "rollout_validation": dict(rollout_validation or {}),
     }
 
 
@@ -547,6 +552,7 @@ def _build_legacy_btst_next_day_trade_brief_payload(
         excluded_research_entries=[],
         recommendation_lines=[],
         brief_frontier_context=brief_frontier_context,
+        rollout_validation=_load_btst_rollout_validation_context(report_dir=report_dir),
     )
 
 
@@ -1087,10 +1093,10 @@ def _build_runner_recall_review_entries(
             if not ticker:
                 continue
             existing = candidate_entries_by_ticker.get(ticker)
-            if existing is None or _runner_recall_review_sort_key(candidate) < _runner_recall_review_sort_key(existing):
+            if existing is None or _runner_recall_review_priority_key(candidate) < _runner_recall_review_priority_key(existing):
                 candidate_entries_by_ticker[ticker] = candidate
     runner_recall_review_entries = list(candidate_entries_by_ticker.values())
-    runner_recall_review_entries.sort(key=_runner_recall_review_sort_key)
+    runner_recall_review_entries.sort(key=_runner_recall_review_priority_key)
     return runner_recall_review_entries[:RUNNER_RECALL_REVIEW_MAX_ENTRIES]
 
 
@@ -1132,6 +1138,14 @@ def _runner_recall_review_sort_key(entry: dict[str, Any]) -> tuple[Any, ...]:
         -_as_float(metrics.get("catalyst_freshness")),
         -_as_float(metrics.get("close_strength")),
         str(entry.get("ticker") or ""),
+    )
+
+
+def _runner_recall_review_priority_key(entry: dict[str, Any]) -> tuple[Any, ...]:
+    candidate_reason_codes = list(entry.get("candidate_reason_codes") or [])
+    return (
+        0 if "payoff_first_runner_recall_candidate" in candidate_reason_codes else 1,
+        *_runner_recall_review_sort_key(entry),
     )
 
 
