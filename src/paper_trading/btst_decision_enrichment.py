@@ -4,6 +4,22 @@ import math
 from typing import Any
 
 
+_REPORT_MODE_FORMAL_EXECUTION = "formal_execution"
+_REPORT_MODE_CONFIRMATION_REVIEW_ONLY = "confirmation_review_only"
+_VALID_REPORT_MODES = {
+    _REPORT_MODE_FORMAL_EXECUTION,
+    _REPORT_MODE_CONFIRMATION_REVIEW_ONLY,
+}
+_VETO_OWNER_MARKET_GATE = "market_gate"
+_VETO_OWNER_MODEL_EVIDENCE = "model_evidence"
+_VETO_OWNER_MANUAL_REVIEW = "manual_review"
+_VALID_VETO_OWNERS = {
+    _VETO_OWNER_MARKET_GATE,
+    _VETO_OWNER_MODEL_EVIDENCE,
+    _VETO_OWNER_MANUAL_REVIEW,
+}
+
+
 def _is_missing(value: Any) -> bool:
     return value in (None, "", [], {}, ())
 
@@ -24,6 +40,50 @@ def _to_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _string_list(value: Any) -> list[str]:
+    if _is_missing(value):
+        return []
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        values = list(value)
+    else:
+        values = [value]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        text = str(item or "").strip()
+        if text and text not in seen:
+            normalized.append(text)
+            seen.add(text)
+    return normalized
+
+
+def _merge_string_lists(*values: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in _string_list(value):
+            if item not in seen:
+                merged.append(item)
+                seen.add(item)
+    return merged
+
+
+def _normalized_report_mode(report_mode: Any) -> str:
+    candidate = str(report_mode or "").strip()
+    if candidate in _VALID_REPORT_MODES:
+        return candidate
+    return _REPORT_MODE_CONFIRMATION_REVIEW_ONLY
+
+
+def _explicit_report_mode(report_mode: Any) -> str | None:
+    candidate = str(report_mode or "").strip()
+    if candidate in _VALID_REPORT_MODES:
+        return candidate
+    return None
 
 
 def normalize_historical_metric(row: dict[str, Any], key: str) -> Any:
@@ -269,6 +329,136 @@ def _action_matrix(preferred_entry_mode: str) -> list[dict[str, str]]:
     ]
 
 
+def build_report_mode(control_tower: dict[str, Any]) -> str:
+    effective_trade_bias = str(control_tower.get("effective_trade_bias") or "").strip()
+    if effective_trade_bias == "trade_allowed":
+        return _REPORT_MODE_FORMAL_EXECUTION
+    existing_report_mode = str(control_tower.get("report_mode") or "").strip()
+    if not effective_trade_bias and existing_report_mode in _VALID_REPORT_MODES:
+        return existing_report_mode
+    return _REPORT_MODE_CONFIRMATION_REVIEW_ONLY
+
+
+def build_veto_owner(control_tower: dict[str, Any]) -> str:
+    existing_veto_owner = str(control_tower.get("veto_owner") or "").strip()
+    if existing_veto_owner in _VALID_VETO_OWNERS:
+        return existing_veto_owner
+    reason_codes = _string_list(control_tower.get("reason_codes"))
+    if any(
+        "market_gate" in code or "regime_gate" in code or "buy_orders_cleared" in code
+        for code in reason_codes
+    ):
+        return _VETO_OWNER_MARKET_GATE
+    if any("selection_snapshot_missing" in code or "manual_review" in code for code in reason_codes):
+        return _VETO_OWNER_MANUAL_REVIEW
+    return _VETO_OWNER_MODEL_EVIDENCE
+
+
+def _resolve_execution_context(
+    *,
+    report_mode: Any = None,
+    control_tower: dict[str, Any] | None = None,
+    veto_owner: str | None = None,
+) -> tuple[str | None, str | None]:
+    resolved_report_mode = _explicit_report_mode(report_mode)
+    if resolved_report_mode is None and control_tower is not None:
+        resolved_report_mode = build_report_mode(control_tower)
+    elif resolved_report_mode is None and not _is_missing(report_mode):
+        resolved_report_mode = _normalized_report_mode(report_mode)
+
+    resolved_veto_owner = str(veto_owner or "").strip() or None
+    if not resolved_veto_owner and control_tower is not None:
+        resolved_veto_owner = build_veto_owner(control_tower)
+
+    return resolved_report_mode, resolved_veto_owner
+
+
+def build_execution_semantics(
+    *,
+    report_mode: str,
+    role: str,
+    trade_bias: str,
+    control_tower: dict[str, Any] | None = None,
+    state_reason_codes: Any = None,
+) -> dict[str, Any]:
+    resolved_report_mode = _normalized_report_mode(report_mode)
+    normalized_role = str(role or "").strip()
+    normalized_trade_bias = str(trade_bias or "watch_only").strip() or "watch_only"
+    merged_reason_codes = _merge_string_lists(
+        state_reason_codes,
+        (control_tower or {}).get("reason_codes"),
+    )
+
+    if resolved_report_mode == _REPORT_MODE_CONFIRMATION_REVIEW_ONLY:
+        if normalized_trade_bias == "skip":
+            execution_state = "blocked"
+            allowed_sections = ["blocked_only"]
+        elif (
+            normalized_role == "formal_selected"
+            and normalized_trade_bias in {"trade_allowed", "confirmation_only"}
+        ):
+            execution_state = "confirmable"
+            allowed_sections = ["review_queue"]
+        else:
+            execution_state = "watching"
+            allowed_sections = ["watch_queue"]
+        max_allowed_state_today = "confirmable"
+        formal_buy_allowed = False
+    else:
+        if normalized_trade_bias == "trade_allowed" and normalized_role == "formal_selected":
+            execution_state = "orderable"
+            allowed_sections = ["formal_queue"]
+            formal_buy_allowed = True
+        elif normalized_trade_bias == "confirmation_only" and normalized_role == "formal_selected":
+            execution_state = "confirmable"
+            allowed_sections = ["formal_queue"]
+            formal_buy_allowed = False
+        elif normalized_trade_bias == "skip":
+            execution_state = "blocked"
+            allowed_sections = ["blocked_only"]
+            formal_buy_allowed = False
+        else:
+            execution_state = "watching"
+            allowed_sections = ["watch_queue"]
+            formal_buy_allowed = False
+        max_allowed_state_today = "orderable"
+
+    return {
+        "report_mode": resolved_report_mode,
+        "execution_state": execution_state,
+        "max_allowed_state_today": max_allowed_state_today,
+        "formal_buy_allowed": formal_buy_allowed,
+        "allowed_sections": allowed_sections,
+        "state_reason_codes": merged_reason_codes,
+    }
+
+
+def attach_execution_semantics(
+    row: dict[str, Any],
+    *,
+    report_mode: str,
+    control_tower: dict[str, Any] | None = None,
+    veto_owner: str | None = None,
+) -> dict[str, Any]:
+    resolved_report_mode, resolved_veto_owner = _resolve_execution_context(
+        report_mode=report_mode,
+        control_tower=control_tower,
+        veto_owner=veto_owner,
+    )
+    semantics = build_execution_semantics(
+        report_mode=resolved_report_mode or report_mode,
+        role=str(row.get("role") or ""),
+        trade_bias=str(row.get("trade_bias") or "watch_only"),
+        control_tower=control_tower,
+        state_reason_codes=row.get("state_reason_codes"),
+    )
+    enriched = dict(row)
+    enriched.update(semantics)
+    if resolved_veto_owner:
+        enriched["veto_owner"] = resolved_veto_owner
+    return enriched
+
+
 def enrich_btst_row(
     row: dict[str, Any],
     *,
@@ -350,21 +540,47 @@ def build_review_ledger_rows(
     signal_date: str,
     next_trade_date: str,
     rows: list[dict[str, Any]],
+    report_mode: str | None = None,
+    control_tower: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     ledger_rows = []
+    default_report_mode, default_veto_owner = _resolve_execution_context(
+        report_mode=report_mode,
+        control_tower=control_tower,
+    )
     for row in rows:
+        normalized_row = dict(row)
+        row_report_mode = normalized_row.get("report_mode")
+        if _is_missing(row_report_mode):
+            row_report_mode = default_report_mode
+        if row_report_mode or control_tower is not None:
+            normalized_row = attach_execution_semantics(
+                normalized_row,
+                report_mode=str(row_report_mode or ""),
+                control_tower=control_tower,
+                veto_owner=default_veto_owner,
+            )
+        if _is_missing(normalized_row.get("veto_owner")) and default_veto_owner is not None:
+            normalized_row["veto_owner"] = default_veto_owner
         metrics = dict(row.get("metrics") or {})
-        reliability_metrics = build_historical_reliability_metrics(row)
+        reliability_metrics = build_historical_reliability_metrics(normalized_row)
         ledger_rows.append(
             {
                 "signal_date": signal_date,
                 "next_trade_date": next_trade_date,
-                "ticker": row.get("ticker"),
-                "role": row.get("role"),
-                "evidence_grade": row.get("evidence_grade"),
-                "data_quality": row.get("data_quality"),
-                "trade_bias": row.get("trade_bias"),
-                "risk_posture": row.get("risk_posture"),
+                "ticker": normalized_row.get("ticker"),
+                "role": normalized_row.get("role"),
+                "evidence_grade": normalized_row.get("evidence_grade"),
+                "data_quality": normalized_row.get("data_quality"),
+                "trade_bias": normalized_row.get("trade_bias"),
+                "risk_posture": normalized_row.get("risk_posture"),
+                "report_mode": normalized_row.get("report_mode"),
+                "execution_state": normalized_row.get("execution_state"),
+                "max_allowed_state_today": normalized_row.get("max_allowed_state_today"),
+                "formal_buy_allowed": normalized_row.get("formal_buy_allowed"),
+                "allowed_sections": _string_list(normalized_row.get("allowed_sections")),
+                "state_reason_codes": _string_list(normalized_row.get("state_reason_codes")),
+                "veto_owner": normalized_row.get("veto_owner"),
                 "win_rate": metrics.get("win_rate"),
                 "payoff_ratio": metrics.get("payoff_ratio"),
                 "expectancy": metrics.get("expectancy"),
@@ -375,12 +591,12 @@ def build_review_ledger_rows(
                 "shrunk_win_rate": reliability_metrics["shrunk_win_rate"],
                 "win_rate_wilson_low": reliability_metrics["win_rate_wilson_low"],
                 "win_rate_wilson_high": reliability_metrics["win_rate_wilson_high"],
-                "expected_slippage_cap": estimate_execution_cost_cap(row),
-                "entry_mode": row.get("preferred_entry_mode"),
-                "must_confirm": row.get("must_confirm"),
-                "invalidate_if": row.get("invalidate_if"),
-                "intended_entry_trigger": row.get("must_confirm"),
-                "intended_invalidation": row.get("invalidate_if"),
+                "expected_slippage_cap": estimate_execution_cost_cap(normalized_row),
+                "entry_mode": normalized_row.get("preferred_entry_mode"),
+                "must_confirm": normalized_row.get("must_confirm"),
+                "invalidate_if": normalized_row.get("invalidate_if"),
+                "intended_entry_trigger": normalized_row.get("must_confirm"),
+                "intended_invalidation": normalized_row.get("invalidate_if"),
                 "realized_entry_price": None,
                 "realized_exit_price": None,
                 "realized_slippage": None,

@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 from scripts.generate_btst_doc_bundle import (
+    _build_forbidden_semantics_hits,
+    _build_semantic_conflicts,
     _render_action_matrix_sections,
     compare_btst_doc_bundle_profiles,
     generate_btst_doc_bundle,
@@ -37,6 +39,86 @@ def test_render_action_matrix_sections_escapes_markdown_table_cells() -> None:
 
     assert "强势\\|确认" in rendered
     assert "先等确认<br>再执行" in rendered
+
+
+def test_render_action_matrix_sections_confirmation_review_only_uses_confirmation_title() -> None:
+    """Confirmation-review checklist should not reuse the formal-execution action-matrix title."""
+    lines = _render_action_matrix_sections(
+        [
+            {
+                "ticker": "300054",
+                "name": "鼎龙股份",
+                "action_matrix": [],
+            }
+        ],
+        report_mode="confirmation_review_only",
+    )
+
+    rendered = "\n".join(lines)
+
+    assert "## 确认复核动作矩阵" in rendered
+    assert "## 正式执行动作矩阵" not in rendered
+
+
+def test_build_semantic_conflicts_checks_allowed_sections_in_confirmation_review_mode() -> None:
+    """Quality QA should flag confirmation-mode rows that keep formal sections."""
+    conflicts = _build_semantic_conflicts(
+        report_mode="confirmation_review_only",
+        rows=[
+            {
+                "ticker": "300054",
+                "name": "鼎龙股份",
+                "report_mode": "confirmation_review_only",
+                "role": "formal_selected",
+                "trade_bias": "trade_allowed",
+                "execution_state": "confirmable",
+                "max_allowed_state_today": "confirmable",
+                "formal_buy_allowed": False,
+                "allowed_sections": ["formal_queue"],
+            }
+        ],
+    )
+
+    assert "300054 鼎龙股份:expected_allowed_sections=review_queue" in conflicts
+
+
+def test_build_semantic_conflicts_checks_confirmation_only_state_in_formal_execution_mode() -> None:
+    """Formal-execution QA should validate confirmation-only selected rows beyond trade_allowed."""
+    conflicts = _build_semantic_conflicts(
+        report_mode="formal_execution",
+        rows=[
+            {
+                "ticker": "300476",
+                "name": "胜宏科技",
+                "report_mode": "formal_execution",
+                "role": "formal_selected",
+                "trade_bias": "confirmation_only",
+                "execution_state": "confirmable",
+                "max_allowed_state_today": "orderable",
+                "formal_buy_allowed": False,
+                "allowed_sections": ["watch_queue"],
+            }
+        ],
+    )
+
+    assert "300476 胜宏科技:expected_allowed_sections=formal_queue" in conflicts
+
+
+def test_build_forbidden_semantics_hits_uses_precise_formal_confirmation_markers() -> None:
+    """Forbidden-semantics QA should hit precise formal wording, not generic status words."""
+    hits = _build_forbidden_semantics_hits(
+        signal_date_compact="20260529",
+        report_mode="confirmation_review_only",
+        docs={
+            "BTST-LLM-20260529.md": "## 确认复核队列\n",
+            "BTST-20260529-EXEC-CHECKLIST.md": "说明里提到了 orderable，但这不是标题。\n## 正式执行动作矩阵\n- [ ] 正式执行：`300054 鼎龙股份`\n",
+        },
+    )
+
+    assert hits == [
+        "BTST-20260529-EXEC-CHECKLIST.md:## 正式执行动作矩阵",
+        "BTST-20260529-EXEC-CHECKLIST.md:- [ ] 正式执行：",
+    ]
 
 
 def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -> None:
@@ -272,7 +354,7 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "- 交易倾向：`confirmation_only`" in checklist_doc
     assert "09:20-09:25" in checklist_doc
     assert "## 当前策略阈值基线" in checklist_doc
-    assert "## 正式执行动作矩阵" in checklist_doc
+    assert "## 确认复核动作矩阵" in checklist_doc
     assert "### 300054 鼎龙股份" in checklist_doc
     assert "| 开盘强且延续确认 | 等待盘中延续确认后再执行，不做开盘无确认追价。 |" in checklist_doc
     assert "| 触发失效条件 | 若开盘后无法形成延续确认，或快速冲高回落，则取消正式执行。 |" in checklist_doc
@@ -1298,6 +1380,224 @@ def test_generate_btst_doc_bundle_renders_institutional_control_sections(tmp_pat
     assert ledger_payload["rows"][0]["realized_slippage"] is None
     assert ledger_payload["rows"][0]["mae"] is None
     assert ledger_payload["rows"][0]["mfe"] is None
+
+
+def _generate_btst_doc_bundle_gate_outputs(tmp_path: Path, *, gate_locked: bool):
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260529_20260529_live_m2_7_short_trade_only_20260601_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    snapshot_path = report_dir / "selection_artifacts" / "2026-05-29" / "selection_snapshot.json"
+    priority_board_path = report_dir / "btst_next_day_priority_board_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-29",
+            "selection_target": "short_trade_only",
+            "btst_followup": {
+                "brief_json": brief_path.as_posix(),
+                "priority_board_json": priority_board_path.as_posix(),
+            },
+        },
+    )
+    selected_row = {
+        "ticker": "300408",
+        "name": "三环集团",
+        "preferred_entry_mode": "confirm_then_hold_breakout",
+        "score_target": 0.5349,
+        "confidence": 0.7396,
+        "positive_tags": [
+            "trend_acceleration_confirmed",
+            "fresh_catalyst_support",
+            "confirmed_breakout_stage",
+        ],
+        "top_reasons": [
+            "trend_acceleration_strong",
+            "catalyst_theme_short_trade_carryover",
+            "confirmed_breakout",
+        ],
+        "candidate_reason_codes": ["catalyst_theme_candidate_score_ranked"],
+        "gate_status": {
+            "data": "pass",
+            "execution": "proxy_only",
+            "committee": "shadow_only",
+        },
+        "metrics": {
+            "breakout_freshness": 0.4,
+            "trend_acceleration": 0.8957,
+            "volume_expansion_quality": 0.25,
+            "close_strength": 0.9211,
+            "catalyst_freshness": 0.0,
+        },
+        "historical_prior": {
+            "applied_scope": "same_ticker",
+            "sample_count": 15,
+            "evaluable_count": 15,
+            "next_high_hit_threshold": 0.02,
+            "next_open_return_mean": 0.0204,
+            "next_high_hit_rate_at_threshold": 0.7333,
+            "next_close_positive_rate": 0.8,
+            "next_close_positive_count": 12,
+            "next_close_negative_count": 3,
+            "next_close_payoff_ratio": 3.7926,
+            "next_close_expectancy": 0.0533,
+            "next_high_return_mean": 0.0837,
+            "next_close_return_mean": 0.0533,
+            "next_open_to_close_return_mean": 0.0319,
+        },
+    }
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-29",
+            "next_trade_date": "2026-06-01",
+            "selection_target": "short_trade_only",
+            "snapshot_path": snapshot_path.as_posix(),
+            "selected_actions": [selected_row],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        priority_board_path,
+        {
+            "trade_date": "2026-05-29",
+            "next_trade_date": "2026-06-01",
+            "selection_target": "short_trade_only",
+            "source_paths": {"snapshot_path": snapshot_path.as_posix()},
+            "priority_rows": [selected_row],
+        },
+    )
+    _write_json(
+        snapshot_path,
+        {
+            "trade_date": "2026-05-29",
+            "market_state": {
+                "regime_gate_level": "crisis" if gate_locked else "balanced",
+                "breadth_ratio": 0.284187 if gate_locked else 0.612345,
+                "daily_return": -0.004496 if gate_locked else 0.0112,
+                "limit_up_count": 49 if gate_locked else 83,
+                "limit_down_count": 49 if gate_locked else 11,
+                "limit_up_down_ratio": 1.0 if gate_locked else 7.5455,
+                "position_scale": 0.75 if gate_locked else 1.0,
+                "regime_gate_reasons": ["breadth_weak", "position_scale_reduced"] if gate_locked else ["breadth_supportive"],
+            },
+            "buy_orders": [
+                {
+                    "ticker": "300408",
+                    "shares": 400,
+                    "amount": 4000.0,
+                    "risk_budget_ratio": 0.5,
+                    "risk_budget_gate": "halt_relief",
+                    "execution_contract_bucket": "halt_promoted",
+                    "constraint_binding": "vol",
+                }
+            ]
+            if gate_locked
+            else [],
+            "funnel_diagnostics": {
+                "btst_regime_gate_enforcement": {
+                    "enforced": gate_locked,
+                    "gate": "halt" if gate_locked else "pass",
+                    "mode": "enforce" if gate_locked else "observe",
+                    "buy_orders_cleared": gate_locked,
+                    "buy_orders_cleared_count": 1 if gate_locked else 0,
+                    "shadow_promotion_tickers": ["300408"] if gate_locked else [],
+                }
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260529.json",
+        {
+            "trade_date": "20260529",
+            "next_date": "20260601",
+            "pool_size": 3339,
+            "selected_count": 530,
+            "near_miss_count": 578,
+            "high_confidence": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {
+            "daily_boards": [
+                {
+                    "trade_date": "2026-05-29",
+                    "gate_action": "tradeable",
+                    "deployment_mode": "shadow_only",
+                    "early_runner_watchlist": [],
+                    "early_runner_priority": [],
+                    "second_entry_reentry": [],
+                }
+            ]
+        },
+    )
+
+    output_dir = tmp_path / "outputs"
+    result = generate_btst_doc_bundle(
+        "20260529",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+        include_extra_warning_docs=False,
+        write_review_ledger=True,
+    )
+
+    llm_doc = (output_dir / "BTST-LLM-20260529.md").read_text(encoding="utf-8")
+    checklist_doc = (output_dir / "BTST-20260529-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
+    quality_summary = json.loads(Path(result["quality_summary_json_path"]).read_text(encoding="utf-8"))
+    ledger_payload = json.loads((output_dir / "20260529-btst-decision-review-ledger.json").read_text(encoding="utf-8"))
+    return llm_doc, checklist_doc, quality_summary, ledger_payload
+
+
+def test_generate_btst_doc_bundle_gate_locked_confirmation_only_switches_to_confirmation_review_outputs(tmp_path: Path) -> None:
+    """Gate-locked control-tower state should downgrade final docs and ledger into confirmation-review mode."""
+    llm_doc, checklist_doc, quality_summary, ledger_payload = _generate_btst_doc_bundle_gate_outputs(
+        tmp_path,
+        gate_locked=True,
+    )
+
+    assert quality_summary["control_tower"]["effective_trade_bias"] == "gate_locked_confirmation_only"
+    first_row = ledger_payload["rows"][0]
+
+    assert "## 正式执行层" not in llm_doc
+    assert "## 确认复核队列" in llm_doc
+    assert "## 正式执行顺序" not in checklist_doc
+    assert "## 确认复核顺序" in checklist_doc
+    assert "## 正式执行动作矩阵" not in checklist_doc
+    assert "## 确认复核动作矩阵" in checklist_doc
+    assert quality_summary.get("report_mode") == "confirmation_review_only"
+    assert quality_summary.get("semantic_conflicts") == []
+    assert quality_summary.get("forbidden_semantics_hits") == []
+    assert first_row.get("execution_state") == "confirmable"
+    assert first_row.get("max_allowed_state_today") == "confirmable"
+    assert first_row.get("formal_buy_allowed") is False
+    assert first_row.get("allowed_sections") == ["review_queue"]
+
+
+def test_generate_btst_doc_bundle_gate_allowed_keeps_formal_execution_outputs(tmp_path: Path) -> None:
+    """Gate-passed control-tower state should keep formal-execution docs and ledger outputs."""
+    llm_doc, checklist_doc, quality_summary, ledger_payload = _generate_btst_doc_bundle_gate_outputs(
+        tmp_path,
+        gate_locked=False,
+    )
+
+    assert quality_summary["control_tower"]["effective_trade_bias"] == "trade_allowed"
+    first_row = ledger_payload["rows"][0]
+
+    assert "## 正式执行层" in llm_doc
+    assert "## 确认复核队列" not in llm_doc
+    assert "## 正式执行顺序" in checklist_doc
+    assert "## 确认复核顺序" not in checklist_doc
+    assert "## 正式执行动作矩阵" in checklist_doc
+    assert "## 确认复核动作矩阵" not in checklist_doc
+    assert quality_summary.get("report_mode") == "formal_execution"
+    assert quality_summary.get("semantic_conflicts") == []
+    assert quality_summary.get("forbidden_semantics_hits") == []
+    assert first_row.get("max_allowed_state_today") == "orderable"
+    assert first_row.get("execution_state") == "orderable"
+    assert first_row.get("formal_buy_allowed") is True
+    assert first_row.get("allowed_sections") == ["formal_queue"]
 
 
 def test_generate_btst_doc_bundle_prefers_canonical_names_from_sibling_snapshots(tmp_path: Path) -> None:

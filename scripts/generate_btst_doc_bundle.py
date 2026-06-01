@@ -14,9 +14,13 @@ from scripts.btst_strategy_thresholds import (
 )
 from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
 from src.paper_trading.btst_decision_enrichment import (
+    attach_execution_semantics,
     build_historical_reliability_metrics,
     build_decision_card,
+    build_execution_semantics,
+    build_report_mode,
     build_review_ledger_rows,
+    build_veto_owner,
     enrich_btst_row,
     estimate_execution_cost_cap,
 )
@@ -329,11 +333,22 @@ def _attach_decision_card_primary_name(card: dict[str, Any], rows: list[dict[str
 
 def _row_historical_metric(row: dict[str, Any], key: str) -> Any:
     """Return one historical metric from nested prior first, then from the row itself."""
-    prior = dict(row.get("historical_prior") or {})
+    source_row = dict(row.get("source_row") or {})
+    prior = dict(row.get("historical_prior") or source_row.get("historical_prior") or {})
     value = prior.get(key)
     if value not in (None, "", [], {}, ()):
         return value
-    return row.get(key)
+    value = row.get(key)
+    if value not in (None, "", [], {}, ()):
+        return value
+    return source_row.get(key)
+
+
+def _row_field(row: dict[str, Any], key: str) -> Any:
+    value = row.get(key)
+    if value not in (None, "", [], {}, ()):
+        return value
+    return dict(row.get("source_row") or {}).get(key)
 
 
 def _historical_reading_note(row: dict[str, Any]) -> str:
@@ -470,7 +485,7 @@ def _compact_code_items(items: Any, *, limit: int = 4) -> str:
 
 
 def _gate_status_text(row: dict[str, Any]) -> str:
-    gate_status = dict(row.get("gate_status") or {})
+    gate_status = dict(_row_field(row, "gate_status") or {})
     if not gate_status:
         return "`n/a`"
     return "，".join(f"{key}={value}" for key, value in gate_status.items())
@@ -483,20 +498,21 @@ def _render_alpha_factor_cards(rows: list[dict[str, Any]]) -> list[str]:
         lines.append("- 当前没有正式执行票。")
         return lines
     for row in rows[:5]:
-        positive = list(row.get("positive_tags") or row.get("top_reasons") or [])
-        if not positive and row.get("why_now"):
-            positive = [item.strip() for item in str(row.get("why_now")).split(",") if item.strip()]
+        positive = list(_row_field(row, "positive_tags") or _row_field(row, "top_reasons") or [])
+        why_now = _row_field(row, "why_now")
+        if not positive and why_now:
+            positive = [item.strip() for item in str(why_now).split(",") if item.strip()]
         negative = list(
             _first_non_empty(
-                row.get("negative_tags"),
-                row.get("blockers"),
-                row.get("execution_blocked_flags"),
+                _row_field(row, "negative_tags"),
+                _row_field(row, "blockers"),
+                _row_field(row, "execution_blocked_flags"),
                 [],
             )
             or []
         )
         if not negative:
-            negative = list(row.get("candidate_reason_codes") or [])[:2]
+            negative = list(_row_field(row, "candidate_reason_codes") or [])[:2]
         lines.append(
             f"- `{_stock_label(row)}`：正向证据：{_compact_code_items(positive)}；"
             f"风险/负项：{_compact_code_items(negative)}；gate：{_gate_status_text(row)}。"
@@ -720,10 +736,18 @@ def _markdown_table_cell(value: Any) -> str:
     return text.replace("|", "\\|").replace("\n", "<br>")
 
 
-def _render_action_matrix_sections(rows: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
-    lines = ["## 正式执行动作矩阵", ""]
+def _render_action_matrix_sections(
+    rows: list[dict[str, Any]],
+    *,
+    report_mode: str = "formal_execution",
+    limit: int = 3,
+) -> list[str]:
+    section_labels = _build_section_labels(report_mode)
+    action_matrix_title = str(section_labels.get("action_matrix_title") or "正式执行动作矩阵")
+    action_item_label = str(section_labels.get("checklist_execution_item_label") or "正式执行")
+    lines = [f"## {action_matrix_title}", ""]
     if not rows:
-        lines.append("- 当前没有正式执行票。")
+        lines.append(f"- 当前没有{action_item_label}票。")
         return lines
     for row in rows[:limit]:
         lines.extend(
@@ -740,6 +764,202 @@ def _render_action_matrix_sections(rows: list[dict[str, Any]], *, limit: int = 3
             lines.append(f"| {scenario} | {action} |")
         lines.append("")
     return lines
+
+
+def _build_section_labels(report_mode: str) -> dict[str, str]:
+    if str(report_mode or "").strip() == "formal_execution":
+        return {
+            "llm_execution_title": "正式执行层",
+            "checklist_execution_title": "正式执行顺序",
+            "checklist_execution_item_label": "正式执行",
+            "action_matrix_title": "正式执行动作矩阵",
+            "execution_state_table_title": "当日执行状态",
+        }
+    return {
+        "llm_execution_title": "确认复核队列",
+        "checklist_execution_title": "确认复核顺序",
+        "checklist_execution_item_label": "确认复核",
+        "action_matrix_title": "确认复核动作矩阵",
+        "execution_state_table_title": "当日执行状态",
+    }
+
+
+def _attach_execution_semantics_rows(
+    rows: list[dict[str, Any]],
+    *,
+    report_mode: str,
+    control_tower: dict[str, Any],
+    veto_owner: str,
+) -> list[dict[str, Any]]:
+    return [
+        attach_execution_semantics(
+            row,
+            report_mode=report_mode,
+            control_tower=control_tower,
+            veto_owner=veto_owner,
+        )
+        for row in rows
+    ]
+
+
+def _fmt_bool(value: Any) -> str:
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return "n/a"
+
+
+def _render_execution_state_table(rows: list[dict[str, Any]], *, title: str) -> list[str]:
+    lines = [
+        f"## {title}",
+        "",
+        "| 股票 | trade_bias | execution_state | max_allowed_state_today | formal_buy_allowed | allowed_sections | veto_owner | state_reason_codes |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    if not rows:
+        lines.append("| 无 | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+        return lines
+    for row in rows[:5]:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_table_cell(_enriched_stock_label(row)),
+                    _markdown_table_cell(str(row.get("trade_bias") or "n/a")),
+                    _markdown_table_cell(str(row.get("execution_state") or "n/a")),
+                    _markdown_table_cell(str(row.get("max_allowed_state_today") or "n/a")),
+                    _markdown_table_cell(_fmt_bool(row.get("formal_buy_allowed"))),
+                    _markdown_table_cell("/".join(str(item) for item in list(row.get("allowed_sections") or [])) or "n/a"),
+                    _markdown_table_cell(str(row.get("veto_owner") or "n/a")),
+                    _markdown_table_cell("/".join(str(item) for item in list(row.get("state_reason_codes") or [])) or "n/a"),
+                ]
+            )
+            + " |"
+        )
+    return lines
+
+
+def _build_semantic_conflicts(*, report_mode: str, rows: list[dict[str, Any]]) -> list[str]:
+    def _normalized_sections(value: Any) -> list[str]:
+        if value in (None, "", [], (), set(), frozenset()):
+            return []
+        if isinstance(value, str):
+            raw_values = [value]
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            raw_values = list(value)
+        else:
+            raw_values = [value]
+        normalized: list[str] = []
+        for item in raw_values:
+            text = str(item or "").strip()
+            if text:
+                normalized.append(text)
+        return normalized
+
+    def _format_expected(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (list, tuple, set, frozenset)):
+            normalized = _normalized_sections(value)
+            return "/".join(normalized) if normalized else "none"
+        text = str(value or "").strip()
+        return text or "n/a"
+
+    conflicts: list[str] = []
+    for row in rows:
+        ticker_label = _enriched_stock_label(row) or str(row.get("ticker") or "unknown")
+        row_report_mode = str(row.get("report_mode") or "").strip()
+        role = str(row.get("role") or "").strip()
+        trade_bias = str(row.get("trade_bias") or "").strip()
+        if row_report_mode and row_report_mode != report_mode:
+            conflicts.append(f"{ticker_label}:report_mode={row_report_mode}")
+        expected_semantics = build_execution_semantics(
+            report_mode=report_mode,
+            role=role,
+            trade_bias=trade_bias,
+        )
+        if str(row.get("execution_state") or "").strip() != str(expected_semantics.get("execution_state") or "").strip():
+            conflicts.append(
+                f"{ticker_label}:expected_execution_state={_format_expected(expected_semantics.get('execution_state'))}"
+            )
+        if str(row.get("max_allowed_state_today") or "").strip() != str(expected_semantics.get("max_allowed_state_today") or "").strip():
+            conflicts.append(
+                f"{ticker_label}:expected_max_allowed_state_today={_format_expected(expected_semantics.get('max_allowed_state_today'))}"
+            )
+        if row.get("formal_buy_allowed") is not expected_semantics.get("formal_buy_allowed"):
+            conflicts.append(
+                f"{ticker_label}:expected_formal_buy_allowed={_format_expected(expected_semantics.get('formal_buy_allowed'))}"
+            )
+        if _normalized_sections(row.get("allowed_sections")) != _normalized_sections(expected_semantics.get("allowed_sections")):
+            conflicts.append(
+                f"{ticker_label}:expected_allowed_sections={_format_expected(expected_semantics.get('allowed_sections'))}"
+            )
+    return conflicts
+
+
+def _build_forbidden_semantics_hits(
+    *,
+    signal_date_compact: str,
+    docs: dict[str, str],
+    report_mode: str,
+) -> list[str]:
+    llm_doc_name = f"BTST-LLM-{signal_date_compact}.md"
+    checklist_doc_name = f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md"
+    forbidden_by_doc = (
+        {
+            llm_doc_name: ["## 正式执行层"],
+            checklist_doc_name: [
+                "## 正式执行顺序",
+                "## 正式执行动作矩阵",
+                "- [ ] 正式执行：",
+            ],
+        }
+        if report_mode == "confirmation_review_only"
+        else {
+            llm_doc_name: ["## 确认复核队列"],
+            checklist_doc_name: [
+                "## 确认复核顺序",
+                "## 确认复核动作矩阵",
+                "- [ ] 确认复核：",
+            ],
+        }
+    )
+    hits: list[str] = []
+    for file_name, phrases in forbidden_by_doc.items():
+        content = docs.get(file_name, "")
+        for phrase in phrases:
+            if phrase in content:
+                hits.append(f"{file_name}:{phrase}")
+    return hits
+
+
+def _build_source_of_truth_snapshot(
+    *,
+    signal_date_compact: str,
+    report_mode: str,
+    veto_owner: str,
+    section_labels: dict[str, str],
+    control_tower: dict[str, Any],
+    early_runner: dict[str, Any],
+    selection_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "signal_date": signal_date_compact,
+        "report_mode": report_mode,
+        "veto_owner": veto_owner,
+        "section_labels": dict(section_labels),
+        "early_runner_status": early_runner.get("status"),
+        "control_tower_effective_trade_bias": control_tower.get("effective_trade_bias"),
+        "control_tower_reason_codes": list(control_tower.get("reason_codes") or []),
+        "selection_snapshot_loaded": bool(selection_snapshot),
+        "selection_snapshot_source_path": selection_snapshot.get("_source_path"),
+        "selection_snapshot_gate": {
+            "regime_gate_level": control_tower.get("regime_gate_level"),
+            "gate": control_tower.get("gate"),
+            "buy_orders_cleared": control_tower.get("buy_orders_cleared"),
+        },
+    }
 
 
 def _rule_stock_bullets(rows: list[dict[str, Any]], *, limit: int) -> list[str]:
@@ -1166,32 +1386,27 @@ def _render_llm_doc(
     brief: dict[str, Any],
     priority_board: dict[str, Any],
     session_summary: dict[str, Any],
+    semantic_selected: list[dict[str, Any]],
+    semantic_watch: list[dict[str, Any]],
     early_runner: dict[str, Any],
     selection_snapshot: dict[str, Any],
     control_tower: dict[str, Any],
+    report_mode: str,
+    veto_owner: str,
+    section_labels: dict[str, str],
     report_dir: Path,
     strategy_thresholds: dict[str, Any],
     strategy_thresholds_config_path: str,
     strategy_thresholds_profile: str,
 ) -> str:
     """Render the multi-agent document and add early-runner overlaps plus watch-only context."""
-    selected_actions = _resolve_selected_rows(brief, priority_board)
-    watch_actions = _resolve_watch_rows(brief, priority_board)
+    selected_actions = semantic_selected
+    watch_actions = semantic_watch
     opportunity_actions = _resolve_opportunity_rows(brief, priority_board)
     formal_rows = [*selected_actions, *watch_actions, *opportunity_actions]
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     profile_name = _first_non_empty(dict(session_summary.get("optimization_profile_resolution") or {}).get("profile_name"), session_summary.get("short_trade_target_profile_name"))
     early_status = str(early_runner.get("status") or "unavailable")
-    enriched_selected = _enrich_formal_rows(
-        selected_actions,
-        role="formal_selected",
-        early_runner_status=early_status,
-    )
-    enriched_watch = _enrich_formal_rows(
-        watch_actions,
-        role="formal_watch",
-        early_runner_status=early_status,
-    )
     enriched_only_early_runner = _enrich_early_runner_rows(
         _safe_rows(intersection_summary.get("only_early_runner_rows")),
         role="early_runner_watchlist",
@@ -1203,12 +1418,12 @@ def _render_llm_doc(
         early_runner_status=early_status,
     )
     decision_card = build_decision_card(
-        selected_rows=enriched_selected,
+        selected_rows=semantic_selected,
         early_runner_status=early_status,
         signal_date=str(brief.get("trade_date") or ""),
         next_trade_date=str(brief.get("next_trade_date") or ""),
     )
-    decision_card = _attach_decision_card_primary_name(decision_card, enriched_selected)
+    decision_card = _attach_decision_card_primary_name(decision_card, semantic_selected)
     lines = [
         f"# BTST 多智能体详细计划（{signal_date_compact}）",
         "",
@@ -1241,10 +1456,10 @@ def _render_llm_doc(
     if rollout_lines:
         lines.extend([""])
         lines.extend(rollout_lines)
-    lines.extend(["", "## 正式执行层", ""])
-    lines.extend(_render_enriched_stock_bullets(enriched_selected, limit=5))
+    lines.extend(["", f"## {section_labels['llm_execution_title']}", ""])
+    lines.extend(_render_enriched_stock_bullets(semantic_selected, limit=5))
     lines.extend(["", "## 观察层", ""])
-    lines.extend(_render_enriched_stock_bullets(enriched_watch, limit=8))
+    lines.extend(_render_enriched_stock_bullets(semantic_watch, limit=8))
     if opportunity_actions:
         lines.extend(["", "## 机会池", ""])
         lines.extend(_stock_bullets(opportunity_actions, limit=5, include_payoff=True))
@@ -1368,30 +1583,30 @@ def _render_checklist_doc(
     signal_date_compact: str,
     brief: dict[str, Any],
     priority_board: dict[str, Any],
+    semantic_selected: list[dict[str, Any]],
+    semantic_watch: list[dict[str, Any]],
     early_runner: dict[str, Any],
     selection_snapshot: dict[str, Any],
     control_tower: dict[str, Any],
+    report_mode: str,
+    veto_owner: str,
+    section_labels: dict[str, str],
     strategy_thresholds: dict[str, Any],
     strategy_thresholds_config_path: str,
     strategy_thresholds_profile: str,
 ) -> str:
     """Render the next-morning checklist and append early-runner watch-only checkpoints."""
-    selected_actions = _resolve_selected_rows(brief, priority_board)
-    watch_actions = _resolve_watch_rows(brief, priority_board)
+    selected_actions = semantic_selected
+    watch_actions = semantic_watch
     intersection_summary = _build_intersection_summary(early_runner, [*selected_actions, *watch_actions])
     early_status = str(early_runner.get("status") or "unavailable")
-    enriched_selected = _enrich_formal_rows(
-        selected_actions,
-        role="formal_selected",
-        early_runner_status=early_status,
-    )
     decision_card = build_decision_card(
-        selected_rows=enriched_selected,
+        selected_rows=semantic_selected,
         early_runner_status=early_status,
         signal_date=str(brief.get("trade_date") or ""),
         next_trade_date=str(brief.get("next_trade_date") or ""),
     )
-    decision_card = _attach_decision_card_primary_name(decision_card, enriched_selected)
+    decision_card = _attach_decision_card_primary_name(decision_card, semantic_selected)
     lines = [
         f"# BTST-{signal_date_compact}-EXEC-CHECKLIST",
         "",
@@ -1417,13 +1632,15 @@ def _render_checklist_doc(
     if rollout_lines:
         lines.extend([""])
         lines.extend(rollout_lines)
-    lines.extend(["", "## 正式执行顺序", ""])
-    for row in selected_actions[:3]:
-        lines.append(f"- [ ] 正式执行：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，" f"收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，" f"说明：{_historical_reading_note(row)}")
     lines.extend([""])
-    lines.extend(_render_action_matrix_sections(enriched_selected, limit=3))
+    lines.extend(_render_execution_state_table(semantic_selected, title=section_labels["execution_state_table_title"]))
+    lines.extend(["", f"## {section_labels['checklist_execution_title']}", ""])
+    for row in selected_actions[:3]:
+        lines.append(f"- [ ] {section_labels['checklist_execution_item_label']}：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，" f"收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，" f"说明：{_historical_reading_note(row)}")
+    lines.extend([""])
+    lines.extend(_render_action_matrix_sections(semantic_selected, report_mode=report_mode, limit=3))
     lines.extend(["", "## 正式观察顺序", ""])
-    for row in watch_actions[:6]:
+    for row in semantic_watch[:6]:
         lines.append(f"- [ ] 正式观察：`{_stock_label(row)}`，层级 `{row.get('action_tier') or 'watch_only'}`，必要时盘中再确认。")
     lines.extend(["", "## 交集优先复审", ""])
     if _safe_rows(intersection_summary.get("overlap_rows")):
@@ -1568,6 +1785,10 @@ def _build_report_quality_summary(
     *,
     signal_date_compact: str,
     docs: dict[str, str],
+    report_mode: str,
+    veto_owner: str,
+    section_labels: dict[str, str],
+    semantic_rows: list[dict[str, Any]],
     control_tower: dict[str, Any],
     early_runner: dict[str, Any],
     selection_snapshot: dict[str, Any],
@@ -1582,6 +1803,7 @@ def _build_report_quality_summary(
             "## Gamma 市场门控与风险预算",
             "## Beta 执行硬条件与成本闸门",
             "## Governed Rollout 观察",
+            f"## {section_labels['llm_execution_title']}",
         ],
         f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": [
             "## 30 秒决策卡",
@@ -1590,6 +1812,8 @@ def _build_report_quality_summary(
             "## 胜率/赔率闸门",
             "## Gamma 市场门控与风险预算",
             "## Beta 执行硬条件与成本闸门",
+            f"## {section_labels['execution_state_table_title']}",
+            f"## {section_labels['checklist_execution_title']}",
             "## 盘后复盘闭环",
         ],
     }
@@ -1611,11 +1835,29 @@ def _build_report_quality_summary(
     ]
     return {
         "signal_date": signal_date_compact,
+        "report_mode": report_mode,
+        "veto_owner": veto_owner,
+        "section_labels": dict(section_labels),
         "control_tower": control_tower,
         "early_runner_status": early_runner.get("status"),
         "selection_snapshot_loaded": bool(selection_snapshot),
         "required_sections_missing": missing,
         "quality_warnings": quality_warnings,
+        "semantic_conflicts": _build_semantic_conflicts(report_mode=report_mode, rows=semantic_rows),
+        "forbidden_semantics_hits": _build_forbidden_semantics_hits(
+            signal_date_compact=signal_date_compact,
+            docs=docs,
+            report_mode=report_mode,
+        ),
+        "source_of_truth_snapshot": _build_source_of_truth_snapshot(
+            signal_date_compact=signal_date_compact,
+            report_mode=report_mode,
+            veto_owner=veto_owner,
+            section_labels=section_labels,
+            control_tower=control_tower,
+            early_runner=early_runner,
+            selection_snapshot=selection_snapshot,
+        ),
     }
 
 
@@ -1676,6 +1918,11 @@ def generate_btst_doc_bundle(
         role="formal_selected",
         early_runner_status=early_status,
     )
+    control_watch = _enrich_formal_rows(
+        watch_rows,
+        role="formal_watch",
+        early_runner_status=early_status,
+    )
     control_decision_card = build_decision_card(
         selected_rows=control_selected,
         early_runner_status=early_status,
@@ -1683,12 +1930,32 @@ def generate_btst_doc_bundle(
         next_trade_date=str(brief.get("next_trade_date") or ""),
     )
     control_tower = _build_premarket_control_tower(control_decision_card, selection_snapshot)
+    report_mode = build_report_mode(control_tower)
+    veto_owner = build_veto_owner(control_tower)
+    section_labels = _build_section_labels(report_mode)
+    control_tower = {
+        **control_tower,
+        "report_mode": report_mode,
+        "veto_owner": veto_owner,
+    }
+    semantic_selected = _attach_execution_semantics_rows(
+        control_selected,
+        report_mode=report_mode,
+        control_tower=control_tower,
+        veto_owner=veto_owner,
+    )
+    semantic_watch = _attach_execution_semantics_rows(
+        control_watch,
+        report_mode=report_mode,
+        control_tower=control_tower,
+        veto_owner=veto_owner,
+    )
     docs = {
         f"BTST-{signal_date_compact}.md": _render_rule_doc(signal_date_compact, rule_report, brief, priority_board, early_runner, rule_report_path, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
-        f"BTST-LLM-{signal_date_compact}.md": _render_llm_doc(signal_date_compact, brief, priority_board, session_summary, early_runner, selection_snapshot, control_tower, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
+        f"BTST-LLM-{signal_date_compact}.md": _render_llm_doc(signal_date_compact, brief, priority_board, session_summary, semantic_selected, semantic_watch, early_runner, selection_snapshot, control_tower, report_mode, veto_owner, section_labels, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
         f"{signal_date_compact}-两套交易计划通俗说明.md": _render_plain_language_doc(signal_date_compact, brief, priority_board, early_runner),
         f"{signal_date_compact}-两套交易计划论坛短版.md": _render_forum_doc(signal_date_compact, brief, priority_board, early_runner),
-        f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, early_runner, selection_snapshot, control_tower, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
+        f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, semantic_selected, semantic_watch, early_runner, selection_snapshot, control_tower, report_mode, veto_owner, section_labels, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
     }
     if include_extra_warning_docs:
         docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, signal_date_iso, str(brief.get("next_trade_date") or ""), early_runner, formal_rows, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile)
@@ -1696,6 +1963,10 @@ def generate_btst_doc_bundle(
     quality_summary = _build_report_quality_summary(
         signal_date_compact=signal_date_compact,
         docs=docs,
+        report_mode=report_mode,
+        veto_owner=veto_owner,
+        section_labels=section_labels,
+        semantic_rows=[*semantic_selected, *semantic_watch],
         control_tower=control_tower,
         early_runner=early_runner,
         selection_snapshot=selection_snapshot,
@@ -1709,20 +1980,12 @@ def generate_btst_doc_bundle(
     _write_text(quality_summary_json_path, json.dumps(quality_summary, ensure_ascii=False, indent=2) + "\n")
     review_ledger_json_path = None
     if write_review_ledger:
-        ledger_selected = _enrich_formal_rows(
-            selected_rows,
-            role="formal_selected",
-            early_runner_status=early_status,
-        )
-        ledger_watch = _enrich_formal_rows(
-            watch_rows,
-            role="formal_watch",
-            early_runner_status=early_status,
-        )
         ledger_rows = build_review_ledger_rows(
             signal_date=str(brief.get("trade_date") or signal_date_iso),
             next_trade_date=str(brief.get("next_trade_date") or ""),
-            rows=[*ledger_selected, *ledger_watch],
+                rows=[*semantic_selected, *semantic_watch],
+            report_mode=report_mode,
+            control_tower=control_tower,
         )
         review_ledger_json_path = target_output_dir / f"{signal_date_compact}-btst-decision-review-ledger.json"
         _write_text(
@@ -1755,6 +2018,9 @@ def generate_btst_doc_bundle(
         "strategy_thresholds_profile": strategy_thresholds_profile,
         "strategy_thresholds": resolved_strategy_thresholds,
         "control_tower": control_tower,
+        "report_mode": report_mode,
+        "veto_owner": veto_owner,
+        "section_labels": section_labels,
         "quality_summary_json_path": quality_summary_json_path.as_posix(),
         "review_ledger_json_path": review_ledger_json_path.as_posix() if review_ledger_json_path else None,
     }

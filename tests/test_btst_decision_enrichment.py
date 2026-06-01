@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from src.paper_trading.btst_decision_enrichment import (
     build_decision_card,
+    build_execution_semantics,
+    build_report_mode,
+    build_review_ledger_rows,
+    build_veto_owner,
     enrich_btst_row,
     normalize_historical_metric,
 )
@@ -145,3 +149,138 @@ def test_build_decision_card_selects_first_confirmable_candidate() -> None:
     assert card["evidence_grade"] == "B"
     assert card["data_quality"] == "fresh"
     assert card["risk_posture"] == "reduced"
+
+
+def test_build_execution_semantics_confirmation_review_only_keeps_watch_only_formal_selected_in_watch_queue() -> None:
+    semantics = build_execution_semantics(
+        report_mode="confirmation_review_only",
+        role="formal_selected",
+        trade_bias="watch_only",
+    )
+
+    assert semantics["execution_state"] == "watching"
+    assert semantics["allowed_sections"] == ["watch_queue"]
+    assert semantics["formal_buy_allowed"] is False
+    assert semantics["max_allowed_state_today"] == "confirmable"
+
+
+def test_build_execution_semantics_formal_execution_trade_allowed_is_orderable() -> None:
+    semantics = build_execution_semantics(
+        report_mode="formal_execution",
+        role="formal_selected",
+        trade_bias="trade_allowed",
+    )
+
+    assert semantics["report_mode"] == "formal_execution"
+    assert semantics["execution_state"] == "orderable"
+    assert semantics["max_allowed_state_today"] == "orderable"
+    assert semantics["formal_buy_allowed"] is True
+    assert semantics["allowed_sections"] == ["formal_queue"]
+
+
+def test_build_report_mode_prefers_current_control_tower_bias_over_legacy_mode() -> None:
+    assert (
+        build_report_mode(
+            {
+                "effective_trade_bias": "gate_locked_confirmation_only",
+                "report_mode": "formal_execution",
+            }
+        )
+        == "confirmation_review_only"
+    )
+    assert (
+        build_report_mode(
+            {
+                "effective_trade_bias": "trade_allowed",
+                "report_mode": "confirmation_review_only",
+            }
+        )
+        == "formal_execution"
+    )
+    assert build_report_mode({"report_mode": "formal_execution"}) == "formal_execution"
+
+
+def test_build_veto_owner_maps_market_gate_manual_review_and_model_evidence() -> None:
+    assert build_veto_owner({"reason_codes": ["buy_orders_cleared"]}) == "market_gate"
+    assert build_veto_owner({"reason_codes": ["selection_snapshot_missing"]}) == "manual_review"
+    assert build_veto_owner({"reason_codes": ["insufficient_sample"]}) == "model_evidence"
+
+
+def test_build_review_ledger_rows_control_tower_normalizes_legacy_semantics() -> None:
+    ledger_rows = build_review_ledger_rows(
+        signal_date="2026-05-28",
+        next_trade_date="2026-05-29",
+        control_tower={
+            "effective_trade_bias": "gate_locked_confirmation_only",
+            "report_mode": "formal_execution",
+            "reason_codes": ["buy_orders_cleared", "market_gate_requires_confirmation"],
+        },
+        rows=[
+            {
+                "ticker": "002222",
+                "role": "formal_selected",
+                "evidence_grade": "B",
+                "data_quality": "fresh",
+                "trade_bias": "trade_allowed",
+                "risk_posture": "normal",
+                "preferred_entry_mode": "confirm_then_hold_breakout",
+                "must_confirm": "等待盘中延续确认后再执行，不做开盘无确认追价。",
+                "invalidate_if": "若开盘后无法形成延续确认，或快速冲高回落，则取消正式执行。",
+                "metrics": {
+                    "win_rate": 0.7273,
+                    "payoff_ratio": 1.0792,
+                    "expectancy": 0.0272,
+                },
+                "source_row": {
+                    "historical_prior": {
+                        "sample_count": 10,
+                        "evaluable_count": 10,
+                        "next_close_positive_count": 7,
+                        "next_close_negative_count": 3,
+                        "next_close_positive_rate": 0.7,
+                    }
+                },
+            }
+        ],
+    )
+
+    assert ledger_rows[0]["report_mode"] == "confirmation_review_only"
+    assert ledger_rows[0]["execution_state"] == "confirmable"
+    assert ledger_rows[0]["max_allowed_state_today"] == "confirmable"
+    assert ledger_rows[0]["formal_buy_allowed"] is False
+    assert ledger_rows[0]["allowed_sections"] == ["review_queue"]
+    assert ledger_rows[0]["veto_owner"] == "market_gate"
+    assert ledger_rows[0]["state_reason_codes"] == ["buy_orders_cleared", "market_gate_requires_confirmation"]
+
+
+def test_build_review_ledger_rows_partial_control_tower_keeps_explicit_formal_execution() -> None:
+    ledger_rows = build_review_ledger_rows(
+        signal_date="2026-05-28",
+        next_trade_date="2026-05-29",
+        control_tower={
+            "reason_codes": ["buy_orders_cleared"],
+        },
+        rows=[
+            {
+                "ticker": "002222",
+                "role": "formal_selected",
+                "evidence_grade": "B",
+                "data_quality": "fresh",
+                "trade_bias": "trade_allowed",
+                "risk_posture": "normal",
+                "preferred_entry_mode": "confirm_then_hold_breakout",
+                "must_confirm": "x",
+                "invalidate_if": "y",
+                "metrics": {},
+                "report_mode": "formal_execution",
+            }
+        ],
+    )
+
+    assert ledger_rows[0]["report_mode"] == "formal_execution"
+    assert ledger_rows[0]["execution_state"] == "orderable"
+    assert ledger_rows[0]["max_allowed_state_today"] == "orderable"
+    assert ledger_rows[0]["formal_buy_allowed"] is True
+    assert ledger_rows[0]["allowed_sections"] == ["formal_queue"]
+    assert ledger_rows[0]["veto_owner"] == "market_gate"
+    assert ledger_rows[0]["state_reason_codes"] == ["buy_orders_cleared"]
