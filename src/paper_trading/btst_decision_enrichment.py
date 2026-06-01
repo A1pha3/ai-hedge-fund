@@ -357,6 +357,67 @@ def build_veto_owner(control_tower: dict[str, Any]) -> str:
     return _VETO_OWNER_MODEL_EVIDENCE
 
 
+def _selection_snapshot_gate_context(selection_snapshot: dict[str, Any]) -> dict[str, Any]:
+    market_state = dict(selection_snapshot.get("market_state") or {})
+    funnel_diagnostics = dict(selection_snapshot.get("funnel_diagnostics") or {})
+    gate_enforcement = dict(funnel_diagnostics.get("btst_regime_gate_enforcement") or {})
+    return {
+        "regime_gate_level": str(market_state.get("regime_gate_level") or "n/a"),
+        "regime_gate_reasons": list(market_state.get("regime_gate_reasons") or []),
+        "position_scale": market_state.get("position_scale"),
+        "gate": str(gate_enforcement.get("gate") or ""),
+        "enforced": gate_enforcement.get("enforced"),
+        "buy_orders_cleared": gate_enforcement.get("buy_orders_cleared"),
+        "buy_orders_cleared_count": gate_enforcement.get("buy_orders_cleared_count"),
+    }
+
+
+def build_premarket_control_tower(
+    decision_card: dict[str, Any],
+    selection_snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
+    raw_trade_bias = str(decision_card.get("trade_bias") or "skip")
+    gate_context = _selection_snapshot_gate_context(selection_snapshot or {}) if selection_snapshot else {}
+    gate = str(gate_context.get("gate") or "")
+    regime_level = str(gate_context.get("regime_gate_level") or "n/a")
+    buy_orders_cleared = bool(gate_context.get("buy_orders_cleared"))
+    hard_gate = gate == "halt" or regime_level in {"crisis", "halt", "risk_off"} or buy_orders_cleared
+    reason_codes: list[str] = []
+    if raw_trade_bias in {"skip", "no_trade"}:
+        effective_trade_bias = raw_trade_bias
+        reason_codes.append("raw_model_no_trade")
+    elif not selection_snapshot:
+        effective_trade_bias = "manual_review_required"
+        reason_codes.append("selection_snapshot_missing")
+    elif hard_gate:
+        effective_trade_bias = "gate_locked_confirmation_only"
+        reason_codes.append(
+            "market_gate_downgraded_raw_trade_allowed"
+            if raw_trade_bias == "trade_allowed"
+            else "market_gate_requires_confirmation"
+        )
+    else:
+        effective_trade_bias = raw_trade_bias
+        reason_codes.append("market_gate_passed")
+    return {
+        "raw_trade_bias": raw_trade_bias,
+        "effective_trade_bias": effective_trade_bias,
+        "primary_ticker": decision_card.get("primary_ticker"),
+        "evidence_grade": decision_card.get("evidence_grade"),
+        "data_quality": decision_card.get("data_quality"),
+        "risk_posture": decision_card.get("risk_posture"),
+        "regime_gate_level": regime_level,
+        "gate": gate or "n/a",
+        "buy_orders_cleared": gate_context.get("buy_orders_cleared"),
+        "buy_orders_cleared_count": gate_context.get("buy_orders_cleared_count"),
+        "position_scale": gate_context.get("position_scale"),
+        "reason_codes": reason_codes,
+        "action": "先按门控降级，只允许 09:25 后重新确认；若盘口承接和市场宽度没有修复，则不执行。"
+        if effective_trade_bias == "gate_locked_confirmation_only"
+        else "沿用模型原始倾向，但仍需完成盘中确认。",
+    }
+
+
 def _resolve_execution_context(
     *,
     report_mode: Any = None,

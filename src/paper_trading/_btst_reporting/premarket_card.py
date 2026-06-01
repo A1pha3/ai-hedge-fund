@@ -8,6 +8,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.paper_trading._btst_reporting.execution_contract import (
+    build_brief_execution_contract,
+)
 from src.paper_trading._btst_reporting.entry_mode_utils import (
     _selected_action_posture,
     _selected_holding_contract_note,
@@ -130,6 +133,7 @@ def _build_premarket_action_context(brief: dict[str, Any]) -> dict[str, Any]:
         selected_entries[0] if selected_entries else None
     )
     return {
+        "selected_entries": selected_entries,
         "primary_entry": primary_entry,
         "catalyst_theme_frontier_priority": dict(
             brief.get("catalyst_theme_frontier_priority") or {}
@@ -152,6 +156,31 @@ def _build_premarket_action_context(brief: dict[str, Any]) -> dict[str, Any]:
         ),
         "upstream_shadow_summary": dict(brief.get("upstream_shadow_summary") or {}),
     }
+
+
+def _attach_primary_action_contract(
+    primary_action: dict[str, Any] | None,
+    primary_semantic_action: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not primary_action:
+        return primary_action
+    if not primary_semantic_action:
+        return primary_action
+    attached = dict(primary_action)
+    for field in (
+        "report_mode",
+        "execution_state",
+        "max_allowed_state_today",
+        "formal_buy_allowed",
+        "allowed_sections",
+        "release_authority",
+        "state_reason_codes",
+        "veto_owner",
+    ):
+        value = primary_semantic_action.get(field)
+        if value not in (None, "", [], {}, ()):  # pragma: no branch - simple field gate
+            attached[field] = value
+    return attached
 
 
 def _build_watch_actions(
@@ -307,11 +336,19 @@ def analyze_btst_premarket_execution_card(
         input_path, trade_date=trade_date, next_trade_date=next_trade_date
     )
     action_context = _build_premarket_action_context(brief)
+    execution_contract_context = build_brief_execution_contract(
+        brief=brief,
+        selected_entries=list(action_context["selected_entries"] or []),
+        early_runner_status="unavailable",
+    )
     catalyst_theme_frontier_priority = action_context[
         "catalyst_theme_frontier_priority"
     ]
     catalyst_theme_shadow_watch = action_context["catalyst_theme_shadow_watch"]
-    primary_action = action_context["primary_action"]
+    primary_action = _attach_primary_action_contract(
+        action_context["primary_action"],
+        execution_contract_context["primary_semantic_action"],
+    )
     watch_actions = action_context["watch_actions"]
     opportunity_actions = action_context["opportunity_actions"]
     runner_recall_review_actions = action_context["runner_recall_review_actions"]
@@ -336,6 +373,7 @@ def analyze_btst_premarket_execution_card(
             upstream_shadow_summary=upstream_shadow_summary,
         ),
         "recommendation": brief.get("recommendation"),
+        "execution_contract": execution_contract_context["execution_contract"],
         "primary_action": primary_action,
         "watch_actions": watch_actions,
         "opportunity_actions": opportunity_actions,

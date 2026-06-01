@@ -94,6 +94,11 @@ def test_render_btst_opening_watch_card_markdown_emits_sections_and_sources():
             "selection_target": "short_trade_only",
             "headline": "若主票缺少确认信号，则允许空仓。",
             "recommendation": "先观察主票，再递减关注 near-miss 与机会池。",
+            "execution_contract": {
+                "report_mode": "confirmation_review_only",
+                "effective_trade_bias": "gate_locked_confirmation_only",
+                "release_authority": "market_gate",
+            },
             "summary": {
                 "primary_count": 1,
                 "near_miss_count": 1,
@@ -111,6 +116,9 @@ def test_render_btst_opening_watch_card_markdown_emits_sections_and_sources():
                     "focus_tier": "primary_entry",
                     "monitor_priority": "execute",
                     "execution_posture": "breakout_confirmation",
+                    "execution_state": "confirmable",
+                    "max_allowed_state_today": "confirmable",
+                    "release_authority": "market_gate",
                     "score_target": 0.5907,
                     "preferred_entry_mode": "next_day_breakout_confirmation",
                     "why_now": "breakout_freshness=0.94",
@@ -198,7 +206,11 @@ def test_render_btst_opening_watch_card_markdown_emits_sections_and_sources():
 
     assert "# BTST Opening Watch Card" in markdown
     assert "## Opening Headline" in markdown
+    assert "report_mode: confirmation_review_only" in markdown
+    assert "release_authority: market_gate" in markdown
     assert "### 1. 300757" in markdown
+    assert "- execution_state: confirmable" in markdown
+    assert "- max_allowed_state_today: confirmable" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "- recommended_variant_name: catalyst_theme_relaxed_sector_frontier" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown
@@ -247,6 +259,27 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
             {
                 "trade_date": "20260327",
                 "target_mode": "short_trade_only",
+                "market_state": {
+                    "regime_gate_level": "crisis",
+                    "breadth_ratio": 0.284187,
+                    "position_scale": 0.75,
+                },
+                "buy_orders": [
+                    {
+                        "ticker": "300757",
+                        "shares": 100,
+                        "amount": 1000.0,
+                    }
+                ],
+                "funnel_diagnostics": {
+                    "btst_regime_gate_enforcement": {
+                        "enforced": True,
+                        "gate": "halt",
+                        "mode": "enforce",
+                        "buy_orders_cleared": True,
+                        "buy_orders_cleared_count": 1,
+                    }
+                },
                 "selection_targets": {
                     "300757": {
                         "ticker": "300757",
@@ -428,12 +461,21 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
     assert [entry["ticker"] for entry in payload["upstream_shadow_entries"]] == ["601869", "300442"]
     assert payload["focus_items"][0]["historical_summary"] is not None
     assert payload["focus_items"][0]["execution_note"] is not None
+    assert payload["execution_contract"]["report_mode"] == "confirmation_review_only"
+    assert payload["execution_contract"]["effective_trade_bias"] == "gate_locked_confirmation_only"
+    assert payload["focus_items"][0]["execution_state"] == "confirmable"
+    assert payload["focus_items"][0]["max_allowed_state_today"] == "confirmable"
+    assert payload["focus_items"][0]["release_authority"] == "market_gate"
     assert payload["upstream_shadow_entries"][0]["candidate_source"] == "upstream_liquidity_corridor_shadow"
     assert payload["upstream_shadow_entries"][1]["candidate_source"] == "post_gate_liquidity_competition_shadow"
     assert "# BTST Opening Watch Card" in markdown
+    assert "report_mode: confirmation_review_only" in markdown
+    assert "effective_trade_bias: gate_locked_confirmation_only" in markdown
+    assert "release_authority: market_gate" in markdown
     assert "### 1. 300757" in markdown
     assert "### 2. 601869" in markdown
     assert "### 3. 300442" in markdown
+    assert "execution_state: confirmable" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown
     assert "## Upstream Shadow Recall" in markdown

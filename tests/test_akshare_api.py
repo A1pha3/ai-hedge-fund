@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import date
 from types import SimpleNamespace
 
 import pandas as pd
@@ -175,6 +176,27 @@ def test_get_prices_uses_akshare_dataframe_and_caches(monkeypatch):
     assert [(price.time, price.close, price.volume) for price in prices] == [("2026-04-01", 10.8, 12345)]
     assert cache.saved == [price.model_dump() for price in prices]
     assert restored == {"HTTP_PROXY": "x"}
+
+
+def test_get_prices_normalizes_date_objects_from_akshare_dataframe(monkeypatch):
+    cache = _DummyPriceCache()
+    monkeypatch.setattr(akshare_api, "_cache", cache)
+    monkeypatch.setattr(akshare_api, "_get_akshare", lambda: SimpleNamespace(stock_zh_a_hist=object()))
+    monkeypatch.setattr(akshare_api.AShareTicker, "from_symbol", classmethod(lambda cls, symbol: SimpleNamespace(symbol=symbol)))
+    monkeypatch.setattr(akshare_api, "_disable_system_proxies", lambda: {})
+    monkeypatch.setattr(akshare_api, "_restore_proxies", lambda saved: None)
+    monkeypatch.setattr(
+        akshare_api,
+        "_cached_akshare_dataframe_call",
+        lambda *args, **kwargs: pd.DataFrame(
+            [{"日期": date(2026, 4, 1), "开盘": 10.0, "最高": 11.0, "最低": 9.5, "收盘": 10.8, "成交量": 12345}]
+        ),
+    )
+
+    prices = akshare_api.get_prices("000001", "2026-04-01", "2026-04-02")
+
+    assert [(price.time, price.close, price.volume) for price in prices] == [("2026-04-01", 10.8, 12345)]
+    assert cache.saved == [price.model_dump() for price in prices]
 
 
 def test_get_prices_falls_back_to_tencent_when_akshare_fails(monkeypatch):

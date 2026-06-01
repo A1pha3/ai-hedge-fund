@@ -97,6 +97,11 @@ def test_render_btst_premarket_execution_card_markdown_emits_sections_and_source
             "next_trade_date": "2026-03-30",
             "selection_target": "short_trade_only",
             "recommendation": "主票优先，其他仅观察。",
+            "execution_contract": {
+                "report_mode": "confirmation_review_only",
+                "effective_trade_bias": "gate_locked_confirmation_only",
+                "release_authority": "market_gate",
+            },
             "summary": {
                 "primary_count": 1,
                 "watch_count": 1,
@@ -115,6 +120,9 @@ def test_render_btst_premarket_execution_card_markdown_emits_sections_and_source
                 "execution_posture": "breakout_confirmation",
                 "watch_priority": "highest",
                 "execution_quality_label": "balanced_confirmation",
+                "execution_state": "confirmable",
+                "max_allowed_state_today": "confirmable",
+                "release_authority": "market_gate",
                 "preferred_entry_mode": "next_day_breakout_confirmation",
                 "historical_prior": {
                     "summary": "close continuation supportive",
@@ -228,7 +236,12 @@ def test_render_btst_premarket_execution_card_markdown_emits_sections_and_source
 
     assert "# BTST Premarket Execution Card" in markdown
     assert "## Primary Action" in markdown
+    assert "report_mode: confirmation_review_only" in markdown
+    assert "effective_trade_bias: gate_locked_confirmation_only" in markdown
+    assert "release_authority: market_gate" in markdown
     assert "## Watchlist Actions" in markdown
+    assert "execution_state: confirmable" in markdown
+    assert "max_allowed_state_today: confirmable" in markdown
     assert "- historical_win_rate_payoff: 胜率=0.5000" in markdown
     assert "盈亏比(平均盈/平均亏)=1.0000" in markdown
     assert "### 1. 601869" in markdown
@@ -289,6 +302,27 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
             {
                 "trade_date": "20260327",
                 "target_mode": "short_trade_only",
+                "market_state": {
+                    "regime_gate_level": "crisis",
+                    "breadth_ratio": 0.284187,
+                    "position_scale": 0.75,
+                },
+                "buy_orders": [
+                    {
+                        "ticker": "300757",
+                        "shares": 100,
+                        "amount": 1000.0,
+                    }
+                ],
+                "funnel_diagnostics": {
+                    "btst_regime_gate_enforcement": {
+                        "enforced": True,
+                        "gate": "halt",
+                        "mode": "enforce",
+                        "buy_orders_cleared": True,
+                        "buy_orders_cleared_count": 1,
+                    }
+                },
                 "catalyst_theme_shadow_candidates": [
                     {
                         "ticker": "301001",
@@ -423,15 +457,24 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     assert payload["summary"]["catalyst_theme_shadow_count"] == 1
     assert payload["summary"]["upstream_shadow_candidate_count"] == 2
     assert payload["summary"]["upstream_shadow_promotable_count"] == 1
+    assert payload["execution_contract"]["report_mode"] == "confirmation_review_only"
+    assert payload["execution_contract"]["effective_trade_bias"] == "gate_locked_confirmation_only"
+    assert payload["execution_contract"]["release_authority"] == "market_gate"
     assert [entry["ticker"] for entry in payload["watch_actions"]] == ["601869"]
     assert payload["opportunity_actions"] == []
     assert [entry["ticker"] for entry in payload["no_history_observer_actions"]] == ["300442"]
     assert [entry["ticker"] for entry in payload["upstream_shadow_entries"]] == ["601869", "300442"]
     assert payload["catalyst_theme_frontier_priority"]["promoted_tickers"] == ["301001"]
     assert [entry["ticker"] for entry in payload["catalyst_theme_shadow_watch"]] == ["301001"]
+    assert payload["primary_action"]["execution_state"] == "confirmable"
+    assert payload["primary_action"]["max_allowed_state_today"] == "confirmable"
+    assert payload["primary_action"]["release_authority"] == "market_gate"
     assert payload["primary_action"]["historical_prior"]["execution_quality_label"] == "unknown"
     assert [entry["ticker"] for entry in payload["excluded_research_entries"]] == ["002002"]
     assert "# BTST Premarket Execution Card" in markdown
+    assert "report_mode: confirmation_review_only" in markdown
+    assert "effective_trade_bias: gate_locked_confirmation_only" in markdown
+    assert "release_authority: market_gate" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown
     assert "## Upstream Shadow Recall" in markdown
@@ -439,6 +482,7 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     assert "601869" in markdown
     assert "300442" in markdown
     assert "301001" in markdown
+    assert "execution_state: confirmable" in markdown
     assert "action_tier: catalyst_theme_frontier_priority" in markdown
     assert "Opportunity Pool Actions" in markdown
     assert "execution_posture: research_followup_only" in markdown

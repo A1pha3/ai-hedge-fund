@@ -21,6 +21,16 @@ def append_opening_watch_focus_items_markdown(
         inner_lines.append(f"- focus_tier: {item.get('focus_tier')}")
         inner_lines.append(f"- monitor_priority: {item.get('monitor_priority')}")
         inner_lines.append(f"- execution_posture: {item.get('execution_posture')}")
+        if item.get("execution_state") not in (None, ""):
+            inner_lines.append(f"- execution_state: {item.get('execution_state')}")
+        if item.get("max_allowed_state_today") not in (None, ""):
+            inner_lines.append(
+                f"- max_allowed_state_today: {item.get('max_allowed_state_today')}"
+            )
+        if item.get("release_authority") not in (None, ""):
+            inner_lines.append(
+                f"- release_authority: {item.get('release_authority')}"
+            )
         inner_lines.append(f"- score_target: {format_float(item.get('score_target'))}")
         inner_lines.append(f"- preferred_entry_mode: {item.get('preferred_entry_mode')}")
         inner_lines.append(f"- why_now: {item.get('why_now')}")

@@ -1681,6 +1681,126 @@ def test_generate_btst_doc_bundle_post_trade_review_loop_mentions_review_transit
     assert "post_close_review_transition" in checklist_doc
 
 
+def test_generate_btst_doc_bundle_gate_locked_early_warning_docs_surface_execution_contract(tmp_path: Path) -> None:
+    """Early-warning docs should inherit the same gate-locked execution contract as the main BTST surfaces."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260529_20260529_live_m2_7_short_trade_only_20260601_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    snapshot_path = report_dir / "selection_artifacts" / "2026-05-29" / "selection_snapshot.json"
+    priority_board_path = report_dir / "btst_next_day_priority_board_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-29",
+            "selection_target": "short_trade_only",
+            "btst_followup": {
+                "brief_json": brief_path.as_posix(),
+                "priority_board_json": priority_board_path.as_posix(),
+            },
+        },
+    )
+    selected_row = {
+        "ticker": "300408",
+        "name": "三环集团",
+        "preferred_entry_mode": "confirm_then_hold_breakout",
+        "score_target": 0.5349,
+        "historical_prior": {
+            "applied_scope": "same_ticker",
+            "sample_count": 15,
+            "evaluable_count": 15,
+            "next_close_positive_rate": 0.8,
+            "next_close_positive_count": 12,
+            "next_close_negative_count": 3,
+            "next_close_payoff_ratio": 3.7926,
+            "next_close_expectancy": 0.0533,
+        },
+    }
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-29",
+            "next_trade_date": "2026-06-01",
+            "selection_target": "short_trade_only",
+            "snapshot_path": snapshot_path.as_posix(),
+            "selected_actions": [selected_row],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        priority_board_path,
+        {
+            "trade_date": "2026-05-29",
+            "next_trade_date": "2026-06-01",
+            "selection_target": "short_trade_only",
+            "source_paths": {"snapshot_path": snapshot_path.as_posix()},
+            "priority_rows": [selected_row],
+        },
+    )
+    _write_json(
+        snapshot_path,
+        {
+            "trade_date": "2026-05-29",
+            "market_state": {
+                "regime_gate_level": "crisis",
+                "breadth_ratio": 0.284187,
+                "position_scale": 0.75,
+            },
+            "buy_orders": [
+                {
+                    "ticker": "300408",
+                    "shares": 400,
+                    "amount": 4000.0,
+                }
+            ],
+            "funnel_diagnostics": {
+                "btst_regime_gate_enforcement": {
+                    "enforced": True,
+                    "gate": "halt",
+                    "mode": "enforce",
+                    "buy_orders_cleared": True,
+                    "buy_orders_cleared_count": 1,
+                }
+            },
+        },
+    )
+    _write_json(reports_root / "btst_full_report_20260529.json", {"trade_date": "20260529", "next_date": "20260601", "pool_size": 1, "selected_count": 1, "near_miss_count": 0, "high_confidence": []})
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {
+            "daily_boards": [
+                {
+                    "trade_date": "2026-05-29",
+                    "gate_action": "tradeable",
+                    "deployment_mode": "shadow_only",
+                    "early_runner_watchlist": [],
+                    "early_runner_priority": [],
+                    "second_entry_reentry": [],
+                }
+            ]
+        },
+    )
+
+    output_dir = tmp_path / "outputs"
+    generate_btst_doc_bundle(
+        "20260529",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+        include_extra_warning_docs=True,
+        write_review_ledger=False,
+    )
+
+    early_warning_doc = (output_dir / "BTST-20260529-EARLY-WARNING.md").read_text(encoding="utf-8")
+    early_warning_card = (output_dir / "BTST-20260529-EARLY-WARNING-CARD.md").read_text(encoding="utf-8")
+
+    assert "当前状态 `confirmable`" in early_warning_doc
+    assert "当日上限 `confirmable`" in early_warning_doc
+    assert "放行权 `market_gate`" in early_warning_doc
+    assert "effective_trade_bias `gate_locked_confirmation_only`" in early_warning_card
+    assert "release_authority `market_gate`" in early_warning_card
+
+
 def test_generate_btst_doc_bundle_prefers_canonical_names_from_sibling_snapshots(tmp_path: Path) -> None:
     """Repair XD/DR-prefixed stock names by looking for canonical names in sibling snapshots."""
     reports_root = tmp_path / "data" / "reports"

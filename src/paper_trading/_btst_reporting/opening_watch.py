@@ -8,6 +8,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.paper_trading._btst_reporting.execution_contract import (
+    build_brief_execution_contract,
+)
 from src.paper_trading._btst_reporting.entry_mode_utils import (
     _augment_execution_note,
     _selected_action_posture,
@@ -129,6 +132,39 @@ def _build_opening_headline(
             + "。"
         )
     return headline
+
+
+def _attach_primary_focus_contract(
+    focus_items: list[dict[str, Any]],
+    primary_semantic_action: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not primary_semantic_action:
+        return focus_items
+    contract_fields = (
+        "report_mode",
+        "execution_state",
+        "max_allowed_state_today",
+        "formal_buy_allowed",
+        "allowed_sections",
+        "release_authority",
+        "state_reason_codes",
+    )
+    primary_ticker = str(primary_semantic_action.get("ticker") or "").strip()
+    enriched_focus_items: list[dict[str, Any]] = []
+    for item in focus_items:
+        if (
+            item.get("focus_tier") == "primary_entry"
+            and str(item.get("ticker") or "").strip() == primary_ticker
+        ):
+            enriched_item = dict(item)
+            for field in contract_fields:
+                value = primary_semantic_action.get(field)
+                if value not in (None, "", [], {}, ()):
+                    enriched_item[field] = value
+            enriched_focus_items.append(enriched_item)
+            continue
+        enriched_focus_items.append(item)
+    return enriched_focus_items
 
 
 def _build_opening_watch_context(brief: dict[str, Any]) -> dict[str, Any]:
@@ -360,6 +396,11 @@ def analyze_btst_opening_watch_card(
     no_history_observer_entries = opening_context["no_history_observer_entries"]
     risky_observer_entries = opening_context["risky_observer_entries"]
     primary_entry = opening_context["primary_entry"]
+    execution_contract_context = build_brief_execution_contract(
+        brief=brief,
+        selected_entries=list(opening_context["selected_entries"] or []),
+        early_runner_status="unavailable",
+    )
     focus_items = _build_opening_focus_items(
         brief=brief,
         primary_entry=primary_entry,
@@ -367,6 +408,10 @@ def analyze_btst_opening_watch_card(
         opportunity_pool_entries=opportunity_pool_entries,
         no_history_observer_entries=no_history_observer_entries,
         risky_observer_entries=risky_observer_entries,
+    )
+    focus_items = _attach_primary_focus_contract(
+        focus_items,
+        execution_contract_context["primary_semantic_action"],
     )
     _sort_opening_focus_items(focus_items)
     upstream_shadow_summary = opening_context["upstream_shadow_summary"]
@@ -386,6 +431,7 @@ def analyze_btst_opening_watch_card(
         "selection_target": brief.get("selection_target"),
         "headline": headline,
         "recommendation": brief.get("recommendation"),
+        "execution_contract": execution_contract_context["execution_contract"],
         "summary": _build_opening_watch_summary(
             brief=brief,
             no_history_observer_entries=no_history_observer_entries,

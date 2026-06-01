@@ -18,6 +18,7 @@ from src.paper_trading.btst_decision_enrichment import (
     build_historical_reliability_metrics,
     build_decision_card,
     build_execution_semantics,
+    build_premarket_control_tower,
     build_report_mode,
     build_review_ledger_rows,
     build_veto_owner,
@@ -607,67 +608,12 @@ def _render_gamma_market_gate_lines(selection_snapshot: dict[str, Any], selected
     return lines
 
 
-def _selection_snapshot_gate_context(selection_snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Extract the market gate fields that can override a raw trade decision."""
-    market_state = dict(selection_snapshot.get("market_state") or {})
-    funnel_diagnostics = dict(selection_snapshot.get("funnel_diagnostics") or {})
-    gate_enforcement = dict(funnel_diagnostics.get("btst_regime_gate_enforcement") or {})
-    return {
-        "regime_gate_level": str(market_state.get("regime_gate_level") or "n/a"),
-        "regime_gate_reasons": list(market_state.get("regime_gate_reasons") or []),
-        "position_scale": market_state.get("position_scale"),
-        "gate": str(gate_enforcement.get("gate") or ""),
-        "enforced": gate_enforcement.get("enforced"),
-        "buy_orders_cleared": gate_enforcement.get("buy_orders_cleared"),
-        "buy_orders_cleared_count": gate_enforcement.get("buy_orders_cleared_count"),
-    }
-
-
 def _build_premarket_control_tower(
     decision_card: dict[str, Any],
     selection_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     """Combine model trade bias with market gate state into one effective execution state."""
-    raw_trade_bias = str(decision_card.get("trade_bias") or "skip")
-    gate_context = _selection_snapshot_gate_context(selection_snapshot) if selection_snapshot else {}
-    gate = str(gate_context.get("gate") or "")
-    regime_level = str(gate_context.get("regime_gate_level") or "n/a")
-    buy_orders_cleared = bool(gate_context.get("buy_orders_cleared"))
-    hard_gate = gate == "halt" or regime_level in {"crisis", "halt", "risk_off"} or buy_orders_cleared
-    reason_codes: list[str] = []
-    if raw_trade_bias in {"skip", "no_trade"}:
-        effective_trade_bias = raw_trade_bias
-        reason_codes.append("raw_model_no_trade")
-    elif not selection_snapshot:
-        effective_trade_bias = "manual_review_required"
-        reason_codes.append("selection_snapshot_missing")
-    elif hard_gate:
-        effective_trade_bias = "gate_locked_confirmation_only"
-        reason_codes.append(
-            "market_gate_downgraded_raw_trade_allowed"
-            if raw_trade_bias == "trade_allowed"
-            else "market_gate_requires_confirmation"
-        )
-    else:
-        effective_trade_bias = raw_trade_bias
-        reason_codes.append("market_gate_passed")
-    return {
-        "raw_trade_bias": raw_trade_bias,
-        "effective_trade_bias": effective_trade_bias,
-        "primary_ticker": decision_card.get("primary_ticker"),
-        "evidence_grade": decision_card.get("evidence_grade"),
-        "data_quality": decision_card.get("data_quality"),
-        "risk_posture": decision_card.get("risk_posture"),
-        "regime_gate_level": regime_level,
-        "gate": gate or "n/a",
-        "buy_orders_cleared": gate_context.get("buy_orders_cleared"),
-        "buy_orders_cleared_count": gate_context.get("buy_orders_cleared_count"),
-        "position_scale": gate_context.get("position_scale"),
-        "reason_codes": reason_codes,
-        "action": "先按门控降级，只允许 09:25 后重新确认；若盘口承接和市场宽度没有修复，则不执行。"
-        if effective_trade_bias == "gate_locked_confirmation_only"
-        else "沿用模型原始倾向，但仍需完成盘中确认。",
-    }
+    return build_premarket_control_tower(decision_card, selection_snapshot)
 
 
 def _render_premarket_control_tower(control_tower: dict[str, Any]) -> list[str]:
@@ -1349,6 +1295,33 @@ def _render_primary_contract_lines(primary_action: dict[str, Any], *, report_mod
     return lines
 
 
+def _render_contract_mirror_lines(
+    primary_action: dict[str, Any],
+    *,
+    report_mode: str,
+    control_tower: dict[str, Any] | None = None,
+    title: str | None,
+) -> list[str]:
+    lines: list[str] = []
+    if title:
+        lines.extend([title, ""])
+    if not primary_action:
+        lines.append("- 当前没有 formal 主线，对应 contract 保持空仓观察，release_authority `none`。")
+        return lines
+    lines.append(
+        f"- 当前状态 `{primary_action.get('execution_state') or 'n/a'}`；当日上限 `{primary_action.get('max_allowed_state_today') or 'n/a'}`；放行权 `{primary_action.get('release_authority') or 'none'}`；release_authority `{primary_action.get('release_authority') or 'none'}`。"
+    )
+    if control_tower:
+        lines.append(
+            f"- effective_trade_bias `{control_tower.get('effective_trade_bias') or 'n/a'}`；reason_codes { _compact_code_items(control_tower.get('reason_codes'), limit=6) }。"
+        )
+    if report_mode == "confirmation_review_only":
+        lines.append("- 这里只镜像主执行 contract，不自动等价成正式下单许可。")
+    else:
+        lines.append("- 这里与正式执行 contract 对齐，但盘中仍需服从确认与失效条件。")
+    return lines
+
+
 def _render_early_runner_status(context: dict[str, Any]) -> list[str]:
     """Render human-readable early-runner availability lines."""
     board = dict(context.get("board") or {})
@@ -1845,6 +1818,9 @@ def _render_early_warning_doc(
     next_trade_date: str,
     early_runner: dict[str, Any],
     formal_rows: list[dict[str, Any]],
+    semantic_selected: list[dict[str, Any]],
+    control_tower: dict[str, Any],
+    report_mode: str,
     strategy_thresholds: dict[str, Any],
     strategy_thresholds_config_path: str,
     strategy_thresholds_profile: str,
@@ -1873,6 +1849,10 @@ def _render_early_warning_doc(
         role="early_runner_research",
         early_runner_status=early_status,
     )
+    primary_action = _resolve_primary_semantic_action(
+        semantic_selected,
+        report_mode=report_mode,
+    )
     lines = [
         f"# BTST 提前预警池（{signal_date_compact}）",
         "",
@@ -1899,6 +1879,15 @@ def _render_early_warning_doc(
             "",
         ]
     )
+    lines.extend(
+        _render_contract_mirror_lines(
+            primary_action,
+            report_mode=report_mode,
+            control_tower=control_tower,
+            title="## 与主执行层对齐的当日 contract",
+        )
+    )
+    lines.extend([""])
     lines.extend(_render_intersection_highlights(intersection_summary))
     lines.extend(["", "## Priority", ""])
     lines.extend(_render_enriched_stock_bullets(enriched_priority, limit=6))
@@ -1922,13 +1911,26 @@ def _render_early_warning_doc(
     return "\n".join(lines) + "\n"
 
 
-def _render_early_warning_card_doc(signal_date_compact: str, signal_date_iso: str, next_trade_date: str, early_runner: dict[str, Any], formal_rows: list[dict[str, Any]]) -> str:
+def _render_early_warning_card_doc(
+    signal_date_compact: str,
+    signal_date_iso: str,
+    next_trade_date: str,
+    early_runner: dict[str, Any],
+    formal_rows: list[dict[str, Any]],
+    semantic_selected: list[dict[str, Any]],
+    control_tower: dict[str, Any],
+    report_mode: str,
+) -> str:
     """Render the compact early-warning card for quick reading."""
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     priority = _safe_rows(early_runner.get("priority"))
     watchlist = _safe_rows(early_runner.get("watchlist"))
     second_entry = _safe_rows(early_runner.get("second_entry"))
     research_confirmation = _safe_rows(early_runner.get("research_confirmation"))
+    primary_action = _resolve_primary_semantic_action(
+        semantic_selected,
+        report_mode=report_mode,
+    )
     lines = [
         f"# BTST 提前预警卡（{signal_date_compact}）",
         "",
@@ -1940,9 +1942,15 @@ def _render_early_warning_card_doc(signal_date_compact: str, signal_date_iso: st
         f"- second_entry：`{_stock_labels_text(second_entry, limit=5)}`。",
         "- 使用顺序：先看正式 BTST，再看交集优先复审，only early-runner 做补充复审，second-entry 单独看回补机会。",
     ]
+    lines[4:4] = _render_contract_mirror_lines(
+        primary_action,
+        report_mode=report_mode,
+        control_tower=control_tower,
+        title=None,
+    )
     if research_confirmation:
         lines.insert(
-            6,
+            8,
             f"- research_only 确认池：`{_stock_labels_text(research_confirmation, limit=5)}`。",
         )
     return "\n".join(lines) + "\n"
@@ -2131,8 +2139,8 @@ def generate_btst_doc_bundle(
         f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, semantic_selected, semantic_watch, early_runner, selection_snapshot, control_tower, report_mode, veto_owner, section_labels, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
     }
     if include_extra_warning_docs:
-        docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, signal_date_iso, str(brief.get("next_trade_date") or ""), early_runner, formal_rows, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile)
-        docs[f"BTST-{signal_date_compact}-EARLY-WARNING-CARD.md"] = _render_early_warning_card_doc(signal_date_compact, signal_date_iso, str(brief.get("next_trade_date") or ""), early_runner, formal_rows)
+        docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, signal_date_iso, str(brief.get("next_trade_date") or ""), early_runner, formal_rows, semantic_selected, control_tower, report_mode, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile)
+        docs[f"BTST-{signal_date_compact}-EARLY-WARNING-CARD.md"] = _render_early_warning_card_doc(signal_date_compact, signal_date_iso, str(brief.get("next_trade_date") or ""), early_runner, formal_rows, semantic_selected, control_tower, report_mode)
     quality_summary = _build_report_quality_summary(
         signal_date_compact=signal_date_compact,
         docs=docs,

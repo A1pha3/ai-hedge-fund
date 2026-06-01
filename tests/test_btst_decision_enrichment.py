@@ -3,6 +3,7 @@ from __future__ import annotations
 from src.paper_trading.btst_decision_enrichment import (
     build_decision_card,
     build_execution_semantics,
+    build_premarket_control_tower,
     build_report_mode,
     build_review_ledger_rows,
     build_veto_owner,
@@ -221,6 +222,36 @@ def test_build_report_mode_prefers_current_control_tower_bias_over_legacy_mode()
         == "formal_execution"
     )
     assert build_report_mode({"report_mode": "formal_execution"}) == "formal_execution"
+
+
+def test_build_premarket_control_tower_downgrades_trade_allowed_under_hard_market_gate() -> None:
+    control_tower = build_premarket_control_tower(
+        {
+            "trade_bias": "trade_allowed",
+            "primary_ticker": "300408",
+            "evidence_grade": "A",
+            "data_quality": "fresh",
+            "risk_posture": "normal",
+        },
+        {
+            "market_state": {
+                "regime_gate_level": "crisis",
+                "position_scale": 0.75,
+            },
+            "funnel_diagnostics": {
+                "btst_regime_gate_enforcement": {
+                    "gate": "halt",
+                    "buy_orders_cleared": True,
+                    "buy_orders_cleared_count": 1,
+                }
+            },
+        },
+    )
+
+    assert control_tower["effective_trade_bias"] == "gate_locked_confirmation_only"
+    assert control_tower["reason_codes"] == ["market_gate_downgraded_raw_trade_allowed"]
+    assert control_tower["buy_orders_cleared"] is True
+    assert control_tower["regime_gate_level"] == "crisis"
 
 
 def test_build_veto_owner_maps_market_gate_manual_review_and_model_evidence() -> None:

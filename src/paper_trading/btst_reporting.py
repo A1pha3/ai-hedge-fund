@@ -712,6 +712,7 @@ def analyze_btst_premarket_execution_card(
 
 def _append_premarket_overview_markdown(lines: list[str], card: dict[str, Any]) -> None:
     summary = dict(card.get("summary") or {})
+    execution_contract = dict(card.get("execution_contract") or {})
     lines.append("# BTST Premarket Execution Card")
     lines.append("")
     lines.append("## Overview")
@@ -742,6 +743,24 @@ def _append_premarket_overview_markdown(lines: list[str], card: dict[str, Any]) 
     )
     lines.append(f"- excluded_research_count: {summary.get('excluded_research_count')}")
     lines.append(f"- recommendation: {card.get('recommendation')}")
+    if execution_contract:
+        lines.append(
+            f"- report_mode: {execution_contract.get('report_mode') or 'n/a'}"
+        )
+        lines.append(
+            f"- effective_trade_bias: {execution_contract.get('effective_trade_bias') or 'n/a'}"
+        )
+        if execution_contract.get("execution_state") not in (None, ""):
+            lines.append(
+                f"- execution_state: {execution_contract.get('execution_state')}"
+            )
+        if execution_contract.get("max_allowed_state_today") not in (None, ""):
+            lines.append(
+                f"- max_allowed_state_today: {execution_contract.get('max_allowed_state_today')}"
+            )
+        lines.append(
+            f"- release_authority: {execution_contract.get('release_authority') or 'none'}"
+        )
     lines.append("")
 
 
@@ -760,6 +779,16 @@ def _append_premarket_action_block(
     lines.append(
         f"{prefix}execution_quality_label: {entry.get('execution_quality_label')}"
     )
+    if entry.get("execution_state") not in (None, ""):
+        lines.append(f"{prefix}execution_state: {entry.get('execution_state')}")
+    if entry.get("max_allowed_state_today") not in (None, ""):
+        lines.append(
+            f"{prefix}max_allowed_state_today: {entry.get('max_allowed_state_today')}"
+        )
+    if entry.get("release_authority") not in (None, ""):
+        lines.append(
+            f"{prefix}release_authority: {entry.get('release_authority')}"
+        )
     lines.append(f"{prefix}preferred_entry_mode: {entry.get('preferred_entry_mode')}")
     lines.append(
         f"{prefix}historical_summary: {(entry.get('historical_prior') or {}).get('summary') or 'n/a'}"
@@ -1107,6 +1136,7 @@ def _append_opening_watch_overview_markdown(
     lines: list[str], card: dict[str, Any]
 ) -> None:
     summary = dict(card.get("summary") or {})
+    execution_contract = dict(card.get("execution_contract") or {})
     lines.append("# BTST Opening Watch Card")
     lines.append("")
     lines.append("## Opening Headline")
@@ -1134,6 +1164,24 @@ def _append_opening_watch_overview_markdown(
         f"- upstream_shadow_promotable_count: {summary.get('upstream_shadow_promotable_count')}"
     )
     lines.append(f"- recommendation: {card.get('recommendation')}")
+    if execution_contract:
+        lines.append(
+            f"- report_mode: {execution_contract.get('report_mode') or 'n/a'}"
+        )
+        lines.append(
+            f"- effective_trade_bias: {execution_contract.get('effective_trade_bias') or 'n/a'}"
+        )
+        if execution_contract.get("execution_state") not in (None, ""):
+            lines.append(
+                f"- execution_state: {execution_contract.get('execution_state')}"
+            )
+        if execution_contract.get("max_allowed_state_today") not in (None, ""):
+            lines.append(
+                f"- max_allowed_state_today: {execution_contract.get('max_allowed_state_today')}"
+            )
+        lines.append(
+            f"- release_authority: {execution_contract.get('release_authority') or 'none'}"
+        )
     lines.append("")
 
 

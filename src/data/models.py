@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from datetime import date, datetime
+
+from pydantic import BaseModel, field_validator
 
 
 class Price(BaseModel):
@@ -8,6 +10,17 @@ class Price(BaseModel):
     low: float
     volume: int
     time: str
+
+    @field_validator("time", mode="before")
+    @classmethod
+    def normalize_time(cls, value: object) -> object:
+        if isinstance(value, datetime):
+            if value.hour == 0 and value.minute == 0 and value.second == 0 and value.microsecond == 0:
+                return value.date().isoformat()
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        return value
 
 
 class PriceResponse(BaseModel):
