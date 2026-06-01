@@ -178,6 +178,29 @@ def test_build_execution_semantics_formal_execution_trade_allowed_is_orderable()
     assert semantics["allowed_sections"] == ["formal_queue"]
 
 
+def test_build_execution_semantics_uses_veto_owner_as_release_authority_in_confirmation_review_mode() -> None:
+    semantics = build_execution_semantics(
+        report_mode="confirmation_review_only",
+        role="formal_selected",
+        trade_bias="trade_allowed",
+        control_tower={"reason_codes": ["buy_orders_cleared"]},
+    )
+
+    assert semantics["execution_state"] == "confirmable"
+    assert semantics["release_authority"] == "market_gate"
+
+
+def test_build_execution_semantics_uses_execution_desk_as_release_authority_for_formal_confirmation_rows() -> None:
+    semantics = build_execution_semantics(
+        report_mode="formal_execution",
+        role="formal_selected",
+        trade_bias="confirmation_only",
+    )
+
+    assert semantics["execution_state"] == "confirmable"
+    assert semantics["release_authority"] == "execution_desk"
+
+
 def test_build_report_mode_prefers_current_control_tower_bias_over_legacy_mode() -> None:
     assert (
         build_report_mode(
@@ -250,7 +273,10 @@ def test_build_review_ledger_rows_control_tower_normalizes_legacy_semantics() ->
     assert ledger_rows[0]["formal_buy_allowed"] is False
     assert ledger_rows[0]["allowed_sections"] == ["review_queue"]
     assert ledger_rows[0]["veto_owner"] == "market_gate"
+    assert ledger_rows[0]["release_authority"] == "market_gate"
     assert ledger_rows[0]["state_reason_codes"] == ["buy_orders_cleared", "market_gate_requires_confirmation"]
+    assert ledger_rows[0]["post_close_review_state"] is None
+    assert ledger_rows[0]["post_close_review_transition"] is None
 
 
 def test_build_review_ledger_rows_partial_control_tower_keeps_explicit_formal_execution() -> None:
@@ -283,4 +309,5 @@ def test_build_review_ledger_rows_partial_control_tower_keeps_explicit_formal_ex
     assert ledger_rows[0]["formal_buy_allowed"] is True
     assert ledger_rows[0]["allowed_sections"] == ["formal_queue"]
     assert ledger_rows[0]["veto_owner"] == "market_gate"
+    assert ledger_rows[0]["release_authority"] == "already_released"
     assert ledger_rows[0]["state_reason_codes"] == ["buy_orders_cleared"]

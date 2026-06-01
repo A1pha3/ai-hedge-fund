@@ -6,6 +6,7 @@ from pathlib import Path
 from scripts.generate_btst_doc_bundle import (
     _build_forbidden_semantics_hits,
     _build_semantic_conflicts,
+    _group_rows_by_allowed_sections,
     _render_action_matrix_sections,
     compare_btst_doc_bundle_profiles,
     generate_btst_doc_bundle,
@@ -119,6 +120,34 @@ def test_build_forbidden_semantics_hits_uses_precise_formal_confirmation_markers
         "BTST-20260529-EXEC-CHECKLIST.md:## 正式执行动作矩阵",
         "BTST-20260529-EXEC-CHECKLIST.md:- [ ] 正式执行：",
     ]
+
+
+def test_group_rows_by_allowed_sections_separates_review_watch_and_blocked_rows() -> None:
+    """Rendered sections must follow allowed_sections instead of raw selected/watch buckets."""
+    grouped_rows = _group_rows_by_allowed_sections(
+        [
+            {
+                "ticker": "300054",
+                "name": "鼎龙股份",
+                "allowed_sections": ["review_queue"],
+            },
+            {
+                "ticker": "300476",
+                "name": "胜宏科技",
+                "allowed_sections": ["watch_queue"],
+            },
+            {
+                "ticker": "300999",
+                "name": "华润微",
+                "allowed_sections": ["blocked_only"],
+            },
+        ]
+    )
+
+    assert grouped_rows["formal_queue"] == []
+    assert [row["ticker"] for row in grouped_rows["review_queue"]] == ["300054"]
+    assert [row["ticker"] for row in grouped_rows["watch_queue"]] == ["300476"]
+    assert [row["ticker"] for row in grouped_rows["blocked_only"]] == ["300999"]
 
 
 def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -> None:
@@ -1545,14 +1574,16 @@ def _generate_btst_doc_bundle_gate_outputs(tmp_path: Path, *, gate_locked: bool)
 
     llm_doc = (output_dir / "BTST-LLM-20260529.md").read_text(encoding="utf-8")
     checklist_doc = (output_dir / "BTST-20260529-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
+    plain_doc = (output_dir / "20260529-两套交易计划通俗说明.md").read_text(encoding="utf-8")
+    forum_doc = (output_dir / "20260529-两套交易计划论坛短版.md").read_text(encoding="utf-8")
     quality_summary = json.loads(Path(result["quality_summary_json_path"]).read_text(encoding="utf-8"))
     ledger_payload = json.loads((output_dir / "20260529-btst-decision-review-ledger.json").read_text(encoding="utf-8"))
-    return llm_doc, checklist_doc, quality_summary, ledger_payload
+    return llm_doc, checklist_doc, plain_doc, forum_doc, quality_summary, ledger_payload
 
 
 def test_generate_btst_doc_bundle_gate_locked_confirmation_only_switches_to_confirmation_review_outputs(tmp_path: Path) -> None:
     """Gate-locked control-tower state should downgrade final docs and ledger into confirmation-review mode."""
-    llm_doc, checklist_doc, quality_summary, ledger_payload = _generate_btst_doc_bundle_gate_outputs(
+    llm_doc, checklist_doc, plain_doc, forum_doc, quality_summary, ledger_payload = _generate_btst_doc_bundle_gate_outputs(
         tmp_path,
         gate_locked=True,
     )
@@ -1562,22 +1593,46 @@ def test_generate_btst_doc_bundle_gate_locked_confirmation_only_switches_to_conf
 
     assert "## 正式执行层" not in llm_doc
     assert "## 确认复核队列" in llm_doc
+    assert "正式执行层先决定主顺序" not in llm_doc
+    assert "确认复核队列先决定主复核顺序" in llm_doc
     assert "## 正式执行顺序" not in checklist_doc
     assert "## 确认复核顺序" in checklist_doc
     assert "## 正式执行动作矩阵" not in checklist_doc
     assert "## 确认复核动作矩阵" in checklist_doc
+    assert "- [ ] 确认复核：`300408 三环集团`" in checklist_doc
+    assert "- [ ] 正式观察：`300408 三环集团`" not in checklist_doc
+    assert "确认复核主线" in plain_doc
+    assert "正式 BTST 决定主执行顺序" not in plain_doc
+    assert "放行权归 `market_gate`" in plain_doc
+    assert "确认复核主线" in forum_doc
+    assert "正式 BTST 决定主票" not in forum_doc
+    assert "放行权 `market_gate`" in forum_doc
     assert quality_summary.get("report_mode") == "confirmation_review_only"
     assert quality_summary.get("semantic_conflicts") == []
     assert quality_summary.get("forbidden_semantics_hits") == []
+    assert quality_summary["source_of_truth_snapshot"]["formal_rows"] == [
+        {
+            "ticker": "300408",
+            "execution_state": "confirmable",
+            "max_allowed_state_today": "confirmable",
+            "allowed_sections": ["review_queue"],
+            "formal_buy_allowed": False,
+            "release_authority": "market_gate",
+        }
+    ]
+    assert quality_summary["source_of_truth_snapshot"]["forbidden_semantics_hits"] == []
     assert first_row.get("execution_state") == "confirmable"
     assert first_row.get("max_allowed_state_today") == "confirmable"
     assert first_row.get("formal_buy_allowed") is False
     assert first_row.get("allowed_sections") == ["review_queue"]
+    assert first_row.get("release_authority") == "market_gate"
+    assert first_row.get("post_close_review_state") is None
+    assert first_row.get("post_close_review_transition") is None
 
 
 def test_generate_btst_doc_bundle_gate_allowed_keeps_formal_execution_outputs(tmp_path: Path) -> None:
     """Gate-passed control-tower state should keep formal-execution docs and ledger outputs."""
-    llm_doc, checklist_doc, quality_summary, ledger_payload = _generate_btst_doc_bundle_gate_outputs(
+    llm_doc, checklist_doc, plain_doc, forum_doc, quality_summary, ledger_payload = _generate_btst_doc_bundle_gate_outputs(
         tmp_path,
         gate_locked=False,
     )
@@ -1591,13 +1646,39 @@ def test_generate_btst_doc_bundle_gate_allowed_keeps_formal_execution_outputs(tm
     assert "## 确认复核顺序" not in checklist_doc
     assert "## 正式执行动作矩阵" in checklist_doc
     assert "## 确认复核动作矩阵" not in checklist_doc
+    assert "正式 BTST 仍以 `300408 三环集团` 这条主线为准" in plain_doc
+    assert "放行权归 `already_released`" in plain_doc
+    assert "明日 BTST 主线还是 `300408 三环集团`" in forum_doc
+    assert "放行权 `already_released`" in forum_doc
     assert quality_summary.get("report_mode") == "formal_execution"
     assert quality_summary.get("semantic_conflicts") == []
     assert quality_summary.get("forbidden_semantics_hits") == []
+    assert quality_summary["source_of_truth_snapshot"]["formal_rows"] == [
+        {
+            "ticker": "300408",
+            "execution_state": "orderable",
+            "max_allowed_state_today": "orderable",
+            "allowed_sections": ["formal_queue"],
+            "formal_buy_allowed": True,
+            "release_authority": "already_released",
+        }
+    ]
     assert first_row.get("max_allowed_state_today") == "orderable"
     assert first_row.get("execution_state") == "orderable"
     assert first_row.get("formal_buy_allowed") is True
     assert first_row.get("allowed_sections") == ["formal_queue"]
+    assert first_row.get("release_authority") == "already_released"
+
+
+def test_generate_btst_doc_bundle_post_trade_review_loop_mentions_review_transition_backfill(tmp_path: Path) -> None:
+    """Checklist should document the post-close review transition fields that close the execution loop."""
+    _, checklist_doc, _, _, _, _ = _generate_btst_doc_bundle_gate_outputs(
+        tmp_path,
+        gate_locked=True,
+    )
+
+    assert "post_close_review_state" in checklist_doc
+    assert "post_close_review_transition" in checklist_doc
 
 
 def test_generate_btst_doc_bundle_prefers_canonical_names_from_sibling_snapshots(tmp_path: Path) -> None:

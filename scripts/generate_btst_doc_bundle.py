@@ -549,7 +549,7 @@ def _render_post_trade_review_loop() -> list[str]:
     return [
         "## 盘后复盘闭环",
         "",
-        "- 收盘后回填 `realized_entry_price`、`realized_exit_price`、`realized_slippage`、`mae`、`mfe` 与 `execution_review_label`。",
+        "- 收盘后回填 `realized_entry_price`、`realized_exit_price`、`realized_slippage`、`mae`、`mfe`、`post_close_review_state`、`post_close_review_transition` 与 `execution_review_label`。",
         "- 次日复盘时同时标注是否触发买点、是否触发取消条件、真实滑点是否超过成本闸门。",
         "- 回填结果进入 review ledger，用于下一轮样本稳健性、执行质量和风险预算校准。",
     ]
@@ -784,6 +784,67 @@ def _build_section_labels(report_mode: str) -> dict[str, str]:
     }
 
 
+_ALLOWED_SECTION_ORDER = (
+    "formal_queue",
+    "review_queue",
+    "watch_queue",
+    "blocked_only",
+)
+
+
+def _normalized_allowed_sections(value: Any) -> list[str]:
+    if value in (None, "", [], (), set(), frozenset()):
+        return []
+    if isinstance(value, str):
+        raw_values = [value]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        raw_values = list(value)
+    else:
+        raw_values = [value]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_values:
+        text = str(item or "").strip()
+        if text and text not in seen:
+            normalized.append(text)
+            seen.add(text)
+    return normalized
+
+
+def _group_rows_by_allowed_sections(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped_rows: dict[str, list[dict[str, Any]]] = {
+        section: [] for section in _ALLOWED_SECTION_ORDER
+    }
+    for row in rows:
+        for section in _normalized_allowed_sections(row.get("allowed_sections")):
+            if section in grouped_rows:
+                grouped_rows[section].append(row)
+    return grouped_rows
+
+
+def _flatten_grouped_rows(
+    grouped_rows: dict[str, list[dict[str, Any]]],
+    *,
+    order: tuple[str, ...] = _ALLOWED_SECTION_ORDER,
+) -> list[dict[str, Any]]:
+    flattened: list[dict[str, Any]] = []
+    seen_row_ids: set[int] = set()
+    for section in order:
+        for row in grouped_rows.get(section, []):
+            row_id = id(row)
+            if row_id in seen_row_ids:
+                continue
+            flattened.append(row)
+            seen_row_ids.add(row_id)
+    return flattened
+
+
+def _primary_execution_section(report_mode: str) -> str:
+    if str(report_mode or "").strip() == "formal_execution":
+        return "formal_queue"
+    return "review_queue"
+
+
 def _attach_execution_semantics_rows(
     rows: list[dict[str, Any]],
     *,
@@ -841,27 +902,11 @@ def _render_execution_state_table(rows: list[dict[str, Any]], *, title: str) -> 
 
 
 def _build_semantic_conflicts(*, report_mode: str, rows: list[dict[str, Any]]) -> list[str]:
-    def _normalized_sections(value: Any) -> list[str]:
-        if value in (None, "", [], (), set(), frozenset()):
-            return []
-        if isinstance(value, str):
-            raw_values = [value]
-        elif isinstance(value, (list, tuple, set, frozenset)):
-            raw_values = list(value)
-        else:
-            raw_values = [value]
-        normalized: list[str] = []
-        for item in raw_values:
-            text = str(item or "").strip()
-            if text:
-                normalized.append(text)
-        return normalized
-
     def _format_expected(value: Any) -> str:
         if isinstance(value, bool):
             return "true" if value else "false"
         if isinstance(value, (list, tuple, set, frozenset)):
-            normalized = _normalized_sections(value)
+            normalized = _normalized_allowed_sections(value)
             return "/".join(normalized) if normalized else "none"
         text = str(value or "").strip()
         return text or "n/a"
@@ -891,7 +936,7 @@ def _build_semantic_conflicts(*, report_mode: str, rows: list[dict[str, Any]]) -
             conflicts.append(
                 f"{ticker_label}:expected_formal_buy_allowed={_format_expected(expected_semantics.get('formal_buy_allowed'))}"
             )
-        if _normalized_sections(row.get("allowed_sections")) != _normalized_sections(expected_semantics.get("allowed_sections")):
+        if _normalized_allowed_sections(row.get("allowed_sections")) != _normalized_allowed_sections(expected_semantics.get("allowed_sections")):
             conflicts.append(
                 f"{ticker_label}:expected_allowed_sections={_format_expected(expected_semantics.get('allowed_sections'))}"
             )
@@ -906,13 +951,27 @@ def _build_forbidden_semantics_hits(
 ) -> list[str]:
     llm_doc_name = f"BTST-LLM-{signal_date_compact}.md"
     checklist_doc_name = f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md"
+    plain_doc_name = f"{signal_date_compact}-两套交易计划通俗说明.md"
+    forum_doc_name = f"{signal_date_compact}-两套交易计划论坛短版.md"
     forbidden_by_doc = (
         {
-            llm_doc_name: ["## 正式执行层"],
+            llm_doc_name: [
+                "## 正式执行层",
+                "正式执行层先决定主顺序",
+                "正式 BTST 决定主执行顺序",
+            ],
             checklist_doc_name: [
                 "## 正式执行顺序",
                 "## 正式执行动作矩阵",
                 "- [ ] 正式执行：",
+            ],
+            plain_doc_name: [
+                "正式 BTST 仍以",
+                "正式 BTST 决定主执行顺序",
+            ],
+            forum_doc_name: [
+                "明日 BTST 主线还是",
+                "正式 BTST 决定主票",
             ],
         }
         if report_mode == "confirmation_review_only"
@@ -923,6 +982,8 @@ def _build_forbidden_semantics_hits(
                 "## 确认复核动作矩阵",
                 "- [ ] 确认复核：",
             ],
+            plain_doc_name: ["确认复核主线"],
+            forum_doc_name: ["明日确认复核主线还是"],
         }
     )
     hits: list[str] = []
@@ -943,7 +1004,10 @@ def _build_source_of_truth_snapshot(
     control_tower: dict[str, Any],
     early_runner: dict[str, Any],
     selection_snapshot: dict[str, Any],
+    semantic_rows: list[dict[str, Any]],
+    forbidden_semantics_hits: list[str],
 ) -> dict[str, Any]:
+    grouped_rows = _group_rows_by_allowed_sections(semantic_rows)
     return {
         "signal_date": signal_date_compact,
         "report_mode": report_mode,
@@ -959,6 +1023,23 @@ def _build_source_of_truth_snapshot(
             "gate": control_tower.get("gate"),
             "buy_orders_cleared": control_tower.get("buy_orders_cleared"),
         },
+        "formal_rows": [
+            {
+                "ticker": str(row.get("ticker") or ""),
+                "execution_state": row.get("execution_state"),
+                "max_allowed_state_today": row.get("max_allowed_state_today"),
+                "allowed_sections": _normalized_allowed_sections(row.get("allowed_sections")),
+                "formal_buy_allowed": row.get("formal_buy_allowed"),
+                "release_authority": row.get("release_authority"),
+            }
+            for row in semantic_rows
+            if str(row.get("role") or "").strip() == "formal_selected"
+        ],
+        "render_groups": {
+            section: [str(row.get("ticker") or "") for row in grouped_rows.get(section, [])]
+            for section in _ALLOWED_SECTION_ORDER
+        },
+        "forbidden_semantics_hits": list(forbidden_semantics_hits),
     }
 
 
@@ -1235,6 +1316,39 @@ def _resolve_primary_action(brief: dict[str, Any], priority_board: dict[str, Any
     return dict(_first_non_empty(brief.get("primary_action"), brief.get("primary_entry"), selected_rows[0] if selected_rows else {}) or {})
 
 
+def _resolve_primary_semantic_action(rows: list[dict[str, Any]], *, report_mode: str) -> dict[str, Any]:
+    grouped_rows = _group_rows_by_allowed_sections(rows)
+    for section in (
+        _primary_execution_section(report_mode),
+        "watch_queue",
+        "blocked_only",
+    ):
+        section_rows = grouped_rows.get(section, [])
+        if section_rows:
+            return dict(section_rows[0])
+    return dict(rows[0] if rows else {})
+
+
+def _render_primary_contract_lines(primary_action: dict[str, Any], *, report_mode: str) -> list[str]:
+    if not primary_action:
+        return [
+            "## 当日状态与放行权",
+            "",
+            "- 当前没有可用主线，因此放行权保持 `none`，维持空仓观察。",
+        ]
+    lines = [
+        "## 当日状态与放行权",
+        "",
+        f"- 主线当前状态是 `{primary_action.get('execution_state') or 'n/a'}`，当日上限是 `{primary_action.get('max_allowed_state_today') or 'n/a'}`。",
+        f"- 放行权归 `{primary_action.get('release_authority') or 'none'}`。",
+    ]
+    if report_mode == "confirmation_review_only":
+        lines.append("- 当前只允许先确认，不允许把这份文档当成正式下单单。")
+    else:
+        lines.append("- 当前主线已经进入正式执行语义，但盘中仍需服从失效条件和成本闸门。")
+    return lines
+
+
 def _render_early_runner_status(context: dict[str, Any]) -> list[str]:
     """Render human-readable early-runner availability lines."""
     board = dict(context.get("board") or {})
@@ -1402,6 +1516,10 @@ def _render_llm_doc(
     """Render the multi-agent document and add early-runner overlaps plus watch-only context."""
     selected_actions = semantic_selected
     watch_actions = semantic_watch
+    grouped_semantic_rows = _group_rows_by_allowed_sections([*semantic_selected, *semantic_watch])
+    primary_execution_rows = grouped_semantic_rows[_primary_execution_section(report_mode)]
+    watch_queue_rows = grouped_semantic_rows["watch_queue"]
+    blocked_rows = grouped_semantic_rows["blocked_only"]
     opportunity_actions = _resolve_opportunity_rows(brief, priority_board)
     formal_rows = [*selected_actions, *watch_actions, *opportunity_actions]
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
@@ -1457,9 +1575,12 @@ def _render_llm_doc(
         lines.extend([""])
         lines.extend(rollout_lines)
     lines.extend(["", f"## {section_labels['llm_execution_title']}", ""])
-    lines.extend(_render_enriched_stock_bullets(semantic_selected, limit=5))
+    lines.extend(_render_enriched_stock_bullets(primary_execution_rows, limit=5))
     lines.extend(["", "## 观察层", ""])
-    lines.extend(_render_enriched_stock_bullets(semantic_watch, limit=8))
+    lines.extend(_render_enriched_stock_bullets(watch_queue_rows, limit=8))
+    if blocked_rows:
+        lines.extend(["", "## 阻断层", ""])
+        lines.extend(_render_enriched_stock_bullets(blocked_rows, limit=8))
     if opportunity_actions:
         lines.extend(["", "## 机会池", ""])
         lines.extend(_stock_bullets(opportunity_actions, limit=5, include_payoff=True))
@@ -1469,7 +1590,10 @@ def _render_llm_doc(
     lines.extend(_render_intersection_highlights(intersection_summary))
     lines.extend(["", "### 四层使用顺序", ""])
     if str(intersection_summary.get("status") or "") == "exact":
-        lines.append("- 正式执行层先决定主顺序，交集票只做优先复审，不做无条件升级。")
+        if report_mode == "formal_execution":
+            lines.append("- 正式执行层先决定主顺序，交集票只做优先复审，不做无条件升级。")
+        else:
+            lines.append("- 确认复核队列先决定主复核顺序，交集票只做优先复审，不做无条件升级。")
     else:
         lines.append("- 当前只有回退板或旧板可用，因此交集只做参考高亮，不升级为当日交集优先。")
     lines.append("- only early-runner 票只进入补充复审层，不自动升级为正式主票。")
@@ -1483,11 +1607,18 @@ def _render_llm_doc(
     return "\n".join(lines) + "\n"
 
 
-def _render_plain_language_doc(signal_date_compact: str, brief: dict[str, Any], priority_board: dict[str, Any], early_runner: dict[str, Any]) -> str:
+def _render_plain_language_doc(
+    signal_date_compact: str,
+    brief: dict[str, Any],
+    semantic_selected: list[dict[str, Any]],
+    semantic_watch: list[dict[str, Any]],
+    early_runner: dict[str, Any],
+    report_mode: str,
+) -> str:
     """Render the plain-language explanation and explain why early-runner is watch-only now."""
-    primary_action = _resolve_primary_action(brief, priority_board)
-    selected_actions = _resolve_selected_rows(brief, priority_board)
-    watch_actions = _resolve_watch_rows(brief, priority_board)
+    selected_actions = semantic_selected
+    watch_actions = semantic_watch
+    primary_action = _resolve_primary_semantic_action([*selected_actions, *watch_actions], report_mode=report_mode)
     intersection_summary = _build_intersection_summary(early_runner, [*selected_actions, *watch_actions])
     early_status = str(early_runner.get("status") or "unavailable")
     board = dict(early_runner.get("board") or {})
@@ -1503,7 +1634,15 @@ def _render_plain_language_doc(signal_date_compact: str, brief: dict[str, Any], 
         "",
         "## 先说结论",
         "",
-        f"正式 BTST 仍以 `{_stock_label(primary_action)}` 这条主线为准，early-runner 不是替代品，而是补充观察层。{status_note}",
+        (
+            f"确认复核主线仍以 `{_stock_label(primary_action)}` 这条主线为准，early-runner 不是替代品，而是补充观察层。{status_note}"
+            if report_mode == "confirmation_review_only"
+            else f"正式 BTST 仍以 `{_stock_label(primary_action)}` 这条主线为准，early-runner 不是替代品，而是补充观察层。{status_note}"
+        ),
+        "",
+    ]
+    lines.extend(_render_primary_contract_lines(primary_action, report_mode=report_mode))
+    lines.extend([
         "",
         "## 这次为什么要把 Early Runner 写进来",
         "",
@@ -1518,7 +1657,7 @@ def _render_plain_language_doc(signal_date_compact: str, brief: dict[str, Any], 
         "",
         "## Early Runner 在看什么",
         "",
-    ]
+    ])
     lines.extend(_render_early_runner_overlay(early_runner, [*selected_actions, *watch_actions]))
     lines.extend(
         [
@@ -1541,7 +1680,7 @@ def _render_plain_language_doc(signal_date_compact: str, brief: dict[str, Any], 
             "",
             "## 怎么使用这两条线",
             "",
-            "- 正式 BTST 决定主执行顺序。",
+            ("- 确认复核主线决定先看谁，不能直接下单。" if report_mode == "confirmation_review_only" else "- 正式 BTST 决定主执行顺序。"),
             "- early-runner 负责提示更早的观察票和 second-entry 线索。",
             "- 只出现在 early-runner 的票默认不进正式执行清单，只放入盘中复审。",
         ]
@@ -1549,11 +1688,18 @@ def _render_plain_language_doc(signal_date_compact: str, brief: dict[str, Any], 
     return "\n".join(lines) + "\n"
 
 
-def _render_forum_doc(signal_date_compact: str, brief: dict[str, Any], priority_board: dict[str, Any], early_runner: dict[str, Any]) -> str:
+def _render_forum_doc(
+    signal_date_compact: str,
+    brief: dict[str, Any],
+    semantic_selected: list[dict[str, Any]],
+    semantic_watch: list[dict[str, Any]],
+    early_runner: dict[str, Any],
+    report_mode: str,
+) -> str:
     """Render the short forum-ready version with a compact early-runner status note."""
-    primary_action = _resolve_primary_action(brief, priority_board)
-    selected_actions = _resolve_selected_rows(brief, priority_board)
-    watch_actions = _resolve_watch_rows(brief, priority_board)
+    selected_actions = semantic_selected
+    watch_actions = semantic_watch
+    primary_action = _resolve_primary_semantic_action([*selected_actions, *watch_actions], report_mode=report_mode)
     intersection_summary = _build_intersection_summary(early_runner, [*selected_actions, *watch_actions])
     priority = _safe_rows(early_runner.get("priority"))
     watchlist = _safe_rows(early_runner.get("watchlist"))
@@ -1570,11 +1716,19 @@ def _render_forum_doc(signal_date_compact: str, brief: dict[str, Any], priority_
         "",
         f"信号日：`{brief.get('trade_date')}`；目标交易日：`{brief.get('next_trade_date')}`。",
         "",
-        f"明日 BTST 主线还是 `{_stock_label(primary_action)}`，执行模式 `{primary_action.get('preferred_entry_mode') or 'n/a'}`，先确认再决定，不做开盘无脑追价。",
+        (
+            f"明日确认复核主线还是 `{_stock_label(primary_action)}`，当前状态 `{primary_action.get('execution_state') or 'n/a'}` / 当日上限 `{primary_action.get('max_allowed_state_today') or 'n/a'}`，放行权 `{primary_action.get('release_authority') or 'none'}`，先确认再决定，不做开盘无脑追价。"
+            if report_mode == "confirmation_review_only"
+            else f"明日 BTST 主线还是 `{_stock_label(primary_action)}`，执行模式 `{primary_action.get('preferred_entry_mode') or 'n/a'}`，放行权 `{primary_action.get('release_authority') or 'none'}`，先确认再决定，不做开盘无脑追价。"
+        ),
         "",
         f"这次 early-runner 状态：`{early_runner.get('status')}`；交集高亮 `{overlap}`；{extra_label} `{extra}`。",
         "",
-        "使用顺序：正式 BTST 决定主票，early-runner 只做交集优先和补充复审，不替代正式执行单。",
+        (
+            "使用顺序：确认复核主线决定先看谁，early-runner 只做交集优先和补充复审，不替代正式执行单。"
+            if report_mode == "confirmation_review_only"
+            else "使用顺序：正式 BTST 决定主票，early-runner 只做交集优先和补充复审，不替代正式执行单。"
+        ),
     ]
     return "\n".join(lines) + "\n"
 
@@ -1598,6 +1752,11 @@ def _render_checklist_doc(
     """Render the next-morning checklist and append early-runner watch-only checkpoints."""
     selected_actions = semantic_selected
     watch_actions = semantic_watch
+    grouped_semantic_rows = _group_rows_by_allowed_sections([*semantic_selected, *semantic_watch])
+    primary_execution_rows = grouped_semantic_rows[_primary_execution_section(report_mode)]
+    watch_queue_rows = grouped_semantic_rows["watch_queue"]
+    blocked_rows = grouped_semantic_rows["blocked_only"]
+    execution_state_rows = _flatten_grouped_rows(grouped_semantic_rows)
     intersection_summary = _build_intersection_summary(early_runner, [*selected_actions, *watch_actions])
     early_status = str(early_runner.get("status") or "unavailable")
     decision_card = build_decision_card(
@@ -1633,15 +1792,23 @@ def _render_checklist_doc(
         lines.extend([""])
         lines.extend(rollout_lines)
     lines.extend([""])
-    lines.extend(_render_execution_state_table(semantic_selected, title=section_labels["execution_state_table_title"]))
+    lines.extend(_render_execution_state_table(execution_state_rows, title=section_labels["execution_state_table_title"]))
     lines.extend(["", f"## {section_labels['checklist_execution_title']}", ""])
-    for row in selected_actions[:3]:
+    for row in primary_execution_rows[:3]:
         lines.append(f"- [ ] {section_labels['checklist_execution_item_label']}：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，" f"收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，" f"说明：{_historical_reading_note(row)}")
     lines.extend([""])
-    lines.extend(_render_action_matrix_sections(semantic_selected, report_mode=report_mode, limit=3))
+    lines.extend(_render_action_matrix_sections(primary_execution_rows, report_mode=report_mode, limit=3))
     lines.extend(["", "## 正式观察顺序", ""])
-    for row in semantic_watch[:6]:
+    for row in watch_queue_rows[:6]:
         lines.append(f"- [ ] 正式观察：`{_stock_label(row)}`，层级 `{row.get('action_tier') or 'watch_only'}`，必要时盘中再确认。")
+    if not watch_queue_rows:
+        lines.append("- [ ] 当前没有进入 watch_queue 的观察票。")
+    if blocked_rows:
+        lines.extend(["", "## 阻断观察", ""])
+        for row in blocked_rows[:6]:
+            lines.append(
+                f"- [ ] 阻断观察：`{_stock_label(row)}`，当前 execution_state `{row.get('execution_state') or 'blocked'}`，只做 blocker 复核，不进入当日执行/观察清单。"
+            )
     lines.extend(["", "## 交集优先复审", ""])
     if _safe_rows(intersection_summary.get("overlap_rows")):
         for row in _safe_rows(intersection_summary.get("overlap_rows"))[:5]:
@@ -1794,6 +1961,11 @@ def _build_report_quality_summary(
     selection_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     """Build a machine-readable QA summary for the generated report bundle."""
+    forbidden_hits = _build_forbidden_semantics_hits(
+        signal_date_compact=signal_date_compact,
+        docs=docs,
+        report_mode=report_mode,
+    )
     required_sections = {
         f"BTST-LLM-{signal_date_compact}.md": [
             "## 30 秒决策卡",
@@ -1815,6 +1987,9 @@ def _build_report_quality_summary(
             f"## {section_labels['execution_state_table_title']}",
             f"## {section_labels['checklist_execution_title']}",
             "## 盘后复盘闭环",
+        ],
+        f"{signal_date_compact}-两套交易计划通俗说明.md": [
+            "## 当日状态与放行权",
         ],
     }
     missing: list[str] = []
@@ -1844,11 +2019,7 @@ def _build_report_quality_summary(
         "required_sections_missing": missing,
         "quality_warnings": quality_warnings,
         "semantic_conflicts": _build_semantic_conflicts(report_mode=report_mode, rows=semantic_rows),
-        "forbidden_semantics_hits": _build_forbidden_semantics_hits(
-            signal_date_compact=signal_date_compact,
-            docs=docs,
-            report_mode=report_mode,
-        ),
+        "forbidden_semantics_hits": forbidden_hits,
         "source_of_truth_snapshot": _build_source_of_truth_snapshot(
             signal_date_compact=signal_date_compact,
             report_mode=report_mode,
@@ -1857,6 +2028,8 @@ def _build_report_quality_summary(
             control_tower=control_tower,
             early_runner=early_runner,
             selection_snapshot=selection_snapshot,
+            semantic_rows=semantic_rows,
+            forbidden_semantics_hits=forbidden_hits,
         ),
     }
 
@@ -1953,8 +2126,8 @@ def generate_btst_doc_bundle(
     docs = {
         f"BTST-{signal_date_compact}.md": _render_rule_doc(signal_date_compact, rule_report, brief, priority_board, early_runner, rule_report_path, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
         f"BTST-LLM-{signal_date_compact}.md": _render_llm_doc(signal_date_compact, brief, priority_board, session_summary, semantic_selected, semantic_watch, early_runner, selection_snapshot, control_tower, report_mode, veto_owner, section_labels, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
-        f"{signal_date_compact}-两套交易计划通俗说明.md": _render_plain_language_doc(signal_date_compact, brief, priority_board, early_runner),
-        f"{signal_date_compact}-两套交易计划论坛短版.md": _render_forum_doc(signal_date_compact, brief, priority_board, early_runner),
+        f"{signal_date_compact}-两套交易计划通俗说明.md": _render_plain_language_doc(signal_date_compact, brief, semantic_selected, semantic_watch, early_runner, report_mode),
+        f"{signal_date_compact}-两套交易计划论坛短版.md": _render_forum_doc(signal_date_compact, brief, semantic_selected, semantic_watch, early_runner, report_mode),
         f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, semantic_selected, semantic_watch, early_runner, selection_snapshot, control_tower, report_mode, veto_owner, section_labels, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
     }
     if include_extra_warning_docs:

@@ -19,6 +19,11 @@ def _review_label(close_return: Any) -> str:
         return "missing_realized_price"
 
 
+def _post_close_review_transition(execution_state: Any, review_state: str) -> str:
+    normalized_execution_state = str(execution_state or "unknown").strip() or "unknown"
+    return f"{normalized_execution_state}->{review_state}"
+
+
 def fill_review_ledger(
     *,
     ledger_path: str | Path,
@@ -39,6 +44,11 @@ def fill_review_ledger(
             updated["review_label"] = _review_label(price.get("next_close_return"))
         else:
             updated["review_label"] = "missing_realized_price"
+        updated["post_close_review_state"] = updated["review_label"]
+        updated["post_close_review_transition"] = _post_close_review_transition(
+            updated.get("execution_state"),
+            str(updated["review_label"]),
+        )
         rows.append(updated)
     result = dict(payload)
     result["rows"] = rows

@@ -20,6 +20,8 @@ def test_fill_review_ledger_updates_realized_fields_and_review_label(tmp_path: P
                         "role": "formal_selected",
                         "evidence_grade": "B",
                         "trade_bias": "confirmation_only",
+                        "execution_state": "confirmable",
+                        "release_authority": "market_gate",
                         "realized_next_open": None,
                         "realized_next_high": None,
                         "realized_next_close": None,
@@ -58,6 +60,8 @@ def test_fill_review_ledger_updates_realized_fields_and_review_label(tmp_path: P
     assert row["realized_next_high"] == 0.034
     assert row["realized_next_close"] == 0.021
     assert row["review_label"] == "close_positive"
+    assert row["post_close_review_state"] == "close_positive"
+    assert row["post_close_review_transition"] == "confirmable->close_positive"
     assert (tmp_path / "filled.json").exists()
 
 
@@ -69,7 +73,7 @@ def test_fill_review_ledger_marks_missing_realized_price(tmp_path: Path) -> None
             {
                 "signal_date": "2026-05-28",
                 "next_trade_date": "2026-05-29",
-                "rows": [{"ticker": "002222", "review_label": None}],
+                "rows": [{"ticker": "002222", "execution_state": "watching", "review_label": None}],
             },
             ensure_ascii=False,
         )
@@ -81,3 +85,5 @@ def test_fill_review_ledger_marks_missing_realized_price(tmp_path: Path) -> None
     result = fill_review_ledger(ledger_path=ledger_path, realized_prices_path=price_path)
 
     assert result["rows"][0]["review_label"] == "missing_realized_price"
+    assert result["rows"][0]["post_close_review_state"] == "missing_realized_price"
+    assert result["rows"][0]["post_close_review_transition"] == "watching->missing_realized_price"

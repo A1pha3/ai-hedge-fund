@@ -18,6 +18,9 @@ _VALID_VETO_OWNERS = {
     _VETO_OWNER_MODEL_EVIDENCE,
     _VETO_OWNER_MANUAL_REVIEW,
 }
+_RELEASE_AUTHORITY_ALREADY_RELEASED = "already_released"
+_RELEASE_AUTHORITY_EXECUTION_DESK = "execution_desk"
+_RELEASE_AUTHORITY_NONE = "none"
 
 
 def _is_missing(value: Any) -> bool:
@@ -373,12 +376,40 @@ def _resolve_execution_context(
     return resolved_report_mode, resolved_veto_owner
 
 
+def build_release_authority(
+    *,
+    report_mode: str,
+    execution_state: str,
+    control_tower: dict[str, Any] | None = None,
+    veto_owner: str | None = None,
+) -> str:
+    resolved_report_mode, resolved_veto_owner = _resolve_execution_context(
+        report_mode=report_mode,
+        control_tower=control_tower,
+        veto_owner=veto_owner,
+    )
+    normalized_execution_state = str(execution_state or "").strip()
+    if normalized_execution_state == "orderable":
+        return _RELEASE_AUTHORITY_ALREADY_RELEASED
+    if normalized_execution_state == "confirmable":
+        if resolved_report_mode == _REPORT_MODE_FORMAL_EXECUTION:
+            return _RELEASE_AUTHORITY_EXECUTION_DESK
+        if resolved_veto_owner:
+            return resolved_veto_owner
+    if normalized_execution_state in {"watching", "blocked"} and resolved_report_mode == _REPORT_MODE_CONFIRMATION_REVIEW_ONLY and resolved_veto_owner:
+        return resolved_veto_owner
+    if normalized_execution_state == "blocked" and resolved_veto_owner:
+        return resolved_veto_owner
+    return _RELEASE_AUTHORITY_NONE
+
+
 def build_execution_semantics(
     *,
     report_mode: str,
     role: str,
     trade_bias: str,
     control_tower: dict[str, Any] | None = None,
+    veto_owner: str | None = None,
     state_reason_codes: Any = None,
 ) -> dict[str, Any]:
     resolved_report_mode = _normalized_report_mode(report_mode)
@@ -422,6 +453,12 @@ def build_execution_semantics(
             allowed_sections = ["watch_queue"]
             formal_buy_allowed = False
         max_allowed_state_today = "orderable"
+    release_authority = build_release_authority(
+        report_mode=resolved_report_mode,
+        execution_state=execution_state,
+        control_tower=control_tower,
+        veto_owner=veto_owner,
+    )
 
     return {
         "report_mode": resolved_report_mode,
@@ -429,6 +466,7 @@ def build_execution_semantics(
         "max_allowed_state_today": max_allowed_state_today,
         "formal_buy_allowed": formal_buy_allowed,
         "allowed_sections": allowed_sections,
+        "release_authority": release_authority,
         "state_reason_codes": merged_reason_codes,
     }
 
@@ -450,6 +488,7 @@ def attach_execution_semantics(
         role=str(row.get("role") or ""),
         trade_bias=str(row.get("trade_bias") or "watch_only"),
         control_tower=control_tower,
+        veto_owner=resolved_veto_owner,
         state_reason_codes=row.get("state_reason_codes"),
     )
     enriched = dict(row)
@@ -543,6 +582,16 @@ def build_review_ledger_rows(
     report_mode: str | None = None,
     control_tower: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    semantic_fields = (
+        "report_mode",
+        "execution_state",
+        "max_allowed_state_today",
+        "formal_buy_allowed",
+        "allowed_sections",
+        "release_authority",
+        "state_reason_codes",
+        "veto_owner",
+    )
     ledger_rows = []
     default_report_mode, default_veto_owner = _resolve_execution_context(
         report_mode=report_mode,
@@ -554,12 +603,15 @@ def build_review_ledger_rows(
         if _is_missing(row_report_mode):
             row_report_mode = default_report_mode
         if row_report_mode or control_tower is not None:
-            normalized_row = attach_execution_semantics(
+            semantics_row = attach_execution_semantics(
                 normalized_row,
                 report_mode=str(row_report_mode or ""),
                 control_tower=control_tower,
                 veto_owner=default_veto_owner,
             )
+            for field in semantic_fields:
+                if _is_missing(normalized_row.get(field)) and not _is_missing(semantics_row.get(field)):
+                    normalized_row[field] = semantics_row.get(field)
         if _is_missing(normalized_row.get("veto_owner")) and default_veto_owner is not None:
             normalized_row["veto_owner"] = default_veto_owner
         metrics = dict(row.get("metrics") or {})
@@ -579,6 +631,7 @@ def build_review_ledger_rows(
                 "max_allowed_state_today": normalized_row.get("max_allowed_state_today"),
                 "formal_buy_allowed": normalized_row.get("formal_buy_allowed"),
                 "allowed_sections": _string_list(normalized_row.get("allowed_sections")),
+                "release_authority": normalized_row.get("release_authority"),
                 "state_reason_codes": _string_list(normalized_row.get("state_reason_codes")),
                 "veto_owner": normalized_row.get("veto_owner"),
                 "win_rate": metrics.get("win_rate"),
@@ -605,6 +658,8 @@ def build_review_ledger_rows(
                 "realized_next_open": None,
                 "realized_next_high": None,
                 "realized_next_close": None,
+                "post_close_review_state": None,
+                "post_close_review_transition": None,
                 "review_label": None,
                 "execution_review_label": None,
             }
