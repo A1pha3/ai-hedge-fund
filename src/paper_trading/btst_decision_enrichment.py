@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -31,6 +32,78 @@ def normalize_historical_metric(row: dict[str, Any], key: str) -> Any:
     if not _is_missing(prior_value):
         return prior_value
     return row.get(key)
+
+
+def _historical_metric_source(row: dict[str, Any]) -> dict[str, Any]:
+    return dict(row.get("source_row") or row)
+
+
+def _historical_counts(row: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
+    source = _historical_metric_source(row)
+    wins = _to_int(normalize_historical_metric(source, "next_close_positive_count"))
+    losses = _to_int(normalize_historical_metric(source, "next_close_negative_count"))
+    evaluable_count = _to_int(normalize_historical_metric(source, "evaluable_count"))
+    if evaluable_count is None and wins is not None and losses is not None:
+        evaluable_count = wins + losses
+    if evaluable_count is not None:
+        win_rate = _to_float(normalize_historical_metric(source, "next_close_positive_rate"))
+        if wins is None and win_rate is not None:
+            wins = int(round(win_rate * evaluable_count))
+        if losses is None and wins is not None:
+            losses = max(evaluable_count - wins, 0)
+    return wins, losses, evaluable_count
+
+
+def _wilson_interval(wins: int | None, total: int | None) -> tuple[float | None, float | None]:
+    if wins is None or total is None or total <= 0:
+        return None, None
+    z = 1.96
+    phat = wins / total
+    denominator = 1 + z * z / total
+    centre = phat + z * z / (2 * total)
+    margin = z * math.sqrt((phat * (1 - phat) + z * z / (4 * total)) / total)
+    return (centre - margin) / denominator, (centre + margin) / denominator
+
+
+def build_historical_reliability_metrics(row: dict[str, Any]) -> dict[str, Any]:
+    source = _historical_metric_source(row)
+    wins, losses, evaluable_count = _historical_counts(source)
+    sample_count = _to_int(normalize_historical_metric(source, "sample_count"))
+    total = evaluable_count or sample_count
+    raw_win_rate = _to_float(normalize_historical_metric(source, "next_close_positive_rate"))
+    if raw_win_rate is None and wins is not None and total:
+        raw_win_rate = wins / total
+    wilson_low, wilson_high = _wilson_interval(wins, total)
+    shrunk_win_rate = ((wins + 1) / (total + 2)) if wins is not None and total else None
+    if total is None:
+        reliability_label = "样本未知"
+    elif total < 5:
+        reliability_label = "弱参考"
+    elif total < 20:
+        reliability_label = "中等样本"
+    else:
+        reliability_label = "较稳健"
+    return {
+        "sample_count": sample_count,
+        "evaluable_count": evaluable_count,
+        "positive_count": wins,
+        "negative_count": losses,
+        "raw_win_rate": round(raw_win_rate, 4) if raw_win_rate is not None else None,
+        "shrunk_win_rate": round(shrunk_win_rate, 4) if shrunk_win_rate is not None else None,
+        "win_rate_wilson_low": round(wilson_low, 4) if wilson_low is not None else None,
+        "win_rate_wilson_high": round(wilson_high, 4) if wilson_high is not None else None,
+        "reliability_label": reliability_label,
+    }
+
+
+def estimate_execution_cost_cap(row: dict[str, Any]) -> float:
+    source = _historical_metric_source(row)
+    expectancy = _to_float(normalize_historical_metric(source, "next_close_expectancy"))
+    close_return_mean = _to_float(normalize_historical_metric(source, "next_close_return_mean"))
+    edge = expectancy if expectancy is not None else close_return_mean
+    if edge is None or edge <= 0:
+        return 0.001
+    return round(min(0.005, max(0.001, edge * 0.2)), 4)
 
 
 def _scope_label(row: dict[str, Any]) -> str:
@@ -281,6 +354,7 @@ def build_review_ledger_rows(
     ledger_rows = []
     for row in rows:
         metrics = dict(row.get("metrics") or {})
+        reliability_metrics = build_historical_reliability_metrics(row)
         ledger_rows.append(
             {
                 "signal_date": signal_date,
@@ -294,13 +368,29 @@ def build_review_ledger_rows(
                 "win_rate": metrics.get("win_rate"),
                 "payoff_ratio": metrics.get("payoff_ratio"),
                 "expectancy": metrics.get("expectancy"),
+                "sample_count": reliability_metrics["sample_count"],
+                "evaluable_count": reliability_metrics["evaluable_count"],
+                "positive_count": reliability_metrics["positive_count"],
+                "negative_count": reliability_metrics["negative_count"],
+                "shrunk_win_rate": reliability_metrics["shrunk_win_rate"],
+                "win_rate_wilson_low": reliability_metrics["win_rate_wilson_low"],
+                "win_rate_wilson_high": reliability_metrics["win_rate_wilson_high"],
+                "expected_slippage_cap": estimate_execution_cost_cap(row),
                 "entry_mode": row.get("preferred_entry_mode"),
                 "must_confirm": row.get("must_confirm"),
                 "invalidate_if": row.get("invalidate_if"),
+                "intended_entry_trigger": row.get("must_confirm"),
+                "intended_invalidation": row.get("invalidate_if"),
+                "realized_entry_price": None,
+                "realized_exit_price": None,
+                "realized_slippage": None,
+                "mae": None,
+                "mfe": None,
                 "realized_next_open": None,
                 "realized_next_high": None,
                 "realized_next_close": None,
                 "review_label": None,
+                "execution_review_label": None,
             }
         )
     return ledger_rows

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +14,11 @@ from scripts.btst_strategy_thresholds import (
 )
 from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
 from src.paper_trading.btst_decision_enrichment import (
+    build_historical_reliability_metrics,
     build_decision_card,
     build_review_ledger_rows,
     enrich_btst_row,
+    estimate_execution_cost_cap,
 )
 from src.paper_trading.btst_reporting_utils import _format_rollout_value
 
@@ -103,11 +106,188 @@ def _enriched_stock_label(row: dict[str, Any]) -> str:
     return f"{ticker} {name}".strip()
 
 
+def _stock_name_suffix(entry: dict[str, Any]) -> str:
+    """Return a short Chinese-name suffix for compact code-first fields."""
+    name = str(entry.get("name") or "").strip()
+    return f"（{name}）" if name else ""
+
+
+def _stock_labels(rows: list[dict[str, Any]], *, limit: int | None = None) -> list[str]:
+    """Return display labels for compact list fields."""
+    selected = rows if limit is None else rows[:limit]
+    return [_stock_label(row) for row in selected if _stock_label(row)]
+
+
+def _stock_labels_text(rows: list[dict[str, Any]], *, limit: int | None = None) -> str:
+    """Return a human-readable compact stock-label list."""
+    labels = _stock_labels(rows, limit=limit)
+    return "、".join(labels) if labels else "无"
+
+
+_STOCK_NAME_EVENT_PREFIXES = ("*ST", "ST", "XD", "XR", "DR", "N", "C")
+
+
+def _strip_stock_name_event_prefix(name: str) -> str:
+    """Remove exchange event prefixes from display names without guessing missing characters."""
+    text = str(name or "").strip()
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _STOCK_NAME_EVENT_PREFIXES:
+            if text.startswith(prefix) and len(text) > len(prefix):
+                text = text[len(prefix) :].strip()
+                changed = True
+                break
+    return text
+
+
+def _stock_name_has_event_prefix(name: str) -> bool:
+    text = str(name or "").strip()
+    return any(text.startswith(prefix) and len(text) > len(prefix) for prefix in _STOCK_NAME_EVENT_PREFIXES)
+
+
+def _stock_name_quality(name: str) -> tuple[int, int]:
+    text = str(name or "").strip()
+    if not text:
+        return (0, 0)
+    canonical = _strip_stock_name_event_prefix(text)
+    return (0 if _stock_name_has_event_prefix(text) else 1, len(canonical))
+
+
+def _prefer_stock_name(current: str | None, candidate: str | None) -> str:
+    """Pick the cleaner stock name when multiple local artifacts disagree."""
+    current_text = str(current or "").strip()
+    candidate_text = str(candidate or "").strip()
+    if not candidate_text:
+        return current_text
+    normalized_candidate = _strip_stock_name_event_prefix(candidate_text)
+    if not current_text:
+        return normalized_candidate
+    if _stock_name_quality(candidate_text) > _stock_name_quality(current_text):
+        return normalized_candidate
+    return _strip_stock_name_event_prefix(current_text)
+
+
+def _collect_tickers_from_payload(value: Any, tickers: set[str]) -> None:
+    """Collect ticker symbols from nested artifacts."""
+    if isinstance(value, dict):
+        ticker = str(value.get("ticker") or "").strip()
+        if ticker:
+            tickers.add(ticker)
+        for child in value.values():
+            _collect_tickers_from_payload(child, tickers)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_tickers_from_payload(item, tickers)
+
+
+def _collect_stock_names_from_payload(value: Any, names: dict[str, str]) -> None:
+    """Collect ticker-name pairs already present in nested artifacts."""
+    if isinstance(value, dict):
+        ticker = str(value.get("ticker") or "").strip()
+        name = str(value.get("name") or "").strip()
+        if ticker and name:
+            names[ticker] = _prefer_stock_name(names.get(ticker), name)
+        for child in value.values():
+            _collect_stock_names_from_payload(child, names)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_stock_names_from_payload(item, names)
+
+
+def _extract_stock_name_from_snapshot_summary(text: str, ticker: str) -> str:
+    """Extract one stock name from a local data snapshot summary."""
+    for pattern in (
+        r"- \*\*股票名称\*\*：([^\n]+)",
+        rf"#\s*{re.escape(ticker)}[（(]([^）)]+)[）)]数据快照",
+    ):
+        match = re.search(pattern, text)
+        if match:
+            return str(match.group(1)).strip()
+    return ""
+
+
+def _collect_stock_names_from_snapshots(report_dir: Path) -> dict[str, str]:
+    """Read local data snapshot summaries and return ticker-name pairs."""
+    snapshot_root = report_dir / "data_snapshots"
+    if not snapshot_root.exists():
+        return {}
+    names: dict[str, str] = {}
+    for summary_path in snapshot_root.glob("*/*/summary.md"):
+        ticker = summary_path.parent.parent.name
+        try:
+            name = _extract_stock_name_from_snapshot_summary(
+                summary_path.read_text(encoding="utf-8"),
+                ticker,
+            )
+        except OSError:
+            continue
+        if ticker and name:
+            names[ticker] = _prefer_stock_name(names.get(ticker), name)
+    return names
+
+
+def _collect_stock_names_from_sibling_snapshots(reports_root: Path, tickers: set[str]) -> dict[str, str]:
+    """Find cleaner historical names for requested tickers from sibling report snapshots."""
+    names: dict[str, str] = {}
+    if not reports_root.exists():
+        return names
+    for ticker in sorted(tickers):
+        for summary_path in reports_root.glob(f"*/data_snapshots/{ticker}/*/summary.md"):
+            try:
+                name = _extract_stock_name_from_snapshot_summary(
+                    summary_path.read_text(encoding="utf-8"),
+                    ticker,
+                )
+            except OSError:
+                continue
+            if name:
+                names[ticker] = _prefer_stock_name(names.get(ticker), name)
+    return names
+
+
+def _apply_stock_names_to_payload(value: Any, names: dict[str, str]) -> None:
+    """Fill missing names in nested artifact payloads without overwriting existing names."""
+    if isinstance(value, dict):
+        ticker = str(value.get("ticker") or "").strip()
+        current_name = str(value.get("name") or "").strip()
+        if ticker and names.get(ticker):
+            value["name"] = _prefer_stock_name(current_name, names[ticker])
+        for child in value.values():
+            _apply_stock_names_to_payload(child, names)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _apply_stock_names_to_payload(item, names)
+
+
+def _enrich_missing_stock_names(
+    *,
+    reports_root: Path,
+    report_dir: Path,
+    rule_report: dict[str, Any],
+    brief: dict[str, Any],
+    priority_board: dict[str, Any],
+    early_runner: dict[str, Any],
+) -> dict[str, str]:
+    """Build a local name map and apply it to current BTST artifacts."""
+    names: dict[str, str] = {}
+    tickers: set[str] = set()
+    for payload in (rule_report, brief, priority_board, early_runner):
+        _collect_tickers_from_payload(payload, tickers)
+        _collect_stock_names_from_payload(payload, names)
+    names.update(_collect_stock_names_from_snapshots(report_dir))
+    for ticker, name in _collect_stock_names_from_sibling_snapshots(reports_root, tickers).items():
+        names[ticker] = _prefer_stock_name(names.get(ticker), name)
+    for payload in (rule_report, brief, priority_board, early_runner):
+        _apply_stock_names_to_payload(payload, names)
+    return names
+
+
 def _enrich_formal_rows(rows: list[dict[str, Any]], *, role: str, early_runner_status: str) -> list[dict[str, Any]]:
-    return [
-        enrich_btst_row(row, role=role, early_runner_status=early_runner_status)
-        for row in rows
-    ]
+    return [enrich_btst_row(row, role=role, early_runner_status=early_runner_status) for row in rows]
 
 
 def _enrich_early_runner_rows(
@@ -116,23 +296,35 @@ def _enrich_early_runner_rows(
     role: str,
     early_runner_status: str,
 ) -> list[dict[str, Any]]:
-    return [
-        enrich_btst_row(row, role=role, early_runner_status=early_runner_status)
-        for row in rows
-    ]
+    return [enrich_btst_row(row, role=role, early_runner_status=early_runner_status) for row in rows]
 
 
 def _render_decision_card(card: dict[str, Any]) -> list[str]:
+    primary = {
+        "ticker": str(card.get("primary_ticker") or "").strip(),
+        "name": str(card.get("primary_name") or "").strip(),
+    }
     return [
         "## 30 秒决策卡",
         "",
         f"- 交易倾向：`{card.get('trade_bias')}`。",
-        f"- 主票：`{card.get('primary_ticker') or 'n/a'}`。",
+        f"- 主票：`{card.get('primary_ticker') or 'n/a'}`{_stock_name_suffix(primary)}。",
         f"- 证据等级：`{card.get('evidence_grade')}`；数据质量：`{card.get('data_quality')}`；风险姿态：`{card.get('risk_posture')}`。",
         f"- 必须确认：{card.get('must_confirm')}",
         f"- 失效条件：{card.get('invalidate_if')}",
         f"- early-runner 状态：`{card.get('early_runner_status')}`。",
     ]
+
+
+def _attach_decision_card_primary_name(card: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Attach the display name of the primary ticker to a compact decision card."""
+    result = dict(card)
+    primary_ticker = str(result.get("primary_ticker") or "").strip()
+    for row in rows:
+        if str(row.get("ticker") or "").strip() == primary_ticker:
+            result["primary_name"] = str(row.get("name") or "").strip()
+            break
+    return result
 
 
 def _row_historical_metric(row: dict[str, Any], key: str) -> Any:
@@ -199,6 +391,292 @@ def _render_historical_metric_guide() -> list[str]:
         "- `收盘胜率` 看的是历史上次日收盘为正的比例，越高代表历史命中率越好。",
         "- `盈亏比` 大于 `1.00` 才说明平均赚幅大体能覆盖平均亏幅；低于 `1.00` 往往更依赖命中率。",
         "- 如果文档写 `n/a`，通常表示历史正负样本拆分不足，先验只能轻量参考，不能把空字段误读成强信号。",
+    ]
+
+
+def _is_intraday_only(row: dict[str, Any]) -> bool:
+    """Return whether a selected row should be treated as intraday-only."""
+    mode = str(row.get("preferred_entry_mode") or "")
+    payoff = _row_historical_metric(row, "next_close_payoff_ratio")
+    try:
+        payoff_value = None if payoff in (None, "") else float(payoff)
+    except (TypeError, ValueError):
+        payoff_value = None
+    return mode == "intraday_confirmation_only" or (payoff_value is not None and payoff_value < 1.0)
+
+
+def _render_win_rate_payoff_decision(rows: list[dict[str, Any]]) -> list[str]:
+    """Render the execution priority through the win-rate/payoff lens."""
+    lines = ["## 胜率/赔率优先决策", ""]
+    if not rows:
+        lines.append("- 当前没有正式执行票，胜率/赔率闸门不放行。")
+        return lines
+    hold_candidates = [row for row in rows if not _is_intraday_only(row)]
+    intraday_only = [row for row in rows if _is_intraday_only(row)]
+    if hold_candidates:
+        first = hold_candidates[0]
+        lines.append(f"- 第一优先：`{_stock_label(first)}`，收盘胜率 `{_fmt_pct(_row_historical_metric(first, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(first, 'next_close_payoff_ratio'), 2)}`，先等盘中确认，不做开盘无确认追价。")
+        for row in hold_candidates[1:3]:
+            lines.append(f"- 备选确认：`{_stock_label(row)}`，收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，确认强度不足时只观察。")
+    else:
+        lines.append("- 没有胜率和赔率同时站稳的隔夜延续候选，正式票也只按盘中确认处理。")
+    for row in intraday_only[:3]:
+        lines.append(f"- 只做盘中机会：`{_stock_label(row)}`，收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，不预设隔夜持有。")
+    return lines
+
+
+def _render_win_rate_payoff_gate(rows: list[dict[str, Any]]) -> list[str]:
+    """Render checklist items for the win-rate/payoff gate."""
+    lines = ["## 胜率/赔率闸门", ""]
+    decision_lines = _render_win_rate_payoff_decision(rows)[2:]
+    for line in decision_lines:
+        if line.startswith("- "):
+            lines.append("- [ ] " + line[2:])
+    return lines or ["## 胜率/赔率闸门", "", "- [ ] 当前没有正式执行票。"]
+
+
+def _render_alpha_reliability_lines(rows: list[dict[str, Any]]) -> list[str]:
+    """Render sample-size, Wilson interval and label decomposition for Alpha review."""
+    lines = ["## Alpha 样本稳健性与标签拆解", ""]
+    if not rows:
+        lines.append("- 当前没有正式执行票，无法形成样本稳健性卡片。")
+        return lines
+    for row in rows[:5]:
+        reliability = build_historical_reliability_metrics(row)
+        positive_count = reliability.get("positive_count")
+        negative_count = reliability.get("negative_count")
+        evaluable_count = reliability.get("evaluable_count") or reliability.get("sample_count")
+        count_text = f"样本 `{evaluable_count}`（正 `{positive_count}` / 负 `{negative_count}`）" if evaluable_count is not None else "样本 `n/a`"
+        wilson_low = reliability.get("win_rate_wilson_low")
+        wilson_high = reliability.get("win_rate_wilson_high")
+        wilson_text = f"{_fmt_pct(wilson_low)}~{_fmt_pct(wilson_high)}" if wilson_low is not None and wilson_high is not None else "n/a"
+        lines.append(
+            f"- `{_stock_label(row)}`：{count_text}，原始胜率 `{_fmt_pct(reliability.get('raw_win_rate'))}`，"
+            f"Wilson 区间 `{wilson_text}`，收缩胜率 `{_fmt_pct(reliability.get('shrunk_win_rate'))}`，"
+            f"可靠性 `{reliability.get('reliability_label')}`；标签拆解："
+            f"开盘均值 `{_fmt_pct(_row_historical_metric(row, 'next_open_return_mean'))}`，"
+            f"最高命中 `{_fmt_pct(_row_historical_metric(row, 'next_high_hit_rate_at_threshold'))}`，"
+            f"收盘均值 `{_fmt_pct(_row_historical_metric(row, 'next_close_return_mean'))}`，"
+            f"开盘到收盘 `{_fmt_pct(_row_historical_metric(row, 'next_open_to_close_return_mean'))}`。"
+        )
+    return lines
+
+
+def _compact_code_items(items: Any, *, limit: int = 4) -> str:
+    values = [str(item).strip() for item in list(items or []) if str(item).strip()]
+    if not values:
+        return "`无`"
+    return "、".join(f"`{item}`" for item in values[:limit])
+
+
+def _gate_status_text(row: dict[str, Any]) -> str:
+    gate_status = dict(row.get("gate_status") or {})
+    if not gate_status:
+        return "`n/a`"
+    return "，".join(f"{key}={value}" for key, value in gate_status.items())
+
+
+def _render_alpha_factor_cards(rows: list[dict[str, Any]]) -> list[str]:
+    """Render compact factor attribution cards from artifact evidence fields."""
+    lines = ["## Alpha 因子证据卡", ""]
+    if not rows:
+        lines.append("- 当前没有正式执行票。")
+        return lines
+    for row in rows[:5]:
+        positive = list(row.get("positive_tags") or row.get("top_reasons") or [])
+        if not positive and row.get("why_now"):
+            positive = [item.strip() for item in str(row.get("why_now")).split(",") if item.strip()]
+        negative = list(
+            _first_non_empty(
+                row.get("negative_tags"),
+                row.get("blockers"),
+                row.get("execution_blocked_flags"),
+                [],
+            )
+            or []
+        )
+        if not negative:
+            negative = list(row.get("candidate_reason_codes") or [])[:2]
+        lines.append(
+            f"- `{_stock_label(row)}`：正向证据：{_compact_code_items(positive)}；"
+            f"风险/负项：{_compact_code_items(negative)}；gate：{_gate_status_text(row)}。"
+        )
+    return lines
+
+
+def _render_beta_execution_controls(rows: list[dict[str, Any]]) -> list[str]:
+    """Render execution, microstructure and cost controls for Beta review."""
+    lines = [
+        "## Beta 执行硬条件与成本闸门",
+        "",
+        "| 股票 | 触发条件 | 取消条件 | 成本闸门 | 成交约束 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    if not rows:
+        lines.append("| 无 | 无正式执行票 | 保持空仓观察 | n/a | n/a |")
+        return lines
+    for row in rows[:5]:
+        preferred_entry_mode = str(row.get("preferred_entry_mode") or "next_day_breakout_confirmation")
+        cost_cap = estimate_execution_cost_cap(row)
+        lines.append(
+            f"| {_markdown_table_cell(_stock_label(row))} | "
+            f"{_markdown_table_cell('09:25 后等待 VWAP/开盘价承接与量价延续确认；' + ('只做盘中机会' if preferred_entry_mode == 'intraday_confirmation_only' else '确认后才允许 BTST 持有'))} | "
+            f"{_markdown_table_cell('高开过大后快速跌回开盘价/VWAP、竞价缩量或盘口撤单异常时取消')} | "
+            f"{_markdown_table_cell('滑点+冲击成本 <= `' + _fmt_pct(cost_cap) + '`')} | "
+            f"{_markdown_table_cell('单票参与率 <= 5%；盘口价差异常或涨停排队不主动追单')} |"
+        )
+    return lines
+
+
+def _render_post_trade_review_loop() -> list[str]:
+    """Render the post-trade feedback fields expected by the review ledger."""
+    return [
+        "## 盘后复盘闭环",
+        "",
+        "- 收盘后回填 `realized_entry_price`、`realized_exit_price`、`realized_slippage`、`mae`、`mfe` 与 `execution_review_label`。",
+        "- 次日复盘时同时标注是否触发买点、是否触发取消条件、真实滑点是否超过成本闸门。",
+        "- 回填结果进入 review ledger，用于下一轮样本稳健性、执行质量和风险预算校准。",
+    ]
+
+
+def _buy_order_label(order: dict[str, Any], rows_by_ticker: dict[str, dict[str, Any]]) -> str:
+    ticker = str(order.get("ticker") or "").strip()
+    row = dict(rows_by_ticker.get(ticker) or {"ticker": ticker})
+    return _stock_label(row)
+
+
+def _render_gamma_market_gate_lines(selection_snapshot: dict[str, Any], selected_rows: list[dict[str, Any]]) -> list[str]:
+    """Render market gate, risk budget and portfolio guardrails for Gamma review."""
+    lines = ["## Gamma 市场门控与风险预算", ""]
+    if not selection_snapshot:
+        lines.append("- selection_snapshot 未找到；本节只保留人工复核入口，不能把市场门控状态写成已验证。")
+        return lines
+    market_state = dict(selection_snapshot.get("market_state") or {})
+    funnel_diagnostics = dict(selection_snapshot.get("funnel_diagnostics") or {})
+    gate_enforcement = dict(funnel_diagnostics.get("btst_regime_gate_enforcement") or {})
+    reasons = list(market_state.get("regime_gate_reasons") or [])
+    lines.append(
+        f"- 市场状态：regime_gate_level：`{market_state.get('regime_gate_level') or 'n/a'}`；"
+        f"breadth_ratio：`{_fmt_pct(market_state.get('breadth_ratio'))}`；"
+        f"daily_return：`{_fmt_pct(market_state.get('daily_return'))}`；"
+        f"涨跌停：`{market_state.get('limit_up_count', 'n/a')}` / `{market_state.get('limit_down_count', 'n/a')}`；"
+        f"position_scale：`{_fmt_pct(market_state.get('position_scale'))}`。"
+    )
+    if reasons:
+        lines.append(f"- 门控原因：{_compact_code_items(reasons, limit=6)}。")
+    if gate_enforcement:
+        lines.append(
+            f"- regime gate enforcement：gate：`{gate_enforcement.get('gate') or 'n/a'}`；"
+            f"mode：`{gate_enforcement.get('mode') or 'n/a'}`；enforced：`{gate_enforcement.get('enforced')}`；"
+            f"buy_orders_cleared：`{gate_enforcement.get('buy_orders_cleared')}`"
+            f"（count `{gate_enforcement.get('buy_orders_cleared_count', 'n/a')}`）。"
+        )
+        promoted = gate_enforcement.get("shadow_promotion_tickers")
+        if promoted:
+            lines.append(f"- shadow promotion tickers：{_compact_code_items(promoted, limit=8)}。")
+    rows_by_ticker = {str(row.get("ticker") or "").strip(): row for row in selected_rows}
+    buy_orders = _safe_rows(selection_snapshot.get("buy_orders"))
+    if buy_orders:
+        lines.append("- 风险预算上限：")
+        for order in buy_orders[:5]:
+            lines.append(
+                f"  - `{_buy_order_label(order, rows_by_ticker)}`：shares `{order.get('shares', 'n/a')}`，"
+                f"amount `{_fmt_num(order.get('amount'), 2)}`，risk_budget_ratio `{_fmt_num(order.get('risk_budget_ratio'), 2)}`，"
+                f"gate `{order.get('risk_budget_gate') or 'n/a'}`，contract `{order.get('execution_contract_bucket') or 'n/a'}`，"
+                f"constraint `{order.get('constraint_binding') or 'n/a'}`。"
+            )
+    else:
+        lines.append("- 当前 selection_snapshot 没有 buy_orders 风险预算明细。")
+    lines.append("- 组合约束：同主题候选不叠加加仓，市场门控为 `halt/risk_off/crisis` 时只允许确认后小仓复核或放弃。")
+    return lines
+
+
+def _selection_snapshot_gate_context(selection_snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Extract the market gate fields that can override a raw trade decision."""
+    market_state = dict(selection_snapshot.get("market_state") or {})
+    funnel_diagnostics = dict(selection_snapshot.get("funnel_diagnostics") or {})
+    gate_enforcement = dict(funnel_diagnostics.get("btst_regime_gate_enforcement") or {})
+    return {
+        "regime_gate_level": str(market_state.get("regime_gate_level") or "n/a"),
+        "regime_gate_reasons": list(market_state.get("regime_gate_reasons") or []),
+        "position_scale": market_state.get("position_scale"),
+        "gate": str(gate_enforcement.get("gate") or ""),
+        "enforced": gate_enforcement.get("enforced"),
+        "buy_orders_cleared": gate_enforcement.get("buy_orders_cleared"),
+        "buy_orders_cleared_count": gate_enforcement.get("buy_orders_cleared_count"),
+    }
+
+
+def _build_premarket_control_tower(
+    decision_card: dict[str, Any],
+    selection_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Combine model trade bias with market gate state into one effective execution state."""
+    raw_trade_bias = str(decision_card.get("trade_bias") or "skip")
+    gate_context = _selection_snapshot_gate_context(selection_snapshot) if selection_snapshot else {}
+    gate = str(gate_context.get("gate") or "")
+    regime_level = str(gate_context.get("regime_gate_level") or "n/a")
+    buy_orders_cleared = bool(gate_context.get("buy_orders_cleared"))
+    hard_gate = gate == "halt" or regime_level in {"crisis", "halt", "risk_off"} or buy_orders_cleared
+    reason_codes: list[str] = []
+    if raw_trade_bias in {"skip", "no_trade"}:
+        effective_trade_bias = raw_trade_bias
+        reason_codes.append("raw_model_no_trade")
+    elif not selection_snapshot:
+        effective_trade_bias = "manual_review_required"
+        reason_codes.append("selection_snapshot_missing")
+    elif hard_gate:
+        effective_trade_bias = "gate_locked_confirmation_only"
+        reason_codes.append(
+            "market_gate_downgraded_raw_trade_allowed"
+            if raw_trade_bias == "trade_allowed"
+            else "market_gate_requires_confirmation"
+        )
+    else:
+        effective_trade_bias = raw_trade_bias
+        reason_codes.append("market_gate_passed")
+    return {
+        "raw_trade_bias": raw_trade_bias,
+        "effective_trade_bias": effective_trade_bias,
+        "primary_ticker": decision_card.get("primary_ticker"),
+        "evidence_grade": decision_card.get("evidence_grade"),
+        "data_quality": decision_card.get("data_quality"),
+        "risk_posture": decision_card.get("risk_posture"),
+        "regime_gate_level": regime_level,
+        "gate": gate or "n/a",
+        "buy_orders_cleared": gate_context.get("buy_orders_cleared"),
+        "buy_orders_cleared_count": gate_context.get("buy_orders_cleared_count"),
+        "position_scale": gate_context.get("position_scale"),
+        "reason_codes": reason_codes,
+        "action": "先按门控降级，只允许 09:25 后重新确认；若盘口承接和市场宽度没有修复，则不执行。"
+        if effective_trade_bias == "gate_locked_confirmation_only"
+        else "沿用模型原始倾向，但仍需完成盘中确认。",
+    }
+
+
+def _render_premarket_control_tower(control_tower: dict[str, Any]) -> list[str]:
+    """Render the effective premarket status above detailed execution sections."""
+    return [
+        "## 盘前控制塔",
+        "",
+        f"- 模型原始倾向：`{control_tower.get('raw_trade_bias') or 'n/a'}`；门控后有效状态：`{control_tower.get('effective_trade_bias') or 'n/a'}`。",
+        f"- 市场门控：regime_gate_level `{control_tower.get('regime_gate_level') or 'n/a'}`，gate `{control_tower.get('gate') or 'n/a'}`，buy_orders_cleared `{control_tower.get('buy_orders_cleared')}`。",
+        f"- 风险姿态：证据 `{control_tower.get('evidence_grade') or 'n/a'}`，数据 `{control_tower.get('data_quality') or 'n/a'}`，仓位缩放 `{_fmt_pct(control_tower.get('position_scale'))}`。",
+        f"- 原因码：{_compact_code_items(control_tower.get('reason_codes'), limit=6)}。",
+        f"- 执行动作：{control_tower.get('action') or 'n/a'}",
+    ]
+
+
+def _render_opening_timeline_lines(primary_label: str) -> list[str]:
+    """Render next-morning time windows required by the final document spec."""
+    focus = primary_label or "主票"
+    return [
+        "## 早盘时间轴",
+        "",
+        f"- 09:20-09:25：只看竞价强弱和封单/撤单质量，`{focus}` 没有稳定承接就不提前预设买点。",
+        "- 09:25-09:35：等待开盘后第一段延续确认；高开后快速回落时直接降级观察。",
+        "- 09:35-10:00：只复审仍在原始触发逻辑内的票，不因低位反抽自动升级。",
+        "- 10:00 后：没有形成延续确认的正式票退出执行队列，只保留观察记录和复盘标签。",
     ]
 
 
@@ -334,6 +812,47 @@ def _refresh_early_runner_artifacts(reports_root: Path) -> dict[str, Any]:
         "analysis": analysis,
         "tables": tables,
     }
+
+
+def _resolve_existing_json_path(raw_path: Any, report_dir: Path) -> Path | None:
+    """Resolve a JSON path from artifacts without assuming it is absolute."""
+    if not raw_path:
+        return None
+    candidate = Path(str(raw_path)).expanduser()
+    candidates = [candidate]
+    if not candidate.is_absolute():
+        candidates.append(report_dir / candidate)
+    for item in candidates:
+        if item.exists():
+            return item.resolve()
+    return None
+
+
+def _load_selection_snapshot(
+    *,
+    report_dir: Path,
+    signal_date_iso: str,
+    brief: dict[str, Any],
+    priority_board: dict[str, Any],
+) -> dict[str, Any]:
+    """Load selection_snapshot when current artifacts expose it."""
+    source_paths = dict(priority_board.get("source_paths") or {})
+    candidate_paths = [
+        brief.get("snapshot_path"),
+        source_paths.get("snapshot_path"),
+        report_dir / "selection_artifacts" / signal_date_iso / "selection_snapshot.json",
+    ]
+    for raw_path in candidate_paths:
+        path = _resolve_existing_json_path(raw_path, report_dir)
+        if path is None:
+            continue
+        try:
+            payload = _read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        payload["_source_path"] = path.as_posix()
+        return payload
+    return {}
 
 
 def _load_early_runner_context(reports_root: Path, signal_date_iso: str, *, refresh: bool) -> dict[str, Any]:
@@ -511,12 +1030,8 @@ def _render_early_runner_status(context: dict[str, Any]) -> list[str]:
     else:
         lines.append("- 当前没有可用 early-runner 板，本轮文档只记录缺失状态，不编造观察票。")
     if research_confirmation:
-        lines.append(
-            f"- 当前板保留 `full_report_confirmation={len(research_confirmation)}` 条研究确认票；它们只用于研究确认，不自动进入 priority/watchlist/second-entry。"
-        )
-        lines.append(
-            f"- 研究确认前排：`{[str(row.get('ticker') or '').strip() for row in research_confirmation[:5]]}`。"
-        )
+        lines.append(f"- 当前板保留 `full_report_confirmation={len(research_confirmation)}` 条研究确认票；它们只用于研究确认，不自动进入 priority/watchlist/second-entry。")
+        lines.append(f"- 研究确认前排：`{_stock_labels_text(research_confirmation, limit=5)}`。")
     return lines
 
 
@@ -532,13 +1047,16 @@ def _render_early_runner_overlay(context: dict[str, Any], formal_rows: list[dict
     lines.append(f"- watchlist 数量：`{len(watchlist)}`；priority 数量：`{len(priority)}`；second_entry 数量：`{len(second_entry)}`。")
     if research_confirmation:
         lines.append(f"- research-only 确认池数量：`{len(research_confirmation)}`。")
-    lines.append(f"- 与正式 BTST 的重合票：`{intersection_summary.get('overlap_tickers')}`。")
-    lines.append(
-        f"- 仅 early-runner 命中的补充票：`{[str(row.get('ticker') or '').strip() for row in _safe_rows(intersection_summary.get('only_early_runner_rows'))]}`。"
-    )
-    lines.append(
-        f"- 回补机会层：`{[str(row.get('ticker') or '').strip() for row in _safe_rows(intersection_summary.get('second_entry_rows'))]}`。"
-    )
+    overlap_labels = _stock_labels_text([dict(row.get("formal_row") or row.get("early_row") or {}) for row in _safe_rows(intersection_summary.get("overlap_rows"))])
+    lines.append(f"- 与正式 BTST 的重合票：`{overlap_labels}`。")
+    only_rows = _safe_rows(intersection_summary.get("only_early_runner_rows"))
+    second_entry_rows = _safe_rows(intersection_summary.get("second_entry_rows"))
+    if str(intersection_summary.get("status") or "") == "stale_fallback":
+        lines.append(f"- 仅 early-runner 命中的补充票：`{len(only_rows)} 只，非当日板，仅作历史参考`。")
+        lines.append(f"- 回补机会层：`{len(second_entry_rows)} 只，非当日板，仅作历史参考`。")
+    else:
+        lines.append(f"- 仅 early-runner 命中的补充票：`{_stock_labels_text(only_rows)}`。")
+        lines.append(f"- 回补机会层：`{_stock_labels_text(second_entry_rows)}`。")
     return lines
 
 
@@ -551,7 +1069,7 @@ def _render_strategy_threshold_lines(
     return [
         "## 当前策略阈值基线",
         "",
-        f"- profile：`{strategy_thresholds_profile}`；配置文件：`{strategy_thresholds_config_path}`。",
+        f"- 阈值 profile：`{strategy_thresholds_profile}`；配置文件：`{strategy_thresholds_config_path}`。",
         f"- exact 连续门槛：`{strategy_thresholds.get('min_recent_exact_streak')}`；交集出现天数门槛：`{strategy_thresholds.get('min_intersection_positive_days')}`。",
         f"- 交集层 uplift 门槛：胜率差 `+{_fmt_pct(strategy_thresholds.get('intersection_uplift_rate_threshold'))}`；均值差 `+{_fmt_num(strategy_thresholds.get('intersection_uplift_mean_return_threshold'), 2)}`。",
         f"- 补充层最大容忍正收益率：`{_fmt_pct(strategy_thresholds.get('only_early_runner_max_positive_rate'))}`；回补层 T+2 优势门槛：`+{_fmt_num(strategy_thresholds.get('second_entry_t2_advantage_threshold'), 3)}`。",
@@ -649,6 +1167,8 @@ def _render_llm_doc(
     priority_board: dict[str, Any],
     session_summary: dict[str, Any],
     early_runner: dict[str, Any],
+    selection_snapshot: dict[str, Any],
+    control_tower: dict[str, Any],
     report_dir: Path,
     strategy_thresholds: dict[str, Any],
     strategy_thresholds_config_path: str,
@@ -688,6 +1208,7 @@ def _render_llm_doc(
         signal_date=str(brief.get("trade_date") or ""),
         next_trade_date=str(brief.get("next_trade_date") or ""),
     )
+    decision_card = _attach_decision_card_primary_name(decision_card, enriched_selected)
     lines = [
         f"# BTST 多智能体详细计划（{signal_date_compact}）",
         "",
@@ -695,11 +1216,23 @@ def _render_llm_doc(
         "",
         f"- 信号日：`{brief.get('trade_date')}`；目标交易日：`{brief.get('next_trade_date')}`。",
         f"- 运行目录：`{report_dir}`。",
-        f"- 选股模式：`{brief.get('selection_target')}`；profile：`{profile_name or 'n/a'}`。",
+        f"- 选股模式：`{brief.get('selection_target')}`；LLM 选股 profile：`{profile_name or 'n/a'}`。",
         f"- selected 数量：`{len(selected_actions)}`；watch 数量：`{len(watch_actions)}`；机会池数量：`{len(opportunity_actions)}`。",
         "",
     ]
     lines.extend(_render_decision_card(decision_card))
+    lines.extend([""])
+    lines.extend(_render_premarket_control_tower(control_tower))
+    lines.extend([""])
+    lines.extend(_render_win_rate_payoff_decision(selected_actions))
+    lines.extend([""])
+    lines.extend(_render_alpha_reliability_lines(selected_actions))
+    lines.extend([""])
+    lines.extend(_render_alpha_factor_cards(selected_actions))
+    lines.extend([""])
+    lines.extend(_render_gamma_market_gate_lines(selection_snapshot, selected_actions))
+    lines.extend([""])
+    lines.extend(_render_beta_execution_controls(selected_actions))
     lines.extend([""])
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
     lines.extend([""])
@@ -744,11 +1277,7 @@ def _render_plain_language_doc(signal_date_compact: str, brief: dict[str, Any], 
     early_status = str(early_runner.get("status") or "unavailable")
     board = dict(early_runner.get("board") or {})
     status_note = {
-        "exact": (
-            "这次文档里已经拿到了当日 early-runner 板，但它当前仍是 `research_only`，只保留研究确认池，不生成可执行观察票。"
-            if str(board.get("gate_action") or "") == "research_only"
-            else "这次文档里已经拿到了当日 early-runner 板，所以它可以作为正式 BTST 旁边的第二观察层使用。"
-        ),
+        "exact": ("这次文档里已经拿到了当日 early-runner 板，但它当前仍是 `research_only`，只保留研究确认池，不生成可执行观察票。" if str(board.get("gate_action") or "") == "research_only" else "这次文档里已经拿到了当日 early-runner 板，所以它可以作为正式 BTST 旁边的第二观察层使用。"),
         "stale_fallback": "这次文档没有拿到当日 early-runner 板，只能回退到最近可用板，所以它只能作为参考线索，不能当成当天正式观察单。",
         "unavailable": "这次文档没有拿到可用 early-runner 板，所以只能显式记录缺失状态，不能拿它补出不存在的观察票。",
     }.get(early_status, "当前 early-runner 状态不明确，只能保守处理。")
@@ -819,10 +1348,12 @@ def _render_forum_doc(signal_date_compact: str, brief: dict[str, Any], priority_
     if not extra_rows and research_confirmation:
         extra_rows = research_confirmation[:2]
         extra_label = "research-only 确认前排"
-    extra = [str(row.get("ticker") or "").strip() for row in extra_rows]
-    overlap = [str(row.get("ticker") or "").strip() for row in _safe_rows(intersection_summary.get("overlap_rows"))[:3]]
+    extra = _stock_labels_text(extra_rows, limit=2)
+    overlap = _stock_labels_text([dict(row.get("formal_row") or row.get("early_row") or {}) for row in _safe_rows(intersection_summary.get("overlap_rows"))[:3]])
     lines = [
         f"# {signal_date_compact}-两套交易计划论坛短版",
+        "",
+        f"信号日：`{brief.get('trade_date')}`；目标交易日：`{brief.get('next_trade_date')}`。",
         "",
         f"明日 BTST 主线还是 `{_stock_label(primary_action)}`，执行模式 `{primary_action.get('preferred_entry_mode') or 'n/a'}`，先确认再决定，不做开盘无脑追价。",
         "",
@@ -838,6 +1369,8 @@ def _render_checklist_doc(
     brief: dict[str, Any],
     priority_board: dict[str, Any],
     early_runner: dict[str, Any],
+    selection_snapshot: dict[str, Any],
+    control_tower: dict[str, Any],
     strategy_thresholds: dict[str, Any],
     strategy_thresholds_config_path: str,
     strategy_thresholds_profile: str,
@@ -858,6 +1391,7 @@ def _render_checklist_doc(
         signal_date=str(brief.get("trade_date") or ""),
         next_trade_date=str(brief.get("next_trade_date") or ""),
     )
+    decision_card = _attach_decision_card_primary_name(decision_card, enriched_selected)
     lines = [
         f"# BTST-{signal_date_compact}-EXEC-CHECKLIST",
         "",
@@ -865,6 +1399,16 @@ def _render_checklist_doc(
         "",
     ]
     lines.extend(_render_decision_card(decision_card))
+    lines.extend([""])
+    lines.extend(_render_premarket_control_tower(control_tower))
+    lines.extend([""])
+    lines.extend(_render_opening_timeline_lines(_stock_label(selected_actions[0]) if selected_actions else ""))
+    lines.extend([""])
+    lines.extend(_render_win_rate_payoff_gate(selected_actions))
+    lines.extend([""])
+    lines.extend(_render_gamma_market_gate_lines(selection_snapshot, selected_actions))
+    lines.extend([""])
+    lines.extend(_render_beta_execution_controls(selected_actions))
     lines.extend([""])
     lines.extend(_render_strategy_threshold_lines(strategy_thresholds, strategy_thresholds_config_path, strategy_thresholds_profile))
     lines.extend([""])
@@ -875,12 +1419,7 @@ def _render_checklist_doc(
         lines.extend(rollout_lines)
     lines.extend(["", "## 正式执行顺序", ""])
     for row in selected_actions[:3]:
-        lines.append(
-            f"- [ ] 正式执行：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，"
-            f"收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，"
-            f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，"
-            f"说明：{_historical_reading_note(row)}"
-        )
+        lines.append(f"- [ ] 正式执行：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，" f"收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，" f"说明：{_historical_reading_note(row)}")
     lines.extend([""])
     lines.extend(_render_action_matrix_sections(enriched_selected, limit=3))
     lines.extend(["", "## 正式观察顺序", ""])
@@ -911,11 +1450,15 @@ def _render_checklist_doc(
             lines.append(f"- [ ] Second Entry / Reentry：`{_stock_label(row)}`，`pre_score={_fmt_num(row.get('pre_score'), 4)}`，`confirm_score={_fmt_num(row.get('confirm_score'), 4)}`，等二次确认后再决定是否跟进。")
     else:
         lines.append("- [ ] 当前没有 second-entry / reentry 回补机会票。")
+    lines.extend([""])
+    lines.extend(_render_post_trade_review_loop())
     return "\n".join(lines) + "\n"
 
 
 def _render_early_warning_doc(
     signal_date_compact: str,
+    signal_date_iso: str,
+    next_trade_date: str,
     early_runner: dict[str, Any],
     formal_rows: list[dict[str, Any]],
     strategy_thresholds: dict[str, Any],
@@ -948,6 +1491,8 @@ def _render_early_warning_doc(
     )
     lines = [
         f"# BTST 提前预警池（{signal_date_compact}）",
+        "",
+        f"信号日：`{signal_date_iso}`；目标交易日：`{next_trade_date}`。",
         "",
         "## 定位",
         "",
@@ -993,7 +1538,7 @@ def _render_early_warning_doc(
     return "\n".join(lines) + "\n"
 
 
-def _render_early_warning_card_doc(signal_date_compact: str, early_runner: dict[str, Any], formal_rows: list[dict[str, Any]]) -> str:
+def _render_early_warning_card_doc(signal_date_compact: str, signal_date_iso: str, next_trade_date: str, early_runner: dict[str, Any], formal_rows: list[dict[str, Any]]) -> str:
     """Render the compact early-warning card for quick reading."""
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     priority = _safe_rows(early_runner.get("priority"))
@@ -1003,19 +1548,75 @@ def _render_early_warning_card_doc(signal_date_compact: str, early_runner: dict[
     lines = [
         f"# BTST 提前预警卡（{signal_date_compact}）",
         "",
+        f"- 信号日：`{signal_date_iso}`；目标交易日：`{next_trade_date}`。",
         f"- early-runner 状态：`{early_runner.get('status')}`。",
-        f"- 交集高亮：`{[str(row.get('ticker') or '').strip() for row in _safe_rows(intersection_summary.get('overlap_rows'))[:5]]}`。",
-        f"- priority：`{[str(row.get('ticker') or '').strip() for row in priority[:5]]}`。",
-        f"- watchlist：`{[str(row.get('ticker') or '').strip() for row in watchlist[:5]]}`。",
-        f"- second_entry：`{[str(row.get('ticker') or '').strip() for row in second_entry[:5]]}`。",
+        f"- 交集高亮：`{_stock_labels_text([dict(row.get('formal_row') or row.get('early_row') or {}) for row in _safe_rows(intersection_summary.get('overlap_rows'))[:5]])}`。",
+        f"- priority：`{_stock_labels_text(priority, limit=5)}`。",
+        f"- watchlist：`{_stock_labels_text(watchlist, limit=5)}`。",
+        f"- second_entry：`{_stock_labels_text(second_entry, limit=5)}`。",
         "- 使用顺序：先看正式 BTST，再看交集优先复审，only early-runner 做补充复审，second-entry 单独看回补机会。",
     ]
     if research_confirmation:
         lines.insert(
             6,
-            f"- research_only 确认池：`{[str(row.get('ticker') or '').strip() for row in research_confirmation[:5]]}`。",
+            f"- research_only 确认池：`{_stock_labels_text(research_confirmation, limit=5)}`。",
         )
     return "\n".join(lines) + "\n"
+
+
+def _build_report_quality_summary(
+    *,
+    signal_date_compact: str,
+    docs: dict[str, str],
+    control_tower: dict[str, Any],
+    early_runner: dict[str, Any],
+    selection_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a machine-readable QA summary for the generated report bundle."""
+    required_sections = {
+        f"BTST-LLM-{signal_date_compact}.md": [
+            "## 30 秒决策卡",
+            "## 盘前控制塔",
+            "## Alpha 样本稳健性与标签拆解",
+            "## Alpha 因子证据卡",
+            "## Gamma 市场门控与风险预算",
+            "## Beta 执行硬条件与成本闸门",
+            "## Governed Rollout 观察",
+        ],
+        f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": [
+            "## 30 秒决策卡",
+            "## 盘前控制塔",
+            "## 早盘时间轴",
+            "## 胜率/赔率闸门",
+            "## Gamma 市场门控与风险预算",
+            "## Beta 执行硬条件与成本闸门",
+            "## 盘后复盘闭环",
+        ],
+    }
+    missing: list[str] = []
+    for file_name, sections in required_sections.items():
+        content = docs.get(file_name, "")
+        for section in sections:
+            if section not in content:
+                missing.append(f"{file_name}:{section}")
+    quality_warnings = [
+        code
+        for code in list(control_tower.get("reason_codes") or [])
+        if code
+        in {
+            "market_gate_downgraded_raw_trade_allowed",
+            "market_gate_requires_confirmation",
+            "selection_snapshot_missing",
+        }
+    ]
+    return {
+        "signal_date": signal_date_compact,
+        "control_tower": control_tower,
+        "early_runner_status": early_runner.get("status"),
+        "selection_snapshot_loaded": bool(selection_snapshot),
+        "required_sections_missing": missing,
+        "quality_warnings": quality_warnings,
+    }
 
 
 def generate_btst_doc_bundle(
@@ -1041,6 +1642,20 @@ def generate_btst_doc_bundle(
     rule_report_path = resolved_reports_root / f"btst_full_report_{signal_date_compact}.json"
     rule_report = _read_json(rule_report_path)
     early_runner = _load_early_runner_context(resolved_reports_root, signal_date_iso, refresh=refresh_early_runner)
+    _enrich_missing_stock_names(
+        reports_root=resolved_reports_root,
+        report_dir=resolved_report_dir,
+        rule_report=rule_report,
+        brief=brief,
+        priority_board=priority_board,
+        early_runner=early_runner,
+    )
+    selection_snapshot = _load_selection_snapshot(
+        report_dir=resolved_report_dir,
+        signal_date_iso=signal_date_iso,
+        brief=brief,
+        priority_board=priority_board,
+    )
     resolved_strategy_thresholds = resolve_strategy_thresholds(
         config_path=strategy_thresholds_config_path,
         profile=strategy_thresholds_profile,
@@ -1055,24 +1670,45 @@ def generate_btst_doc_bundle(
     formal_rows = [*selected_rows, *watch_rows, *opportunity_rows]
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
     target_output_dir = Path(output_dir).expanduser().resolve() if output_dir else (OUTPUTS_DIR / signal_date_compact[:6] / brief.get("next_trade_date", signal_date_iso).replace("-", "")).resolve()
+    early_status = str(early_runner.get("status") or "unavailable")
+    control_selected = _enrich_formal_rows(
+        selected_rows,
+        role="formal_selected",
+        early_runner_status=early_status,
+    )
+    control_decision_card = build_decision_card(
+        selected_rows=control_selected,
+        early_runner_status=early_status,
+        signal_date=str(brief.get("trade_date") or signal_date_iso),
+        next_trade_date=str(brief.get("next_trade_date") or ""),
+    )
+    control_tower = _build_premarket_control_tower(control_decision_card, selection_snapshot)
     docs = {
         f"BTST-{signal_date_compact}.md": _render_rule_doc(signal_date_compact, rule_report, brief, priority_board, early_runner, rule_report_path, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
-        f"BTST-LLM-{signal_date_compact}.md": _render_llm_doc(signal_date_compact, brief, priority_board, session_summary, early_runner, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
+        f"BTST-LLM-{signal_date_compact}.md": _render_llm_doc(signal_date_compact, brief, priority_board, session_summary, early_runner, selection_snapshot, control_tower, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
         f"{signal_date_compact}-两套交易计划通俗说明.md": _render_plain_language_doc(signal_date_compact, brief, priority_board, early_runner),
         f"{signal_date_compact}-两套交易计划论坛短版.md": _render_forum_doc(signal_date_compact, brief, priority_board, early_runner),
-        f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, early_runner, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
+        f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, early_runner, selection_snapshot, control_tower, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
     }
     if include_extra_warning_docs:
-        docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, early_runner, formal_rows, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile)
-        docs[f"BTST-{signal_date_compact}-EARLY-WARNING-CARD.md"] = _render_early_warning_card_doc(signal_date_compact, early_runner, formal_rows)
+        docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, signal_date_iso, str(brief.get("next_trade_date") or ""), early_runner, formal_rows, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile)
+        docs[f"BTST-{signal_date_compact}-EARLY-WARNING-CARD.md"] = _render_early_warning_card_doc(signal_date_compact, signal_date_iso, str(brief.get("next_trade_date") or ""), early_runner, formal_rows)
+    quality_summary = _build_report_quality_summary(
+        signal_date_compact=signal_date_compact,
+        docs=docs,
+        control_tower=control_tower,
+        early_runner=early_runner,
+        selection_snapshot=selection_snapshot,
+    )
+    quality_summary_json_path = target_output_dir / f"{signal_date_compact}-btst-report-quality-summary.json"
     written_files = []
     for name, content in docs.items():
         target_path = target_output_dir / name
         _write_text(target_path, content)
         written_files.append(target_path.as_posix())
+    _write_text(quality_summary_json_path, json.dumps(quality_summary, ensure_ascii=False, indent=2) + "\n")
     review_ledger_json_path = None
     if write_review_ledger:
-        early_status = str(early_runner.get("status") or "unavailable")
         ledger_selected = _enrich_formal_rows(
             selected_rows,
             role="formal_selected",
@@ -1118,6 +1754,8 @@ def generate_btst_doc_bundle(
         "strategy_thresholds_config_path": resolved_strategy_thresholds_config_path,
         "strategy_thresholds_profile": strategy_thresholds_profile,
         "strategy_thresholds": resolved_strategy_thresholds,
+        "control_tower": control_tower,
+        "quality_summary_json_path": quality_summary_json_path.as_posix(),
         "review_ledger_json_path": review_ledger_json_path.as_posix() if review_ledger_json_path else None,
     }
 
@@ -1142,6 +1780,7 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
             int(item.get("intersection_count") or 0),
             -int(item.get("only_early_runner_count") or 0),
             -int(item.get("second_entry_count") or 0),
+            1 if item.get("profile") == "conservative" else 0,
         ),
         reverse=True,
     )
@@ -1150,12 +1789,15 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
     if len(ranked_profiles) >= 2:
         top = ranked_profiles[0]
         runner_up = ranked_profiles[1]
-        reasons.append(
-            f"`{top['profile']}` 的交集票更多：`{top['intersection_count']}` vs `{runner_up['intersection_count']}`。"
-        )
-        reasons.append(
-            f"`{top['profile']}` 的 only early-runner 更少：`{top['only_early_runner_count']}` vs `{runner_up['only_early_runner_count']}`。"
-        )
+        if top["intersection_count"] == runner_up["intersection_count"] and top["only_early_runner_count"] == runner_up["only_early_runner_count"] and top["second_entry_count"] == runner_up["second_entry_count"]:
+            reasons.append("两套 profile 的交集票、only early-runner 与 second-entry 完全持平；没有形成有效 profile 差异，默认采用 conservative 做风控基线。")
+        else:
+            if top["intersection_count"] > runner_up["intersection_count"]:
+                reasons.append(f"`{top['profile']}` 的交集票更多：`{top['intersection_count']}` vs `{runner_up['intersection_count']}`。")
+            if top["only_early_runner_count"] < runner_up["only_early_runner_count"]:
+                reasons.append(f"`{top['profile']}` 的 only early-runner 更少：`{top['only_early_runner_count']}` vs `{runner_up['only_early_runner_count']}`。")
+            if top["second_entry_count"] < runner_up["second_entry_count"]:
+                reasons.append(f"`{top['profile']}` 的 second-entry 干扰更少：`{top['second_entry_count']}` vs `{runner_up['second_entry_count']}`。")
     return {
         "profiles": sorted(profiles, key=lambda item: str(item["profile"])),
         "recommended_profile": recommended_profile,
@@ -1176,9 +1818,7 @@ def _render_profile_doc_bundle_comparison_markdown(signal_date_compact: str, com
         "| --- | --- | ---: | ---: | ---: | ---: | --- |",
     ]
     for item in list(comparison.get("profiles") or []):
-        lines.append(
-            f"| {item['profile']} | {item.get('early_runner_status')} | {item.get('intersection_count')} | {item.get('only_early_runner_count')} | {item.get('second_entry_count')} | {item.get('written_file_count')} | {item.get('output_dir')} |"
-        )
+        lines.append(f"| {item['profile']} | {item.get('early_runner_status')} | {item.get('intersection_count')} | {item.get('only_early_runner_count')} | {item.get('second_entry_count')} | {item.get('written_file_count')} | {item.get('output_dir')} |")
     lines.extend(["", "## 推荐理由", ""])
     if list(comparison.get("recommendation_reasons") or []):
         for reason in list(comparison.get("recommendation_reasons") or []):
@@ -1206,21 +1846,9 @@ def _build_profile_doc_bundle_decision_card(comparison: dict[str, Any]) -> dict[
         "intersection_count": int(recommended.get("intersection_count") or 0) if recommended else 0,
         "only_early_runner_count": int(recommended.get("only_early_runner_count") or 0) if recommended else 0,
         "second_entry_count": int(recommended.get("second_entry_count") or 0) if recommended else 0,
-        "intersection_delta_vs_runner_up": (
-            int(recommended.get("intersection_count") or 0) - int(challenger.get("intersection_count") or 0)
-            if recommended and challenger
-            else 0
-        ),
-        "only_early_runner_delta_vs_runner_up": (
-            int(recommended.get("only_early_runner_count") or 0) - int(challenger.get("only_early_runner_count") or 0)
-            if recommended and challenger
-            else 0
-        ),
-        "second_entry_delta_vs_runner_up": (
-            int(recommended.get("second_entry_count") or 0) - int(challenger.get("second_entry_count") or 0)
-            if recommended and challenger
-            else 0
-        ),
+        "intersection_delta_vs_runner_up": (int(recommended.get("intersection_count") or 0) - int(challenger.get("intersection_count") or 0) if recommended and challenger else 0),
+        "only_early_runner_delta_vs_runner_up": (int(recommended.get("only_early_runner_count") or 0) - int(challenger.get("only_early_runner_count") or 0) if recommended and challenger else 0),
+        "second_entry_delta_vs_runner_up": (int(recommended.get("second_entry_count") or 0) - int(challenger.get("second_entry_count") or 0) if recommended and challenger else 0),
         "recommendation_reasons": list(comparison.get("recommendation_reasons") or []),
     }
 
@@ -1257,9 +1885,7 @@ def _render_profile_decision_bridge_lines(decision_card: dict[str, Any]) -> list
         f"- 交集票：`{decision_card.get('intersection_count')}`；相对次优差值：`{int(decision_card.get('intersection_delta_vs_runner_up') or 0):+d}`。",
         f"- only early-runner：`{decision_card.get('only_early_runner_count')}`；相对次优差值：`{int(decision_card.get('only_early_runner_delta_vs_runner_up') or 0):+d}`。",
         f"- second-entry：`{decision_card.get('second_entry_count')}`；相对次优差值：`{int(decision_card.get('second_entry_delta_vs_runner_up') or 0):+d}`。",
-    ] + [
-        f"- {reason}" for reason in list(decision_card.get("recommendation_reasons") or [])
-    ]
+    ] + [f"- {reason}" for reason in list(decision_card.get("recommendation_reasons") or [])]
 
 
 def _append_profile_decision_bridge(

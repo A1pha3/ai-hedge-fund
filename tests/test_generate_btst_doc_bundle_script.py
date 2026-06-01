@@ -253,6 +253,7 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "证据 `B`，数据 `fresh`，倾向 `confirmation_only`，风险 `reduced`" in llm_doc
     assert "## 当前策略阈值基线" in llm_doc
     assert strategy_thresholds_path.resolve().as_posix() in llm_doc
+    assert "阈值 profile：`conservative`" in llm_doc
     assert "exact 连续门槛：`4`" in llm_doc
     assert "## Early Runner 章节" in llm_doc
     assert "## Governed Rollout 观察" in llm_doc
@@ -267,8 +268,9 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "说明：胜率中性偏强，盈亏比站上 1.00，赚钱时大体能覆盖亏损。" in llm_doc
     checklist_doc = (output_dir / "BTST-20260526-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
     assert "## 30 秒决策卡" in checklist_doc
-    assert "- 主票：`300054`" in checklist_doc
+    assert "- 主票：`300054`（鼎龙股份）。" in checklist_doc
     assert "- 交易倾向：`confirmation_only`" in checklist_doc
+    assert "09:20-09:25" in checklist_doc
     assert "## 当前策略阈值基线" in checklist_doc
     assert "## 正式执行动作矩阵" in checklist_doc
     assert "### 300054 鼎龙股份" in checklist_doc
@@ -283,11 +285,17 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "Second Entry / Reentry：`605500 森林包装`" in checklist_doc
     assert "说明：胜率中性偏强，盈亏比站上 1.00，赚钱时大体能覆盖亏损。" in checklist_doc
     early_warning_doc = (output_dir / "BTST-20260526-EARLY-WARNING.md").read_text(encoding="utf-8")
+    assert "信号日：`2026-05-26`；目标交易日：`2026-05-27`。" in early_warning_doc
     assert "## 当前策略阈值基线" in early_warning_doc
     assert "## 交集票高亮" in early_warning_doc
     assert "## Priority" in early_warning_doc
     assert "605500" in early_warning_doc
     assert "说明：胜率中性偏强，盈亏比站上 1.00，赚钱时大体能覆盖亏损。" in early_warning_doc
+    early_warning_card = (output_dir / "BTST-20260526-EARLY-WARNING-CARD.md").read_text(encoding="utf-8")
+    assert "信号日：`2026-05-26`；目标交易日：`2026-05-27`。" in early_warning_card
+    forum_doc = (output_dir / "20260526-两套交易计划论坛短版.md").read_text(encoding="utf-8")
+    assert "信号日：`2026-05-26`；目标交易日：`2026-05-27`。" in forum_doc
+    assert "['" not in forum_doc
 
 
 def test_generate_btst_doc_bundle_writes_review_ledger_when_requested(tmp_path: Path) -> None:
@@ -467,9 +475,7 @@ def test_generate_btst_doc_bundle_supports_named_threshold_profiles(tmp_path: Pa
     )
 
     assert result["strategy_thresholds_profile"] == "aggressive"
-    assert result["strategy_thresholds_config_path"].endswith(
-        "config/btst_strategy_thresholds_aggressive.json"
-    )
+    assert result["strategy_thresholds_config_path"].endswith("config/btst_strategy_thresholds_aggressive.json")
     assert result["strategy_thresholds"]["min_recent_exact_streak"] == 2
     llm_doc = (output_dir / "BTST-LLM-20260526.md").read_text(encoding="utf-8")
     assert "profile：`aggressive`" in llm_doc
@@ -538,6 +544,46 @@ def test_compare_btst_doc_bundle_profiles_writes_comparison_outputs(tmp_path: Pa
     assert "今日更偏：`conservative`" in bridge_doc
     bridge_llm_doc = (output_dir / "aggressive" / "BTST-LLM-20260526.md").read_text(encoding="utf-8")
     assert "## 今日执行倾向" in bridge_llm_doc
+
+
+def test_compare_btst_doc_bundle_profiles_describes_ties_without_false_edge(tmp_path: Path, monkeypatch) -> None:
+    """Do not claim one profile has more or fewer early-runner evidence when all counts tie."""
+    output_dir = tmp_path / "outputs"
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [
+                str(profile_output_dir / f"BTST-{signal_date}.md"),
+                str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+            ],
+            "early_runner_status": "stale_fallback",
+            "early_runner_intersection_count": 0,
+            "early_runner_only_count": 0,
+            "early_runner_second_entry_count": 0,
+        }
+
+    monkeypatch.setattr("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", _fake_generate)
+
+    result = compare_btst_doc_bundle_profiles(
+        "20260529",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    reasons = result["comparison"]["recommendation_reasons"]
+    assert result["comparison"]["recommended_profile"] == "conservative"
+    assert reasons == ["两套 profile 的交集票、only early-runner 与 second-entry 完全持平；没有形成有效 profile 差异，默认采用 conservative 做风控基线。"]
+    assert "更多" not in "\n".join(reasons)
+    assert "更少" not in "\n".join(reasons)
+    card_markdown = Path(result["decision_card_md_path"]).read_text(encoding="utf-8")
+    assert "完全持平" in card_markdown
 
 
 def test_generate_btst_doc_bundle_marks_stale_overlap_as_reference_only(tmp_path: Path) -> None:
@@ -611,7 +657,7 @@ def test_generate_btst_doc_bundle_marks_stale_overlap_as_reference_only(tmp_path
                             "entry_status": "watch_only",
                             "pre_score": 0.64,
                             "confirm_score": 0.43,
-                        }
+                        },
                     ],
                     "early_runner_priority": [],
                     "second_entry_reentry": [],
@@ -904,3 +950,435 @@ def test_generate_btst_doc_bundle_surfaces_research_only_confirmation_pool(tmp_p
     plain_doc = (output_dir / "20260527-两套交易计划通俗说明.md").read_text(encoding="utf-8")
     assert "研究确认前排" in plain_doc
     assert "300476" in plain_doc
+
+
+def test_generate_btst_doc_bundle_enriches_missing_names_from_snapshot_summary(tmp_path: Path) -> None:
+    """Fill missing BTST artifact names from local data snapshots before rendering docs."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260529_20260529_live_m2_7_short_trade_only_20260601_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-29",
+            "selection_target": "short_trade_only",
+            "btst_followup": {"brief_json": brief_path.as_posix()},
+        },
+    )
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-29",
+            "next_trade_date": "2026-06-01",
+            "selection_target": "short_trade_only",
+            "selected_actions": [
+                {
+                    "ticker": "300408",
+                    "preferred_entry_mode": "confirm_then_hold_breakout",
+                    "score_target": 0.5349,
+                    "historical_prior": {
+                        "evaluable_count": 15,
+                        "next_close_positive_rate": 0.8,
+                        "next_close_payoff_ratio": 3.7926,
+                        "next_close_return_mean": 0.0533,
+                    },
+                }
+            ],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260529.json",
+        {
+            "trade_date": "20260529",
+            "next_date": "20260601",
+            "pool_size": 3339,
+            "selected_count": 530,
+            "near_miss_count": 578,
+            "high_confidence": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {"daily_boards": [{"trade_date": "2026-05-29"}]},
+    )
+    snapshot_summary = report_dir / "data_snapshots" / "300408" / "2026-05-29" / "summary.md"
+    snapshot_summary.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_summary.write_text(
+        "# 300408（三环集团）数据快照 - 2026-05-29\n\n- **股票名称**：三环集团\n",
+        encoding="utf-8",
+    )
+
+    output_dir = tmp_path / "outputs"
+    generate_btst_doc_bundle(
+        "20260529",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+        include_extra_warning_docs=False,
+    )
+
+    llm_doc = (output_dir / "BTST-LLM-20260529.md").read_text(encoding="utf-8")
+    assert "300408 三环集团" in llm_doc
+    assert "`300408`：" not in llm_doc
+
+
+def test_generate_btst_doc_bundle_renders_win_rate_payoff_decision(tmp_path: Path) -> None:
+    """Render a win-rate/payoff-first decision section that separates hold candidates from intraday-only names."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260529_20260529_live_m2_7_short_trade_only_20260601_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-29",
+            "selection_target": "short_trade_only",
+            "btst_followup": {"brief_json": brief_path.as_posix()},
+        },
+    )
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-29",
+            "next_trade_date": "2026-06-01",
+            "selection_target": "short_trade_only",
+            "selected_actions": [
+                {
+                    "ticker": "300408",
+                    "name": "三环集团",
+                    "preferred_entry_mode": "confirm_then_hold_breakout",
+                    "score_target": 0.5349,
+                    "historical_prior": {
+                        "evaluable_count": 15,
+                        "next_close_positive_rate": 0.8,
+                        "next_close_payoff_ratio": 3.7926,
+                        "next_close_return_mean": 0.0533,
+                    },
+                },
+                {
+                    "ticker": "300054",
+                    "name": "鼎龙股份",
+                    "preferred_entry_mode": "intraday_confirmation_only",
+                    "score_target": 0.5457,
+                    "historical_prior": {
+                        "evaluable_count": 47,
+                        "next_close_positive_rate": 0.5319,
+                        "next_close_payoff_ratio": 0.8408,
+                        "next_close_return_mean": -0.0012,
+                    },
+                },
+            ],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260529.json",
+        {
+            "trade_date": "20260529",
+            "next_date": "20260601",
+            "pool_size": 3339,
+            "selected_count": 530,
+            "near_miss_count": 578,
+            "high_confidence": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {"daily_boards": [{"trade_date": "2026-05-29"}]},
+    )
+
+    output_dir = tmp_path / "outputs"
+    generate_btst_doc_bundle(
+        "20260529",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+        include_extra_warning_docs=False,
+    )
+
+    llm_doc = (output_dir / "BTST-LLM-20260529.md").read_text(encoding="utf-8")
+    checklist_doc = (output_dir / "BTST-20260529-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
+    assert "## 胜率/赔率优先决策" in llm_doc
+    assert "第一优先：`300408 三环集团`" in llm_doc
+    assert "只做盘中机会：`300054 鼎龙股份`" in llm_doc
+    assert "## 胜率/赔率闸门" in checklist_doc
+    assert "300054 鼎龙股份" in checklist_doc
+
+
+def test_generate_btst_doc_bundle_renders_institutional_control_sections(tmp_path: Path) -> None:
+    """Surface Alpha/Beta/Gamma controls from historical priors and selection snapshots."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260529_20260529_live_m2_7_short_trade_only_20260601_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    snapshot_path = report_dir / "selection_artifacts" / "2026-05-29" / "selection_snapshot.json"
+    priority_board_path = report_dir / "btst_next_day_priority_board_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-29",
+            "selection_target": "short_trade_only",
+            "btst_followup": {
+                "brief_json": brief_path.as_posix(),
+                "priority_board_json": priority_board_path.as_posix(),
+            },
+        },
+    )
+    selected_row = {
+        "ticker": "300408",
+        "name": "三环集团",
+        "preferred_entry_mode": "confirm_then_hold_breakout",
+        "score_target": 0.5349,
+        "confidence": 0.7396,
+        "positive_tags": [
+            "trend_acceleration_confirmed",
+            "fresh_catalyst_support",
+            "confirmed_breakout_stage",
+        ],
+        "top_reasons": [
+            "trend_acceleration_strong",
+            "catalyst_theme_short_trade_carryover",
+            "confirmed_breakout",
+        ],
+        "candidate_reason_codes": [
+            "catalyst_theme_candidate_score_ranked",
+        ],
+        "gate_status": {
+            "data": "pass",
+            "execution": "proxy_only",
+            "committee": "shadow_only",
+        },
+        "metrics": {
+            "breakout_freshness": 0.4,
+            "trend_acceleration": 0.8957,
+            "volume_expansion_quality": 0.25,
+            "close_strength": 0.9211,
+            "catalyst_freshness": 0.0,
+        },
+        "historical_prior": {
+            "applied_scope": "same_ticker",
+            "sample_count": 15,
+            "evaluable_count": 15,
+            "next_high_hit_threshold": 0.02,
+            "next_open_return_mean": 0.0204,
+            "next_high_hit_rate_at_threshold": 0.7333,
+            "next_close_positive_rate": 0.8,
+            "next_close_positive_count": 12,
+            "next_close_negative_count": 3,
+            "next_close_payoff_ratio": 3.7926,
+            "next_close_expectancy": 0.0533,
+            "next_high_return_mean": 0.0837,
+            "next_close_return_mean": 0.0533,
+            "next_open_to_close_return_mean": 0.0319,
+        },
+    }
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-29",
+            "next_trade_date": "2026-06-01",
+            "selection_target": "short_trade_only",
+            "snapshot_path": snapshot_path.as_posix(),
+            "selected_actions": [selected_row],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        priority_board_path,
+        {
+            "trade_date": "2026-05-29",
+            "next_trade_date": "2026-06-01",
+            "selection_target": "short_trade_only",
+            "source_paths": {"snapshot_path": snapshot_path.as_posix()},
+            "priority_rows": [selected_row],
+        },
+    )
+    _write_json(
+        snapshot_path,
+        {
+            "trade_date": "2026-05-29",
+            "market_state": {
+                "regime_gate_level": "crisis",
+                "breadth_ratio": 0.284187,
+                "daily_return": -0.004496,
+                "limit_up_count": 49,
+                "limit_down_count": 49,
+                "limit_up_down_ratio": 1.0,
+                "position_scale": 0.75,
+                "regime_gate_reasons": ["breadth_weak", "position_scale_reduced"],
+            },
+            "buy_orders": [
+                {
+                    "ticker": "300408",
+                    "shares": 400,
+                    "amount": 4000.0,
+                    "risk_budget_ratio": 0.5,
+                    "risk_budget_gate": "halt_relief",
+                    "execution_contract_bucket": "halt_promoted",
+                    "constraint_binding": "vol",
+                }
+            ],
+            "funnel_diagnostics": {
+                "btst_regime_gate_enforcement": {
+                    "enforced": True,
+                    "gate": "halt",
+                    "mode": "enforce",
+                    "buy_orders_cleared": True,
+                    "buy_orders_cleared_count": 1,
+                    "shadow_promotion_tickers": ["300408"],
+                }
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260529.json",
+        {
+            "trade_date": "20260529",
+            "next_date": "20260601",
+            "pool_size": 3339,
+            "selected_count": 530,
+            "near_miss_count": 578,
+            "high_confidence": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {"daily_boards": [{"trade_date": "2026-05-29"}]},
+    )
+
+    output_dir = tmp_path / "outputs"
+    result = generate_btst_doc_bundle(
+        "20260529",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+        include_extra_warning_docs=False,
+        write_review_ledger=True,
+    )
+
+    llm_doc = (output_dir / "BTST-LLM-20260529.md").read_text(encoding="utf-8")
+    checklist_doc = (output_dir / "BTST-20260529-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
+    quality_summary_path = Path(result["quality_summary_json_path"])
+    quality_summary = json.loads(quality_summary_path.read_text(encoding="utf-8"))
+    ledger_payload = json.loads(
+        (output_dir / "20260529-btst-decision-review-ledger.json").read_text(encoding="utf-8")
+    )
+
+    assert "## 盘前控制塔" in llm_doc
+    assert "模型原始倾向：`trade_allowed`" in llm_doc
+    assert "门控后有效状态：`gate_locked_confirmation_only`" in llm_doc
+    assert "market_gate_downgraded_raw_trade_allowed" in llm_doc
+    assert "## 盘前控制塔" in checklist_doc
+    assert quality_summary_path.exists()
+    assert quality_summary["control_tower"]["effective_trade_bias"] == "gate_locked_confirmation_only"
+    assert quality_summary["required_sections_missing"] == []
+    assert quality_summary["quality_warnings"] == ["market_gate_downgraded_raw_trade_allowed"]
+    assert "## Alpha 样本稳健性与标签拆解" in llm_doc
+    assert "样本 `15`（正 `12` / 负 `3`）" in llm_doc
+    assert "Wilson 区间" in llm_doc
+    assert "收缩胜率" in llm_doc
+    assert "开盘均值 `2.04%`" in llm_doc
+    assert "## Alpha 因子证据卡" in llm_doc
+    assert "正向证据：`trend_acceleration_confirmed`" in llm_doc
+    assert "## Gamma 市场门控与风险预算" in llm_doc
+    assert "regime_gate_level：`crisis`" in llm_doc
+    assert "breadth_ratio：`28.42%`" in llm_doc
+    assert "gate：`halt`" in llm_doc
+    assert "300408 三环集团" in llm_doc
+    assert "risk_budget_ratio `0.50`" in llm_doc
+    assert "## Beta 执行硬条件与成本闸门" in checklist_doc
+    assert "滑点+冲击成本" in checklist_doc
+    assert "## 盘后复盘闭环" in checklist_doc
+    assert ledger_payload["rows"][0]["sample_count"] == 15
+    assert ledger_payload["rows"][0]["evaluable_count"] == 15
+    assert ledger_payload["rows"][0]["shrunk_win_rate"] == 0.7647
+    assert ledger_payload["rows"][0]["win_rate_wilson_low"] is not None
+    assert ledger_payload["rows"][0]["realized_slippage"] is None
+    assert ledger_payload["rows"][0]["mae"] is None
+    assert ledger_payload["rows"][0]["mfe"] is None
+
+
+def test_generate_btst_doc_bundle_prefers_canonical_names_from_sibling_snapshots(tmp_path: Path) -> None:
+    """Repair XD/DR-prefixed stock names by looking for canonical names in sibling snapshots."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260529_20260529_live_m2_7_short_trade_only_20260601_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-29",
+            "selection_target": "short_trade_only",
+            "btst_followup": {"brief_json": brief_path.as_posix()},
+        },
+    )
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-29",
+            "next_trade_date": "2026-06-01",
+            "selection_target": "short_trade_only",
+            "selected_actions": [
+                {
+                    "ticker": "600176",
+                    "name": "XD中国巨",
+                    "preferred_entry_mode": "intraday_confirmation_only",
+                    "historical_prior": {
+                        "evaluable_count": 14,
+                        "next_close_positive_rate": 0.5,
+                        "next_close_payoff_ratio": 0.8748,
+                    },
+                }
+            ],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260529.json",
+        {
+            "trade_date": "20260529",
+            "next_date": "20260601",
+            "pool_size": 3339,
+            "selected_count": 530,
+            "near_miss_count": 578,
+            "high_confidence": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {"daily_boards": [{"trade_date": "2026-05-29"}]},
+    )
+    dirty_summary = report_dir / "data_snapshots" / "600176" / "2026-05-29" / "summary.md"
+    dirty_summary.parent.mkdir(parents=True, exist_ok=True)
+    dirty_summary.write_text(
+        "# 600176（XD中国巨）数据快照 - 2026-05-29\n\n- **股票名称**：XD中国巨\n",
+        encoding="utf-8",
+    )
+    clean_summary = (
+        reports_root
+        / "paper_trading_20260408_20260408_live_m2_7_short_trade_only_20260409_plan"
+        / "data_snapshots"
+        / "600176"
+        / "2026-04-08"
+        / "summary.md"
+    )
+    clean_summary.parent.mkdir(parents=True, exist_ok=True)
+    clean_summary.write_text(
+        "# 600176（中国巨石）数据快照 - 2026-04-08\n\n- **股票名称**：中国巨石\n",
+        encoding="utf-8",
+    )
+
+    output_dir = tmp_path / "outputs"
+    generate_btst_doc_bundle(
+        "20260529",
+        reports_root=reports_root,
+        output_dir=output_dir,
+        refresh_early_runner=False,
+        include_extra_warning_docs=False,
+    )
+
+    llm_doc = (output_dir / "BTST-LLM-20260529.md").read_text(encoding="utf-8")
+    assert "600176 中国巨石" in llm_doc
+    assert "XD中国巨" not in llm_doc
