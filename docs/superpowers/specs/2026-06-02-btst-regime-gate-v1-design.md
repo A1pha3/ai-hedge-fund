@@ -43,7 +43,7 @@ I scanned **681** `selection_snapshot.json` files in-repo and filtered by `trade
 Interpretation:
 - Gate states `shadow_only/halt` exist and are persisted.
 - In many cases (`shadow_only/halt` in 202604) `buy_order_count` is consistently cleared to 0, suggesting enforcement is wired.
-- However, there are also `halt` snapshots with non-zero buy orders (e.g. 202605 aggregates). v1 rollout should treat this as a diagnosis target: enforcement may be conditional, derived-vs-explicit gate may differ, or older runs didn’t clear orders.
+- The `halt/shadow_only` + non-zero buy orders cases are concentrated in **derived-gate** snapshots where `btst_regime_gate` is missing but `market_state` implies `halt/shadow_only` (found 5 such cases in 202605). v1 should persist explicit `btst_regime_gate` and `btst_regime_gate_enforcement` to remove ambiguity and make enforcement auditable.
 
 ## Existing building blocks (reuse)
 Already present in the repo:
