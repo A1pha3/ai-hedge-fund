@@ -54,6 +54,22 @@
 
 这说明：封堵 layer_c 不是“只改排序”，而是对 tradeable 集合有可量化的净收缩；但在 202605 扩窗里对 buy_orders 的净影响相对温和（可能被其他 gate/预算覆盖所“吸收”）。同时通过“新增 variant”保持默认 BTST profile 不被隐式改变，满足 rollout 纪律。
 
+#### 3.1) 被移除票的 candidate_source 归因（避免“凭感觉”）
+为了避免人工逐个打开 `selection_target_replay_input.json` 做 JSON 考古，已将 `scripts/analyze_btst_shadow_profile_replay.py` 增强为：当 frozen source 旁存在 `selection_artifacts/<date>/selection_target_replay_input.json` 时，自动输出被移除 ticker 在 replay_input 中的 `candidate_source` 命中统计（字段：`delta.removed_ticker_source_hits_by_date`）。
+
+对扩窗中“被移除 execution_eligible/selected”的票做归因（见 session-state artifacts `shadow_profile_replay_selected_exact_20260519_20260529_attributed_20260602.{md,json}`）：
+
+| trade_date | ticker | layer_c_hits | total_hits | top_sources (count) |
+|---|---|---:|---:|---|
+| 20260519 | 600487 | 4 | 8 | catalyst_theme=4, layer_c_watchlist=4 |
+| 20260522 | 300054 | 1 | 16 | catalyst_theme=8, short_trade_boundary=5, layer_c_watchlist=1, watchlist_filter_diagnostics=1 |
+| 20260525 | 688008 | 1 | 14 | catalyst_theme=11, layer_c_watchlist=1, watchlist_filter_diagnostics=1 |
+| 20260526 | 300054 | 1 | 13 | catalyst_theme=8, short_trade_boundary=2, layer_c_watchlist=1, watchlist_filter_diagnostics=1 |
+| 20260527 | 001309 | 1 | 10 | catalyst_theme=9, layer_c_watchlist=1 |
+| 20260529 | 300054 | 1 | 11 | catalyst_theme=6, short_trade_boundary=2, layer_c_watchlist=1, watchlist_filter_diagnostics=1 |
+
+注意：同一 ticker 在 replay_input 中可能同时出现在多个来源（例如 `catalyst_theme`/`short_trade_boundary`/`layer_c_watchlist`/`watchlist_filter_diagnostics`），因此 **不能** 仅凭 “layer_c_hits>0” 就断言它“就是 layer_c 票”。这张表的价值是：证明被移除票确实“在某处”来自 layer_c_watchlist lane，便于后续继续追踪它在 target_model 里最终采用的 candidate_source（防止误杀）。
+
 ---
 
 ## 实现（代码改动）
