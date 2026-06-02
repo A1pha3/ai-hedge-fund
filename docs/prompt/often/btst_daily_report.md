@@ -6,9 +6,9 @@
 
 - **只必填 `signal_date`**：已经拿到收盘数据的交易日（信号日）。
 - **`next_trade_date` 自动推算**：使用 SSE 交易日历从 `signal_date` 严格推算下一交易日（周五/节假日会跳到下一开市日；`signal_date` 若非开市日会直接报错）。
-- **默认输出目录按执行日归档**：
-  - 非 scheme_a：`outputs/<next_yyyymm>/<next_yyyymmdd>_from_<signal_yyyymmdd>/`
-  - scheme_a：`outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/`
+- **默认输出目录按 signal_date 归档**：
+  - 非 scheme_a：`outputs/<signal_yyyymm>/<signal_yyyymmdd>/`
+  - scheme_a：`outputs/<signal_yyyymm>/<signal_yyyymmdd>_scheme_a/`
 - 文档文件名仍以 `signal_date` 为主（便于复盘数据来源），正文内明确写 `next_trade_date`。
 - 默认全套文档是核心 `5` 份；如果 `scheme_a` 当前激活，通常再附加 `2` 份 EARLY-WARNING 文档。
 - opening watch card / premarket execution card 属于 follow-up 产物，必须与主文档保持一致的 execution contract 口径，并落在同一输出目录。
@@ -55,7 +55,7 @@
 适合策略刚调过，想比较优化前后结果是否真的更好。
 
 ```text
-我下午已经用 ai-hedge-fund-btst skill，基于 YYYY-MM-DD 收盘数据，为下一交易日生成过一版 BTST 全套中文文档，保存到 outputs/<next_yyyymm>/<next_yyyymmdd>_from_<signal_yyyymmdd>-first/。现在我们优化了 btst 策略，请再次基于同一个 signal date 重新生成同一天的 BTST 全套中文文档，保存到 outputs/<next_yyyymm>/<next_yyyymmdd>_from_<signal_yyyymmdd>-second/。然后比较两次的主票、备选层级、机会池、执行顺序、交易前决策卡和最终建议，判断这次优化是否值得保留，并说明差异来自哪些规则、profile 或下游产物变化。
+我下午已经用 ai-hedge-fund-btst skill，基于 YYYY-MM-DD 收盘数据，为下一交易日生成过一版 BTST 全套中文文档，保存到 outputs/<signal_yyyymm>/<signal_yyyymmdd>-first/。现在我们优化了 btst 策略，请再次基于同一个 signal date 重新生成同一天的 BTST 全套中文文档，保存到 outputs/<signal_yyyymm>/<signal_yyyymmdd>-second/。然后比较两次的主票、备选层级、机会池、执行顺序、交易前决策卡和最终建议，判断这次优化是否值得保留，并说明差异来自哪些规则、profile 或下游产物变化。
 ```
 
 ## 使用提醒

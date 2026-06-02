@@ -82,27 +82,25 @@ Today, users often have to type both dates and manually maintain a directory pat
 
 ### 4.3 Output Directory Naming (New Default)
 
-Directory is keyed by **execution day** (`next_trade_date`) and encodes the signal day.
+Directory is keyed by **signal day** (`signal_date`) to avoid directory/file-date mismatches that confuse audit & replay.
 
 - Non-scheme_a:
 
 ```text
-outputs/<next_yyyymm>/<next_yyyymmdd>_from_<signal_yyyymmdd>/
+outputs/<signal_yyyymm>/<signal_yyyymmdd>/
 ```
 
 - scheme_a:
 
 ```text
-outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/
+outputs/<signal_yyyymm>/<signal_yyyymmdd>_scheme_a/
 ```
 
 Rationale:
 
-- “What do I execute today?” is answered by `next_trade_date`.
-- “Which close data generated this plan?” is preserved by `signal_date` in the directory name.
-- The scheme_a marker is placed early for fast visual recognition.
-
-Note: existing scheme_a operational docs currently reference `outputs/YYYYMM/YYYYMMDD_scheme_a/` and will be updated to the new naming.
+- “Which close data generated this plan?” is answered by the directory name itself.
+- `next_trade_date` is still recorded inside docs + `manifest.json` for execution alignment.
+- The scheme_a marker is kept for fast visual recognition.
 
 ### 4.4 `manifest.json` (Output Provenance)
 
@@ -117,7 +115,7 @@ Each output directory MUST include a `manifest.json` with at least:
   "market": "CN-SSE",
   "calendar_source": "tushare_trade_cal" ,
   "scheme_a_active": true,
-  "output_dir": "outputs/202606/20260602_scheme_a_from_20260601",
+  "output_dir": "outputs/202606/20260601_scheme_a",
   "generated_at": "2026-06-02T08:00:00+08:00",
   "execution_contract_summary": {
     "effective_trade_bias": "confirmation_only",
@@ -169,7 +167,7 @@ Update these user-facing docs to match the new rule:
 1. **Weekend inference**: if `signal_date` is a Friday open day, inferred `next_trade_date` must be the next Monday open day.
 2. **Non-trading-day rejection**: if `signal_date` is Saturday, resolver must error.
 3. **Fallback calendar**: if Tushare calendar is empty/unavailable, Akshare calendar provides the open-day list.
-4. **Directory naming**: output dir uses `next_trade_date` month prefix and includes `_from_<signal>` (and scheme_a marker when active).
+4. **Directory naming**: output dir is signal-date anchored: `outputs/<signal_yyyymm>/<signal_yyyymmdd>[_scheme_a]/`.
 5. **Manifest correctness**: manifest dates match resolver and include `calendar_source`.
 
 ## 5. Rollout Notes

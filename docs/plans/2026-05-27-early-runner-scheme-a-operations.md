@@ -239,7 +239,7 @@ uv run python scripts/validate_btst_early_runner_history.py \
 
 | 日期 | signal_date | output_dir | early_runner_status | latest_trade_date | 交集票 | only early-runner 票 | second-entry 票 | 是否手工修补 | 收盘后结论 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-05-27 | 20260526 | outputs/202605/20260527_scheme_a_from_20260526 | stale_fallback | 2026-05-14 | [] | [] | [] | 否 | 仅作历史参考 | 首次方案 A 真实生成 |
+| 2026-05-27 | 20260526 | outputs/202605/20260526_scheme_a | stale_fallback | 2026-05-14 | [] | [] | [] | 否 | 仅作历史参考 | 首次方案 A 真实生成 |
 
 这张表的用途不是留档好看，而是给后面的升级判断提供原始证据。
 
@@ -293,7 +293,7 @@ uv run python scripts/generate_btst_doc_bundle.py \
 ```bash
 uv run python scripts/generate_btst_doc_bundle.py \
   --signal-date 20260526 \
-  --output-dir outputs/202605/20260527
+  --output-dir outputs/202605/20260526
 ```
 
 切换后默认含义是：
@@ -314,7 +314,7 @@ uv run python scripts/generate_btst_doc_bundle.py \
 这时只做两件事：
 
 1. 先修 early-runner 刷新与日期链路
-2. 继续保持输出目录为 `outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/`
+2. 继续保持输出目录为 `outputs/<signal_yyyymm>/<signal_yyyymmdd>_scheme_a/`
 
 ## 推荐日常节奏
 
@@ -330,4 +330,4 @@ uv run python scripts/generate_btst_doc_bundle.py \
 
 ## 一句话版本
 
-观察期里，统一把文档生成到 `outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/`；先确保 daily artifact、daily tables、manifest、control tower 和文档包都稳定，再用连续 `10` 到 `15` 个交易日样本验证 `exact`、交集票高亮和手工修补率。只有当它已经稳定、省心、并开始对优先级判断有正面价值时，才切回正式目录 `outputs/<next_yyyymm>/<next_yyyymmdd>_from_<signal_yyyymmdd>/`。
+观察期里，统一把文档生成到 `outputs/<signal_yyyymm>/<signal_yyyymmdd>_scheme_a/`；先确保 daily artifact、daily tables、manifest、control tower 和文档包都稳定，再用连续 `10` 到 `15` 个交易日样本验证 `exact`、交集票高亮和手工修补率。只有当它已经稳定、省心、并开始对优先级判断有正面价值时，才切回正式目录 `outputs/<signal_yyyymm>/<signal_yyyymmdd>/`。

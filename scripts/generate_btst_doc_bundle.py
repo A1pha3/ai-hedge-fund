@@ -1413,6 +1413,7 @@ def _render_rule_doc(
         role="early_runner_second_entry",
         early_runner_status=early_status,
     )
+    formal_selected_count = len(selected_actions)
     lines = [
         f"# BTST 规则版详细计划（{signal_date_compact}）",
         "",
@@ -1420,6 +1421,11 @@ def _render_rule_doc(
         "",
         f"- 信号日：`{signal_date_compact}`；目标交易日：`{rule_report.get('next_date') or brief.get('next_trade_date') or 'n/a'}`。",
         f"- 规则池：`pool_size={rule_report.get('pool_size')}`，`selected_count={rule_report.get('selected_count')}`，`near_miss_count={rule_report.get('near_miss_count')}`。",
+        (
+            "- 多智能体 formal selected：`0`（默认空仓/只观察，不把规则前排当执行清单；若盘中出现确认信号，再以 BTST-LLM/EXEC-CHECKLIST 为准复核）。"
+            if formal_selected_count <= 0
+            else f"- 多智能体 formal selected：`{formal_selected_count}`（执行以 BTST-LLM/EXEC-CHECKLIST 为准）。"
+        ),
         f"- 规则报告来源：`{rule_report_path}`。",
         f"- 多智能体运行目录：`{report_dir}`。",
         "",
@@ -1550,7 +1556,10 @@ def _render_llm_doc(
         lines.extend([""])
         lines.extend(rollout_lines)
     lines.extend(["", f"## {section_labels['llm_execution_title']}", ""])
-    lines.extend(_render_enriched_stock_bullets(primary_execution_rows, limit=5))
+    if not primary_execution_rows:
+        lines.append("- 无正式执行票（formal selected=0：默认空仓/只观察；如盘中出现确认信号，再按确认复核队列逐条复核）。")
+    else:
+        lines.extend(_render_enriched_stock_bullets(primary_execution_rows, limit=5))
     lines.extend(["", "## 观察层", ""])
     lines.extend(_render_enriched_stock_bullets(watch_queue_rows, limit=8))
     if blocked_rows:
@@ -1857,8 +1866,13 @@ def _render_checklist_doc(
     lines.extend([""])
     lines.extend(_render_execution_state_table(execution_state_rows, title=section_labels["execution_state_table_title"]))
     lines.extend(["", f"## {section_labels['checklist_execution_title']}", ""])
-    for row in primary_execution_rows[:3]:
-        lines.append(f"- [ ] {section_labels['checklist_execution_item_label']}：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，" f"收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，" f"说明：{_historical_reading_note(row)}")
+    if not primary_execution_rows:
+        lines.append(
+            f"- [ ] {section_labels['checklist_execution_item_label']}：无（formal selected=0：默认空仓/只观察；等待盘中确认信号再决定）"
+        )
+    else:
+        for row in primary_execution_rows[:3]:
+            lines.append(f"- [ ] {section_labels['checklist_execution_item_label']}：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，" f"收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，" f"说明：{_historical_reading_note(row)}")
     lines.extend([""])
     lines.extend(_render_action_matrix_sections(primary_execution_rows, report_mode=report_mode, limit=3))
     lines.extend(["", "## 正式观察顺序", ""])

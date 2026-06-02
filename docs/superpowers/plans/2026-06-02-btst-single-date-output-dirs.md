@@ -311,7 +311,7 @@ def test_generate_btst_doc_bundle_default_output_dir_uses_next_trade_date_and_ma
         scheme_a_active=True,
     )
 
-    expected_dir = (tmp_path / "outputs" / "202605" / "20260527_scheme_a_from_20260526")
+    expected_dir = (tmp_path / "outputs" / "202605" / "20260526_scheme_a")
     assert Path(result["output_dir"]) == expected_dir.resolve()
 
     manifest_path = expected_dir / "manifest.json"
@@ -369,12 +369,8 @@ if brief_next_iso and brief_next_iso != expected_next_iso:
 if output_dir:
     target_output_dir = Path(output_dir).expanduser().resolve()
 else:
-    month_prefix = resolution.next_trade_date_compact[:6]
-    leaf = (
-        f"{resolution.next_trade_date_compact}_scheme_a_from_{signal_date_compact}"
-        if scheme_a_active
-        else f"{resolution.next_trade_date_compact}_from_{signal_date_compact}"
-    )
+    month_prefix = signal_date_compact[:6]
+    leaf = f"{signal_date_compact}_scheme_a" if scheme_a_active else signal_date_compact
     target_output_dir = (OUTPUTS_DIR / month_prefix / leaf).resolve()
 ```
 
@@ -551,7 +547,7 @@ In `docs/plans/2026-05-27-early-runner-scheme-a-operations.md`, replace:
 
 with:
 
-- `outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/`
+- `outputs/<signal_yyyymm>/<signal_yyyymmdd>_scheme_a/`
 
 And update the command examples accordingly.
 

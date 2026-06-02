@@ -20,6 +20,12 @@ def append_brief_scored_entries_markdown(
     append_gate_status_line: Callable[[list[str], dict[str, Any]], None],
     format_float: Callable[[Any], str],
 ) -> None:
+    if not entries and title == "Selected Entries":
+        lines.append(f"## {title}")
+        lines.append("- none（formal selected=0：默认空仓/只观察；等待盘中确认信号再决定）")
+        lines.append("")
+        return
+
     def render_entry(inner_lines: list[str], entry: dict[str, Any]) -> None:
         historical_prior = dict(entry.get("historical_prior") or {})
         inner_lines.append(f"- decision: {entry['decision']}")
