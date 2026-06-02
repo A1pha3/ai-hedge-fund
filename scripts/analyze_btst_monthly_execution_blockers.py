@@ -234,6 +234,14 @@ def analyze_btst_monthly_execution_blockers(
                     for reason in r.short_trade_blockers:
                         blocker_samples.setdefault(str(reason), []).append(sample)
 
+        def _quantile(values: list[float], q: float) -> float:
+            if not values:
+                return 0.0
+            ordered = sorted(values)
+            idx = int((len(ordered) - 1) * q)
+            idx = max(0, min(idx, len(ordered) - 1))
+            return float(ordered[idx])
+
         def _summarize(samples: list[tuple[float | None, float | None]]) -> dict[str, Any]:
             close_vals = [v for v, _ in samples if isinstance(v, (int, float))]
             o2c_vals = [v for _, v in samples if isinstance(v, (int, float))]
@@ -244,6 +252,10 @@ def analyze_btst_monthly_execution_blockers(
                         "next_close_ok_count": len(close_vals),
                         "next_close_win_rate": round(sum(1 for v in close_vals if v > 0.0) / len(close_vals), 4),
                         "next_close_return_mean": round(sum(close_vals) / len(close_vals), 6),
+                        "next_close_return_min": round(min(close_vals), 6),
+                        "next_close_return_p10": round(_quantile(close_vals, 0.10), 6),
+                        "next_close_return_p90": round(_quantile(close_vals, 0.90), 6),
+                        "next_close_return_max": round(max(close_vals), 6),
                     }
                 )
             if o2c_vals:
@@ -252,6 +264,10 @@ def analyze_btst_monthly_execution_blockers(
                         "open_to_close_ok_count": len(o2c_vals),
                         "open_to_close_win_rate": round(sum(1 for v in o2c_vals if v > 0.0) / len(o2c_vals), 4),
                         "open_to_close_return_mean": round(sum(o2c_vals) / len(o2c_vals), 6),
+                        "open_to_close_return_min": round(min(o2c_vals), 6),
+                        "open_to_close_return_p10": round(_quantile(o2c_vals, 0.10), 6),
+                        "open_to_close_return_p90": round(_quantile(o2c_vals, 0.90), 6),
+                        "open_to_close_return_max": round(max(o2c_vals), 6),
                     }
                 )
             return out
