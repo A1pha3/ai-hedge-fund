@@ -42,6 +42,9 @@ from src.paper_trading._btst_reporting.historical_prior import (
     _enrich_upstream_shadow_entries_with_history,
     _extract_excluded_research_entry,
 )
+from src.paper_trading._btst_reporting.payoff_review_lane import (
+    build_payoff_review_entries,
+)
 
 
 RUNNER_RECALL_REVIEW_MAX_ENTRIES = 5
@@ -687,10 +690,16 @@ def _build_btst_next_day_trade_brief_sections(
     excluded_research_entries: list[dict[str, Any]],
     brief_frontier_context: dict[str, Any],
 ) -> dict[str, Any]:
+    payoff_review_entries = build_payoff_review_entries(
+        selected_entries=selected_entries,
+        near_miss_entries=near_miss_entries,
+    )
+
     return {
         "primary_entry": primary_entry,
         "selected_entries": selected_entries,
         "near_miss_entries": near_miss_entries,
+        "payoff_review_entries": payoff_review_entries,
         "opportunity_pool_entries": opportunity_pool_entries,
         "no_history_observer_entries": no_history_observer_entries,
         "risky_observer_entries": risky_observer_entries,
