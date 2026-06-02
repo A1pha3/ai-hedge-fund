@@ -22,8 +22,13 @@ def _iter_selection_snapshot_paths(input_path: Path) -> list[Path]:
     resolved = input_path.resolve()
     if resolved.is_file():
         return [resolved]
-    artifacts_root = resolved / "selection_artifacts" if (resolved / "selection_artifacts").is_dir() else resolved
-    return sorted(artifacts_root.glob("*/selection_snapshot.json"))
+
+    direct_root = resolved / "selection_artifacts"
+    if direct_root.is_dir():
+        return sorted(direct_root.glob("*/selection_snapshot.json"))
+
+    # Fallback: treat input_path as a reports root (e.g. data/reports)
+    return sorted(resolved.glob("**/selection_artifacts/*/selection_snapshot.json"))
 
 
 def _recommendation(*, selected_count: int, near_miss_count: int, gate_counts: dict[str, int]) -> str:
@@ -137,9 +142,9 @@ def analyze_btst_selected_nearmiss_separation(
         if not decisions or not trade_date:
             continue
 
-        used_snapshots += 1
-        if limit is not None and used_snapshots > int(limit):
+        if limit is not None and used_snapshots >= int(limit):
             break
+        used_snapshots += 1
 
         try:
             realized = generate_realized_prices(signal_date=trade_date, tickers=sorted(decisions))
