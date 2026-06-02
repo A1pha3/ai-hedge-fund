@@ -130,8 +130,10 @@ Each payoff review entry should include:
 - Start as report-only (always non-executable).
 - Only after offline evidence: consider Approach B (selected split) behind an env gate.
 
-## Open decision (needs explicit confirmation)
-Which primary objective should the payoff lane optimize long-term?
-- A) `hit_5d_15` (recommended; matches user’s stated objective)
-- B) maximize expected `max_high_t1_t5_from_open`
-- C) mixed constraint (hit-rate floor + maximize expected value)
+## Decision: primary objective
+The payoff review lane’s long-term primary objective is:
+- `hit_5d_15` (within 5 trading days, max high from T+1 open reaches +15%).
+
+Rationale:
+- This matches the stated BTST objective used for factor mining and offline monitoring in this repo.
+- v1 remains **report-only** and must be validated offline before any promotion into execution logic.
