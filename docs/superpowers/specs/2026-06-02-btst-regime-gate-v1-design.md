@@ -60,6 +60,8 @@ For 202604/202605 monthly audits based on `data/reports/btst_full_report_YYYYMMD
 - root-cause explanation for “bad months”
 - repeatable rollout checks and regression tests
 
+**Where the rule report comes from:** `scripts/btst_full_report.py` writes `data/reports/btst_full_report_<trade_date>.json` today. It currently persists pool/selected/limit_up/high_confidence fields but does not persist a structured `market_state` payload.
+
 Meanwhile, paper-trading selection artifacts have market state, but it is not guaranteed to be attached to rule-based reports.
 
 ## Design (v1)
