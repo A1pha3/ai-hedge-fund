@@ -1218,17 +1218,37 @@ def _render_intersection_highlights(intersection_summary: dict[str, Any]) -> lis
     return lines
 
 
+FORMAL_EXECUTION_BLOCK_FLAGS = (
+    "p2_execution_blocked",
+    "p3_execution_blocked",
+    "p5_execution_blocked",
+    "p6_execution_blocked",
+)
+
+
+def _is_formal_execution_blocked_row(row: dict[str, Any]) -> bool:
+    if bool(row.get("execution_blocked")):
+        return True
+    if str(row.get("reporting_decision") or "").strip() == "blocked":
+        return True
+    return any(bool(row.get(flag)) for flag in FORMAL_EXECUTION_BLOCK_FLAGS)
+
+
+def _filter_execution_ready_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [dict(row) for row in rows if not _is_formal_execution_blocked_row(dict(row or {}))]
+
+
 def _resolve_selected_rows(brief: dict[str, Any], priority_board: dict[str, Any]) -> list[dict[str, Any]]:
     """Resolve formal selected rows from the brief first, then from the priority board."""
     selected_rows = _safe_rows(_first_non_empty(brief.get("selected_actions"), brief.get("selected_entries")))
     if selected_rows:
-        return selected_rows
+        return _filter_execution_ready_rows(selected_rows)
     rows = []
     for row in _safe_rows(priority_board.get("priority_rows")):
         lane = str(row.get("lane") or "")
         if lane in {"primary_entry", "selected_backup"}:
             rows.append(row)
-    return rows
+    return _filter_execution_ready_rows(rows)
 
 
 def _resolve_watch_rows(brief: dict[str, Any], priority_board: dict[str, Any]) -> list[dict[str, Any]]:
