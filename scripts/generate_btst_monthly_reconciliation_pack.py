@@ -14,6 +14,10 @@ from scripts.analyze_btst_monthly_execution_health import (
     analyze_btst_monthly_execution_health,
     render_btst_monthly_execution_health_markdown,
 )
+from scripts.analyze_btst_monthly_near_miss_gate_breakdown import (
+    analyze_btst_monthly_near_miss_gate_breakdown,
+    render_btst_monthly_near_miss_gate_breakdown_markdown,
+)
 from scripts.audit_btst_outputs_month import audit_btst_outputs_month
 
 
@@ -44,6 +48,8 @@ def generate_btst_monthly_reconciliation_pack(
     - outputs month audit (path references + date-role/canonicalization diagnostics)
     - rule top-N realized scorecard
     - execution formal-selected realized scorecard
+    - execution health (why picks are empty / blocked)
+    - near-miss gate breakdown (which gates are suppressing promotion)
 
     Returns a mapping of artifact names -> absolute file paths.
     """
@@ -75,6 +81,12 @@ def generate_btst_monthly_reconciliation_pack(
     )
     health_md = render_btst_monthly_execution_health_markdown(health)
 
+    near_miss = analyze_btst_monthly_near_miss_gate_breakdown(
+        month=month,
+        reports_dir=reports_dir,
+    )
+    near_miss_md = render_btst_monthly_near_miss_gate_breakdown_markdown(near_miss)
+
     paths: dict[str, Path] = {
         "outputs_audit_json": out_root / f"outputs_audit_{month}.json",
         "rule_scorecard_json": out_root / f"btst_monthly_scorecard_{month}_top{top_n}.json",
@@ -83,6 +95,8 @@ def generate_btst_monthly_reconciliation_pack(
         "execution_scorecard_md": out_root / f"btst_monthly_execution_scorecard_{month}.md",
         "execution_health_json": out_root / f"btst_monthly_execution_health_{month}.json",
         "execution_health_md": out_root / f"btst_monthly_execution_health_{month}.md",
+        "near_miss_gate_breakdown_json": out_root / f"btst_monthly_near_miss_gate_breakdown_{month}.json",
+        "near_miss_gate_breakdown_md": out_root / f"btst_monthly_near_miss_gate_breakdown_{month}.md",
     }
 
     _write_json(paths["outputs_audit_json"], audit)
@@ -92,6 +106,8 @@ def generate_btst_monthly_reconciliation_pack(
     _write_text(paths["execution_scorecard_md"], execution_md)
     _write_json(paths["execution_health_json"], health)
     _write_text(paths["execution_health_md"], health_md)
+    _write_json(paths["near_miss_gate_breakdown_json"], near_miss)
+    _write_text(paths["near_miss_gate_breakdown_md"], near_miss_md)
 
     return {name: str(path) for name, path in paths.items()}
 
