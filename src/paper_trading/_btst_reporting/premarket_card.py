@@ -62,6 +62,23 @@ def _btst_0422_p7_gap_overlay_guardrail() -> str | None:
     )
 
 
+def _btst_regime_gate_guardrail(control_tower: dict[str, Any]) -> str | None:
+    level = str(control_tower.get("regime_gate_level") or "").strip()
+    if not level or level in {"n/a", "na", "none"}:
+        return None
+
+    if level == "risk_off":
+        return (
+            "Regime gate (risk_off): 默认不做正式买入，只允许观察/确认性复审；"
+            "若无明确修复信号则空仓。"
+        )
+
+    if level in {"crisis", "halt"}:
+        return f"Regime gate ({level}): 当日按门控降级执行，只允许确认后小仓试错或空仓。"
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Action building helpers
 # ---------------------------------------------------------------------------
@@ -404,6 +421,12 @@ def analyze_btst_premarket_execution_card(
     gap_guardrail = _btst_0422_p7_gap_overlay_guardrail()
     if gap_guardrail:
         global_guardrails.append(gap_guardrail)
+
+    regime_guardrail = _btst_regime_gate_guardrail(
+        dict(execution_contract_context.get("control_tower") or {})
+    )
+    if regime_guardrail:
+        global_guardrails.append(regime_guardrail)
 
     return {
         "trade_date": brief.get("trade_date"),

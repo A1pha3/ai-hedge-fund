@@ -570,6 +570,35 @@ def test_analyze_btst_premarket_execution_card_p7_gap_overlay_guardrail_toggle(m
     assert "1.0%" in guardrails_text
 
 
+def test_analyze_btst_premarket_execution_card_adds_regime_guardrail_when_risk_off(monkeypatch):
+    brief = {
+        "trade_date": "2026-05-22",
+        "next_trade_date": "2026-05-23",
+        "selection_target": "short_trade_only",
+        "selected_entries": [],
+        "near_miss_entries": [],
+        "opportunity_pool_entries": [],
+        "no_history_observer_entries": [],
+        "risky_observer_entries": [],
+        "research_upside_radar_entries": [],
+        "runner_recall_review_entries": [],
+        "catalyst_theme_shadow_entries": [],
+        "excluded_research_entries": [],
+        "upstream_shadow_entries": [],
+        "upstream_shadow_summary": {},
+        "selection_snapshot": {
+            "market_state": {"regime_gate_level": "risk_off", "regime_gate_reasons": ["unit-test"]},
+            "funnel_diagnostics": {"btst_regime_gate_enforcement": {"gate": ""}},
+        },
+    }
+
+    monkeypatch.setenv("BTST_0422_P7_GAP_OVERLAY_MODE", "off")
+    card = btst_reporting.analyze_btst_premarket_execution_card(brief)
+
+    guardrails_text = "\n".join(list(card.get("global_guardrails") or []))
+    assert "Regime gate (risk_off)" in guardrails_text
+
+
 def test_analyze_btst_premarket_execution_card_surfaces_runner_recall_review_actions():
     payload = btst_reporting.analyze_btst_premarket_execution_card(
         {
