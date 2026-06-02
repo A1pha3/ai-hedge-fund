@@ -49,6 +49,24 @@ RUNNER_RECALL_REVIEW_SOURCE = "watchlist_filter_diagnostics"
 RUNNER_RECALL_REVIEW_EXCLUDED_EXECUTION_QUALITY_LABELS = {"payoff_divergence_risk"}
 
 
+def _btst_regime_gate_guardrail(snapshot: dict[str, Any]) -> str | None:
+    market_state = dict(snapshot.get("market_state") or {})
+    level = str(market_state.get("regime_gate_level") or "").strip()
+    if not level or level in {"n/a", "na", "none"}:
+        return None
+
+    if level == "risk_off":
+        return (
+            "Regime gate (risk_off): 默认不做正式买入，只允许观察/确认性复审；"
+            "若无明确修复信号则空仓。"
+        )
+
+    if level in {"crisis", "halt"}:
+        return f"Regime gate ({level}): 当日按门控降级执行，只允许确认后小仓试错或空仓。"
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Lazy import helpers for Middle Man functions remaining in btst_reporting.py
 # ---------------------------------------------------------------------------
@@ -470,6 +488,12 @@ def _build_btst_next_day_trade_brief_payload(
     selected_entries = _filter_execution_ready_entries(selected_entries)
     near_miss_entries = _filter_execution_ready_entries(near_miss_entries)
     primary_entry = selected_entries[0] if selected_entries else None
+
+    global_guardrails: list[str] = []
+    regime_guardrail = _btst_regime_gate_guardrail(snapshot)
+    if regime_guardrail:
+        global_guardrails.append(regime_guardrail)
+
     return {
         **_build_btst_next_day_trade_brief_metadata(
             report_dir=report_dir,
@@ -481,25 +505,26 @@ def _build_btst_next_day_trade_brief_payload(
             session_summary=session_summary,
         ),
         **_build_btst_next_day_trade_brief_content(
-            snapshot=snapshot,
-            selection_targets=selection_targets,
-            primary_entry=primary_entry,
-            selected_entries=selected_entries,
-            near_miss_entries=near_miss_entries,
-            opportunity_pool_entries=opportunity_pool_entries,
-            no_history_observer_entries=no_history_observer_entries,
-            risky_observer_entries=risky_observer_entries,
-            weak_history_pruned_entries=weak_history_pruned_entries,
-            research_upside_radar_entries=research_upside_radar_entries,
-            runner_recall_review_entries=runner_recall_review_entries,
-            catalyst_theme_entries=catalyst_theme_entries,
-            catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
-            btst_candidate_historical_context=btst_candidate_historical_context,
-            excluded_research_entries=excluded_research_entries,
-            recommendation_lines=recommendation_lines,
-            brief_frontier_context=brief_frontier_context,
-        ),
-        "rollout_validation": dict(rollout_validation or {}),
+           snapshot=snapshot,
+           selection_targets=selection_targets,
+           primary_entry=primary_entry,
+           selected_entries=selected_entries,
+           near_miss_entries=near_miss_entries,
+           opportunity_pool_entries=opportunity_pool_entries,
+           no_history_observer_entries=no_history_observer_entries,
+           risky_observer_entries=risky_observer_entries,
+           weak_history_pruned_entries=weak_history_pruned_entries,
+           research_upside_radar_entries=research_upside_radar_entries,
+           runner_recall_review_entries=runner_recall_review_entries,
+           catalyst_theme_entries=catalyst_theme_entries,
+           catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
+           btst_candidate_historical_context=btst_candidate_historical_context,
+           excluded_research_entries=excluded_research_entries,
+           recommendation_lines=recommendation_lines,
+           brief_frontier_context=brief_frontier_context,
+       ),
+       "global_guardrails": global_guardrails,
+       "rollout_validation": dict(rollout_validation or {}),
     }
 
 

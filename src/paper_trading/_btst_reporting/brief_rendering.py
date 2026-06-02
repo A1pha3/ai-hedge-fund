@@ -529,6 +529,13 @@ def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) 
     lines.append(
         f"- excluded_research_selected_count: {len(analysis.get('excluded_research_entries') or [])}"
     )
+    guardrails = list(analysis.get("global_guardrails") or [])
+    if guardrails:
+        lines.append("")
+        lines.append("## Global Guardrails")
+        for item in guardrails:
+            lines.append(f"- {item}")
+
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis.get('recommendation')}")
