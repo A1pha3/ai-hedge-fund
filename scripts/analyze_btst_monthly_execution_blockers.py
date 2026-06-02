@@ -395,6 +395,10 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
                     + str(s.get("open_to_close_win_rate") or "n/a")
                     + ", open_to_close_mean="
                     + str(s.get("open_to_close_return_mean") or "n/a")
+                    + ", open_to_close_p10="
+                    + str(s.get("open_to_close_return_p10") or "n/a")
+                    + ", open_to_close_min="
+                    + str(s.get("open_to_close_return_min") or "n/a")
                 )
 
         blocker_realized = dict(realized.get("short_trade_blocker") or {})
@@ -412,6 +416,10 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
                     + str(s.get("open_to_close_win_rate") or "n/a")
                     + ", open_to_close_mean="
                     + str(s.get("open_to_close_return_mean") or "n/a")
+                    + ", open_to_close_p10="
+                    + str(s.get("open_to_close_return_p10") or "n/a")
+                    + ", open_to_close_min="
+                    + str(s.get("open_to_close_return_min") or "n/a")
                 )
 
     lines.append("")
