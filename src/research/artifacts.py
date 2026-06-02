@@ -542,6 +542,7 @@ def _build_pipeline_config_snapshot(plan: ExecutionPlan, pipeline: DailyPipeline
             "p7_gap_overlay_mode": str(os.getenv("BTST_0422_P7_GAP_OVERLAY_MODE", "off") or "off").strip().lower() or "off",
             "p7_gap_warn_threshold": abs(get_env_float("BTST_0422_P7_GAP_WARN_THRESHOLD", 0.005)),
             "p7_gap_halt_threshold": abs(get_env_float("BTST_0422_P7_GAP_HALT_THRESHOLD", 0.01)),
+            "p7_gap_warn_size_discount": abs(get_env_float("BTST_0422_P7_GAP_WARN_SIZE_DISCOUNT", 0.5)),
         },
     }
 

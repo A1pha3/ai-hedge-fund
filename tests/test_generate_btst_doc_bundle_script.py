@@ -1532,6 +1532,7 @@ def _generate_btst_doc_bundle_gate_outputs(tmp_path: Path, *, gate_locked: bool)
                 "p7_gap_overlay_mode": "report",
                 "p7_gap_warn_threshold": 0.005,
                 "p7_gap_halt_threshold": 0.01,
+                "p7_gap_warn_size_discount": 0.5,
             },
         },
     )
