@@ -15,6 +15,36 @@ This spec is intentionally **low-risk**: v1 focuses on **field persistence + rep
 
 Conclusion: gap overlay is an execution filter; v1 must add **regime-aware gating** so we can reduce exposure in weak/choppy regimes.
 
+### Evidence appendix: observed gate distribution from truth-source snapshots
+The rendered Markdown in `outputs/202605` is not a truth source; the auditable truth source is `data/reports/**/selection_artifacts/*/selection_snapshot.json`.
+
+I scanned **681** `selection_snapshot.json` files in-repo and filtered by `trade_date` month (202604 vs 202605). Note these snapshots may include multiple experiment runs; the goal here is to verify that the gate is real, persisted, and sometimes affects execution.
+
+**Gate counts**
+
+| month | aggressive_trade | normal_trade | shadow_only | halt | other |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 202604 | 69 | 34 | 30 | 13 | 0 |
+| 202605 | 8 | 5 | 19 | 13 | 0 |
+
+**Execution surface aggregates** (from `universe_summary.buy_order_count` + target summaries)
+
+| month | gate | snapshots | buy_orders_total | buy_orders_zero | buy_orders_nonzero | selected_total | near_miss_total |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 202604 | aggressive_trade | 69 | 26 | 47 | 22 | 281 | 182 |
+| 202604 | normal_trade | 34 | 37 | 7 | 27 | 117 | 141 |
+| 202604 | shadow_only | 30 | 0 | 30 | 0 | 109 | 107 |
+| 202604 | halt | 13 | 0 | 13 | 0 | 31 | 82 |
+| 202605 | shadow_only | 19 | 2 | 18 | 1 | 148 | 92 |
+| 202605 | halt | 13 | 8 | 9 | 4 | 40 | 112 |
+| 202605 | aggressive_trade | 8 | 7 | 4 | 4 | 29 | 57 |
+| 202605 | normal_trade | 5 | 10 | 0 | 5 | 22 | 60 |
+
+Interpretation:
+- Gate states `shadow_only/halt` exist and are persisted.
+- In many cases (`shadow_only/halt` in 202604) `buy_order_count` is consistently cleared to 0, suggesting enforcement is wired.
+- However, there are also `halt` snapshots with non-zero buy orders (e.g. 202605 aggregates). v1 rollout should treat this as a diagnosis target: enforcement may be conditional, derived-vs-explicit gate may differ, or older runs didn’t clear orders.
+
 ## Existing building blocks (reuse)
 Already present in the repo:
 - `src/screening/market_state.py`: builds `MarketState` from index + breadth + limits + flows.
