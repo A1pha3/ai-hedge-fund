@@ -72,6 +72,7 @@ class BlockedRow:
     ticker: str
     decision: str
     block_flags: list[str]
+    p2_block_reason: str | None = None
 
 
 def analyze_btst_monthly_execution_blockers(
@@ -115,6 +116,9 @@ def analyze_btst_monthly_execution_blockers(
         snapshot_path = str(brief.get("snapshot_path") or "").strip()
         snapshot: dict[str, Any] = _load_json(snapshot_path) if snapshot_path else {}
 
+        market_state = dict(snapshot.get("market_state") or {})
+        market_regime_gate_level = str(market_state.get("regime_gate_level") or "").strip() or None
+
         selection_targets = snapshot.get("selection_targets")
         if not isinstance(selection_targets, dict):
             selection_targets = {}
@@ -129,18 +133,24 @@ def analyze_btst_monthly_execution_blockers(
                 continue
             execution_blocked_count += 1
             short_trade = dict(entry.get("short_trade") or {})
+            p2_reason: str | None = None
+            if "p2_execution_blocked" in set(flags):
+                p2_reason = str(entry.get("p2_execution_block_reason") or "").strip() or None
+
             blocked_rows.append(
                 BlockedRow(
                     trade_date=trade_date,
                     ticker=str(entry.get("ticker") or ticker),
                     decision=str(short_trade.get("decision") or ""),
                     block_flags=flags,
+                    p2_block_reason=p2_reason,
                 )
             )
 
         daily.append(
             {
                 "trade_date": trade_date,
+                "market_regime_gate_level": market_regime_gate_level,
                 "formal_selected_count": formal_selected_count,
                 "execution_blocked_target_count": execution_blocked_count,
                 "selection_target_count": len(selection_targets),
@@ -151,10 +161,13 @@ def analyze_btst_monthly_execution_blockers(
 
     flags_counter = Counter()
     decision_counter = Counter()
+    p2_reason_counter = Counter()
     for r in blocked_rows:
         decision_counter[str(r.decision or "unknown")] += 1
         for f in r.block_flags:
             flags_counter[str(f)] += 1
+        if r.p2_block_reason:
+            p2_reason_counter[str(r.p2_block_reason)] += 1
 
     overall = {
         "month": str(month),
@@ -163,6 +176,7 @@ def analyze_btst_monthly_execution_blockers(
         "blocked_row_count": len(blocked_rows),
         "by_block_flag": dict(sorted(flags_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         "by_decision": dict(sorted(decision_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "by_p2_block_reason": dict(sorted(p2_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
     }
 
     return {
@@ -206,15 +220,24 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
             lines.append(f"- {name}: {count}")
 
     lines.append("")
+    p2_reasons = dict(o.get("by_p2_block_reason") or {})
+    if p2_reasons:
+        lines.append("")
+        lines.append("## P2 block reasons")
+        for name, count in top_k(p2_reasons):
+            lines.append(f"- {name}: {count}")
+
+    lines.append("")
     lines.append("## Daily")
-    lines.append("| trade_date | formal_selected | blocked_targets | selection_targets |")
-    lines.append("|---:|---:|---:|---:|")
+    lines.append("| trade_date | regime_gate | formal_selected | blocked_targets | selection_targets |")
+    lines.append("|---:|:---|---:|---:|---:|")
     for row in list(analysis.get("daily") or []):
         lines.append(
             "| "
             + " | ".join(
                 [
                     str(row.get("trade_date") or ""),
+                    str(row.get("market_regime_gate_level") or ""),
                     str(row.get("formal_selected_count") or 0),
                     str(row.get("execution_blocked_target_count") or 0),
                     str(row.get("selection_target_count") or 0),
