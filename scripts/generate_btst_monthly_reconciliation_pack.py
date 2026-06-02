@@ -10,6 +10,10 @@ from scripts.analyze_btst_monthly_execution_scorecard import (
     render_btst_monthly_execution_scorecard_markdown,
 )
 from scripts.analyze_btst_monthly_scorecard import analyze_btst_monthly_scorecard, render_btst_monthly_scorecard_markdown
+from scripts.analyze_btst_monthly_execution_health import (
+    analyze_btst_monthly_execution_health,
+    render_btst_monthly_execution_health_markdown,
+)
 from scripts.audit_btst_outputs_month import audit_btst_outputs_month
 
 
@@ -65,12 +69,20 @@ def generate_btst_monthly_reconciliation_pack(
     )
     execution_md = render_btst_monthly_execution_scorecard_markdown(execution)
 
+    health = analyze_btst_monthly_execution_health(
+        month=month,
+        reports_dir=reports_dir,
+    )
+    health_md = render_btst_monthly_execution_health_markdown(health)
+
     paths: dict[str, Path] = {
         "outputs_audit_json": out_root / f"outputs_audit_{month}.json",
         "rule_scorecard_json": out_root / f"btst_monthly_scorecard_{month}_top{top_n}.json",
         "rule_scorecard_md": out_root / f"btst_monthly_scorecard_{month}_top{top_n}.md",
         "execution_scorecard_json": out_root / f"btst_monthly_execution_scorecard_{month}.json",
         "execution_scorecard_md": out_root / f"btst_monthly_execution_scorecard_{month}.md",
+        "execution_health_json": out_root / f"btst_monthly_execution_health_{month}.json",
+        "execution_health_md": out_root / f"btst_monthly_execution_health_{month}.md",
     }
 
     _write_json(paths["outputs_audit_json"], audit)
@@ -78,6 +90,8 @@ def generate_btst_monthly_reconciliation_pack(
     _write_text(paths["rule_scorecard_md"], rule_md)
     _write_json(paths["execution_scorecard_json"], execution)
     _write_text(paths["execution_scorecard_md"], execution_md)
+    _write_json(paths["execution_health_json"], health)
+    _write_text(paths["execution_health_md"], health_md)
 
     return {name: str(path) for name, path in paths.items()}
 

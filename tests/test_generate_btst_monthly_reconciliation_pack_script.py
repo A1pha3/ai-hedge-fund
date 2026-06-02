@@ -21,11 +21,19 @@ def test_generate_btst_monthly_reconciliation_pack_writes_expected_files(tmp_pat
     def _fake_exec_md(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
         return "# EXEC\n"
 
+    def _fake_health(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
+        return {"month": "202605", "overall": {"day_count": 1}}
+
+    def _fake_health_md(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
+        return "# HEALTH\n"
+
     monkeypatch.setattr(pack, "audit_btst_outputs_month", _fake_audit_btst_outputs_month)
     monkeypatch.setattr(pack, "analyze_btst_monthly_scorecard", _fake_rule_scorecard)
     monkeypatch.setattr(pack, "render_btst_monthly_scorecard_markdown", _fake_rule_md)
     monkeypatch.setattr(pack, "analyze_btst_monthly_execution_scorecard", _fake_exec_scorecard)
     monkeypatch.setattr(pack, "render_btst_monthly_execution_scorecard_markdown", _fake_exec_md)
+    monkeypatch.setattr(pack, "analyze_btst_monthly_execution_health", _fake_health)
+    monkeypatch.setattr(pack, "render_btst_monthly_execution_health_markdown", _fake_health_md)
 
     out_dir = tmp_path / "out"
     outputs = pack.generate_btst_monthly_reconciliation_pack(month="202605", out_dir=out_dir)
@@ -35,6 +43,9 @@ def test_generate_btst_monthly_reconciliation_pack_writes_expected_files(tmp_pat
     assert Path(outputs["rule_scorecard_md"]).is_file()
     assert Path(outputs["execution_scorecard_json"]).is_file()
     assert Path(outputs["execution_scorecard_md"]).is_file()
+    assert Path(outputs["execution_health_json"]).is_file()
+    assert Path(outputs["execution_health_md"]).is_file()
 
     assert (out_dir / "btst_monthly_scorecard_202605_top5.md").read_text(encoding="utf-8").startswith("# RULE")
     assert (out_dir / "btst_monthly_execution_scorecard_202605.md").read_text(encoding="utf-8").startswith("# EXEC")
+    assert (out_dir / "btst_monthly_execution_health_202605.md").read_text(encoding="utf-8").startswith("# HEALTH")
