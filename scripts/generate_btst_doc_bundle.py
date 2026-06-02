@@ -1708,10 +1708,63 @@ def _render_forum_doc(
     return "\n".join(lines) + "\n"
 
 
+def _btst_0422_p7_gap_overlay_guardrail_from_flags(flags: dict[str, Any]) -> str | None:
+    mode = str(flags.get("p7_gap_overlay_mode") or "off").strip().lower()
+    if mode not in {"off", "report", "enforce"}:
+        mode = "off"
+    if mode == "off":
+        return None
+
+    def _coerce_abs_float(value: Any, default: float) -> float:
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            num = default
+        num = abs(num)
+        if num <= 0:
+            return default
+        return num
+
+    warn = _coerce_abs_float(flags.get("p7_gap_warn_threshold"), 0.005)
+    halt = _coerce_abs_float(flags.get("p7_gap_halt_threshold"), 0.01)
+    if halt < warn:
+        halt = warn
+
+    warn_pct = f"{warn * 100:.1f}%"
+    halt_pct = f"{halt * 100:.1f}%"
+    return (
+        f"Gap overlay (BTST 0422 P7/{mode}): 若 T+1 开盘相对 T 收盘跳空低开 ≤ -{warn_pct}，只允许确认后减仓入场；"
+        f"若 ≤ -{halt_pct}，当日禁入。"
+    )
+
+
+def _render_global_guardrails_lines(*, priority_board: dict[str, Any], session_summary: dict[str, Any]) -> list[str]:
+    guardrails: list[str] = []
+
+    for item in list(priority_board.get("global_guardrails") or []):
+        text = str(item).strip()
+        if text:
+            guardrails.append(text)
+
+    flags = dict(session_summary.get("btst_0422_flags") or {})
+    gap_guardrail = _btst_0422_p7_gap_overlay_guardrail_from_flags(flags)
+    if gap_guardrail:
+        guardrails.append(gap_guardrail)
+
+    lines = ["## 全局 Guardrails"]
+    if not guardrails:
+        lines.append("- （无）")
+        return lines
+
+    lines.extend([f"- {text}" for text in guardrails])
+    return lines
+
+
 def _render_checklist_doc(
     signal_date_compact: str,
     brief: dict[str, Any],
     priority_board: dict[str, Any],
+    session_summary: dict[str, Any],
     semantic_selected: list[dict[str, Any]],
     semantic_watch: list[dict[str, Any]],
     early_runner: dict[str, Any],
@@ -1750,6 +1803,8 @@ def _render_checklist_doc(
     lines.extend(_render_decision_card(decision_card))
     lines.extend([""])
     lines.extend(_render_premarket_control_tower(control_tower))
+    lines.extend([""])
+    lines.extend(_render_global_guardrails_lines(priority_board=priority_board, session_summary=session_summary))
     lines.extend([""])
     lines.extend(_render_opening_timeline_lines(_stock_label(selected_actions[0]) if selected_actions else ""))
     lines.extend([""])
@@ -2167,7 +2222,7 @@ def generate_btst_doc_bundle(
         f"BTST-LLM-{signal_date_compact}.md": _render_llm_doc(signal_date_compact, brief, priority_board, session_summary, semantic_selected, semantic_watch, early_runner, selection_snapshot, control_tower, report_mode, veto_owner, section_labels, resolved_report_dir, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
         f"{signal_date_compact}-两套交易计划通俗说明.md": _render_plain_language_doc(signal_date_compact, brief, semantic_selected, semantic_watch, early_runner, report_mode),
         f"{signal_date_compact}-两套交易计划论坛短版.md": _render_forum_doc(signal_date_compact, brief, semantic_selected, semantic_watch, early_runner, report_mode),
-        f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, semantic_selected, semantic_watch, early_runner, selection_snapshot, control_tower, report_mode, veto_owner, section_labels, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
+        f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, session_summary, semantic_selected, semantic_watch, early_runner, selection_snapshot, control_tower, report_mode, veto_owner, section_labels, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
     }
     if include_extra_warning_docs:
         docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, signal_date_iso, effective_next_trade_date_iso, early_runner, formal_rows, semantic_selected, control_tower, report_mode, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile)

@@ -1527,6 +1527,11 @@ def _generate_btst_doc_bundle_gate_outputs(tmp_path: Path, *, gate_locked: bool)
                 "brief_json": brief_path.as_posix(),
                 "priority_board_json": priority_board_path.as_posix(),
             },
+            "btst_0422_flags": {
+                "p7_gap_overlay_mode": "report",
+                "p7_gap_warn_threshold": 0.005,
+                "p7_gap_halt_threshold": 0.01,
+            },
         },
     )
     selected_row = {
@@ -1595,6 +1600,7 @@ def _generate_btst_doc_bundle_gate_outputs(tmp_path: Path, *, gate_locked: bool)
             "selection_target": "short_trade_only",
             "source_paths": {"snapshot_path": snapshot_path.as_posix()},
             "priority_rows": [selected_row],
+            "global_guardrails": ["priority board 只负责排序和分层，不改变 short-trade admission 默认语义。"],
         },
     )
     _write_json(
@@ -1702,6 +1708,12 @@ def test_generate_btst_doc_bundle_gate_locked_confirmation_only_switches_to_conf
     assert "## 确认复核动作矩阵" in checklist_doc
     assert "- [ ] 确认复核：`300408 三环集团`" in checklist_doc
     assert "- [ ] 正式观察：`300408 三环集团`" not in checklist_doc
+
+    assert "## 全局 Guardrails" in checklist_doc
+    assert "priority board 只负责排序和分层" in checklist_doc
+    assert "Gap overlay (BTST 0422 P7/report):" in checklist_doc
+    assert "≤ -0.5%" in checklist_doc
+    assert "≤ -1.0%" in checklist_doc
     assert "确认复核主线" in plain_doc
     assert "正式 BTST 决定主执行顺序" not in plain_doc
     assert "放行权归 `market_gate`" in plain_doc
