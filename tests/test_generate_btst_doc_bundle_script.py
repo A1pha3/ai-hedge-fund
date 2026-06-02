@@ -8,6 +8,7 @@ from scripts.generate_btst_doc_bundle import (
     _build_semantic_conflicts,
     _group_rows_by_allowed_sections,
     _render_action_matrix_sections,
+    _render_llm_doc,
     compare_btst_doc_bundle_profiles,
     generate_btst_doc_bundle,
 )
@@ -1997,3 +1998,41 @@ def test_generate_btst_doc_bundle_prefers_canonical_names_from_sibling_snapshots
     llm_doc = (output_dir / "BTST-LLM-20260529.md").read_text(encoding="utf-8")
     assert "600176 中国巨石" in llm_doc
     assert "XD中国巨" not in llm_doc
+
+
+def test_render_llm_doc_surfaces_payoff_review_lane_when_present() -> None:
+    brief = {
+        "trade_date": "2026-03-27",
+        "next_trade_date": "2026-03-30",
+        "selection_target": "short_trade_only",
+        "payoff_review_entries": [
+            {
+                "ticker": "300001",
+                "decision": "near_miss",
+                "candidate_source": "short_trade_boundary",
+                "payoff_review_lane_score": 0.5,
+            }
+        ],
+    }
+
+    text = _render_llm_doc(
+        signal_date_compact="20260327",
+        brief=brief,
+        priority_board={},
+        session_summary={},
+        semantic_selected=[],
+        semantic_watch=[],
+        early_runner={"status": "unavailable"},
+        selection_snapshot={},
+        control_tower={},
+        report_mode="formal_execution",
+        veto_owner="system",
+        section_labels={"llm_execution_title": "正式执行层"},
+        report_dir=Path("/tmp/btst"),
+        strategy_thresholds={},
+        strategy_thresholds_config_path="/tmp/btst_strategy_thresholds.json",
+        strategy_thresholds_profile="default",
+    )
+
+    assert "## Payoff-first Review Lane" in text
+    assert "300001" in text

@@ -1582,6 +1582,20 @@ def _render_llm_doc(
         lines.extend(_render_enriched_stock_bullets(primary_execution_rows, limit=5))
     lines.extend(["", "## 观察层", ""])
     lines.extend(_render_enriched_stock_bullets(watch_queue_rows, limit=8))
+
+    payoff_review_rows = _safe_rows(brief.get("payoff_review_entries"))
+    if payoff_review_rows:
+        lines.extend(["", "## Payoff-first Review Lane", ""])
+        lines.append("- 复审层（review-only）：不等于下单；用于优先盯 5D payoff 线索。")
+        for row in payoff_review_rows[:5]:
+            score = row.get("payoff_review_lane_score")
+            score_str = "n/a"
+            try:
+                score_str = f"{float(score):.4f}"
+            except (TypeError, ValueError):
+                score_str = "n/a"
+            lines.append(f"- `{_stock_label(row)}` score={score_str}")
+
     if blocked_rows:
         lines.extend(["", "## 阻断层", ""])
         lines.extend(_render_enriched_stock_bullets(blocked_rows, limit=8))
