@@ -86,17 +86,37 @@ class PendingPlanRunner:
         build_confirmation_inputs_fn: Callable[[ExecutionPlan, dict[str, float], str, str], dict[str, dict]],
         process_pending_queues_fn: Callable[..., tuple[list[PendingOrder], list[PendingOrder], list[str]]],
     ) -> PendingPlanRunResult:
+        # Compute confirmation inputs up-front so we can derive open_gap_pct for pre-market signal decay.
+        confirmation_inputs = build_confirmation_inputs_fn(
+            pending_plan,
+            day_context.current_prices,
+            day_context.previous_date_str,
+            day_context.current_date_str,
+        )
+        open_gap_pct = {
+            ticker: float(payload["open_gap_pct"])
+            for ticker, payload in dict(confirmation_inputs or {}).items()
+            if isinstance(payload, dict) and payload.get("open_gap_pct") is not None
+        }
+
         preparation = self._build_pending_pipeline_preparation_state(
             pending_plan=pending_plan,
             trade_date_compact=day_context.trade_date_compact,
+            open_gap_pct=open_gap_pct,
         )
+
+        prepared_buy_tickers = {order.ticker for order in list(preparation.prepared_plan.buy_orders or [])}
+        prepared_confirmation_inputs = {
+            ticker: payload for ticker, payload in dict(confirmation_inputs or {}).items() if ticker in prepared_buy_tickers
+        }
+
         intraday_state, updated_buy_queue, updated_sell_queue = self._build_pending_pipeline_intraday_state(
             prepared_plan=preparation.prepared_plan,
             day_context=day_context,
             decisions=decisions,
             pending_buy_queue=pending_buy_queue,
             pending_sell_queue=pending_sell_queue,
-            build_confirmation_inputs_fn=build_confirmation_inputs_fn,
+            confirmation_inputs=prepared_confirmation_inputs,
             process_pending_queues_fn=process_pending_queues_fn,
         )
         self._apply_pending_plan_intraday_results(
@@ -131,6 +151,7 @@ class PendingPlanRunner:
         *,
         pending_plan: ExecutionPlan,
         trade_date_compact: str,
+        open_gap_pct: dict[str, float],
     ) -> PendingPipelinePreparationState:
         (
             prepared_plan,
@@ -141,6 +162,7 @@ class PendingPlanRunner:
         ) = self._prepare_pending_pipeline_plan(
             pending_plan=pending_plan,
             trade_date_compact=trade_date_compact,
+            open_gap_pct=open_gap_pct,
         )
         return PendingPipelinePreparationState(
             prepared_plan=prepared_plan,
@@ -155,11 +177,13 @@ class PendingPlanRunner:
         *,
         pending_plan: ExecutionPlan,
         trade_date_compact: str,
+        open_gap_pct: dict[str, float],
     ) -> tuple[ExecutionPlan, float, dict[str, int], dict[str, float], dict]:
-        stage_started_at = perf_counter()
-        prepared_plan = self._pipeline.run_pre_market(pending_plan, trade_date_compact)
-        pre_market_seconds = perf_counter() - stage_started_at
+        # Capture the inbound plan metrics before pre-market mutates it.
         previous_plan_counts, previous_plan_timing, previous_plan_funnel_diagnostics = extract_plan_risk_metrics(pending_plan)
+        stage_started_at = perf_counter()
+        prepared_plan = self._pipeline.run_pre_market(pending_plan, trade_date_compact, open_gap_pct=open_gap_pct)
+        pre_market_seconds = perf_counter() - stage_started_at
         return prepared_plan, pre_market_seconds, previous_plan_counts, previous_plan_timing, previous_plan_funnel_diagnostics
 
     # ------------------------------------------------------------------
@@ -174,16 +198,10 @@ class PendingPlanRunner:
         decisions: dict[str, dict],
         pending_buy_queue: list[PendingOrder],
         pending_sell_queue: list[PendingOrder],
-        build_confirmation_inputs_fn: Callable[[ExecutionPlan, dict[str, float], str, str], dict[str, dict]],
+        confirmation_inputs: dict[str, dict],
         process_pending_queues_fn: Callable[..., tuple[list[PendingOrder], list[PendingOrder], list[str]]],
     ) -> tuple[PendingPipelineIntradayState, list[PendingOrder], list[PendingOrder]]:
         stage_started_at = perf_counter()
-        confirmation_inputs = build_confirmation_inputs_fn(
-            prepared_plan,
-            day_context.current_prices,
-            day_context.previous_date_str,
-            day_context.current_date_str,
-        )
         updated_buy_queue, updated_sell_queue, queue_alerts = self._run_pending_intraday_queue_stage(
             prepared_plan=prepared_plan,
             day_context=day_context,
@@ -236,7 +254,7 @@ class PendingPlanRunner:
         *,
         prepared_plan: ExecutionPlan,
         trade_date_compact: str,
-        confirmation_inputs: list[dict[str, Any]],
+        confirmation_inputs: dict[str, dict],
     ) -> tuple[list, list, dict]:
         return self._pipeline.run_intraday(
             prepared_plan,
