@@ -29,7 +29,30 @@
 - `near_miss_count`: **17 → 13**（-4）
 - `buy_order_count`: **1 → 1**（0）
 
-这说明：封堵 layer_c 不是“只改排序”，而是对 tradeable 集合有可量化的净收缩；同时通过“新增 variant”保持默认 BTST profile 不被隐式改变，满足 rollout 纪律。
+### 3) 扩窗验证（20260506~20260529）：封堵 layer_c 的净影响较小，但确实移除部分 execution_eligible / buy_orders
+使用 202605 的 32 个 paper_trading frozen `daily_events.jsonl` 作为 source（trade_dates 覆盖 20260506~20260529），对比：
+- baseline：`btst_precision_v2`
+- shadow：`btst_precision_v2_no_layer_c_watchlist`
+
+结果（见 session-state artifacts `shadow_profile_replay_window_20260506_20260529_btst_v2_no_layerc_20260602.{md,json}`）：
+- `buy_order_count`: **3 → 1**（-2）
+- `execution_eligible_count`: **8 → 2**（-6）
+- `selected_count`: **62 → 54**（-8）
+- `near_miss_count`: **33 → 26**（-7）
+
+被移除的 buy_orders（重复出现的票，值得重点复盘）：
+- `20260522`：300054
+- `20260529`：300054
+
+被移除的 execution_eligible（按日期）：
+- `20260519`：600487
+- `20260522`：300054
+- `20260525`：688008
+- `20260526`：300054
+- `20260527`：001309
+- `20260529`：300054
+
+这说明：封堵 layer_c 不是“只改排序”，而是对 tradeable 集合有可量化的净收缩；但在 202605 扩窗里对 buy_orders 的净影响相对温和（可能被其他 gate/预算覆盖所“吸收”）。同时通过“新增 variant”保持默认 BTST profile 不被隐式改变，满足 rollout 纪律。
 
 ---
 
