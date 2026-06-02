@@ -16,6 +16,7 @@ BTST_0422_P7_GAP_OVERLAY_MODE_ENV = "BTST_0422_P7_GAP_OVERLAY_MODE"
 BTST_0422_P7_GAP_OVERLAY_MODES = frozenset({"off", "report", "enforce"})
 BTST_0422_P7_GAP_WARN_THRESHOLD_ENV = "BTST_0422_P7_GAP_WARN_THRESHOLD"
 BTST_0422_P7_GAP_HALT_THRESHOLD_ENV = "BTST_0422_P7_GAP_HALT_THRESHOLD"
+BTST_0422_P7_GAP_WARN_SIZE_DISCOUNT_ENV = "BTST_0422_P7_GAP_WARN_SIZE_DISCOUNT"
 
 DEFAULT_P7_GAP_WARN_THRESHOLD = 0.005
 DEFAULT_P7_GAP_HALT_THRESHOLD = 0.01
@@ -33,6 +34,13 @@ def _resolve_p7_gap_thresholds() -> tuple[float, float]:
     return warn, max(halt, warn)
 
 
+def _resolve_p7_warn_size_discount() -> float:
+    discount = abs(get_env_float(BTST_0422_P7_GAP_WARN_SIZE_DISCOUNT_ENV, DEFAULT_P7_GAP_WARN_SIZE_DISCOUNT))
+    if discount <= 0:
+        return DEFAULT_P7_GAP_WARN_SIZE_DISCOUNT
+    return min(discount, 1.0)
+
+
 def apply_signal_decay(
     plan: ExecutionPlan,
     trade_date_t1: str,
@@ -48,6 +56,7 @@ def apply_signal_decay(
 
     p7_mode = _resolve_p7_gap_overlay_mode()
     p7_warn_threshold, p7_halt_threshold = _resolve_p7_gap_thresholds()
+    p7_warn_size_discount = _resolve_p7_warn_size_discount()
 
     filtered_buy_orders = []
     risk_alerts = list(plan.risk_alerts)
@@ -77,8 +86,8 @@ def apply_signal_decay(
                 risk_alerts.append(f"cancel_buy_gap_overlay_halt:{ticker}")
                 continue
             if gap_pct <= -p7_warn_threshold:
-                new_shares = int(order.shares * DEFAULT_P7_GAP_WARN_SIZE_DISCOUNT)
-                new_amount = float(order.amount) * DEFAULT_P7_GAP_WARN_SIZE_DISCOUNT
+                new_shares = int(order.shares * p7_warn_size_discount)
+                new_amount = float(order.amount) * p7_warn_size_discount
                 if new_shares <= 0 or new_amount <= 0:
                     p7_halted.append(ticker)
                     risk_alerts.append(f"cancel_buy_gap_overlay_warn_zeroed:{ticker}")
@@ -90,8 +99,8 @@ def apply_signal_decay(
                         update={
                             "shares": new_shares,
                             "amount": new_amount,
-                            "execution_ratio": float(order.execution_ratio or 0.0) * DEFAULT_P7_GAP_WARN_SIZE_DISCOUNT,
-                            "risk_budget_ratio": float(order.risk_budget_ratio or 1.0) * DEFAULT_P7_GAP_WARN_SIZE_DISCOUNT,
+                            "execution_ratio": float(order.execution_ratio or 0.0) * p7_warn_size_discount,
+                            "risk_budget_ratio": float(order.risk_budget_ratio or 1.0) * p7_warn_size_discount,
                         }
                     )
                 )
@@ -114,7 +123,7 @@ def apply_signal_decay(
             "trade_date_t1": str(trade_date_t1),
             "warn_threshold": p7_warn_threshold,
             "halt_threshold": p7_halt_threshold,
-            "warn_size_discount": DEFAULT_P7_GAP_WARN_SIZE_DISCOUNT,
+            "warn_size_discount": p7_warn_size_discount,
             "buy_orders_original_count": original_buy_count,
             "buy_orders_retained_count": len(plan.buy_orders),
             "warned_count": len(p7_warned),

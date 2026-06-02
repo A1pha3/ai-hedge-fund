@@ -59,6 +59,24 @@ def test_apply_signal_decay_p7_gap_overlay_enforce_warn_reduces_size(monkeypatch
     assert payload["halted_count"] == 0
 
 
+def test_apply_signal_decay_p7_gap_overlay_enforce_warn_size_discount_env(monkeypatch):
+    monkeypatch.setenv("BTST_0422_P7_GAP_OVERLAY_MODE", "enforce")
+    monkeypatch.setenv("BTST_0422_P7_GAP_WARN_THRESHOLD", "0.005")
+    monkeypatch.setenv("BTST_0422_P7_GAP_HALT_THRESHOLD", "0.01")
+    monkeypatch.setenv("BTST_0422_P7_GAP_WARN_SIZE_DISCOUNT", "0.25")
+
+    plan = _make_plan(shares=100, amount=20_000.0)
+    apply_signal_decay(plan, "20240304", open_gap_pct={"000001": -0.006})
+
+    assert len(plan.buy_orders) == 1
+    assert plan.buy_orders[0].shares == 25
+    assert plan.buy_orders[0].amount == 5_000.0
+
+    payload = plan.risk_metrics.get("btst_gap_overlay_p7_enforcement")
+    assert payload is not None
+    assert payload["warn_size_discount"] == 0.25
+
+
 def test_apply_signal_decay_p7_gap_overlay_off_no_change(monkeypatch):
     monkeypatch.setenv("BTST_0422_P7_GAP_OVERLAY_MODE", "off")
 
