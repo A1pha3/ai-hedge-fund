@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from collections import defaultdict
+from typing import Any, Callable
 
 try:
     from scripts.btst_data_utils import build_beijing_exchange_mask
@@ -202,6 +203,84 @@ def resolve_trade_dates(pro, requested_trade_date=None):
 
     next_date = next_map.get(trade_date, 'N/A')
     return trade_date, next_date, all_dates
+
+
+_P2_BLOCKED_GATES = frozenset({"halt", "shadow_only"})
+
+
+def _build_market_state_proxy(
+    trade_date: str,
+    *,
+    data_dir: Path | None = None,
+    market_state_detector: Callable[[str], Any] | None = None,
+) -> dict[str, Any] | None:
+    """Build a best-effort market_state snapshot for audit-only reporting.
+
+    This is a proxy field for rule-based btst_full_report JSON only. It must not be
+    treated as the canonical market_state used by paper trading / pipeline runs.
+    """
+    _ = data_dir  # reserved for future offline snapshot loading
+
+    if market_state_detector is None:
+        try:
+            from src.screening.market_state import detect_market_state as market_state_detector  # type: ignore[assignment]
+        except Exception:
+            return None
+
+    try:
+        market_state = market_state_detector(trade_date)
+    except Exception:
+        return None
+
+    if market_state is None:
+        return None
+
+    if hasattr(market_state, "model_dump"):
+        payload = dict(market_state.model_dump(mode="json") or {})
+    elif isinstance(market_state, dict):
+        payload = dict(market_state)
+    else:
+        return None
+
+    payload["provenance"] = "proxy/audit-only"
+    payload["proxy_trade_date"] = trade_date
+    payload["proxy_generated_at"] = datetime.now().isoformat(timespec="seconds")
+    return payload
+
+
+def _resolve_btst_regime_gate_enforcement_proxy_mode() -> str:
+    normalized_mode = str(os.getenv("BTST_0422_P2_REGIME_GATE_MODE", "off") or "off").strip().lower()
+    return normalized_mode if normalized_mode in {"off", "enforce"} else "off"
+
+
+def _build_btst_regime_gate_enforcement_proxy(market_state_proxy: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Derive a gate + enforcement decision snapshot from market_state_proxy.
+
+    Purely for auditing rule-based btst_full_report JSON; does not affect selection.
+    """
+    if not market_state_proxy:
+        return None
+
+    try:
+        from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state
+    except Exception:
+        return None
+
+    gate_payload = dict(classify_btst_regime_gate_from_market_state(market_state_proxy) or {})
+    if not gate_payload:
+        return None
+
+    gate = str(gate_payload.get("gate", "") or "").strip()
+    mode = _resolve_btst_regime_gate_enforcement_proxy_mode()
+    blocked_gate = gate in _P2_BLOCKED_GATES
+    return {
+        "provenance": "proxy/audit-only",
+        "mode": mode,
+        "gate": gate,
+        "blocked_gate": blocked_gate,
+        "would_enforce": bool(mode == "enforce" and blocked_gate),
+        "btst_regime_gate": gate_payload,
+    }
 
 
 def main():
@@ -526,7 +605,13 @@ def main():
             'score': round(float(r['score']),4), 'reversal': round(float(r.get('str_val',0)),4),
             'ret_5d': round(float(stock_factors.get(r['ts_code'],{}).get('ret_5d',0))*100,2),
         } for _, r in rev_high.head(20).iterrows()],
+        'market_state_proxy': None,
+        'btst_regime_gate_enforcement_proxy': None,
     }
+    market_state_proxy = _build_market_state_proxy(trade_date, data_dir=out_dir)
+    json_data['market_state_proxy'] = market_state_proxy
+    json_data['btst_regime_gate_enforcement_proxy'] = _build_btst_regime_gate_enforcement_proxy(market_state_proxy)
+
     json_path = out_dir / f"btst_full_report_{trade_date}.json"
     with open(json_path, 'w') as f:
         json.dump(json_data, f, indent=2, ensure_ascii=False)
