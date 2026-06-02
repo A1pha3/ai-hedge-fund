@@ -40,6 +40,8 @@ Thresholds are stored as absolute positive values; trigger uses `gap <= -thresho
 ### Reporting surface
 - `src/paper_trading/_btst_reporting/premarket_card.py`
   - Adds a `Gap overlay (BTST 0422 P7/<mode>)...` guardrail line into `global_guardrails` when mode != off.
+- `BTST-YYYYMMDD-EXEC-CHECKLIST.md`
+  - Currently **does not** render `global_guardrails` (gap overlay text may be missing from the checklist). This is a follow-up rendering gap, not a strategy change.
 
 ### Replayability / persistence
 - `src/paper_trading/runtime_session_helpers.py`
