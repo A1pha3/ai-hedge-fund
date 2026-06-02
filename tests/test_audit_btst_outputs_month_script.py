@@ -34,6 +34,9 @@ def test_audit_btst_outputs_month_detects_missing_refs_and_mismatch(tmp_path: Pa
     assert result["folder_count"] == 1
     assert result["missing_paths"] == ["data/reports/run1/missing.json"]
     assert result["mismatched_folders"] == ["20260523"]
+    assert result["inconsistent_folders"] == ["20260523"]
+    assert result["non_canonical_folders"] == ["20260523"]
+    assert result["filename_mismatch_folders"] == ["20260523"]
 
     folder = result["folders"][0]
     assert folder["filename_dates"] == ["20260521"]
@@ -43,3 +46,4 @@ def test_audit_btst_outputs_month_detects_missing_refs_and_mismatch(tmp_path: Pa
     assert folder["folder_date_role"] == "mismatch"
     assert folder["next_date_matches_folder"] is False
     assert folder["filename_date_matches_folder"] is False
+    assert folder["is_date_folder"] is True

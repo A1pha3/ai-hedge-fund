@@ -91,6 +91,7 @@ class FolderAudit:
     folder_date_role: str
     next_date_matches_folder: bool | None
     filename_date_matches_folder: bool | None
+    is_date_folder: bool
 
 
 def audit_btst_outputs_month(
@@ -106,6 +107,12 @@ def audit_btst_outputs_month(
     missing_total: set[str] = set()
     mismatched_folders: list[str] = []
 
+    role_counts: dict[str, int] = {}
+    inconsistent_folders: list[str] = []
+    non_canonical_folders: list[str] = []
+    filename_mismatch_folders: list[str] = []
+    unknown_role_folders: list[str] = []
+
     if not outputs_root.exists():
         return {
             "month": str(month),
@@ -114,6 +121,11 @@ def audit_btst_outputs_month(
             "folders": [],
             "missing_paths": [],
             "mismatched_folders": [],
+            "folder_role_counts": {},
+            "inconsistent_folders": [],
+            "unknown_role_folders": [],
+            "non_canonical_folders": [],
+            "filename_mismatch_folders": [],
         }
 
     for day_dir in sorted([p for p in outputs_root.iterdir() if p.is_dir()]):
@@ -167,9 +179,25 @@ def audit_btst_outputs_month(
                 folder_date_role = "mismatch"
                 mismatched_folders.append(day_dir.name)
 
+        role_counts[folder_date_role] = int(role_counts.get(folder_date_role) or 0) + 1
+
         filename_date_matches_folder: bool | None = None
         if filename_dates and base_date:
             filename_date_matches_folder = filename_dates == {base_date}
+
+        if is_date_folder and folder_date_role == "unknown":
+            unknown_role_folders.append(day_dir.name)
+
+        if is_date_folder and folder_date_role not in {"signal_date", "special_folder"}:
+            non_canonical_folders.append(day_dir.name)
+
+        if is_date_folder and filename_date_matches_folder is False:
+            filename_mismatch_folders.append(day_dir.name)
+
+        if is_date_folder and (
+            folder_date_role in {"unknown", "mismatch"} or not metadata_consistent
+        ):
+            inconsistent_folders.append(day_dir.name)
 
         folders.append(
             FolderAudit(
@@ -184,6 +212,7 @@ def audit_btst_outputs_month(
                 folder_date_role=folder_date_role,
                 next_date_matches_folder=next_date_matches_folder,
                 filename_date_matches_folder=filename_date_matches_folder,
+                is_date_folder=is_date_folder,
             )
         )
 
@@ -194,6 +223,11 @@ def audit_btst_outputs_month(
         "folders": [f.__dict__ for f in folders],
         "missing_paths": sorted(missing_total),
         "mismatched_folders": sorted(set(mismatched_folders)),
+        "folder_role_counts": dict(role_counts),
+        "inconsistent_folders": sorted(set(inconsistent_folders)),
+        "unknown_role_folders": sorted(set(unknown_role_folders)),
+        "non_canonical_folders": sorted(set(non_canonical_folders)),
+        "filename_mismatch_folders": sorted(set(filename_mismatch_folders)),
     }
 
 
@@ -202,7 +236,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--month", required=True, help="YYYYMM, e.g. 202605")
     parser.add_argument("--outputs-dir", default="outputs")
     parser.add_argument("--repo-root", default=".")
-    parser.add_argument("--strict", action="store_true", help="Exit non-zero if missing paths or mismatched dates exist")
+    parser.add_argument("--strict", action="store_true", help="Exit non-zero if missing paths or mismatched/unknown dates exist")
+    parser.add_argument(
+        "--strict-canonical",
+        action="store_true",
+        help="Also exit non-zero if outputs folders are not canonical signal-date folders (or filename dates do not match folder date)",
+    )
     return parser.parse_args()
 
 
@@ -214,7 +253,15 @@ def main() -> None:
     if args.strict:
         missing = result.get("missing_paths") or []
         mismatched = result.get("mismatched_folders") or []
-        if missing or mismatched:
+        inconsistent = result.get("inconsistent_folders") or []
+        if missing or mismatched or inconsistent:
+            raise SystemExit(1)
+
+    if args.strict_canonical:
+        missing = result.get("missing_paths") or []
+        non_canonical = result.get("non_canonical_folders") or []
+        filename_mismatch = result.get("filename_mismatch_folders") or []
+        if missing or non_canonical or filename_mismatch:
             raise SystemExit(1)
 
 
