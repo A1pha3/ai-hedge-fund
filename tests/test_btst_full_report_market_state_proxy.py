@@ -191,3 +191,23 @@ def test_btst_full_report_json_emits_market_state_and_regime_gate_proxies(monkey
     assert payload["market_state_proxy"]["regime_gate_level"] == "risk_off"
 
     assert payload["btst_regime_gate_enforcement_proxy"] == expected_enforcement
+
+
+def test_btst_regime_gate_enforcement_proxy_stamps_nested_provenance(monkeypatch) -> None:
+    monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
+
+    market_state_proxy = {
+        "provenance": "proxy/audit-only",
+        "state_type": "mixed",
+        "breadth_ratio": 0.39,
+        "daily_return": -0.002,
+        "style_dispersion": 0.55,
+        "regime_flip_risk": 0.65,
+        "regime_gate_level": "risk_off",
+    }
+
+    payload = btst_full_report._build_btst_regime_gate_enforcement_proxy(market_state_proxy)
+    assert payload is not None
+    assert payload["provenance"] == "proxy/audit-only"
+    assert isinstance(payload.get("btst_regime_gate"), dict)
+    assert payload["btst_regime_gate"]["provenance"] == "proxy/audit-only"

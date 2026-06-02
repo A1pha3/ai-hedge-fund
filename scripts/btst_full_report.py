@@ -205,9 +205,6 @@ def resolve_trade_dates(pro, requested_trade_date=None):
     return trade_date, next_date, all_dates
 
 
-_P2_BLOCKED_GATES = frozenset({"halt", "shadow_only"})
-
-
 def _build_market_state_proxy(
     trade_date: str,
     *,
@@ -224,16 +221,6 @@ def _build_market_state_proxy(
     if market_state_detector is None:
         try:
             from src.screening.market_state import detect_market_state as market_state_detector  # type: ignore[assignment]
-            from src.tools.tushare_api import get_index_daily
-        except Exception:
-            return None
-
-        try:
-            end_dt = datetime.strptime(trade_date, "%Y%m%d")
-            start_dt = (end_dt - timedelta(days=180)).strftime("%Y%m%d")
-            index_df = get_index_daily("000300.SH", start_date=start_dt, end_date=trade_date, limit=180)
-            if index_df is None or index_df.empty:
-                return None
         except Exception:
             return None
 
@@ -247,6 +234,14 @@ def _build_market_state_proxy(
 
     if hasattr(market_state, "model_dump"):
         payload = dict(market_state.model_dump(mode="json") or {})
+        try:
+            from src.screening.models import MarketState
+
+            default_payload = dict(MarketState().model_dump(mode="json") or {})
+            if payload == default_payload:
+                return None
+        except Exception:
+            pass
     elif isinstance(market_state, dict):
         payload = dict(market_state)
     else:
@@ -284,7 +279,7 @@ def _build_btst_regime_gate_enforcement_proxy(market_state_proxy: dict[str, Any]
 
     gate = str(gate_payload.get("gate", "") or "").strip()
     mode = _resolve_btst_regime_gate_enforcement_proxy_mode()
-    blocked_gate = gate in _P2_BLOCKED_GATES
+    blocked_gate = bool(gate) and gate not in {"normal_trade", "aggressive_trade"}
     return {
         "provenance": "proxy/audit-only",
         "mode": mode,
@@ -299,7 +294,11 @@ def main():
     import tushare as ts
     args = parse_args()
     ts.set_token(os.getenv('TUSHARE_TOKEN'))
-    _ts_timeout = int(os.getenv('TUSHARE_TIMEOUT', '120'))
+    _ts_timeout_raw = os.getenv("TUSHARE_TIMEOUT", "120")
+    try:
+        _ts_timeout = int(_ts_timeout_raw)
+    except (TypeError, ValueError):
+        _ts_timeout = 120
     try:
         pro = ts.pro_api(timeout=_ts_timeout)
     except TypeError as error:
