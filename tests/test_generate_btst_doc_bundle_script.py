@@ -1714,6 +1714,7 @@ def test_generate_btst_doc_bundle_gate_locked_confirmation_only_switches_to_conf
     assert "Gap overlay (BTST 0422 P7/report):" in checklist_doc
     assert "≤ -0.5%" in checklist_doc
     assert "≤ -1.0%" in checklist_doc
+    assert "Regime gate (crisis):" in checklist_doc
     assert "确认复核主线" in plain_doc
     assert "正式 BTST 决定主执行顺序" not in plain_doc
     assert "放行权归 `market_gate`" in plain_doc

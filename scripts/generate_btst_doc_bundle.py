@@ -1738,7 +1738,30 @@ def _btst_0422_p7_gap_overlay_guardrail_from_flags(flags: dict[str, Any]) -> str
     )
 
 
-def _render_global_guardrails_lines(*, priority_board: dict[str, Any], session_summary: dict[str, Any]) -> list[str]:
+def _btst_regime_gate_guardrail_from_snapshot(selection_snapshot: dict[str, Any]) -> str | None:
+    market_state = dict(selection_snapshot.get("market_state") or {})
+    level = str(market_state.get("regime_gate_level") or "").strip()
+    if not level or level in {"n/a", "na", "none"}:
+        return None
+
+    if level == "risk_off":
+        return (
+            "Regime gate (risk_off): 默认不做正式买入，只允许观察/确认性复审；"
+            "若无明确修复信号则空仓。"
+        )
+
+    if level in {"crisis", "halt"}:
+        return f"Regime gate ({level}): 当日按门控降级执行，只允许确认后小仓试错或空仓。"
+
+    return None
+
+
+def _render_global_guardrails_lines(
+    *,
+    priority_board: dict[str, Any],
+    session_summary: dict[str, Any],
+    selection_snapshot: dict[str, Any],
+) -> list[str]:
     guardrails: list[str] = []
 
     for item in list(priority_board.get("global_guardrails") or []):
@@ -1750,6 +1773,10 @@ def _render_global_guardrails_lines(*, priority_board: dict[str, Any], session_s
     gap_guardrail = _btst_0422_p7_gap_overlay_guardrail_from_flags(flags)
     if gap_guardrail:
         guardrails.append(gap_guardrail)
+
+    regime_guardrail = _btst_regime_gate_guardrail_from_snapshot(selection_snapshot)
+    if regime_guardrail:
+        guardrails.append(regime_guardrail)
 
     lines = ["## 全局 Guardrails"]
     if not guardrails:
@@ -1804,7 +1831,13 @@ def _render_checklist_doc(
     lines.extend([""])
     lines.extend(_render_premarket_control_tower(control_tower))
     lines.extend([""])
-    lines.extend(_render_global_guardrails_lines(priority_board=priority_board, session_summary=session_summary))
+    lines.extend(
+        _render_global_guardrails_lines(
+            priority_board=priority_board,
+            session_summary=session_summary,
+            selection_snapshot=selection_snapshot,
+        )
+    )
     lines.extend([""])
     lines.extend(_render_opening_timeline_lines(_stock_label(selected_actions[0]) if selected_actions else ""))
     lines.extend([""])
