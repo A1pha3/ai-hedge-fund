@@ -187,6 +187,11 @@ def test_analyze_btst_shadow_profile_replay_compares_baseline_and_shadow_replay(
     assert analysis["delta"]["buy_orders_removed_by_date"] == {"20260421": ["300620"]}
     assert analysis["delta"]["execution_eligibility_lost_by_date"] == {"20260421": ["300620"]}
 
+    eval_by_date = analysis["delta"].get("removed_ticker_eval_snapshot_by_date") or {}
+    assert eval_by_date["20260421"]["300620"]["baseline"]["short_trade"]["decision"] == "selected"
+    assert eval_by_date["20260421"]["300620"]["baseline"]["execution_eligible"] is True
+    assert eval_by_date["20260421"]["300620"]["shadow"]["execution_eligible"] is False
+
     persisted_json = json.loads(output_json.read_text(encoding="utf-8"))
     assert persisted_json["shadow"]["profile_name"] == "btst_precision_v2_layer_c_watchlist_shadow"
     markdown = output_markdown.read_text(encoding="utf-8")
@@ -293,3 +298,6 @@ def test_analyze_btst_shadow_profile_replay_adds_removed_ticker_source_attributi
     hits = hits_by_date.get("20260421") or {}
     assert hits["300620"]["candidate_source_counts"]["layer_c_watchlist"] >= 1
     assert hits["300620"]["total_hits"] >= 1
+
+    eval_by_date = analysis["delta"].get("removed_ticker_eval_snapshot_by_date") or {}
+    assert eval_by_date["20260421"]["300620"]["baseline"]["short_trade"]["decision"] == "selected"

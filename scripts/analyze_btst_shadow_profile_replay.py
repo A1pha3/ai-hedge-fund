@@ -149,6 +149,25 @@ def _scan_ticker_candidate_source_hits(payload: Any, *, tickers: set[str]) -> di
     return result
 
 
+def _extract_removed_ticker_evaluation_snapshot(plan: Any, *, ticker: str) -> dict[str, Any] | None:
+    selection_targets = dict(getattr(plan, "selection_targets", {}) or {})
+    evaluation = selection_targets.get(ticker)
+    if evaluation is None:
+        return None
+    short_trade = getattr(evaluation, "short_trade", None)
+    return {
+        "evaluation_candidate_source": str(getattr(evaluation, "candidate_source", "") or "") or None,
+        "execution_eligible": bool(getattr(evaluation, "execution_eligible", False)),
+        "short_trade": {
+            "decision": str(getattr(short_trade, "decision", "") or "") or None,
+            "candidate_source": str(getattr(short_trade, "candidate_source", "") or "") or None,
+            "score_target": float(getattr(short_trade, "score_target", 0.0) or 0.0),
+            "confidence": float(getattr(short_trade, "confidence", 0.0) or 0.0),
+            "downgrade_reasons": list(getattr(short_trade, "downgrade_reasons", []) or []),
+        },
+    }
+
+
 def _build_delta_summary(baseline: dict[str, Any], shadow: dict[str, Any]) -> dict[str, Any]:
     trade_dates = sorted(set(baseline["trade_dates"]) | set(shadow["trade_dates"]))
     buy_orders_removed_by_date: dict[str, list[str]] = {}
@@ -227,6 +246,27 @@ def render_btst_shadow_profile_replay_markdown(analysis: dict[str, Any]) -> str:
                 top = ", ".join(f"{key}={value}" for key, value in list(counts.items())[:3])
                 lines.append(f"  - {ticker}: layer_c_watchlist {layer_c_hits}/{total}{('; top: ' + top) if top else ''}")
 
+        eval_by_ticker = dict(delta.get("removed_ticker_eval_snapshot_by_date", {}).get(trade_date, {}) or {})
+        if eval_by_ticker:
+            lines.append("- Removed ticker evaluation snapshot (baseline vs shadow):")
+            for ticker in sorted(eval_by_ticker):
+                payload = dict(eval_by_ticker.get(ticker) or {})
+                baseline = dict(payload.get("baseline") or {})
+                shadow = dict(payload.get("shadow") or {})
+
+                def _render_side(side: dict[str, Any]) -> str:
+                    if not side:
+                        return "N/A"
+                    short_trade = dict(side.get("short_trade") or {})
+                    decision = str(short_trade.get("decision") or "") or "N/A"
+                    execution_eligible = "Y" if bool(side.get("execution_eligible")) else "N"
+                    source = str(short_trade.get("candidate_source") or side.get("evaluation_candidate_source") or "") or "N/A"
+                    score = short_trade.get("score_target")
+                    score_display = f"{float(score):.4f}" if score is not None else "N/A"
+                    return f"decision={decision} exec={execution_eligible} score={score_display} src={source}"
+
+                lines.append(f"  - {ticker}: baseline({_render_side(baseline)}) | shadow({_render_side(shadow)})")
+
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -297,6 +337,8 @@ def analyze_btst_shadow_profile_replay(
 
     removed_ticker_source_hits_by_date: dict[str, Any] = {}
     removed_ticker_source_hits_payload_source_by_date: dict[str, str] = {}
+    removed_ticker_eval_snapshot_by_date: dict[str, Any] = {}
+
     for trade_date in analysis["trade_dates"]:
         delta = dict(analysis.get("delta") or {})
         removed_tickers = set(delta.get("buy_orders_removed_by_date", {}).get(trade_date, []) or [])
@@ -304,6 +346,21 @@ def analyze_btst_shadow_profile_replay(
         removed_tickers |= set(delta.get("selected_removed_by_date", {}).get(trade_date, []) or [])
         if not removed_tickers:
             continue
+
+        baseline_plan = baseline_plans.get(trade_date)
+        shadow_plan = shadow_plans.get(trade_date)
+        eval_snapshots: dict[str, Any] = {}
+        for ticker in sorted(removed_tickers):
+            baseline_snapshot = _extract_removed_ticker_evaluation_snapshot(baseline_plan, ticker=ticker) if baseline_plan is not None else None
+            shadow_snapshot = _extract_removed_ticker_evaluation_snapshot(shadow_plan, ticker=ticker) if shadow_plan is not None else None
+            if baseline_snapshot is None and shadow_snapshot is None:
+                continue
+            eval_snapshots[ticker] = {
+                "baseline": baseline_snapshot,
+                "shadow": shadow_snapshot,
+            }
+        if eval_snapshots:
+            removed_ticker_eval_snapshot_by_date[trade_date] = eval_snapshots
 
         payload_source = "selection_target_replay_input"
         attribution_payload = _load_selection_target_replay_input(source_paths, trade_date=trade_date)
@@ -322,6 +379,9 @@ def analyze_btst_shadow_profile_replay(
     if removed_ticker_source_hits_by_date:
         analysis["delta"]["removed_ticker_source_hits_by_date"] = removed_ticker_source_hits_by_date
         analysis["delta"]["removed_ticker_source_hits_payload_source_by_date"] = removed_ticker_source_hits_payload_source_by_date
+
+    if removed_ticker_eval_snapshot_by_date:
+        analysis["delta"]["removed_ticker_eval_snapshot_by_date"] = removed_ticker_eval_snapshot_by_date
     if output_json_path is not None:
         json_path = Path(output_json_path)
         json_path.parent.mkdir(parents=True, exist_ok=True)
