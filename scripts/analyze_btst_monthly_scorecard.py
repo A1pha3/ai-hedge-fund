@@ -162,11 +162,79 @@ def _pct_chg_bucket(value: float | None) -> str:
     return "pct>20"
 
 
+def _parse_gap_cutoffs(value: str | None) -> list[float]:
+    """Parse comma-separated gap cutoffs.
+
+    Cutoffs express a minimum allowed next_open_return (gap) to keep a sample:
+      keep if next_open_return >= cutoff
+
+    Accepted formats:
+    - "-0.005" (fraction)
+    - "-0.5%" (percent)
+    - "-0.5" (treated as percent when abs(v) > 0.2)
+
+    Positive inputs are interpreted as magnitudes and converted to negative cutoffs.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return []
+
+    cutoffs: list[float] = []
+    for token in text.replace(";", ",").split(","):
+        raw = token.strip()
+        if not raw:
+            continue
+        try:
+            if raw.endswith("%"):
+                parsed = float(raw[:-1].strip()) / 100.0
+            else:
+                parsed = float(raw)
+                if abs(parsed) > 0.2:
+                    parsed = parsed / 100.0
+        except (TypeError, ValueError):
+            continue
+
+        if parsed == 0:
+            cutoffs.append(0.0)
+        else:
+            cutoffs.append(-abs(parsed))
+
+    # Stable unique + sorted (more strict → less strict: -1.0%, -0.5%, -0.3%, 0%)
+    return sorted({float(c) for c in cutoffs})
+
+
+def _format_gap_cutoff_label(cutoff: float) -> str:
+    pct = cutoff * 100.0
+    # keep stable 1-decimal formatting to match CLI expectations
+    return f"gap>={pct:.1f}%"
+
+
+def _gap_overlay_counterfactual(rows: list[dict[str, Any]], cutoffs: list[float]) -> dict[str, Any]:
+    overlays: dict[str, Any] = {}
+    if not rows:
+        return overlays
+    for cutoff in cutoffs:
+        kept = [
+            row
+            for row in rows
+            if _as_float(row.get("next_open_return")) is not None
+            and float(row["next_open_return"]) >= float(cutoff)
+        ]
+        overlays[_format_gap_cutoff_label(float(cutoff))] = {
+            "cutoff": float(cutoff),
+            "kept_rate": float(len(kept) / len(rows)) if rows else None,
+            "kept": _segment_summary(kept),
+            "dropped_count": int(len(rows) - len(kept)),
+        }
+    return overlays
+
+
 def analyze_btst_monthly_scorecard(
     *,
     month: str,
     reports_dir: str | Path = "data/reports",
     top_n: int = 5,
+    gap_cutoffs: list[float] | None = None,
 ) -> dict[str, Any]:
     root = Path(reports_dir).expanduser().resolve()
     report_paths = _iter_month_reports(reports_dir=root, month=month)
@@ -224,6 +292,14 @@ def analyze_btst_monthly_scorecard(
         label = _pct_chg_bucket(pct)
         pct_buckets.setdefault(label, []).append(row)
 
+    resolved_gap_cutoffs = gap_cutoffs
+    if resolved_gap_cutoffs is None:
+        # Default counterfactual cutoffs (keep if gap >= cutoff)
+        resolved_gap_cutoffs = [-0.01, -0.005, -0.003, 0.0]
+
+    # Normalize: treat positives as magnitudes; keep stable uniqueness
+    resolved_gap_cutoffs = sorted({0.0 if c == 0 else float(-abs(float(c))) for c in resolved_gap_cutoffs})
+
     overall = {
         "month": str(month),
         "source": "btst_full_report.high_confidence",
@@ -244,6 +320,8 @@ def analyze_btst_monthly_scorecard(
             "negative": _segment_summary(gap_neg),
             "non_negative": _segment_summary(gap_nonneg),
         },
+        "gap_overlay_cutoffs": list(resolved_gap_cutoffs),
+        "gap_overlay_counterfactual": _gap_overlay_counterfactual(ok_all, resolved_gap_cutoffs),
         "pct_chg_buckets": {label: _segment_summary(rows) for label, rows in pct_buckets.items()},
     }
 
@@ -291,6 +369,35 @@ def render_btst_monthly_scorecard_markdown(analysis: dict[str, Any]) -> str:
         lines.append(
             f"- gap>=0: n={nonneg.get('count')}, win_rate={pct(nonneg.get('win_rate_next_close'))}, mean_close={ret(nonneg.get('mean_next_close_return'))}, hit_5d_15={pct(nonneg.get('hit_rate_5d_15'))}"
         )
+
+    overlays = dict(overall.get("gap_overlay_counterfactual") or {})
+    if overlays:
+        lines.append("")
+        lines.append("## Gap overlay counterfactual (keep if gap >= cutoff)")
+        lines.append("| cutoff | kept_n | kept_rate | mean_gap | win_rate_close | mean_close | hit_5d_15 |")
+        lines.append("|---:|---:|---:|---:|---:|---:|---:|")
+        # Sort by numeric cutoff when available
+        overlay_items: list[tuple[str, dict[str, Any]]] = []
+        for label, payload in overlays.items():
+            overlay_items.append((str(label), dict(payload or {})))
+        overlay_items.sort(key=lambda item: float(item[1].get("cutoff", 0.0)))
+        for label, payload in overlay_items:
+            kept = dict(payload.get("kept") or {})
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        str(label),
+                        str(kept.get("count") or 0),
+                        pct(payload.get("kept_rate")),
+                        ret(kept.get("mean_next_open_return")),
+                        pct(kept.get("win_rate_next_close")),
+                        ret(kept.get("mean_next_close_return")),
+                        pct(kept.get("hit_rate_5d_15")),
+                    ]
+                )
+                + " |"
+            )
 
     pct_buckets = dict(overall.get("pct_chg_buckets") or {})
     if pct_buckets:
@@ -349,6 +456,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--month", required=True, help="YYYYMM, e.g. 202605")
     parser.add_argument("--top-n", type=int, default=5, help="Top-N high_confidence tickers per day")
     parser.add_argument("--reports-dir", default="data/reports")
+    parser.add_argument(
+        "--gap-cutoffs",
+        default="-1.0%,-0.5%,-0.3%,0%",
+        help="Comma-separated gap cutoffs for counterfactual overlay. Keep sample if next_open_return >= cutoff. Supports fraction (-0.005) or percent (-0.5%).",
+    )
     parser.add_argument("--output-json", default="")
     parser.add_argument("--output-md", default="")
     return parser.parse_args()
@@ -356,7 +468,12 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    analysis = analyze_btst_monthly_scorecard(month=args.month, reports_dir=args.reports_dir, top_n=int(args.top_n))
+    analysis = analyze_btst_monthly_scorecard(
+        month=args.month,
+        reports_dir=args.reports_dir,
+        top_n=int(args.top_n),
+        gap_cutoffs=_parse_gap_cutoffs(args.gap_cutoffs),
+    )
 
     if args.output_json:
         _write_json(args.output_json, analysis)

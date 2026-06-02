@@ -105,6 +105,10 @@ def test_analyze_btst_monthly_scorecard_aggregates_high_confidence(monkeypatch, 
     assert segments["non_negative"]["count"] == 1
     assert segments["non_negative"]["win_rate_next_close"] == 1.0
 
+    overlays = analysis["overall"]["gap_overlay_counterfactual"]
+    assert overlays["gap>=-0.5%"]["kept"]["count"] == 1
+    assert overlays["gap>=-0.5%"]["kept"]["win_rate_next_close"] == 1.0
+
     pct_buckets = analysis["overall"]["pct_chg_buckets"]
     assert pct_buckets["pct<=5"]["count"] == 1
     assert pct_buckets["10<pct<=20"]["count"] == 1
@@ -113,3 +117,4 @@ def test_analyze_btst_monthly_scorecard_aggregates_high_confidence(monkeypatch, 
     assert "BTST Monthly Scorecard 202605" in md
     assert "Daily breakdown" in md
     assert "gap<0" in md
+    assert "Gap overlay counterfactual" in md
