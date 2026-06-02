@@ -23,28 +23,30 @@
 
 ## 输出目录规范
 
-输出目录按“目标交易日 / 执行日（next_trade_date）”归档，并在目录名里编码 `signal_date`，避免周末/休市导致的两日期混淆。
+输出目录**必须按 signal_date 归档**，避免出现“目录日期与文件信号日不一致”（例如 `outputs/202605/20260522/` 里却包含 `BTST-20260521.md`）导致复盘与执行误读。
+
+- `next_trade_date` 仍然会写入所有文档头部与 `manifest.json`，用于次日执行对齐。
 
 ### 观察期目录（scheme_a）
 
 观察期统一输出到：
 
 ```text
-outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/
+outputs/<signal_yyyymm>/<signal_yyyymmdd>_scheme_a/
 ```
 
 例如（signal_date=20260526 → next_trade_date=20260527）：
 
 ```text
-outputs/202605/20260527_scheme_a_from_20260526/
+outputs/202605/20260526_scheme_a/
 ```
 
 ### 正式目录（非 scheme_a）
 
-只有观察期通过后，才切换到：
+观察期通过后，正式目录为：
 
 ```text
-outputs/<next_yyyymm>/<next_yyyymmdd>_from_<signal_yyyymmdd>/
+outputs/<signal_yyyymm>/<signal_yyyymmdd>/
 ```
 
 ### 为什么必须分目录
@@ -108,7 +110,7 @@ uv run python scripts/generate_btst_doc_bundle.py \
   --no-refresh-early-runner
 ```
 
-> 注：不传 `--output-dir` 时，脚本会用 SSE 交易日历严格推算 `next_trade_date`，并默认写到 `outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/`，同时落 `manifest.json` 记录两日期与 `calendar_source`。
+> 注：不传 `--output-dir` 时，脚本会用 SSE 交易日历严格推算 `next_trade_date`，但**默认输出目录仍以 `signal_date` 为锚点**（见上方规范），同时落 `manifest.json` 记录两日期与 `calendar_source`。
 
 默认保留 `--no-refresh-early-runner`，因为刷新动作已经在前面单独执行。这样一来，问题更容易定位，连续多日也更稳定。
 

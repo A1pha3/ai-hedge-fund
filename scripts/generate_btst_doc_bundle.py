@@ -2193,12 +2193,12 @@ def generate_btst_doc_bundle(
         if brief_next_trade_date_iso and brief_next_trade_date_iso != expected_next_trade_date_iso:
             raise ValueError(f"next_trade_date mismatch: brief={brief_next_trade_date_iso} calendar={expected_next_trade_date_iso}")
 
-        month_prefix = calendar_resolution.next_trade_date_compact[:6]
-        leaf = (
-            f"{calendar_resolution.next_trade_date_compact}_scheme_a_from_{signal_date_compact}"
-            if scheme_a_active
-            else f"{calendar_resolution.next_trade_date_compact}_from_{signal_date_compact}"
-        )
+        # Default output layout MUST be anchored to the signal date so directories
+        # never mismatch the generated filenames (e.g. outputs/202605/20260522/
+        # containing BTST-20260521.md). The next_trade_date stays in document headers
+        # and manifest.json; it should not drive the output directory name.
+        month_prefix = signal_date_compact[:6]
+        leaf = f"{signal_date_compact}_scheme_a" if scheme_a_active else signal_date_compact
         target_output_dir = (OUTPUTS_DIR / month_prefix / leaf).resolve()
     else:
         target_output_dir = resolved_output_dir

@@ -409,7 +409,7 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "['" not in forum_doc
 
 
-def test_generate_btst_doc_bundle_default_output_dir_uses_next_trade_date_and_manifest(tmp_path: Path, monkeypatch) -> None:
+def test_generate_btst_doc_bundle_default_output_dir_uses_signal_date_and_manifest(tmp_path: Path, monkeypatch) -> None:
     import scripts.generate_btst_doc_bundle as bundle
 
     monkeypatch.setattr(bundle, "OUTPUTS_DIR", tmp_path / "outputs")
@@ -501,7 +501,7 @@ def test_generate_btst_doc_bundle_default_output_dir_uses_next_trade_date_and_ma
         scheme_a_active=True,
     )
 
-    expected_dir = (tmp_path / "outputs" / "202605" / "20260527_scheme_a_from_20260526").resolve()
+    expected_dir = (tmp_path / "outputs" / "202605" / "20260526_scheme_a").resolve()
     assert Path(result["output_dir"]) == expected_dir
 
     manifest = json.loads((expected_dir / "manifest.json").read_text(encoding="utf-8"))

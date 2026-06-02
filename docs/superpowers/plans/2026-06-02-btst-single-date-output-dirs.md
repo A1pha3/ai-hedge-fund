@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make BTST daily runs require only `signal_date`, infer `next_trade_date` via SSE trading calendar, write a `manifest.json`, and default outputs to `outputs/<next_yyyymm>/<next_yyyymmdd>[_scheme_a]_from_<signal_yyyymmdd>/`.
+**Goal:** Make BTST daily runs require only `signal_date`, infer `next_trade_date` via SSE trading calendar, write a `manifest.json`, and default outputs to `outputs/<signal_yyyymm>/<signal_yyyymmdd>[_scheme_a]/` (signal-date anchored).
 
 **Architecture:** Add a strict CN-SSE calendar resolver (Tushare trade_cal with Akshare fallback) and reuse it inside `generate_btst_doc_bundle.py` for (1) date validation, (2) default output-dir resolution, and (3) manifest emission. Update user docs/templates to match the new contract.
 
