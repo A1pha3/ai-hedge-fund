@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +16,9 @@ from scripts.btst_analysis_utils import (
     round_or_none as _round_or_none,
     safe_float as _safe_float,
 )
+from scripts.btst_latest_followup_utils import _load_btst_runtime_5d_prior_by_ticker
 from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
+from src.paper_trading._btst_reporting.payoff_review_lane import build_payoff_review_entries
 
 
 REPORTS_DIR = Path("data/reports")
@@ -262,6 +265,56 @@ def _load_btst_brief(report_dir: Path) -> dict[str, Any]:
     return {}
 
 
+def _build_payoff_review_entries_from_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    runtime_5d_prior_by_ticker: dict[str, dict[str, Any]],
+    max_entries: int = 5,
+) -> list[dict[str, Any]]:
+    selection_targets = dict(snapshot.get("selection_targets") or {})
+    selected_entries: list[dict[str, Any]] = []
+    near_miss_entries: list[dict[str, Any]] = []
+    for ticker, evaluation in selection_targets.items():
+        short_trade = dict((evaluation or {}).get("short_trade") or {})
+        if not short_trade:
+            continue
+        decision = str(short_trade.get("decision") or "unknown")
+        if decision not in {"selected", "near_miss"}:
+            continue
+        runtime_prior = dict(runtime_5d_prior_by_ticker.get(str(ticker)) or {})
+        if not runtime_prior:
+            continue
+        candidate_source = str((evaluation or {}).get("candidate_source") or dict(short_trade.get("explainability_payload") or {}).get("candidate_source") or "unknown")
+        entry = {
+            "ticker": str(ticker),
+            "decision": decision,
+            "candidate_source": candidate_source,
+            "score_target": _round_or_none(_safe_float(short_trade.get("score_target"))),
+            "historical_prior": runtime_prior,
+        }
+        if decision == "selected":
+            selected_entries.append(entry)
+        else:
+            near_miss_entries.append(entry)
+
+    if not selected_entries and not near_miss_entries:
+        return []
+
+    previous = os.getenv("BTST_PAYOFF_REVIEW_LANE_MODE")
+    os.environ["BTST_PAYOFF_REVIEW_LANE_MODE"] = "report"
+    try:
+        return build_payoff_review_entries(
+            selected_entries=selected_entries,
+            near_miss_entries=near_miss_entries,
+            max_entries=max_entries,
+        )
+    finally:
+        if previous is None:
+            os.environ.pop("BTST_PAYOFF_REVIEW_LANE_MODE", None)
+        else:
+            os.environ["BTST_PAYOFF_REVIEW_LANE_MODE"] = previous
+
+
 def analyze_btst_5d_15pct_objective_monitor(
     reports_root: str | Path,
     *,
@@ -269,12 +322,17 @@ def analyze_btst_5d_15pct_objective_monitor(
     objective_hit_rate_target: float = 0.55,
     max_future_high_return_target: float = 0.15,
     leaderboard_min_closed_cycle_count: int = 2,
+    payoff_review_surface_source: str = "brief",
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     report_dirs = discover_report_dirs([resolved_reports_root], report_name_contains=report_name_contains)
     price_cache: dict[tuple[str, str], Any] = {}
     rows: list[dict[str, Any]] = []
     payoff_review_rows: list[dict[str, Any]] = []
+
+    runtime_5d_prior_by_ticker: dict[str, dict[str, Any]] = {}
+    if payoff_review_surface_source == "runtime_5d":
+        runtime_5d_prior_by_ticker = _load_btst_runtime_5d_prior_by_ticker(resolved_reports_root)
 
     for report_dir in report_dirs:
         for snapshot in _iter_selection_snapshots(report_dir) or []:
@@ -298,28 +356,52 @@ def analyze_btst_5d_15pct_objective_monitor(
                     }
                 )
 
-        brief = _load_btst_brief(report_dir)
-        payoff_entries = list(brief.get("payoff_review_entries") or [])
-        if payoff_entries:
-            trade_date = _normalize_trade_date(brief.get("trade_date"))
-            for entry in payoff_entries:
-                entry_row = dict(entry or {})
-                ticker = str(entry_row.get("ticker") or "").strip()
-                if not ticker:
-                    continue
-                price_outcome = _extract_btst_price_outcome(ticker, trade_date, price_cache)
-                payoff_review_rows.append(
-                    {
-                        "report_dir_name": report_dir.name,
-                        "trade_date": trade_date,
-                        "ticker": ticker,
-                        "decision": str(entry_row.get("decision") or "unknown"),
-                        "candidate_source": str(entry_row.get("candidate_source") or "unknown"),
-                        "score_target": _round_or_none(_safe_float(entry_row.get("score_target"))),
-                        "payoff_review_lane_score": _round_or_none(_safe_float(entry_row.get("payoff_review_lane_score"))),
-                        **price_outcome,
-                    }
+            if payoff_review_surface_source == "runtime_5d" and runtime_5d_prior_by_ticker:
+                runtime_entries = _build_payoff_review_entries_from_snapshot(
+                    snapshot,
+                    runtime_5d_prior_by_ticker=runtime_5d_prior_by_ticker,
                 )
+                for entry in runtime_entries:
+                    ticker = str((entry or {}).get("ticker") or "").strip()
+                    if not ticker:
+                        continue
+                    price_outcome = _extract_btst_price_outcome(ticker, trade_date, price_cache)
+                    payoff_review_rows.append(
+                        {
+                            "report_dir_name": report_dir.name,
+                            "trade_date": trade_date,
+                            "ticker": ticker,
+                            "decision": str((entry or {}).get("decision") or "unknown"),
+                            "candidate_source": str((entry or {}).get("candidate_source") or "unknown"),
+                            "score_target": _round_or_none(_safe_float((entry or {}).get("score_target"))),
+                            "payoff_review_lane_score": _round_or_none(_safe_float((entry or {}).get("payoff_review_lane_score"))),
+                            **price_outcome,
+                        }
+                    )
+
+        if payoff_review_surface_source != "runtime_5d":
+            brief = _load_btst_brief(report_dir)
+            payoff_entries = list(brief.get("payoff_review_entries") or [])
+            if payoff_entries:
+                trade_date = _normalize_trade_date(brief.get("trade_date"))
+                for entry in payoff_entries:
+                    entry_row = dict(entry or {})
+                    ticker = str(entry_row.get("ticker") or "").strip()
+                    if not ticker:
+                        continue
+                    price_outcome = _extract_btst_price_outcome(ticker, trade_date, price_cache)
+                    payoff_review_rows.append(
+                        {
+                            "report_dir_name": report_dir.name,
+                            "trade_date": trade_date,
+                            "ticker": ticker,
+                            "decision": str(entry_row.get("decision") or "unknown"),
+                            "candidate_source": str(entry_row.get("candidate_source") or "unknown"),
+                            "score_target": _round_or_none(_safe_float(entry_row.get("score_target"))),
+                            "payoff_review_lane_score": _round_or_none(_safe_float(entry_row.get("payoff_review_lane_score"))),
+                            **price_outcome,
+                        }
+                    )
 
     rows.sort(
         key=lambda row: (
@@ -351,6 +433,7 @@ def analyze_btst_5d_15pct_objective_monitor(
         "objective_hit_rate_target": objective_hit_rate_target,
         "max_future_high_return_2_5d_target": max_future_high_return_target,
         "leaderboard_min_closed_cycle_count": leaderboard_min_closed_cycle_count,
+        "payoff_review_surface_source": payoff_review_surface_source,
         "raw_row_count": raw_row_count,
         "row_count": len(rows),
         "duplicate_row_count": duplicate_row_count,
@@ -386,6 +469,12 @@ def main() -> None:
     parser.add_argument("--objective-hit-rate-target", type=float, default=0.55)
     parser.add_argument("--max-future-high-return-target", type=float, default=0.15)
     parser.add_argument("--leaderboard-min-closed-cycle-count", type=int, default=2)
+    parser.add_argument(
+        "--payoff-review-surface-source",
+        default="brief",
+        choices=["brief", "runtime_5d"],
+        help="How to build payoff_review_surface: from saved briefs (brief) or recompute per snapshot using runtime 5D priors (runtime_5d).",
+    )
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -396,6 +485,7 @@ def main() -> None:
         objective_hit_rate_target=float(args.objective_hit_rate_target),
         max_future_high_return_target=float(args.max_future_high_return_target),
         leaderboard_min_closed_cycle_count=int(args.leaderboard_min_closed_cycle_count),
+        payoff_review_surface_source=str(args.payoff_review_surface_source or "brief"),
     )
 
     output_json = Path(args.output_json).expanduser().resolve()

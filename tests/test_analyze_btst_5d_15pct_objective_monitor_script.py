@@ -119,3 +119,95 @@ def test_analyze_btst_5d_15pct_objective_monitor_ranks_tradeable_and_false_negat
     assert "001309" in markdown
     assert "300383" in markdown
     assert "False Negative Strict Goal Cases" in markdown
+
+
+def test_analyze_btst_5d_15pct_objective_monitor_supports_runtime_payoff_review_surface(tmp_path: Path, monkeypatch) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    window = reports_root / "paper_trading_window_20260323_20260326_live_m2_7_runtime_payoff"
+
+    _write_snapshot(
+        window,
+        "2026-03-24",
+        {
+            "001309": {
+                "candidate_source": "short_trade_boundary",
+                "short_trade": {"decision": "selected", "score_target": 0.58},
+            },
+            "300383": {
+                "candidate_source": "short_trade_boundary",
+                "short_trade": {"decision": "near_miss", "score_target": 0.42},
+            },
+        },
+    )
+
+    (reports_root / "btst_5d_15pct_boundary_contract_inspection_latest.json").parent.mkdir(parents=True, exist_ok=True)
+    (reports_root / "btst_5d_15pct_boundary_contract_inspection_latest.json").write_text(
+        json.dumps(
+            {
+                "boundary_rows": [
+                    {
+                        "ticker": "001309",
+                        "trade_date": "2026-03-24",
+                        "cycle_status": "closed_cycle",
+                        "max_future_high_return_2_5d": 0.10,
+                        "future_high_hit_15pct_2_5d": False,
+                        "time_to_hit_15pct": None,
+                    },
+                    {
+                        "ticker": "300383",
+                        "trade_date": "2026-03-24",
+                        "cycle_status": "closed_cycle",
+                        "max_future_high_return_2_5d": 0.22,
+                        "future_high_hit_15pct_2_5d": True,
+                        "time_to_hit_15pct": 2,
+                    },
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (reports_root / "btst_5d_15pct_trend_gate_oos_validation_latest.json").write_text(
+        json.dumps({"candidate_manifest": []}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    outcomes = {
+        ("001309", "2026-03-24"): {"data_status": "ok", "cycle_status": "closed_cycle", "max_future_high_return_2_5d": 0.18, "future_high_hit_15pct_2_5d": True, "time_to_hit_15pct": 2},
+        ("300383", "2026-03-24"): {"data_status": "ok", "cycle_status": "closed_cycle", "max_future_high_return_2_5d": 0.17, "future_high_hit_15pct_2_5d": True, "time_to_hit_15pct": 3},
+    }
+
+    def _fake_outcome(ticker: str, trade_date: str, price_cache: dict) -> dict:
+        del price_cache
+        payload = dict(outcomes[(ticker, trade_date)])
+        payload.setdefault("trade_close", 10.0)
+        payload.setdefault("next_trade_date", "2026-03-25")
+        payload.setdefault("next_open", 10.1)
+        payload.setdefault("next_high", 10.8)
+        payload.setdefault("next_close", 10.4)
+        payload.setdefault("next_open_return", 0.01)
+        payload.setdefault("next_high_return", 0.08)
+        payload.setdefault("next_close_return", 0.04)
+        payload.setdefault("next_open_to_close_return", 0.03)
+        payload.setdefault("t_plus_2_trade_date", "2026-03-26")
+        payload.setdefault("t_plus_2_close", 10.5)
+        payload.setdefault("t_plus_2_close_return", 0.05)
+        payload.setdefault("t_plus_5_trade_date", "2026-03-31")
+        payload.setdefault("t_plus_5_close", 10.9)
+        payload.setdefault("t_plus_5_close_return", 0.09)
+        return payload
+
+    monkeypatch.setattr(objective_monitor, "_extract_btst_price_outcome", _fake_outcome)
+
+    analysis = objective_monitor.analyze_btst_5d_15pct_objective_monitor(
+        reports_root,
+        leaderboard_min_closed_cycle_count=1,
+        payoff_review_surface_source="runtime_5d",
+    )
+
+    assert analysis["report_dir_count"] == 1
+    assert analysis["payoff_review_surface_source"] == "runtime_5d"
+    assert analysis["payoff_review_surface"]["closed_cycle_count"] == 2
+    assert {row["ticker"] for row in analysis["payoff_review_rows"]} == {"001309", "300383"}
