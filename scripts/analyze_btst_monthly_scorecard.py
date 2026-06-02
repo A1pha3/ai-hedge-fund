@@ -280,6 +280,55 @@ def _gap_overlay_counterfactual(rows: list[dict[str, Any]], cutoffs: list[float]
     return overlays
 
 
+def _suggest_gap_overlay_cutoff(overlays: dict[str, Any]) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+    for label, payload in dict(overlays or {}).items():
+        row = dict(payload or {})
+        kept = dict(row.get("kept") or {})
+        win_rate = _as_float(kept.get("win_rate_next_close"))
+        kept_rate = _as_float(row.get("kept_rate"))
+        count = int(kept.get("count") or 0)
+        if win_rate is None or kept_rate is None or count <= 0:
+            continue
+        candidates.append(
+            {
+                "label": str(label),
+                "cutoff": _as_float(row.get("cutoff")),
+                "kept_rate": float(kept_rate),
+                "kept_count": int(count),
+                "win_rate_next_close": float(win_rate),
+            }
+        )
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: (
+            float(item["win_rate_next_close"]),
+            float(item["kept_rate"]),
+        ),
+        reverse=True,
+    )
+    best_win = candidates[0]
+    best_win_rate = float(best_win["win_rate_next_close"])
+
+    tolerance = 0.02
+    near_best = [
+        item
+        for item in candidates
+        if float(item["win_rate_next_close"]) >= best_win_rate - tolerance
+    ]
+    best_tradeoff = max(near_best, key=lambda item: float(item["kept_rate"]))
+
+    return {
+        "picked": best_tradeoff,
+        "best_win": best_win,
+        "tolerance": tolerance,
+        "note": "Heuristic suggestion for review only; do not treat as an execution guarantee.",
+    }
+
+
 def analyze_btst_monthly_scorecard(
     *,
     month: str,
@@ -379,6 +428,8 @@ def analyze_btst_monthly_scorecard(
     # Normalize: treat positives as magnitudes; keep stable uniqueness
     resolved_gap_cutoffs = sorted({0.0 if c == 0 else float(-abs(float(c))) for c in resolved_gap_cutoffs})
 
+    gap_overlay_counterfactual = _gap_overlay_counterfactual(ok_all, resolved_gap_cutoffs)
+
     overall = {
         "month": str(month),
         "source": "btst_full_report.high_confidence",
@@ -400,12 +451,17 @@ def analyze_btst_monthly_scorecard(
             "non_negative": _segment_summary(gap_nonneg),
         },
         "gap_overlay_cutoffs": list(resolved_gap_cutoffs),
-        "gap_overlay_counterfactual": _gap_overlay_counterfactual(ok_all, resolved_gap_cutoffs),
+        "gap_overlay_counterfactual": gap_overlay_counterfactual,
+        "gap_overlay_suggestion": _suggest_gap_overlay_cutoff(gap_overlay_counterfactual),
         "pct_chg_buckets": {label: _segment_summary(rows) for label, rows in pct_buckets.items()},
         "regime_gate_day_counts": dict(regime_day_counts),
         "regime_gate_buckets": {label: _segment_summary(rows) for label, rows in sorted(regime_buckets.items())},
         "regime_gate_gap_overlay_counterfactual": {
             label: _gap_overlay_counterfactual(rows, resolved_gap_cutoffs) for label, rows in sorted(regime_buckets.items())
+        },
+        "regime_gate_gap_overlay_suggestions": {
+            label: _suggest_gap_overlay_cutoff(_gap_overlay_counterfactual(rows, resolved_gap_cutoffs))
+            for label, rows in sorted(regime_buckets.items())
         },
     }
 
@@ -483,6 +539,14 @@ def render_btst_monthly_scorecard_markdown(analysis: dict[str, Any]) -> str:
                 + " |"
             )
 
+        suggestion = dict(overall.get("gap_overlay_suggestion") or {})
+        picked = dict(suggestion.get("picked") or {})
+        if picked:
+            lines.append("")
+            lines.append(
+                f"- suggestion: {picked.get('label')} (win_rate={pct(picked.get('win_rate_next_close'))}, kept_rate={pct(picked.get('kept_rate'))}, n={picked.get('kept_count')})"
+            )
+
     pct_buckets = dict(overall.get("pct_chg_buckets") or {})
     if pct_buckets:
         lines.append("")
@@ -530,6 +594,31 @@ def render_btst_monthly_scorecard_markdown(analysis: dict[str, Any]) -> str:
             )
         lines.append("")
         lines.append("Notes: regime buckets are only available when --daily-events-root is provided.")
+
+        regime_suggestions = dict(overall.get("regime_gate_gap_overlay_suggestions") or {})
+        if regime_suggestions:
+            lines.append("")
+            lines.append("## Regime gap overlay suggestions (review only)")
+            lines.append("| regime | picked_cutoff | win_rate_close | kept_rate | kept_n |")
+            lines.append("|---:|---:|---:|---:|---:|")
+            for regime, suggestion in sorted(regime_suggestions.items()):
+                suggestion = dict(suggestion or {})
+                picked = dict(suggestion.get("picked") or {})
+                if not picked:
+                    continue
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            str(regime),
+                            str(picked.get("label") or "n/a"),
+                            pct(picked.get("win_rate_next_close")),
+                            pct(picked.get("kept_rate")),
+                            str(picked.get("kept_count") or 0),
+                        ]
+                    )
+                    + " |"
+                )
 
     lines.append("")
 

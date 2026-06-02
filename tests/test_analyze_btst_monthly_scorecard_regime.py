@@ -50,7 +50,7 @@ def test_analyze_btst_monthly_scorecard_adds_regime_gate_buckets_when_daily_even
         return {
             "000001": {
                 "data_status": "ok",
-                "next_open_return": -0.001,
+                "next_open_return": 0.001,
                 "next_close_return": 0.01,
                 "next_open_to_close_return": 0.011,
                 "max_high_t1_t5_from_open": 0.2,
@@ -69,6 +69,8 @@ def test_analyze_btst_monthly_scorecard_adds_regime_gate_buckets_when_daily_even
 
     assert analysis["tickers"][0]["regime_gate_level"] == "normal"
     assert analysis["overall"]["regime_gate_buckets"]["normal"]["count"] == 1
+    assert analysis["overall"]["gap_overlay_suggestion"]["picked"]["label"] == "gap>=0.0%"
+    assert analysis["overall"]["regime_gate_gap_overlay_suggestions"]["normal"]["picked"]["label"] == "gap>=0.0%"
 
     markdown = scorecard.render_btst_monthly_scorecard_markdown(analysis)
     assert "Regime buckets" in markdown
