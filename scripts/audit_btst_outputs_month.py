@@ -27,6 +27,10 @@ def _extract_report_refs(text: str) -> set[str]:
     return refs
 
 
+def _extract_filename_dates(filename: str) -> set[str]:
+    return {match for match in re.findall(rf"{_DATE_YYYYMMDD}", str(filename or ""))}
+
+
 def _extract_dates(text: str) -> tuple[set[str], set[str]]:
     signal_dates: set[str] = set()
     next_dates: set[str] = set()
@@ -78,6 +82,7 @@ def _extract_dates(text: str) -> tuple[set[str], set[str]]:
 class FolderAudit:
     folder: str
     md_files: list[str]
+    filename_dates: list[str]
     signal_dates: list[str]
     next_dates: list[str]
     referenced_paths: list[str]
@@ -85,6 +90,7 @@ class FolderAudit:
     metadata_consistent: bool
     folder_date_role: str
     next_date_matches_folder: bool | None
+    filename_date_matches_folder: bool | None
 
 
 def audit_btst_outputs_month(
@@ -113,10 +119,12 @@ def audit_btst_outputs_month(
     for day_dir in sorted([p for p in outputs_root.iterdir() if p.is_dir()]):
         md_paths = sorted(day_dir.glob("*.md"))
         referenced: set[str] = set()
+        filename_dates: set[str] = set()
         signal_dates: set[str] = set()
         next_dates: set[str] = set()
 
         for md_path in md_paths:
+            filename_dates |= _extract_filename_dates(md_path.name)
             text = _read_text(md_path)
             referenced |= _extract_report_refs(text)
             s_dates, n_dates = _extract_dates(text)
@@ -159,10 +167,15 @@ def audit_btst_outputs_month(
                 folder_date_role = "mismatch"
                 mismatched_folders.append(day_dir.name)
 
+        filename_date_matches_folder: bool | None = None
+        if filename_dates and base_date:
+            filename_date_matches_folder = filename_dates == {base_date}
+
         folders.append(
             FolderAudit(
                 folder=day_dir.name,
                 md_files=[p.name for p in md_paths],
+                filename_dates=sorted(filename_dates),
                 signal_dates=sorted(signal_dates),
                 next_dates=sorted(next_dates),
                 referenced_paths=sorted(referenced),
@@ -170,6 +183,7 @@ def audit_btst_outputs_month(
                 metadata_consistent=metadata_consistent,
                 folder_date_role=folder_date_role,
                 next_date_matches_folder=next_date_matches_folder,
+                filename_date_matches_folder=filename_date_matches_folder,
             )
         )
 
