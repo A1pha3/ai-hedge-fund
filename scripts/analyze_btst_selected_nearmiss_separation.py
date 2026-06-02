@@ -161,6 +161,16 @@ def analyze_btst_selected_nearmiss_separation(
         decision: _outcome_summary(rows) for decision, rows in outcomes_by_decision.items() if rows is not None
     }
 
+    decision_gate_outcome_summaries: dict[str, dict[str, dict[str, Any]]] = {}
+    for decision, rows in outcomes_by_decision.items():
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        for row in list(rows or []):
+            gate = str(row.get("btst_regime_gate") or "unknown")
+            buckets.setdefault(gate, []).append(row)
+        decision_gate_outcome_summaries[decision] = {
+            gate: _outcome_summary(bucket_rows) for gate, bucket_rows in buckets.items()
+        }
+
     selected_summary = dict(decision_outcome_summaries.get("selected") or {})
     near_miss_summary = dict(decision_outcome_summaries.get("near_miss") or {})
 
@@ -180,6 +190,7 @@ def analyze_btst_selected_nearmiss_separation(
             gate_counts=gate_counts,
         ),
         "decision_outcomes": decision_outcome_summaries,
+        "decision_gate_outcomes": decision_gate_outcome_summaries,
         "selected_vs_near_miss_delta": {
             "win_rate_next_close": (
                 None
@@ -242,6 +253,26 @@ def _render_markdown(analysis: dict[str, Any]) -> str:
         lines.append(
             f"- delta(selected - near_miss): win_rate_close={pct(delta.get('win_rate_next_close'))}, hit_5d_15={pct(delta.get('hit_rate_5d_15'))}"
         )
+
+    gate_outcomes = dict(analysis.get("decision_gate_outcomes") or {})
+    if gate_outcomes:
+        lines.append("")
+        lines.append("## Outcome by Gate (realized)")
+        lines.append("")
+        for decision, buckets in sorted(gate_outcomes.items()):
+            bucket_map = dict(buckets or {})
+            if not bucket_map:
+                continue
+            lines.append(f"- {decision}:")
+            for gate, summary in sorted(bucket_map.items()):
+                summary = dict(summary or {})
+                lines.append(
+                    f"  - {gate}: n={summary.get('count')}, ok={summary.get('ok_count')}, "
+                    f"win_rate_close={pct(summary.get('win_rate_next_close'))}, "
+                    f"mean_gap={ret(summary.get('mean_next_open_return'))}, "
+                    f"mean_close={ret(summary.get('mean_next_close_return'))}, "
+                    f"hit_5d_15={pct(summary.get('hit_rate_5d_15'))}"
+                )
 
     lines.extend(
         [

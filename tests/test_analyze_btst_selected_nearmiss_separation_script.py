@@ -67,6 +67,8 @@ class TestAnalyzeBtstSelectedNearmissSeparation:
         assert "decision_outcomes" in result
         assert result["decision_outcomes"]["selected"]["hit_rate_5d_15"] == 1.0
         assert result["decision_outcomes"]["near_miss"]["hit_rate_5d_15"] == 0.5
+        assert "decision_gate_outcomes" in result
+        assert result["decision_gate_outcomes"]["selected"]["normal_trade"]["hit_rate_5d_15"] == 1.0
 
     def test_script_writes_required_json_and_markdown_outputs(self, monkeypatch, tmp_path: Path) -> None:
         report_dir = tmp_path / "paper_trading_window_sample"
