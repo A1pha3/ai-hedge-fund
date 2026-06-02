@@ -33,6 +33,12 @@ def test_generate_btst_monthly_reconciliation_pack_writes_expected_files(tmp_pat
     def _fake_near_miss_md(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
         return "# NEAR_MISS\n"
 
+    def _fake_counterfactual(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
+        return {"month": "202605", "overall": {"zero_pick_day_count": 1}}
+
+    def _fake_counterfactual_md(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
+        return "# COUNTERFACTUAL\n"
+
     monkeypatch.setattr(pack, "audit_btst_outputs_month", _fake_audit_btst_outputs_month)
     monkeypatch.setattr(pack, "analyze_btst_monthly_scorecard", _fake_rule_scorecard)
     monkeypatch.setattr(pack, "render_btst_monthly_scorecard_markdown", _fake_rule_md)
@@ -42,6 +48,8 @@ def test_generate_btst_monthly_reconciliation_pack_writes_expected_files(tmp_pat
     monkeypatch.setattr(pack, "render_btst_monthly_execution_health_markdown", _fake_health_md)
     monkeypatch.setattr(pack, "analyze_btst_monthly_near_miss_gate_breakdown", _fake_near_miss)
     monkeypatch.setattr(pack, "render_btst_monthly_near_miss_gate_breakdown_markdown", _fake_near_miss_md)
+    monkeypatch.setattr(pack, "analyze_btst_monthly_zero_pick_promotion_counterfactual", _fake_counterfactual)
+    monkeypatch.setattr(pack, "render_btst_monthly_zero_pick_promotion_counterfactual_markdown", _fake_counterfactual_md)
 
     out_dir = tmp_path / "out"
     outputs = pack.generate_btst_monthly_reconciliation_pack(month="202605", out_dir=out_dir)
@@ -55,8 +63,11 @@ def test_generate_btst_monthly_reconciliation_pack_writes_expected_files(tmp_pat
     assert Path(outputs["execution_health_md"]).is_file()
     assert Path(outputs["near_miss_gate_breakdown_json"]).is_file()
     assert Path(outputs["near_miss_gate_breakdown_md"]).is_file()
+    assert Path(outputs["zero_pick_promotion_counterfactual_json"]).is_file()
+    assert Path(outputs["zero_pick_promotion_counterfactual_md"]).is_file()
 
     assert (out_dir / "btst_monthly_scorecard_202605_top5.md").read_text(encoding="utf-8").startswith("# RULE")
     assert (out_dir / "btst_monthly_execution_scorecard_202605.md").read_text(encoding="utf-8").startswith("# EXEC")
     assert (out_dir / "btst_monthly_execution_health_202605.md").read_text(encoding="utf-8").startswith("# HEALTH")
     assert (out_dir / "btst_monthly_near_miss_gate_breakdown_202605.md").read_text(encoding="utf-8").startswith("# NEAR_MISS")
+    assert (out_dir / "btst_monthly_zero_pick_promotion_counterfactual_202605.md").read_text(encoding="utf-8").startswith("# COUNTERFACTUAL")
