@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import scripts.generate_btst_monthly_reconciliation_pack as pack
+
+
+def test_generate_btst_monthly_reconciliation_pack_writes_expected_files(tmp_path: Path, monkeypatch) -> None:
+    def _fake_audit_btst_outputs_month(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
+        return {"month": "202605", "folder_count": 1, "missing_paths": [], "mismatched_folders": []}
+
+    def _fake_rule_scorecard(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
+        return {"month": "202605", "overall": {"pick_count": 1}}
+
+    def _fake_rule_md(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
+        return "# RULE\n"
+
+    def _fake_exec_scorecard(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
+        return {"month": "202605", "overall": {"pick_count": 0}}
+
+    def _fake_exec_md(*args, **kwargs):  # noqa: ANN001,ANN002,ARG001
+        return "# EXEC\n"
+
+    monkeypatch.setattr(pack, "audit_btst_outputs_month", _fake_audit_btst_outputs_month)
+    monkeypatch.setattr(pack, "analyze_btst_monthly_scorecard", _fake_rule_scorecard)
+    monkeypatch.setattr(pack, "render_btst_monthly_scorecard_markdown", _fake_rule_md)
+    monkeypatch.setattr(pack, "analyze_btst_monthly_execution_scorecard", _fake_exec_scorecard)
+    monkeypatch.setattr(pack, "render_btst_monthly_execution_scorecard_markdown", _fake_exec_md)
+
+    out_dir = tmp_path / "out"
+    outputs = pack.generate_btst_monthly_reconciliation_pack(month="202605", out_dir=out_dir)
+
+    assert Path(outputs["outputs_audit_json"]).is_file()
+    assert Path(outputs["rule_scorecard_json"]).is_file()
+    assert Path(outputs["rule_scorecard_md"]).is_file()
+    assert Path(outputs["execution_scorecard_json"]).is_file()
+    assert Path(outputs["execution_scorecard_md"]).is_file()
+
+    assert (out_dir / "btst_monthly_scorecard_202605_top5.md").read_text(encoding="utf-8").startswith("# RULE")
+    assert (out_dir / "btst_monthly_execution_scorecard_202605.md").read_text(encoding="utf-8").startswith("# EXEC")
