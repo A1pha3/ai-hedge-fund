@@ -86,6 +86,10 @@ def _compact_date(value: str) -> str:
     return token
 
 
+_EXECUTABLE_GATES = {"normal_trade", "aggressive_trade"}
+_BLOCKED_GATES = {"halt", "shadow_only"}
+
+
 def analyze_btst_selected_nearmiss_separation(
     input_path: Path,
     *,
@@ -179,6 +183,10 @@ def analyze_btst_selected_nearmiss_separation(
     selected_summary = dict(decision_outcome_summaries.get("selected") or {})
     near_miss_summary = dict(decision_outcome_summaries.get("near_miss") or {})
 
+    selected_rows = list(outcomes_by_decision.get("selected") or [])
+    selected_executable = [row for row in selected_rows if str(row.get("btst_regime_gate") or "") in _EXECUTABLE_GATES]
+    selected_blocked = [row for row in selected_rows if str(row.get("btst_regime_gate") or "") in _BLOCKED_GATES]
+
     return {
         "report_type": "p4_btst_selected_nearmiss_separation",
         "generated_on": str(date.today()),
@@ -196,6 +204,14 @@ def analyze_btst_selected_nearmiss_separation(
         ),
         "decision_outcomes": decision_outcome_summaries,
         "decision_gate_outcomes": decision_gate_outcome_summaries,
+        "selected_execution_gate_sets": {
+            "executable": sorted(_EXECUTABLE_GATES),
+            "blocked": sorted(_BLOCKED_GATES),
+        },
+        "selected_execution_outcomes": {
+            "executable": _outcome_summary(selected_executable),
+            "blocked": _outcome_summary(selected_blocked),
+        },
         "selected_vs_near_miss_delta": {
             "win_rate_next_close": (
                 None
@@ -258,6 +274,28 @@ def _render_markdown(analysis: dict[str, Any]) -> str:
         lines.append(
             f"- delta(selected - near_miss): win_rate_close={pct(delta.get('win_rate_next_close'))}, hit_5d_15={pct(delta.get('hit_rate_5d_15'))}"
         )
+
+    selected_exec = dict(analysis.get("selected_execution_outcomes") or {})
+    if selected_exec:
+        lines.append("")
+        lines.append("## Selected execution subsets (decision=selected)")
+        sets_payload = dict(analysis.get("selected_execution_gate_sets") or {})
+        executable_gates = ",".join(list(sets_payload.get("executable") or []))
+        blocked_gates = ",".join(list(sets_payload.get("blocked") or []))
+        if executable_gates or blocked_gates:
+            lines.append(f"- executable_gates: {executable_gates or 'n/a'}")
+            lines.append(f"- blocked_gates: {blocked_gates or 'n/a'}")
+        for label in ("executable", "blocked"):
+            summary = dict(selected_exec.get(label) or {})
+            if not summary:
+                continue
+            lines.append(
+                f"- {label}: n={summary.get('count')}, ok={summary.get('ok_count')}, "
+                f"win_rate_close={pct(summary.get('win_rate_next_close'))}, "
+                f"mean_gap={ret(summary.get('mean_next_open_return'))}, "
+                f"mean_close={ret(summary.get('mean_next_close_return'))}, "
+                f"hit_5d_15={pct(summary.get('hit_rate_5d_15'))}"
+            )
 
     gate_outcomes = dict(analysis.get("decision_gate_outcomes") or {})
     if gate_outcomes:
