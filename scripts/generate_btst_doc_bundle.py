@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from scripts.btst_strategy_thresholds import (
     resolve_strategy_thresholds_config_path,
 )
 from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
+from src.paper_trading import btst_trade_calendar
 from src.paper_trading.btst_decision_enrichment import (
     attach_execution_semantics,
     build_historical_reliability_metrics,
@@ -2053,6 +2055,7 @@ def generate_btst_doc_bundle(
     strategy_thresholds_config_path: str | Path | None = None,
     strategy_thresholds_profile: str = DEFAULT_STRATEGY_THRESHOLDS_PROFILE,
     write_review_ledger: bool = False,
+    scheme_a_active: bool = False,
 ) -> dict[str, Any]:
     """Generate the final BTST reading bundle and append scheme-A early-runner sections."""
     signal_date_compact, signal_date_iso = _normalize_signal_date(signal_date)
@@ -2092,7 +2095,35 @@ def generate_btst_doc_bundle(
     opportunity_rows = _resolve_opportunity_rows(brief, priority_board)
     formal_rows = [*selected_rows, *watch_rows, *opportunity_rows]
     intersection_summary = _build_intersection_summary(early_runner, formal_rows)
-    target_output_dir = Path(output_dir).expanduser().resolve() if output_dir else (OUTPUTS_DIR / signal_date_compact[:6] / brief.get("next_trade_date", signal_date_iso).replace("-", "")).resolve()
+
+    resolved_output_dir = Path(output_dir).expanduser().resolve() if output_dir else None
+    calendar_resolution: btst_trade_calendar.NextTradeDateResolution | None = None
+    if resolved_output_dir is None:
+        calendar_resolution = btst_trade_calendar.resolve_next_trade_date_cn_sse_strict(signal_date_iso)
+        expected_next_trade_date_iso = calendar_resolution.next_trade_date_iso
+        brief_next_trade_date_iso = str(brief.get("next_trade_date") or "").strip()
+        if brief_next_trade_date_iso and brief_next_trade_date_iso != expected_next_trade_date_iso:
+            raise ValueError(f"next_trade_date mismatch: brief={brief_next_trade_date_iso} calendar={expected_next_trade_date_iso}")
+
+        month_prefix = calendar_resolution.next_trade_date_compact[:6]
+        leaf = (
+            f"{calendar_resolution.next_trade_date_compact}_scheme_a_from_{signal_date_compact}"
+            if scheme_a_active
+            else f"{calendar_resolution.next_trade_date_compact}_from_{signal_date_compact}"
+        )
+        target_output_dir = (OUTPUTS_DIR / month_prefix / leaf).resolve()
+    else:
+        target_output_dir = resolved_output_dir
+
+    effective_next_trade_date_iso = str(
+        brief.get("next_trade_date")
+        or (
+            calendar_resolution.next_trade_date_iso
+            if calendar_resolution
+            else ""
+        )
+    ).strip()
+
     early_status = str(early_runner.get("status") or "unavailable")
     control_selected = _enrich_formal_rows(
         selected_rows,
@@ -2108,7 +2139,7 @@ def generate_btst_doc_bundle(
         selected_rows=control_selected,
         early_runner_status=early_status,
         signal_date=str(brief.get("trade_date") or signal_date_iso),
-        next_trade_date=str(brief.get("next_trade_date") or ""),
+        next_trade_date=effective_next_trade_date_iso,
     )
     control_tower = _build_premarket_control_tower(control_decision_card, selection_snapshot)
     report_mode = build_report_mode(control_tower)
@@ -2139,8 +2170,8 @@ def generate_btst_doc_bundle(
         f"BTST-{signal_date_compact}-EXEC-CHECKLIST.md": _render_checklist_doc(signal_date_compact, brief, priority_board, semantic_selected, semantic_watch, early_runner, selection_snapshot, control_tower, report_mode, veto_owner, section_labels, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile),
     }
     if include_extra_warning_docs:
-        docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, signal_date_iso, str(brief.get("next_trade_date") or ""), early_runner, formal_rows, semantic_selected, control_tower, report_mode, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile)
-        docs[f"BTST-{signal_date_compact}-EARLY-WARNING-CARD.md"] = _render_early_warning_card_doc(signal_date_compact, signal_date_iso, str(brief.get("next_trade_date") or ""), early_runner, formal_rows, semantic_selected, control_tower, report_mode)
+        docs[f"BTST-{signal_date_compact}-EARLY-WARNING.md"] = _render_early_warning_doc(signal_date_compact, signal_date_iso, effective_next_trade_date_iso, early_runner, formal_rows, semantic_selected, control_tower, report_mode, resolved_strategy_thresholds, resolved_strategy_thresholds_config_path, strategy_thresholds_profile)
+        docs[f"BTST-{signal_date_compact}-EARLY-WARNING-CARD.md"] = _render_early_warning_card_doc(signal_date_compact, signal_date_iso, effective_next_trade_date_iso, early_runner, formal_rows, semantic_selected, control_tower, report_mode)
     quality_summary = _build_report_quality_summary(
         signal_date_compact=signal_date_compact,
         docs=docs,
@@ -2163,8 +2194,8 @@ def generate_btst_doc_bundle(
     if write_review_ledger:
         ledger_rows = build_review_ledger_rows(
             signal_date=str(brief.get("trade_date") or signal_date_iso),
-            next_trade_date=str(brief.get("next_trade_date") or ""),
-                rows=[*semantic_selected, *semantic_watch],
+            next_trade_date=effective_next_trade_date_iso,
+            rows=[*semantic_selected, *semantic_watch],
             report_mode=report_mode,
             control_tower=control_tower,
         )
@@ -2174,7 +2205,7 @@ def generate_btst_doc_bundle(
             json.dumps(
                 {
                     "signal_date": str(brief.get("trade_date") or signal_date_iso),
-                    "next_trade_date": str(brief.get("next_trade_date") or ""),
+                    "next_trade_date": effective_next_trade_date_iso,
                     "rows": ledger_rows,
                 },
                 ensure_ascii=False,
@@ -2183,13 +2214,50 @@ def generate_btst_doc_bundle(
             + "\n",
         )
         written_files.append(review_ledger_json_path.as_posix())
+
+    manifest_json_path = target_output_dir / "manifest.json"
+    manifest_next_trade_date_compact = effective_next_trade_date_iso.replace("-", "") if effective_next_trade_date_iso else None
+    manifest_calendar_source = calendar_resolution.calendar_source if calendar_resolution else None
+    manifest_calendar_next_trade_date_iso = calendar_resolution.next_trade_date_iso if calendar_resolution else None
+    _write_text(
+        manifest_json_path,
+        json.dumps(
+            {
+                "signal_date": signal_date_compact,
+                "next_trade_date": manifest_next_trade_date_compact,
+                "signal_date_iso": signal_date_iso,
+                "next_trade_date_iso": effective_next_trade_date_iso,
+                "market": "CN-SSE",
+                "calendar_source": manifest_calendar_source,
+                "calendar_next_trade_date_iso": manifest_calendar_next_trade_date_iso,
+                "calendar_strict_applied": bool(calendar_resolution),
+                "scheme_a_active": bool(scheme_a_active),
+                "output_dir": target_output_dir.as_posix(),
+                "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "execution_contract_summary": {
+                    "report_mode": report_mode,
+                    "veto_owner": veto_owner,
+                    "effective_trade_bias": control_tower.get("effective_trade_bias"),
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+    )
+
     return {
         "status": "generated",
         "signal_date": signal_date_compact,
         "signal_date_iso": signal_date_iso,
+        "next_trade_date_iso": effective_next_trade_date_iso,
         "report_dir": resolved_report_dir.as_posix(),
         "output_dir": target_output_dir.as_posix(),
         "written_files": written_files,
+        "scheme_a_active": bool(scheme_a_active),
+        "calendar_source": manifest_calendar_source,
+        "calendar_next_trade_date_iso": manifest_calendar_next_trade_date_iso,
+        "manifest_json_path": manifest_json_path.as_posix(),
         "early_runner_status": early_runner.get("status"),
         "early_runner_latest_trade_date": early_runner.get("latest_trade_date"),
         "early_runner_intersection_count": len(_safe_rows(intersection_summary.get("overlap_rows"))),
@@ -2435,6 +2503,7 @@ def main() -> None:
     parser.add_argument("--report-dir", default="")
     parser.add_argument("--no-refresh-early-runner", action="store_true")
     parser.add_argument("--core-only", action="store_true", help="Generate only the 5 canonical BTST docs.")
+    parser.add_argument("--scheme-a", action="store_true", help="Mark default output dir as scheme_a when --output-dir is omitted.")
     parser.add_argument("--strategy-thresholds-config", default="")
     parser.add_argument("--strategy-thresholds-profile", default=DEFAULT_STRATEGY_THRESHOLDS_PROFILE)
     parser.add_argument("--compare-profiles", nargs="*", default=[])
@@ -2462,6 +2531,7 @@ def main() -> None:
         strategy_thresholds_config_path=args.strategy_thresholds_config or None,
         strategy_thresholds_profile=args.strategy_thresholds_profile,
         write_review_ledger=args.write_review_ledger,
+        scheme_a_active=bool(args.scheme_a),
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

@@ -409,6 +409,107 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "['" not in forum_doc
 
 
+def test_generate_btst_doc_bundle_default_output_dir_uses_next_trade_date_and_manifest(tmp_path: Path, monkeypatch) -> None:
+    import scripts.generate_btst_doc_bundle as bundle
+
+    monkeypatch.setattr(bundle, "OUTPUTS_DIR", tmp_path / "outputs")
+
+    from src.paper_trading import btst_trade_calendar as cal
+
+    monkeypatch.setattr(
+        cal,
+        "resolve_next_trade_date_cn_sse_strict",
+        lambda *_args, **_kwargs: cal.NextTradeDateResolution(
+            signal_date_iso="2026-05-26",
+            signal_date_compact="20260526",
+            next_trade_date_iso="2026-05-27",
+            next_trade_date_compact="20260527",
+            calendar_source="tushare_trade_cal",
+        ),
+    )
+
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_20260526_20260526_live_m2_7_short_trade_only_20260527_plan"
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "trade_date": "2026-05-26",
+            "selection_target": "short_trade_only",
+            "btst_followup": {
+                "brief_json": brief_path.as_posix(),
+            },
+        },
+    )
+    _write_json(
+        brief_path,
+        {
+            "trade_date": "2026-05-26",
+            "next_trade_date": "2026-05-27",
+            "selection_target": "short_trade_only",
+            "primary_action": {
+                "ticker": "300054",
+                "name": "鼎龙股份",
+                "preferred_entry_mode": "confirm_then_hold_breakout",
+            },
+            "selected_actions": [
+                {
+                    "ticker": "300054",
+                    "name": "鼎龙股份",
+                    "action_tier": "primary_entry",
+                    "preferred_entry_mode": "confirm_then_hold_breakout",
+                    "score_target": 0.55,
+                    "historical_prior": {
+                        "applied_scope": "same_ticker",
+                        "evaluable_count": 10,
+                        "next_close_positive_rate": 0.6,
+                        "next_close_payoff_ratio": 1.2,
+                        "next_close_expectancy": 0.01,
+                        "sample_count": 12,
+                    },
+                }
+            ],
+            "watch_actions": [],
+            "opportunity_actions": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_full_report_20260526.json",
+        {
+            "trade_date": "20260526",
+            "next_date": "20260527",
+            "pool_size": 1,
+            "selected_count": 1,
+            "near_miss_count": 0,
+            "high_confidence": [],
+        },
+    )
+    _write_json(
+        reports_root / "btst_early_runner_v1_latest.json",
+        {
+            "daily_boards": [],
+        },
+    )
+
+    result = bundle.generate_btst_doc_bundle(
+        "20260526",
+        reports_root=reports_root,
+        output_dir=None,
+        refresh_early_runner=False,
+        include_extra_warning_docs=False,
+        scheme_a_active=True,
+    )
+
+    expected_dir = (tmp_path / "outputs" / "202605" / "20260527_scheme_a_from_20260526").resolve()
+    assert Path(result["output_dir"]) == expected_dir
+
+    manifest = json.loads((expected_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["signal_date"] == "20260526"
+    assert manifest["next_trade_date"] == "20260527"
+    assert manifest["scheme_a_active"] is True
+
+
 def test_generate_btst_doc_bundle_writes_review_ledger_when_requested(tmp_path: Path) -> None:
     """Write a machine-readable pre-trade review ledger only when requested."""
     reports_root = tmp_path / "data" / "reports"

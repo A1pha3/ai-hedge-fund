@@ -131,15 +131,35 @@ def _daily_metrics(outcomes: list[dict[str, Any]]) -> DailyScorecard:
 
 def _segment_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     close_returns = [float(row["next_close_return"]) for row in rows if row.get("next_close_return") is not None]
+    open_returns = [float(row["next_open_return"]) for row in rows if row.get("next_open_return") is not None]
     max_high = [
         float(row["max_high_t1_t5_from_open"]) for row in rows if row.get("max_high_t1_t5_from_open") is not None
     ]
+
+    negative_gap_rate = None
+    if open_returns:
+        negative_gap_rate = float(sum(1.0 for r in open_returns if r < 0) / len(open_returns))
+
     return {
         "count": len(rows),
         "win_rate_next_close": float(sum(1.0 for r in close_returns if r > 0) / len(close_returns)) if close_returns else None,
+        "mean_next_open_return": _mean(open_returns),
         "mean_next_close_return": _mean(close_returns),
+        "negative_gap_rate": negative_gap_rate,
         "hit_rate_5d_15": float(sum(1.0 for r in max_high if r >= 0.15) / len(max_high)) if max_high else None,
     }
+
+
+def _pct_chg_bucket(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    if value <= 5.0:
+        return "pct<=5"
+    if value <= 10.0:
+        return "5<pct<=10"
+    if value <= 20.0:
+        return "10<pct<=20"
+    return "pct>20"
 
 
 def analyze_btst_monthly_scorecard(
@@ -172,6 +192,9 @@ def analyze_btst_monthly_scorecard(
             realized_row["ticker"] = ticker
             realized_row["name"] = entry.get("name")
             realized_row["score"] = entry.get("score")
+            realized_row["pct_chg"] = entry.get("pct_chg")
+            realized_row["close_strength"] = entry.get("close_strength")
+            realized_row["catalyst_freshness"] = entry.get("catalyst_freshness")
             realized_row["trade_date"] = trade_date
             realized_row["next_date"] = next_date
             outcomes.append(realized_row)
@@ -195,6 +218,12 @@ def analyze_btst_monthly_scorecard(
         row for row in ok_all if _as_float(row.get("next_open_return")) is not None and float(row["next_open_return"]) >= 0
     ]
 
+    pct_buckets: dict[str, list[dict[str, Any]]] = {}
+    for row in ok_all:
+        pct = _as_float(row.get("pct_chg"))
+        label = _pct_chg_bucket(pct)
+        pct_buckets.setdefault(label, []).append(row)
+
     overall = {
         "month": str(month),
         "source": "btst_full_report.high_confidence",
@@ -215,6 +244,7 @@ def analyze_btst_monthly_scorecard(
             "negative": _segment_summary(gap_neg),
             "non_negative": _segment_summary(gap_nonneg),
         },
+        "pct_chg_buckets": {label: _segment_summary(rows) for label, rows in pct_buckets.items()},
     }
 
     return {
@@ -261,6 +291,29 @@ def render_btst_monthly_scorecard_markdown(analysis: dict[str, Any]) -> str:
         lines.append(
             f"- gap>=0: n={nonneg.get('count')}, win_rate={pct(nonneg.get('win_rate_next_close'))}, mean_close={ret(nonneg.get('mean_next_close_return'))}, hit_5d_15={pct(nonneg.get('hit_rate_5d_15'))}"
         )
+
+    pct_buckets = dict(overall.get("pct_chg_buckets") or {})
+    if pct_buckets:
+        lines.append("")
+        lines.append("## Buckets (pct_chg on signal day)")
+        lines.append("| bucket | n | mean_gap | win_rate_close | mean_close | hit_5d_15 |")
+        lines.append("|---:|---:|---:|---:|---:|---:|")
+        for label, bucket in sorted(pct_buckets.items()):
+            bucket = dict(bucket or {})
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        str(label),
+                        str(bucket.get("count") or 0),
+                        ret(bucket.get("mean_next_open_return")),
+                        pct(bucket.get("win_rate_next_close")),
+                        ret(bucket.get("mean_next_close_return")),
+                        pct(bucket.get("hit_rate_5d_15")),
+                    ]
+                )
+                + " |"
+            )
 
     lines.append("")
 

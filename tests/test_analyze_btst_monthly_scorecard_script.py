@@ -19,7 +19,16 @@ def test_analyze_btst_monthly_scorecard_aggregates_high_confidence(monkeypatch, 
             {
                 "trade_date": "20260528",
                 "next_date": "20260529",
-                "high_confidence": [{"ticker": "002222", "name": "TESTA", "score": 0.8}],
+                "high_confidence": [
+                    {
+                        "ticker": "002222",
+                        "name": "TESTA",
+                        "score": 0.8,
+                        "pct_chg": 12.0,
+                        "close_strength": 1.0,
+                        "catalyst_freshness": 1.0,
+                    }
+                ],
             },
             ensure_ascii=False,
         )
@@ -32,7 +41,16 @@ def test_analyze_btst_monthly_scorecard_aggregates_high_confidence(monkeypatch, 
             {
                 "trade_date": "20260529",
                 "next_date": "20260530",
-                "high_confidence": [{"ticker": "300054", "name": "TESTB", "score": 0.7}],
+                "high_confidence": [
+                    {
+                        "ticker": "300054",
+                        "name": "TESTB",
+                        "score": 0.7,
+                        "pct_chg": 3.0,
+                        "close_strength": 1.0,
+                        "catalyst_freshness": 1.0,
+                    }
+                ],
             },
             ensure_ascii=False,
         )
@@ -86,6 +104,10 @@ def test_analyze_btst_monthly_scorecard_aggregates_high_confidence(monkeypatch, 
     assert segments["negative"]["win_rate_next_close"] == 0.0
     assert segments["non_negative"]["count"] == 1
     assert segments["non_negative"]["win_rate_next_close"] == 1.0
+
+    pct_buckets = analysis["overall"]["pct_chg_buckets"]
+    assert pct_buckets["pct<=5"]["count"] == 1
+    assert pct_buckets["10<pct<=20"]["count"] == 1
 
     md = render_btst_monthly_scorecard_markdown(analysis)
     assert "BTST Monthly Scorecard 202605" in md
