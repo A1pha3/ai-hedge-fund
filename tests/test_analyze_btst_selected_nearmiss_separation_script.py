@@ -27,7 +27,7 @@ def _selection_target(ticker: str, decision: str, gate: str) -> dict:
 
 
 class TestAnalyzeBtstSelectedNearmissSeparation:
-    def test_analysis_returns_required_shape_and_recommendation(self, tmp_path: Path) -> None:
+    def test_analysis_returns_required_shape_and_recommendation(self, monkeypatch, tmp_path: Path) -> None:
         report_dir = tmp_path / "paper_trading_window_sample"
         _write_json(
             report_dir / "selection_artifacts" / "2026-04-22" / "selection_snapshot.json",
@@ -41,6 +41,20 @@ class TestAnalyzeBtstSelectedNearmissSeparation:
             },
         )
 
+        def fake_generate_realized_prices(*, signal_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
+            assert signal_date == "2026-04-22"
+            assert sorted(tickers) == ["000001", "000002", "000003"]
+            return {
+                "000001": {"data_status": "ok", "next_open_return": -0.005, "next_close_return": 0.01, "max_high_t1_t5_from_open": 0.16},
+                "000002": {"data_status": "ok", "next_open_return": 0.002, "next_close_return": -0.01, "max_high_t1_t5_from_open": 0.10},
+                "000003": {"data_status": "ok", "next_open_return": 0.001, "next_close_return": 0.02, "max_high_t1_t5_from_open": 0.20},
+            }
+
+        monkeypatch.setattr(
+            "scripts.analyze_btst_selected_nearmiss_separation.generate_realized_prices",
+            fake_generate_realized_prices,
+        )
+
         result = analyze_btst_selected_nearmiss_separation(report_dir)
 
         assert result["report_type"] == "p4_btst_selected_nearmiss_separation"
@@ -50,8 +64,11 @@ class TestAnalyzeBtstSelectedNearmissSeparation:
         assert result["decision_gate_counts"]["selected"] == {"normal_trade": 1}
         assert result["decision_gate_counts"]["near_miss"] == {"normal_trade": 1, "shadow_only": 1}
         assert result["recommendation"] in {"go", "shadow_only", "rollback"}
+        assert "decision_outcomes" in result
+        assert result["decision_outcomes"]["selected"]["hit_rate_5d_15"] == 1.0
+        assert result["decision_outcomes"]["near_miss"]["hit_rate_5d_15"] == 0.5
 
-    def test_script_writes_required_json_and_markdown_outputs(self, tmp_path: Path) -> None:
+    def test_script_writes_required_json_and_markdown_outputs(self, monkeypatch, tmp_path: Path) -> None:
         report_dir = tmp_path / "paper_trading_window_sample"
         output_dir = tmp_path / "reports"
         _write_json(
@@ -63,6 +80,19 @@ class TestAnalyzeBtstSelectedNearmissSeparation:
                     "000002": _selection_target("000002", "near_miss", "shadow_only"),
                 },
             },
+        )
+
+        def fake_generate_realized_prices(*, signal_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
+            assert signal_date == "2026-04-22"
+            assert sorted(tickers) == ["000001", "000002"]
+            return {
+                "000001": {"data_status": "ok", "next_open_return": 0.0, "next_close_return": 0.01, "max_high_t1_t5_from_open": 0.15},
+                "000002": {"data_status": "ok", "next_open_return": 0.0, "next_close_return": -0.01, "max_high_t1_t5_from_open": 0.10},
+            }
+
+        monkeypatch.setattr(
+            "scripts.analyze_btst_selected_nearmiss_separation.generate_realized_prices",
+            fake_generate_realized_prices,
         )
 
         main([str(report_dir), "--output-dir", str(output_dir)])

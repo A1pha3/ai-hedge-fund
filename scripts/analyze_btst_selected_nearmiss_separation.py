@@ -8,6 +8,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from scripts.generate_btst_realized_prices import generate_realized_prices
+
 _DEFAULT_REPORT_DIR = Path("data/p4_prior_shrinkage_eval_sample")
 _OUTPUT_DIR = Path("data/reports")
 
@@ -33,31 +35,112 @@ def _recommendation(*, selected_count: int, near_miss_count: int, gate_counts: d
     return "rollback"
 
 
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _outcome_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    ok = [row for row in rows if row.get("data_status") == "ok"]
+    close_returns = [float(row["next_close_return"]) for row in ok if _as_float(row.get("next_close_return")) is not None]
+    open_returns = [float(row["next_open_return"]) for row in ok if _as_float(row.get("next_open_return")) is not None]
+    max_high = [
+        float(row["max_high_t1_t5_from_open"]) for row in ok if _as_float(row.get("max_high_t1_t5_from_open")) is not None
+    ]
+
+    win_rate_close = None
+    if close_returns:
+        win_rate_close = float(sum(1.0 for r in close_returns if r > 0) / len(close_returns))
+
+    hit_rate_5d_15 = None
+    if max_high:
+        hit_rate_5d_15 = float(sum(1.0 for r in max_high if r >= 0.15) / len(max_high))
+
+    mean_next_close_return = float(sum(close_returns) / len(close_returns)) if close_returns else None
+    mean_next_open_return = float(sum(open_returns) / len(open_returns)) if open_returns else None
+
+    return {
+        "count": int(len(rows)),
+        "ok_count": int(len(ok)),
+        "missing_count": int(len(rows) - len(ok)),
+        "win_rate_next_close": win_rate_close,
+        "mean_next_open_return": mean_next_open_return,
+        "mean_next_close_return": mean_next_close_return,
+        "hit_rate_5d_15": hit_rate_5d_15,
+    }
+
+
 def analyze_btst_selected_nearmiss_separation(input_path: Path) -> dict[str, Any]:
     snapshot_paths = _iter_selection_snapshot_paths(input_path)
     decision_counts: dict[str, int] = {}
     gate_counts: dict[str, int] = {}
     decision_gate_counts: dict[str, dict[str, int]] = {}
 
+    outcomes_by_decision: dict[str, list[dict[str, Any]]] = {"selected": [], "near_miss": []}
+
     for snapshot_path in snapshot_paths:
         try:
             snapshot = _load_json(snapshot_path)
         except Exception:
             continue
-        for ticker, payload in dict(snapshot.get("selection_targets") or {}).items():
+
+        trade_date = str(snapshot.get("trade_date") or "").strip()
+        if not trade_date:
+            # try infer from nested targets (synthetic fixtures include it per-row)
+            sample_target = next(iter(dict(snapshot.get("selection_targets") or {}).values()), {})
+            trade_date = str(dict(sample_target or {}).get("trade_date") or "").strip()
+
+        selection_targets = dict(snapshot.get("selection_targets") or {})
+        decisions: dict[str, str] = {}
+        gates: dict[str, str] = {}
+        for ticker, payload in selection_targets.items():
             target = dict(payload or {})
             short_trade = dict(target.get("short_trade") or {})
             decision = str(short_trade.get("decision") or "rejected")
             if decision not in {"selected", "near_miss"}:
                 continue
+            ticker_str = str(ticker or target.get("ticker") or "").strip()
+            if not ticker_str:
+                continue
             gate = str(target.get("btst_regime_gate") or short_trade.get("btst_regime_gate") or "unknown")
+            decisions[ticker_str] = decision
+            gates[ticker_str] = gate
+
             decision_counts[decision] = int(decision_counts.get(decision) or 0) + 1
             gate_counts[gate] = int(gate_counts.get(gate) or 0) + 1
             gate_counter = decision_gate_counts.setdefault(decision, {})
             gate_counter[gate] = int(gate_counter.get(gate) or 0) + 1
 
+        if not decisions or not trade_date:
+            continue
+
+        try:
+            realized = generate_realized_prices(signal_date=trade_date, tickers=sorted(decisions))
+        except Exception:
+            realized = {}
+        for ticker_str in sorted(decisions):
+            decision = decisions[ticker_str]
+            realized_row = dict(realized.get(ticker_str) or {"data_status": "realized_unavailable"})
+            realized_row["ticker"] = ticker_str
+            realized_row["trade_date"] = trade_date
+            realized_row["decision"] = decision
+            realized_row["btst_regime_gate"] = gates.get(ticker_str) or "unknown"
+            outcomes_by_decision.setdefault(decision, []).append(realized_row)
+
     selected_count = int(decision_counts.get("selected") or 0)
     near_miss_count = int(decision_counts.get("near_miss") or 0)
+
+    decision_outcome_summaries = {
+        decision: _outcome_summary(rows) for decision, rows in outcomes_by_decision.items() if rows is not None
+    }
+
+    selected_summary = dict(decision_outcome_summaries.get("selected") or {})
+    near_miss_summary = dict(decision_outcome_summaries.get("near_miss") or {})
+
     return {
         "report_type": "p4_btst_selected_nearmiss_separation",
         "generated_on": str(date.today()),
@@ -71,10 +154,33 @@ def analyze_btst_selected_nearmiss_separation(input_path: Path) -> dict[str, Any
             near_miss_count=near_miss_count,
             gate_counts=gate_counts,
         ),
+        "decision_outcomes": decision_outcome_summaries,
+        "selected_vs_near_miss_delta": {
+            "win_rate_next_close": (
+                None
+                if selected_summary.get("win_rate_next_close") is None or near_miss_summary.get("win_rate_next_close") is None
+                else float(selected_summary["win_rate_next_close"]) - float(near_miss_summary["win_rate_next_close"])
+            ),
+            "hit_rate_5d_15": (
+                None
+                if selected_summary.get("hit_rate_5d_15") is None or near_miss_summary.get("hit_rate_5d_15") is None
+                else float(selected_summary["hit_rate_5d_15"]) - float(near_miss_summary["hit_rate_5d_15"])
+            ),
+        },
     }
 
 
 def _render_markdown(analysis: dict[str, Any]) -> str:
+    def pct(value: Any) -> str:
+        if value is None:
+            return "n/a"
+        return f"{float(value) * 100:.1f}%"
+
+    def ret(value: Any) -> str:
+        if value is None:
+            return "n/a"
+        return f"{float(value) * 100:+.2f}%"
+
     lines = [
         "# Selected vs Near Miss Separation",
         "",
@@ -87,13 +193,42 @@ def _render_markdown(analysis: dict[str, Any]) -> str:
         f"- selected: {dict(analysis.get('decision_counts') or {}).get('selected', 0)}",
         f"- near_miss: {dict(analysis.get('decision_counts') or {}).get('near_miss', 0)}",
         "",
-        "## Gate Counts",
-        "",
-        f"- gate_counts: {analysis.get('gate_counts', {})}",
-        "",
-        "## Decision by Gate",
+        "## Outcome Summary (realized; vs signal-day close)",
         "",
     ]
+
+    outcomes = dict(analysis.get("decision_outcomes") or {})
+    for decision in ("selected", "near_miss"):
+        summary = dict(outcomes.get(decision) or {})
+        if not summary:
+            lines.append(f"- {decision}: n/a")
+            continue
+        lines.append(
+            f"- {decision}: n={summary.get('count')}, ok={summary.get('ok_count')}, "
+            f"win_rate_close={pct(summary.get('win_rate_next_close'))}, "
+            f"mean_gap={ret(summary.get('mean_next_open_return'))}, "
+            f"mean_close={ret(summary.get('mean_next_close_return'))}, "
+            f"hit_5d_15={pct(summary.get('hit_rate_5d_15'))}"
+        )
+
+    delta = dict(analysis.get("selected_vs_near_miss_delta") or {})
+    if delta:
+        lines.append("")
+        lines.append(
+            f"- delta(selected - near_miss): win_rate_close={pct(delta.get('win_rate_next_close'))}, hit_5d_15={pct(delta.get('hit_rate_5d_15'))}"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Gate Counts",
+            "",
+            f"- gate_counts: {analysis.get('gate_counts', {})}",
+            "",
+            "## Decision by Gate",
+            "",
+        ]
+    )
     for decision, gate_counts in dict(analysis.get("decision_gate_counts") or {}).items():
         lines.append(f"- {decision}: {gate_counts}")
     return "\n".join(lines) + "\n"
