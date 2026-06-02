@@ -165,8 +165,17 @@ def _append_overview_markdown(lines: list[str], analysis: dict[str, Any]) -> Non
 
 def _append_surface_summary_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Surface Summary")
-    for label in ("all_surface", "tradeable_surface", "selected_surface", "near_miss_surface", "non_tradeable_surface"):
+    for label in (
+        "all_surface",
+        "tradeable_surface",
+        "selected_surface",
+        "near_miss_surface",
+        "non_tradeable_surface",
+        "payoff_review_surface",
+    ):
         summary = dict(analysis.get(label) or {})
+        if not summary:
+            continue
         lines.append(
             f"- {label}: closed_cycle_count={summary.get('closed_cycle_count')}, hit_rate={summary.get('max_future_high_return_2_5d_hit_rate_at_target')}, mean_max_return={summary.get('mean_max_future_high_return_2_5d')}, verdict={summary.get('verdict')}, objective_fit_score={summary.get('objective_fit_score')}"
         )
@@ -214,6 +223,45 @@ def render_btst_5d_15pct_objective_monitor_markdown(analysis: dict[str, Any]) ->
     return "\n".join(lines)
 
 
+def _read_json(path: str | Path) -> dict[str, Any]:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _resolve_existing_json_path(raw_path: Any, report_dir: Path) -> Path | None:
+    if not raw_path:
+        return None
+    candidate = Path(str(raw_path)).expanduser()
+    candidates = [candidate]
+    if not candidate.is_absolute():
+        candidates.append(report_dir / candidate)
+    for item in candidates:
+        if item.exists():
+            return item.resolve()
+    return None
+
+
+def _load_btst_brief(report_dir: Path) -> dict[str, Any]:
+    session_summary_path = report_dir / "session_summary.json"
+    candidates: list[Path] = [report_dir / "btst_next_day_trade_brief_latest.json"]
+    if session_summary_path.exists():
+        try:
+            session_summary = _read_json(session_summary_path)
+        except (OSError, json.JSONDecodeError):
+            session_summary = {}
+        brief_path = _resolve_existing_json_path(dict(session_summary.get("btst_followup") or {}).get("brief_json"), report_dir)
+        if brief_path is not None:
+            candidates.insert(0, brief_path)
+
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            return dict(_read_json(candidate))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return {}
+
+
 def analyze_btst_5d_15pct_objective_monitor(
     reports_root: str | Path,
     *,
@@ -226,6 +274,7 @@ def analyze_btst_5d_15pct_objective_monitor(
     report_dirs = discover_report_dirs([resolved_reports_root], report_name_contains=report_name_contains)
     price_cache: dict[tuple[str, str], Any] = {}
     rows: list[dict[str, Any]] = []
+    payoff_review_rows: list[dict[str, Any]] = []
 
     for report_dir in report_dirs:
         for snapshot in _iter_selection_snapshots(report_dir) or []:
@@ -245,6 +294,29 @@ def analyze_btst_5d_15pct_objective_monitor(
                         "candidate_source": candidate_source,
                         "score_target": _round_or_none(_safe_float(short_trade.get("score_target"))),
                         "preferred_entry_mode": short_trade.get("preferred_entry_mode"),
+                        **price_outcome,
+                    }
+                )
+
+        brief = _load_btst_brief(report_dir)
+        payoff_entries = list(brief.get("payoff_review_entries") or [])
+        if payoff_entries:
+            trade_date = _normalize_trade_date(brief.get("trade_date"))
+            for entry in payoff_entries:
+                entry_row = dict(entry or {})
+                ticker = str(entry_row.get("ticker") or "").strip()
+                if not ticker:
+                    continue
+                price_outcome = _extract_btst_price_outcome(ticker, trade_date, price_cache)
+                payoff_review_rows.append(
+                    {
+                        "report_dir_name": report_dir.name,
+                        "trade_date": trade_date,
+                        "ticker": ticker,
+                        "decision": str(entry_row.get("decision") or "unknown"),
+                        "candidate_source": str(entry_row.get("candidate_source") or "unknown"),
+                        "score_target": _round_or_none(_safe_float(entry_row.get("score_target"))),
+                        "payoff_review_lane_score": _round_or_none(_safe_float(entry_row.get("payoff_review_lane_score"))),
                         **price_outcome,
                     }
                 )
@@ -290,11 +362,13 @@ def analyze_btst_5d_15pct_objective_monitor(
         "selected_surface": _surface_summary(selected_rows, objective_hit_rate_target=objective_hit_rate_target, return_target=max_future_high_return_target),
         "near_miss_surface": _surface_summary(near_miss_rows, objective_hit_rate_target=objective_hit_rate_target, return_target=max_future_high_return_target),
         "non_tradeable_surface": _surface_summary(non_tradeable_rows, objective_hit_rate_target=objective_hit_rate_target, return_target=max_future_high_return_target),
+        "payoff_review_surface": _surface_summary(payoff_review_rows, objective_hit_rate_target=objective_hit_rate_target, return_target=max_future_high_return_target),
         "decision_leaderboard": _group_leaderboard(rows, group_key="decision", objective_hit_rate_target=objective_hit_rate_target, return_target=max_future_high_return_target, min_closed_cycle_count=leaderboard_min_closed_cycle_count)[:6],
         "candidate_source_leaderboard": _group_leaderboard(rows, group_key="candidate_source", objective_hit_rate_target=objective_hit_rate_target, return_target=max_future_high_return_target, min_closed_cycle_count=leaderboard_min_closed_cycle_count)[:8],
         "ticker_leaderboard": _group_leaderboard(rows, group_key="ticker", objective_hit_rate_target=objective_hit_rate_target, return_target=max_future_high_return_target, min_closed_cycle_count=leaderboard_min_closed_cycle_count)[:8],
         "strict_goal_rows": strict_goal_rows[:10],
         "false_negative_strict_goal_rows": false_negative_strict_goal_rows[:10],
+        "payoff_review_rows": payoff_review_rows[:10],
     }
     analysis["recommendation"] = _recommendation(
         tradeable_surface=dict(analysis.get("tradeable_surface") or {}),

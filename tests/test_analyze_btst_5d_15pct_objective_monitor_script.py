@@ -35,6 +35,28 @@ def test_analyze_btst_5d_15pct_objective_monitor_ranks_tradeable_and_false_negat
             },
         },
     )
+
+    (window_a / "btst_next_day_trade_brief_latest.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-24",
+                "next_trade_date": "2026-03-25",
+                "selection_target": "short_trade_only",
+                "payoff_review_entries": [
+                    {
+                        "ticker": "300383",
+                        "decision": "near_miss",
+                        "candidate_source": "short_trade_boundary",
+                        "payoff_review_lane_score": 0.5,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     _write_snapshot(
         window_b,
         "2026-03-27",
@@ -85,6 +107,8 @@ def test_analyze_btst_5d_15pct_objective_monitor_ranks_tradeable_and_false_negat
     assert analysis["tradeable_surface"]["closed_cycle_count"] == 2
     assert analysis["tradeable_surface"]["max_future_high_return_2_5d_hit_rate_at_target"] == 1.0
     assert analysis["tradeable_surface"]["verdict"] == "meets_strict_btst_objective"
+    assert analysis["payoff_review_surface"]["closed_cycle_count"] == 1
+    assert analysis["payoff_review_surface"]["max_future_high_return_2_5d_hit_rate_at_target"] == 1.0
     assert analysis["decision_leaderboard"][0]["group_label"] in {"selected", "near_miss"}
     assert analysis["ticker_leaderboard"][0]["group_label"] == "001309"
     assert analysis["strict_goal_rows"][0]["ticker"] in {"001309", "300383"}
