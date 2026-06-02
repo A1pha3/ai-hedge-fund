@@ -74,13 +74,28 @@ def _outcome_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def analyze_btst_selected_nearmiss_separation(input_path: Path) -> dict[str, Any]:
+def _compact_date(value: str) -> str:
+    token = str(value or "").strip()
+    if len(token) == 10 and token[4] == "-" and token[7] == "-":
+        return token.replace("-", "")
+    return token
+
+
+def analyze_btst_selected_nearmiss_separation(
+    input_path: Path,
+    *,
+    month: str | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
     snapshot_paths = _iter_selection_snapshot_paths(input_path)
     decision_counts: dict[str, int] = {}
     gate_counts: dict[str, int] = {}
     decision_gate_counts: dict[str, dict[str, int]] = {}
 
     outcomes_by_decision: dict[str, list[dict[str, Any]]] = {"selected": [], "near_miss": []}
+
+    used_snapshots = 0
+    month_token = str(month or "").strip()
 
     for snapshot_path in snapshot_paths:
         try:
@@ -93,6 +108,10 @@ def analyze_btst_selected_nearmiss_separation(input_path: Path) -> dict[str, Any
             # try infer from nested targets (synthetic fixtures include it per-row)
             sample_target = next(iter(dict(snapshot.get("selection_targets") or {}).values()), {})
             trade_date = str(dict(sample_target or {}).get("trade_date") or "").strip()
+
+        compact_trade_date = _compact_date(trade_date)
+        if month_token and not compact_trade_date.startswith(month_token):
+            continue
 
         selection_targets = dict(snapshot.get("selection_targets") or {})
         decisions: dict[str, str] = {}
@@ -117,6 +136,10 @@ def analyze_btst_selected_nearmiss_separation(input_path: Path) -> dict[str, Any
 
         if not decisions or not trade_date:
             continue
+
+        used_snapshots += 1
+        if limit is not None and used_snapshots > int(limit):
+            break
 
         try:
             realized = generate_realized_prices(signal_date=trade_date, tickers=sorted(decisions))
@@ -144,7 +167,9 @@ def analyze_btst_selected_nearmiss_separation(input_path: Path) -> dict[str, Any
     return {
         "report_type": "p4_btst_selected_nearmiss_separation",
         "generated_on": str(date.today()),
-        "snapshot_count": len(snapshot_paths),
+        "snapshot_count": used_snapshots,
+        "snapshot_count_total": len(snapshot_paths),
+        "month_filter": month_token or None,
         "decision_counts": decision_counts,
         "gate_counts": gate_counts,
         "decision_gate_counts": decision_gate_counts,
@@ -236,11 +261,20 @@ def _render_markdown(analysis: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("report_dir", nargs="?", default=str(_DEFAULT_REPORT_DIR), help="Directory containing selection_artifacts/ sub-tree")
+    parser.add_argument(
+        "report_dir",
+        nargs="?",
+        default=str(_DEFAULT_REPORT_DIR),
+        help="Directory containing selection_artifacts/ sub-tree (or data/reports root)",
+    )
     parser.add_argument("--output-dir", default=str(_OUTPUT_DIR), help="Directory to write reports")
+    parser.add_argument("--month", default="", help="Optional YYYYMM filter (e.g. 202605)")
+    parser.add_argument("--limit", type=int, default=0, help="Optional max snapshots to analyze (0=unlimited)")
     args = parser.parse_args(argv)
 
-    analysis = analyze_btst_selected_nearmiss_separation(Path(args.report_dir))
+    limit = None if int(args.limit) <= 0 else int(args.limit)
+    month = str(args.month).strip() or None
+    analysis = analyze_btst_selected_nearmiss_separation(Path(args.report_dir), month=month, limit=limit)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
