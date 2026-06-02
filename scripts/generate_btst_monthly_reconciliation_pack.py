@@ -22,6 +22,10 @@ from scripts.analyze_btst_monthly_zero_pick_promotion_counterfactual import (
     analyze_btst_monthly_zero_pick_promotion_counterfactual,
     render_btst_monthly_zero_pick_promotion_counterfactual_markdown,
 )
+from scripts.analyze_btst_monthly_execution_blockers import (
+    analyze_btst_monthly_execution_blockers,
+    render_btst_monthly_execution_blockers_markdown,
+)
 from scripts.audit_btst_outputs_month import audit_btst_outputs_month
 
 
@@ -55,6 +59,7 @@ def generate_btst_monthly_reconciliation_pack(
     - execution health (why picks are empty / blocked)
     - near-miss gate breakdown (which gates are suppressing promotion)
     - zero-pick promotion counterfactual (what if we promote a subset of near-miss on empty days)
+    - execution blockers (which p2/p3/p5/p6 flags are removing formal execution-ready entries)
 
     Returns a mapping of artifact names -> absolute file paths.
     """
@@ -98,6 +103,12 @@ def generate_btst_monthly_reconciliation_pack(
     )
     counterfactual_md = render_btst_monthly_zero_pick_promotion_counterfactual_markdown(counterfactual)
 
+    blockers = analyze_btst_monthly_execution_blockers(
+        month=month,
+        reports_dir=reports_dir,
+    )
+    blockers_md = render_btst_monthly_execution_blockers_markdown(blockers)
+
     paths: dict[str, Path] = {
         "outputs_audit_json": out_root / f"outputs_audit_{month}.json",
         "rule_scorecard_json": out_root / f"btst_monthly_scorecard_{month}_top{top_n}.json",
@@ -110,6 +121,8 @@ def generate_btst_monthly_reconciliation_pack(
         "near_miss_gate_breakdown_md": out_root / f"btst_monthly_near_miss_gate_breakdown_{month}.md",
         "zero_pick_promotion_counterfactual_json": out_root / f"btst_monthly_zero_pick_promotion_counterfactual_{month}.json",
         "zero_pick_promotion_counterfactual_md": out_root / f"btst_monthly_zero_pick_promotion_counterfactual_{month}.md",
+        "execution_blockers_json": out_root / f"btst_monthly_execution_blockers_{month}.json",
+        "execution_blockers_md": out_root / f"btst_monthly_execution_blockers_{month}.md",
     }
 
     _write_json(paths["outputs_audit_json"], audit)
@@ -123,6 +136,8 @@ def generate_btst_monthly_reconciliation_pack(
     _write_text(paths["near_miss_gate_breakdown_md"], near_miss_md)
     _write_json(paths["zero_pick_promotion_counterfactual_json"], counterfactual)
     _write_text(paths["zero_pick_promotion_counterfactual_md"], counterfactual_md)
+    _write_json(paths["execution_blockers_json"], blockers)
+    _write_text(paths["execution_blockers_md"], blockers_md)
 
     return {name: str(path) for name, path in paths.items()}
 
