@@ -3364,16 +3364,20 @@ def test_generate_btst_next_day_trade_brief_prunes_mixed_boundary_opportunity_po
 
 
 def test_infer_next_trade_date_uses_earliest_open_calendar_date(monkeypatch):
-    monkeypatch.setattr("src.paper_trading.btst_reporting_utils._get_pro", lambda: object())
+    from src.paper_trading import btst_trade_calendar as cal
+
+    def fake_resolve(signal_date: str, lookahead_days: int = 20):
+        return cal.NextTradeDateResolution(
+            signal_date_iso="2026-03-26",
+            signal_date_compact="20260326",
+            next_trade_date_iso="2026-03-27",
+            next_trade_date_compact="20260327",
+            calendar_source="tushare_trade_cal",
+        )
+
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting_utils._cached_tushare_dataframe_call",
-        lambda *args, **kwargs: pd.DataFrame(
-            [
-                {"cal_date": "20260409", "is_open": 1},
-                {"cal_date": "20260327", "is_open": 1},
-                {"cal_date": "20260408", "is_open": 1},
-            ]
-        ),
+        "src.paper_trading.btst_reporting_utils.btst_trade_calendar.resolve_next_trade_date_cn_sse_strict",
+        fake_resolve,
     )
 
     assert infer_next_trade_date("2026-03-26") == "2026-03-27"

@@ -6,7 +6,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
+from src.paper_trading import btst_trade_calendar
 
 # ---------------------------------------------------------------------------
 # Configuration constants (shared across BTST reporting modules)
@@ -181,46 +181,16 @@ def _compact_trade_date(value: str | None) -> str | None:
     return normalized.replace("-", "") if normalized else None
 
 
-def _fallback_next_weekday(trade_date: str | None) -> str | None:
-    normalized = _normalize_trade_date(trade_date)
-    if not normalized:
-        return None
-    cursor = datetime.strptime(normalized, "%Y-%m-%d") + timedelta(days=1)
-    while cursor.weekday() >= 5:
-        cursor += timedelta(days=1)
-    return cursor.strftime("%Y-%m-%d")
-
-
 def infer_next_trade_date(trade_date: str | None, lookahead_days: int = 14) -> str | None:
     normalized = _normalize_trade_date(trade_date)
     if not normalized:
         return None
 
-    pro = _get_pro()
-    if pro is None:
-        return _fallback_next_weekday(normalized)
-
-    start_date = (datetime.strptime(normalized, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y%m%d")
-    end_date = (datetime.strptime(normalized, "%Y-%m-%d") + timedelta(days=lookahead_days)).strftime("%Y%m%d")
-
-    try:
-        df = _cached_tushare_dataframe_call(
-            pro,
-            "trade_cal",
-            exchange="",
-            start_date=start_date,
-            end_date=end_date,
-            is_open=1,
-            fields="cal_date,is_open",
-        )
-    except Exception:
-        df = None
-
-    if df is not None and not df.empty:
-        candidate_dates = sorted(_normalize_trade_date(str(value)) for value in df["cal_date"].tolist())
-        if candidate_dates:
-            return candidate_dates[0]
-    return _fallback_next_weekday(normalized)
+    resolution = btst_trade_calendar.resolve_next_trade_date_cn_sse_strict(
+        normalized,
+        lookahead_days=max(int(lookahead_days or 0), 20),
+    )
+    return resolution.next_trade_date_iso
 
 
 def _resolve_followup_trade_dates(

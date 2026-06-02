@@ -23,26 +23,28 @@
 
 ## 输出目录规范
 
-### 观察期目录
+输出目录按“目标交易日 / 执行日（next_trade_date）”归档，并在目录名里编码 `signal_date`，避免周末/休市导致的两日期混淆。
+
+### 观察期目录（scheme_a）
 
 观察期统一输出到：
 
 ```text
-outputs/YYYYMM/YYYYMMDD_scheme_a/
+outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/
 ```
 
-例如：
+例如（signal_date=20260526 → next_trade_date=20260527）：
 
 ```text
-outputs/202605/20260527_scheme_a/
+outputs/202605/20260527_scheme_a_from_20260526/
 ```
 
-### 正式目录
+### 正式目录（非 scheme_a）
 
 只有观察期通过后，才切换到：
 
 ```text
-outputs/YYYYMM/YYYYMMDD/
+outputs/<next_yyyymm>/<next_yyyymmdd>_from_<signal_yyyymmdd>/
 ```
 
 ### 为什么必须分目录
@@ -93,18 +95,20 @@ uv run python scripts/run_btst_nightly_control_tower.py
 ```bash
 uv run python scripts/generate_btst_doc_bundle.py \
   --signal-date YYYYMMDD \
-  --output-dir outputs/YYYYMM/YYYYMMDD_scheme_a \
+  --scheme-a \
   --no-refresh-early-runner
 ```
 
-例如：
+例如（signal_date=20260526 → next_trade_date=20260527）：
 
 ```bash
 uv run python scripts/generate_btst_doc_bundle.py \
   --signal-date 20260526 \
-  --output-dir outputs/202605/20260527_scheme_a \
+  --scheme-a \
   --no-refresh-early-runner
 ```
+
+> 注：不传 `--output-dir` 时，脚本会用 SSE 交易日历严格推算 `next_trade_date`，并默认写到 `outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/`，同时落 `manifest.json` 记录两日期与 `calendar_source`。
 
 默认保留 `--no-refresh-early-runner`，因为刷新动作已经在前面单独执行。这样一来，问题更容易定位，连续多日也更稳定。
 
@@ -128,7 +132,7 @@ uv run python scripts/generate_btst_doc_bundle.py \
 ```bash
 uv run python scripts/generate_btst_doc_bundle.py \
   --signal-date YYYYMMDD \
-  --output-dir outputs/YYYYMM/YYYYMMDD_scheme_a \
+  --scheme-a \
   --no-refresh-early-runner \
   --core-only
 ```
@@ -233,7 +237,7 @@ uv run python scripts/validate_btst_early_runner_history.py \
 
 | 日期 | signal_date | output_dir | early_runner_status | latest_trade_date | 交集票 | only early-runner 票 | second-entry 票 | 是否手工修补 | 收盘后结论 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-05-27 | 20260526 | outputs/202605/20260527_scheme_a | stale_fallback | 2026-05-14 | [] | [] | [] | 否 | 仅作历史参考 | 首次方案 A 真实生成 |
+| 2026-05-27 | 20260526 | outputs/202605/20260527_scheme_a_from_20260526 | stale_fallback | 2026-05-14 | [] | [] | [] | 否 | 仅作历史参考 | 首次方案 A 真实生成 |
 
 这张表的用途不是留档好看，而是给后面的升级判断提供原始证据。
 
@@ -308,7 +312,7 @@ uv run python scripts/generate_btst_doc_bundle.py \
 这时只做两件事：
 
 1. 先修 early-runner 刷新与日期链路
-2. 继续保持输出目录为 `outputs/YYYYMM/YYYYMMDD_scheme_a/`
+2. 继续保持输出目录为 `outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/`
 
 ## 推荐日常节奏
 
@@ -324,4 +328,4 @@ uv run python scripts/generate_btst_doc_bundle.py \
 
 ## 一句话版本
 
-观察期里，统一把文档生成到 `outputs/YYYYMM/YYYYMMDD_scheme_a/`；先确保 daily artifact、daily tables、manifest、control tower 和文档包都稳定，再用连续 `10` 到 `15` 个交易日样本验证 `exact`、交集票高亮和手工修补率。只有当它已经稳定、省心、并开始对优先级判断有正面价值时，才切回正式目录 `outputs/YYYYMM/YYYYMMDD/`。
+观察期里，统一把文档生成到 `outputs/<next_yyyymm>/<next_yyyymmdd>_scheme_a_from_<signal_yyyymmdd>/`；先确保 daily artifact、daily tables、manifest、control tower 和文档包都稳定，再用连续 `10` 到 `15` 个交易日样本验证 `exact`、交集票高亮和手工修补率。只有当它已经稳定、省心、并开始对优先级判断有正面价值时，才切回正式目录 `outputs/<next_yyyymm>/<next_yyyymmdd>_from_<signal_yyyymmdd>/`。
