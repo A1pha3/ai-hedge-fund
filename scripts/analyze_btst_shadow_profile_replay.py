@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,67 @@ def _summarize_replayed_plans(plans: dict[str, Any], *, profile_name: str, profi
     }
 
 
+def _trade_date_selection_artifact_folder(trade_date: str) -> str:
+    raw = str(trade_date or "").strip()
+    if len(raw) == 8 and raw.isdigit():
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
+    return raw
+
+
+def _load_selection_target_replay_input(source_paths: list[Path], *, trade_date: str) -> Any | None:
+    date_folder = _trade_date_selection_artifact_folder(trade_date)
+    if not date_folder:
+        return None
+    for source_path in list(source_paths or []):
+        replay_path = source_path.parent / "selection_artifacts" / date_folder / "selection_target_replay_input.json"
+        if replay_path.is_file():
+            return json.loads(replay_path.read_text(encoding="utf-8"))
+    return None
+
+
+def _scan_ticker_candidate_source_hits(payload: Any, *, tickers: set[str]) -> dict[str, Any]:
+    if not tickers:
+        return {}
+
+    total_hits: dict[str, int] = {ticker: 0 for ticker in tickers}
+    source_counts: dict[str, dict[str, int]] = {ticker: defaultdict(int) for ticker in tickers}
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            ticker = obj.get("ticker")
+            if ticker is None:
+                ticker = obj.get("symbol")
+            ticker_str = str(ticker) if ticker is not None else ""
+            if ticker_str in tickers:
+                total_hits[ticker_str] = int(total_hits.get(ticker_str, 0)) + 1
+                candidate_source = str(obj.get("candidate_source") or "").strip()
+                if candidate_source:
+                    source_counts[ticker_str][candidate_source] += 1
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                walk(value)
+
+    walk(payload)
+
+    result: dict[str, Any] = {}
+    for ticker in sorted(tickers):
+        total = int(total_hits.get(ticker, 0))
+        if total <= 0:
+            continue
+        counts = dict(source_counts.get(ticker, {}))
+        result[ticker] = {
+            "total_hits": total,
+            "candidate_source_counts": {
+                key: int(value)
+                for key, value in sorted(counts.items(), key=lambda item: (-int(item[1]), str(item[0])))
+                if str(key).strip()
+            },
+        }
+    return result
+
+
 def _build_delta_summary(baseline: dict[str, Any], shadow: dict[str, Any]) -> dict[str, Any]:
     trade_dates = sorted(set(baseline["trade_dates"]) | set(shadow["trade_dates"]))
     buy_orders_removed_by_date: dict[str, list[str]] = {}
@@ -151,6 +213,20 @@ def render_btst_shadow_profile_replay_markdown(analysis: dict[str, Any]) -> str:
         lines.append(f"### {trade_date}")
         lines.append(f"- Removed buy orders: {', '.join(removed_buy_orders) if removed_buy_orders else 'none'}")
         lines.append(f"- Lost execution eligibility: {', '.join(lost_execution_eligibility) if lost_execution_eligibility else 'none'}")
+
+        delta = analysis.get("delta") or {}
+        removed_hits = dict(delta.get("removed_ticker_source_hits_by_date", {}).get(trade_date, {}) or {})
+        if removed_hits:
+            payload_source = str(dict(delta.get("removed_ticker_source_hits_payload_source_by_date", {}) or {}).get(trade_date, "unknown"))
+            lines.append(f"- Removed ticker candidate_source hits (source: {payload_source}):")
+            for ticker in sorted(removed_hits):
+                payload = dict(removed_hits.get(ticker) or {})
+                total = int(payload.get("total_hits") or 0)
+                counts = dict(payload.get("candidate_source_counts") or {})
+                layer_c_hits = int(counts.get("layer_c_watchlist") or 0)
+                top = ", ".join(f"{key}={value}" for key, value in list(counts.items())[:3])
+                lines.append(f"  - {ticker}: layer_c_watchlist {layer_c_hits}/{total}{('; top: ' + top) if top else ''}")
+
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -218,6 +294,34 @@ def analyze_btst_shadow_profile_replay(
         "shadow": shadow_summary,
         "delta": _build_delta_summary(baseline_summary, shadow_summary),
     }
+
+    removed_ticker_source_hits_by_date: dict[str, Any] = {}
+    removed_ticker_source_hits_payload_source_by_date: dict[str, str] = {}
+    for trade_date in analysis["trade_dates"]:
+        delta = dict(analysis.get("delta") or {})
+        removed_tickers = set(delta.get("buy_orders_removed_by_date", {}).get(trade_date, []) or [])
+        removed_tickers |= set(delta.get("execution_eligibility_lost_by_date", {}).get(trade_date, []) or [])
+        removed_tickers |= set(delta.get("selected_removed_by_date", {}).get(trade_date, []) or [])
+        if not removed_tickers:
+            continue
+
+        payload_source = "selection_target_replay_input"
+        attribution_payload = _load_selection_target_replay_input(source_paths, trade_date=trade_date)
+        if attribution_payload is None:
+            payload_source = "replayed_plan_payload"
+            fallback_plan = baseline_plans.get(trade_date) or shadow_plans.get(trade_date)
+            if fallback_plan is None:
+                continue
+            attribution_payload = fallback_plan.model_dump(mode="json")
+
+        hits = _scan_ticker_candidate_source_hits(attribution_payload, tickers=removed_tickers)
+        if hits:
+            removed_ticker_source_hits_by_date[trade_date] = hits
+            removed_ticker_source_hits_payload_source_by_date[trade_date] = payload_source
+
+    if removed_ticker_source_hits_by_date:
+        analysis["delta"]["removed_ticker_source_hits_by_date"] = removed_ticker_source_hits_by_date
+        analysis["delta"]["removed_ticker_source_hits_payload_source_by_date"] = removed_ticker_source_hits_payload_source_by_date
     if output_json_path is not None:
         json_path = Path(output_json_path)
         json_path.parent.mkdir(parents=True, exist_ok=True)

@@ -131,6 +131,43 @@ def _write_frozen_plan_source(tmp_path: Path, *, trade_date: str = "20260421", i
     return source_path
 
 
+def _write_selection_target_replay_input(tmp_path: Path, *, trade_date: str = "20260421") -> Path:
+    from src.research.artifacts import build_selection_target_replay_input
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    date_folder = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
+    artifact_dir = tmp_path / "selection_artifacts" / date_folder
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    replay_input_path = artifact_dir / "selection_target_replay_input.json"
+
+    frozen_plan = _build_frozen_plan(trade_date=trade_date)
+    replay_input = build_selection_target_replay_input(
+        plan=frozen_plan,
+        trade_date=trade_date,
+        run_id="test",
+        pipeline=None,
+        selected_analysts=None,
+        experiment_id=None,
+        market="CN",
+        artifact_version="v1",
+    )
+
+    payload = replay_input.model_dump(mode="json")
+    # Make sure the rebuilt selection_targets sees this as a strong candidate under the baseline profile.
+    for row in list(payload.get("watchlist") or []):
+        if str(row.get("ticker") or "").strip() == "300620":
+            row["score_b"] = 0.95
+            row["score_c"] = 0.95
+            row["score_final"] = 0.95
+            row["quality_score"] = 0.95
+
+    replay_input_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return replay_input_path
+
+
 def test_analyze_btst_shadow_profile_replay_compares_baseline_and_shadow_replay(tmp_path: Path) -> None:
     source_path = _write_frozen_plan_source(tmp_path)
     output_json = tmp_path / "shadow_profile_replay.json"
@@ -241,3 +278,18 @@ def test_analyze_btst_shadow_profile_replay_accepts_weekly_validation_json(tmp_p
 
     assert analysis["frozen_plan_source"] == [str(source_a.resolve()), str(source_b.resolve())]
     assert analysis["trade_dates"] == ["20260421", "20260422"]
+
+
+def test_analyze_btst_shadow_profile_replay_adds_removed_ticker_source_attribution_when_selection_artifacts_present(tmp_path: Path) -> None:
+    source_path = _write_frozen_plan_source(tmp_path, trade_date="20260421")
+
+    analysis = shadow_profile_replay.analyze_btst_shadow_profile_replay(
+        frozen_plan_source=source_path,
+        baseline_profile="btst_precision_v2",
+        shadow_profile="btst_precision_v2_layer_c_watchlist_shadow",
+    )
+
+    hits_by_date = analysis["delta"].get("removed_ticker_source_hits_by_date") or {}
+    hits = hits_by_date.get("20260421") or {}
+    assert hits["300620"]["candidate_source_counts"]["layer_c_watchlist"] >= 1
+    assert hits["300620"]["total_hits"] >= 1
