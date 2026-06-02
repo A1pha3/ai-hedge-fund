@@ -75,6 +75,57 @@ def _iter_month_reports(*, reports_dir: Path, month: str) -> list[Path]:
     return [path for path in candidates if path.is_file()]
 
 
+def _iter_daily_events_candidates(*, daily_events_root: Path, trade_date: str) -> list[Path]:
+    token = str(trade_date or "").strip()
+    if not token:
+        return []
+
+    # Prefer the canonical live plan folder (trade_date == signal_date).
+    preferred = sorted(
+        daily_events_root.glob(f"paper_trading_{token}_{token}_live_*_plan/daily_events.jsonl")
+    )
+    if preferred:
+        return [path for path in preferred if path.is_file()]
+
+    # Fallback: any plan folder for that trade_date.
+    fallback = sorted(daily_events_root.glob(f"paper_trading_{token}_*_plan/daily_events.jsonl"))
+    return [path for path in fallback if path.is_file()]
+
+
+def _extract_regime_gate_level_from_daily_events(daily_events_path: Path, *, trade_date: str) -> str | None:
+    try:
+        lines = daily_events_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    token = str(trade_date or "").strip()
+    for line in lines:
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if token and str(payload.get("trade_date") or "").strip() not in ("", token):
+            continue
+        plan = payload.get("current_plan") or {}
+        market_state = plan.get("market_state") or {}
+        level = str(market_state.get("regime_gate_level") or "").strip()
+        if level:
+            return level
+    return None
+
+
+def _resolve_regime_gate_level(*, daily_events_root: Path, trade_date: str) -> str | None:
+    candidates = _iter_daily_events_candidates(daily_events_root=daily_events_root, trade_date=trade_date)
+    for path in candidates:
+        level = _extract_regime_gate_level_from_daily_events(path, trade_date=trade_date)
+        if level:
+            return level
+    return None
+
+
 @dataclass
 class DailyScorecard:
     trade_date: str
@@ -235,9 +286,13 @@ def analyze_btst_monthly_scorecard(
     reports_dir: str | Path = "data/reports",
     top_n: int = 5,
     gap_cutoffs: list[float] | None = None,
+    daily_events_root: str | Path | None = None,
 ) -> dict[str, Any]:
     root = Path(reports_dir).expanduser().resolve()
     report_paths = _iter_month_reports(reports_dir=root, month=month)
+
+    daily_events_root_path = Path(daily_events_root).expanduser().resolve() if daily_events_root else None
+    regime_gate_by_trade_date: dict[str, str] = {}
 
     daily_rows: list[dict[str, Any]] = []
     ticker_rows: list[dict[str, Any]] = []
@@ -247,6 +302,16 @@ def analyze_btst_monthly_scorecard(
         trade_date = str(report.get("trade_date") or "").strip()
         next_date = str(report.get("next_date") or "").strip() or None
         picks = _extract_high_confidence(report, top_n=top_n)
+
+        regime_gate_level: str | None = None
+        if daily_events_root_path is not None and trade_date:
+            cached = regime_gate_by_trade_date.get(trade_date)
+            if cached is None:
+                resolved = _resolve_regime_gate_level(daily_events_root=daily_events_root_path, trade_date=trade_date)
+                regime_gate_level = resolved or "unknown"
+                regime_gate_by_trade_date[trade_date] = regime_gate_level
+            else:
+                regime_gate_level = cached
 
         tickers = [str(entry.get("ticker") or "").strip() for entry in picks if str(entry.get("ticker") or "").strip()]
         realized = generate_realized_prices(signal_date=trade_date, tickers=tickers) if tickers else {}
@@ -265,6 +330,8 @@ def analyze_btst_monthly_scorecard(
             realized_row["catalyst_freshness"] = entry.get("catalyst_freshness")
             realized_row["trade_date"] = trade_date
             realized_row["next_date"] = next_date
+            if regime_gate_level is not None:
+                realized_row["regime_gate_level"] = regime_gate_level
             outcomes.append(realized_row)
             ticker_rows.append(realized_row)
 
@@ -291,6 +358,18 @@ def analyze_btst_monthly_scorecard(
         pct = _as_float(row.get("pct_chg"))
         label = _pct_chg_bucket(pct)
         pct_buckets.setdefault(label, []).append(row)
+
+    regime_buckets: dict[str, list[dict[str, Any]]] = {}
+    if daily_events_root_path is not None:
+        for row in ok_all:
+            label = str(row.get("regime_gate_level") or "unknown").strip() or "unknown"
+            regime_buckets.setdefault(label, []).append(row)
+
+    regime_day_counts: dict[str, int] = {}
+    if daily_events_root_path is not None:
+        for level in regime_gate_by_trade_date.values():
+            token = str(level or "unknown").strip() or "unknown"
+            regime_day_counts[token] = int(regime_day_counts.get(token, 0)) + 1
 
     resolved_gap_cutoffs = gap_cutoffs
     if resolved_gap_cutoffs is None:
@@ -323,6 +402,11 @@ def analyze_btst_monthly_scorecard(
         "gap_overlay_cutoffs": list(resolved_gap_cutoffs),
         "gap_overlay_counterfactual": _gap_overlay_counterfactual(ok_all, resolved_gap_cutoffs),
         "pct_chg_buckets": {label: _segment_summary(rows) for label, rows in pct_buckets.items()},
+        "regime_gate_day_counts": dict(regime_day_counts),
+        "regime_gate_buckets": {label: _segment_summary(rows) for label, rows in sorted(regime_buckets.items())},
+        "regime_gate_gap_overlay_counterfactual": {
+            label: _gap_overlay_counterfactual(rows, resolved_gap_cutoffs) for label, rows in sorted(regime_buckets.items())
+        },
     }
 
     return {
@@ -422,6 +506,31 @@ def render_btst_monthly_scorecard_markdown(analysis: dict[str, Any]) -> str:
                 + " |"
             )
 
+    regime_buckets = dict(overall.get("regime_gate_buckets") or {})
+    if regime_buckets:
+        lines.append("")
+        lines.append("## Regime buckets (from daily_events market_state.regime_gate_level)")
+        lines.append("| regime | n | negative_gap_rate | win_rate_close | mean_close | hit_5d_15 |")
+        lines.append("|---:|---:|---:|---:|---:|---:|")
+        for label, bucket in sorted(regime_buckets.items()):
+            bucket = dict(bucket or {})
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        str(label),
+                        str(bucket.get("count") or 0),
+                        pct(bucket.get("negative_gap_rate")),
+                        pct(bucket.get("win_rate_next_close")),
+                        ret(bucket.get("mean_next_close_return")),
+                        pct(bucket.get("hit_rate_5d_15")),
+                    ]
+                )
+                + " |"
+            )
+        lines.append("")
+        lines.append("Notes: regime buckets are only available when --daily-events-root is provided.")
+
     lines.append("")
 
     lines.append("## Daily breakdown")
@@ -461,6 +570,11 @@ def _parse_args() -> argparse.Namespace:
         default="-1.0%,-0.5%,-0.3%,0%",
         help="Comma-separated gap cutoffs for counterfactual overlay. Keep sample if next_open_return >= cutoff. Supports fraction (-0.005) or percent (-0.5%%).",
     )
+    parser.add_argument(
+        "--daily-events-root",
+        default="",
+        help="Optional: data/reports root containing paper_trading_*_plan/daily_events.jsonl for regime_gate_level bucketing.",
+    )
     parser.add_argument("--output-json", default="")
     parser.add_argument("--output-md", default="")
     return parser.parse_args()
@@ -473,6 +587,7 @@ def main() -> None:
         reports_dir=args.reports_dir,
         top_n=int(args.top_n),
         gap_cutoffs=_parse_gap_cutoffs(args.gap_cutoffs),
+        daily_events_root=str(args.daily_events_root).strip() or None,
     )
 
     if args.output_json:
