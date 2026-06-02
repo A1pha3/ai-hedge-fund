@@ -105,19 +105,15 @@ def _daily_metrics(outcomes: list[dict[str, Any]]) -> DailyScorecard:
         for row in ok
         if row.get("max_high_t1_t5_from_open") is not None and float(row["max_high_t1_t5_from_open"]) >= 0.15
     ]
-    eligible_hits = [
-        1.0 if row.get("max_high_t1_t5_from_open") is not None else None
-        for row in ok
-    ]
+    eligible_hits = [1.0 for row in ok if row.get("max_high_t1_t5_from_open") is not None]
 
     win_rate = None
     if close_returns:
         win_rate = float(sum(1.0 for r in close_returns if r > 0) / len(close_returns))
 
     hit_rate_5d_15 = None
-    eligible = [x for x in eligible_hits if x is not None]
-    if eligible:
-        hit_rate_5d_15 = float(len(hits) / len(eligible))
+    if eligible_hits:
+        hit_rate_5d_15 = float(len(hits) / len(eligible_hits))
 
     return DailyScorecard(
         trade_date=trade_date,
@@ -131,6 +127,19 @@ def _daily_metrics(outcomes: list[dict[str, Any]]) -> DailyScorecard:
         mean_next_open_to_close_return=_mean(intraday_returns),
         hit_rate_5d_15=hit_rate_5d_15,
     )
+
+
+def _segment_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    close_returns = [float(row["next_close_return"]) for row in rows if row.get("next_close_return") is not None]
+    max_high = [
+        float(row["max_high_t1_t5_from_open"]) for row in rows if row.get("max_high_t1_t5_from_open") is not None
+    ]
+    return {
+        "count": len(rows),
+        "win_rate_next_close": float(sum(1.0 for r in close_returns if r > 0) / len(close_returns)) if close_returns else None,
+        "mean_next_close_return": _mean(close_returns),
+        "hit_rate_5d_15": float(sum(1.0 for r in max_high if r >= 0.15) / len(max_high)) if max_high else None,
+    }
 
 
 def analyze_btst_monthly_scorecard(
@@ -181,6 +190,11 @@ def analyze_btst_monthly_scorecard(
         float(row["max_high_t1_t5_from_open"]) for row in ok_all if row.get("max_high_t1_t5_from_open") is not None
     ]
 
+    gap_neg = [row for row in ok_all if _as_float(row.get("next_open_return")) is not None and float(row["next_open_return"]) < 0]
+    gap_nonneg = [
+        row for row in ok_all if _as_float(row.get("next_open_return")) is not None and float(row["next_open_return"]) >= 0
+    ]
+
     overall = {
         "month": str(month),
         "source": "btst_full_report.high_confidence",
@@ -197,6 +211,10 @@ def analyze_btst_monthly_scorecard(
         "next_close_return_quantiles": _quantiles(close_all),
         "next_open_return_quantiles": _quantiles(open_all),
         "max_high_t1_t5_from_open_quantiles": _quantiles(max_high_all),
+        "gap_segments": {
+            "negative": _segment_summary(gap_neg),
+            "non_negative": _segment_summary(gap_nonneg),
+        },
     }
 
     return {
@@ -232,6 +250,18 @@ def render_btst_monthly_scorecard_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- mean next_open_return (gap): {ret(overall.get('mean_next_open_return'))}")
     lines.append(f"- mean next_close_return: {ret(overall.get('mean_next_close_return'))}")
     lines.append(f"- hit_rate 5D +15% (max_high_t1_t5_from_open>=0.15): {pct(overall.get('hit_rate_5d_15'))}")
+
+    gap_segments = dict(overall.get("gap_segments") or {})
+    neg = dict(gap_segments.get("negative") or {})
+    nonneg = dict(gap_segments.get("non_negative") or {})
+    if gap_segments:
+        lines.append(
+            f"- gap<0: n={neg.get('count')}, win_rate={pct(neg.get('win_rate_next_close'))}, mean_close={ret(neg.get('mean_next_close_return'))}, hit_5d_15={pct(neg.get('hit_rate_5d_15'))}"
+        )
+        lines.append(
+            f"- gap>=0: n={nonneg.get('count')}, win_rate={pct(nonneg.get('win_rate_next_close'))}, mean_close={ret(nonneg.get('mean_next_close_return'))}, hit_5d_15={pct(nonneg.get('hit_rate_5d_15'))}"
+        )
+
     lines.append("")
 
     lines.append("## Daily breakdown")

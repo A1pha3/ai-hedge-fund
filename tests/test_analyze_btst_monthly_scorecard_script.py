@@ -81,6 +81,13 @@ def test_analyze_btst_monthly_scorecard_aggregates_high_confidence(monkeypatch, 
     # Day2 close return: 19.2/20.0-1 = -0.04 (loss)
     assert analysis["overall"]["win_rate_next_close"] == 0.5
 
+    segments = analysis["overall"]["gap_segments"]
+    assert segments["negative"]["count"] == 1
+    assert segments["negative"]["win_rate_next_close"] == 0.0
+    assert segments["non_negative"]["count"] == 1
+    assert segments["non_negative"]["win_rate_next_close"] == 1.0
+
     md = render_btst_monthly_scorecard_markdown(analysis)
     assert "BTST Monthly Scorecard 202605" in md
     assert "Daily breakdown" in md
+    assert "gap<0" in md
