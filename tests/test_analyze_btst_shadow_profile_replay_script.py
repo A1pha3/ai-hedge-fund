@@ -177,14 +177,14 @@ def test_analyze_btst_shadow_profile_replay_accepts_profile_overrides(tmp_path: 
     analysis = shadow_profile_replay.analyze_btst_shadow_profile_replay(
         frozen_plan_source=source_path,
         baseline_profile="momentum_optimized",
-        baseline_profile_overrides={"select_threshold": 0.38},
+        baseline_profile_overrides={"select_threshold": 0.38, "layer_c_watchlist_selected_rank_cap": 1},
         shadow_profile="momentum_optimized",
         shadow_profile_overrides={"select_threshold": 0.38, "layer_c_watchlist_selected_rank_cap": 0},
     )
 
     assert analysis["baseline"]["profile_name"] == "momentum_optimized"
     assert analysis["shadow"]["profile_name"] == "momentum_optimized"
-    assert analysis["baseline"]["profile_overrides"] == {"select_threshold": 0.38}
+    assert analysis["baseline"]["profile_overrides"] == {"select_threshold": 0.38, "layer_c_watchlist_selected_rank_cap": 1}
     assert analysis["shadow"]["profile_overrides"] == {"select_threshold": 0.38, "layer_c_watchlist_selected_rank_cap": 0}
     assert analysis["baseline"]["selected_tickers_by_date"] == {"20260421": ["300620"]}
     assert analysis["shadow"]["selected_tickers_by_date"] == {"20260421": []}
