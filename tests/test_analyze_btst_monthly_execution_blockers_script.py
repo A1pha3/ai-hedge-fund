@@ -24,7 +24,14 @@ def test_analyze_btst_monthly_execution_blockers_counts_flags(tmp_path: Path) ->
                         "short_trade": {"decision": "selected", "p2_execution_blocked": True},
                         "p2_execution_block_reason": "p2_regime_gate_enforce:halt",
                     },
-                    "000002": {"ticker": "000002", "short_trade": {"decision": "near_miss"}, "p5_execution_blocked": True},
+                    "000002": {
+                        "ticker": "000002",
+                        "short_trade": {
+                            "decision": "blocked",
+                            "blockers": ["blocked_by_market_regime_gate"],
+                            "downgrade_reasons": ["risk_budget_exceeded"],
+                        },
+                    },
                     "000003": {"ticker": "000003", "short_trade": {"decision": "rejected"}, "p2_execution_blocked": True},
                 },
             },
@@ -52,10 +59,12 @@ def test_analyze_btst_monthly_execution_blockers_counts_flags(tmp_path: Path) ->
 
     assert overall["blocked_row_count"] == 2
     assert overall["by_block_flag"]["p2_execution_blocked"] == 1
-    assert overall["by_block_flag"]["p5_execution_blocked"] == 1
     assert overall["by_p2_block_reason"]["p2_regime_gate_enforce:halt"] == 1
+    assert overall["by_short_trade_blocker"]["blocked_by_market_regime_gate"] == 1
+    assert overall["by_short_trade_blocker"]["risk_budget_exceeded"] == 1
 
     md = blk.render_btst_monthly_execution_blockers_markdown(analysis)
     assert "BTST Monthly Execution Blockers 202605" in md
     assert "Block flags" in md
     assert "P2 block reasons" in md
+    assert "short_trade blocked reasons" in md

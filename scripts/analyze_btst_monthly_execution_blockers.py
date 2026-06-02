@@ -73,6 +73,7 @@ class BlockedRow:
     decision: str
     block_flags: list[str]
     p2_block_reason: str | None = None
+    short_trade_blockers: list[str] | None = None
 
 
 def analyze_btst_monthly_execution_blockers(
@@ -137,13 +138,26 @@ def analyze_btst_monthly_execution_blockers(
             if "p2_execution_blocked" in set(flags):
                 p2_reason = str(entry.get("p2_execution_block_reason") or "").strip() or None
 
+            decision = str(short_trade.get("decision") or "")
+            blockers: list[str] | None = None
+            if decision == "blocked":
+                blockers = [str(v) for v in list(short_trade.get("blockers") or []) if str(v or "").strip()]
+                downgrade = [str(v) for v in list(short_trade.get("downgrade_reasons") or []) if str(v or "").strip()]
+                # Keep a compact, de-duplicated list for analysis.
+                merged: list[str] = []
+                for item in blockers + downgrade:
+                    if item not in merged:
+                        merged.append(item)
+                blockers = merged
+
             blocked_rows.append(
                 BlockedRow(
                     trade_date=trade_date,
                     ticker=str(entry.get("ticker") or ticker),
-                    decision=str(short_trade.get("decision") or ""),
+                    decision=decision,
                     block_flags=flags,
                     p2_block_reason=p2_reason,
+                    short_trade_blockers=blockers,
                 )
             )
 
@@ -162,12 +176,16 @@ def analyze_btst_monthly_execution_blockers(
     flags_counter = Counter()
     decision_counter = Counter()
     p2_reason_counter = Counter()
+    blocked_reason_counter = Counter()
     for r in blocked_rows:
         decision_counter[str(r.decision or "unknown")] += 1
         for f in r.block_flags:
             flags_counter[str(f)] += 1
         if r.p2_block_reason:
             p2_reason_counter[str(r.p2_block_reason)] += 1
+        if r.short_trade_blockers:
+            for reason in r.short_trade_blockers:
+                blocked_reason_counter[str(reason)] += 1
 
     overall = {
         "month": str(month),
@@ -177,6 +195,7 @@ def analyze_btst_monthly_execution_blockers(
         "by_block_flag": dict(sorted(flags_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         "by_decision": dict(sorted(decision_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         "by_p2_block_reason": dict(sorted(p2_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "by_short_trade_blocker": dict(sorted(blocked_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
     }
 
     return {
@@ -245,6 +264,13 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
             )
             + " |"
         )
+
+    blocked_reasons = dict(o.get("by_short_trade_blocker") or {})
+    if blocked_reasons:
+        lines.append("")
+        lines.append("## short_trade blocked reasons")
+        for name, count in top_k(blocked_reasons):
+            lines.append(f"- {name}: {count}")
 
     lines.append("")
     lines.append("## Notes")
