@@ -56,16 +56,57 @@ def _execution_quality_multiplier(label: str) -> float:
 
 
 def _build_lane_components(historical_prior: dict[str, Any]) -> dict[str, Any]:
-    evaluable_count = _as_int(historical_prior.get("evaluable_count"))
-    next_high_hit_rate = _as_float(historical_prior.get("next_high_hit_rate_at_threshold"))
-    execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+    """Return components for payoff review scoring.
 
-    reliability = _clamp01(evaluable_count / 5.0)
+    v2 prefers *direct* 5D payoff priors (aligned with the 5D/+15% objective) when available.
+    If 5D priors are missing, we fall back to the v1 next-day proxy (next_high@threshold).
+    """
+
+    execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
     quality_multiplier = _execution_quality_multiplier(execution_quality_label)
 
+    five_day_evaluable_count = _as_int(historical_prior.get("five_day_evaluable_count"))
+    five_day_hit_rate_at_15pct = historical_prior.get("five_day_hit_rate_at_15pct")
+    five_day_mean_max_future_high_return_2_5d = historical_prior.get("five_day_mean_max_future_high_return_2_5d")
+
+    five_day_hit_rate = None
+    if five_day_hit_rate_at_15pct not in (None, "", [], {}):
+        try:
+            five_day_hit_rate = float(five_day_hit_rate_at_15pct)
+        except (TypeError, ValueError):
+            five_day_hit_rate = None
+
+    five_day_mean_max_return = None
+    if five_day_mean_max_future_high_return_2_5d not in (None, "", [], {}):
+        try:
+            five_day_mean_max_return = float(five_day_mean_max_future_high_return_2_5d)
+        except (TypeError, ValueError):
+            five_day_mean_max_return = None
+
+    if five_day_hit_rate is not None and five_day_evaluable_count > 0:
+        reliability = _clamp01(five_day_evaluable_count / 5.0)
+        mean_norm = _clamp01((five_day_mean_max_return or 0.0) / 0.20)  # 20% in 2~5D is already "excellent"
+        base_score = _clamp01((0.7 * _clamp01(five_day_hit_rate)) + (0.3 * mean_norm))
+        score = _clamp01(base_score * reliability * quality_multiplier)
+        return {
+            "scoring_version": "v2_five_day",
+            "prior_five_day_hit_rate_at_15pct": _clamp01(five_day_hit_rate),
+            "prior_five_day_mean_max_future_high_return_2_5d": five_day_mean_max_return,
+            "five_day_evaluable_count": five_day_evaluable_count,
+            "execution_quality_label": execution_quality_label,
+            "reliability_multiplier": reliability,
+            "quality_multiplier": quality_multiplier,
+            "base_score": base_score,
+            "score": score,
+        }
+
+    evaluable_count = _as_int(historical_prior.get("evaluable_count"))
+    next_high_hit_rate = _as_float(historical_prior.get("next_high_hit_rate_at_threshold"))
+    reliability = _clamp01(evaluable_count / 5.0)
     score = _clamp01(next_high_hit_rate * reliability * quality_multiplier)
 
     return {
+        "scoring_version": "v1_next_high_proxy",
         "prior_next_high_hit_rate_at_threshold": next_high_hit_rate,
         "evaluable_count": evaluable_count,
         "execution_quality_label": execution_quality_label,
@@ -83,7 +124,10 @@ def build_payoff_review_entries(
 ) -> list[dict[str, Any]]:
     """Build a small, review-only shortlist intended to surface payoff candidates.
 
-    v1 intentionally uses proxy priors (next-day high hit-rate @ 2% threshold) as a scoring signal.
+    Scoring:
+    - Prefer v2 five-day priors (5D/+15%) when present in `historical_prior`.
+    - Otherwise, fall back to v1 proxy prior (next-day high hit-rate @ threshold).
+
     The lane is report-only and is gated by `BTST_PAYOFF_REVIEW_LANE_MODE=report` (default off).
     """
 
