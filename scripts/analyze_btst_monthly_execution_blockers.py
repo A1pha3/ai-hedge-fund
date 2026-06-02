@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from scripts.generate_btst_realized_prices import generate_realized_prices
+
 
 FORMAL_EXECUTION_BLOCK_FLAGS = (
     "p2_execution_blocked",
@@ -46,6 +48,15 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 def _collect_formal_execution_block_flags(selection_entry: dict[str, Any]) -> list[str]:
     short_trade_entry = dict(selection_entry.get("short_trade") or {})
     flags: list[str] = []
@@ -75,11 +86,17 @@ class BlockedRow:
     p2_block_reason: str | None = None
     short_trade_blockers: list[str] | None = None
 
+    # Optional realized (counterfactual) returns for diagnosing whether a blocker is likely over/under strict.
+    realized_data_status: str | None = None
+    realized_next_close_return: float | None = None
+    realized_next_open_to_close_return: float | None = None
+
 
 def analyze_btst_monthly_execution_blockers(
     *,
     month: str,
     reports_dir: str | Path = "data/reports",
+    include_realized: bool = False,
 ) -> dict[str, Any]:
     root = Path(reports_dir).expanduser().resolve()
 
@@ -187,6 +204,63 @@ def analyze_btst_monthly_execution_blockers(
             for reason in r.short_trade_blockers:
                 blocked_reason_counter[str(reason)] += 1
 
+    if include_realized and blocked_rows:
+        # Aggregate realized returns for blocked targets.
+        # NOTE: This is a *counterfactual diagnostic* only; it does not imply the target should have been traded.
+        p2_realized: dict[str, dict[str, Any]] = {}
+        blocker_realized: dict[str, dict[str, Any]] = {}
+
+        p2_samples: dict[str, list[tuple[float | None, float | None]]] = {}
+        blocker_samples: dict[str, list[tuple[float | None, float | None]]] = {}
+
+        rows_by_day: dict[str, list[BlockedRow]] = {}
+        for row in blocked_rows:
+            rows_by_day.setdefault(str(row.trade_date), []).append(row)
+
+        for trade_date, rows in sorted(rows_by_day.items()):
+            tickers = sorted({str(r.ticker) for r in rows if str(r.ticker).strip()})
+            realized = generate_realized_prices(signal_date=trade_date, tickers=tickers) if tickers else {}
+            for r in rows:
+                rec = dict(realized.get(str(r.ticker)) or {})
+                status = str(rec.get("data_status") or "").strip() or None
+                r.realized_data_status = status
+                r.realized_next_close_return = _as_float(rec.get("next_close_return"))
+                r.realized_next_open_to_close_return = _as_float(rec.get("next_open_to_close_return"))
+
+                sample = (r.realized_next_close_return, r.realized_next_open_to_close_return)
+                if r.p2_block_reason:
+                    p2_samples.setdefault(str(r.p2_block_reason), []).append(sample)
+                if r.short_trade_blockers:
+                    for reason in r.short_trade_blockers:
+                        blocker_samples.setdefault(str(reason), []).append(sample)
+
+        def _summarize(samples: list[tuple[float | None, float | None]]) -> dict[str, Any]:
+            close_vals = [v for v, _ in samples if isinstance(v, (int, float))]
+            o2c_vals = [v for _, v in samples if isinstance(v, (int, float))]
+            out: dict[str, Any] = {"sample_count": len(samples)}
+            if close_vals:
+                out.update(
+                    {
+                        "next_close_ok_count": len(close_vals),
+                        "next_close_win_rate": round(sum(1 for v in close_vals if v > 0.0) / len(close_vals), 4),
+                        "next_close_return_mean": round(sum(close_vals) / len(close_vals), 6),
+                    }
+                )
+            if o2c_vals:
+                out.update(
+                    {
+                        "open_to_close_ok_count": len(o2c_vals),
+                        "open_to_close_win_rate": round(sum(1 for v in o2c_vals if v > 0.0) / len(o2c_vals), 4),
+                        "open_to_close_return_mean": round(sum(o2c_vals) / len(o2c_vals), 6),
+                    }
+                )
+            return out
+
+        for reason, samples in sorted(p2_samples.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            p2_realized[str(reason)] = _summarize(samples)
+        for reason, samples in sorted(blocker_samples.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            blocker_realized[str(reason)] = _summarize(samples)
+
     overall = {
         "month": str(month),
         "source": "trade_brief.snapshot.selection_targets",
@@ -197,6 +271,12 @@ def analyze_btst_monthly_execution_blockers(
         "by_p2_block_reason": dict(sorted(p2_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         "by_short_trade_blocker": dict(sorted(blocked_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
     }
+
+    if include_realized and blocked_rows:
+        overall["realized"] = {
+            "p2_block_reason": p2_realized,
+            "short_trade_blocker": blocker_realized,
+        }
 
     return {
         "month": str(month),
@@ -216,6 +296,11 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
     def top_k(d: dict[str, Any], k: int = 12) -> list[tuple[str, Any]]:
         items = list((d or {}).items())
         items.sort(key=lambda kv: (-int(kv[1] or 0), str(kv[0])))
+        return items[:k]
+
+    def top_k_stats(d: dict[str, Any], k: int = 12) -> list[tuple[str, Any]]:
+        items = list((d or {}).items())
+        items.sort(key=lambda kv: (-int(dict(kv[1] or {}).get("sample_count") or 0), str(kv[0])))
         return items[:k]
 
     lines.append(f"# BTST Monthly Execution Blockers {month}")
@@ -272,6 +357,47 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
         for name, count in top_k(blocked_reasons):
             lines.append(f"- {name}: {count}")
 
+    realized = dict(o.get("realized") or {})
+    if realized:
+        lines.append("")
+        lines.append("## Realized (blocked targets, counterfactual)")
+        lines.append("- next_close_return: (T+1 close / T close - 1)")
+        lines.append("- open_to_close_return: (T+1 close / T+1 open - 1)")
+
+        p2_realized = dict(realized.get("p2_block_reason") or {})
+        if p2_realized:
+            lines.append("")
+            lines.append("### By P2 block reason")
+            for name, stats in top_k_stats(p2_realized):
+                s = dict(stats or {})
+                lines.append(
+                    "- "
+                    + str(name)
+                    + ": n="
+                    + str(s.get("sample_count") or 0)
+                    + ", open_to_close_win_rate="
+                    + str(s.get("open_to_close_win_rate") or "n/a")
+                    + ", open_to_close_mean="
+                    + str(s.get("open_to_close_return_mean") or "n/a")
+                )
+
+        blocker_realized = dict(realized.get("short_trade_blocker") or {})
+        if blocker_realized:
+            lines.append("")
+            lines.append("### By short_trade blocker (multi-tag counts)")
+            for name, stats in top_k_stats(blocker_realized):
+                s = dict(stats or {})
+                lines.append(
+                    "- "
+                    + str(name)
+                    + ": n="
+                    + str(s.get("sample_count") or 0)
+                    + ", open_to_close_win_rate="
+                    + str(s.get("open_to_close_win_rate") or "n/a")
+                    + ", open_to_close_mean="
+                    + str(s.get("open_to_close_return_mean") or "n/a")
+                )
+
     lines.append("")
     lines.append("## Notes")
     lines.append("- blocked_targets replicate the same p2/p3/p5/p6 flags used to filter formal execution-ready entries.")
@@ -283,6 +409,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze BTST monthly execution blockers from selection_targets")
     parser.add_argument("--month", required=True, help="YYYYMM")
     parser.add_argument("--reports-dir", default="data/reports")
+    parser.add_argument("--include-realized", action="store_true", help="Also compute realized next-day returns for blocked targets")
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-md", default=None)
     return parser.parse_args()
@@ -290,7 +417,11 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    analysis = analyze_btst_monthly_execution_blockers(month=str(args.month).strip(), reports_dir=args.reports_dir)
+    analysis = analyze_btst_monthly_execution_blockers(
+        month=str(args.month).strip(),
+        reports_dir=args.reports_dir,
+        include_realized=bool(args.include_realized),
+    )
     md = render_btst_monthly_execution_blockers_markdown(analysis)
 
     if args.output_json:

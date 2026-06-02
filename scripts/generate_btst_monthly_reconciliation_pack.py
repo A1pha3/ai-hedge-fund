@@ -106,6 +106,7 @@ def generate_btst_monthly_reconciliation_pack(
     blockers = analyze_btst_monthly_execution_blockers(
         month=month,
         reports_dir=reports_dir,
+        include_realized=True,
     )
     blockers_md = render_btst_monthly_execution_blockers_markdown(blockers)
 
