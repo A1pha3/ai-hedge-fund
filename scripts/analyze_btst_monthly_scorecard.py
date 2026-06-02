@@ -459,7 +459,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gap-cutoffs",
         default="-1.0%,-0.5%,-0.3%,0%",
-        help="Comma-separated gap cutoffs for counterfactual overlay. Keep sample if next_open_return >= cutoff. Supports fraction (-0.005) or percent (-0.5%).",
+        help="Comma-separated gap cutoffs for counterfactual overlay. Keep sample if next_open_return >= cutoff. Supports fraction (-0.005) or percent (-0.5%%).",
     )
     parser.add_argument("--output-json", default="")
     parser.add_argument("--output-md", default="")
