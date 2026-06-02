@@ -209,25 +209,67 @@ def _build_market_state_proxy(
     trade_date: str,
     *,
     data_dir: Path | None = None,
+    price_batch: pd.DataFrame | None = None,
     market_state_detector: Callable[[str], Any] | None = None,
 ) -> dict[str, Any] | None:
     """Build a best-effort market_state snapshot for audit-only reporting.
 
     This is a proxy field for rule-based btst_full_report JSON only. It must not be
     treated as the canonical market_state used by paper trading / pipeline runs.
+
+    NOTE: To reduce redundant heavy API calls, callers may pass `price_batch` (a full-market
+    daily bar frame for trade_date) to avoid a second `daily` fetch inside market-state detection.
     """
     _ = data_dir  # reserved for future offline snapshot loading
 
-    if market_state_detector is None:
+    market_state: Any | None = None
+
+    if market_state_detector is not None:
         try:
-            from src.screening.market_state import detect_market_state as market_state_detector  # type: ignore[assignment]
+            market_state = market_state_detector(trade_date)
+        except Exception:
+            return None
+    elif price_batch is not None and not price_batch.empty:
+        try:
+            from src.screening.market_state import _normalize_weights, _northbound_streak, _market_breadth_ratio
+            from src.screening.market_state_helpers import build_market_state_from_metrics, calculate_market_state_metrics, prepare_market_frame
+            from src.tools.tushare_api import get_daily_basic_batch, get_index_daily, get_limit_list, get_northbound_flow
         except Exception:
             return None
 
-    try:
-        market_state = market_state_detector(trade_date)
-    except Exception:
-        return None
+        try:
+            end_dt = datetime.strptime(trade_date, "%Y%m%d")
+            start_dt = (end_dt - timedelta(days=180)).strftime("%Y%m%d")
+            index_df = get_index_daily("000300.SH", start_date=start_dt, end_date=trade_date, limit=180)
+            if index_df is None or index_df.empty:
+                return None
+
+            metrics = calculate_market_state_metrics(
+                frame=prepare_market_frame(index_df),
+                price_batch=price_batch,
+                limit_df=get_limit_list(trade_date),
+                daily_basic=get_daily_basic_batch(trade_date),
+                northbound_df=get_northbound_flow(
+                    end_date=trade_date,
+                    start_date=(end_dt - timedelta(days=20)).strftime("%Y%m%d"),
+                    limit=20,
+                ),
+                market_breadth_ratio=_market_breadth_ratio,
+                northbound_streak=_northbound_streak,
+            )
+            market_state = build_market_state_from_metrics(metrics=metrics, normalize_weights=_normalize_weights)
+        except Exception:
+            return None
+    else:
+        try:
+            from src.screening.market_state import detect_market_state
+        except Exception:
+            return None
+
+        try:
+            market_state = detect_market_state(trade_date)
+        except Exception:
+            return None
 
     if market_state is None:
         return None
@@ -279,7 +321,11 @@ def _build_btst_regime_gate_enforcement_proxy(market_state_proxy: dict[str, Any]
 
     gate = str(gate_payload.get("gate", "") or "").strip()
     mode = _resolve_btst_regime_gate_enforcement_proxy_mode()
-    blocked_gate = bool(gate) and gate not in {"normal_trade", "aggressive_trade"}
+    try:
+        from src.targets.router import _P2_BLOCKED_GATES as _blocked_gates
+    except Exception:
+        _blocked_gates = frozenset({"halt", "shadow_only"})
+    blocked_gate = bool(gate) and gate in _blocked_gates
     return {
         "provenance": "proxy/audit-only",
         "mode": mode,
@@ -328,8 +374,8 @@ def main():
 
     # ====== 第1部分: 候选池 ======
     sb = pro.stock_basic(exchange='', list_status='L', fields='ts_code,name,industry,list_date')
-    df = pro.daily(trade_date=trade_date)
-    df = df.merge(sb, on='ts_code', how='left')
+    market_daily = pro.daily(trade_date=trade_date)
+    df = market_daily.merge(sb, on='ts_code', how='left')
     total = len(df)
     beijing_mask = build_beijing_exchange_mask(df['ts_code'])
     df_st = df[df['name'].str.contains('ST|退', na=False)]
@@ -619,7 +665,7 @@ def main():
         'market_state_proxy': None,
         'btst_regime_gate_enforcement_proxy': None,
     }
-    market_state_proxy = _build_market_state_proxy(trade_date, data_dir=out_dir)
+    market_state_proxy = _build_market_state_proxy(trade_date, data_dir=out_dir, price_batch=market_daily)
     json_data['market_state_proxy'] = market_state_proxy
     json_data['btst_regime_gate_enforcement_proxy'] = _build_btst_regime_gate_enforcement_proxy(market_state_proxy)
 

@@ -152,7 +152,13 @@ def test_btst_full_report_json_emits_market_state_and_regime_gate_proxies(monkey
     monkeypatch.setattr(btst_full_report, "__file__", str(tmp_path / "scripts" / "btst_full_report.py"))
     monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
 
-    def _fake_market_state_proxy(trade_date: str, *, data_dir: Path | None = None) -> dict[str, object]:  # noqa: ARG001
+    def _fake_market_state_proxy(
+        trade_date: str,
+        *,
+        data_dir: Path | None = None,
+        price_batch: pd.DataFrame | None = None,
+    ) -> dict[str, object]:  # noqa: ARG001
+        _ = price_batch
         return {
             "provenance": "proxy/audit-only",
             "proxy_trade_date": trade_date,
