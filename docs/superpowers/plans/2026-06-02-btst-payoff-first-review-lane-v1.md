@@ -421,7 +421,6 @@ def append_brief_payoff_review_lane_markdown(
     lines: list[str],
     entries: list[dict[str, Any]],
     *,
-    append_brief_ticker_section: Callable[..., None],
     append_brief_historical_prior_fields: Callable[..., None],
     append_brief_short_trade_metrics: Callable[[list[str], dict[str, Any]], None],
     append_brief_historical_recent_examples: Callable[[list[str], dict[str, Any]], None],
@@ -431,51 +430,45 @@ def append_brief_payoff_review_lane_markdown(
     if not entries:
         return
 
-    def render_entry(inner: list[str], entry: dict[str, Any]) -> None:
+    lines.append("## Payoff-first Review Lane")
+    lines.append("- 复审层（review-only）：不等于下单；用于优先盯 5D payoff 线索，需盘中确认后再决策。")
+    lines.append("")
+
+    for entry in entries:
+        lines.append(f"### {entry['ticker']}")
         historical_prior = dict(entry.get("historical_prior") or {})
-        inner.append("- review_semantics: review_only")
-        inner.append(
-            f"- payoff_review_lane_rank: {int(entry.get('payoff_review_lane_rank') or 0)}"
-        )
-        inner.append(
-            f"- payoff_review_lane_score: {float(entry.get('payoff_review_lane_score') or 0.0):.4f}"
-        )
         comps = dict(entry.get("payoff_review_lane_components") or {})
-        inner.append(
+        prior_hit = comps.get('prior_next_high_hit_rate_at_threshold')
+        if prior_hit is None:
+            prior_hit = historical_prior.get('next_high_hit_rate_at_threshold')
+
+        lines.append("- review_semantics: review_only")
+        lines.append(f"- payoff_review_lane_rank: {int(entry.get('payoff_review_lane_rank') or 0)}")
+        lines.append(f"- payoff_review_lane_score: {float(entry.get('payoff_review_lane_score') or 0.0):.4f}")
+        lines.append(
             "- payoff_components: "
             + ", ".join(
                 [
-                    f"prior_hit={format_float(comps.get('prior_next_high_hit_rate_at_threshold') or comps.get('prior_next_high_hit_rate_at_threshold'))}",
+                    f"prior_hit={format_float(prior_hit)}",
                     f"evaluable={int(comps.get('evaluable_count') or historical_prior.get('evaluable_count') or 0)}",
                     f"exec_quality={comps.get('execution_quality_label') or historical_prior.get('execution_quality_label') or 'n/a'}",
                 ]
             )
         )
-        inner.append(f"- decision: {entry.get('decision')}")
-        inner.append(f"- candidate_source: {entry.get('candidate_source')}")
+        lines.append(f"- decision: {entry.get('decision')}")
+        lines.append(f"- candidate_source: {entry.get('candidate_source')}")
         append_brief_historical_prior_fields(
-            inner,
+            lines,
             historical_prior,
             include_monitor_priority=True,
             include_execution_quality=True,
             include_execution_note=True,
         )
-        inner.append(
-            f"- top_reasons: {', '.join(entry.get('top_reasons') or []) or 'n/a'}"
-        )
-        append_brief_short_trade_metrics(inner, dict(entry.get("metrics") or {}))
-        append_brief_historical_recent_examples(inner, historical_prior)
-        append_gate_status_line(inner, entry.get("gate_status") or {})
-
-    lines.append("## Payoff-first Review Lane")
-    lines.append("- 复审层（review-only）：不等于下单；用于优先盯 5D payoff 线索，需盘中确认后再决策。")
-    lines.append("")
-    append_brief_ticker_section(
-        lines,
-        title="Payoff-first Review Entries",
-        entries=entries,
-        render_entry=render_entry,
-    )
+        lines.append(f"- top_reasons: {', '.join(entry.get('top_reasons') or []) or 'n/a'}")
+        append_brief_short_trade_metrics(lines, dict(entry.get("metrics") or {}))
+        append_brief_historical_recent_examples(lines, historical_prior)
+        append_gate_status_line(lines, entry.get("gate_status") or {})
+        lines.append("")
 ```
 
 - [ ] **Step 2: Wire renderer into `brief_rendering.py`**
@@ -497,7 +490,6 @@ def _append_brief_payoff_review_lane_markdown(lines: list[str], entries: list[di
     _append_brief_payoff_review_lane_markdown_impl(
         lines,
         entries,
-        append_brief_ticker_section=_append_brief_ticker_section,
         append_brief_historical_prior_fields=_append_brief_historical_prior_fields,
         append_brief_short_trade_metrics=_append_brief_short_trade_metrics,
         append_brief_historical_recent_examples=_append_brief_historical_recent_examples,
@@ -554,13 +546,22 @@ git commit -m "feat(btst): render payoff-first review lane in trade brief" \
 
 Append to `tests/test_generate_btst_doc_bundle_script.py`:
 
+1) Extend imports at the top of that test module:
+
+```python
+from scripts.generate_btst_doc_bundle import (
+    # ... keep existing imports ...
+    _render_llm_doc,
+)
+```
+
+2) Append the test:
+
 ```python
 
 def test_generate_btst_doc_bundle_surfaces_payoff_review_lane_in_llm_doc(tmp_path, monkeypatch):
     monkeypatch.setenv("BTST_PAYOFF_REVIEW_LANE_MODE", "report")
 
-    # Reuse existing helpers in this test module to build a minimal bundle input.
-    # (Pattern: the suite already constructs `brief` dicts inline for many assertions.)
     brief = {
         "trade_date": "2026-04-06",
         "next_trade_date": "2026-04-07",
@@ -579,7 +580,7 @@ def test_generate_btst_doc_bundle_surfaces_payoff_review_lane_in_llm_doc(tmp_pat
         ],
     }
 
-    text = generate_btst_doc_bundle._render_llm_doc(
+    text = _render_llm_doc(
         signal_date_compact="20260406",
         brief=brief,
         priority_board={},
