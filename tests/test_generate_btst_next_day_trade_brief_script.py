@@ -965,6 +965,36 @@ def test_render_btst_next_day_trade_brief_markdown_emits_sections_and_sources():
                 }
             ],
             "near_miss_entries": [],
+            "payoff_review_entries": [
+                {
+                    "ticker": "300001",
+                    "decision": "near_miss",
+                    "review_semantics": "review_only",
+                    "payoff_review_lane_score": 0.5,
+                    "payoff_review_lane_rank": 1,
+                    "payoff_review_lane_components": {
+                        "prior_next_high_hit_rate_at_threshold": 0.2,
+                        "evaluable_count": 8,
+                        "execution_quality_label": "close_continuation",
+                    },
+                    "candidate_source": "short_trade_boundary",
+                    "top_reasons": ["trend_acceleration=0.71"],
+                    "metrics": {
+                        "breakout_freshness": 0.1,
+                        "trend_acceleration": 0.2,
+                        "volume_expansion_quality": 0.3,
+                        "close_strength": 0.4,
+                        "catalyst_freshness": 0.5,
+                    },
+                    "historical_prior": {
+                        "summary": "n/a",
+                        "execution_quality_label": "close_continuation",
+                        "evaluable_count": 8,
+                        "next_high_hit_rate_at_threshold": 0.2,
+                    },
+                    "gate_status": {"score": "near_miss"},
+                }
+            ],
             "opportunity_pool_entries": [],
             "risky_observer_entries": [],
             "no_history_observer_entries": [],
@@ -1070,6 +1100,9 @@ def test_render_btst_next_day_trade_brief_markdown_emits_sections_and_sources():
     assert "## Recommendation" in markdown
     assert "## Selected Entries" in markdown
     assert "### 300757" in markdown
+    assert "## Payoff-first Review Lane" in markdown
+    assert "### 300001" in markdown
+    assert "- payoff_review_lane_score: 0.5000" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown
     assert "## Upstream Shadow Recall" in markdown

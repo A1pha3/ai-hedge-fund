@@ -28,6 +28,9 @@ from src.paper_trading.btst_trade_brief_pool_markdown_helpers import (
     append_brief_pruned_entries_markdown as _append_brief_pruned_entries_markdown_impl,
     append_brief_research_radar_markdown as _append_brief_research_radar_markdown_impl,
 )
+from src.paper_trading.btst_trade_brief_payoff_markdown_helpers import (
+    append_brief_payoff_review_lane_markdown as _append_brief_payoff_review_lane_markdown_impl,
+)
 from src.paper_trading.btst_trade_brief_catalyst_markdown_helpers import (
     append_brief_catalyst_theme_markdown as _append_brief_catalyst_theme_markdown_impl,
     append_brief_excluded_research_markdown as _append_brief_excluded_research_markdown_impl,
@@ -245,6 +248,20 @@ def _append_brief_scored_entries_markdown(
         title,
         entries,
         append_brief_ticker_section=_append_brief_ticker_section,
+        append_brief_historical_prior_fields=_append_brief_historical_prior_fields,
+        append_brief_short_trade_metrics=_append_brief_short_trade_metrics,
+        append_brief_historical_recent_examples=_append_brief_historical_recent_examples,
+        append_gate_status_line=_append_gate_status_line,
+        format_float=_format_float,
+    )
+
+
+def _append_brief_payoff_review_lane_markdown(
+    lines: list[str], entries: list[dict[str, Any]]
+) -> None:
+    _append_brief_payoff_review_lane_markdown_impl(
+        lines,
+        entries,
         append_brief_historical_prior_fields=_append_brief_historical_prior_fields,
         append_brief_short_trade_metrics=_append_brief_short_trade_metrics,
         append_brief_historical_recent_examples=_append_brief_historical_recent_examples,
@@ -554,6 +571,9 @@ def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
     )
     _append_brief_scored_entries_markdown(
         lines, "Near-Miss Watchlist", list(analysis.get("near_miss_entries") or [])
+    )
+    _append_brief_payoff_review_lane_markdown(
+        lines, list(analysis.get("payoff_review_entries") or [])
     )
     _append_brief_opportunity_pool_markdown(
         lines, list(analysis.get("opportunity_pool_entries") or [])
