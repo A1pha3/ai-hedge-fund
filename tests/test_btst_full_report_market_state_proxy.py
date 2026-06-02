@@ -164,7 +164,21 @@ def test_btst_full_report_json_emits_market_state_and_regime_gate_proxies(monkey
             "regime_gate_level": "risk_off",
         }
 
+    expected_enforcement = {
+        "provenance": "proxy/audit-only",
+        "mode": "enforce",
+        "gate": "halt",
+        "blocked_gate": True,
+        "would_enforce": True,
+        "btst_regime_gate": {
+            "provenance": "proxy/audit-only",
+            "gate": "halt",
+            "reason_codes": ["fixture"],
+        },
+    }
+
     monkeypatch.setattr(btst_full_report, "_build_market_state_proxy", _fake_market_state_proxy)
+    monkeypatch.setattr(btst_full_report, "_build_btst_regime_gate_enforcement_proxy", lambda _proxy: expected_enforcement)
 
     btst_full_report.main()
 
@@ -176,11 +190,4 @@ def test_btst_full_report_json_emits_market_state_and_regime_gate_proxies(monkey
     assert payload["market_state_proxy"]["provenance"] == "proxy/audit-only"
     assert payload["market_state_proxy"]["regime_gate_level"] == "risk_off"
 
-    assert "btst_regime_gate_enforcement_proxy" in payload
-    enforcement = payload["btst_regime_gate_enforcement_proxy"]
-    assert enforcement["provenance"] == "proxy/audit-only"
-    assert enforcement["mode"] == "enforce"
-    assert enforcement["gate"] == "halt"
-    assert enforcement["blocked_gate"] is True
-    assert enforcement["would_enforce"] is True
-    assert enforcement["btst_regime_gate"]["gate"] == "halt"
+    assert payload["btst_regime_gate_enforcement_proxy"] == expected_enforcement

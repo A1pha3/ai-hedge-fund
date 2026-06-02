@@ -179,20 +179,29 @@ def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: b
 
 
 def _get_pro():
-    """
-    初始化并返回 Tushare Pro 实例
-    """
+    """初始化并返回 Tushare Pro 实例。"""
     global _pro
     if _pro is not None:
         return _pro
+
     token = os.environ.get("TUSHARE_TOKEN")
     if not token:
         return None
+
+    raw_timeout = os.getenv("TUSHARE_TIMEOUT", "120")
+    try:
+        timeout = int(raw_timeout)
+    except ValueError:
+        timeout = 120
+
     try:
         import tushare as ts
 
         # 直接使用 token 创建 pro_api，避免写入文件
-        _pro = ts.pro_api(token=token)
+        try:
+            _pro = ts.pro_api(token=token, timeout=timeout)
+        except TypeError:
+            _pro = ts.pro_api(token=token)
         return _pro
     except Exception:
         return None

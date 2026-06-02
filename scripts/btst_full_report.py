@@ -224,6 +224,16 @@ def _build_market_state_proxy(
     if market_state_detector is None:
         try:
             from src.screening.market_state import detect_market_state as market_state_detector  # type: ignore[assignment]
+            from src.tools.tushare_api import get_index_daily
+        except Exception:
+            return None
+
+        try:
+            end_dt = datetime.strptime(trade_date, "%Y%m%d")
+            start_dt = (end_dt - timedelta(days=180)).strftime("%Y%m%d")
+            index_df = get_index_daily("000300.SH", start_date=start_dt, end_date=trade_date, limit=180)
+            if index_df is None or index_df.empty:
+                return None
         except Exception:
             return None
 
@@ -269,6 +279,8 @@ def _build_btst_regime_gate_enforcement_proxy(market_state_proxy: dict[str, Any]
     gate_payload = dict(classify_btst_regime_gate_from_market_state(market_state_proxy) or {})
     if not gate_payload:
         return None
+
+    gate_payload["provenance"] = "proxy/audit-only"
 
     gate = str(gate_payload.get("gate", "") or "").strip()
     mode = _resolve_btst_regime_gate_enforcement_proxy_mode()
