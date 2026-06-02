@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.utils.env_helpers import get_env_float
+
 
 @dataclass(frozen=True)
 class PaperTradingSessionPaths:
@@ -213,6 +215,9 @@ def build_session_summary(
             "p2_regime_gate_mode": str(os.getenv("BTST_0422_P2_REGIME_GATE_MODE", "off") or "off").strip().lower() or "off",
             "p5_execution_contract_mode": str(os.getenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "off") or "off").strip().lower() or "off",
             "p6_risk_budget_mode": str(os.getenv("BTST_0422_P6_RISK_BUDGET_MODE", "off") or "off").strip().lower() or "off",
+            "p7_gap_overlay_mode": str(os.getenv("BTST_0422_P7_GAP_OVERLAY_MODE", "off") or "off").strip().lower() or "off",
+            "p7_gap_warn_threshold": abs(get_env_float("BTST_0422_P7_GAP_WARN_THRESHOLD", 0.005)),
+            "p7_gap_halt_threshold": abs(get_env_float("BTST_0422_P7_GAP_HALT_THRESHOLD", 0.01)),
         },
         "performance_metrics": dict(metrics),
         "portfolio_values": portfolio_values,

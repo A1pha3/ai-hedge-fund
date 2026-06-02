@@ -8,6 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.utils.env_helpers import get_env_float, get_env_mode
+
 from src.paper_trading._btst_reporting.execution_contract import (
     build_brief_execution_contract,
 )
@@ -24,6 +26,40 @@ from src.paper_trading._btst_reporting.entry_transforms import (
 from src.paper_trading.btst_reporting_utils import (
     _entry_mode_action_guidance,
 )
+
+
+# ---------------------------------------------------------------------------
+# Environment overlays
+# ---------------------------------------------------------------------------
+
+_BTST_0422_P7_GAP_OVERLAY_MODE_ENV = "BTST_0422_P7_GAP_OVERLAY_MODE"
+_BTST_0422_P7_GAP_OVERLAY_MODES = frozenset({"off", "report", "enforce"})
+_BTST_0422_P7_GAP_WARN_THRESHOLD_ENV = "BTST_0422_P7_GAP_WARN_THRESHOLD"
+_BTST_0422_P7_GAP_HALT_THRESHOLD_ENV = "BTST_0422_P7_GAP_HALT_THRESHOLD"
+
+
+def _btst_0422_p7_gap_overlay_guardrail() -> str | None:
+    mode = get_env_mode(_BTST_0422_P7_GAP_OVERLAY_MODE_ENV, "off")
+    if mode not in _BTST_0422_P7_GAP_OVERLAY_MODES:
+        mode = "off"
+    if mode == "off":
+        return None
+
+    warn = abs(get_env_float(_BTST_0422_P7_GAP_WARN_THRESHOLD_ENV, 0.005))
+    halt = abs(get_env_float(_BTST_0422_P7_GAP_HALT_THRESHOLD_ENV, 0.01))
+    if warn <= 0:
+        warn = 0.005
+    if halt <= 0:
+        halt = 0.01
+    if halt < warn:
+        halt = warn
+
+    warn_pct = f"{warn * 100:.1f}%"
+    halt_pct = f"{halt * 100:.1f}%"
+    return (
+        f"Gap overlay (BTST 0422 P7/{mode}): 若 T+1 开盘相对 T 收盘跳空低开 ≤ -{warn_pct}，只允许确认后减仓入场；"
+        f"若 ≤ -{halt_pct}，当日禁入。"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +393,18 @@ def analyze_btst_premarket_execution_card(
     upstream_shadow_summary = action_context["upstream_shadow_summary"]
     rollout_validation = action_context["rollout_validation"]
 
+    global_guardrails = [
+        "主执行名单只认 short-trade selected，不把 research selected 自动等价成短线可交易票。",
+        "near-miss 默认只做观察，不预设与主票同级的买入动作。",
+        "机会池只用于补充盯盘覆盖面，不自动升级为正式交易对象。",
+        "runner recall 复审层只做影子复审，不把 watchlist_filter_diagnostics 漏票直接并入正式交易名单。",
+        "题材催化影子池只做研究跟踪，不进入当日 BTST 交易名单。",
+        "若 selected 当日没有出现确认信号，则允许空仓而不是强行交易。",
+    ]
+    gap_guardrail = _btst_0422_p7_gap_overlay_guardrail()
+    if gap_guardrail:
+        global_guardrails.append(gap_guardrail)
+
     return {
         "trade_date": brief.get("trade_date"),
         "next_trade_date": brief.get("next_trade_date"),
@@ -386,14 +434,7 @@ def analyze_btst_premarket_execution_card(
         "upstream_shadow_entries": list(brief.get("upstream_shadow_entries") or []),
         "upstream_shadow_summary": upstream_shadow_summary,
         "excluded_research_entries": list(brief.get("excluded_research_entries") or []),
-        "global_guardrails": [
-            "主执行名单只认 short-trade selected，不把 research selected 自动等价成短线可交易票。",
-            "near-miss 默认只做观察，不预设与主票同级的买入动作。",
-            "机会池只用于补充盯盘覆盖面，不自动升级为正式交易对象。",
-            "runner recall 复审层只做影子复审，不把 watchlist_filter_diagnostics 漏票直接并入正式交易名单。",
-            "题材催化影子池只做研究跟踪，不进入当日 BTST 交易名单。",
-            "若 selected 当日没有出现确认信号，则允许空仓而不是强行交易。",
-        ],
+        "global_guardrails": global_guardrails,
         "source_paths": {
             "report_dir": brief.get("report_dir"),
             "snapshot_path": brief.get("snapshot_path"),

@@ -539,6 +539,9 @@ def _build_pipeline_config_snapshot(plan: ExecutionPlan, pipeline: DailyPipeline
             "p4_prior_shrinkage_mode": str(os.getenv("BTST_0422_P4_PRIOR_SHRINKAGE_MODE", "off") or "off").strip().lower() or "off",
             "p5_execution_contract_mode": str(os.getenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "off") or "off").strip().lower() or "off",
             "p6_risk_budget_mode": str(os.getenv("BTST_0422_P6_RISK_BUDGET_MODE", "off") or "off").strip().lower() or "off",
+            "p7_gap_overlay_mode": str(os.getenv("BTST_0422_P7_GAP_OVERLAY_MODE", "off") or "off").strip().lower() or "off",
+            "p7_gap_warn_threshold": abs(get_env_float("BTST_0422_P7_GAP_WARN_THRESHOLD", 0.005)),
+            "p7_gap_halt_threshold": abs(get_env_float("BTST_0422_P7_GAP_HALT_THRESHOLD", 0.01)),
         },
     }
 
