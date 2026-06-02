@@ -127,12 +127,37 @@ def analyze_btst_monthly_execution_blockers(
 
     blocked_rows: list[BlockedRow] = []
     daily: list[dict[str, Any]] = []
+    missing_snapshots: list[dict[str, Any]] = []
 
     for trade_date in sorted(selected_runs.keys()):
         run = dict(selected_runs[trade_date] or {})
         brief = _load_json(str(run.get("brief_path") or ""))
         snapshot_path = str(brief.get("snapshot_path") or "").strip()
-        snapshot: dict[str, Any] = _load_json(snapshot_path) if snapshot_path else {}
+
+        snapshot: dict[str, Any] = {}
+        if snapshot_path:
+            try:
+                snapshot = _load_json(snapshot_path)
+            except Exception as exc:
+                missing_snapshots.append(
+                    {
+                        "trade_date": trade_date,
+                        "snapshot_path": snapshot_path,
+                        "brief_path": str(run.get("brief_path") or ""),
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                continue
+        else:
+            missing_snapshots.append(
+                {
+                    "trade_date": trade_date,
+                    "snapshot_path": snapshot_path,
+                    "brief_path": str(run.get("brief_path") or ""),
+                    "error": "missing_snapshot_path",
+                }
+            )
+            continue
 
         market_state = dict(snapshot.get("market_state") or {})
         market_regime_gate_level = str(market_state.get("regime_gate_level") or "").strip() or None
@@ -280,7 +305,9 @@ def analyze_btst_monthly_execution_blockers(
     overall = {
         "month": str(month),
         "source": "trade_brief.snapshot.selection_targets",
-        "day_count": len(selected_runs),
+        "selected_run_count": len(selected_runs),
+        "day_count": len(daily),
+        "missing_snapshot_count": len(missing_snapshots),
         "blocked_row_count": len(blocked_rows),
         "by_block_flag": dict(sorted(flags_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         "by_decision": dict(sorted(decision_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
@@ -301,6 +328,7 @@ def analyze_btst_monthly_execution_blockers(
         "daily": daily,
         "blocked_rows": [r.__dict__ for r in blocked_rows],
         "selected_runs": [selected_runs[key] for key in sorted(selected_runs.keys())],
+        "missing_snapshots": missing_snapshots,
     }
 
 
@@ -323,7 +351,18 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
     lines.append("")
     lines.append("## Overall")
     lines.append(f"- source: {o.get('source')}")
-    lines.append(f"- day_count: {o.get('day_count')}, blocked_row_count: {o.get('blocked_row_count')}")
+    lines.append(
+        f"- selected_run_count: {o.get('selected_run_count')}, day_count: {o.get('day_count')}, missing_snapshot_count: {o.get('missing_snapshot_count')}, blocked_row_count: {o.get('blocked_row_count')}"
+    )
+
+    missing = list(analysis.get("missing_snapshots") or [])
+    if missing:
+        lines.append("")
+        lines.append("## Missing snapshots (skipped)")
+        for row in missing[:12]:
+            lines.append(f"- {row.get('trade_date')}: {row.get('snapshot_path')}")
+        if len(missing) > 12:
+            lines.append(f"- ... ({len(missing) - 12} more)")
 
     by_flag = dict(o.get("by_block_flag") or {})
     if by_flag:
@@ -348,7 +387,7 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
             lines.append(f"- {name}: {count}")
 
     lines.append("")
-    lines.append("## Daily")
+    lines.append("## Daily (snapshot available)")
     lines.append("| trade_date | regime_gate | formal_selected | blocked_targets | selection_targets |")
     lines.append("|---:|:---|---:|---:|---:|")
     for row in list(analysis.get("daily") or []):
