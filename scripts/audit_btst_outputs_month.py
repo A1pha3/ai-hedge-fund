@@ -134,19 +134,26 @@ def audit_btst_outputs_month(
 
         metadata_consistent = len(signal_dates) <= 1 and len(next_dates) <= 1
 
+        base_date: str | None = None
+        match = re.match(rf"^({_DATE_YYYYMMDD})", day_dir.name)
+        if match:
+            base_date = match.group(1)
+
         next_date_matches_folder: bool | None = None
-        if next_dates:
+        if next_dates and base_date:
+            next_date_matches_folder = base_date in next_dates
+        elif next_dates:
             next_date_matches_folder = day_dir.name in next_dates
 
-        is_date_folder = bool(re.fullmatch(_DATE_YYYYMMDD, day_dir.name))
+        is_date_folder = base_date is not None
 
         folder_date_role = "unknown"
         if not is_date_folder:
             folder_date_role = "special_folder"
         elif signal_dates or next_dates:
-            if day_dir.name in next_dates:
+            if base_date in next_dates:
                 folder_date_role = "next_date"
-            elif day_dir.name in signal_dates:
+            elif base_date in signal_dates:
                 folder_date_role = "signal_date"
             else:
                 folder_date_role = "mismatch"
