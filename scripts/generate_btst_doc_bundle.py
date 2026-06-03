@@ -2399,6 +2399,11 @@ def generate_btst_doc_bundle(
         "early_runner_intersection_count": len(_safe_rows(intersection_summary.get("overlap_rows"))),
         "early_runner_only_count": len(_safe_rows(intersection_summary.get("only_early_runner_rows"))),
         "early_runner_second_entry_count": len(_safe_rows(intersection_summary.get("second_entry_rows"))),
+        "semantic_selected_labels": _stock_labels(semantic_selected),
+        "semantic_watch_labels": _stock_labels(semantic_watch),
+        "early_runner_overlap_labels": _stock_labels([dict(row.get("formal_row") or row.get("early_row") or {}) for row in _safe_rows(intersection_summary.get("overlap_rows"))]),
+        "early_runner_only_labels": _stock_labels(_safe_rows(intersection_summary.get("only_early_runner_rows"))),
+        "early_runner_second_entry_labels": _stock_labels(_safe_rows(intersection_summary.get("second_entry_rows"))),
         "strategy_thresholds_config_path": resolved_strategy_thresholds_config_path,
         "strategy_thresholds_profile": strategy_thresholds_profile,
         "strategy_thresholds": resolved_strategy_thresholds,
@@ -2422,9 +2427,26 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
             "intersection_count": int(result.get("early_runner_intersection_count") or 0),
             "only_early_runner_count": int(result.get("early_runner_only_count") or 0),
             "second_entry_count": int(result.get("early_runner_second_entry_count") or 0),
+            "report_mode": result.get("report_mode"),
+            "veto_owner": result.get("veto_owner"),
+            "market_gate": (result.get("control_tower") or {}).get("gate") if isinstance(result.get("control_tower"), dict) else None,
+            "buy_orders_cleared": (result.get("control_tower") or {}).get("buy_orders_cleared") if isinstance(result.get("control_tower"), dict) else None,
+            "semantic_selected_labels": list(result.get("semantic_selected_labels") or []),
+            "semantic_watch_labels": list(result.get("semantic_watch_labels") or []),
+            "early_runner_overlap_labels": list(result.get("early_runner_overlap_labels") or []),
+            "early_runner_only_labels": list(result.get("early_runner_only_labels") or []),
+            "early_runner_second_entry_labels": list(result.get("early_runner_second_entry_labels") or []),
         }
         for profile, result in profile_results.items()
     ]
+
+    def _shared_profile_value(key: str) -> Any | None:
+        values = [item.get(key) for item in profiles if item.get(key) is not None and item.get(key) != ""]
+        if not values:
+            return None
+        first = values[0]
+        return first if all(value == first for value in values[1:]) else None
+
     ranked_profiles = sorted(
         profiles,
         key=lambda item: (
@@ -2436,7 +2458,24 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
         reverse=True,
     )
     recommended_profile = ranked_profiles[0]["profile"] if ranked_profiles else None
+    shared_report_mode = _shared_profile_value("report_mode")
+    shared_veto_owner = _shared_profile_value("veto_owner")
+    shared_market_gate = _shared_profile_value("market_gate")
+    shared_buy_orders_cleared = _shared_profile_value("buy_orders_cleared")
+    gate_override_active = bool(
+        shared_report_mode
+        and shared_report_mode != "formal_execution"
+        and (
+            shared_veto_owner == "market_gate"
+            or shared_market_gate in {"halt", "risk_off"}
+            or shared_buy_orders_cleared is False
+        )
+    )
     reasons: list[str] = []
+    if gate_override_active:
+        reasons.append(
+            f"两套 profile 都被市场门控压到 `{shared_report_mode}`（gate `{shared_market_gate or 'n/a'}`，buy_orders_cleared `{shared_buy_orders_cleared}`）；今天先按门控做复核，不把 profile 差异当主裁决。"
+        )
     if len(ranked_profiles) >= 2:
         top = ranked_profiles[0]
         runner_up = ranked_profiles[1]
@@ -2449,10 +2488,49 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
                 reasons.append(f"`{top['profile']}` 的 only early-runner 更少：`{top['only_early_runner_count']}` vs `{runner_up['only_early_runner_count']}`。")
             if top["second_entry_count"] < runner_up["second_entry_count"]:
                 reasons.append(f"`{top['profile']}` 的 second-entry 干扰更少：`{top['second_entry_count']}` vs `{runner_up['second_entry_count']}`。")
+    layer_field_specs = [
+        ("semantic_selected_labels", "正式执行层"),
+        ("semantic_watch_labels", "观察层"),
+        ("early_runner_overlap_labels", "交集优先复审层"),
+        ("early_runner_only_labels", "补充复审层"),
+        ("early_runner_second_entry_labels", "回补机会层"),
+    ]
+    layer_differences: list[dict[str, Any]] = []
+    if len(ranked_profiles) >= 2:
+        top = ranked_profiles[0]
+        runner_up = ranked_profiles[1]
+        for field_name, layer_label in layer_field_specs:
+            top_labels = [str(label) for label in list(top.get(field_name) or []) if str(label).strip()]
+            runner_up_labels = [str(label) for label in list(runner_up.get(field_name) or []) if str(label).strip()]
+            top_only = [label for label in top_labels if label not in runner_up_labels]
+            runner_up_only = [label for label in runner_up_labels if label not in top_labels]
+            if not top_only and not runner_up_only:
+                continue
+            summary_bits: list[str] = []
+            if top_only:
+                summary_bits.append(f"`{top['profile']}` 独有 {len(top_only)} 只")
+            if runner_up_only:
+                summary_bits.append(f"`{runner_up['profile']}` 独有 {len(runner_up_only)} 只")
+            layer_differences.append(
+                {
+                    "layer_label": layer_label,
+                    "recommended_profile": top["profile"],
+                    "runner_up_profile": runner_up["profile"],
+                    "recommended_unique": top_only,
+                    "runner_up_unique": runner_up_only,
+                    "summary": "；".join(summary_bits) if summary_bits else "无明显票级差异",
+                }
+            )
     return {
         "profiles": sorted(profiles, key=lambda item: str(item["profile"])),
         "recommended_profile": recommended_profile,
         "recommendation_reasons": reasons,
+        "shared_report_mode": shared_report_mode,
+        "shared_veto_owner": shared_veto_owner,
+        "shared_market_gate": shared_market_gate,
+        "shared_buy_orders_cleared": shared_buy_orders_cleared,
+        "gate_override_active": gate_override_active,
+        "layer_differences": layer_differences,
     }
 
 
@@ -2465,17 +2543,34 @@ def _render_profile_doc_bundle_comparison_markdown(signal_date_compact: str, com
         "",
         "## 总览",
         "",
-        "| profile | early_runner_status | intersection_count | only_early_runner_count | second_entry_count | written_file_count | output_dir |",
-        "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+        "| profile | early_runner_status | report_mode | market_gate | buy_orders_cleared | intersection_count | only_early_runner_count | second_entry_count | written_file_count | output_dir |",
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
     ]
     for item in list(comparison.get("profiles") or []):
-        lines.append(f"| {item['profile']} | {item.get('early_runner_status')} | {item.get('intersection_count')} | {item.get('only_early_runner_count')} | {item.get('second_entry_count')} | {item.get('written_file_count')} | {item.get('output_dir')} |")
+        lines.append(
+            f"| {item['profile']} | {item.get('early_runner_status')} | {item.get('report_mode') or 'n/a'} | {item.get('market_gate') or 'n/a'} | {item.get('buy_orders_cleared')} | {item.get('intersection_count')} | {item.get('only_early_runner_count')} | {item.get('second_entry_count')} | {item.get('written_file_count')} | {item.get('output_dir')} |"
+        )
     lines.extend(["", "## 推荐理由", ""])
     if list(comparison.get("recommendation_reasons") or []):
         for reason in list(comparison.get("recommendation_reasons") or []):
             lines.append(f"- {reason}")
     else:
         lines.append("- 当前样本不足，尚未形成明显 profile 差异。")
+    lines.extend(["", "## 层级差异", ""])
+    layer_differences = list(comparison.get("layer_differences") or [])
+    if layer_differences:
+        lines.extend(
+            [
+                "| 层级 | 推荐 profile 独有 | 次优 profile 独有 | 说明 |",
+                "| --- | --- | --- | --- |",
+            ]
+        )
+        for item in layer_differences:
+            lines.append(
+                f"| {item.get('layer_label') or 'n/a'} | {('、'.join(item.get('recommended_unique') or []) or '无')} | {('、'.join(item.get('runner_up_unique') or []) or '无')} | {item.get('summary') or 'n/a'} |"
+            )
+    else:
+        lines.append("- 今天两套 profile 在正式执行层、观察层、交集优先复审层、补充复审层和回补机会层都没有票级差异。")
     return "\n".join(lines) + "\n"
 
 
@@ -2490,10 +2585,27 @@ def _build_profile_doc_bundle_decision_card(comparison: dict[str, Any]) -> dict[
     alternatives = [item for item in profiles if item.get("profile") != recommended_profile]
     challenger = alternatives[0] if alternatives else None
     action_bias = "偏保守执行" if recommended_profile == "conservative" else "偏激进执行"
+    action_mode = comparison.get("shared_report_mode") or "profile_selection"
+    dominant_reason_type = "no_effective_profile_diff"
+    if comparison.get("gate_override_active"):
+        dominant_reason_type = "market_gate_override"
+    elif recommended and challenger:
+        if int(recommended.get("intersection_count") or 0) > int(challenger.get("intersection_count") or 0):
+            dominant_reason_type = "intersection_advantage"
+        elif int(recommended.get("only_early_runner_count") or 0) < int(challenger.get("only_early_runner_count") or 0):
+            dominant_reason_type = "only_early_runner_pressure"
+        elif int(recommended.get("second_entry_count") or 0) < int(challenger.get("second_entry_count") or 0):
+            dominant_reason_type = "second_entry_interference"
     return {
         "recommended_profile": recommended_profile,
         "action_bias": action_bias,
+        "action_mode": action_mode,
+        "dominant_reason_type": dominant_reason_type,
         "early_runner_status": recommended.get("early_runner_status") if recommended else None,
+        "report_mode": comparison.get("shared_report_mode"),
+        "veto_owner": comparison.get("shared_veto_owner"),
+        "market_gate": comparison.get("shared_market_gate"),
+        "buy_orders_cleared": comparison.get("shared_buy_orders_cleared"),
         "intersection_count": int(recommended.get("intersection_count") or 0) if recommended else 0,
         "only_early_runner_count": int(recommended.get("only_early_runner_count") or 0) if recommended else 0,
         "second_entry_count": int(recommended.get("second_entry_count") or 0) if recommended else 0,
@@ -2511,7 +2623,10 @@ def _render_profile_doc_bundle_decision_card_markdown(signal_date_compact: str, 
         "",
         f"- 推荐 profile：`{decision_card.get('recommended_profile') or 'n/a'}`",
         f"- 执行倾向：`{decision_card.get('action_bias') or 'n/a'}`",
+        f"- 执行模式：`{decision_card.get('action_mode') or 'n/a'}`",
+        f"- 主导原因：`{decision_card.get('dominant_reason_type') or 'n/a'}`",
         f"- early-runner 状态：`{decision_card.get('early_runner_status') or 'n/a'}`",
+        f"- 市场门控：gate `{'n/a' if decision_card.get('market_gate') is None else decision_card.get('market_gate')}`；buy_orders_cleared `{'n/a' if decision_card.get('buy_orders_cleared') is None else decision_card.get('buy_orders_cleared')}`",
         f"- 交集票：`{decision_card.get('intersection_count')}`；相对次优差值：`{decision_card.get('intersection_delta_vs_runner_up'):+d}`",
         f"- only early-runner：`{decision_card.get('only_early_runner_count')}`；相对次优差值：`{decision_card.get('only_early_runner_delta_vs_runner_up'):+d}`",
         f"- second-entry：`{decision_card.get('second_entry_count')}`；相对次优差值：`{decision_card.get('second_entry_delta_vs_runner_up'):+d}`",
@@ -2532,7 +2647,8 @@ def _render_profile_decision_bridge_lines(decision_card: dict[str, Any]) -> list
     return [
         "## 今日执行倾向",
         "",
-        f"- 今日更偏：`{decision_card.get('recommended_profile') or 'n/a'}`，执行倾向：`{decision_card.get('action_bias') or 'n/a'}`。",
+        f"- 今日更偏：`{decision_card.get('recommended_profile') or 'n/a'}`，执行倾向：`{decision_card.get('action_bias') or 'n/a'}`，执行模式：`{decision_card.get('action_mode') or 'n/a'}`。",
+        f"- 主导原因：`{decision_card.get('dominant_reason_type') or 'n/a'}`；市场门控：gate `{'n/a' if decision_card.get('market_gate') is None else decision_card.get('market_gate')}`，buy_orders_cleared `{'n/a' if decision_card.get('buy_orders_cleared') is None else decision_card.get('buy_orders_cleared')}`。",
         f"- 交集票：`{decision_card.get('intersection_count')}`；相对次优差值：`{int(decision_card.get('intersection_delta_vs_runner_up') or 0):+d}`。",
         f"- only early-runner：`{decision_card.get('only_early_runner_count')}`；相对次优差值：`{int(decision_card.get('only_early_runner_delta_vs_runner_up') or 0):+d}`。",
         f"- second-entry：`{decision_card.get('second_entry_count')}`；相对次优差值：`{int(decision_card.get('second_entry_delta_vs_runner_up') or 0):+d}`。",
@@ -2560,6 +2676,22 @@ def _append_profile_decision_bridge(
         target_path.write_text(original.rstrip() + bridge, encoding="utf-8")
         updated_files.append(target_path.as_posix())
     return updated_files
+
+
+def _resolve_primary_btst_doc_output_dir(compare_output_dir: Path, signal_date_compact: str) -> Path | None:
+    """Resolve the sibling top-level BTST doc directory when compare output follows the *_profile_compare naming."""
+    normalized_output_dir = compare_output_dir.expanduser().resolve()
+    candidate_name: str | None = None
+    if normalized_output_dir.name == f"{signal_date_compact}_profile_compare":
+        candidate_name = signal_date_compact
+    elif normalized_output_dir.name.endswith("_profile_compare"):
+        candidate_name = normalized_output_dir.name[: -len("_profile_compare")]
+    if not candidate_name:
+        return None
+    candidate_dir = normalized_output_dir.parent / candidate_name
+    if candidate_dir == normalized_output_dir or not candidate_dir.exists():
+        return None
+    return candidate_dir
 
 
 def compare_btst_doc_bundle_profiles(
@@ -2595,6 +2727,15 @@ def compare_btst_doc_bundle_profiles(
         bridge_updated_files.extend(
             _append_profile_decision_bridge(
                 Path(result["output_dir"]),
+                signal_date_compact,
+                decision_card,
+            )
+        )
+    primary_output_dir = _resolve_primary_btst_doc_output_dir(resolved_output_dir, signal_date_compact)
+    if primary_output_dir is not None:
+        bridge_updated_files.extend(
+            _append_profile_decision_bridge(
+                primary_output_dir,
                 signal_date_compact,
                 decision_card,
             )

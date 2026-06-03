@@ -718,6 +718,11 @@ def test_compare_btst_doc_bundle_profiles_writes_comparison_outputs(tmp_path: Pa
             "early_runner_intersection_count": 2 if kwargs["strategy_thresholds_profile"] == "conservative" else 1,
             "early_runner_only_count": 1 if kwargs["strategy_thresholds_profile"] == "conservative" else 3,
             "early_runner_second_entry_count": 0 if kwargs["strategy_thresholds_profile"] == "conservative" else 1,
+            "semantic_selected_labels": ["002463 沪电股份"] if kwargs["strategy_thresholds_profile"] == "conservative" else ["300308 中际旭创"],
+            "semantic_watch_labels": ["300308 中际旭创"] if kwargs["strategy_thresholds_profile"] == "conservative" else ["002475 立讯精密"],
+            "early_runner_overlap_labels": ["002463 沪电股份"] if kwargs["strategy_thresholds_profile"] == "conservative" else [],
+            "early_runner_only_labels": [] if kwargs["strategy_thresholds_profile"] == "conservative" else ["002916 深南电路"],
+            "early_runner_second_entry_labels": [] if kwargs["strategy_thresholds_profile"] == "conservative" else ["600183 生益科技"],
         }
 
     monkeypatch.setattr(
@@ -746,8 +751,12 @@ def test_compare_btst_doc_bundle_profiles_writes_comparison_outputs(tmp_path: Pa
     assert "Profile 文档包对照" in markdown
     assert "conservative" in markdown
     assert "aggressive" in markdown
+    assert "层级差异" in markdown
+    assert "002463 沪电股份" in markdown
+    assert "002916 深南电路" in markdown
     card_payload = json.loads(Path(result["decision_card_json_path"]).read_text(encoding="utf-8"))
     assert card_payload["action_bias"] == "偏保守执行"
+    assert card_payload["dominant_reason_type"] == "intersection_advantage"
     assert card_payload["intersection_delta_vs_runner_up"] == 1
     card_markdown = Path(result["decision_card_md_path"]).read_text(encoding="utf-8")
     assert "交易前决策卡" in card_markdown
@@ -795,8 +804,99 @@ def test_compare_btst_doc_bundle_profiles_describes_ties_without_false_edge(tmp_
     assert reasons == ["两套 profile 的交集票、only early-runner 与 second-entry 完全持平；没有形成有效 profile 差异，默认采用 conservative 做风控基线。"]
     assert "更多" not in "\n".join(reasons)
     assert "更少" not in "\n".join(reasons)
+    assert result["comparison"]["layer_differences"] == []
+    assert result["decision_card"]["dominant_reason_type"] == "no_effective_profile_diff"
     card_markdown = Path(result["decision_card_md_path"]).read_text(encoding="utf-8")
     assert "完全持平" in card_markdown
+
+
+def test_compare_btst_doc_bundle_profiles_surfaces_market_gate_override_in_decision_card(tmp_path: Path, monkeypatch) -> None:
+    """Promote market-gate override into the compact decision card when both profiles are blocked the same way."""
+    output_dir = tmp_path / "outputs"
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [
+                str(profile_output_dir / f"BTST-{signal_date}.md"),
+                str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+            ],
+            "early_runner_status": "exact",
+            "early_runner_intersection_count": 0,
+            "early_runner_only_count": 0,
+            "early_runner_second_entry_count": 0,
+            "report_mode": "confirmation_review_only",
+            "veto_owner": "market_gate",
+            "control_tower": {
+                "gate": "halt",
+                "buy_orders_cleared": False,
+            },
+        }
+
+    monkeypatch.setattr("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", _fake_generate)
+
+    result = compare_btst_doc_bundle_profiles(
+        "20260530",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    decision_card = result["decision_card"]
+    assert decision_card["recommended_profile"] == "conservative"
+    assert decision_card["action_mode"] == "confirmation_review_only"
+    assert decision_card["dominant_reason_type"] == "market_gate_override"
+    assert decision_card["market_gate"] == "halt"
+    assert decision_card["buy_orders_cleared"] is False
+    assert any("市场门控" in reason for reason in decision_card["recommendation_reasons"])
+
+
+def test_compare_btst_doc_bundle_profiles_bridges_top_level_main_docs_when_present(tmp_path: Path, monkeypatch) -> None:
+    """Append the shared profile decision bridge into the sibling top-level BTST docs when they already exist."""
+    output_dir = tmp_path / "outputs" / "20260529_profile_compare"
+    main_output_dir = tmp_path / "outputs" / "20260529"
+    main_output_dir.mkdir(parents=True, exist_ok=True)
+    (main_output_dir / "BTST-20260529.md").write_text("# Top-level BTST\n", encoding="utf-8")
+    (main_output_dir / "BTST-LLM-20260529.md").write_text("# Top-level BTST-LLM\n", encoding="utf-8")
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [
+                str(profile_output_dir / f"BTST-{signal_date}.md"),
+                str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+            ],
+            "early_runner_status": "exact",
+            "early_runner_intersection_count": 0,
+            "early_runner_only_count": 0,
+            "early_runner_second_entry_count": 0,
+        }
+
+    monkeypatch.setattr("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", _fake_generate)
+
+    result = compare_btst_doc_bundle_profiles(
+        "20260529",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    top_level_rule_doc = (main_output_dir / "BTST-20260529.md").read_text(encoding="utf-8")
+    top_level_llm_doc = (main_output_dir / "BTST-LLM-20260529.md").read_text(encoding="utf-8")
+    assert "## 今日执行倾向" in top_level_rule_doc
+    assert "## 今日执行倾向" in top_level_llm_doc
+    assert (main_output_dir / "BTST-20260529.md").as_posix() in result["bridge_updated_files"]
+    assert (main_output_dir / "BTST-LLM-20260529.md").as_posix() in result["bridge_updated_files"]
 
 
 def test_generate_btst_doc_bundle_marks_stale_overlap_as_reference_only(tmp_path: Path) -> None:
