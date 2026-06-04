@@ -207,3 +207,61 @@ class TestIdempotency:
                 output_dir=str(tmp_path / "output_b"),
             )
         assert result_a["summary"]["decision_id"] == result_b["summary"]["decision_id"]
+
+
+class TestRefreshOnceInvariant:
+    def test_profile_compare_does_not_refresh_early_runner_twice(
+        self, tmp_path: Path
+    ) -> None:
+        """P0D (2026-06-04): profile compare must never refresh early-runner a second time.
+
+        Plan invariant: "保证 early-runner 整次运行最多刷新一次" — even when both
+        --refresh-early-runner and --with-profile-compare are set, the profile compare
+        step must pass refresh_early_runner=False to the inner generate_btst_doc_bundle.
+        """
+        refresh_call_args: list[dict] = []
+
+        def _fake_generate(signal_date, **kwargs):
+            refresh_call_args.append(kwargs.get("refresh_early_runner"))
+            profile_output_dir = Path(kwargs["output_dir"])
+            profile_output_dir.mkdir(parents=True, exist_ok=True)
+            (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+            (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+            return {
+                "status": "generated",
+                "signal_date": signal_date,
+                "output_dir": str(profile_output_dir),
+                "written_files": [
+                    str(profile_output_dir / f"BTST-{signal_date}.md"),
+                    str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+                ],
+                "early_runner_status": "exact",
+                "early_runner_intersection_count": 0,
+                "early_runner_only_count": 0,
+                "early_runner_second_entry_count": 0,
+                "control_tower": {
+                    "gate": "normal_trade",
+                    "enforced": False,
+                    "buy_orders_cleared": False,
+                },
+                "report_mode": "formal_execution",
+                "semantic_selected_labels": [],
+            }
+
+        with patch("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", side_effect=_fake_generate):
+            run_btst_next_day_package(
+                signal_date="20260602",
+                reports_root=str(tmp_path / "reports"),
+                output_dir=str(tmp_path / "output"),
+                refresh_early_runner=True,  # First call SHOULD refresh.
+                with_profile_compare=True,  # Then profile compare runs.
+            )
+
+        # The first call (initial doc bundle) and the second call (profile compare)
+        # are the only generate_btst_doc_bundle invocations.
+        assert len(refresh_call_args) >= 2
+        # First call respects the user's refresh flag.
+        assert refresh_call_args[0] is True
+        # Subsequent calls (profile compare) MUST NOT refresh.
+        for arg in refresh_call_args[1:]:
+            assert arg is False, f"Profile compare must not refresh; got {arg}"

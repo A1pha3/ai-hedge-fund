@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # Enums
 # ---------------------------------------------------------------------------
 
+
 class SummaryStatus(str, Enum):
     COMPLETE = "complete"
     DEGRADED = "degraded"
