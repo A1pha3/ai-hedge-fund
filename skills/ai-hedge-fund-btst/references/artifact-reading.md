@@ -4,6 +4,11 @@ Load this file before drafting any BTST output.
 
 ## Source priority
 
+0. **operator_summary.json** (P0D 2026-06-04): 如果存在且 `schema_version=1`，优先读取此文件获取运行状态、市场门控、执行语义、early-runner 状态和 artifact 路径索引。
+   - `summary_status=degraded` 时先说明降级原因再继续。
+   - `summary_status=failed` 时停止正常流程，报告 blocker。
+   - 此文件不存在或不支持时，回退到以下 1-5 的逐文件读取流程。
+   - **不得**让 `operator_summary.json` 覆盖 canonical execution contract；它只是派生视图。
 1. Rule-based plan: data/reports/btst_full_report_YYYYMMDD.json first, then the matching Markdown report.
 2. Multi-agent plan: session_summary.json first, then the files indexed under btst_followup or artifacts.
 3. Candidate semantics: btst_next_day_priority_board_latest.json and btst_next_day_trade_brief_latest.json.
