@@ -408,6 +408,7 @@ def build_premarket_control_tower(
         "risk_posture": decision_card.get("risk_posture"),
         "regime_gate_level": regime_level,
         "gate": gate or "n/a",
+        "enforced": gate_context.get("enforced"),
         "buy_orders_cleared": gate_context.get("buy_orders_cleared"),
         "buy_orders_cleared_count": gate_context.get("buy_orders_cleared_count"),
         "position_scale": gate_context.get("position_scale"),

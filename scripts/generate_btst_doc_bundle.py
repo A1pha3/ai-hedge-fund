@@ -71,6 +71,164 @@ def _tag_rows(rows: list[dict[str, Any]], table_key: str) -> list[dict[str, Any]
     return tagged_rows
 
 
+# P0A correctness (2026-06-04): split the three status concepts that the old `exact` enum
+# conflated. The plan explicitly forbids using `exact` / `stale_fallback` / `unavailable`
+# as the sole signal for actionability.
+_DECISION_PHASES = {"post_close_plan", "t_plus_1_open_confirmation", "post_trade_evaluation"}
+_FIELDS_FORBIDDEN_IN_POST_CLOSE_PLAN = frozenset(
+    {
+        "filled",
+        "confirmed",
+        "next_open_return",
+        "next_open_to_close_return",
+        "next_high_return",
+        "next_close_return",
+        "realized_return",
+        "realized_outcome",
+        "t_plus_1_outcome",
+    }
+)
+
+
+def _isoformat(value: Any) -> str | None:
+    """Best-effort ISO timestamp normalization. Returns None for missing/invalid input."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return str(value)
+
+
+def _classify_board_date_alignment(
+    *,
+    requested_trade_date: str | None,
+    selected_board_trade_date: str | None,
+) -> str:
+    """P0A: classify whether the selected board's trade_date matches the request.
+
+    Returns one of `exact`, `stale_fallback`, `unavailable`. This signal is purely
+    about date alignment and MUST NOT be used to derive actionability.
+    """
+    if not selected_board_trade_date:
+        return "unavailable"
+    if requested_trade_date and str(selected_board_trade_date) == str(requested_trade_date):
+        return "exact"
+    return "stale_fallback"
+
+
+def _classify_artifact_freshness(
+    *,
+    analysis_generated_at: str | None,
+    data_as_of: str | None,
+    decision_as_of: str | None,
+    now_iso: str,
+) -> str:
+    """P0A: classify whether the artifact's generation and source timestamps are fresh
+    enough to back a decision at `now_iso` against `decision_as_of`.
+
+    Returns `fresh`, `stale`, or `unknown`. Independent of date alignment.
+    """
+    if not analysis_generated_at or not decision_as_of:
+        return "unknown"
+    # Heuristic: if the artifact was generated more than 24h after decision_as_of,
+    # treat as stale. (Future tune: replace with a configurable horizon if needed.)
+    try:
+        from datetime import datetime, timezone
+        gen = datetime.fromisoformat(analysis_generated_at.replace("Z", "+00:00"))
+        dec = datetime.fromisoformat(decision_as_of.replace("Z", "+00:00"))
+        delta_hours = abs((gen - dec).total_seconds()) / 3600.0
+    except (ValueError, TypeError):
+        return "unknown"
+    if delta_hours <= 24.0:
+        return "fresh"
+    return "stale"
+
+
+def _classify_point_in_time_status(
+    *,
+    decision_phase: str,
+    selected_board: dict[str, Any],
+    decision_as_of: str | None,
+    data_as_of: str | None,
+    now_iso: str,
+) -> str:
+    """P0A: classify whether the selected board's data is safe to consume at this phase.
+
+    `safe`   - only data available at `decision_as_of` is used.
+    `unsafe` - selected board contains T+1 / post-trade fields consumed at a pre-trade phase.
+    `unknown` - cannot determine (missing timestamps or unrecognized phase).
+    """
+    if decision_phase not in _DECISION_PHASES:
+        return "unknown"
+    if not decision_as_of or not data_as_of:
+        return "unknown"
+    if decision_phase == "post_close_plan":
+        forbidden_fields_present = [
+            field for field in _FIELDS_FORBIDDEN_IN_POST_CLOSE_PLAN
+            if selected_board.get(field) is not None
+        ]
+        # Also block if any row inside priority/confirmed_entries carries forbidden fields.
+        for sub_key in ("early_runner_priority", "confirmed_entries", "early_runner_watchlist"):
+            for row in list(selected_board.get(sub_key) or []):
+                if not isinstance(row, dict):
+                    continue
+                for field in _FIELDS_FORBIDDEN_IN_POST_CLOSE_PLAN:
+                    if row.get(field) is not None:
+                        forbidden_fields_present.append(f"{sub_key}.{field}")
+                        break
+        if forbidden_fields_present:
+            return "unsafe"
+    try:
+        from datetime import datetime
+        dec = datetime.fromisoformat(decision_as_of.replace("Z", "+00:00"))
+        data = datetime.fromisoformat(data_as_of.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return "unknown"
+    if data > dec:
+        return "unsafe"
+    return "safe"
+
+
+def _actionability_for_phase(
+    decision_phase: str,
+    *,
+    point_in_time_status: str,
+    source_gate_action: str | None,
+    source_deployment_mode: str | None,
+    runtime_confirmation_passed: bool,
+) -> str:
+    """P0A: derive the actionability_status for the given decision_phase.
+
+    P0A semantics (P0D will refine further):
+      - post_close_plan: only `eligible_for_confirmation` / `research_only` / `unavailable`.
+      - t_plus_1_open_confirmation: only `executable` / `confirmation_failed` / `research_only` / `unavailable`.
+      - post_trade_evaluation: not used; returns `not_applicable`.
+    """
+    if decision_phase == "post_trade_evaluation":
+        return "not_applicable"
+    if decision_phase == "post_close_plan":
+        if point_in_time_status != "safe":
+            return "research_only"
+        if source_gate_action == "tradeable":
+            return "eligible_for_confirmation"
+        return "research_only"
+    if decision_phase == "t_plus_1_open_confirmation":
+        if point_in_time_status != "safe":
+            return "research_only"
+        if (
+            source_gate_action == "tradeable"
+            and source_deployment_mode == "formal_runtime_pilot_ready"
+            and runtime_confirmation_passed
+        ):
+            return "executable"
+        if runtime_confirmation_passed is False:
+            return "confirmation_failed"
+        return "research_only"
+    return "unavailable"
+
+
+
 def _fmt_pct(value: Any, digits: int = 2) -> str:
     """Render mixed numeric values into percentage text."""
     try:
@@ -1104,8 +1262,22 @@ def _load_selection_snapshot(
     return {}
 
 
-def _load_early_runner_context(reports_root: Path, signal_date_iso: str, *, refresh: bool) -> dict[str, Any]:
-    """Load the exact-date early-runner board or the latest available fallback board."""
+def _load_early_runner_context(
+    reports_root: Path,
+    signal_date_iso: str,
+    *,
+    refresh: bool,
+    decision_phase: str = "post_close_plan",
+    decision_as_of: str | None = None,
+    data_as_of: str | None = None,
+    now_iso: str | None = None,
+) -> dict[str, Any]:
+    """Load the exact-date early-runner board or the latest available fallback board.
+
+    P0A correctness (2026-06-04): returns three split status fields instead of a single
+    `status` enum. The legacy `status` is preserved (now equals
+    `board_date_alignment_status`) for backward compatibility.
+    """
     if refresh:
         refreshed = _refresh_early_runner_artifacts(reports_root)
         analysis = dict(refreshed["analysis"])
@@ -1117,15 +1289,39 @@ def _load_early_runner_context(reports_root: Path, signal_date_iso: str, *, refr
     exact_board = next((row for row in boards if str(row.get("trade_date") or "") == signal_date_iso), {})
     latest_board = max(boards, key=lambda row: str(row.get("trade_date") or ""), default={})
     selected_board = dict(exact_board or latest_board or {})
-    status = "exact"
-    if not selected_board:
-        status = "unavailable"
-    elif not exact_board:
-        status = "stale_fallback"
+
+    analysis_generated_at = _isoformat(analysis.get("generated_at"))
+    if analysis_generated_at is None and isinstance(analysis.get("meta"), dict):
+        analysis_generated_at = _isoformat((analysis.get("meta") or {}).get("generated_at"))
+    resolved_now = now_iso or analysis_generated_at
+    board_date_alignment_status = _classify_board_date_alignment(
+        requested_trade_date=signal_date_iso,
+        selected_board_trade_date=str(selected_board.get("trade_date") or "") or None,
+    )
+    artifact_freshness_status = _classify_artifact_freshness(
+        analysis_generated_at=analysis_generated_at,
+        data_as_of=data_as_of,
+        decision_as_of=decision_as_of,
+        now_iso=resolved_now or "",
+    )
+    pit = _classify_point_in_time_status(
+        decision_phase=decision_phase,
+        selected_board=selected_board,
+        decision_as_of=decision_as_of,
+        data_as_of=data_as_of,
+        now_iso=resolved_now or "",
+    )
     return {
         "analysis": analysis,
         "tables_refresh": tables_refresh,
-        "status": status,
+        # Legacy single-field, kept for back-compat. Equals the new board_date_alignment_status.
+        "status": board_date_alignment_status,
+        # P0A: three split status fields.
+        "board_date_alignment_status": board_date_alignment_status,
+        "artifact_freshness_status": artifact_freshness_status,
+        "point_in_time_status": pit,
+        "source_generated_at": analysis_generated_at,
+        "decision_phase": decision_phase,
         "requested_trade_date": signal_date_iso,
         "board": selected_board,
         "latest_trade_date": str(latest_board.get("trade_date") or "") or None,
@@ -2197,13 +2393,43 @@ def generate_btst_doc_bundle(
     signal_date_compact, signal_date_iso = _normalize_signal_date(signal_date)
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     resolved_report_dir = _discover_report_dir(resolved_reports_root, signal_date_iso, report_dir)
+    # P0A: derive point-in-time inputs for early-runner classification.
+    #   - data_as_of: market data cutoff, taken from the rule report's data_as_of
+    #     (defaults to signal_date close if missing).
+    #   - decision_as_of: latest time the operator summary may rely on
+    #     (signal_date 23:59 local unless overridden).
+    #   - now_iso: this run's wall-clock, used for artifact freshness classification.
+    rule_report_path_probe = resolved_reports_root / f"btst_full_report_{signal_date_compact}.json"
+    probe_rule_report: dict[str, Any] = {}
+    if rule_report_path_probe.exists():
+        try:
+            probe_rule_report = _read_json(rule_report_path_probe)
+        except (OSError, json.JSONDecodeError):
+            probe_rule_report = {}
+    data_as_of = (
+        _isoformat(probe_rule_report.get("data_as_of"))
+        or _isoformat(probe_rule_report.get("as_of"))
+        or f"{signal_date_iso}T15:00:00+08:00"
+    )
+    decision_as_of = f"{signal_date_iso}T23:59:59+08:00"
+    now_iso = _isoformat(probe_rule_report.get("generated_at")) or _isoformat(
+        (probe_rule_report.get("meta") or {}).get("generated_at")
+    ) or data_as_of
     session_summary = _read_json(resolved_report_dir / "session_summary.json")
     followup_paths = dict(session_summary.get("btst_followup") or {})
     brief = _read_json(Path(followup_paths["brief_json"]))
     priority_board = _read_json(Path(followup_paths["priority_board_json"])) if followup_paths.get("priority_board_json") else {}
     rule_report_path = resolved_reports_root / f"btst_full_report_{signal_date_compact}.json"
     rule_report = _read_json(rule_report_path)
-    early_runner = _load_early_runner_context(resolved_reports_root, signal_date_iso, refresh=refresh_early_runner)
+    early_runner = _load_early_runner_context(
+        resolved_reports_root,
+        signal_date_iso,
+        refresh=refresh_early_runner,
+        decision_phase="post_close_plan",
+        decision_as_of=decision_as_of,
+        data_as_of=data_as_of,
+        now_iso=now_iso,
+    )
     _enrich_missing_stock_names(
         reports_root=resolved_reports_root,
         report_dir=resolved_report_dir,
@@ -2430,6 +2656,8 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
             "report_mode": result.get("report_mode"),
             "veto_owner": result.get("veto_owner"),
             "market_gate": (result.get("control_tower") or {}).get("gate") if isinstance(result.get("control_tower"), dict) else None,
+            "regime_gate_level": (result.get("control_tower") or {}).get("regime_gate_level") if isinstance(result.get("control_tower"), dict) else None,
+            "gate_enforced": (result.get("control_tower") or {}).get("enforced") if isinstance(result.get("control_tower"), dict) else None,
             "buy_orders_cleared": (result.get("control_tower") or {}).get("buy_orders_cleared") if isinstance(result.get("control_tower"), dict) else None,
             "semantic_selected_labels": list(result.get("semantic_selected_labels") or []),
             "semantic_watch_labels": list(result.get("semantic_watch_labels") or []),
@@ -2461,20 +2689,32 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
     shared_report_mode = _shared_profile_value("report_mode")
     shared_veto_owner = _shared_profile_value("veto_owner")
     shared_market_gate = _shared_profile_value("market_gate")
+    shared_regime_gate_level = _shared_profile_value("regime_gate_level")
+    shared_gate_enforced = _shared_profile_value("gate_enforced")
     shared_buy_orders_cleared = _shared_profile_value("buy_orders_cleared")
+    # P0A correctness fix (2026-06-04): `buy_orders_cleared is False` is ambiguous
+    # — it covers both (a) non-blocked gate with no enforcement, and (b) blocked
+    # gate with no orders to clear. Per the implementation in
+    # src/execution/daily_pipeline.py:506-542, gate override must be derived from
+    # `enforced=True` or `veto_owner=market_gate`, not from the absence of
+    # `buy_orders_cleared`. `market_gate=risk_off` is also not a real gate value
+    # (risk_off is a regime_gate_level, not a market_gate).
     gate_override_active = bool(
         shared_report_mode
         and shared_report_mode != "formal_execution"
         and (
             shared_veto_owner == "market_gate"
-            or shared_market_gate in {"halt", "risk_off"}
-            or shared_buy_orders_cleared is False
+            or shared_market_gate == "halt"
+            or shared_regime_gate_level in {"crisis", "halt", "risk_off"}
+            or shared_gate_enforced is True
         )
     )
     reasons: list[str] = []
     if gate_override_active:
         reasons.append(
-            f"两套 profile 都被市场门控压到 `{shared_report_mode}`（gate `{shared_market_gate or 'n/a'}`，buy_orders_cleared `{shared_buy_orders_cleared}`）；今天先按门控做复核，不把 profile 差异当主裁决。"
+            f"两套 profile 都被市场门控压到 `{shared_report_mode}`（gate `{shared_market_gate or 'n/a'}`，"
+            f"regime_gate_level `{shared_regime_gate_level or 'n/a'}`，enforced `{shared_gate_enforced}`，"
+            f"veto_owner `{shared_veto_owner or 'n/a'}`）；今天先按门控做复核，不把 profile 差异当主裁决。"
         )
     if len(ranked_profiles) >= 2:
         top = ranked_profiles[0]
@@ -2528,6 +2768,8 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
         "shared_report_mode": shared_report_mode,
         "shared_veto_owner": shared_veto_owner,
         "shared_market_gate": shared_market_gate,
+        "shared_regime_gate_level": shared_regime_gate_level,
+        "shared_gate_enforced": shared_gate_enforced,
         "shared_buy_orders_cleared": shared_buy_orders_cleared,
         "gate_override_active": gate_override_active,
         "layer_differences": layer_differences,
@@ -2605,6 +2847,8 @@ def _build_profile_doc_bundle_decision_card(comparison: dict[str, Any]) -> dict[
         "report_mode": comparison.get("shared_report_mode"),
         "veto_owner": comparison.get("shared_veto_owner"),
         "market_gate": comparison.get("shared_market_gate"),
+        "regime_gate_level": comparison.get("shared_regime_gate_level"),
+        "gate_enforced": comparison.get("shared_gate_enforced"),
         "buy_orders_cleared": comparison.get("shared_buy_orders_cleared"),
         "intersection_count": int(recommended.get("intersection_count") or 0) if recommended else 0,
         "only_early_runner_count": int(recommended.get("only_early_runner_count") or 0) if recommended else 0,
@@ -2626,7 +2870,10 @@ def _render_profile_doc_bundle_decision_card_markdown(signal_date_compact: str, 
         f"- 执行模式：`{decision_card.get('action_mode') or 'n/a'}`",
         f"- 主导原因：`{decision_card.get('dominant_reason_type') or 'n/a'}`",
         f"- early-runner 状态：`{decision_card.get('early_runner_status') or 'n/a'}`",
-        f"- 市场门控：gate `{'n/a' if decision_card.get('market_gate') is None else decision_card.get('market_gate')}`；buy_orders_cleared `{'n/a' if decision_card.get('buy_orders_cleared') is None else decision_card.get('buy_orders_cleared')}`",
+        f"- 市场门控：gate `{'n/a' if decision_card.get('market_gate') is None else decision_card.get('market_gate')}`；"
+        f"regime_gate_level `{'n/a' if decision_card.get('regime_gate_level') is None else decision_card.get('regime_gate_level')}`；"
+        f"gate_enforced `{'n/a' if decision_card.get('gate_enforced') is None else decision_card.get('gate_enforced')}`；"
+        f"buy_orders_cleared `{'n/a' if decision_card.get('buy_orders_cleared') is None else decision_card.get('buy_orders_cleared')}`",
         f"- 交集票：`{decision_card.get('intersection_count')}`；相对次优差值：`{decision_card.get('intersection_delta_vs_runner_up'):+d}`",
         f"- only early-runner：`{decision_card.get('only_early_runner_count')}`；相对次优差值：`{decision_card.get('only_early_runner_delta_vs_runner_up'):+d}`",
         f"- second-entry：`{decision_card.get('second_entry_count')}`；相对次优差值：`{decision_card.get('second_entry_delta_vs_runner_up'):+d}`",

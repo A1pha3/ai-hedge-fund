@@ -856,6 +856,168 @@ def test_compare_btst_doc_bundle_profiles_surfaces_market_gate_override_in_decis
     assert any("市场门控" in reason for reason in decision_card["recommendation_reasons"])
 
 
+def test_compare_btst_doc_bundle_profiles_does_not_mark_market_gate_override_when_buy_orders_cleared_is_false_without_enforcement(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """P0A correctness (2026-06-04): `buy_orders_cleared=False` alone is ambiguous and must NOT trigger
+    market_gate_override. Override must be derived from `enforced=True`, `veto_owner=market_gate`,
+    `market_gate=halt`, or `regime_gate_level in {crisis, halt, risk_off}`.
+    """
+    output_dir = tmp_path / "outputs"
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [
+                str(profile_output_dir / f"BTST-{signal_date}.md"),
+                str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+            ],
+            "early_runner_status": "exact",
+            "early_runner_intersection_count": 0,
+            "early_runner_only_count": 0,
+            "early_runner_second_entry_count": 0,
+            # normal_trade path: no enforcement, no orders cleared, but veto_owner is model_evidence.
+            "report_mode": "formal_execution",
+            "veto_owner": "model_evidence",
+            "control_tower": {
+                "gate": "normal_trade",
+                "regime_gate_level": "normal",
+                "enforced": False,
+                "buy_orders_cleared": False,
+            },
+        }
+
+    monkeypatch.setattr("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", _fake_generate)
+
+    result = compare_btst_doc_bundle_profiles(
+        "20260530",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    decision_card = result["decision_card"]
+    # P0A critical assertion: gate override must NOT activate when only `buy_orders_cleared=False` is present.
+    assert decision_card["dominant_reason_type"] != "market_gate_override"
+    assert "market_gate_override" not in str(decision_card.get("recommendation_reasons") or [])
+    # New decision-card fields must be propagated and present.
+    assert decision_card["regime_gate_level"] == "normal"
+    assert decision_card["gate_enforced"] is False
+    assert decision_card["buy_orders_cleared"] is False
+
+
+def test_compare_btst_doc_bundle_profiles_marks_market_gate_override_when_halt_with_enforcement(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """P0A correctness (2026-06-04): `market_gate=halt` + `gate_enforced=True` must still activate override,
+    even when no orders were cleared (blocked gate that had no orders to clear is a real override).
+    """
+    output_dir = tmp_path / "outputs"
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [
+                str(profile_output_dir / f"BTST-{signal_date}.md"),
+                str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+            ],
+            "early_runner_status": "exact",
+            "early_runner_intersection_count": 0,
+            "early_runner_only_count": 0,
+            "early_runner_second_entry_count": 0,
+            "report_mode": "confirmation_review_only",
+            "veto_owner": "market_gate",
+            "control_tower": {
+                "gate": "halt",
+                "regime_gate_level": "crisis",
+                "enforced": True,
+                # No buy orders to clear (e.g., gate blocked upstream), but enforcement is real.
+                "buy_orders_cleared": False,
+                "buy_orders_cleared_count": 0,
+            },
+        }
+
+    monkeypatch.setattr("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", _fake_generate)
+
+    result = compare_btst_doc_bundle_profiles(
+        "20260530",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    decision_card = result["decision_card"]
+    # Override must activate from `gate=halt` (or `enforced=True` or `veto_owner=market_gate`).
+    assert decision_card["dominant_reason_type"] == "market_gate_override"
+    assert decision_card["market_gate"] == "halt"
+    assert decision_card["regime_gate_level"] == "crisis"
+    assert decision_card["gate_enforced"] is True
+    assert decision_card["buy_orders_cleared"] is False
+    assert any("市场门控" in reason for reason in decision_card["recommendation_reasons"])
+
+
+def test_compare_btst_doc_bundle_profiles_does_not_treat_risk_off_as_market_gate_value(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """P0A correctness (2026-06-04): `risk_off` is a regime_gate_level, not a market_gate value.
+    Market_gate must not be set to `risk_off`; override activation flows from regime_gate_level mapping.
+    """
+    output_dir = tmp_path / "outputs"
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [
+                str(profile_output_dir / f"BTST-{signal_date}.md"),
+                str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+            ],
+            "early_runner_status": "exact",
+            "early_runner_intersection_count": 0,
+            "early_runner_only_count": 0,
+            "early_runner_second_entry_count": 0,
+            "report_mode": "confirmation_review_only",
+            "veto_owner": "market_gate",
+            "control_tower": {
+                "gate": "shadow_only",  # risk_off is NOT a market_gate value
+                "regime_gate_level": "risk_off",  # this is the real signal
+                "enforced": True,
+                "buy_orders_cleared": False,
+            },
+        }
+
+    monkeypatch.setattr("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", _fake_generate)
+
+    result = compare_btst_doc_bundle_profiles(
+        "20260530",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    decision_card = result["decision_card"]
+    # Override must activate via regime_gate_level=risk_off even though market_gate is shadow_only.
+    assert decision_card["dominant_reason_type"] == "market_gate_override"
+    # market_gate must not be 'risk_off' — that is a regime_gate_level value.
+    assert decision_card["market_gate"] != "risk_off"
+    assert decision_card["market_gate"] == "shadow_only"
+    assert decision_card["regime_gate_level"] == "risk_off"
+
+
 def test_compare_btst_doc_bundle_profiles_bridges_top_level_main_docs_when_present(tmp_path: Path, monkeypatch) -> None:
     """Append the shared profile decision bridge into the sibling top-level BTST docs when they already exist."""
     output_dir = tmp_path / "outputs" / "20260529_profile_compare"
