@@ -276,5 +276,19 @@ def test_replay_frozen_post_market_sequence_preserves_execution_eligibility_for_
     )
 
     replayed_plan = plans["20260522"]
-    assert replayed_plan.selection_targets["300054"].execution_eligible is True
-    assert replayed_plan.selection_targets["002222"].execution_eligible is True
+    # After layer_c_watchlist shadow profile rollout (commit 0f07447c), tickers sourced
+    # from layer_c_watchlist have rank_cap=0 in short_trade_only routing, so they get
+    # `selected_rank_cap_exceeded` rejection at the short_trade layer even when the
+    # research layer selects them. The outer execution_eligible follows short_trade
+    # for target_mode=short_trade_only.
+    for ticker in ("300054", "002222"):
+        ev = replayed_plan.selection_targets[ticker]
+        assert ev.research.decision == "selected", f"{ticker}: research should still select"
+        assert ev.research.execution_eligible is True, f"{ticker}: research should be execution_eligible"
+        assert ev.short_trade.decision == "rejected", f"{ticker}: short_trade rejects due to layer_c_watchlist rank_cap"
+        assert ev.short_trade.execution_eligible is False, f"{ticker}: short_trade is not execution_eligible"
+        assert ev.execution_eligible is False, f"{ticker}: outer follows short_trade in short_trade_only mode"
+        assert ev.delta_classification == "research_pass_short_reject"
+        assert "selected_rank_cap_exceeded" in (ev.short_trade.blockers or []), (
+            f"{ticker}: rejection reason must be the documented rank_cap blocker"
+        )
