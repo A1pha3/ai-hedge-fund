@@ -2761,6 +2761,32 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
                     "summary": "；".join(summary_bits) if summary_bits else "无明显票级差异",
                 }
             )
+    # P0B (2026-06-04): honest scope declaration and effective-decision-diff detection.
+    # Current profile only changes doc rendering thresholds; it does NOT enter upstream
+    # candidate selection or execution rules.  The comparison_scope is therefore fixed
+    # at doc_bundle_rendering.  true upstream comparison is deferred to P2.
+    has_layer_diff = bool(layer_differences)
+    has_count_diff = False
+    if len(ranked_profiles) >= 2:
+        top = ranked_profiles[0]
+        runner_up = ranked_profiles[1]
+        has_count_diff = (
+            top["intersection_count"] != runner_up["intersection_count"]
+            or top["only_early_runner_count"] != runner_up["only_early_runner_count"]
+            or top["second_entry_count"] != runner_up["second_entry_count"]
+        )
+    # effective_decision_diff is true only when profile actually changes the real
+    # candidate set or execution semantics.  For now (P0B) this is conservatively
+    # set to false because profiles only change doc rendering thresholds, not
+    # upstream candidate selection.  When P2 implements real upstream profile
+    # routing, this will be derived from actual candidate differences.
+    effective_decision_diff = False  # P0B: always false; P2 will compute from real diffs.
+    # When no effective decision diff exists, suppress strategy-oriented language.
+    if not effective_decision_diff and not has_count_diff and not has_layer_diff:
+        reasons.append(
+            "P0B note: 当前 profile 只改变文档展示阈值，未改变真实候选集合或执行语义；"
+            "以下推荐仅反映 conservative 做风控基线的默认选择，不代表已验证的策略优势。"
+        )
     return {
         "profiles": sorted(profiles, key=lambda item: str(item["profile"])),
         "recommended_profile": recommended_profile,
@@ -2773,15 +2799,20 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
         "shared_buy_orders_cleared": shared_buy_orders_cleared,
         "gate_override_active": gate_override_active,
         "layer_differences": layer_differences,
+        "comparison_scope": "doc_bundle_rendering",
+        "effective_decision_diff": effective_decision_diff,
     }
 
 
 def _render_profile_doc_bundle_comparison_markdown(signal_date_compact: str, comparison: dict[str, Any]) -> str:
     """Render one markdown summary for daily BTST bundle profile comparison."""
+    scope = comparison.get("comparison_scope", "doc_bundle_rendering")
+    eff_diff = comparison.get("effective_decision_diff", False)
     lines = [
         f"# BTST {signal_date_compact} Profile 文档包对照",
         "",
         f"- 推荐 profile：`{comparison.get('recommended_profile') or 'n/a'}`",
+        f"- 比较范围：`{scope}`；有效决策差异：`{eff_diff}`",
         "",
         "## 总览",
         "",
@@ -2857,11 +2888,17 @@ def _build_profile_doc_bundle_decision_card(comparison: dict[str, Any]) -> dict[
         "only_early_runner_delta_vs_runner_up": (int(recommended.get("only_early_runner_count") or 0) - int(challenger.get("only_early_runner_count") or 0) if recommended and challenger else 0),
         "second_entry_delta_vs_runner_up": (int(recommended.get("second_entry_count") or 0) - int(challenger.get("second_entry_count") or 0) if recommended and challenger else 0),
         "recommendation_reasons": list(comparison.get("recommendation_reasons") or []),
+        # P0B (2026-06-04): honest scope and decision-diff semantics.
+        "comparison_scope": comparison.get("comparison_scope", "doc_bundle_rendering"),
+        "effective_decision_diff": comparison.get("effective_decision_diff", False),
     }
 
 
 def _render_profile_doc_bundle_decision_card_markdown(signal_date_compact: str, decision_card: dict[str, Any]) -> str:
     """Render one compact pre-trade decision card for fast profile selection."""
+    # P0B: include comparison_scope and effective_decision_diff in header.
+    scope = decision_card.get("comparison_scope", "doc_bundle_rendering")
+    eff_diff = decision_card.get("effective_decision_diff", False)
     lines = [
         f"# BTST {signal_date_compact} 交易前决策卡",
         "",
@@ -2874,6 +2911,7 @@ def _render_profile_doc_bundle_decision_card_markdown(signal_date_compact: str, 
         f"regime_gate_level `{'n/a' if decision_card.get('regime_gate_level') is None else decision_card.get('regime_gate_level')}`；"
         f"gate_enforced `{'n/a' if decision_card.get('gate_enforced') is None else decision_card.get('gate_enforced')}`；"
         f"buy_orders_cleared `{'n/a' if decision_card.get('buy_orders_cleared') is None else decision_card.get('buy_orders_cleared')}`",
+        f"- 比较范围：`{scope}`；有效决策差异：`{eff_diff}`",
         f"- 交集票：`{decision_card.get('intersection_count')}`；相对次优差值：`{decision_card.get('intersection_delta_vs_runner_up'):+d}`",
         f"- only early-runner：`{decision_card.get('only_early_runner_count')}`；相对次优差值：`{decision_card.get('only_early_runner_delta_vs_runner_up'):+d}`",
         f"- second-entry：`{decision_card.get('second_entry_count')}`；相对次优差值：`{decision_card.get('second_entry_delta_vs_runner_up'):+d}`",

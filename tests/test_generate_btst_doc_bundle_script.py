@@ -801,13 +801,21 @@ def test_compare_btst_doc_bundle_profiles_describes_ties_without_false_edge(tmp_
 
     reasons = result["comparison"]["recommendation_reasons"]
     assert result["comparison"]["recommended_profile"] == "conservative"
-    assert reasons == ["两套 profile 的交集票、only early-runner 与 second-entry 完全持平；没有形成有效 profile 差异，默认采用 conservative 做风控基线。"]
+    # P0B: an honest scope disclosure is appended when no effective decision diff exists.
+    assert any("完全持平" in r for r in reasons)
+    assert any("P0B note" in r for r in reasons)
     assert "更多" not in "\n".join(reasons)
     assert "更少" not in "\n".join(reasons)
     assert result["comparison"]["layer_differences"] == []
+    assert result["comparison"]["comparison_scope"] == "doc_bundle_rendering"
+    assert result["comparison"]["effective_decision_diff"] is False
     assert result["decision_card"]["dominant_reason_type"] == "no_effective_profile_diff"
+    assert result["decision_card"]["comparison_scope"] == "doc_bundle_rendering"
+    assert result["decision_card"]["effective_decision_diff"] is False
     card_markdown = Path(result["decision_card_md_path"]).read_text(encoding="utf-8")
     assert "完全持平" in card_markdown
+    # P0B: card markdown must include the scope declaration.
+    assert "doc_bundle_rendering" in card_markdown
 
 
 def test_compare_btst_doc_bundle_profiles_surfaces_market_gate_override_in_decision_card(tmp_path: Path, monkeypatch) -> None:
@@ -1016,6 +1024,106 @@ def test_compare_btst_doc_bundle_profiles_does_not_treat_risk_off_as_market_gate
     assert decision_card["market_gate"] != "risk_off"
     assert decision_card["market_gate"] == "shadow_only"
     assert decision_card["regime_gate_level"] == "risk_off"
+
+
+
+def test_p0b_comparison_scope_is_always_doc_bundle_rendering(tmp_path: Path, monkeypatch) -> None:
+    """P0B (2026-06-04): comparison_scope must always be doc_bundle_rendering for current profiles."""
+    output_dir = tmp_path / "outputs"
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [
+                str(profile_output_dir / f"BTST-{signal_date}.md"),
+                str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+            ],
+            "early_runner_status": "exact",
+            "early_runner_intersection_count": 1,
+            "early_runner_only_count": 0,
+            "early_runner_second_entry_count": 0,
+            "report_mode": "formal_execution",
+            "veto_owner": "model_evidence",
+            "control_tower": {
+                "gate": "normal_trade",
+                "regime_gate_level": "normal",
+                "enforced": False,
+                "buy_orders_cleared": False,
+            },
+        }
+
+    monkeypatch.setattr("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", _fake_generate)
+
+    result = compare_btst_doc_bundle_profiles(
+        "20260530",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    # P0B: comparison_scope must always be doc_bundle_rendering.
+    assert result["comparison"]["comparison_scope"] == "doc_bundle_rendering"
+    assert result["decision_card"]["comparison_scope"] == "doc_bundle_rendering"
+    # effective_decision_diff must be False (profiles don't change upstream selection).
+    assert result["comparison"]["effective_decision_diff"] is False
+    assert result["decision_card"]["effective_decision_diff"] is False
+    # Card markdown must include the scope declaration.
+    card_md = Path(result["decision_card_md_path"]).read_text(encoding="utf-8")
+    assert "doc_bundle_rendering" in card_md
+    # Comparison markdown must include the scope declaration.
+    comp_md = Path(result["md_path"]).read_text(encoding="utf-8")
+    assert "doc_bundle_rendering" in comp_md
+
+
+def test_p0b_no_strategy_advantage_claimed_when_no_effective_decision_diff(tmp_path: Path, monkeypatch) -> None:
+    """P0B (2026-06-04): must not describe doc rendering differences as verified strategy advantages."""
+    output_dir = tmp_path / "outputs"
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [
+                str(profile_output_dir / f"BTST-{signal_date}.md"),
+                str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+            ],
+            "early_runner_status": "exact",
+            "early_runner_intersection_count": 0,
+            "early_runner_only_count": 0,
+            "early_runner_second_entry_count": 0,
+            "report_mode": "formal_execution",
+            "veto_owner": "model_evidence",
+            "control_tower": {
+                "gate": "normal_trade",
+                "regime_gate_level": "normal",
+                "enforced": False,
+                "buy_orders_cleared": False,
+            },
+        }
+
+    monkeypatch.setattr("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", _fake_generate)
+
+    result = compare_btst_doc_bundle_profiles(
+        "20260530",
+        profiles=["conservative", "aggressive"],
+        output_dir=output_dir,
+    )
+
+    reasons = result["comparison"]["recommendation_reasons"]
+    # P0B: must contain honest scope disclosure when no effective decision diff.
+    assert any("P0B note" in r for r in reasons)
+    # Must explicitly disclaim verified strategy advantage.
+    assert any("不代表已验证的策略优势" in r or "不代表策略上更优" in r for r in reasons)
 
 
 def test_compare_btst_doc_bundle_profiles_bridges_top_level_main_docs_when_present(tmp_path: Path, monkeypatch) -> None:
