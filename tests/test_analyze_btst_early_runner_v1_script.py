@@ -289,6 +289,7 @@ def test_analyze_btst_early_runner_v1_builds_ledgers_profiles_and_daily_boards(t
         "trade_date",
         "btst_regime_gate",
         "gate_action",
+        "board_provenance",  # P0A: provenance annotation for T+1 fields
         "early_runner_watchlist",
         "early_runner_priority",
         "second_entry_reentry",
@@ -635,3 +636,61 @@ def test_analyze_btst_early_runner_v1_uses_watchlist_cohort_for_first_entry_vali
     assert analysis["theme_radar_by_trade_date"]["2026-04-07"]["top_active_themes"] == ["AI"]
     assert analysis["early_runner_first_entry_ledger"]["sample_count"] == len(daily_board["early_runner_watchlist"])
     assert analysis["early_runner_first_entry_ledger"]["deduped_sample_count"] == len(daily_board["early_runner_watchlist"])
+
+
+def test_daily_board_includes_p0a_board_provenance(tmp_path: Path, monkeypatch) -> None:
+    """P0A (2026-06-04): daily boards must carry board_provenance annotating T+1 fields."""
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = reports_root / "paper_trading_window_20260323_20260326_early_runner"
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    market_state = {
+        "breadth_ratio": 0.58,
+        "daily_return": 0.003,
+        "style_dispersion": 0.18,
+        "regime_flip_risk": 0.12,
+    }
+    selection_targets = {
+        "300001": _selection_target(
+            decision="selected",
+            score_target=0.72,
+            candidate_source="layer_c_watchlist",
+            preferred_entry_mode="watchlist_followthrough",
+            metrics={
+                "trend_acceleration": 0.79,
+                "breakout_freshness": 0.58,
+                "volume_expansion_quality": 0.34,
+                "close_strength": 0.88,
+                "sector_resonance": 0.18,
+                "catalyst_freshness": 0.0,
+                "layer_c_alignment": 0.49,
+                "ret_5d": 0.0,
+                "ret_10d": 0.0,
+                "gap_to_limit": 0.10,
+                "failed_breakout_10": 0,
+                "supply_pressure_60": 0.10,
+                "projected_theme_exposure": 0.12,
+            },
+        ),
+    }
+    _write_snapshot(report_dir, "20260323", selection_targets, market_state=market_state)
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_all_stock_basic",
+        lambda *_args, **_kwargs: _stock_basic_frame(),
+    )
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_daily_basic_batch",
+        lambda *_args, **_kwargs: _daily_basic_frame(),
+    )
+
+    analysis = early_runner.analyze_btst_early_runner_v1(reports_root)
+    assert analysis["daily_boards"], "expected at least one daily board from fixture"
+    daily_board = analysis["daily_boards"][0]
+
+    # P0A: board must carry provenance metadata.
+    assert "board_provenance" in daily_board
+    provenance = daily_board["board_provenance"]
+    assert provenance["source"] == "analyze_btst_early_runner_v1"
+    assert "T+1" in provenance["note"]
+    assert "confirmed_entries" in provenance["note"]
+

@@ -97,3 +97,28 @@ def test_compute_liquidity_score_rejects_missing_or_too_thin_liquidity() -> None
     """Liquidity scoring should fail closed when turnover is absent and stay bounded when thin."""
     assert compute_liquidity_score(None, low_liquidity_threshold_wan_yuan=5000.0) == 0.0
     assert compute_liquidity_score(1000.0, low_liquidity_threshold_wan_yuan=5000.0) == 0.1
+
+
+def test_compute_confirm_assessment_outputs_are_t_plus_1_data() -> None:
+    """P0A (2026-06-04): confirm_assessment outputs (score, provenance, checks) represent T+1 data.
+
+    Downstream post_close_plan consumers must not use these fields directly.
+    The _classify_point_in_time_status helper in generate_btst_doc_bundle.py
+    is responsible for flagging boards containing these as 'unsafe' for post_close_plan.
+    """
+    row = _base_row()
+    assessment = compute_confirm_assessment(
+        row,
+        ticker="300001",
+        confirm_trade_date=None,  # no confirm date → proxy_fallback (no runtime data needed)
+        max_open_gap=0.05,
+        low_liquidity_threshold_wan_yuan=5000.0,
+    )
+    # These fields represent T+1 intraday data and must not be consumed in post_close_plan.
+    assert "score" in assessment
+    assert "provenance" in assessment
+    assert "checks" in assessment
+    # When provenance is proxy_fallback, the data is estimated from next_*_return fields
+    # which are T+1 data — not available at post_close_plan (signal day close).
+    assert assessment["provenance"] == "proxy_fallback"
+    assert row.get("next_open_return") is not None

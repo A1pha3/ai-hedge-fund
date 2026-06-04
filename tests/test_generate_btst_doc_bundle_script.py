@@ -819,7 +819,14 @@ def test_compare_btst_doc_bundle_profiles_describes_ties_without_false_edge(tmp_
 
 
 def test_compare_btst_doc_bundle_profiles_surfaces_market_gate_override_in_decision_card(tmp_path: Path, monkeypatch) -> None:
-    """Promote market-gate override into the compact decision card when both profiles are blocked the same way."""
+    """Promote market-gate override into the compact decision card when both profiles are blocked the same way.
+
+    P0B note (2026-06-04): This test uses mock to manufacture gate override data. Real profile
+    compare cannot produce effective_decision_diff=True because profiles only change doc
+    rendering thresholds. The mock is retained to verify that gate override logic still fires
+    correctly when the canonical artifacts genuinely reflect a blocked gate — but the
+    comparison_scope must remain 'doc_bundle_rendering' and effective_decision_diff must be False.
+    """
     output_dir = tmp_path / "outputs"
 
     def _fake_generate(signal_date, **kwargs):
@@ -1167,9 +1174,52 @@ def test_compare_btst_doc_bundle_profiles_bridges_top_level_main_docs_when_prese
     assert "## 今日执行倾向" in top_level_llm_doc
     assert (main_output_dir / "BTST-20260529.md").as_posix() in result["bridge_updated_files"]
     assert (main_output_dir / "BTST-LLM-20260529.md").as_posix() in result["bridge_updated_files"]
+    # P0D: managed markers must be present.
+    assert "<!-- BTST_PROFILE_BRIDGE_BEGIN -->" in top_level_rule_doc
+    assert "<!-- BTST_PROFILE_BRIDGE_END -->" in top_level_rule_doc
 
 
-def test_generate_btst_doc_bundle_marks_stale_overlap_as_reference_only(tmp_path: Path) -> None:
+def test_compare_btst_doc_bundle_profiles_bridge_idempotent_on_rerun(tmp_path: Path, monkeypatch) -> None:
+    """P0D (2026-06-04): re-running bridge must replace, not duplicate."""
+    output_dir = tmp_path / "outputs" / "20260529_profile_compare"
+    main_output_dir = tmp_path / "outputs" / "20260529"
+    main_output_dir.mkdir(parents=True, exist_ok=True)
+    (main_output_dir / "BTST-20260529.md").write_text("# Top-level BTST\n", encoding="utf-8")
+    (main_output_dir / "BTST-LLM-20260529.md").write_text("# Top-level BTST-LLM\n", encoding="utf-8")
+
+    def _fake_generate(signal_date, **kwargs):
+        profile_output_dir = Path(kwargs["output_dir"])
+        profile_output_dir.mkdir(parents=True, exist_ok=True)
+        (profile_output_dir / f"BTST-{signal_date}.md").write_text("# BTST\n", encoding="utf-8")
+        (profile_output_dir / f"BTST-LLM-{signal_date}.md").write_text("# BTST-LLM\n", encoding="utf-8")
+        return {
+            "status": "generated",
+            "signal_date": signal_date,
+            "output_dir": str(profile_output_dir),
+            "written_files": [
+                str(profile_output_dir / f"BTST-{signal_date}.md"),
+                str(profile_output_dir / f"BTST-LLM-{signal_date}.md"),
+            ],
+            "early_runner_status": "exact",
+            "early_runner_intersection_count": 0,
+            "early_runner_only_count": 0,
+            "early_runner_second_entry_count": 0,
+        }
+
+    monkeypatch.setattr("scripts.generate_btst_doc_bundle.generate_btst_doc_bundle", _fake_generate)
+
+    # Run once.
+    compare_btst_doc_bundle_profiles("20260529", profiles=["conservative", "aggressive"], output_dir=output_dir)
+    doc_after_first = (main_output_dir / "BTST-20260529.md").read_text(encoding="utf-8")
+    count_first = doc_after_first.count("## 今日执行倾向")
+
+    # Run again with same params.
+    compare_btst_doc_bundle_profiles("20260529", profiles=["conservative", "aggressive"], output_dir=output_dir)
+    doc_after_second = (main_output_dir / "BTST-20260529.md").read_text(encoding="utf-8")
+    count_second = doc_after_second.count("## 今日执行倾向")
+
+    # Must not duplicate the bridge section.
+    assert count_second == count_first == 1
     """Mark overlaps as reference-only when early-runner falls back to an older board."""
     reports_root = tmp_path / "data" / "reports"
     report_dir = reports_root / "paper_trading_20260526_20260526_live_m2_7_short_trade_only_20260527_plan"

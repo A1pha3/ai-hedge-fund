@@ -2642,6 +2642,54 @@ def generate_btst_doc_bundle(
     }
 
 
+def _build_operator_summary_from_doc_bundle(
+    result: dict[str, Any],
+    *,
+    signal_date: str,
+    decision_as_of: str,
+    data_as_of: str,
+) -> dict[str, Any]:
+    """P0C integration: build an operator_summary dict from generate_btst_doc_bundle output.
+
+    This is a lightweight bridge — the full Pydantic builder lives in
+    ``src.paper_trading.btst_operator_summary.build_operator_summary``.
+    This function produces a dict that can be passed directly to
+    ``build_operator_summary(**kwargs)`` or written as raw JSON.
+    """
+    control_tower = dict(result.get("control_tower") or {})
+    early_runner_ctx = {
+        "board_date_alignment_status": result.get("early_runner_status"),
+        "intersection_count": result.get("early_runner_intersection_count", 0),
+        "only_early_runner_count": result.get("early_runner_only_count", 0),
+        "second_entry_count": result.get("early_runner_second_entry_count", 0),
+    }
+    return {
+        "signal_date": signal_date,
+        "decision_phase": "post_close_plan",
+        "next_trade_date": result.get("next_trade_date_iso"),
+        "decision_as_of": decision_as_of,
+        "data_as_of": data_as_of,
+        "summary_status": "complete",
+        "market": {
+            "regime_gate_level": control_tower.get("regime_gate_level"),
+            "market_gate": control_tower.get("gate"),
+            "gate_enforced": control_tower.get("enforced"),
+            "buy_orders_cleared": control_tower.get("buy_orders_cleared"),
+        },
+        "execution": {
+            "report_mode": result.get("report_mode"),
+            "formal_selected_tickers": list(result.get("semantic_selected_labels") or []),
+            "orderable_tickers": [],
+            "confirmation_only_tickers": list(result.get("semantic_selected_labels") or []),
+        },
+        "early_runner": early_runner_ctx,
+        "profile_compare": {
+            "comparison_scope": "doc_bundle_rendering",
+            "effective_decision_diff": False,
+        },
+    }
+
+
 def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Compare daily BTST bundle outputs across multiple threshold profiles."""
     profiles = [
@@ -2940,13 +2988,22 @@ def _render_profile_decision_bridge_lines(decision_card: dict[str, Any]) -> list
     ] + [f"- {reason}" for reason in list(decision_card.get("recommendation_reasons") or [])]
 
 
+_BRIDGE_BEGIN_MARKER = "<!-- BTST_PROFILE_BRIDGE_BEGIN -->"
+_BRIDGE_END_MARKER = "<!-- BTST_PROFILE_BRIDGE_END -->"
+
+
 def _append_profile_decision_bridge(
     output_dir: Path,
     signal_date_compact: str,
     decision_card: dict[str, Any],
 ) -> list[str]:
-    """Append one shared profile-decision bridge section into the main BTST docs."""
-    bridge = "\n" + "\n".join(_render_profile_decision_bridge_lines(decision_card)) + "\n"
+    """Append one shared profile-decision bridge section into the main BTST docs.
+
+    P0D (2026-06-04): uses managed begin/end markers for idempotent replacement.
+    Re-running replaces the existing bridge block instead of appending duplicates.
+    """
+    bridge_body = "\n".join(_render_profile_decision_bridge_lines(decision_card))
+    bridge_block = f"\n{_BRIDGE_BEGIN_MARKER}\n{bridge_body}\n{_BRIDGE_END_MARKER}\n"
     updated_files: list[str] = []
     for file_name in (
         f"BTST-{signal_date_compact}.md",
@@ -2956,9 +3013,19 @@ def _append_profile_decision_bridge(
         if not target_path.exists():
             continue
         original = target_path.read_text(encoding="utf-8")
+        # P0D: if managed markers exist, replace the block (idempotent).
+        if _BRIDGE_BEGIN_MARKER in original and _BRIDGE_END_MARKER in original:
+            start = original.index(_BRIDGE_BEGIN_MARKER)
+            end = original.index(_BRIDGE_END_MARKER) + len(_BRIDGE_END_MARKER)
+            new_content = original[:start] + bridge_block + original[end:]
+            target_path.write_text(new_content, encoding="utf-8")
+            updated_files.append(target_path.as_posix())
+            continue
+        # Legacy fallback: if old-style bridge exists, skip (no duplicate).
         if "## 今日执行倾向" in original:
             continue
-        target_path.write_text(original.rstrip() + bridge, encoding="utf-8")
+        # First-time append.
+        target_path.write_text(original.rstrip() + bridge_block, encoding="utf-8")
         updated_files.append(target_path.as_posix())
     return updated_files
 

@@ -54,3 +54,29 @@ If a same-day decision card exists, the final reply must start with this exact o
 ## Fallback
 
 If there is no decision card, skip `今日执行倾向` and `核心理由`, then start from `文件位置`.
+
+## P0D additions (2026-06-04)
+
+### operator_summary.json awareness
+
+If `operator_summary.json` exists:
+- Check `summary_status` first. If `degraded` or `failed`, explain the reason before any trading advice.
+- Reference the `decision_id` for traceability.
+- Do NOT let the summary override canonical execution contracts or session_summary provenance.
+
+### ONE-PAGER reference
+
+- If `BTST-YYYYMMDD-ONE-PAGER.md` was generated, mention it in `文件位置` after the decision card.
+- The ONE-PAGER is a quick-read summary; it does NOT replace the 5 core documents.
+
+### Profile comparison scope
+
+- Always state that profile comparison scope is `doc_bundle_rendering` and `effective_decision_diff` is `False`.
+- Do NOT claim any profile has been verified as strategically superior.
+- When writing `今日执行倾向`, if `dominant_reason_type=no_effective_profile_diff`, state that the choice defaults to conservative as risk baseline — not because it has been proven better.
+
+### Incremental evidence
+
+- When mentioning early-runner contribution, check `incremental_evidence.status`.
+- If `insufficient`: say "证据不足" — never "无增量价值" or "无贡献".
+- If `sufficient` or `partial`: cite the sample count and win rate from the evidence.

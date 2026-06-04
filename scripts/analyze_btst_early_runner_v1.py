@@ -981,6 +981,13 @@ def _collect_daily_board(
         "trade_date": trade_date,
         "btst_regime_gate": gate,
         "gate_action": gate_action,
+        # P0A (2026-06-04): annotate board with decision-phase metadata so
+        # downstream consumers know which fields are safe to use at which phase.
+        "board_provenance": {
+            "source": "analyze_btst_early_runner_v1",
+            "note": "confirmed_entries and entry_status contain T+1 data; "
+                    "not safe for post_close_plan consumption without PIT validation.",
+        },
         "early_runner_watchlist": watchlist,
         "early_runner_priority": priority,
         "second_entry_reentry": _rank_rows(second_entry_rows, "score_target")[:10],

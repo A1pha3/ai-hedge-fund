@@ -45,3 +45,29 @@ Use the signal date YYYYMMDD in every filename:
 - The forum short version must be directly postable, but still reflect the current run rather than yesterday's wording.
 - The execution checklist must follow the multi-agent hierarchy, not a blended or manually re-ranked list.
 - When a decision card exists, the shared bridge conclusion may guide framing, but it must not overwrite rule provenance in BTST-YYYYMMDD.md or silently upgrade names in BTST-LLM-YYYYMMDD.md.
+
+## P0D additions (2026-06-04)
+
+### operator_summary.json integration
+
+When `operator_summary.json` exists alongside the 5 core documents:
+- Treat it as the compressed run-status view; do NOT let it override canonical execution contracts.
+- If `summary_status` is `degraded` or `failed`, state the degradation reason before proceeding.
+- The ONE-PAGER (`BTST-YYYYMMDD-ONE-PAGER.md`) is derived from `operator_summary.json`, not from re-reading multiple artifacts.
+
+### ONE-PAGER
+
+- Rendered from validated `operator_summary.json` only.
+- Must NOT contain fields unavailable at the current `decision_phase` (e.g., no T+1 results in `post_close_plan`).
+- Must say "证据不足" when `incremental_evidence.status` is insufficient — never "无增量价值".
+
+### Profile comparison scope
+
+- `comparison_scope` is always `doc_bundle_rendering` (P0B).
+- `effective_decision_diff` is `False` until P2 wires upstream routing.
+- Do NOT describe doc rendering differences as verified strategy advantages.
+
+### Bridge markers
+
+- The profile decision bridge uses managed HTML comment markers (`<!-- BTST_PROFILE_BRIDGE_BEGIN -->` / `<!-- BTST_PROFILE_BRIDGE_END -->`).
+- Re-running replaces the existing block; no duplicate bridges.
