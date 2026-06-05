@@ -307,3 +307,36 @@ def test_execute_sell_trade_no_longer_debits_cash_separately(monkeypatch) -> Non
     # Net cash credit: 100 * 11 * (1 - 0.0025 - 0.001) = 100 * 11 * 0.9965 = 1096.15
     expected_cash = starting_cash + 100 * 11.0 * 0.9965
     assert snap["cash"] == pytest.approx(expected_cash)
+
+
+# ---------------------------------------------------------------------------
+# REF-006: _EMPTY_POSITION stays in sync with PositionState type
+# ---------------------------------------------------------------------------
+
+def test_empty_position_keys_match_position_state_type():
+    """REF-006: any new field added to PositionState must also be added
+    to _EMPTY_POSITION. This test catches the regression at the type
+    level so the compiler/linter flags it next time someone adds
+    e.g. a new ``stop_loss_pct`` field to PositionState."""
+    from src.backtesting.portfolio import _EMPTY_POSITION
+    from src.backtesting.types import PositionState, PositionStateRequired
+
+    expected_keys = set(PositionStateRequired.__annotations__.keys()) | set(PositionState.__annotations__.keys())
+    actual_keys = set(_EMPTY_POSITION.keys())
+    missing = expected_keys - actual_keys
+    extra = actual_keys - expected_keys
+    assert not missing, f"_EMPTY_POSITION is missing keys present in PositionState: {missing}"
+    assert not extra, f"_EMPTY_POSITION has extra keys not in PositionState: {extra}"
+
+
+def test_ensure_ticker_uses_empty_position_default():
+    """REF-006: ensure_ticker must produce a position that is a copy of
+    _EMPTY_POSITION (not a reference) so per-ticker mutations are isolated."""
+    from src.backtesting.portfolio import _EMPTY_POSITION
+
+    p = Portfolio(tickers=["AAPL"], initial_cash=100_000.0, margin_requirement=0.0)
+    p.ensure_ticker("MSFT")
+    assert p.get_positions()["MSFT"] == _EMPTY_POSITION
+    # Verify it's a copy, not a shared reference
+    p.get_positions()["MSFT"]["long"] = 100
+    assert _EMPTY_POSITION["long"] == 0

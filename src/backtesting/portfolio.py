@@ -6,6 +6,35 @@ from collections.abc import Mapping
 from .types import PortfolioSnapshot, PositionState, TickerRealizedGains
 
 
+# REF-006: single source of truth for an "empty" per-ticker position.
+# Previously the same default dict was duplicated in 4 places (init,
+# get_snapshot, load_snapshot, ensure_ticker), which historically led
+# to bugs when new fields were added to PositionState but not to all
+# sites (e.g. ``last_trade_date`` was added in a later PR and initially
+# missed by one of the literals).
+_EMPTY_POSITION: PositionState = {
+    "long": 0,
+    "short": 0,
+    "long_cost_basis": 0.0,
+    "short_cost_basis": 0.0,
+    "short_margin_used": 0.0,
+    "entry_date": "",
+    "last_trade_date": "",
+    "holding_days": 0,
+    "max_unrealized_pnl_pct": 0.0,
+    "profit_take_stage": 0,
+    "entry_score": 0.0,
+    "quality_score": 0.5,
+    "is_fundamental_driven": False,
+    "industry_sw": "",
+    "theme_name": "",
+    "theme_category": "",
+    "is_new_theme": False,
+    "execution_contract_bucket": "",
+    "btst_runtime_metrics": {},
+}
+
+
 class Portfolio:
     """Portfolio state management for backtesting operations.
 
@@ -26,26 +55,7 @@ class Portfolio:
             "margin_used": 0.0,
             "margin_requirement": float(margin_requirement),
             "positions": {
-                ticker: {
-                    "long": 0,
-                    "short": 0,
-                    "long_cost_basis": 0.0,
-                    "short_cost_basis": 0.0,
-                    "short_margin_used": 0.0,
-                    "entry_date": "",
-                    "holding_days": 0,
-                    "max_unrealized_pnl_pct": 0.0,
-                    "profit_take_stage": 0,
-                    "entry_score": 0.0,
-                    "quality_score": 0.5,
-                    "is_fundamental_driven": False,
-                    "industry_sw": "",
-                    "theme_name": "",
-                    "theme_category": "",
-                    "is_new_theme": False,
-                    "execution_contract_bucket": "",
-                }
-                for ticker in tickers
+                ticker: dict(_EMPTY_POSITION) for ticker in tickers
             },
             "realized_gains": {ticker: {"long": 0.0, "short": 0.0} for ticker in tickers},
         }
@@ -125,26 +135,7 @@ class Portfolio:
     def ensure_ticker(self, ticker: str) -> None:
         if ticker in self._portfolio["positions"]:
             return
-        self._portfolio["positions"][ticker] = {
-            "long": 0,
-            "short": 0,
-            "long_cost_basis": 0.0,
-            "short_cost_basis": 0.0,
-            "short_margin_used": 0.0,
-            "entry_date": "",
-            "last_trade_date": "",
-            "holding_days": 0,
-            "max_unrealized_pnl_pct": 0.0,
-            "profit_take_stage": 0,
-            "entry_score": 0.0,
-            "quality_score": 0.5,
-            "is_fundamental_driven": False,
-            "industry_sw": "",
-            "theme_name": "",
-            "theme_category": "",
-            "is_new_theme": False,
-            "execution_contract_bucket": "",
-        }
+        self._portfolio["positions"][ticker] = dict(_EMPTY_POSITION)
         self._portfolio["realized_gains"][ticker] = {"long": 0.0, "short": 0.0}
 
     def record_long_entry(
