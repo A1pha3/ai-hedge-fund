@@ -46,15 +46,20 @@ class PerformanceMetricsCalculator:
         else:
             sharpe = 0.0
 
-        negative_excess = excess[excess < 0]
-        if len(negative_excess) > 0:
-            downside_std = negative_excess.std()
-            if downside_std > 1e-12:
-                sortino = float(np.sqrt(self.annual_trading_days) * (mean_excess / downside_std))
-            else:
-                sortino = float("inf") if mean_excess > 0 else 0.0
+        # Sortino ratio — canonical downside deviation (ALPHA-001 fix)
+        # σ_d = sqrt(mean(min(R - Rf, 0)²)) computed over ALL returns.
+        # The old code used pandas .std() on the negative-only subset, which
+        # (1) divides by (n_neg - 1) instead of N, and (2) centers around the
+        # negative mean instead of the MAR. This inflated Sortino by ~1.4× on
+        # typical equity returns.
+        downside_squared = np.minimum(excess.values, 0.0) ** 2
+        downside_std = float(np.sqrt(np.mean(downside_squared)))
+        if downside_std > 1e-12:
+            sortino = float(np.sqrt(self.annual_trading_days) * (mean_excess / downside_std))
+        elif mean_excess > 0:
+            sortino = float("inf")
         else:
-            sortino = float("inf") if mean_excess > 0 else 0.0
+            sortino = 0.0
 
         rolling_max = df["Portfolio Value"].cummax()
         drawdown = (df["Portfolio Value"] - rolling_max) / rolling_max
