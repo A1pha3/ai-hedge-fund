@@ -231,12 +231,30 @@ class Portfolio:
     def adjust_cash(self, delta: float) -> None:
         self._portfolio["cash"] += float(delta)
 
-    def apply_long_buy(self, ticker: str, quantity: int, price: float) -> int:
+    def apply_long_buy(
+        self,
+        ticker: str,
+        quantity: int,
+        price: float,
+        commission_rate: float = 0.0,
+    ) -> int:
+        """Buy `quantity` shares at `price`. The per-share all-in cost is
+        ``price * (1 + commission_rate)`` — commission is capitalized into
+        the cost basis so subsequent realized P&L is computed on the true
+        economic cost (BETA-004 fix).
+
+        Cash debit and cost-basis update both use the all-in price, so the
+        caller does NOT need to call ``adjust_cash`` for the commission
+        separately. Passing ``commission_rate=0`` (the default) reproduces
+        the historical gross-price-only behavior.
+        """
         if quantity <= 0:
             return 0
         quantity = int(quantity)
         position = self._portfolio["positions"][ticker]
-        cost = quantity * price
+        commission_rate = float(commission_rate)
+        all_in_price = float(price) * (1.0 + commission_rate)
+        cost = quantity * all_in_price
         if cost <= self._portfolio["cash"]:
             old_shares = position["long"]
             old_cost_basis = position["long_cost_basis"]
@@ -248,9 +266,9 @@ class Portfolio:
             position["long"] = old_shares + quantity
             self._portfolio["cash"] -= cost
             return quantity
-        max_quantity = int(self._portfolio["cash"] / price) if price > 0 else 0
+        max_quantity = int(self._portfolio["cash"] / all_in_price) if all_in_price > 0 else 0
         if max_quantity > 0:
-            cost = max_quantity * price
+            cost = max_quantity * all_in_price
             old_shares = position["long"]
             old_cost_basis = position["long_cost_basis"]
             total_shares = old_shares + max_quantity
@@ -263,16 +281,38 @@ class Portfolio:
             return max_quantity
         return 0
 
-    def apply_long_sell(self, ticker: str, quantity: int, price: float) -> int:
+    def apply_long_sell(
+        self,
+        ticker: str,
+        quantity: int,
+        price: float,
+        commission_rate: float = 0.0,
+        stamp_duty_rate: float = 0.0,
+    ) -> int:
+        """Sell `quantity` shares at `price`. The realized gain is computed
+        on the **net** proceeds (after commission + stamp duty) so the
+        ``realized_gains`` ledger reflects true economic P&L (BETA-004
+        fix). Cash credit is also net of fees.
+
+        Per-share: ``net_proceeds_price = price * (1 - commission_rate - stamp_duty_rate)``
+        ``realized_gain = (net_proceeds_price - cost_basis) * quantity``
+
+        Passing both rates as 0 (the default) reproduces the historical
+        gross-price behavior for backward compatibility.
+        """
         position = self._portfolio["positions"][ticker]
         quantity = min(int(quantity), position["long"]) if quantity > 0 else 0
         if quantity <= 0:
             return 0
         avg_cost = position["long_cost_basis"] if position["long"] > 0 else 0.0
-        realized_gain = (price - avg_cost) * quantity
+        commission_rate = float(commission_rate)
+        stamp_duty_rate = float(stamp_duty_rate)
+        net_proceeds_price = float(price) * (1.0 - commission_rate - stamp_duty_rate)
+        realized_gain = (net_proceeds_price - avg_cost) * quantity
         self._portfolio["realized_gains"][ticker]["long"] += realized_gain
         position["long"] -= quantity
-        self._portfolio["cash"] += quantity * price
+        # Cash credit at the net-of-fees price (no separate adjust_cash for fees).
+        self._portfolio["cash"] += quantity * net_proceeds_price
         if position["long"] == 0:
             position["long_cost_basis"] = 0.0
         return quantity

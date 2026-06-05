@@ -78,10 +78,9 @@ def execute_buy_trade(
     daily_turnover: float | None = None,
 ) -> int:
     requested_quantity, executed_price = _resolve_buy_execution(quantity, current_price, portfolio, slippage_rate, commission_rate, daily_turnover)
-    executed = portfolio.apply_long_buy(ticker, requested_quantity, executed_price)
-    if executed > 0:
-        portfolio.adjust_cash(-(executed * executed_price * commission_rate))
-    return executed
+    # BETA-004: commission is now internalized in apply_long_buy (cost basis
+    # is all-in, cash debit is all-in). No post-hoc adjust_cash for fees.
+    return portfolio.apply_long_buy(ticker, requested_quantity, executed_price, commission_rate=commission_rate)
 
 
 def execute_sell_trade(
@@ -106,11 +105,16 @@ def execute_sell_trade(
 
     executable_quantity = min(int(quantity), int(positions.get(ticker, {}).get("long", 0))) if quantity > 0 else 0
     executed_price = float(current_price) * (1 - _resolve_execution_slippage_rate(slippage_rate, executable_quantity, current_price, daily_turnover))
-    executed = portfolio.apply_long_sell(ticker, executable_quantity, executed_price)
-    if executed > 0:
-        gross_amount = executed * executed_price
-        portfolio.adjust_cash(-(gross_amount * (commission_rate + stamp_duty_rate)))
-    return executed
+    # BETA-004: commission + stamp duty are internalized in apply_long_sell
+    # (net proceeds price, realized gain computed on net). No post-hoc
+    # adjust_cash for fees.
+    return portfolio.apply_long_sell(
+        ticker,
+        executable_quantity,
+        executed_price,
+        commission_rate=commission_rate,
+        stamp_duty_rate=stamp_duty_rate,
+    )
 
 
 def execute_short_trade(

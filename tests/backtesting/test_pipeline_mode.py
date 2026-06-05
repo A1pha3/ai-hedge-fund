@@ -107,7 +107,12 @@ def test_pipeline_mode_executes_buy_on_t_plus_one(monkeypatch):
     assert snapshot["positions"]["AAPL"]["long"] == 100
     assert snapshot["positions"]["AAPL"]["entry_date"] == "20240304"
     assert snapshot["positions"]["AAPL"]["holding_days"] == 1
-    assert snapshot["positions"]["AAPL"]["max_unrealized_pnl_pct"] == pytest.approx(0.0876, abs=1e-4)
+    # BETA-004: cost basis now includes commission (all-in). The pnl_pct
+    # is (current_price - cost_basis) / cost_basis, and the all-in cost
+    # basis is slightly higher than the gross price, so pnl_pct is
+    # slightly smaller. The pre-fix value was 0.0876 (gross cost basis);
+    # the new correct value is 0.08737 (cost basis = price*(1+commission)).
+    assert snapshot["positions"]["AAPL"]["max_unrealized_pnl_pct"] == pytest.approx(0.08737, abs=1e-4)
     assert pipeline.post_market_calls[0][0] == "20240301"
     assert pipeline.pre_market_calls[0][0] == "20240304"
     assert pipeline.intraday_calls[0][0] == "20240304"

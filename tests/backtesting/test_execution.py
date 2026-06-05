@@ -51,13 +51,23 @@ def test_trade_executor_applies_slippage_and_fees(portfolio):
     buy_qty = ex.execute_trade("AAPL", "buy", 10, 100.0, portfolio, daily_turnover=100_000_000.0)
     assert buy_qty == 10
     snapshot_after_buy = portfolio.get_snapshot()
-    assert snapshot_after_buy["positions"]["AAPL"]["long_cost_basis"] == pytest.approx(110.0)
-    assert snapshot_after_buy["cash"] == pytest.approx(100_000.0 - 1_100.0 - 11.0)
+    # BETA-004: commission is now capitalized into the cost basis. The
+    # gross executed price is 100 * 1.10 = 110 (10% slippage), and with
+    # 1% commission the all-in price is 110 * 1.01 = 111.1 per share.
+    # Cash debit is 10 * 111.1 = 1111.0 (no separate post-hoc commission).
+    assert snapshot_after_buy["positions"]["AAPL"]["long_cost_basis"] == pytest.approx(111.1)
+    assert snapshot_after_buy["cash"] == pytest.approx(100_000.0 - 1_111.0)
 
     sell_qty = ex.execute_trade("AAPL", "sell", 10, 100.0, portfolio, daily_turnover=100_000_000.0)
     assert sell_qty == 10
     snapshot_after_sell = portfolio.get_snapshot()
-    assert snapshot_after_sell["cash"] == pytest.approx(100_000.0 - 1_111.0 + 900.0 - 18.0)
+    # BETA-004: sell at 100 with 10% slippage → executed_price = 90.
+    # Net proceeds = 90 * (1 - 0.01 - 0.01) = 88.2 per share.
+    # Cash credit = 10 * 88.2 = 882.0. Total cash = 100_000 - 1111 + 882 = 99_771.
+    # (Old test had same total — 100_000 - 1111 + 900 - 18 = 99_771 — but the
+    # intermediate decomposition was different: gross debit + commission
+    # double-debit. The economic total is preserved.)
+    assert snapshot_after_sell["cash"] == pytest.approx(99_771.0)
 
 
 def test_trade_executor_scales_slippage_with_order_size_when_turnover_is_available():
