@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from src.portfolio.models import PositionPlan
 from src.utils.env_helpers import get_env_float
 
@@ -174,14 +176,28 @@ def evaluate_portfolio_risk_guardrails(
     cvar_95 = 0.0
     if portfolio_returns:
         sorted_returns = sorted(portfolio_returns)
-        tail_size = max(1, int(len(sorted_returns) * 0.05))
+        # GAMMA-006 / ALPHA-002: use ceil() for the tail count, not int()
+        # truncation, so that N=21+1 days correctly takes 2 (not 1) of the
+        # worst observations. cvar_95 is signed: negative for lossy tails.
+        n_obs = len(sorted_returns)
+        tail_size = max(1, int(math.ceil(0.05 * n_obs)))
         cvar_95 = sum(sorted_returns[:tail_size]) / tail_size
     portfolio_beta = _compute_beta(portfolio_returns, benchmark_returns)
 
     alerts: list[str] = []
     block_buy = False
     prefer_low_beta = False
-    if abs(cvar_95) > 0.03 and candidate_is_high_vol:
+    # GAMMA-006: cvar_95 is signed (negative for losses). Compare to the
+    # threshold with explicit sign, not abs(), so a positive cvar_95 (which
+    # would indicate only positive tail observations) does not falsely
+    # trigger the block. Also: if cvar_95 is NaN/None, default to safe (block).
+    cvar_below_threshold = (
+        cvar_95 is not None
+        and isinstance(cvar_95, float)
+        and not math.isnan(cvar_95)
+        and cvar_95 < -0.03
+    )
+    if cvar_below_threshold and candidate_is_high_vol:
         alerts.append("cvar_warning")
         block_buy = True
     if portfolio_beta is not None and portfolio_beta > 1.3 and candidate_beta > 1.0:

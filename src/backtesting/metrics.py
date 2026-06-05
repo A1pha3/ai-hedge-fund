@@ -77,13 +77,20 @@ class PerformanceMetricsCalculator:
         abs_mdd = abs(min_dd) if min_dd < 0 else 0
         calmar = float(annual_return / abs_mdd) if abs_mdd > 1e-12 else (float("inf") if annual_return > 0 else 0.0)
 
-        # CVaR(95%) 历史模拟法
+        # CVaR(95%) historical simulation (ALPHA-002 / GAMMA-006 fix)
+        # CVaR_alpha = E[R | R < VaR_alpha] — the mean of the worst alpha
+        # fraction of returns. The tail count is ceil(alpha * N), not floor:
+        # - floor() under-counts (e.g. N=21 → floor=1 vs ceil=2) and biases
+        #   the tail mean toward the single worst observation.
+        # - The convention is the worst 5% of observations, so we take the
+        #   mean of the k=ceil(0.05*N) lowest values, k >= 1.
         sorted_returns = np.sort(clean_returns.values)
-        var_index = int(np.floor(0.05 * len(sorted_returns)))
-        if var_index > 0:
-            cvar_95 = float(sorted_returns[:var_index].mean())
+        n_obs = len(sorted_returns)
+        if n_obs == 0:
+            cvar_95 = 0.0
         else:
-            cvar_95 = float(sorted_returns[0]) if len(sorted_returns) > 0 else 0.0
+            tail_count = max(1, int(np.ceil(0.05 * n_obs)))
+            cvar_95 = float(sorted_returns[:tail_count].mean())
 
         return {
             "sharpe_ratio": sharpe,

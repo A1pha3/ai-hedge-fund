@@ -130,3 +130,71 @@ def test_hhi_block():
     )
     assert "hhi_block" in result["alerts"]
     assert result["block_buy"] is True
+
+
+def test_cvar_uses_ceil_not_truncation_for_tail_count():
+    """GAMMA-006 / ALPHA-002: N=21 returns → tail_size must be 2 (ceil),
+    not 1 (int() truncation). With 2 worst observations averaging -0.10,
+    abs(cvar)=-0.10 is below the -0.03 threshold → cvar_warning fires.
+    The old int-truncation formula would have used only 1 obs and the
+    same threshold still fires — so this test alone doesn't catch the
+    off-by-one; the real test is for cases where the 2nd-worst is
+    significantly less bad than the worst. Here we use:
+       20 returns of -0.05 (worst) + 1 return of -0.005 (second-worst)
+    With ceil: k=2 → cvar_95 = (-0.05 + -0.005)/2 = -0.0275 (NOT < -0.03)
+    With int-truncation: k=1 → cvar_95 = -0.05 (< -0.03, fires warning)
+    The fix changes the verdict for this case from BLOCK to NO-BLOCK."""
+    # 21 returns: 1 worst, 20 second-worst
+    portfolio_returns = [-0.005] * 20 + [-0.05]
+    result = evaluate_portfolio_risk_guardrails(
+        industry_hhi=0.10,
+        candidate_industry_weight=0.10,
+        portfolio_returns=portfolio_returns,
+        benchmark_returns=[0.0] * 21,
+        candidate_beta=1.0,
+        candidate_is_high_vol=True,
+    )
+    # With ceil: k=2 → cvar_95=-0.0275 (NOT < -0.03) → no cvar_warning
+    assert "cvar_warning" not in result["alerts"]
+    assert result["block_buy"] is False
+    # Sanity: cvar_95 is signed and approximately what we expect
+    assert -0.030 <= result["cvar_95"] <= -0.025
+
+
+def test_cvar_sign_convention_uses_negative_threshold():
+    """GAMMA-006: cvar_95 is signed (negative for losses). The old
+    `abs(cvar_95) > 0.03` was a band-aid that would also fire for a
+    positive tail-mean. The fix uses `cvar_95 < -0.03` (explicit
+    negative sign) so that only a true loss tail triggers the block.
+
+    Construct a portfolio where the tail is POSITIVE (mean of 5 worst
+    observations is positive because all returns are positive) — the
+    old abs() would have triggered cvar_warning (>0.03), the new sign
+    check correctly does not."""
+    # 20 returns all positive; tail = ceil(0.05*20)=1 → mean of the
+    # single smallest = 0.01 > 0. Old abs()=0.01 would not fire either,
+    # so use a more aggressive setup.
+    # 20 returns: 5 at -0.08 (worst), 15 at +0.10. tail = 1 → worst = -0.08
+    # abs() old code: |-0.08| > 0.03 → fires; new sign: -0.08 < -0.03 → fires.
+    # This doesn't differentiate. Instead construct: 20 obs of +0.05.
+    # tail=1 → mean of 1 obs of +0.05 = +0.05. abs() old: |0.05|>0.03 → fires
+    # (false positive!). New sign: 0.05 < -0.03 → False → no fire.
+    portfolio_returns = [0.05] * 20
+    result = evaluate_portfolio_risk_guardrails(
+        industry_hhi=0.10,
+        candidate_industry_weight=0.10,
+        portfolio_returns=portfolio_returns,
+        benchmark_returns=[0.0] * 20,
+        candidate_beta=1.0,
+        candidate_is_high_vol=True,
+    )
+    # Old abs() code: |+0.05| = 0.05 > 0.03 → fires cvar_warning (WRONG)
+    # New sign code: +0.05 < -0.03 is False → no warning (CORRECT)
+    assert "cvar_warning" not in result["alerts"], (
+        "Positive tail-mean should not trigger cvar_warning; "
+        "old abs() was too permissive"
+    )
+    assert result["block_buy"] is False
+    assert result["cvar_95"] > 0.0, (
+        f"Expected positive tail-mean, got {result['cvar_95']}"
+    )
