@@ -14,11 +14,11 @@ class Cache:
             return new_data
 
         # Create a set of existing keys for O(1) lookup
-        existing_keys = {item[key_field] for item in existing}
+        existing_keys = {item.get(key_field) for item in existing if key_field in item}
 
         # Only add items that don't exist yet
         merged = existing.copy()
-        merged.extend([item for item in new_data if item[key_field] not in existing_keys])
+        merged.extend([item for item in new_data if key_field in item and item[key_field] not in existing_keys])
         return merged
 
     def get_prices(self, ticker: str) -> list[dict[str, any]] | None:
@@ -29,7 +29,7 @@ class Cache:
         """Append new price data to cache."""
         self._prices_cache[ticker] = self._merge_data(self._prices_cache.get(ticker), data, key_field="time")
 
-    def get_financial_metrics(self, ticker: str) -> list[dict[str, any]]:
+    def get_financial_metrics(self, ticker: str) -> list[dict[str, any]] | None:
         """Get cached financial metrics if available."""
         return self._financial_metrics_cache.get(ticker)
 

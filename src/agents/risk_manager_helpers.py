@@ -74,9 +74,9 @@ def _build_correlation_matrix(returns_by_ticker: dict[str, pd.Series]) -> pd.Dat
 def _calculate_total_portfolio_value(portfolio: dict, current_prices: dict[str, float]) -> float:
     total_portfolio_value = portfolio.get("cash", 0.0)
     for ticker, position in portfolio.get("positions", {}).items():
-        if ticker in current_prices:
-            total_portfolio_value += position.get("long", 0) * current_prices[ticker]
-            total_portfolio_value -= position.get("short", 0) * current_prices[ticker]
+        price = current_prices.get(ticker, 0.0)
+        total_portfolio_value += position.get("long", 0) * price
+        total_portfolio_value -= position.get("short", 0) * price
     return total_portfolio_value
 
 
@@ -152,7 +152,7 @@ def _build_risk_analysis_entry(
     )
     combined_limit_pct = vol_adjusted_limit_pct * corr_multiplier
     position_limit = total_portfolio_value * combined_limit_pct
-    remaining_position_limit = position_limit - current_position_value
+    remaining_position_limit = max(0.0, position_limit - current_position_value)
     max_position_size = min(remaining_position_limit, portfolio.get("cash", 0))
 
     return {

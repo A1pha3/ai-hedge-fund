@@ -571,6 +571,7 @@ def test_apply_single_pipeline_decision_executes_and_records_side_effects(monkey
     executed_trades: dict[str, int] = {}
 
     monkeypatch.setattr(engine._decision_executor, "_normalize_ticker", lambda ticker: "AAPL")
+
     def fake_queue(**kwargs):
         captured["queue_kwargs"] = kwargs
         return False
@@ -676,6 +677,8 @@ def test_run_pending_pipeline_plan_merges_applies_and_carries_queue_alerts(monke
             (),
             {
                 "trade_date_compact": "20240304",
+                "current_date_str": "2024-03-04",
+                "previous_date_str": "2024-03-03",
                 "current_prices": {"AAPL": 11.0},
                 "daily_turnovers": {"AAPL": 1000000.0},
                 "limit_up": set(),

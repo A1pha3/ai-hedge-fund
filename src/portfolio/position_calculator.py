@@ -51,7 +51,7 @@ def _compute_beta(portfolio_returns: list[float], benchmark_returns: list[float]
     sample_size = min(len(portfolio_returns), len(benchmark_returns))
     portfolio_array = np.array(portfolio_returns[:sample_size])
     benchmark_array = np.array(benchmark_returns[:sample_size])
-    benchmark_variance = np.var(benchmark_array)
+    benchmark_variance = np.var(benchmark_array, ddof=1)
     if benchmark_variance < 1e-12:
         return None
     covariance = np.cov(portfolio_array, benchmark_array)[0][1]
@@ -100,7 +100,8 @@ def calculate_position(
         vol_limit = max(vol_limit, min_lot_amount)
     cash_limit = available_cash
     # CandidatePool stores avg_volume_20d in wan-CNY from Tushare amount fields.
-    liq_limit = avg_volume_20d * AVG_VOLUME_20D_AMOUNT_UNIT * 0.02
+    safe_avg_volume_20d = float(avg_volume_20d or 0.0)
+    liq_limit = safe_avg_volume_20d * AVG_VOLUME_20D_AMOUNT_UNIT * 0.02
     industry_limit = industry_remaining_quota
 
     constraints = {

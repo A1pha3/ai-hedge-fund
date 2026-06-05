@@ -410,7 +410,7 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult], baseline_summar
 
     positive_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) > 0.0)
     negative_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) < 0.0)
-    zero_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) == 0.0)
+    zero_sharpe_window_count = sum(1 for value in sharpe_values if abs(float(value or 0.0)) < 1e-12)
     non_positive_sharpe_window_count = sum(1 for value in sharpe_values if float(value or 0.0) <= 0.0)
     positive_sharpe_window_ratio = (positive_sharpe_window_count / len(sharpe_values)) if sharpe_values else None
     max_non_positive_sharpe_streak = 0

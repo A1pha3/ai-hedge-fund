@@ -41,6 +41,7 @@ from src.tools.tushare_sw_industry_helpers import (
 )
 
 _pro = None
+_pro_lock = threading.Lock()
 _stock_name_cache: dict[str, str] = {}
 _persistent_cache = get_enhanced_cache()
 
@@ -179,32 +180,37 @@ def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: b
 
 
 def _get_pro():
-    """初始化并返回 Tushare Pro 实例。"""
+    """初始化并返回 Tushare Pro 实例（线程安全）。"""
     global _pro
     if _pro is not None:
         return _pro
 
-    token = os.environ.get("TUSHARE_TOKEN")
-    if not token:
-        return None
+    with _pro_lock:
+        # Double-check after acquiring lock
+        if _pro is not None:
+            return _pro
 
-    raw_timeout = os.getenv("TUSHARE_TIMEOUT", "120")
-    try:
-        timeout = int(raw_timeout)
-    except ValueError:
-        timeout = 120
+        token = os.environ.get("TUSHARE_TOKEN")
+        if not token:
+            return None
 
-    try:
-        import tushare as ts
-
-        # 直接使用 token 创建 pro_api，避免写入文件
+        raw_timeout = os.getenv("TUSHARE_TIMEOUT", "120")
         try:
-            _pro = ts.pro_api(token=token, timeout=timeout)
-        except TypeError:
-            _pro = ts.pro_api(token=token)
-        return _pro
-    except Exception:
-        return None
+            timeout = int(raw_timeout)
+        except ValueError:
+            timeout = 120
+
+        try:
+            import tushare as ts
+
+            # 直接使用 token 创建 pro_api，避免写入文件
+            try:
+                _pro = ts.pro_api(token=token, timeout=timeout)
+            except TypeError:
+                _pro = ts.pro_api(token=token)
+            return _pro
+        except Exception:
+            return None
 
 
 def _to_ts_code(ticker: str) -> str:
@@ -711,22 +717,25 @@ def get_all_stock_basic() -> pd.DataFrame | None:
     结果全局缓存，同一进程内仅调用一次。
     """
     global _stock_basic_cache
-    with _stock_basic_cache_lock:
-        cached_stock_basic = _stock_basic_cache
 
     pro = _get_pro()
     if pro is None:
         return None
 
-    try:
-        return fetch_process_cached_frame(
-            cached_frame=cached_stock_basic,
-            fetch_frame=lambda: _fetch_tushare_all_stock_basic(pro),
-            cache_frame=lambda df: _cache_stock_basic_frame(df),
-        )
-    except Exception as e:
-        print(f"[Tushare] get_all_stock_basic 失败: {e}")
-        return None
+    # Double-checked locking: fast path (read lock) + slow path (write lock)
+    with _stock_basic_cache_lock:
+        if _stock_basic_cache is not None:
+            return _stock_basic_cache.copy()
+
+        try:
+            df = _fetch_tushare_all_stock_basic(pro)
+            if df is None or df.empty:
+                return None
+            _stock_basic_cache = df
+            return df.copy()
+        except Exception as e:
+            print(f"[Tushare] get_all_stock_basic 失败: {e}")
+            return None
 
 
 def _fetch_tushare_daily_basic_batch(pro, trade_date: str) -> pd.DataFrame | None:
@@ -860,22 +869,23 @@ def get_sw_industry_classification() -> dict[str, str] | None:
     再用 index_member 获取每个行业的成分股。
     结果全局缓存。
     """
-    global _sw_industry_cache
-    with _sw_industry_cache_lock:
-        cached_mapping = _sw_industry_cache
-
     pro = _get_pro()
     if pro is None:
         return None
 
-    try:
-        result = _resolve_tushare_sw_industry_mapping(pro, cached_mapping)
-        if result is None and cached_mapping is None:
-            print("[Tushare] 无法获取申万行业分类")
-        return result
-    except Exception as e:
-        print(f"[Tushare] get_sw_industry_classification 失败: {e}")
-        return None
+    # Double-checked locking: fast path under lock
+    with _sw_industry_cache_lock:
+        if _sw_industry_cache is not None:
+            return dict(_sw_industry_cache)
+
+        try:
+            result = _resolve_tushare_sw_industry_mapping(pro, None)
+            if result is None:
+                print("[Tushare] 无法获取申万行业分类")
+            return result
+        except Exception as e:
+            print(f"[Tushare] get_sw_industry_classification 失败: {e}")
+            return None
 
 
 def _cache_sw_industry_mapping(mapping: dict[str, str]) -> None:

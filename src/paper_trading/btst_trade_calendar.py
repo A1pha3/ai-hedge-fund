@@ -60,8 +60,9 @@ def _load_open_trade_dates_cn_sse(start_compact: str, end_compact: str) -> tuple
             dates = _extract_open_dates_from_frame(df, start_compact, end_compact)
             if dates:
                 return dates, "tushare_trade_cal"
-        except Exception:
-            pass
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("tushare trade_cal failed for %s-%s: %s", start_compact, end_compact, exc)
 
     # Fallback: akshare sina trade-date history
     try:

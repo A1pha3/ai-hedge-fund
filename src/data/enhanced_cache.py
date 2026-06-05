@@ -8,6 +8,7 @@ import logging
 import os
 import pickle
 import sqlite3
+import threading
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -39,21 +40,27 @@ class LRUCache:
         self._cache: dict[str, Any] = {}
         self._access_time: dict[str, datetime] = {}
 
-    def get(self, key: str) -> Any | None:
+    # Sentinel for cache miss — distinguishes "key not present" from "cached None".
+    _MISSING = object()
+
+    def get(self, key: str, *, _sentinel: Any = None) -> Any | None:
         """
         获取缓存值
 
         Args:
             key: 缓存键
+            _sentinel: if provided, return this instead of None on miss.
+                       Callers can pass a unique sentinel to distinguish
+                       "cached None" from "key not present".
 
         Returns:
-            缓存值或 None
+            缓存值, _sentinel on miss, or None on miss (default)
         """
         if key in self._cache:
             # 更新访问时间
             self._access_time[key] = datetime.now()
             return self._cache[key]
-        return None
+        return _sentinel
 
     def set(self, key: str, value: Any):
         """
@@ -428,6 +435,9 @@ class EnhancedCache:
         # 统计信息
         self._stats = {"lru_hits": 0, "redis_hits": 0, "disk_hits": 0, "misses": 0, "sets": 0}
 
+    # Sentinel for cache miss — distinguishes "key not present" from "cached None".
+    _MISSING = object()
+
     def get(self, key: str) -> Any | None:
         """
         获取缓存值
@@ -441,19 +451,22 @@ class EnhancedCache:
             缓存值或 None
         """
         # 1. 查 LRU
-        if (value := self.lru.get(key)) is not None:
+        value = self.lru.get(key, _sentinel=self._MISSING)
+        if value is not self._MISSING:
             self._stats["lru_hits"] += 1
             return value
 
         # 2. 查 Redis
-        if (value := self.redis.get(key)) is not None:
+        value = self.redis.get(key)
+        if value is not None:
             self._stats["redis_hits"] += 1
             # 回填 LRU
             self.lru.set(key, value)
             return value
 
         # 3. 查 Disk
-        if (value := self.disk.get(key)) is not None:
+        value = self.disk.get(key)
+        if value is not None:
             self._stats["disk_hits"] += 1
             # 回填 Redis 和 LRU
             self.redis.set(key, value)
@@ -585,22 +598,29 @@ class CacheAdapter:
 
 _enhanced_cache: EnhancedCache | None = None
 _cache_adapter: CacheAdapter | None = None
+_singleton_lock = threading.Lock()
 
 
 def get_enhanced_cache() -> EnhancedCache:
-    """获取全局增强缓存实例"""
+    """获取全局增强缓存实例（线程安全）"""
     global _enhanced_cache
-    if _enhanced_cache is None:
-        _enhanced_cache = EnhancedCache()
-    return _enhanced_cache
+    if _enhanced_cache is not None:
+        return _enhanced_cache
+    with _singleton_lock:
+        if _enhanced_cache is None:
+            _enhanced_cache = EnhancedCache()
+        return _enhanced_cache
 
 
 def get_cache() -> CacheAdapter:
-    """获取兼容接口的缓存实例"""
+    """获取兼容接口的缓存实例（线程安全）"""
     global _cache_adapter
-    if _cache_adapter is None:
-        _cache_adapter = CacheAdapter(get_enhanced_cache())
-    return _cache_adapter
+    if _cache_adapter is not None:
+        return _cache_adapter
+    with _singleton_lock:
+        if _cache_adapter is None:
+            _cache_adapter = CacheAdapter(get_enhanced_cache())
+        return _cache_adapter
 
 
 def clear_cache():

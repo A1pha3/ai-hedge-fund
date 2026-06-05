@@ -107,7 +107,7 @@ class PerformanceMetricsCalculator:
             return None
         pr = np.array(portfolio_returns[:min(len(portfolio_returns), len(benchmark_returns))])
         br = np.array(benchmark_returns[:min(len(portfolio_returns), len(benchmark_returns))])
-        var_b = np.var(br)
+        var_b = np.var(br, ddof=1)
         if var_b < 1e-12:
             return None
         cov_pb = np.cov(pr, br)[0][1]

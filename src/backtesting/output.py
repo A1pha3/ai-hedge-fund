@@ -42,8 +42,9 @@ class OutputBuilder:
             pos = positions.get(ticker)
             long_shares = int(pos["long"]) if pos is not None else 0
             short_shares = int(pos["short"]) if pos is not None else 0
-            long_val = long_shares * current_prices[ticker]
-            short_val = short_shares * current_prices[ticker]
+            ticker_price = float(current_prices.get(ticker, 0.0))
+            long_val = long_shares * ticker_price
+            short_val = short_shares * ticker_price
             net_position_value = long_val - short_val
 
             action = decisions.get(ticker, {}).get("action", "hold")
@@ -55,7 +56,7 @@ class OutputBuilder:
                     ticker=ticker,
                     action=action,
                     quantity=quantity,
-                    price=current_prices[ticker],
+                    price=ticker_price,
                     long_shares=long_shares,
                     short_shares=short_shares,
                     position_value=net_position_value,
