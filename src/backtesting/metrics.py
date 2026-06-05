@@ -134,39 +134,3 @@ class PerformanceMetricsCalculator:
         cov_pb = np.cov(pr, br)[0][1]
         return float(cov_pb / var_b)
 
-
-def compute_beta(
-    portfolio_returns: Sequence[float],
-    benchmark_returns: Sequence[float],
-) -> float | None:
-    """Compute portfolio beta against a benchmark.
-
-    Beta = Cov(Rp, Rb) / Var(Rb)
-
-    **Precondition**: both sequences must be aligned by date (same trading
-    days in the same order). If lengths differ, only the overlapping prefix
-    is used — this is a **silent truncation** and may produce a wrong beta
-    if the series are offset (ALPHA-007 / GAMMA-005). Callers must ensure
-    alignment before passing data here.
-
-    Module-level function (REF-002) so that ``src.portfolio.position_calculator``
-    can reuse the same implementation without duplication.
-    """
-    if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
-        return None
-    n = min(len(portfolio_returns), len(benchmark_returns))
-    if len(portfolio_returns) != len(benchmark_returns):
-        warnings.warn(
-            f"compute_beta: portfolio_returns ({len(portfolio_returns)}) and "
-            f"benchmark_returns ({len(benchmark_returns)}) have different lengths. "
-            f"Using first {n} — results may be incorrect if series are not "
-            f"date-aligned (ALPHA-007).",
-            stacklevel=2,
-        )
-    pr = np.array(portfolio_returns[:n])
-    br = np.array(benchmark_returns[:n])
-    var_b = np.var(br, ddof=1)
-    if var_b < 1e-12:
-        return None
-    cov_pb = np.cov(pr, br)[0][1]
-    return float(cov_pb / var_b)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 
-from src.backtesting.metrics import compute_beta  # REF-002: shared implementation
 from src.portfolio.models import PositionPlan
 from src.utils.env_helpers import get_env_float
 
@@ -47,8 +46,40 @@ def _resolve_single_name_limit(*, allow_extended_limit: bool, avg_volume_20d: fl
 
 
 def _compute_beta(portfolio_returns: list[float], benchmark_returns: list[float]) -> float | None:
-    """Backwards-compat thin wrapper around ``compute_beta`` (REF-002)."""
-    return compute_beta(portfolio_returns, benchmark_returns)
+    """Compute portfolio beta against a benchmark.
+
+    **Precondition**: both lists must be aligned by date (same trading
+    days in the same order). If lengths differ, a warning is emitted
+    and only the overlapping prefix is used (ALPHA-007 / GAMMA-005).
+
+    This is an intentional near-duplicate of
+    :func:`src.backtesting.metrics.compute_beta` — they are kept as
+    separate implementations to avoid a circular import between
+    ``src.portfolio`` and ``src.backtesting`` (engine → execution →
+    position_calculator → metrics → ...). If a third caller ever needs
+    beta, extract to a leaf module.
+    """
+    import warnings
+
+    import numpy as np
+
+    if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
+        return None
+    n = min(len(portfolio_returns), len(benchmark_returns))
+    if len(portfolio_returns) != len(benchmark_returns):
+        warnings.warn(
+            f"_compute_beta: portfolio_returns ({len(portfolio_returns)}) and "
+            f"benchmark_returns ({len(benchmark_returns)}) differ in length. "
+            f"Using first {n} — may be wrong if not date-aligned (ALPHA-007).",
+            stacklevel=2,
+        )
+    portfolio_array = np.array(portfolio_returns[:n])
+    benchmark_array = np.array(benchmark_returns[:n])
+    benchmark_variance = np.var(benchmark_array, ddof=1)
+    if benchmark_variance < 1e-12:
+        return None
+    covariance = np.cov(portfolio_array, benchmark_array)[0][1]
+    return float(covariance / benchmark_variance)
 
 
 def calculate_position(
@@ -156,50 +187,13 @@ def enforce_daily_trade_limit(plans: list[PositionPlan], portfolio_nav: float, l
     return selected
 
 
-def evaluate_portfolio_risk_guardrails(
-    industry_hhi: float,
-    candidate_industry_weight: float,
-    portfolio_returns: list[float],
-    benchmark_returns: list[float],
-    candidate_beta: float,
-    candidate_is_high_vol: bool,
-) -> dict:
-    cvar_95 = 0.0
-    if portfolio_returns:
-        sorted_returns = sorted(portfolio_returns)
-        # CVaR(95%) historical simulation: mean of the worst 5% of
-        # returns. tail_size = ceil(0.05 * N), with floor of 1.
-        n_obs = len(sorted_returns)
-        tail_size = max(1, int(math.ceil(0.05 * n_obs)))
-        cvar_95 = sum(sorted_returns[:tail_size]) / tail_size
-    portfolio_beta = _compute_beta(portfolio_returns, benchmark_returns)
+# REF-001: ``evaluate_portfolio_risk_guardrails`` was deleted as dead code
+# in 2026-06-08. The function computed HHI / CVaR / beta risk alerts and
+# returned ``block_buy``/``prefer_low_beta`` flags, but had zero production
+# call sites (only 4 unit tests exercised it). The product doc references
+# "风险护栏" as a design concept but does NOT advertise this specific
+# function as an enforced check. If/when the gating is wired into the
+# buy-order prep path, the function should be re-introduced at that
+# boundary, not resurrected here. See docs/bugs/2026-06-05 for the
+# historical triage.
 
-    alerts: list[str] = []
-    block_buy = False
-    prefer_low_beta = False
-    # CVaR threshold uses explicit sign (cvar_95 is negative for losses),
-    # so a positive cvar_95 (all-positive tail) does not falsely trigger.
-    # NaN/None defaults to safe (block).
-    cvar_below_threshold = (
-        cvar_95 is not None
-        and isinstance(cvar_95, float)
-        and not math.isnan(cvar_95)
-        and cvar_95 < -0.03
-    )
-    if cvar_below_threshold and candidate_is_high_vol:
-        alerts.append("cvar_warning")
-        block_buy = True
-    if portfolio_beta is not None and portfolio_beta > 1.3 and candidate_beta > 1.0:
-        alerts.append("beta_rebalance")
-        prefer_low_beta = True
-    if industry_hhi > 0.15 and candidate_industry_weight >= 0.25:
-        alerts.append("hhi_block")
-        block_buy = True
-
-    return {
-        "alerts": alerts,
-        "block_buy": block_buy,
-        "prefer_low_beta": prefer_low_beta,
-        "cvar_95": cvar_95,
-        "portfolio_beta": portfolio_beta,
-    }
