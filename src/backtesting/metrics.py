@@ -112,13 +112,29 @@ class PerformanceMetricsCalculator:
         计算组合 Beta（对基准指数的回归系数）。
 
         Beta = Cov(Rp, Rb) / Var(Rb)
+
+        **Precondition**: both sequences must be aligned by date (same trading
+        days in the same order). If lengths differ, only the overlapping prefix
+        is used — this is a **silent truncation** and may produce a wrong beta
+        if the series are offset (ALPHA-007 / GAMMA-005). Callers must ensure
+        alignment before passing data here.
         """
         import numpy as np
 
         if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
             return None
-        pr = np.array(portfolio_returns[:min(len(portfolio_returns), len(benchmark_returns))])
-        br = np.array(benchmark_returns[:min(len(portfolio_returns), len(benchmark_returns))])
+        n = min(len(portfolio_returns), len(benchmark_returns))
+        if len(portfolio_returns) != len(benchmark_returns):
+            import warnings
+            warnings.warn(
+                f"compute_beta: portfolio_returns ({len(portfolio_returns)}) and "
+                f"benchmark_returns ({len(benchmark_returns)}) have different lengths. "
+                f"Using first {n} elements — results may be incorrect if series "
+                f"are not date-aligned (ALPHA-007).",
+                stacklevel=2,
+            )
+        pr = np.array(portfolio_returns[:n])
+        br = np.array(benchmark_returns[:n])
         var_b = np.var(br, ddof=1)
         if var_b < 1e-12:
             return None

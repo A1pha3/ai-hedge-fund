@@ -46,13 +46,28 @@ def _resolve_single_name_limit(*, allow_extended_limit: bool, avg_volume_20d: fl
 
 
 def _compute_beta(portfolio_returns: list[float], benchmark_returns: list[float]) -> float | None:
+    """Compute portfolio beta against a benchmark.
+
+    **Precondition**: both lists must be aligned by date (same trading
+    days in the same order). If lengths differ, a warning is emitted
+    and only the overlapping prefix is used (ALPHA-007 / GAMMA-005).
+    """
+    import warnings
+
     import numpy as np
 
     if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
         return None
-    sample_size = min(len(portfolio_returns), len(benchmark_returns))
-    portfolio_array = np.array(portfolio_returns[:sample_size])
-    benchmark_array = np.array(benchmark_returns[:sample_size])
+    n = min(len(portfolio_returns), len(benchmark_returns))
+    if len(portfolio_returns) != len(benchmark_returns):
+        warnings.warn(
+            f"_compute_beta: portfolio_returns ({len(portfolio_returns)}) and "
+            f"benchmark_returns ({len(benchmark_returns)}) differ in length. "
+            f"Using first {n} — may be wrong if not date-aligned (ALPHA-007).",
+            stacklevel=2,
+        )
+    portfolio_array = np.array(portfolio_returns[:n])
+    benchmark_array = np.array(benchmark_returns[:n])
     benchmark_variance = np.var(benchmark_array, ddof=1)
     if benchmark_variance < 1e-12:
         return None

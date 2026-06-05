@@ -282,3 +282,44 @@ def test_sortino_large_sample_matches_analytical():
         f"Sortino = {sortino:.3f} — expected ≈ 1.15 for N(0.001, 0.02) sample. "
         f"If much higher, negative-subset std is in use (ALPHA-001)."
     )
+
+
+# ---------------------------------------------------------------------------
+# ALPHA-007 / GAMMA-005: compute_beta warns on length mismatch
+# ---------------------------------------------------------------------------
+
+def test_compute_beta_warns_on_length_mismatch():
+    """ALPHA-007: when portfolio and benchmark series have different lengths,
+    compute_beta must emit a warning because slicing the prefix assumes the
+    series are already date-aligned (which they may not be)."""
+    import warnings
+
+    calc = PerformanceMetricsCalculator(annual_trading_days=252, annual_rf_rate=0.0)
+    portfolio = [0.01, 0.02, -0.01, 0.03, 0.01, -0.02, 0.04, 0.01, -0.01, 0.02,
+                 0.03, -0.01, 0.02, 0.01, -0.03]
+    benchmark = [0.005, 0.01, -0.005, 0.015, 0.005, -0.01, 0.02, 0.005, -0.005, 0.01]
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        beta = calc.compute_beta(portfolio, benchmark)
+        assert beta is not None
+        assert len(w) == 1
+        assert "ALPHA-007" in str(w[0].message)
+
+
+def test_compute_beta_equal_lengths_no_warning():
+    """Same-length series should not trigger the alignment warning."""
+    import warnings
+
+    calc = PerformanceMetricsCalculator(annual_trading_days=252, annual_rf_rate=0.0)
+    returns = [0.01, 0.02, -0.01, 0.03, 0.01, -0.02, 0.04, 0.01, -0.01, 0.02]
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        beta = calc.compute_beta(returns, returns)
+        assert abs(beta - 1.0) < 0.01
+        assert len(w) == 0
+
+
+def test_compute_beta_returns_none_for_insufficient_data():
+    """Less than 10 observations → None (not enough data for meaningful beta)."""
+    calc = PerformanceMetricsCalculator(annual_trading_days=252, annual_rf_rate=0.0)
+    assert calc.compute_beta([0.01, 0.02, 0.03], [0.01, 0.02, 0.03]) is None
