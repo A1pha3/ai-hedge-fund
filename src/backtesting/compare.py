@@ -258,6 +258,8 @@ def run_ab_comparison_walk_forward(
         step_months = preset.get("step_months", step_months)
         max_test_trading_days = preset.get("max_test_trading_days", max_test_trading_days)
 
+    # ALPHA-005: overlap guard
+    overlap_ok = walk_forward_preset in ("extended",)
     windows = build_walk_forward_windows(
         start_date,
         end_date,
@@ -266,6 +268,7 @@ def run_ab_comparison_walk_forward(
         step_months=step_months,
         max_test_trading_days=max_test_trading_days,
         window_mode=window_mode,
+        allow_overlapping_tests=overlap_ok,
     )
     agent_runner = make_backtest_agent_runner(agent, model_name, model_provider)
     compare_checkpoint = Path(checkpoint_path) if checkpoint_path else None

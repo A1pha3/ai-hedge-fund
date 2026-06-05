@@ -36,6 +36,46 @@ def test_build_walk_forward_windows_rejects_non_positive_lengths():
         build_walk_forward_windows("2026-01-01", "2026-06-30", train_months=0)
 
 
+def test_build_walk_forward_windows_rejects_overlapping_tests_by_default():
+    """ALPHA-005: step_months < test_months creates overlapping test windows.
+    By default this raises ValueError to prevent double-counting trades."""
+    with pytest.raises(ValueError, match="overlapping test windows"):
+        build_walk_forward_windows(
+            "2025-01-01", "2025-12-31",
+            train_months=2, test_months=2, step_months=1,
+        )
+
+
+def test_build_walk_forward_windows_allows_overlap_when_opted_in():
+    """ALPHA-005: allow_overlapping_tests=True bypasses the guard (for
+    the "extended" preset and other intentional overlap scenarios)."""
+    windows = build_walk_forward_windows(
+        "2025-01-01", "2025-12-31",
+        train_months=2, test_months=2, step_months=1,
+        allow_overlapping_tests=True,
+    )
+    assert len(windows) > 0
+    # Verify overlap: window 0 test_end >= window 1 test_start
+    if len(windows) >= 2:
+        w0_end = windows[0].test_end
+        w1_start = windows[1].test_start
+        assert w0_end >= w1_start, "Expected overlapping windows with allow_overlapping_tests=True"
+
+
+def test_build_walk_forward_windows_non_overlapping_passes_validation():
+    """Standard preset (step==test) should produce non-overlapping windows."""
+    windows = build_walk_forward_windows(
+        "2025-01-01", "2025-12-31",
+        train_months=2, test_months=1, step_months=1,
+    )
+    assert len(windows) > 1
+    for i in range(len(windows) - 1):
+        assert windows[i].test_end < windows[i + 1].test_start, (
+            f"Window {i} test_end ({windows[i].test_end}) must be < "
+            f"window {i+1} test_start ({windows[i+1].test_start})"
+        )
+
+
 def test_build_walk_forward_windows_truncates_test_range_to_max_trading_days(monkeypatch):
     class StubPro:
         @staticmethod
@@ -558,11 +598,15 @@ def test_all_presets_have_required_month_keys():
     for name, preset in WALK_FORWARD_PRESETS.items():
         for key in ("train_months", "test_months", "step_months"):
             assert key in preset, f"Preset {name!r} is missing required key {key!r}"
-        # Verify the preset can actually build windows without errors
+        # Verify the preset can actually build windows without errors.
+        # ALPHA-005: presets with step < test need allow_overlapping_tests.
+        kwargs = {k: v for k, v in preset.items() if k != "max_test_trading_days"}
+        if kwargs.get("step_months", 1) < kwargs.get("test_months", 1):
+            kwargs["allow_overlapping_tests"] = True
         windows = build_walk_forward_windows(
             "2026-01-01",
             "2026-12-31",
-            **{k: v for k, v in preset.items() if k != "max_test_trading_days"},
+            **kwargs,
         )
         assert len(windows) >= 1, f"Preset {name!r} produced no windows"
 

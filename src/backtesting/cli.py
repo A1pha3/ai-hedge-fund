@@ -64,6 +64,9 @@ def _run_walk_forward_mode(args, build_engine) -> int:
         preset_kwargs = {k: v for k, v in WALK_FORWARD_PRESETS[args.walk_forward_preset].items() if v is not None}
 
     window_mode = WindowMode(args.window_mode)
+    # ALPHA-005: "extended" preset has step < test → overlapping windows.
+    # Allow overlap for known presets that were designed with it.
+    overlap_ok = args.walk_forward_preset in ("extended",)
     windows = build_walk_forward_windows(
         args.start_date,
         args.end_date,
@@ -72,6 +75,7 @@ def _run_walk_forward_mode(args, build_engine) -> int:
         step_months=preset_kwargs.get("step_months", args.step_months),
         max_test_trading_days=preset_kwargs.get("max_test_trading_days", args.max_test_trading_days),
         window_mode=window_mode,
+        allow_overlapping_tests=overlap_ok,
     )
     results = run_walk_forward(windows, lambda window: build_engine(window.test_start, window.test_end))
     summary = summarize_walk_forward(results)

@@ -98,11 +98,28 @@ def build_walk_forward_windows(
     step_months: int = 1,
     max_test_trading_days: int | None = None,
     window_mode: WindowMode = WindowMode.ROLLING,
+    allow_overlapping_tests: bool = False,
 ) -> list[WalkForwardWindow]:
+    """Build walk-forward train/test window pairs.
+
+    When ``step_months < test_months`` (e.g. the "extended" preset),
+    consecutive test windows overlap. This is allowed only when
+    ``allow_overlapping_tests=True`` — otherwise a ``ValueError`` is
+    raised, because overlapping test windows double-count trades and
+    invalidate aggregate statistics (ALPHA-005).
+    """
     if train_months <= 0 or test_months <= 0 or step_months <= 0:
         raise ValueError("walk-forward windows require positive month lengths")
     if max_test_trading_days is not None and max_test_trading_days <= 0:
         raise ValueError("max_test_trading_days must be positive when provided")
+    if step_months < test_months and not allow_overlapping_tests:
+        raise ValueError(
+            f"step_months ({step_months}) < test_months ({test_months}) creates "
+            f"overlapping test windows. Set allow_overlapping_tests=True to "
+            f"proceed anyway, or increase step_months to >= test_months. "
+            f"(ALPHA-005: overlapping windows double-count trades and bias "
+            f"aggregate OOS statistics.)"
+        )
 
     overall_start = datetime.strptime(start_date, "%Y-%m-%d")
     overall_end = datetime.strptime(end_date, "%Y-%m-%d")
