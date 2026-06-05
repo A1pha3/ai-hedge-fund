@@ -105,3 +105,51 @@ def test_build_early_runner_walk_forward_summary_uses_shared_windows_and_counts_
     assert window_modes == {"rolling", "expanding"}
     assert all(window["row_count"] == 3 for window in summary["best_param_set_by_window"].values())
     assert all(window["after_cost_expectancy"] == 0.0217 for window in summary["best_param_set_by_window"].values())
+
+
+# ---------------------------------------------------------------------------
+# ALPHA-003: hit_rate_5d15_on_fills uses filled-only denominator
+# ---------------------------------------------------------------------------
+
+def test_hit_rate_5d15_on_fills_uses_filled_only_denominator() -> None:
+    """ALPHA-003: hit_rate_5d15_on_fills must exclude unfilled rows from the
+    denominator. If 5 of 10 filtered rows are unfilled (hit=False) and 4 of
+    the 5 filled rows hit, then:
+      hit_rate_5d15 = 4/10 = 0.40 (all attempts, old behavior preserved)
+      hit_rate_5d15_on_fills = 4/5 = 0.80 (filled-only, new field)
+    Without the fix, there was no way to distinguish a 40% hit rate from
+    bad signals vs a 40% hit rate caused by 50% unfilled rate."""
+    from src.backtesting.early_runner_walk_forward import _summarize_param_set
+    rows = [
+        # 5 filled rows: 4 hit, 1 miss
+        {"entry_status": "filled", "future_high_hit_15pct_2_5d": True, "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8, "next_close_return_after_cost": 0.03, "next_low_return": -0.02},
+        {"entry_status": "filled", "future_high_hit_15pct_2_5d": True, "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8, "next_close_return_after_cost": 0.03, "next_low_return": -0.02},
+        {"entry_status": "filled", "future_high_hit_15pct_2_5d": True, "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8, "next_close_return_after_cost": 0.03, "next_low_return": -0.02},
+        {"entry_status": "filled", "future_high_hit_15pct_2_5d": True, "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8, "next_close_return_after_cost": 0.03, "next_low_return": -0.02},
+        {"entry_status": "filled", "future_high_hit_15pct_2_5d": False, "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8, "next_close_return_after_cost": -0.01, "next_low_return": -0.04},
+        # 5 unfilled rows: all hit=False (no entry = no future)
+        {"entry_status": "unfilled", "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8},
+        {"entry_status": "unfilled", "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8},
+        {"entry_status": "unfilled", "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8},
+        {"entry_status": "unfilled", "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8},
+        {"entry_status": "unfilled", "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8},
+    ]
+    # Use a permissive param set that passes all rows
+    param_set = {"ret_5d_max": 1.0, "ret_10d_max": 1.0, "gap_max": 1.0, "close_strength_max": 1.0, "volume_quality_max": 1.0, "confirm_score_min": 0.0}
+    result = _summarize_param_set(rows, param_set)
+    assert result["hit_rate_5d15"] == 0.4, f"Expected 0.4 (4/10), got {result['hit_rate_5d15']}"
+    assert result["hit_rate_5d15_on_fills"] == 0.8, f"Expected 0.8 (4/5 filled), got {result['hit_rate_5d15_on_fills']}"
+    assert result["unfilled_rate"] == 0.5
+
+
+def test_hit_rate_on_fills_none_when_all_unfilled() -> None:
+    """When all filtered rows are unfilled, hit_rate_on_fills should be None
+    (no filled population to measure)."""
+    from src.backtesting.early_runner_walk_forward import _summarize_param_set
+    rows = [
+        {"entry_status": "unfilled", "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8},
+        {"entry_status": "unfilled", "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8},
+    ]
+    param_set = {"ret_5d_max": 1.0, "ret_10d_max": 1.0, "gap_max": 1.0, "close_strength_max": 1.0, "volume_quality_max": 1.0, "confirm_score_min": 0.0}
+    result = _summarize_param_set(rows, param_set)
+    assert result["hit_rate_5d15_on_fills"] is None

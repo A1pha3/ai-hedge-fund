@@ -80,10 +80,16 @@ def _summarize_param_set(rows: list[dict[str, Any]], param_set: dict[str, float]
     filtered = _filter_rows_for_param_set(rows, param_set)
     after_cost_returns = [float(row.get("next_close_return_after_cost") or 0.0) for row in filtered if row.get("next_close_return_after_cost") is not None]
     drawdowns = [float(row.get("next_low_return") or 0.0) for row in filtered if row.get("next_low_return") is not None]
+    # ALPHA-003 fix: split hit_rate into filled-only and all-attempts.
+    # The old hit_rate_5d15 used len(filtered) as denominator, which includes
+    # unfilled rows (whose future_hit is almost always False). A strategy with
+    # 50% unfilled rate and 80% filled hit rate would report 40%, not 80%.
+    filled_rows = [row for row in filtered if row.get("entry_status") != "unfilled"]
     return {
         "param_set": dict(param_set),
         "row_count": len(filtered),
         "hit_rate_5d15": _safe_ratio(sum(1 for row in filtered if _future_hit_15(row)), len(filtered)),
+        "hit_rate_5d15_on_fills": _safe_ratio(sum(1 for row in filled_rows if _future_hit_15(row)), len(filled_rows)),
         "after_cost_expectancy": _round_or_none(mean(after_cost_returns)) if after_cost_returns else None,
         "unfilled_rate": _safe_ratio(sum(1 for row in filtered if row.get("entry_status") == "unfilled"), len(filtered)),
         "drawdown_p10": _distribution_p10(drawdowns),
