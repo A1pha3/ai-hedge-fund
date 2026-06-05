@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from src.execution.models import PendingOrder
 
+# BETA-005: maximum days a pending buy order can stay in the queue before
+# auto-expiring. Without this, an order with is_limit_up=False and
+# opened_board=False stays queued forever (returning "keep"), blocking
+# the capital allocation that drove the buy plan.
+MAX_PENDING_BUY_QUEUE_DAYS: int = 10
+
 
 def queue_pending_buy(ticker: str, original_score: float, queue_date: str, reason: str = "limit_up_block", shares: int = 0, amount: float = 0.0) -> PendingOrder:
     return PendingOrder(ticker=ticker, order_type="buy", original_score=original_score, shares=shares, amount=amount, queue_date=queue_date, queue_days=1, reason=reason)
@@ -15,6 +21,10 @@ def queue_pending_sell(ticker: str, original_score: float, queue_date: str, reas
 
 def process_pending_buy(order: PendingOrder, current_score: float, is_limit_up: bool, opened_board: bool, current_price: float, reference_close: float) -> dict:
     next_days = order.queue_days + 1
+    # BETA-005: expire orders that have been queued too long without
+    # any qualifying event (overheated or board-opened).
+    if next_days > MAX_PENDING_BUY_QUEUE_DAYS:
+        return {"action": "remove", "reason": "queue_expired", "queue_days": next_days}
     if is_limit_up and next_days >= 2:
         return {"action": "remove", "reason": "overheated_30d", "cooldown_days": 30}
     if opened_board and current_score >= order.original_score * 0.8 and current_price <= reference_close * 1.05:
