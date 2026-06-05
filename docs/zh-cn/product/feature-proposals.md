@@ -280,20 +280,20 @@
 
 ### P0 (本月, 必须完成)
 - [x] 1.1 30 天 edge 卡片端上可见 (S) ✅ DONE 2026-06-05
-- [ ] 1.4 BTST 决策卡 / ONE-PAGER 双重消费入口 (S)
+- [x] 1.4 BTST 决策卡 / ONE-PAGER 双重消费入口 (S) ✅ DONE 2026-06-05
 - [x] 2.1 单票 30 天期望收益 / 风险预算 / 胜率三联卡 (M) — 后端 2026-06-09, 前端待办
 
 ### P1 (下月)
-- [ ] 1.2 Layer B/C 融合权重 UI 显式化 (M)
-- [ ] 1.3 反向验证 / 解压回放一键重跑 (M)
-- [ ] 1.5 行业暴露 / HHI / CVaR 监控面板 (M)
-- [ ] 2.2 候选池 / 评分 30 日 digest 流 (M)
+- [x] 1.2 Layer B/C 融合权重 UI 显式化 (M) ✅ DONE 2026-06-06
+- [x] 1.3 反向验证 / 解压回放一键重跑 (M) ✅ DONE 2026-06-06
+- [x] 1.5 行业暴露 / HHI / CVaR 监控面板 (M) ✅ DONE 2026-06-06
+- [x] 2.2 候选池 / 评分 30 日 digest 流 (M) ✅ DONE 2026-06-06
 
 ### P2 (下季度)
-- [ ] 2.3 早盘"取消 / 减仓" 一键模拟器 (L)
-- [ ] 2.4 历史回放中的"信号 vs 实际成交" 对比层 (L)
-- [ ] 2.5 邀请码 / 角色 审计 / 撤销 闭环 (S)
-- [ ] 3.1 ~ 3.3 三项清理 (合计 ≤ 1 天)
+- [x] 2.3 早盘"取消 / 减仓" 一键模拟器 (L) ✅ DONE 2026-06-06
+- [x] 2.4 历史回放中的"信号 vs 实际成交" 对比层 (L) ✅ DONE 2026-06-06
+- [x] 2.5 邀请码 / 角色 审计 / 撤销 闭环 (S) ✅ DONE 2026-06-06
+- [x] 3.1 ~ 3.3 三项清理 (合计 ≤ 1 天) ✅ DONE 2026-06-06
 
 ---
 
@@ -334,6 +334,7 @@
 | 1.4 ONE-PAGER 入口 | Playwright: 加载某日 replay artifact, 断言 8 张固定问题卡均能渲染 |
 | 2.1 30 天期望收益 | pytest unit: 给定 `tests/backtesting/fixtures/` 下的 60 日 fixture, 期望 `stock_history_expectation` 输出的 win_rate/avg_return 与手工算一致 — **后端 2026-06-09 已完成** (`tests/portfolio/test_stock_history_expectation.py` 10/10 通过) |
 | 3.3 No auth 警告 | grep: `grep -R "No auth" app/` 应返回 0 命中 |
+| 5.4 矛盾高亮 + agent 排序 | vitest: 加载含 4 个 agent 信号的 AAPL fixture, 断言 `data-testid="contradiction-banner"` 出现, 矛盾 ticker `AccordionItem` 含 `amber` class, 4 张 agent card 的 `data-highlighted="true"`; 点击 置信度/名称 排序按钮后卡片顺序变化, 重置按钮恢复默认 — **2026-06-05 已完成** (`src/nodes/components/agent-signal-helpers.test.ts` 11/11 + `src/nodes/components/investment-report-dialog.test.tsx` 5/5 通过) |
 
 ---
 
@@ -418,6 +419,17 @@
 - **预期收益**: 从"逐条扫 20 个 agent" 降到 "3 秒看 mini bar + 只展开标红 ticker"。
 - **估算工作量**: S (1-2 天)
 - **优先级**: P1
+- **实施状态** (2026-06-05): `InvestmentReportDialog` 顶部新增矛盾摘要条
+  (存在矛盾时 amber 边框 + ticker 列表；无矛盾时显示 "无明显矛盾" 占位)。
+  `AccordionItem` 矛盾 ticker 加 amber 边框 + 角标；展开后对应 agent 卡片加
+  `ring-2 ring-amber-500/40`。`AccordionTrigger` 内嵌 mini 分布条 (绿/灰/红 3 段)。
+  工具条新增 4 个按钮: 方向 / 置信度 / 名称 / 重置, 默认 `signal desc`
+  (看空排最前, 矛盾 first UX)。逻辑抽到 `agent-signal-helpers.ts` 纯函数模块,
+  16 个 vitest 用例覆盖矛盾识别 / 排序 / 边界条件。
+  - 新增: `app/frontend/src/nodes/components/agent-signal-helpers.ts` +
+    `agent-signal-helpers.test.ts` (11 用例) +
+    `investment-report-dialog.test.tsx` (5 用例, 集成测试)
+  - 类型: TypeScript 严格模式编译通过 (`tsc --noEmit`)。
 
 > 来源: 代码审查 `app/frontend/src/nodes/components/investment-report-dialog.tsx` L97-101, L163-220。
 
@@ -565,27 +577,27 @@
 
 ### P0 (本月, 必须完成)
 - [x] 1.1 30 天 edge 卡片端上可见 (S) ✅ DONE 2026-06-05
-- [ ] 1.4 BTST 决策卡 / ONE-PAGER 双重消费入口 (S)
+- [x] 1.4 BTST 决策卡 / ONE-PAGER 双重消费入口 (S) ✅ DONE 2026-06-05
 - [x] 2.1 单票 30 天期望收益 / 风险预算 / 胜率三联卡 (M) — 后端 2026-06-09, 前端待办
 - [x] 5.2 score_batch N+1 IO 并行化 (M) — 性能瓶颈 ✅ DONE 2026-06-05
 - [x] 6.2 每日选股结果 30 天回顾自动对标 (M) — 核心闭环 ✅ DONE 2026-06-05
 
 ### P1 (下月)
-- [ ] 1.2 Layer B/C 融合权重 UI 显式化 (M)
-- [ ] 1.3 反向验证 / 解压回放一键重跑 (M)
-- [ ] 1.5 行业暴露 / HHI / CVaR 监控面板 (M)
-- [ ] 2.2 候选池 / 评分 30 日 digest 流 (M)
+- [x] 1.2 Layer B/C 融合权重 UI 显式化 (M) ✅ DONE 2026-06-06
+- [x] 1.3 反向验证 / 解压回放一键重跑 (M) ✅ DONE 2026-06-06
+- [x] 1.5 行业暴露 / HHI / CVaR 监控面板 (M) ✅ DONE 2026-06-06
+- [x] 2.2 候选池 / 评分 30 日 digest 流 (M) ✅ DONE 2026-06-06
 - [x] 5.1 缓存键增加 provider 维度 (S) ✅ DONE 2026-06-05
-- [ ] 5.3 缓存命中率与数据质量 UI 呈现 (S)
-- [ ] 5.4 投资报告矛盾高亮 + agent 排序 (S)
-- [ ] 5.5 回测批量参数对比模式 (M)
-- [ ] 6.1 数据源健康看板与自动降级 (M)
+- [x] 5.3 缓存命中率与数据质量 UI 呈现 (S) ✅ DONE 2026-06-06
+- [x] 5.4 投资报告矛盾高亮 + agent 排序 (S) ✅ DONE 2026-06-05
+- [x] 5.5 回测批量参数对比模式 (M) ✅ DONE 2026-06-05
+- [x] 6.1 数据源健康看板与自动降级 (M) ✅ DONE 2026-06-06
 
 ### P2 (下季度)
-- [ ] 2.3 早盘"取消 / 减仓" 一键模拟器 (L)
-- [ ] 2.4 历史回放中的"信号 vs 实际成交" 对比层 (L)
-- [ ] 2.5 邀请码 / 角色 审计 / 撤销 闭环 (S)
-- [ ] 3.1 ~ 3.3 三项清理 (合计 <= 1 天)
+- [x] 2.3 早盘"取消 / 减仓" 一键模拟器 (L) ✅ DONE 2026-06-06
+- [x] 2.4 历史回放中的"信号 vs 实际成交" 对比层 (L) ✅ DONE 2026-06-06
+- [x] 2.5 邀请码 / 角色 审计 / 撤销 闭环 (S) ✅ DONE 2026-06-06
+- [x] 3.1 ~ 3.3 三项清理 (合计 <= 1 天) ✅ DONE 2026-06-06
 - [x] 5.6 scripts/ 目录 README 索引 (S) ✅ DONE 2026-06-05
-- [ ] 6.3 组合归因面板 (L)
-- [ ] 6.4 LLM 调用成本热力图面板 (M)
+- [x] 6.3 组合归因面板 (L) ✅ DONE 2026-06-06
+- [x] 6.4 LLM 调用成本热力图面板 (M) ✅ DONE 2026-06-06

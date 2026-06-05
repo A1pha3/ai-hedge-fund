@@ -1,7 +1,9 @@
 """
 数据路由器模块
 
-实现数据源路由、容错切换、缓存管理等功能
+实现数据源路由、容错切换、缓存管理等功能。
+集成了 HealthMonitor 进行自动降级：当某 provider 最近 N 次请求
+成功率低于阈值时自动跳过，恢复后自动重新启用。
 """
 
 import logging
@@ -15,6 +17,7 @@ from src.data.base_provider import (
     DataType,
 )
 from src.data.enhanced_cache import get_cache
+from src.data.health import DataSourceHealth, HealthMonitor, get_health_monitor, reset_health_monitor
 from src.data.router_helpers import build_router_failure_response, fetch_from_providers, serialize_cache_records
 
 # 配置日志
@@ -29,12 +32,14 @@ class DataRouter:
     负责：
     - 根据数据类型和优先级选择合适的数据源
     - 实现容错机制（主数据源失败时自动切换）
+    - 基于 HealthMonitor 的自动降级/恢复
     - 管理缓存
     - 记录数据血缘和性能指标
 
     Attributes:
         providers: 注册的提供商列表
         cache: 缓存实例
+        health_monitor: 健康监控器实例
         health_check_interval: 健康检查间隔（秒）
         _last_health_check: 上次健康检查时间
     """
@@ -49,9 +54,9 @@ class DataRouter:
         """
         self.providers = providers or []
         self.cache = get_cache()
+        self.health_monitor: HealthMonitor = get_health_monitor()
         self.health_check_interval = health_check_interval
         self._last_health_check: datetime | None = None
-        self._health_cache: dict[str, bool] = {}
 
         # 按优先级排序
         self._sort_providers()
@@ -157,6 +162,12 @@ class DataRouter:
         """
         检查提供商健康状态
 
+        同时使用：
+        1. BaseDataProvider.health_check() — 主动探测
+        2. HealthMonitor — 被动统计（由 router_helpers 在每次请求时更新）
+
+        主动探测失败也会记入 HealthMonitor。
+
         Args:
             force: 是否强制检查
         """
@@ -172,25 +183,57 @@ class DataRouter:
         for provider in self.providers:
             try:
                 is_healthy = await provider.health_check()
-                self._health_cache[provider.name] = is_healthy
 
                 if is_healthy:
-                    logger.debug(f"Provider {provider.name} is healthy")
+                    logger.debug(f"Provider {provider.name} is healthy (active check)")
                 else:
-                    logger.warning(f"Provider {provider.name} is unhealthy")
+                    logger.warning(f"Provider {provider.name} is unhealthy (active check)")
+                    # 主动探测失败记为一次失败
+                    self.health_monitor.record_failure(provider.name, 0.0, error="health_check returned False")
 
             except Exception as e:
-                self._health_cache[provider.name] = False
                 logger.warning(f"Health check failed for {provider.name}: {e}")
+                self.health_monitor.record_failure(provider.name, 0.0, error=str(e))
 
     def _get_healthy_providers(self) -> list[BaseDataProvider]:
         """
-        获取健康的提供商列表
+        获取健康的提供商列表（基于 HealthMonitor 滑动窗口统计）
+
+        优先级：
+        1. 跳过已被 HealthMonitor 标记为 DEGRADED 的 provider
+        2. 保留原始优先级排序
 
         Returns:
             健康的提供商列表
         """
-        return [p for p in self.providers if self._health_cache.get(p.name, True)]
+        return [p for p in self.providers if self.health_monitor.is_healthy(p.name)]
+
+    def get_health_status(self) -> dict[str, DataSourceHealth]:
+        """获取所有数据源的健康状态快照
+
+        Returns:
+            {provider_name: DataSourceHealth}
+        """
+        # 确保所有已注册的 provider 都有 tracker
+        result: dict[str, DataSourceHealth] = {}
+        for p in self.providers:
+            health = self.health_monitor.get_health(p.name)
+            if health is not None:
+                result[p.name] = health
+            else:
+                # 尚无请求记录，返回 UNKNOWN 状态
+                from src.data.health import SourceStatus
+
+                result[p.name] = DataSourceHealth(
+                    provider=p.name,
+                    status=SourceStatus.UNKNOWN,
+                    success_rate=0.0,
+                    avg_latency_ms=0.0,
+                    total_requests=0,
+                    success_count=0,
+                    last_check=datetime.now().isoformat(),
+                )
+        return result
 
     async def get_prices(self, ticker: str, start_date: str, end_date: str, use_cache: bool = True) -> DataResponse:
         """
@@ -205,9 +248,6 @@ class DataRouter:
         Returns:
             DataResponse 包含价格数据
         """
-        # 缓存键不携带 provider 维度：在路由器层面，我们不知道哪个 provider
-        # 会成功返回，因此使用一个共享的"router"命名空间。任何 provider 写入的
-        # 数据形状都应该一致（DataResponse.data 已经是归一化的字典列表）。
         cache_key = self._get_cache_key(DataType.PRICE, ticker, provider="router", start=start_date, end=end_date)
 
         # 检查缓存

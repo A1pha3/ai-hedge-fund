@@ -1,6 +1,8 @@
+> ⚠️ **已废弃 (2026-06-06)** — 本文档为 v1.0 初始版本，已被 [institutional_multi_strategy_framework_v1.4.md](institutional_multi_strategy_framework_v1.4.md) 完全取代。仅保留供历史参考。
+
 # 机构级多策略量化交易决策框架
 
-> **版本**：v1.0.0  
+> **版本**：v1.0.0
 > **日期**：2026-03-04  
 > **角色**：多策略量化研究总监 + 首席风控官（A股）  
 > **目标函数**：最大化风险调整后收益（Sharpe / Sortino），而非单次命中率  

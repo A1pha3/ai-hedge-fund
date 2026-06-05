@@ -1,8 +1,9 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useFlowConnectionState } from '@/hooks/use-flow-connection';
+import { useFlowConnection, useFlowConnectionState } from '@/hooks/use-flow-connection';
+import { useNodeContext } from '@/contexts/node-context';
 import { cn } from '@/lib/utils';
-import { flowService } from '@/services/flow-service';
+import { flowService, FlowRunSummary } from '@/services/flow-service';
 import { Flow } from '@/types/flow';
 import {
   Calendar,
@@ -11,7 +12,7 @@ import {
   MoreHorizontal,
   Zap
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FlowContextMenu } from './flow-context-menu';
 import { FlowEditDialog } from './flow-edit-dialog';
 
@@ -29,11 +30,28 @@ export default function FlowItem({ flow, onLoadFlow, onDeleteFlow, onRefresh, is
     position: { x: 0, y: 0 }
   });
   const [editDialog, setEditDialog] = useState(false);
+  const [hasCompletedRuns, setHasCompletedRuns] = useState(false);
+  const [latestRunId, setLatestRunId] = useState<number | null>(null);
 
   // Check if this flow has an active connection
   const connectionState = useFlowConnectionState(flow.id.toString());
-  const hasActiveConnection = connectionState && 
+  const hasActiveConnection = connectionState &&
     (connectionState.state === 'connecting' || connectionState.state === 'connected');
+
+  // Check for completed runs on mount / when flow changes
+  useEffect(() => {
+    let cancelled = false;
+    flowService.getFlowRuns(flow.id, 5).then((runs: FlowRunSummary[]) => {
+      if (cancelled) return;
+      const completed = runs.find(r => r.status === 'COMPLETE');
+      setHasCompletedRuns(!!completed);
+      setLatestRunId(completed?.id ?? runs[0]?.id ?? null);
+    }).catch(() => {
+      setHasCompletedRuns(false);
+      setLatestRunId(null);
+    });
+    return () => { cancelled = true; };
+  }, [flow.id]);
 
   const handleLoadFlow = async () => {
     await onLoadFlow(flow);
@@ -84,6 +102,29 @@ export default function FlowItem({ flow, onLoadFlow, onDeleteFlow, onRefresh, is
       } catch (error) {
         console.error('Failed to delete flow:', error);
       }
+    }
+  };
+
+  const handleRerun = async () => {
+    if (!latestRunId) return;
+    if (!window.confirm('Re-run using the parameters from the last completed run?')) return;
+
+    try {
+      // Load the flow first so the canvas shows the correct nodes/edges
+      await onLoadFlow(flow);
+      // The SSE stream is consumed by the browser but progress events
+      // are handled through the normal runHedgeFund path. For the rerun
+      // case we delegate to the same SSE processing used by api.ts, but
+      // the backend handles it entirely -- the frontend just needs to
+      // open the SSE connection and let the existing handlers work.
+      const sseResponse = await flowService.rerunFlowRun(flow.id, latestRunId);
+
+      // Extract the new run ID from response headers
+      const newRunId = sseResponse.headers.get('X-Rerun-Run-Id');
+      console.log(`Rerun started: new run ID=${newRunId}, original run ID=${latestRunId}`);
+    } catch (error) {
+      console.error('Failed to rerun flow:', error);
+      alert(`Rerun failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -187,6 +228,8 @@ export default function FlowItem({ flow, onLoadFlow, onDeleteFlow, onRefresh, is
         onClose={closeContextMenu}
         onEdit={handleEdit}
         onDuplicate={handleDuplicateFlow}
+        onRerun={handleRerun}
+        hasCompletedRuns={hasCompletedRuns}
         onDelete={handleDeleteFlow}
       />
 

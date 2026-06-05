@@ -9,7 +9,6 @@ from app.backend.auth.dependencies import get_current_user
 from app.backend.models.user import User
 from app.backend.services.replay_artifact_service import ReplayArtifactService
 
-
 router = APIRouter(prefix="/replay-artifacts", tags=["replay-artifacts"])
 
 
@@ -54,6 +53,11 @@ class ReplayFeedbackBatchAppendRequest(BaseModel):
 
 class ReplayFeedbackBatchAppendResponse(BaseModel):
     feedback: dict[str, Any]
+
+
+class ReplaySignalTradeComparisonResponse(BaseModel):
+    pairs: list[dict[str, Any]]
+    summary: dict[str, Any]
 
 
 class ReplayFeedbackActivityResponse(BaseModel):
@@ -139,6 +143,24 @@ async def get_replay_artifact(report_name: str) -> ReplayArtifactDetailResponse:
     service = ReplayArtifactService()
     try:
         return ReplayArtifactDetailResponse(report=service.get_replay(report_name))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{report_name}/signal-trade-comparison", response_model=ReplaySignalTradeComparisonResponse)
+async def get_signal_trade_comparison(
+    report_name: str,
+    time_window_days: int = 1,
+) -> ReplaySignalTradeComparisonResponse:
+    """Compare strategy signals against actual executed trades for a replay run.
+
+    Returns per-signal match status (filled/partial/missed), price slippage,
+    and fill delay statistics.
+    """
+    service = ReplayArtifactService()
+    try:
+        result = service.get_signal_trade_comparison(report_name, time_window_days=time_window_days)
+        return ReplaySignalTradeComparisonResponse(pairs=result["pairs"], summary=result["summary"])
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

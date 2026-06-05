@@ -146,7 +146,7 @@ class TestRegisterRoute:
         })
         assert resp.status_code == 201
         assert resp.json()["username"] == "newuser"
-        assert resp.json()["role"] == "user"
+        assert resp.json()["role"] == "member"  # legacy "user" normalized to "member"
 
     def test_register_invalid_invite(self, client):
         resp = client.post("/auth/register", json={

@@ -16,7 +16,7 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)  # bcrypt hash, never plaintext
     email = Column(String(255), unique=True, nullable=True)
-    role = Column(String(20), nullable=False, default="user")  # 'admin' | 'user'
+    role = Column(String(20), nullable=False, default="user")  # 'admin' | 'member' | 'viewer' | 'user' (legacy)
     is_active = Column(Boolean, nullable=False, default=True)
     login_attempts = Column(Integer, nullable=False, default=0)
     locked_until = Column(DateTime, nullable=True)
@@ -41,12 +41,20 @@ class InvitationCode(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     used_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     is_used = Column(Boolean, nullable=False, default=False)
+    revoked_at = Column(DateTime, nullable=True)  # When the code was revoked (admin action)
+    revoked_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Who revoked it
+    role_to_assign = Column(String(20), nullable=True)  # Role to assign on redeem (default: member)
     expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     # Relationships
     creator = relationship("User", foreign_keys=[created_by], back_populates="created_codes")
     consumer = relationship("User", foreign_keys=[used_by])
+    revoker = relationship("User", foreign_keys=[revoked_by])
+
+    @property
+    def is_revoked(self) -> bool:
+        return self.revoked_at is not None
 
     def __repr__(self):
-        return f"<InvitationCode(code='{self.code}', is_used={self.is_used})>"
+        return f"<InvitationCode(code='{self.code}', is_used={self.is_used}, revoked={self.is_revoked})>"

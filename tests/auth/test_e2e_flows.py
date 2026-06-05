@@ -67,7 +67,7 @@ class TestRegistrationLoginFlow:
         assert resp.status_code == 201
         data = resp.json()
         assert data["username"] == "newuser"
-        assert data["role"] == "user"
+        assert data["role"] == "member"  # legacy "user" normalized to "member"
 
         # Step 2: Login with new credentials
         resp = e2e_client.post("/auth/login", json={

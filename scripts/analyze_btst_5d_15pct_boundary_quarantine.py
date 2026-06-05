@@ -1,3 +1,4 @@
+"""⚠️ DEPRECATED — 5d_15pct boundary quarantine decision analysis. One-time experiment from 2026-Q1; kept for historical reference only."""
 from __future__ import annotations
 
 import argparse

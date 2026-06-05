@@ -2,10 +2,10 @@ import { ReplayArtifactsEntryCard } from '@/components/replay-artifacts/replay-a
 import { useTabsContext } from '@/contexts/tabs-context';
 import { cn } from '@/lib/utils';
 import { CubeIcon } from '@radix-ui/react-icons';
-import { Database, Key, Palette } from 'lucide-react';
+import { Activity, Database, Key, Palette } from 'lucide-react';
 import { useState } from 'react';
 import { TabService } from '@/services/tab-service';
-import { ApiKeysSettings, Models } from './';
+import { ApiKeysSettings, LLMMetricsPanel, Models } from './';
 import { ThemeSettings } from './appearance';
 
 interface SettingsProps {
@@ -48,6 +48,12 @@ export function Settings({ className }: SettingsProps) {
       icon: Database,
       description: 'Replay summaries and execution digests',
     },
+    {
+      id: 'llm-metrics',
+      label: 'LLM Metrics',
+      icon: Activity,
+      description: 'Cost, latency, and usage heatmaps',
+    },
   ];
 
   const renderContent = () => {
@@ -60,6 +66,8 @@ export function Settings({ className }: SettingsProps) {
         return <ThemeSettings />;
       case 'api':
         return <ApiKeysSettings />;
+      case 'llm-metrics':
+        return <LLMMetricsPanel />;
       default:
         return <Models />;
     }

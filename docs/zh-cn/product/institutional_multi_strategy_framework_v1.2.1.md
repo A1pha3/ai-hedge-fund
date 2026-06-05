@@ -1,6 +1,8 @@
+> ⚠️ **已废弃 (2026-06-06)** — 本文件文件名为 v1.2.1 但内容为 v1.3，已被 [institutional_multi_strategy_framework_v1.4.md](institutional_multi_strategy_framework_v1.4.md) 取代。仅保留供历史参考。
+
 # 机构级多策略量化交易决策框架
 
-> **版本**：v1.3  
+> **版本**：v1.3
 > **日期**：2026-03-05  
 > **角色**：多策略量化研究总监 + 首席风控官（A股）  
 > **上游文档**：[stock_selection_mvp_design_v0.md](stock_selection_mvp_design_v0.md)  

@@ -37,6 +37,13 @@ def test_main_prints_default_model_and_exits(monkeypatch, capsys):
         analysts=None,
         analysts_all=False,
         ollama=False,
+        # New param-grid flags (5.5) — None so we don't take the grid branch.
+        param_grid=None,
+        output=None,
+        max_workers=None,
+        sort_by="sharpe_ratio",
+        walk_forward_preset=None,
+        window_mode="rolling",
     )
 
     monkeypatch.setattr(cli, "build_backtest_parser", lambda: _ParserStub(args))
@@ -73,6 +80,13 @@ def test_main_runs_engine_with_non_interactive_model_and_analysts(monkeypatch, c
         analysts="news_agent,fundamentals_agent",
         analysts_all=False,
         ollama=False,
+        # New param-grid flags (5.5) — None so we don't take the grid branch.
+        param_grid=None,
+        output=None,
+        max_workers=None,
+        sort_by="sharpe_ratio",
+        walk_forward_preset=None,
+        window_mode="rolling",
     )
 
     class EngineStub:
@@ -166,3 +180,99 @@ def test_run_walk_forward_mode_prints_rollout_and_promotion_summary(capsys):
     assert "Rollout Blockers: majority_non_positive_sharpe_windows" in captured.out
     assert "Promotion Ready: NO" in captured.out
     assert "Promotion Blockers: risk_budget_suppression_exceeded" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# 5.5 — --param-grid dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_main_dispatches_to_param_grid_runner(monkeypatch, tmp_path):
+    """When --param-grid is set, main() must delegate to the grid runner."""
+    args = SimpleNamespace(
+        show_default_model=False,
+        tickers="AAPL,MSFT",
+        end_date="2026-04-10",
+        start_date="2026-03-10",
+        initial_capital=100000.0,
+        margin_requirement=0.0,
+        mode="agent",
+        walk_forward=False,
+        ab_compare=False,
+        train_months=2,
+        test_months=1,
+        step_months=1,
+        max_test_trading_days=None,
+        baseline_pct_threshold=3.0,
+        baseline_top_n=10,
+        report_file=None,
+        report_json=None,
+        model_name="gpt-test",
+        model_provider="openai",
+        analysts=None,
+        analysts_all=False,
+        ollama=False,
+        param_grid="top_n=10,20",
+        output=str(tmp_path / "out"),
+        max_workers=1,
+        sort_by="sharpe_ratio",
+        walk_forward_preset=None,
+        window_mode="rolling",
+    )
+
+    captured_argv: list[list[str]] = []
+
+    def fake_grid_main(argv):
+        captured_argv.append(list(argv))
+        return 0
+
+    # Replace the symbol inside the already-imported scripts module; the
+    # dispatch in cli._run_param_grid_mode imports it lazily each call, so
+    # mutating the module is sufficient.
+    from scripts import run_backtest_param_grid as grid_module
+    monkeypatch.setattr(grid_module, "main", fake_grid_main)
+
+    monkeypatch.setattr(cli, "build_backtest_parser", lambda: _ParserStub(args))
+    monkeypatch.setattr(cli, "init", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "resolve_selected_analysts", lambda args, logger: [])
+    monkeypatch.setattr(cli, "resolve_model_selection", lambda args, logger: SimpleNamespace(name="gpt-test", provider="openai"))
+
+    assert cli.main() == 0
+    assert len(captured_argv) == 1, "grid main was not invoked exactly once"
+    argv = captured_argv[0]
+    # Critical flags must round-trip
+    assert "--param-grid" in argv
+    assert "top_n=10,20" in argv
+    assert "--model-name" in argv and "gpt-test" in argv
+    assert "--output" in argv and str(tmp_path / "out") in argv
+    # Tickers are joined with comma
+    assert "--tickers" in argv and "AAPL,MSFT" in argv
+
+
+def test_run_param_grid_mode_requires_tickers():
+    """The grid runner must fail loudly when --tickers is missing."""
+    args = SimpleNamespace(
+        tickers=None,
+        start_date="2026-01-01",
+        end_date="2026-04-30",
+        initial_capital=100000.0,
+        margin_requirement=0.0,
+        mode="agent",
+        model_name="gpt",
+        model_provider="openai",
+        walk_forward=False,
+        walk_forward_preset=None,
+        train_months=2,
+        test_months=1,
+        step_months=1,
+        max_test_trading_days=None,
+        window_mode="rolling",
+        analysts=None,
+        param_grid="top_n=10",
+        output=None,
+        max_workers=None,
+        sort_by="sharpe_ratio",
+    )
+    # Without a model selection we can short-circuit the runner call entirely.
+    rc = cli._run_param_grid_mode(args, SimpleNamespace(name="gpt", provider="openai"))
+    assert rc == 1

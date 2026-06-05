@@ -41,6 +41,8 @@ export interface OutputNodeData {
   analyst_signals: Record<string, any>;
   // Per-ticker edge / risk data (P0 1.1)
   edge_data?: Record<string, EdgeCardData>;
+  // P1 1.5: Portfolio-level risk metrics for RiskMonitorPanel
+  risk_metrics?: RiskMetrics;
   // Backtest-specific fields
   performance_metrics?: {
     sharpe_ratio?: number;
@@ -57,6 +59,27 @@ export interface OutputNodeData {
     positions: Record<string, any>;
   };
   total_days?: number;
+}
+
+// P1 1.5: Portfolio-level risk metrics from backend _compute_risk_metrics
+export interface RiskMetrics {
+  hhi: number;
+  short_ratio: number;
+  industry_exposures: IndustryExposure[];
+  cvar_95: number;
+  position_count: number;
+  max_single_position_weight: number;
+  total_nav: number;
+  total_long: number;
+  total_short: number;
+}
+
+export interface IndustryExposure {
+  ticker: string;
+  weight: number;
+  long_value: number;
+  short_value: number;
+  net_value: number;
 }
 
 // Default agent node state

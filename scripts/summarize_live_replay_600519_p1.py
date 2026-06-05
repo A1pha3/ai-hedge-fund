@@ -1,3 +1,4 @@
+"""⚠️ DEPRECATED — Summarize 600519 P1 live replay metrics. One-time script; kept for historical reference only."""
 from __future__ import annotations
 
 import argparse

@@ -136,19 +136,51 @@ def _merge_supplemental_short_trade_entries(
     return merged_entries
 
 
-def _extract_top_factors(item: LayerCResult) -> list[dict[str, Any]]:
+def _compute_normalized_weights(
+    adjusted_weights: dict[str, float] | None,
+    strategy_weights: dict[str, float] | None,
+    strategy_signals: dict[str, Any],
+) -> dict[str, float]:
+    """Compute per-strategy normalized weights mirroring signal_fusion._normalize_active_weights."""
+    raw_weights = dict(adjusted_weights or strategy_weights or {})
+    active: dict[str, float] = {}
+    for name, signal in strategy_signals.items():
+        completeness = float(getattr(signal, "completeness", 0.0) or 0.0)
+        if completeness > 0:
+            active[name] = max(float(raw_weights.get(name, 0.0)), 0.0)
+    total = sum(active.values())
+    if total <= 0:
+        return {}
+    return {name: value / total for name, value in active.items()}
+
+
+def _extract_top_factors(item: LayerCResult, plan: ExecutionPlan | None = None) -> list[dict[str, Any]]:
+    strategy_signals = dict(item.strategy_signals or {})
+    adjusted_weights = dict(getattr(plan.market_state, "adjusted_weights", {}) or {}) if plan and plan.market_state else {}
+    normalized = _compute_normalized_weights(
+        adjusted_weights if adjusted_weights else None,
+        dict(plan.strategy_weights or {}) if plan else None,
+        strategy_signals,
+    )
     factors: list[dict[str, Any]] = []
-    for strategy_name, signal in sorted((item.strategy_signals or {}).items()):
+    for strategy_name, signal in sorted(strategy_signals.items()):
+        weight = float(normalized.get(strategy_name, 0.0))
+        direction = int(getattr(signal, "direction", 0))
+        confidence = float(getattr(signal, "confidence", 0.0) or 0.0)
+        completeness = float(getattr(signal, "completeness", 0.0) or 0.0)
+        contribution = abs(weight * direction * (confidence / 100.0) * completeness)
         factors.append(
             {
                 "name": strategy_name,
-                "direction": getattr(signal, "direction", 0),
-                "confidence": round(float(getattr(signal, "confidence", 0.0) or 0.0), 2),
-                "completeness": round(float(getattr(signal, "completeness", 0.0) or 0.0), 2),
+                "direction": direction,
+                "confidence": round(confidence, 2),
+                "completeness": round(completeness, 2),
+                "weight": round(weight, 4),
+                "contribution": round(contribution, 4),
             }
         )
-    factors.sort(key=lambda current: (abs(float(current.get("direction", 0))) * float(current.get("confidence", 0.0))), reverse=True)
-    return factors[:3]
+    factors.sort(key=lambda current: float(current.get("contribution", 0.0)), reverse=True)
+    return factors
 
 
 def _extract_fallback_top_factors(plan: ExecutionPlan, item: LayerCResult) -> list[dict[str, Any]]:
@@ -177,7 +209,7 @@ def _extract_fallback_top_factors(plan: ExecutionPlan, item: LayerCResult) -> li
 
 
 def _build_layer_b_summary(plan: ExecutionPlan, item: LayerCResult) -> dict[str, Any]:
-    top_factors = _extract_top_factors(item)
+    top_factors = _extract_top_factors(item, plan)
     if top_factors:
         return {
             "top_factors": top_factors,

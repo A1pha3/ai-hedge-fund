@@ -71,7 +71,7 @@ class TestLogin:
         assert "access_token" in result
         assert result["token_type"] == "bearer"
         assert result["user"]["username"] == "testuser"
-        assert result["user"]["role"] == "user"
+        assert result["user"]["role"] == "user"  # DB stores "user" for legacy users
         assert result["user"]["email"] == "test@example.com"
 
     def test_login_wrong_password(self, db_session, regular_user):
@@ -159,7 +159,7 @@ class TestRegister:
         service = AuthService(db_session)
         result = service.register("newuser", "NewPass1234", valid_invite.code)
         assert result["username"] == "newuser"
-        assert result["role"] == "user"
+        assert result["role"] == "member"  # legacy "user" normalized to "member"
         # Verify user in DB
         user = db_session.query(User).filter(User.username == "newuser").first()
         assert user is not None

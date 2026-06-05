@@ -30,6 +30,16 @@ from src.data.enhanced_cache import (
     snapshot_cache_stats,
 )
 
+# 健康监控
+from src.data.health import (
+    DataSourceHealth,
+    HealthMonitor,
+    HealthTracker,
+    SourceStatus,
+    get_health_monitor,
+    reset_health_monitor,
+)
+
 # 基础模型
 from src.data.models import (
     CompanyNews,
@@ -86,6 +96,13 @@ __all__ = [
     "RateLimitError",
     "APIError",
     "ValidationError",
+    # 健康监控
+    "DataSourceHealth",
+    "HealthMonitor",
+    "HealthTracker",
+    "SourceStatus",
+    "get_health_monitor",
+    "reset_health_monitor",
     # 路由器
     "DataRouter",
     "get_router",

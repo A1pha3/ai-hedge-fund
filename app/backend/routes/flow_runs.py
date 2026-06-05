@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -11,8 +12,17 @@ from app.backend.models.schemas import (
     FlowRunResponse,
     FlowRunSummaryResponse,
     FlowRunStatus,
-    ErrorResponse
+    ErrorResponse,
+    HedgeFundRequest,
 )
+from app.backend.routes.hedge_fund_streaming import (
+    hydrate_api_keys,
+    resolve_model_provider,
+    stream_hedge_fund_run,
+)
+from app.backend.services.graph import create_graph
+from app.backend.services.portfolio import create_portfolio
+from src.utils.progress import progress
 
 router = APIRouter(prefix="/flows/{flow_id}/runs", tags=["flow-runs"])
 
@@ -300,4 +310,94 @@ async def get_flow_run_count(flow_id: int, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get flow run count: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to get flow run count: {str(e)}")
+
+
+@router.post(
+    "/{run_id}/rerun",
+    response_model=FlowRunResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "Flow or run not found"},
+        400: {"model": ErrorResponse, "description": "No request data stored in historical run"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def rerun_flow_run(
+    flow_id: int,
+    run_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Re-run a historical flow run using its original parameters.
+
+    Extracts the ``request_data`` stored in the specified flow run, creates a
+    new flow run record under the same flow, and immediately kicks off the
+    hedge-fund execution as an SSE stream.
+
+    Returns a JSON payload with the *new* run metadata **and** a SSE stream
+    body, so the frontend can both track the new run ID and stream progress
+    events in a single response.
+    """
+    try:
+        # --- Validate parent flow ---
+        flow_repo = FlowRepository(db)
+        flow = flow_repo.get_flow_by_id(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+
+        # --- Locate source run ---
+        run_repo = FlowRunRepository(db)
+        source_run = run_repo.get_flow_run_by_id(run_id)
+        if not source_run or source_run.flow_id != flow_id:
+            raise HTTPException(status_code=404, detail="Flow run not found")
+
+        # --- Extract original parameters ---
+        request_data_raw = source_run.request_data
+        if not request_data_raw:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot rerun: original request_data is not stored for this run",
+            )
+
+        # Build HedgeFundRequest from stored dict (backwards-compatible)
+        rerun_request = HedgeFundRequest(**request_data_raw)
+
+        # --- Hydrate API keys if not already present ---
+        hydrate_api_keys(rerun_request, db)
+
+        # --- Create new flow run record ---
+        new_run = run_repo.create_flow_run(
+            flow_id=flow_id,
+            request_data=request_data_raw,
+        )
+
+        # --- Compile graph & start execution ---
+        portfolio = create_portfolio(
+            rerun_request.initial_cash,
+            rerun_request.margin_requirement,
+            rerun_request.tickers,
+            rerun_request.portfolio_positions,
+        )
+        graph = create_graph(
+            graph_nodes=rerun_request.graph_nodes,
+            graph_edges=rerun_request.graph_edges,
+        )
+        compiled_graph = graph.compile()
+
+        progress.update_status("system", None, "Preparing rerun")
+        model_provider = resolve_model_provider(rerun_request.model_provider)
+
+        # Return SSE stream (same as normal /hedge-fund/run)
+        return StreamingResponse(
+            stream_hedge_fund_run(request, rerun_request, compiled_graph, portfolio, model_provider),
+            media_type="text/event-stream",
+            headers={
+                "X-Rerun-Run-Id": str(new_run.id),
+                "X-Rerun-Run-Number": str(new_run.run_number),
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to rerun flow run: {str(e)}") 

@@ -1,4 +1,4 @@
-"""Build high-value P1/P2 follow-up artifacts for BTST 0330."""
+"""⚠️ DEPRECATED — Build high-value P1/P2 follow-up artifacts for BTST 0330. Do not run; kept for historical reference only."""
 
 from __future__ import annotations
 

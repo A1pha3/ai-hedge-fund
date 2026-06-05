@@ -37,6 +37,20 @@ def build_backtest_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-test-trading-days", type=int, default=None, help="Optional cap on real trading days inside each test window")
     parser.add_argument("--window-mode", choices=["rolling", "expanding"], default="rolling", help="Walk-forward window mode: rolling (fixed-size train) or expanding (anchored train start)")
     parser.add_argument("--walk-forward-preset", choices=["fast", "standard", "extended", "seasonal"], default=None, help="Use predefined walk-forward window parameters (overrides --train/test/step-months)")
+    parser.add_argument(
+        "--param-grid",
+        type=str,
+        default=None,
+        help=(
+            "Run a batch parameter grid comparison instead of a single backtest. "
+            'Accepts a compact spec like "top_n=10,15,20;min_score=0.5,0.6" and '
+            "expands it into the cartesian product, running each combination in "
+            "parallel and writing a CSV / Markdown / JSON comparison report."
+        ),
+    )
+    parser.add_argument("--output", type=str, default=None, help="Output directory for the parameter-grid report (default: data/reports/param_grid)")
+    parser.add_argument("--max-workers", type=int, default=None, help="Worker thread count for the parameter grid (default: ANALYST_CONCURRENCY_LIMIT env var)")
+    parser.add_argument("--sort-by", choices=["sharpe_ratio", "sortino_ratio", "win_rate", "total_return"], default="sharpe_ratio", help="Primary sort metric for the grid comparison table")
     parser.add_argument("--baseline-pct-threshold", type=float, default=3.0, help="Baseline daily gainers threshold")
     parser.add_argument("--baseline-top-n", type=int, default=10, help="Baseline top N gainers passed to multi-agent analysis")
     parser.add_argument("--report-file", type=str, default=None, help="Optional output path for generated markdown report")

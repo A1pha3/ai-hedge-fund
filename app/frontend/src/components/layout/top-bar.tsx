@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { CacheStatusIndicator } from '@/components/cache-status-indicator';
 import { cn } from '@/lib/utils';
 import { Database, PanelBottom, PanelLeft, PanelRight, Settings, UserCircle } from 'lucide-react';
 
@@ -73,6 +74,12 @@ export function TopBar({
       >
         <PanelRight size={16} />
       </Button>
+
+      {/* Divider */}
+      <div className="w-px h-5 bg-ramp-grey-700 mx-1" />
+
+      {/* Cache Status Indicator */}
+      <CacheStatusIndicator />
 
       {/* Divider */}
       <div className="w-px h-5 bg-ramp-grey-700 mx-1" />

@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { Copy, Edit, Trash2 } from 'lucide-react';
+import { Copy, Edit, Play, Trash2 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
 interface FlowContextMenuProps {
@@ -10,15 +10,19 @@ interface FlowContextMenuProps {
   onEdit: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onRerun?: () => void;
+  hasCompletedRuns?: boolean;
 }
 
-export function FlowContextMenu({ 
-  isOpen, 
-  position, 
-  onClose, 
-  onEdit, 
-  onDuplicate, 
-  onDelete 
+export function FlowContextMenu({
+  isOpen,
+  position,
+  onClose,
+  onEdit,
+  onDuplicate,
+  onDelete,
+  onRerun,
+  hasCompletedRuns = false,
 }: FlowContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -85,7 +89,19 @@ export function FlowContextMenu({
           <Copy size={14} className="mr-2" />
           Duplicate
         </Button>
-        
+
+        {onRerun && hasCompletedRuns && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start text-emerald-400 hover:bg-ramp-grey-700 hover:text-emerald-300"
+            onClick={() => handleAction(onRerun)}
+          >
+            <Play size={14} className="mr-2" />
+            Rerun Last
+          </Button>
+        )}
+
         <Button
           variant="ghost"
           size="sm"

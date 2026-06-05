@@ -49,7 +49,7 @@ backend/
 
 ## CONVENTIONS
 
-- **No authentication** — all endpoints public, CORS allows localhost:5173
+- **No authentication** — all endpoints are currently public (no JWT, no API-key gating on routes). CORS is scoped to `localhost:5173` only. Adding auth would require updating all frontend API calls; see `docs/zh-cn/product/auth_design.md` for the planned design.
 - **SSE for execution** — hedge fund run + backtest stream events, not request-response
 - **Repository pattern** — `__init__(self, db: Session)`, CRUD methods return ORM models
 - **Error handling** — `HTTPException` with status codes; generic catch-all wraps to 500

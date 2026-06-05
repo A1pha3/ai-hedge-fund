@@ -1,4 +1,4 @@
-"""Generate P0 baseline freeze artifacts for BTST 0330 work."""
+"""⚠️ DEPRECATED — Generate P0 baseline freeze artifacts for BTST 0330 work. Do not run; kept for historical reference only."""
 
 from __future__ import annotations
 

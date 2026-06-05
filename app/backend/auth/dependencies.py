@@ -2,12 +2,18 @@
 
 import os
 from datetime import datetime, timezone
+from typing import Sequence
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.backend.auth.constants import ADMIN_USERNAME
+from app.backend.auth.constants import (
+    ADMIN_USERNAME,
+    ADMIN_ROLES,
+    WRITE_ROLES,
+    ROLE_VIEWER,
+)
 from app.backend.auth.utils import decode_token, is_production_environment
 from app.backend.database.connection import get_db
 from app.backend.models.user import User
@@ -72,8 +78,8 @@ async def get_current_user(
     """Extract and validate current user from JWT access token.
 
     Validation flow:
-    1. Decode JWT → extract username
-    2. Query database → confirm user exists and is active
+    1. Decode JWT -> extract username
+    2. Query database -> confirm user exists and is active
     3. Check account lock status (anti brute-force)
     """
     # If auth is disabled, return a mock admin user for development
@@ -86,6 +92,29 @@ async def get_current_user(
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
     """Require admin role."""
-    if current_user.role != "admin":
+    if current_user.role not in ADMIN_ROLES:
         raise HTTPException(status_code=403, detail="权限不足")
     return current_user
+
+
+def require_write_access(current_user: User = Depends(get_current_user)) -> User:
+    """Require write access (admin or member role). Viewers are rejected."""
+    if current_user.role not in WRITE_ROLES:
+        raise HTTPException(status_code=403, detail="权限不足，只读用户无法执行此操作")
+    return current_user
+
+
+def require_roles(*roles: str):
+    """Factory: create a dependency that requires one of the given roles.
+
+    Usage:
+        @router.post("/", dependencies=[Depends(require_roles("admin", "member"))])
+    """
+    allowed: Sequence[str] = roles
+
+    def _checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in allowed:
+            raise HTTPException(status_code=403, detail="权限不足")
+        return current_user
+
+    return _checker

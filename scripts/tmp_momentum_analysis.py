@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""多日动量因子分析：用真实历史数据量化mom5/mom10的最优阈值。"""
+"""⚠️ DEPRECATED — 多日动量因子分析。已被 btst_factor_ic_analysis.py 替代。Do not run; kept for historical reference only."""
 import os
 from pathlib import Path
 

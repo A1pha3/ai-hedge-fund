@@ -113,6 +113,60 @@ def _run_walk_forward_mode(args, build_engine) -> int:
     return 0
 
 
+def _run_param_grid_mode(args, model_selection) -> int:
+    """Delegate the new ``--param-grid`` mode to the dedicated runner script.
+
+    The actual grid logic lives in :mod:`scripts.run_backtest_param_grid` so
+    the dependency surface (langgraph / backtester / LLM provider) is only
+    paid for by callers that opt into batch mode.  We construct the same
+    argv the script would receive from a shell so behaviour is identical
+    regardless of entry point.
+    """
+    from pathlib import Path
+
+    from scripts.run_backtest_param_grid import main as grid_main
+
+    argv: list[str] = []
+    tickers = parse_tickers(args.tickers)
+    if not tickers:
+        print("--tickers is required for --param-grid", flush=True)
+        return 1
+    argv.extend(["--tickers", ",".join(tickers)])
+    argv.extend(["--start-date", str(args.start_date)])
+    argv.extend(["--end-date", str(args.end_date)])
+    argv.extend(["--initial-capital", str(args.initial_capital)])
+    argv.extend(["--margin-requirement", str(args.margin_requirement)])
+    argv.extend(["--mode", str(args.mode)])
+    argv.extend(["--model-name", model_selection.name])
+    argv.extend(["--model-provider", model_selection.provider])
+    if args.walk_forward:
+        argv.append("--walk-forward")
+        if args.walk_forward_preset:
+            argv.extend(["--walk-forward-preset", str(args.walk_forward_preset)])
+        argv.extend(["--train-months", str(args.train_months)])
+        argv.extend(["--test-months", str(args.test_months)])
+        argv.extend(["--step-months", str(args.step_months)])
+        if args.max_test_trading_days is not None:
+            argv.extend(["--max-test-trading-days", str(args.max_test_trading_days)])
+        argv.extend(["--window-mode", str(args.window_mode)])
+    if args.analysts:
+        argv.extend(["--analysts", str(args.analysts)])
+    elif args.analysts_all:
+        argv.append("--analysts-all")
+    argv.extend(["--param-grid", str(args.param_grid)])
+    if args.output:
+        argv.extend(["--output", str(args.output)])
+    if args.max_workers is not None:
+        argv.extend(["--max-workers", str(args.max_workers)])
+    argv.extend(["--sort-by", str(args.sort_by)])
+    # Surface but ignore the param-grid destination path so downstream
+    # tools that read ``args`` see the choice; the grid runner owns the
+    # actual file writes.
+    if args.output:
+        Path(args.output).mkdir(parents=True, exist_ok=True)
+    return int(grid_main(argv))
+
+
 def main() -> int:
     parser = build_backtest_parser()
     args = parser.parse_args()
@@ -149,6 +203,9 @@ def main() -> int:
 
     if args.walk_forward:
         return _run_walk_forward_mode(args, _build_engine)
+
+    if args.param_grid:
+        return _run_param_grid_mode(args, model_selection)
 
     engine = _build_engine(args.start_date, args.end_date)
 

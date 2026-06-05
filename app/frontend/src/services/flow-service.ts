@@ -1,5 +1,5 @@
 import { Flow, FlowData, FlowEdge, FlowNode, FlowViewport } from '@/types/flow';
-import { authFetch } from '@/services/auth-api';
+import { authFetch, authHeaders } from '@/services/auth-api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -23,6 +23,23 @@ export interface UpdateFlowRequest {
   data?: FlowData;
   is_template?: boolean;
   tags?: string[];
+}
+
+export interface FlowRunSummary {
+  id: number;
+  flow_id: number;
+  status: string;
+  run_number: number;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface FlowRunDetail extends FlowRunSummary {
+  updated_at?: string | null;
+  request_data?: Record<string, unknown> | null;
+  results?: Record<string, unknown> | null;
 }
 
 export const flowService = {
@@ -102,4 +119,36 @@ export const flowService = {
       viewport,
     });
   },
-}; 
+
+  // Get flow runs for a specific flow
+  async getFlowRuns(flowId: number, limit: number = 50, offset: number = 0): Promise<FlowRunSummary[]> {
+    const response = await authFetch(`${API_BASE_URL}/flows/${flowId}/runs/?limit=${limit}&offset=${offset}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch flow runs');
+    }
+    return response.json();
+  },
+
+  // Get a specific flow run detail
+  async getFlowRun(flowId: number, runId: number): Promise<FlowRunDetail> {
+    const response = await authFetch(`${API_BASE_URL}/flows/${flowId}/runs/${runId}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch flow run');
+    }
+    return response.json();
+  },
+
+  // Rerun a historical flow run -- returns a fetch Response (SSE stream)
+  // so the caller can process progress events just like runHedgeFund.
+  async rerunFlowRun(flowId: number, runId: number): Promise<Response> {
+    const response = await fetch(`${API_BASE_URL}/flows/${flowId}/runs/${runId}/rerun`, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+    });
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(errorBody.detail || `Rerun failed: ${response.status}`);
+    }
+    return response;
+  },
+};

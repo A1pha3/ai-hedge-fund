@@ -643,3 +643,17 @@ class ReplayArtifactService:
 
     def _counter_to_list(self, counter: Counter[str], limit: int = 5) -> list[dict[str, Any]]:
         return [{"reason": reason, "count": count} for reason, count in counter.most_common(limit)]
+
+    def get_signal_trade_comparison(self, report_name: str, time_window_days: int = 1) -> dict[str, Any]:
+        """Load daily events for a replay and run signal-vs-trade comparison."""
+        from src.backtesting.signal_trade_comparison import compare_from_events, comparison_result_to_dict
+
+        report_dir = self._get_report_dir(report_name)
+        daily_events_path = report_dir / "daily_events.jsonl"
+        if not daily_events_path.exists():
+            raise FileNotFoundError(f"No daily_events.jsonl found for report: {report_name}")
+        events = self._read_jsonl(daily_events_path)
+        if not events:
+            return {"pairs": [], "summary": {"total_signals": 0, "message": "无成交数据"}}
+        result = compare_from_events(events, time_window_days=time_window_days)
+        return comparison_result_to_dict(result)

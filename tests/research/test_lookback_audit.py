@@ -567,3 +567,75 @@ class TestSerialization:
         d = asdict(result)
         assert d["audit_date"] == "2026-05-05"
         assert d["summary"]["avg_return_pct"] == 5.0
+
+
+# ---------------------------------------------------------------------------
+# NaN / Inf price guards (regression for v0 audit)
+# ---------------------------------------------------------------------------
+class TestNaNPriceGuards:
+    """NaN/Inf in upstream price data must not propagate into return_pct /
+    max_drawdown_pct / max_return_pct.  Without this guard a single corrupt
+    row would mark the ticker as 'ok' with NaN metrics and contaminate the
+    summary (avg_return_pct, hit_rate, etc.)."""
+
+    def test_nan_close_is_filtered(self, tmp_path: Path) -> None:
+        """A NaN close in the forward window must drop that row, leaving the
+        remaining rows to produce a well-defined return_pct."""
+        day_dir = tmp_path / "2026-05-05"
+        day_dir.mkdir()
+        snapshot = _make_snapshot(selected=[
+            {"symbol": "AAPL", "score_final": 0.85},
+        ])
+        (day_dir / "selection_snapshot.json").write_text(
+            json.dumps(snapshot), encoding="utf-8"
+        )
+
+        mock_fetcher = MockPriceFetcher({
+            "AAPL": [
+                Price(open=10, close=10, high=10, low=10, volume=1000, time="2026-05-05"),
+                # NaN close must be dropped
+                Price(open=11, close=float("nan"), high=11, low=11, volume=1000, time="2026-05-06"),
+                Price(open=12, close=12, high=12, low=12, volume=1000, time="2026-05-07"),
+            ],
+        })
+
+        result = run_lookback_audit(
+            audit_date="20260505",
+            artifact_root=tmp_path,
+            price_fetcher=mock_fetcher,
+        )
+        tr = result.ticker_results[0]
+        assert tr.data_status == "ok"
+        # return_pct is well-defined (10 -> 12 over 2 surviving rows)
+        assert tr.return_pct is not None
+        assert tr.return_pct == tr.return_pct  # not NaN
+        assert tr.max_drawdown_pct is not None
+        assert tr.max_drawdown_pct == tr.max_drawdown_pct  # not NaN
+
+    def test_all_nan_closes_treated_as_no_data(self, tmp_path: Path) -> None:
+        """If every forward row has a NaN close, no audit can be produced."""
+        day_dir = tmp_path / "2026-05-05"
+        day_dir.mkdir()
+        snapshot = _make_snapshot(selected=[
+            {"symbol": "AAPL", "score_final": 0.85},
+        ])
+        (day_dir / "selection_snapshot.json").write_text(
+            json.dumps(snapshot), encoding="utf-8"
+        )
+
+        mock_fetcher = MockPriceFetcher({
+            "AAPL": [
+                Price(open=10, close=float("nan"), high=10, low=10, volume=1000, time="2026-05-05"),
+                Price(open=11, close=float("nan"), high=11, low=11, volume=1000, time="2026-05-06"),
+            ],
+        })
+
+        result = run_lookback_audit(
+            audit_date="20260505",
+            artifact_root=tmp_path,
+            price_fetcher=mock_fetcher,
+        )
+        tr = result.ticker_results[0]
+        assert tr.data_status == "no_forward_data"
+        assert tr.return_pct is None
+        assert result.audited_count == 0

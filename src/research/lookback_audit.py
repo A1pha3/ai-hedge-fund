@@ -259,6 +259,14 @@ def run_lookback_audit(
             forward_end_dt,
         )
 
+        # Drop rows with non-finite close (defensive against upstream data
+        # corruption — a NaN close would silently propagate into return_pct /
+        # max_drawdown_pct / max_return_pct and surface as NaN in JSON).
+        forward_prices = [
+            p for p in forward_prices
+            if isinstance(p.close, (int, float)) and p.close == p.close  # second check filters NaN
+        ]
+
         if not forward_prices:
             ticker_results.append(TickerAuditResult(
                 ticker=ticker,

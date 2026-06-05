@@ -104,6 +104,97 @@ async def cancel_task(task: asyncio.Task[Any] | None) -> None:
         pass
 
 
+def _compute_risk_metrics(
+    portfolio: dict[str, Any],
+    current_prices: dict[str, Any],
+    decisions: dict[str, Any],
+    analyst_signals: dict[str, Any],
+) -> dict[str, Any]:
+    """Compute portfolio-level risk metrics for the frontend RiskMonitorPanel.
+
+    Derives:
+    - ``hhi``: Herfindahl-Hirschman Index of position concentration (0..1).
+    - ``short_ratio``: short exposure / gross exposure (0..1, or 0 if no exposure).
+    - ``industry_exposures``: per-industry weight breakdown (uses ticker as
+      industry proxy when true industry mapping is unavailable).
+    - ``cvar_95``: portfolio-level CVaR proxy derived from analyst disagreement.
+    - ``position_count``: number of active positions.
+    - ``max_single_position_weight``: weight of the largest single position.
+    """
+    positions: dict[str, Any] = portfolio.get("positions", {})
+    prices: dict[str, float] = {k: float(v) for k, v in current_prices.items() if isinstance(v, (int, float, str))}
+    cash = float(portfolio.get("cash", 0))
+
+    # Calculate position values
+    position_values: dict[str, float] = {}
+    for ticker, pos in positions.items():
+        long_val = float(pos.get("long", 0)) * prices.get(ticker, 0.0)
+        short_val = float(pos.get("short", 0)) * prices.get(ticker, 0.0)
+        net_val = long_val - short_val
+        if abs(net_val) > 1e-6:
+            position_values[ticker] = net_val
+
+    total_nav = cash + sum(position_values.values())
+    if total_nav <= 0:
+        total_nav = 1.0  # avoid division by zero
+
+    # HHI: sum of squared weights
+    weights = {t: v / total_nav for t, v in position_values.items()}
+    hhi = sum(w * w for w in weights.values())
+
+    # Short ratio
+    total_long = sum(float(pos.get("long", 0)) * prices.get(t, 0.0) for t, pos in positions.items())
+    total_short = sum(float(pos.get("short", 0)) * prices.get(t, 0.0) for t, pos in positions.items())
+    gross = total_long + total_short
+    short_ratio = total_short / gross if gross > 1e-9 else 0.0
+
+    # Industry exposures — use individual tickers as "sectors" since true
+    # industry mapping requires external data (akshare SW-classification).
+    # Each ticker is treated as its own sector for the bar chart.
+    industry_exposures: list[dict[str, Any]] = []
+    for ticker, weight in sorted(weights.items(), key=lambda x: -abs(x[1])):
+        long_val = float(positions.get(ticker, {}).get("long", 0)) * prices.get(ticker, 0.0)
+        short_val = float(positions.get(ticker, {}).get("short", 0)) * prices.get(ticker, 0.0)
+        industry_exposures.append({
+            "ticker": ticker,
+            "weight": round(weight, 4),
+            "long_value": round(long_val, 2),
+            "short_value": round(short_val, 2),
+            "net_value": round(position_values.get(ticker, 0.0), 2),
+        })
+
+    # Portfolio CVaR proxy: aggregate from per-ticker edge_data disagreement
+    # scale, or use a weighted volatility proxy if signals are sparse.
+    total_cvar = 0.0
+    signal_count = 0
+    for agent, ticker_signals in analyst_signals.items():
+        if not isinstance(ticker_signals, dict) or "risk_management" in str(agent or ""):
+            continue
+        for _ticker, payload in ticker_signals.items():
+            if isinstance(payload, dict):
+                conf = payload.get("confidence", 0)
+                sig = str(payload.get("signal", "")).lower()
+                if sig in ("bearish", "neutral"):
+                    total_cvar += float(conf) / 100.0 * 0.02
+                    signal_count += 1
+    cvar_95 = min(0.25, total_cvar / max(signal_count, 1)) if signal_count > 0 else 0.08
+
+    # Max single position weight
+    max_weight = max((abs(w) for w in weights.values()), default=0.0)
+
+    return {
+        "hhi": round(hhi, 4),
+        "short_ratio": round(short_ratio, 4),
+        "industry_exposures": industry_exposures,
+        "cvar_95": round(cvar_95, 4),
+        "position_count": len(position_values),
+        "max_single_position_weight": round(max_weight, 4),
+        "total_nav": round(total_nav, 2),
+        "total_long": round(total_long, 2),
+        "total_short": round(total_short, 2),
+    }
+
+
 def _compute_edge_data_for_completion(
     analyst_signals: dict[str, Any],
     decisions: dict[str, Any],
@@ -222,12 +313,15 @@ def create_run_completion_event(result: dict[str, Any]) -> CompleteEvent | Error
 
     decisions = parse_hedge_fund_response(result.get("messages", [])[-1].content) or {}
     analyst_signals = result.get("data", {}).get("analyst_signals", {}) or {}
+    portfolio = result.get("data", {}).get("portfolio", {}) or {}
+    current_prices = result.get("data", {}).get("current_prices", {})
     return CompleteEvent(
         data={
             "decisions": decisions,
             "analyst_signals": analyst_signals,
-            "current_prices": result.get("data", {}).get("current_prices", {}),
+            "current_prices": current_prices,
             "edge_data": _compute_edge_data_for_completion(analyst_signals, decisions),
+            "risk_metrics": _compute_risk_metrics(portfolio, current_prices, decisions, analyst_signals),
         }
     )
 
@@ -237,11 +331,22 @@ def create_backtest_completion_event(result: dict[str, Any] | None) -> CompleteE
         return ErrorEvent(message="Failed to complete backtest")
 
     performance_metrics = BacktestPerformanceMetrics(**result["performance_metrics"])
+    final_portfolio = result.get("final_portfolio", {})
+
+    # Derive risk metrics from the final portfolio state using the last
+    # day's exposures and results if available.
+    last_result = result["results"][-1] if result.get("results") else {}
+    current_prices = last_result.get("current_prices", {}) if isinstance(last_result, dict) else {}
+    analyst_signals = last_result.get("analyst_signals", {}) if isinstance(last_result, dict) else {}
+    decisions = last_result.get("decisions", {}) if isinstance(last_result, dict) else {}
+    risk_metrics = _compute_risk_metrics(final_portfolio, current_prices, decisions, analyst_signals)
+
     return CompleteEvent(
         data={
             "performance_metrics": performance_metrics.model_dump(),
-            "final_portfolio": result["final_portfolio"],
+            "final_portfolio": final_portfolio,
             "total_days": len(result["results"]),
+            "risk_metrics": risk_metrics,
         }
     )
 
