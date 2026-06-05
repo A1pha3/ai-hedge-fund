@@ -122,7 +122,7 @@
 
 ## 2. 待新增功能 (Add new)
 
-### 2.1 30 天期望收益 / 风险预算 / 胜率三联卡片
+### 2.1 30 天期望收益 / 风险预算 / 胜率三联卡片  ✅ DONE 2026-06-09
 - **现状**: `src/research/artifacts.py` 已经把 `risk_budget_ratio`、
   `expected_edge` 等字段写入 artifact, 但当前没有任何模块把"过去 60 日该票
   在当前策略下的历史胜率 / 期望收益 / 30 天最大可能回撤"算出来。
@@ -141,6 +141,11 @@
   §0 "目标函数: Sortino Ratio 最大化" 在单票层面的体现。
 - **估算工作量**: M (3-5 天)
 - **优先级**: P0
+- **实施状态** (2026-06-09): 后端 `compute_stock_history_expectation()` +
+  `StockHistoryExpectation` dataclass 已实现并通过 10 个单元测试。位于
+  `src/portfolio/stock_history_expectation.py`, 测试于
+  `tests/portfolio/test_stock_history_expectation.py`。前端 `ExpectationCard`
+  组件待实施 (见 1.1 路线图)。
 
 > 来源: `institutional_multi_strategy_framework_v1.4.md` §0 / §7.1 / §8.2,
 > `2026-04-19-backtesting-engine-refactor.md` 已为 backtest 引擎搭好骨架。
@@ -263,7 +268,7 @@
 ### P0 (本月, 必须完成)
 - [ ] 1.1 30 天 edge 卡片端上可见 (S)
 - [ ] 1.4 BTST 决策卡 / ONE-PAGER 双重消费入口 (S)
-- [ ] 2.1 单票 30 天期望收益 / 风险预算 / 胜率三联卡 (M)
+- [x] 2.1 单票 30 天期望收益 / 风险预算 / 胜率三联卡 (M) — 后端 2026-06-09, 前端待办
 
 ### P1 (下月)
 - [ ] 1.2 Layer B/C 融合权重 UI 显式化 (M)
@@ -314,5 +319,5 @@
 |------|----------|
 | 1.1 30D Edge 卡片 | Playwright: 打开 InvestmentReportDialog, 断言出现 `expected_30d_edge`、`risk_budget_ratio`、`cvar_95` 三项 |
 | 1.4 ONE-PAGER 入口 | Playwright: 加载某日 replay artifact, 断言 8 张固定问题卡均能渲染 |
-| 2.1 30 天期望收益 | pytest unit: 给定 `tests/backtesting/fixtures/` 下的 60 日 fixture, 期望 `stock_history_expectation` 输出的 win_rate/avg_return 与手工算一致 |
+| 2.1 30 天期望收益 | pytest unit: 给定 `tests/backtesting/fixtures/` 下的 60 日 fixture, 期望 `stock_history_expectation` 输出的 win_rate/avg_return 与手工算一致 — **后端 2026-06-09 已完成** (`tests/portfolio/test_stock_history_expectation.py` 10/10 通过) |
 | 3.3 No auth 警告 | grep: `grep -R "No auth" app/` 应返回 0 命中 |
