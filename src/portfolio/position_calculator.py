@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from src.backtesting.metrics import compute_beta  # REF-002: shared implementation
 from src.portfolio.models import PositionPlan
 from src.utils.env_helpers import get_env_float
 
@@ -46,33 +47,8 @@ def _resolve_single_name_limit(*, allow_extended_limit: bool, avg_volume_20d: fl
 
 
 def _compute_beta(portfolio_returns: list[float], benchmark_returns: list[float]) -> float | None:
-    """Compute portfolio beta against a benchmark.
-
-    **Precondition**: both lists must be aligned by date (same trading
-    days in the same order). If lengths differ, a warning is emitted
-    and only the overlapping prefix is used (ALPHA-007 / GAMMA-005).
-    """
-    import warnings
-
-    import numpy as np
-
-    if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
-        return None
-    n = min(len(portfolio_returns), len(benchmark_returns))
-    if len(portfolio_returns) != len(benchmark_returns):
-        warnings.warn(
-            f"_compute_beta: portfolio_returns ({len(portfolio_returns)}) and "
-            f"benchmark_returns ({len(benchmark_returns)}) differ in length. "
-            f"Using first {n} — may be wrong if not date-aligned (ALPHA-007).",
-            stacklevel=2,
-        )
-    portfolio_array = np.array(portfolio_returns[:n])
-    benchmark_array = np.array(benchmark_returns[:n])
-    benchmark_variance = np.var(benchmark_array, ddof=1)
-    if benchmark_variance < 1e-12:
-        return None
-    covariance = np.cov(portfolio_array, benchmark_array)[0][1]
-    return float(covariance / benchmark_variance)
+    """Backwards-compat thin wrapper around ``compute_beta`` (REF-002)."""
+    return compute_beta(portfolio_returns, benchmark_returns)
 
 
 def calculate_position(
@@ -191,9 +167,8 @@ def evaluate_portfolio_risk_guardrails(
     cvar_95 = 0.0
     if portfolio_returns:
         sorted_returns = sorted(portfolio_returns)
-        # GAMMA-006 / ALPHA-002: use ceil() for the tail count, not int()
-        # truncation, so that N=21+1 days correctly takes 2 (not 1) of the
-        # worst observations. cvar_95 is signed: negative for lossy tails.
+        # CVaR(95%) historical simulation: mean of the worst 5% of
+        # returns. tail_size = ceil(0.05 * N), with floor of 1.
         n_obs = len(sorted_returns)
         tail_size = max(1, int(math.ceil(0.05 * n_obs)))
         cvar_95 = sum(sorted_returns[:tail_size]) / tail_size
@@ -202,10 +177,9 @@ def evaluate_portfolio_risk_guardrails(
     alerts: list[str] = []
     block_buy = False
     prefer_low_beta = False
-    # GAMMA-006: cvar_95 is signed (negative for losses). Compare to the
-    # threshold with explicit sign, not abs(), so a positive cvar_95 (which
-    # would indicate only positive tail observations) does not falsely
-    # trigger the block. Also: if cvar_95 is NaN/None, default to safe (block).
+    # CVaR threshold uses explicit sign (cvar_95 is negative for losses),
+    # so a positive cvar_95 (all-positive tail) does not falsely trigger.
+    # NaN/None defaults to safe (block).
     cvar_below_threshold = (
         cvar_95 is not None
         and isinstance(cvar_95, float)

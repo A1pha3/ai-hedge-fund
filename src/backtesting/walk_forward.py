@@ -654,15 +654,11 @@ def classify_runner_rollout_verdict(
         t2_regression = t2_win_rate - float(baseline_summary.get("t_plus_2_close_positive_rate") or 0.0)
         t3_regression = t3_win_rate - float(baseline_summary.get("t_plus_3_close_positive_rate") or 0.0)
 
-        # Check T+1, T+2, T+3, or downside regression.
-        # T+1/T+2/T+3 are evaluated symmetrically. We combine two flags:
-        #   1. Regression: candidate has regressed by more than the floor
-        #      relative to the baseline.
-        #   2. Absolute minimum: candidate's raw win rate is below
-        #      RUNNER_T*_WIN_RATE_ABSOLUTE_MIN — even if it matches the
-        #      baseline (e.g. both 0%), an absolute-floor breach is risky.
-        # GAMMA-004: the previous `> 0.0` guard on t2/t3 made 0% T+2/T+3
-        # win rates pass as "not risky" — logically inverted.
+        # T+1/T+2/T+3 regression: combine a regression-vs-baseline check
+        # with an absolute win-rate minimum, so that e.g. 0% T+2 vs 0%
+        # baseline (no regression by delta, but absolute floor breached)
+        # still flags the candidate as risky. See docs/bugs/2026-06-05
+        # for the historical rationale (GAMMA-004).
         t1_risky = t1_regression < RUNNER_T1_WIN_RATE_REGRESSION_FLOOR
         t2_regression_risky = t2_regression < RUNNER_T2_WIN_RATE_REGRESSION_FLOOR
         t3_regression_risky = t3_regression < RUNNER_T3_WIN_RATE_REGRESSION_FLOOR

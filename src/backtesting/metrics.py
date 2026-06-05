@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
+
+import numpy as np
+import pandas as pd
 
 from .types import PerformanceMetrics, PortfolioValuePoint
 
@@ -20,8 +24,6 @@ class PerformanceMetricsCalculator:
         metrics.update(computed)  # type: ignore[arg-type]
 
     def compute_metrics(self, values: Sequence[PortfolioValuePoint]) -> PerformanceMetrics:
-        import numpy as np
-        import pandas as pd
 
         if not values:
             return {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None}
@@ -46,12 +48,10 @@ class PerformanceMetricsCalculator:
         else:
             sharpe = 0.0
 
-        # Sortino ratio — canonical downside deviation (ALPHA-001 fix)
-        # σ_d = sqrt(mean(min(R - Rf, 0)²)) computed over ALL returns.
-        # The old code used pandas .std() on the negative-only subset, which
-        # (1) divides by (n_neg - 1) instead of N, and (2) centers around the
-        # negative mean instead of the MAR. This inflated Sortino by ~1.4× on
-        # typical equity returns.
+        # Sortino ratio uses canonical downside deviation:
+        #   σ_d = sqrt(mean(min(R - Rf, 0)²)) over ALL returns.
+        # Positive deviations contribute 0 to the sum; denominator is N
+        # (not n_neg - 1). See docs/bugs/2026-06-05 for derivation.
         downside_squared = np.minimum(excess.values, 0.0) ** 2
         downside_std = float(np.sqrt(np.mean(downside_squared)))
         if downside_std > 1e-12:
@@ -82,13 +82,9 @@ class PerformanceMetricsCalculator:
         abs_mdd = abs(min_dd) if min_dd < 0 else 0
         calmar = float(annual_return / abs_mdd) if abs_mdd > 1e-12 else (float("inf") if annual_return > 0 else 0.0)
 
-        # CVaR(95%) historical simulation (ALPHA-002 / GAMMA-006 fix)
-        # CVaR_alpha = E[R | R < VaR_alpha] — the mean of the worst alpha
-        # fraction of returns. The tail count is ceil(alpha * N), not floor:
-        # - floor() under-counts (e.g. N=21 → floor=1 vs ceil=2) and biases
-        #   the tail mean toward the single worst observation.
-        # - The convention is the worst 5% of observations, so we take the
-        #   mean of the k=ceil(0.05*N) lowest values, k >= 1.
+        # CVaR(95%) = mean of the worst 5% of daily returns (historical
+        # simulation). Tail count is ceil(0.05 * N), k >= 1. See
+        # docs/bugs/2026-06-05 for derivation rationale.
         sorted_returns = np.sort(clean_returns.values)
         n_obs = len(sorted_returns)
         if n_obs == 0:
@@ -119,13 +115,10 @@ class PerformanceMetricsCalculator:
         if the series are offset (ALPHA-007 / GAMMA-005). Callers must ensure
         alignment before passing data here.
         """
-        import numpy as np
-
         if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
             return None
         n = min(len(portfolio_returns), len(benchmark_returns))
         if len(portfolio_returns) != len(benchmark_returns):
-            import warnings
             warnings.warn(
                 f"compute_beta: portfolio_returns ({len(portfolio_returns)}) and "
                 f"benchmark_returns ({len(benchmark_returns)}) have different lengths. "
@@ -140,3 +133,40 @@ class PerformanceMetricsCalculator:
             return None
         cov_pb = np.cov(pr, br)[0][1]
         return float(cov_pb / var_b)
+
+
+def compute_beta(
+    portfolio_returns: Sequence[float],
+    benchmark_returns: Sequence[float],
+) -> float | None:
+    """Compute portfolio beta against a benchmark.
+
+    Beta = Cov(Rp, Rb) / Var(Rb)
+
+    **Precondition**: both sequences must be aligned by date (same trading
+    days in the same order). If lengths differ, only the overlapping prefix
+    is used — this is a **silent truncation** and may produce a wrong beta
+    if the series are offset (ALPHA-007 / GAMMA-005). Callers must ensure
+    alignment before passing data here.
+
+    Module-level function (REF-002) so that ``src.portfolio.position_calculator``
+    can reuse the same implementation without duplication.
+    """
+    if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
+        return None
+    n = min(len(portfolio_returns), len(benchmark_returns))
+    if len(portfolio_returns) != len(benchmark_returns):
+        warnings.warn(
+            f"compute_beta: portfolio_returns ({len(portfolio_returns)}) and "
+            f"benchmark_returns ({len(benchmark_returns)}) have different lengths. "
+            f"Using first {n} — results may be incorrect if series are not "
+            f"date-aligned (ALPHA-007).",
+            stacklevel=2,
+        )
+    pr = np.array(portfolio_returns[:n])
+    br = np.array(benchmark_returns[:n])
+    var_b = np.var(br, ddof=1)
+    if var_b < 1e-12:
+        return None
+    cov_pb = np.cov(pr, br)[0][1]
+    return float(cov_pb / var_b)
