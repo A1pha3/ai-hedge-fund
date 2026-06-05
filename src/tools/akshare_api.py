@@ -273,7 +273,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
     Raises:
         AShareDataError: 当无法获取数据且 use_mock=False 时抛出
     """
-    cache_key = f"ashare_{ticker}_{start_date}_{end_date}_{period}"
+    cache_key = f"akshare::ashare_{ticker}_{start_date}_{end_date}_{period}"
 
     saved_proxies = _disable_system_proxies()
 
@@ -326,7 +326,7 @@ def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_mock:
     Raises:
         AShareDataError: 当无法获取数据且 use_mock=False 时抛出
     """
-    cache_key = f"ashare_metrics_{ticker}_{end_date}_{limit}"
+    cache_key = f"akshare::ashare_metrics_{ticker}_{end_date}_{limit}"
 
     return execute_wrapped_ashare_request(
         run=lambda: execute_financial_metrics_request(

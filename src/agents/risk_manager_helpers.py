@@ -77,6 +77,10 @@ def _calculate_total_portfolio_value(portfolio: dict, current_prices: dict[str, 
         price = current_prices.get(ticker, 0.0)
         total_portfolio_value += position.get("long", 0) * price
         total_portfolio_value -= position.get("short", 0) * price
+    # Margin used is cash locked as collateral for open short positions.
+    # It belongs to the portfolio but is excluded from the cash balance,
+    # so it must be added back to get the true total value.
+    total_portfolio_value += float(portfolio.get("margin_used", 0.0))
     return total_portfolio_value
 
 

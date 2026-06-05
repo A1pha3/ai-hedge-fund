@@ -34,6 +34,25 @@ from src.tools.tushare_api import (
 # Global cache instance
 _cache = get_cache()
 
+# ---------------------------------------------------------------------------
+# Provider-aware cache key helper
+# ---------------------------------------------------------------------------
+# Each data-source (tushare, akshare, financial_datasets) may return
+# differently shaped data for the same ticker + date range.  Including the
+# provider name in every cache key prevents cross-provider overwrites.
+# ---------------------------------------------------------------------------
+
+_PROVIDER_SEPARATOR = "::"
+
+
+def _provider_key(provider: str, raw_key: str) -> str:
+    """Prepend a normalised provider tag to a raw cache key.
+
+    Example: _provider_key("tushare", "000001_2025-01-01_2025-03-01")
+             -> "tushare::000001_2025-01-01_2025-03-01"
+    """
+    return f"{provider.lower()}{_PROVIDER_SEPARATOR}{raw_key}"
+
 
 def _completeness_score(model_obj) -> int:
     """Estimate record completeness by counting non-null fields."""
@@ -111,8 +130,15 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str | None 
     Fetch price data from cache or API.
     Supports both US stocks and A-shares (Chinese stocks).
     """
-    # Create a cache key that includes all parameters to ensure exact matches
-    cache_key = f"{ticker}_{start_date}_{end_date}"
+    # Determine provider first so cache key includes it
+    if is_ashare(ticker):
+        provider = "tushare"
+    else:
+        provider = "financial_datasets"
+
+    # Create a cache key that includes provider + all parameters
+    raw_key = f"{ticker}_{start_date}_{end_date}"
+    cache_key = _provider_key(provider, raw_key)
 
     # Check cache first - simple exact match
     if cached_data := _cache.get_prices(cache_key):
@@ -167,8 +193,15 @@ def get_financial_metrics(
     Fetch financial metrics from cache or API.
     Supports both US stocks and A-shares (Chinese stocks).
     """
-    # Create a cache key that includes all parameters to ensure exact matches
-    cache_key = f"{ticker}_{period}_{end_date}_{limit}"
+    # Determine provider first so cache key includes it
+    if is_ashare(ticker):
+        provider = "tushare"
+    else:
+        provider = "financial_datasets"
+
+    # Create a cache key that includes provider + all parameters
+    raw_key = f"{ticker}_{period}_{end_date}_{limit}"
+    cache_key = _provider_key(provider, raw_key)
 
     # Check cache first - simple exact match
     if cached_data := _cache.get_financial_metrics(cache_key):
@@ -223,9 +256,10 @@ def search_line_items(
     """Fetch line items from API."""
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
-        # 缓存 key: 按 ticker + 字段 + period + end_date + limit 组合
+        # 缓存 key: provider + ticker + 字段 + period + end_date + limit
         sorted_items = "_".join(sorted(line_items))
-        cache_key = f"{ticker}_{sorted_items}_{period}_{end_date}_{limit}"
+        raw_key = f"{ticker}_{sorted_items}_{period}_{end_date}_{limit}"
+        cache_key = _provider_key("tushare", raw_key)
         if cached_data := _cache.get_line_items(cache_key):
             return [LineItem(**item) for item in cached_data]
         results = _dedupe_by_report_period(get_ashare_line_items_with_tushare(ticker, line_items, end_date, period, limit))
@@ -276,7 +310,14 @@ def get_insider_trades(
     api_key: str | None = None,
 ) -> list[InsiderTrade]:
     """Fetch insider trades from cache or API."""
-    cache_key = build_insider_trade_cache_key(ticker, start_date, end_date, limit)
+    # Determine provider first so cache key includes it
+    if is_ashare(ticker):
+        provider = "tushare"
+    else:
+        provider = "financial_datasets"
+
+    raw_key = build_insider_trade_cache_key(ticker, start_date, end_date, limit)
+    cache_key = _provider_key(provider, raw_key)
 
     if is_ashare(ticker):
         if cached_trades := load_cached_insider_trades(_cache, cache_key):
@@ -313,7 +354,8 @@ def get_company_news(
 ) -> list[CompanyNews]:
     """Fetch company news from cache or API."""
     if is_ashare(ticker):
-        cache_key = build_company_news_cache_key(ticker, start_date, end_date, limit, ashare=True)
+        raw_key = build_company_news_cache_key(ticker, start_date, end_date, limit, ashare=True)
+        cache_key = _provider_key("akshare", raw_key)
         if cached_news := load_cached_company_news(_cache, cache_key):
             _get_snapshot().export_company_news(ticker, end_date, cached_news, "cache")
             return cached_news
@@ -323,7 +365,8 @@ def get_company_news(
             _get_snapshot().export_company_news(ticker, end_date, news, "akshare")
         return news
 
-    cache_key = build_company_news_cache_key(ticker, start_date, end_date, limit)
+    raw_key = build_company_news_cache_key(ticker, start_date, end_date, limit)
+    cache_key = _provider_key("financial_datasets", raw_key)
     if cached_news := load_cached_company_news(_cache, cache_key):
         _get_snapshot().export_company_news(ticker, end_date, cached_news, "cache")
         return cached_news

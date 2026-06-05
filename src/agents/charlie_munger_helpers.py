@@ -71,13 +71,13 @@ def _score_munger_intangibles(financial_line_items: list) -> tuple[int, list[str
 
 
 def _score_munger_cash_conversion(financial_line_items: list) -> tuple[int, str, float | None]:
-    fcf_values = [item.free_cash_flow for item in financial_line_items if hasattr(item, "free_cash_flow") and item.free_cash_flow is not None]
-    net_income_values = [item.net_income for item in financial_line_items if hasattr(item, "net_income") and item.net_income is not None]
+    # Pair FCF and NI from the same line-item to avoid length mismatch
+    paired = [(item.free_cash_flow, item.net_income) for item in financial_line_items if hasattr(item, "free_cash_flow") and item.free_cash_flow is not None and hasattr(item, "net_income") and item.net_income is not None]
 
-    if not (fcf_values and net_income_values and len(fcf_values) == len(net_income_values)):
+    if not paired:
         return 0, "Missing FCF or Net Income data", None
 
-    fcf_to_ni_ratios = [fcf_values[i] / net_income_values[i] for i in range(len(fcf_values)) if net_income_values[i] and net_income_values[i] > 0]
+    fcf_to_ni_ratios = [fcf / ni for fcf, ni in paired if ni and ni > 0]
 
     if not fcf_to_ni_ratios:
         return 0, "Could not calculate FCF to Net Income ratios", None
@@ -93,13 +93,13 @@ def _score_munger_cash_conversion(financial_line_items: list) -> tuple[int, str,
 
 
 def _score_munger_debt_management(financial_line_items: list) -> tuple[int, str, float | None]:
-    debt_values = [item.total_debt for item in financial_line_items if hasattr(item, "total_debt") and item.total_debt is not None]
-    equity_values = [item.shareholders_equity for item in financial_line_items if hasattr(item, "shareholders_equity") and item.shareholders_equity is not None]
+    # Pair debt and equity from the same line-item to avoid length mismatch
+    paired = [(item.total_debt, item.shareholders_equity) for item in financial_line_items if hasattr(item, "total_debt") and item.total_debt is not None and hasattr(item, "shareholders_equity") and item.shareholders_equity is not None]
 
-    if not (debt_values and equity_values and len(debt_values) == len(equity_values)):
+    if not paired:
         return 0, "Missing debt or equity data", None
 
-    recent_de_ratio = debt_values[0] / equity_values[0] if equity_values[0] > 0 else float("inf")
+    recent_de_ratio = paired[0][0] / paired[0][1] if paired[0][1] > 0 else float("inf")
     if recent_de_ratio < 0.3:
         return 3, f"Conservative debt management: D/E ratio of {recent_de_ratio:.2f}", recent_de_ratio
     if recent_de_ratio < 0.7:

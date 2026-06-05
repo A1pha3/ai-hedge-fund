@@ -23,10 +23,24 @@ export interface AgentNodeData {
   backtestResults?: any[];
 }
 
+// Edge / risk data for P0 1.1 — 30D edge card on the investment report.
+export interface EdgeCardData {
+  /** Expected 30-day edge (percentage return). Positive = bullish. */
+  expected_30d_edge: number | null;
+  /** CVaR(95%) single-stock exposure as a fraction (e.g. 0.08 = 8% tail risk). */
+  cvar_95: number | null;
+  /** Current risk budget ratio (0..1 where 1 = budget fully consumed). */
+  risk_budget_ratio: number | null;
+  /** Machine-generated one-line explanation of the edge. */
+  edge_summary: string | null;
+}
+
 // Data structure for the output node data (from complete event)
 export interface OutputNodeData {
   decisions: Record<string, any>;
   analyst_signals: Record<string, any>;
+  // Per-ticker edge / risk data (P0 1.1)
+  edge_data?: Record<string, EdgeCardData>;
   // Backtest-specific fields
   performance_metrics?: {
     sharpe_ratio?: number;

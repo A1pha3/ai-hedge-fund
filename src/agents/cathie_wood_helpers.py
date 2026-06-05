@@ -107,7 +107,7 @@ def _score_cathie_rnd_intensity(financial_line_items: list) -> tuple[int, str | 
     if not (rd_expenses and revenues):
         return 0, "No R&D data available"
 
-    rd_intensity = rd_expenses[0] / revenues[0]
+    rd_intensity = rd_expenses[0] / revenues[0] if revenues[0] != 0 else 0
     if rd_intensity > 0.15:
         return 3, f"High R&D investment: {(rd_intensity*100):.1f}% of revenue"
     if rd_intensity > 0.08:
@@ -134,8 +134,8 @@ def _score_cathie_rnd_trends(financial_line_items: list) -> tuple[int, list[str]
         score += 2
         details.append(f"Moderate R&D investment growth: +{(rd_growth*100):.1f}%")
 
-    rd_intensity_start = rd_expenses[-1] / revenues[-1]
-    rd_intensity_end = rd_expenses[0] / revenues[0]
+    rd_intensity_start = rd_expenses[-1] / revenues[-1] if revenues[-1] and revenues[-1] != 0 else 0
+    rd_intensity_end = rd_expenses[0] / revenues[0] if revenues[0] and revenues[0] != 0 else 0
     if rd_intensity_end > rd_intensity_start:
         score += 2
         details.append(f"Increasing R&D intensity: {(rd_intensity_end*100):.1f}% vs {(rd_intensity_start*100):.1f}%")
@@ -147,7 +147,7 @@ def _score_cathie_fcf_funding(financial_line_items: list) -> tuple[int, str]:
     if not (fcf_vals and len(fcf_vals) >= 2):
         return 0, "Insufficient FCF data for analysis"
 
-    fcf_growth = (fcf_vals[0] - fcf_vals[-1]) / abs(fcf_vals[-1])
+    fcf_growth = (fcf_vals[0] - fcf_vals[-1]) / abs(fcf_vals[-1]) if fcf_vals[-1] != 0 else 0.0
     positive_fcf_count = sum(1 for f in fcf_vals if f > 0)
 
     if fcf_growth > 0.3 and positive_fcf_count == len(fcf_vals):
@@ -180,7 +180,7 @@ def _score_cathie_capex_commitment(financial_line_items: list) -> tuple[int, str
     if not (capex and revenues and len(capex) >= 2):
         return 0, "Insufficient CAPEX data"
 
-    capex_intensity = abs(capex[0]) / revenues[0]
+    capex_intensity = abs(capex[0]) / revenues[0] if revenues[0] != 0 else 0
     capex_growth = (abs(capex[0]) - abs(capex[-1])) / abs(capex[-1]) if capex[-1] != 0 else 0
 
     if capex_intensity > 0.10 and capex_growth > 0.2:

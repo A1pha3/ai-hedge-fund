@@ -13,7 +13,8 @@ def test_calculate_portfolio_value(portfolio, prices):
     value = calculate_portfolio_value(portfolio, prices)
     # cash after trades
     snap = portfolio.get_snapshot()
-    expected = snap["cash"] + 10 * 100.0 - 5 * 200.0
+    # total value = cash + margin_used + long_value - short_value
+    expected = snap["cash"] + snap["margin_used"] + 10 * 100.0 - 5 * 200.0
     assert value == expected
 
 

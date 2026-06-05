@@ -180,6 +180,7 @@ def _is_transport_error(error: Exception) -> bool:
         "connection timed out",
         "network is unreachable",
         "read timeout",
+        "readtimeout",
         "timed out",
         "temporary failure in name resolution",
     ]

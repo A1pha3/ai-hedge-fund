@@ -81,6 +81,7 @@ class Portfolio:
                 "theme_category": str(p.get("theme_category", "")),
                 "is_new_theme": bool(p.get("is_new_theme", False)),
                 "execution_contract_bucket": str(p.get("execution_contract_bucket", "")),
+                "btst_runtime_metrics": dict(p.get("btst_runtime_metrics", {})),
             }
             for t, p in self._portfolio["positions"].items()
         }
@@ -118,6 +119,7 @@ class Portfolio:
                     "theme_category": str(position.get("theme_category", "")),
                     "is_new_theme": bool(position.get("is_new_theme", False)),
                     "execution_contract_bucket": str(position.get("execution_contract_bucket", "")),
+                    "btst_runtime_metrics": dict(position.get("btst_runtime_metrics", {})),
                 }
                 for ticker, position in snapshot["positions"].items()
             },
@@ -386,6 +388,8 @@ class Portfolio:
         realized_gain = (avg_short_price - all_in_price) * quantity
         portion = quantity / position["short"] if position["short"] > 0 else 1.0
         margin_to_release = portion * position["short_margin_used"]
+        # Guard against floating-point drift: never release more margin than held
+        margin_to_release = min(margin_to_release, position["short_margin_used"])
         position["short"] -= quantity
         position["short_margin_used"] -= margin_to_release
         self._portfolio["margin_used"] -= margin_to_release

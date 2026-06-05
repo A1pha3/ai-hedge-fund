@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 from dataclasses import dataclass
+import logging
 import math
 import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from statistics import median
+from time import perf_counter
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from src.agents.growth_agent import (
     analyze_insider_conviction,
@@ -83,6 +88,7 @@ INTRADAY_SCORE_MAX_CANDIDATES = int(
 HEAVY_SCORE_MIN_PROVISIONAL_SCORE = float(os.getenv("SCORE_BATCH_MIN_PROVISIONAL_SCORE", "0.05"))
 HEAVY_SCORE_MIN_TREND_CONFIDENCE = float(os.getenv("SCORE_BATCH_MIN_TREND_CONFIDENCE", "35"))
 TECHNICAL_STAGE_LIQUIDITY_RANK_BUCKET = float(os.getenv("CANDIDATE_POOL_BTST_LIQUIDITY_RANK_BUCKET", "2500"))
+SCORE_BATCH_CONCURRENCY = int(os.getenv("SCORE_BATCH_CONCURRENCY", "4"))
 
 
 def _safe_date(date_str: str) -> datetime | None:
@@ -557,12 +563,33 @@ def _build_provisional_ranking(
     technical_candidates = _rank_candidates_for_technical_stage(candidates)[:TECHNICAL_SCORE_MAX_CANDIDATES]
     price_frames_by_ticker: dict[str, pd.DataFrame] = {}
 
-    for candidate in technical_candidates:
-        light_signals, price_frame = _compute_light_signals(candidate, trade_date)
-        results[candidate.ticker] = light_signals
-        if price_frame is not None:
-            price_frames_by_ticker[candidate.ticker] = price_frame
-        provisional_ranking.append((_provisional_score(light_signals), candidate))
+    # Parallel IO: load price frames and compute light signals concurrently
+    max_workers = min(SCORE_BATCH_CONCURRENCY, len(technical_candidates)) if technical_candidates else 1
+    if max_workers <= 1:
+        for candidate in technical_candidates:
+            light_signals, price_frame = _compute_light_signals(candidate, trade_date)
+            results[candidate.ticker] = light_signals
+            if price_frame is not None:
+                price_frames_by_ticker[candidate.ticker] = price_frame
+            provisional_ranking.append((_provisional_score(light_signals), candidate))
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_candidate = {
+                executor.submit(_compute_light_signals, candidate, trade_date): candidate
+                for candidate in technical_candidates
+            }
+            for future in concurrent.futures.as_completed(future_to_candidate):
+                candidate = future_to_candidate[future]
+                try:
+                    light_signals, price_frame = future.result()
+                except Exception:
+                    logger.warning("Light-signal computation failed for %s", candidate.ticker, exc_info=True)
+                    light_signals, price_frame = _build_light_signal_map(pd.DataFrame(), ticker=candidate.ticker), None
+                results[candidate.ticker] = light_signals
+                if price_frame is not None:
+                    price_frames_by_ticker[candidate.ticker] = price_frame
+                provisional_ranking.append((_provisional_score(light_signals), candidate))
+
     _populate_sector_diffusion_metrics(results, technical_candidates, price_frames_by_ticker)
     return _append_unranked_candidates_to_provisional_ranking(provisional_ranking, candidates)
 
@@ -698,16 +725,45 @@ def _populate_heavy_signals(
     trade_date: str,
     industry_pe_medians: dict[str, float],
 ) -> None:
-    for candidate in fundamental_candidates:
-        results[candidate.ticker]["fundamental"] = score_fundamental_strategy(
-            candidate.ticker,
-            trade_date,
-            candidate.industry_sw,
-            industry_pe_medians,
-        )
-
-    for candidate in _select_event_sentiment_candidates(fundamental_candidates):
-        results[candidate.ticker]["event_sentiment"] = score_event_sentiment_strategy(candidate.ticker, trade_date)
+    # Parallel IO: fundamental + event_sentiment scoring per candidate
+    max_workers = min(SCORE_BATCH_CONCURRENCY, len(fundamental_candidates)) if fundamental_candidates else 1
+    if max_workers <= 1:
+        for candidate in fundamental_candidates:
+            results[candidate.ticker]["fundamental"] = score_fundamental_strategy(
+                candidate.ticker, trade_date, candidate.industry_sw, industry_pe_medians,
+            )
+        for candidate in _select_event_sentiment_candidates(fundamental_candidates):
+            results[candidate.ticker]["event_sentiment"] = score_event_sentiment_strategy(candidate.ticker, trade_date)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all fundamental scoring tasks
+            fundamental_futures = {
+                executor.submit(
+                    score_fundamental_strategy,
+                    candidate.ticker, trade_date, candidate.industry_sw, industry_pe_medians,
+                ): candidate
+                for candidate in fundamental_candidates
+            }
+            # Submit event_sentiment scoring tasks for eligible candidates
+            event_candidates = _select_event_sentiment_candidates(fundamental_candidates)
+            event_futures = {
+                executor.submit(score_event_sentiment_strategy, candidate.ticker, trade_date): candidate
+                for candidate in event_candidates
+            }
+            # Collect fundamental results
+            for future in concurrent.futures.as_completed(fundamental_futures):
+                candidate = fundamental_futures[future]
+                try:
+                    results[candidate.ticker]["fundamental"] = future.result()
+                except Exception:
+                    logger.warning("Fundamental scoring failed for %s", candidate.ticker, exc_info=True)
+            # Collect event_sentiment results
+            for future in concurrent.futures.as_completed(event_futures):
+                candidate = event_futures[future]
+                try:
+                    results[candidate.ticker]["event_sentiment"] = future.result()
+                except Exception:
+                    logger.warning("Event-sentiment scoring failed for %s", candidate.ticker, exc_info=True)
 
     _populate_intraday_short_trade_metrics(results, fundamental_candidates, trade_date)
     _populate_dragon_tiger_bonus_metrics(results, fundamental_candidates, trade_date)
@@ -718,14 +774,41 @@ def _populate_intraday_short_trade_metrics(
     candidates: list[CandidateStock],
     trade_date: str,
 ) -> None:
+    # Gather eligible candidates and their trend signals first (sequential, CPU-only)
+    eligible: list[tuple[CandidateStock, StrategySignal]] = []
     for candidate in _select_intraday_metric_candidates(candidates):
         trend_signal = results.get(candidate.ticker, {}).get("trend")
         if not _trend_signal_has_momentum_payload(trend_signal):
             continue
-        intraday_metrics = _build_intraday_short_trade_metrics(candidate.ticker, trade_date)
-        if not intraday_metrics:
-            continue
-        _merge_metrics_into_trend_momentum(trend_signal, intraday_metrics)
+        eligible.append((candidate, trend_signal))
+
+    if not eligible:
+        return
+
+    # Parallel IO: fetch intraday metrics concurrently
+    max_workers = min(SCORE_BATCH_CONCURRENCY, len(eligible))
+    if max_workers <= 1:
+        for candidate, trend_signal in eligible:
+            intraday_metrics = _build_intraday_short_trade_metrics(candidate.ticker, trade_date)
+            if not intraday_metrics:
+                continue
+            _merge_metrics_into_trend_momentum(trend_signal, intraday_metrics)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_pair = {
+                executor.submit(_build_intraday_short_trade_metrics, candidate.ticker, trade_date): (candidate, trend_signal)
+                for candidate, trend_signal in eligible
+            }
+            for future in concurrent.futures.as_completed(future_to_pair):
+                _candidate, trend_signal = future_to_pair[future]
+                try:
+                    intraday_metrics = future.result()
+                except Exception:
+                    logger.warning("Intraday metrics failed for %s", _candidate.ticker, exc_info=True)
+                    continue
+                if not intraday_metrics:
+                    continue
+                _merge_metrics_into_trend_momentum(trend_signal, intraday_metrics)
 
 
 def _select_intraday_metric_candidates(candidates: list[CandidateStock]) -> list[CandidateStock]:
@@ -977,10 +1060,19 @@ def _select_event_sentiment_candidates(fundamental_candidates: list[CandidateSto
 
 
 def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, dict[str, StrategySignal]]:
+    started_at = perf_counter()
     industry_pe_medians = _build_industry_pe_medians(trade_date)
     results = _initialize_score_batch_results(candidates)
     fundamental_candidates = _prepare_heavy_score_candidates(candidates, trade_date, results)
     _populate_heavy_signals(results, fundamental_candidates, trade_date, industry_pe_medians)
+    elapsed = perf_counter() - started_at
+    logger.info(
+        "score_batch completed: %d candidates, %d heavy-scored, concurrency=%d, %.2fs",
+        len(candidates),
+        len(fundamental_candidates),
+        SCORE_BATCH_CONCURRENCY,
+        elapsed,
+    )
     return results
 
 

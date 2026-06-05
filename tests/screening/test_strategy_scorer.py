@@ -1184,3 +1184,159 @@ def test_fundamental_quality_cap_keeps_signal_when_core_quality_is_bullish():
 
     assert capped.direction == 1
     assert capped.confidence == 72.0
+
+
+# ---------------------------------------------------------------------------
+# Parallelisation tests — verify ThreadPoolExecutor path matches serial path
+# ---------------------------------------------------------------------------
+
+
+def test_score_batch_parallel_produces_same_results_as_serial():
+    """Parallel score_batch (concurrency>1) must produce identical results to serial (concurrency=1)."""
+    candidates = [
+        _candidate("000001", avg_volume_20d=30000.0, market_cap=300.0),
+        _candidate("000002", avg_volume_20d=20000.0, market_cap=200.0),
+        _candidate("000003", avg_volume_20d=10000.0, market_cap=100.0),
+    ]
+    trade_date = "20260305"
+
+    def fake_light(candidate, trade_date):
+        return {
+            "trend": _signal(1, 70),
+            "mean_reversion": _signal(0, 0, completeness=0.0),
+            "fundamental": _signal(0, 0, completeness=0.0),
+            "event_sentiment": _signal(0, 0, completeness=0.0),
+        }, None
+
+    def run_score_batch(concurrency: int) -> dict:
+        with (
+            patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
+            patch("src.screening.strategy_scorer._compute_light_signals", side_effect=fake_light),
+            patch("src.screening.strategy_scorer.score_fundamental_strategy", return_value=_signal(1, 65)),
+            patch("src.screening.strategy_scorer.score_event_sentiment_strategy", return_value=_signal(1, 60)),
+            patch("src.screening.strategy_scorer.TECHNICAL_SCORE_MAX_CANDIDATES", 3),
+            patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 3),
+            patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 3),
+            patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.01),
+            patch("src.screening.strategy_scorer.SCORE_BATCH_CONCURRENCY", concurrency),
+        ):
+            return score_batch(candidates, trade_date)
+
+    serial_results = run_score_batch(concurrency=1)
+    parallel_results = run_score_batch(concurrency=4)
+
+    assert set(serial_results.keys()) == set(parallel_results.keys())
+    for ticker in serial_results:
+        for strategy_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+            s = serial_results[ticker][strategy_name]
+            p = parallel_results[ticker][strategy_name]
+            assert s.direction == p.direction, f"{ticker}/{strategy_name} direction mismatch"
+            assert s.confidence == pytest.approx(p.confidence), f"{ticker}/{strategy_name} confidence mismatch"
+            assert s.completeness == pytest.approx(p.completeness), f"{ticker}/{strategy_name} completeness mismatch"
+
+
+def test_score_batch_concurrency_env_var_respected():
+    """SCORE_BATCH_CONCURRENCY env var should be read at module load time."""
+    with patch.dict(os.environ, {"SCORE_BATCH_CONCURRENCY": "8"}):
+        reloaded = importlib.reload(strategy_scorer_module)
+        try:
+            assert reloaded.SCORE_BATCH_CONCURRENCY == 8
+        finally:
+            importlib.reload(strategy_scorer_module)
+
+
+def test_populate_intraday_parallel_produces_same_results_as_serial():
+    """Parallel intraday metrics population must match serial results."""
+    candidates = [_candidate("000001"), _candidate("000002")]
+
+    def _trend_with_momentum() -> StrategySignal:
+        return StrategySignal(
+            direction=1,
+            confidence=70.0,
+            completeness=1.0,
+            sub_factors={
+                "momentum": {
+                    "direction": 1,
+                    "confidence": 75.0,
+                    "completeness": 1.0,
+                    "metrics": {"amount_ratio_5": 1.8},
+                }
+            },
+        )
+
+    def build_results():
+        return {
+            candidate.ticker: {
+                "trend": StrategySignal.model_validate(_trend_with_momentum().model_dump()),
+                "mean_reversion": _signal(0, 0, completeness=0.0),
+                "fundamental": _signal(0, 0, completeness=0.0),
+                "event_sentiment": _signal(0, 0, completeness=0.0),
+            }
+            for candidate in candidates
+        }
+
+    call_order: list[str] = []
+
+    def fake_intraday(ticker, trade_date):
+        call_order.append(ticker)
+        return {"flow_60": 0.1234}
+
+    # Serial
+    serial_results = build_results()
+    with (
+        patch("src.screening.strategy_scorer._build_intraday_short_trade_metrics", side_effect=fake_intraday),
+        patch("src.screening.strategy_scorer.INTRADAY_SCORE_MAX_CANDIDATES", 2),
+        patch("src.screening.strategy_scorer.SCORE_BATCH_CONCURRENCY", 1),
+    ):
+        strategy_scorer_module._populate_intraday_short_trade_metrics(serial_results, candidates, "20260305")
+    assert call_order == ["000001", "000002"]
+
+    # Parallel
+    call_order.clear()
+    parallel_results = build_results()
+    with (
+        patch("src.screening.strategy_scorer._build_intraday_short_trade_metrics", side_effect=fake_intraday),
+        patch("src.screening.strategy_scorer.INTRADAY_SCORE_MAX_CANDIDATES", 2),
+        patch("src.screening.strategy_scorer.SCORE_BATCH_CONCURRENCY", 4),
+    ):
+        strategy_scorer_module._populate_intraday_short_trade_metrics(parallel_results, candidates, "20260305")
+
+    # Results must be identical regardless of execution order
+    for ticker in ("000001", "000002"):
+        serial_m = serial_results[ticker]["trend"].sub_factors["momentum"]["metrics"]
+        parallel_m = parallel_results[ticker]["trend"].sub_factors["momentum"]["metrics"]
+        assert serial_m["flow_60"] == pytest.approx(parallel_m["flow_60"])
+
+
+def test_parallel_handles_individual_candidate_failure_gracefully():
+    """If one candidate's light-signal computation fails, others must still succeed."""
+    candidates = [
+        _candidate("000001", avg_volume_20d=30000.0, market_cap=300.0),
+        _candidate("000002", avg_volume_20d=20000.0, market_cap=200.0),
+    ]
+
+    def fake_light(candidate, trade_date):
+        if candidate.ticker == "000001":
+            raise RuntimeError("Simulated IO failure")
+        return {
+            "trend": _signal(1, 70),
+            "mean_reversion": _signal(0, 0, completeness=0.0),
+            "fundamental": _signal(0, 0, completeness=0.0),
+            "event_sentiment": _signal(0, 0, completeness=0.0),
+        }, None
+
+    with (
+        patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
+        patch("src.screening.strategy_scorer._compute_light_signals", side_effect=fake_light),
+        patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 0),
+        patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 0),
+        patch("src.screening.strategy_scorer.SCORE_BATCH_CONCURRENCY", 4),
+    ):
+        results = score_batch(candidates, "20260305")
+
+    # Failed candidate gets empty signal fallback (direction=0, completeness=0)
+    assert results["000001"]["trend"].direction == 0
+    assert results["000001"]["trend"].completeness == 0.0
+    # Healthy candidate still scored correctly
+    assert results["000002"]["trend"].direction == 1
+    assert results["000002"]["trend"].confidence == 70.0

@@ -87,7 +87,7 @@ def test_get_prices_falls_back_to_healthy_provider_and_caches_serialized_rows():
     assert result.source == "good"
     assert result.latency_ms == 5
     assert router.cache.saved_prices == [
-        ("price_AAPL_end=2024-01-02_start=2024-01-01", [{"close": 10}])
+        ("router_price_AAPL_end=2024-01-02_start=2024-01-01", [{"close": 10}])
     ]
 
 
@@ -118,7 +118,7 @@ def test_get_financial_metrics_applies_limit_and_caches_trimmed_rows():
     assert result.source == "good"
     assert result.latency_ms == 7
     assert router.cache.saved_metrics == [
-        ("fundamental_AAPL_end=2024-01-02_limit=1", [{"ticker": "AAPL"}])
+        ("router_fundamental_AAPL_end=2024-01-02_limit=1", [{"ticker": "AAPL"}])
     ]
 
 

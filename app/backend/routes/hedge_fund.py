@@ -32,11 +32,12 @@ async def run(request_data: HedgeFundRequest, request: Request, db: Session = De
         hydrate_api_keys(request_data, db)
 
         portfolio = create_portfolio(request_data.initial_cash, request_data.margin_requirement, request_data.tickers, request_data.portfolio_positions)
-        graph = create_graph(graph_nodes=request_data.graph_nodes, graph_edges=request_data.graph_edges).compile()
+        graph = create_graph(graph_nodes=request_data.graph_nodes, graph_edges=request_data.graph_edges)
+        compiled_graph = graph.compile()
 
         progress.update_status("system", None, "Preparing hedge fund run")
         model_provider = resolve_model_provider(request_data.model_provider)
-        return StreamingResponse(stream_hedge_fund_run(request, request_data, graph, portfolio, model_provider), media_type="text/event-stream")
+        return StreamingResponse(stream_hedge_fund_run(request, request_data, compiled_graph, portfolio, model_provider), media_type="text/event-stream")
 
     except HTTPException as e:
         raise e
@@ -67,10 +68,10 @@ async def backtest(request_data: BacktestRequest, request: Request, db: Session 
         )
 
         graph = create_graph(graph_nodes=request_data.graph_nodes, graph_edges=request_data.graph_edges)
-        graph = graph.compile()
+        compiled_graph = graph.compile()
 
         backtest_service = BacktestService(
-            graph=graph,
+            graph=compiled_graph,
             portfolio=portfolio,
             tickers=request_data.tickers,
             start_date=request_data.start_date,

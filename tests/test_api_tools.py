@@ -76,7 +76,7 @@ def test_get_insider_trades_ashare_uses_tushare_and_caches(monkeypatch):
     trades = api.get_insider_trades("000001", "2026-04-10", "2026-04-01", 5)
 
     assert trades is sentinel
-    assert cache.insider_trades["000001_2026-04-01_2026-04-10_5"] == [trade.model_dump() for trade in sentinel]
+    assert cache.insider_trades["tushare::000001_2026-04-01_2026-04-10_5"] == [trade.model_dump() for trade in sentinel]
 
 
 def test_get_insider_trades_remote_paginates_and_caches(monkeypatch):
@@ -116,7 +116,7 @@ def test_get_insider_trades_remote_paginates_and_caches(monkeypatch):
 
     assert len(trades) == 1
     assert trades[0].ticker == "AAPL"
-    assert cache.insider_trades["AAPL_2026-04-01_2026-04-10_1"] == [trade.model_dump() for trade in trades]
+    assert cache.insider_trades["financial_datasets::AAPL_2026-04-01_2026-04-10_1"] == [trade.model_dump() for trade in trades]
 
 
 def test_get_company_news_ashare_uses_akshare_and_caches(monkeypatch):
@@ -140,7 +140,7 @@ def test_get_company_news_ashare_uses_akshare_and_caches(monkeypatch):
     news = api.get_company_news("000001", "2026-04-10", "2026-04-01", 5)
 
     assert news is sentinel
-    assert cache.company_news["000001_2026-04-01_2026-04-10_5_ashare"] == [item.model_dump() for item in sentinel]
+    assert cache.company_news["akshare::000001_2026-04-01_2026-04-10_5_ashare"] == [item.model_dump() for item in sentinel]
 
 
 def test_get_company_news_ashare_caches_historical_windows_for_30_days(monkeypatch):
@@ -164,7 +164,7 @@ def test_get_company_news_ashare_caches_historical_windows_for_30_days(monkeypat
     news = api.get_company_news("300724", "2026-03-25", "2026-03-18", 20)
 
     assert news is sentinel
-    assert cache.company_news_ttl["300724_2026-03-18_2026-03-25_20_ashare"] == 30 * 86400
+    assert cache.company_news_ttl["akshare::300724_2026-03-18_2026-03-25_20_ashare"] == 30 * 86400
 
 
 def test_get_company_news_ashare_exports_snapshot(monkeypatch):
@@ -236,7 +236,7 @@ def test_get_company_news_remote_sorts_descending_and_caches(monkeypatch):
     news = api.get_company_news("AAPL", "2026-04-10", "2026-04-01", 5)
 
     assert [item.title for item in news] == ["newer", "older"]
-    assert cache.company_news["AAPL_2026-04-01_2026-04-10_5"] == [item.model_dump() for item in news]
+    assert cache.company_news["financial_datasets::AAPL_2026-04-01_2026-04-10_5"] == [item.model_dump() for item in news]
 
 
 def test_get_ashare_daily_gainers_with_tushare_filters_st_and_formats_results(monkeypatch):

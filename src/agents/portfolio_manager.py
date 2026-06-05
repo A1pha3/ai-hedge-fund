@@ -116,7 +116,16 @@ def compute_allowed_actions(
     positions = portfolio.get("positions", {}) or {}
     margin_requirement = float(portfolio.get("margin_requirement", 0.5))
     margin_used = float(portfolio.get("margin_used", 0.0))
-    equity = float(portfolio.get("equity", cash))
+
+    # Compute true equity from cash + position values, not a missing "equity" key.
+    # Previously fell back to just cash, which ignored existing positions and
+    # could drastically under-estimate shorting capacity.
+    position_value = 0.0
+    for t, pos in positions.items():
+        pos_price = float(current_prices.get(t, 0.0))
+        position_value += float(pos.get("long", 0)) * pos_price
+        position_value -= float(pos.get("short", 0)) * pos_price
+    equity = cash + position_value
 
     for ticker in tickers:
         price = float(current_prices.get(ticker, 0.0))

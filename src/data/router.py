@@ -81,19 +81,22 @@ class DataRouter:
         self.providers = [p for p in self.providers if p.name != provider_name]
         logger.info(f"Unregistered provider: {provider_name}")
 
-    def _get_cache_key(self, data_type: DataType, ticker: str, **kwargs) -> str:
+    def _get_cache_key(self, data_type: DataType, ticker: str, provider: str | None = None, **kwargs) -> str:
         """
         生成缓存键
 
         Args:
             data_type: 数据类型
             ticker: 股票代码
+            provider: 数据提供商（如 "akshare" / "tushare"）。
+                      默认 "default" 保持与旧键的兼容（允许旧缓存自然过期）。
             **kwargs: 其他参数
 
         Returns:
             缓存键字符串
         """
-        key_parts = [data_type.value, ticker]
+        provider_tag = (provider or "default").lower()
+        key_parts = [provider_tag, data_type.value, ticker]
 
         # 添加其他参数
         for k, v in sorted(kwargs.items()):
@@ -202,7 +205,10 @@ class DataRouter:
         Returns:
             DataResponse 包含价格数据
         """
-        cache_key = self._get_cache_key(DataType.PRICE, ticker, start=start_date, end=end_date)
+        # 缓存键不携带 provider 维度：在路由器层面，我们不知道哪个 provider
+        # 会成功返回，因此使用一个共享的"router"命名空间。任何 provider 写入的
+        # 数据形状都应该一致（DataResponse.data 已经是归一化的字典列表）。
+        cache_key = self._get_cache_key(DataType.PRICE, ticker, provider="router", start=start_date, end=end_date)
 
         # 检查缓存
         if use_cache:
@@ -251,7 +257,7 @@ class DataRouter:
         Returns:
             DataResponse 包含财务指标
         """
-        cache_key = self._get_cache_key(DataType.FUNDAMENTAL, ticker, end=end_date, limit=limit)
+        cache_key = self._get_cache_key(DataType.FUNDAMENTAL, ticker, provider="router", end=end_date, limit=limit)
 
         # 检查缓存
         if use_cache:
@@ -299,7 +305,7 @@ class DataRouter:
         Returns:
             DataResponse 包含新闻列表
         """
-        cache_key = self._get_cache_key(DataType.NEWS, ticker, start=start_date, end=end_date)
+        cache_key = self._get_cache_key(DataType.NEWS, ticker, provider="router", start=start_date, end=end_date)
 
         # 检查缓存
         if use_cache:

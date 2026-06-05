@@ -14,19 +14,22 @@ from src.utils.progress import progress
 
 def safe_float(value, default=0.0):
     """
-    Safely convert a value to float, handling NaN cases
+    Safely convert a value to float, handling NaN/Inf cases
 
     Args:
         value: The value to convert (can be pandas scalar, numpy value, etc.)
-        default: Default value to return if the input is NaN or invalid
+        default: Default value to return if the input is NaN/Inf or invalid
 
     Returns:
-        float: The converted value or default if NaN/invalid
+        float: The converted value or default if NaN/Inf/invalid
     """
     try:
         if pd.isna(value) or np.isnan(value):
             return default
-        return float(value)
+        result = float(value)
+        if not math.isfinite(result):
+            return default
+        return result
     except (ValueError, TypeError, OverflowError):
         return default
 
@@ -323,7 +326,11 @@ def calculate_mean_reversion_signals(prices_df):
     rsi_28 = calculate_rsi(prices_df, 28)
 
     # Mean reversion signals
-    price_vs_bb = (prices_df["close"].iloc[-1] - bb_lower.iloc[-1]) / (bb_upper.iloc[-1] - bb_lower.iloc[-1])
+    bb_width = bb_upper.iloc[-1] - bb_lower.iloc[-1]
+    if bb_width > 0:
+        price_vs_bb = (prices_df["close"].iloc[-1] - bb_lower.iloc[-1]) / bb_width
+    else:
+        price_vs_bb = 0.5  # No band width, default to middle
 
     # Combine signals
     if z_score.iloc[-1] < -2 and price_vs_bb < 0.2:
@@ -360,7 +367,7 @@ def calculate_momentum_signals(prices_df):
 
     # Volume momentum
     volume_ma = prices_df["volume"].rolling(21).mean()
-    volume_momentum = prices_df["volume"] / volume_ma
+    volume_momentum = prices_df["volume"] / volume_ma.replace(0, float("nan"))
 
     # Relative strength
     # (would compare to market/sector in real implementation)
@@ -368,8 +375,9 @@ def calculate_momentum_signals(prices_df):
     # Calculate momentum score
     momentum_score = (0.4 * mom_1m + 0.3 * mom_3m + 0.3 * mom_6m).iloc[-1]
 
-    # Volume confirmation
-    volume_confirmation = volume_momentum.iloc[-1] > 1.0
+    # Volume confirmation — guard against NaN from zero volume_ma
+    vol_mom_val = volume_momentum.iloc[-1]
+    volume_confirmation = False if pd.isna(vol_mom_val) else vol_mom_val > 1.0
 
     if momentum_score > 0.05 and volume_confirmation:
         signal = "bullish"
@@ -403,20 +411,23 @@ def calculate_volatility_signals(prices_df):
     # Historical volatility
     hist_vol = returns.rolling(21).std() * math.sqrt(252)
 
-    # Volatility regime detection
+    # Volatility regime detection — guard against division by zero when vol_ma is 0
     vol_ma = hist_vol.rolling(63).mean()
-    vol_regime = hist_vol / vol_ma
+    vol_regime = hist_vol / vol_ma.replace(0, float("nan"))
 
     # Volatility mean reversion
-    vol_z_score = (hist_vol - vol_ma) / hist_vol.rolling(63).std()
+    vol_std = hist_vol.rolling(63).std()
+    vol_z_score = (hist_vol - vol_ma) / vol_std.replace(0, float("nan"))
 
-    # ATR ratio
+    # ATR ratio — guard against division by zero when close price is 0
     atr = calculate_atr(prices_df)
-    atr_ratio = atr / prices_df["close"]
+    atr_ratio = atr / prices_df["close"].replace(0, float("nan"))
 
-    # Generate signal based on volatility regime
-    current_vol_regime = vol_regime.iloc[-1]
-    vol_z = vol_z_score.iloc[-1]
+    # Generate signal based on volatility regime.
+    # safe_float already converts NaN/Inf to the default, so no separate
+    # pd.isna() check is needed here.
+    current_vol_regime = safe_float(vol_regime.iloc[-1], default=1.0)
+    vol_z = safe_float(vol_z_score.iloc[-1], default=0.0)
 
     if current_vol_regime < 0.8 and vol_z < -1:
         signal = "bullish"  # Low vol regime, potential for expansion
@@ -519,7 +530,8 @@ def weighted_signal_combination(signals, weights):
     if signal == "neutral":
         # For neutral signals, confidence = weighted average of sub-strategy confidences
         # This reflects "how confident are we that the signal is neutral"
-        confidence = total_confidence / total_weight if total_weight > 0 else 0
+        raw_confidence = total_confidence / total_weight if total_weight > 0 else 0
+        confidence = min(raw_confidence, 1.0)
     else:
         confidence = abs(final_score)
 
@@ -545,8 +557,10 @@ def calculate_rsi(prices_df: pd.DataFrame, period: int = 14) -> pd.Series:
     loss = (-delta.where(delta < 0, 0)).fillna(0)
     avg_gain = gain.rolling(window=period).mean()
     avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    # Guard against division by zero: when avg_loss is 0, RSI should be 100
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(100.0)
 
 
 def calculate_bollinger_bands(prices_df: pd.DataFrame, window: int = 20) -> tuple[pd.Series, pd.Series]:
@@ -582,6 +596,9 @@ def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     Returns:
         DataFrame with ADX values
     """
+    # Work on a copy to avoid mutating the caller's DataFrame
+    df = df.copy()
+
     # Calculate True Range
     df["high_low"] = df["high"] - df["low"]
     df["high_close"] = abs(df["high"] - df["close"].shift())
@@ -595,10 +612,12 @@ def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     df["plus_dm"] = np.where((df["up_move"] > df["down_move"]) & (df["up_move"] > 0), df["up_move"], 0)
     df["minus_dm"] = np.where((df["down_move"] > df["up_move"]) & (df["down_move"] > 0), df["down_move"], 0)
 
-    # Calculate ADX
-    df["+di"] = 100 * (df["plus_dm"].ewm(span=period).mean() / df["tr"].ewm(span=period).mean())
-    df["-di"] = 100 * (df["minus_dm"].ewm(span=period).mean() / df["tr"].ewm(span=period).mean())
-    df["dx"] = 100 * abs(df["+di"] - df["-di"]) / (df["+di"] + df["-di"])
+    # Calculate ADX — guard against division by zero when TR EMA is 0
+    tr_ema = df["tr"].ewm(span=period).mean().replace(0, float("nan"))
+    df["+di"] = 100 * (df["plus_dm"].ewm(span=period).mean() / tr_ema)
+    df["-di"] = 100 * (df["minus_dm"].ewm(span=period).mean() / tr_ema)
+    di_sum = df["+di"] + df["-di"]
+    df["dx"] = 100 * abs(df["+di"] - df["-di"]) / di_sum.replace(0, float("nan"))
     df["adx"] = df["dx"].ewm(span=period).mean()
 
     return df[["adx", "+di", "-di"]]

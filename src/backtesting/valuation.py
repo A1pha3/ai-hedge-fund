@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from collections.abc import Mapping as _MappingAny
 
 from .portfolio import Portfolio
 
@@ -9,9 +8,12 @@ from .portfolio import Portfolio
 def calculate_portfolio_value(portfolio: Portfolio, current_prices: Mapping[str, float]) -> float:
     """Compute total portfolio value identical to Backtester.calculate_portfolio_value.
 
-    total_value = cash + market value of longs - market value of shorts
+    total_value = cash + market value of longs - market value of shorts + margin_used
+    (margin_used is collateral for shorts — belongs to the portfolio but is excluded from cash)
     """
     total_value = portfolio.get_cash()
+    snapshot = portfolio.get_snapshot()
+    total_value += float(snapshot.get("margin_used", 0.0))
     positions = portfolio.get_positions()
     for ticker, pos in positions.items():
         price = float(current_prices.get(ticker, 0.0))
@@ -56,7 +58,7 @@ def compute_portfolio_summary(
     portfolio: Portfolio,
     total_value: float,
     initial_value: float | None,
-    performance_metrics: _MappingAny[str, float | None],
+    performance_metrics: Mapping[str, float | None],
 ) -> dict[str, float | None]:
     """Compute portfolio summary fields in a pure, testable function.
 
