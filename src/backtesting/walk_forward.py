@@ -51,6 +51,13 @@ RUNNER_TAIL_HIT_ABSOLUTE_MIN = 0.12
 RUNNER_T1_WIN_RATE_REGRESSION_FLOOR = -0.04
 RUNNER_T2_WIN_RATE_REGRESSION_FLOOR = -0.02
 RUNNER_T3_WIN_RATE_REGRESSION_FLOOR = -0.02
+# Absolute minimum win rate on T+2 / T+3. A runner that does not clear
+# these bars is intrinsically risky regardless of how its baseline compares
+# (a 0% T+2 win rate minus a 0% baseline still gives 0.0 regression, but
+# the strategy itself is unprofitable on the 2-3 day horizon). These match
+# the BTST_QUALITY_FLOORS conventions used elsewhere in the evaluation bundle.
+RUNNER_T2_WIN_RATE_ABSOLUTE_MIN = 0.30
+RUNNER_T3_WIN_RATE_ABSOLUTE_MIN = 0.30
 RUNNER_DOWNSIDE_REGRESSION_FLOOR = -0.015
 RUNNER_COMPOSITE_SCORE_QUALITY_FLOOR = 0.50
 RUNNER_ESCAPE_RATE_MIN = 0.03
@@ -630,10 +637,20 @@ def classify_runner_rollout_verdict(
         t2_regression = t2_win_rate - float(baseline_summary.get("t_plus_2_close_positive_rate") or 0.0)
         t3_regression = t3_win_rate - float(baseline_summary.get("t_plus_3_close_positive_rate") or 0.0)
 
-        # Check T+1, T+2, T+3, or downside regression
+        # Check T+1, T+2, T+3, or downside regression.
+        # T+1/T+2/T+3 are evaluated symmetrically. We combine two flags:
+        #   1. Regression: candidate has regressed by more than the floor
+        #      relative to the baseline.
+        #   2. Absolute minimum: candidate's raw win rate is below
+        #      RUNNER_T*_WIN_RATE_ABSOLUTE_MIN — even if it matches the
+        #      baseline (e.g. both 0%), an absolute-floor breach is risky.
+        # GAMMA-004: the previous `> 0.0` guard on t2/t3 made 0% T+2/T+3
+        # win rates pass as "not risky" — logically inverted.
         t1_risky = t1_regression < RUNNER_T1_WIN_RATE_REGRESSION_FLOOR
-        t2_risky = t2_win_rate > 0.0 and t2_regression < RUNNER_T2_WIN_RATE_REGRESSION_FLOOR
-        t3_risky = t3_win_rate > 0.0 and t3_regression < RUNNER_T3_WIN_RATE_REGRESSION_FLOOR
+        t2_regression_risky = t2_regression < RUNNER_T2_WIN_RATE_REGRESSION_FLOOR
+        t3_regression_risky = t3_regression < RUNNER_T3_WIN_RATE_REGRESSION_FLOOR
+        t2_risky = t2_regression_risky or t2_win_rate < RUNNER_T2_WIN_RATE_ABSOLUTE_MIN
+        t3_risky = t3_regression_risky or t3_win_rate < RUNNER_T3_WIN_RATE_ABSOLUTE_MIN
         downside_risky = downside_regression < RUNNER_DOWNSIDE_REGRESSION_FLOOR
 
         if improvement >= RUNNER_TAIL_HIT_IMPROVEMENT_MIN and (t1_risky or t2_risky or t3_risky or downside_risky):

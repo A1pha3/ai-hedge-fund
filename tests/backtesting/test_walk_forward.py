@@ -714,12 +714,61 @@ def test_classify_runner_rollout_verdict_coverage_only_not_runner_better():
 
 
 def test_classify_runner_rollout_verdict_promotable_with_baseline():
-    runner = {"avg_runner_tail_hit_rate": 0.22, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
-    baseline = {"avg_runner_tail_hit_rate": 0.14, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    # t2/t3 explicitly provided to clear the absolute-minimum floor (GAMMA-004).
+    runner = {"avg_runner_tail_hit_rate": 0.22, "next_close_positive_rate": 0.60, "downside_p10": -0.02, "t_plus_2_close_positive_rate": 0.55, "t_plus_3_close_positive_rate": 0.55}
+    baseline = {"avg_runner_tail_hit_rate": 0.14, "next_close_positive_rate": 0.60, "downside_p10": -0.02, "t_plus_2_close_positive_rate": 0.55, "t_plus_3_close_positive_rate": 0.55}
     verdict, detail = classify_runner_rollout_verdict(runner, baseline)
     # tail_hit_delta = 0.08 >= 0.05, no T+1 or downside regression
     assert verdict == "promotable_runner_profile"
     assert abs(detail["tail_hit_delta"] - 0.08) < 0.001
+
+
+def test_classify_runner_rollout_verdict_rejects_zero_t2_win_rate():
+    """GAMMA-004 regression guard: candidate with 0% T+2 win rate is risky,
+    not safe. The `> 0.0` guard on t2/t3 made such candidates pass when
+    t2_regression was trivially 0.0 (any - 0 = 0 > -0.02 floor).
+    A 0% T+2 win rate must be treated as at least as risky as a known-bad
+    regression, mirroring how T+1 is evaluated (no > 0.0 guard)."""
+    runner = {
+        "avg_runner_tail_hit_rate": 0.22,
+        "next_close_positive_rate": 0.60,
+        "t_plus_2_close_positive_rate": 0.0,
+        "t_plus_3_close_positive_rate": 0.60,
+        "downside_p10": -0.02,
+    }
+    baseline = {
+        "avg_runner_tail_hit_rate": 0.14,
+        "next_close_positive_rate": 0.60,
+        "t_plus_2_close_positive_rate": 0.0,
+        "t_plus_3_close_positive_rate": 0.60,
+        "downside_p10": -0.02,
+    }
+    verdict, detail = classify_runner_rollout_verdict(runner, baseline)
+    # tail_hit_delta = 0.08 >= 0.05, no T+1 or downside regression,
+    # but t2_win_rate = 0.0 should be treated as risky and disqualify promotion.
+    assert verdict == "tail_hit_better_but_t1_risky"
+    assert detail["verdict_reason"] == "t1_or_downside_regression"
+
+
+def test_classify_runner_rollout_verdict_rejects_zero_t3_win_rate():
+    """GAMMA-004: same as t2 — 0% t3 win rate must not be ignored."""
+    runner = {
+        "avg_runner_tail_hit_rate": 0.22,
+        "next_close_positive_rate": 0.60,
+        "t_plus_2_close_positive_rate": 0.60,
+        "t_plus_3_close_positive_rate": 0.0,
+        "downside_p10": -0.02,
+    }
+    baseline = {
+        "avg_runner_tail_hit_rate": 0.14,
+        "next_close_positive_rate": 0.60,
+        "t_plus_2_close_positive_rate": 0.60,
+        "t_plus_3_close_positive_rate": 0.0,
+        "downside_p10": -0.02,
+    }
+    verdict, detail = classify_runner_rollout_verdict(runner, baseline)
+    assert verdict == "tail_hit_better_but_t1_risky"
+    assert detail["verdict_reason"] == "t1_or_downside_regression"
 
 
 def test_classify_win_rate_first_rollout_verdict_accepts_bounded_tradeoffs():
@@ -996,9 +1045,10 @@ def test_select_best_promotable_candidate_verdict_priority_order() -> None:
 
 def test_select_best_promotable_candidate_uses_baseline_for_all_candidates() -> None:
     """baseline_summary must be forwarded to each individual verdict classification."""
-    baseline = {"avg_runner_tail_hit_rate": 0.14, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    # t2/t3 explicitly provided to clear the absolute-minimum floor (GAMMA-004).
+    baseline = {"avg_runner_tail_hit_rate": 0.14, "next_close_positive_rate": 0.60, "downside_p10": -0.02, "t_plus_2_close_positive_rate": 0.55, "t_plus_3_close_positive_rate": 0.55}
     # This runner would be promotable only when compared against the baseline
-    runner = {"avg_runner_tail_hit_rate": 0.22, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
+    runner = {"avg_runner_tail_hit_rate": 0.22, "next_close_positive_rate": 0.60, "downside_p10": -0.02, "t_plus_2_close_positive_rate": 0.55, "t_plus_3_close_positive_rate": 0.55}
     candidates = [("runner", runner)]
     label, verdict, _detail = select_best_promotable_candidate(candidates, baseline_summary=baseline)
     assert label == "runner"
