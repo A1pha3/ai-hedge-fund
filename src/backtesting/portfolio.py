@@ -317,12 +317,25 @@ class Portfolio:
             position["long_cost_basis"] = 0.0
         return quantity
 
-    def apply_short_open(self, ticker: str, quantity: int, price: float) -> int:
+    def apply_short_open(
+        self,
+        ticker: str,
+        quantity: int,
+        price: float,
+        commission_rate: float = 0.0,
+    ) -> int:
+        """Open a short position. Cash is credited by the net proceeds
+        (price * (1 - commission_rate) per share). The short_cost_basis
+        tracks the gross entry price for P&L comparison (BETA-004 mirror).
+        Passing commission_rate=0 (default) reproduces the old behavior.
+        """
         if quantity <= 0:
             return 0
         quantity = int(quantity)
         position = self._portfolio["positions"][ticker]
-        proceeds = price * quantity
+        commission_rate = float(commission_rate)
+        net_proceeds_price = float(price) * (1.0 - commission_rate)
+        proceeds = net_proceeds_price * quantity
         margin_ratio = self._portfolio["margin_requirement"]
         margin_required = proceeds * margin_ratio
         if margin_required <= self._portfolio["cash"]:
@@ -331,7 +344,7 @@ class Portfolio:
             total_shares = old_short_shares + quantity
             if total_shares > 0:
                 total_old_cost = old_cost_basis * old_short_shares
-                total_new_cost = price * quantity
+                total_new_cost = float(price) * quantity
                 position["short_cost_basis"] = (total_old_cost + total_new_cost) / total_shares
             position["short"] = old_short_shares + quantity
             position["short_margin_used"] += margin_required
@@ -339,16 +352,16 @@ class Portfolio:
             self._portfolio["cash"] += proceeds
             self._portfolio["cash"] -= margin_required
             return quantity
-        max_quantity = int(self._portfolio["cash"] / (price * margin_ratio)) if margin_ratio > 0 and price > 0 else 0
+        max_quantity = int(self._portfolio["cash"] / (net_proceeds_price * margin_ratio)) if margin_ratio > 0 and net_proceeds_price > 0 else 0
         if max_quantity > 0:
-            proceeds = price * max_quantity
+            proceeds = net_proceeds_price * max_quantity
             margin_required = proceeds * margin_ratio
             old_short_shares = position["short"]
             old_cost_basis = position["short_cost_basis"]
             total_shares = old_short_shares + max_quantity
             if total_shares > 0:
                 total_old_cost = old_cost_basis * old_short_shares
-                total_new_cost = price * max_quantity
+                total_new_cost = float(price) * max_quantity
                 position["short_cost_basis"] = (total_old_cost + total_new_cost) / total_shares
             position["short"] = old_short_shares + max_quantity
             position["short_margin_used"] += margin_required
@@ -358,14 +371,28 @@ class Portfolio:
             return max_quantity
         return 0
 
-    def apply_short_cover(self, ticker: str, quantity: int, price: float) -> int:
+    def apply_short_cover(
+        self,
+        ticker: str,
+        quantity: int,
+        price: float,
+        commission_rate: float = 0.0,
+    ) -> int:
+        """Cover (close) a short position. The cover cost is all-in
+        (price * (1 + commission_rate) per share) so realized_gain
+        reflects true economic P&L (BETA-004 mirror). Cash is debited
+        by the all-in cover cost. Passing commission_rate=0 (default)
+        reproduces the old behavior.
+        """
         position = self._portfolio["positions"][ticker]
         quantity = min(int(quantity), position["short"]) if quantity > 0 else 0
         if quantity <= 0:
             return 0
-        cover_cost = quantity * price
+        commission_rate = float(commission_rate)
+        all_in_price = float(price) * (1.0 + commission_rate)
+        cover_cost = quantity * all_in_price
         avg_short_price = position["short_cost_basis"] if position["short"] > 0 else 0.0
-        realized_gain = (avg_short_price - price) * quantity
+        realized_gain = (avg_short_price - all_in_price) * quantity
         portion = quantity / position["short"] if position["short"] > 0 else 1.0
         margin_to_release = portion * position["short_margin_used"]
         position["short"] -= quantity

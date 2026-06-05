@@ -127,10 +127,9 @@ def execute_short_trade(
     daily_turnover: float | None = None,
 ) -> int:
     requested_quantity, executed_price = _resolve_short_open_execution(quantity, current_price, portfolio, slippage_rate, daily_turnover)
-    executed = portfolio.apply_short_open(ticker, requested_quantity, executed_price)
-    if executed > 0:
-        portfolio.adjust_cash(-(executed * executed_price * commission_rate))
-    return executed
+    # BETA-004 mirror: commission is internalized in apply_short_open
+    # (net proceeds credited to cash). No post-hoc adjust_cash for fees.
+    return portfolio.apply_short_open(ticker, requested_quantity, executed_price, commission_rate=commission_rate)
 
 
 def execute_cover_trade(
@@ -145,7 +144,6 @@ def execute_cover_trade(
     positions = portfolio.get_positions()
     executable_quantity = min(int(quantity), int(positions.get(ticker, {}).get("short", 0))) if quantity > 0 else 0
     executed_price = float(current_price) * (1 + _resolve_execution_slippage_rate(slippage_rate, executable_quantity, current_price, daily_turnover))
-    executed = portfolio.apply_short_cover(ticker, executable_quantity, executed_price)
-    if executed > 0:
-        portfolio.adjust_cash(-(executed * executed_price * commission_rate))
-    return executed
+    # BETA-004 mirror: commission is internalized in apply_short_cover
+    # (all-in cover cost debited from cash). No post-hoc adjust_cash.
+    return portfolio.apply_short_cover(ticker, executable_quantity, executed_price, commission_rate=commission_rate)
