@@ -1,6 +1,6 @@
 # 特性提案 (Feature Proposals)
 
-> 最近更新: 2026-06-06 (第三轮策略团队审查: 17 bug 修复 + NaN/None 系统性模式分析)
+> 最近更新: 2026-06-06 (第四轮策略团队审查: 8 bug 修复 + R4 NaN/case-sensitivity/统计/agent 报告)
 > 目标: 提升产品易用性, 让用户在 30 天投资窗口内更高效地找到最有价值的股票
 
 ## 0. 方法论与范围
@@ -928,6 +928,67 @@
 ### 10.3 下一步行动
 
 **所有 P0/P1 bug 已修复, 1003 回归测试全部通过。**
+
+剩余未实施的功能 (均为 P2, 可在下一轮迭代中完成):
+
+| 优先级 | 编号 | 功能 | 工作量 | 类型 |
+|--------|------|------|--------|------|
+| **P2** | 2.3 | 早盘"取消/减仓"一键模拟器 | L | 前后端 |
+| **P2** | 2.4 | 信号 vs 实际成交对比层 | L | 前后端 |
+| **P2** | 6.3 | 组合归因面板前端 `AttributionPage.tsx` | L | 前端 |
+
+---
+
+## 11. 2026-06-06 第四轮策略研究团队审查更新
+
+> alpha/beta/gamma 三团队第四轮全量代码审查, 聚焦于前轮未覆盖的
+> 智能体、LLM 包装器、回测引擎、paper trading 子系统。
+> 本轮共发现并修复 8 个 bug (646 回归测试通过)。
+
+### 11.1 本轮 Bug 修复清单 (8 项)
+
+#### Alpha — 智能体 / LLM 包装器 (6 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 1 | `agents/rakesh_jhunjhunwala_helpers.py:98` | `declining_years` 方向反转 (line items 排序为 newest→oldest, 原条件数的是增长年份) | P0 |
+| 2 | `agents/charlie_munger_helpers.py:262` | `older_avg` 退化为单值而非窗口均值, 当 FCF < 6 期时与 `recent_avg` 不对称 | P1 |
+| 3 | `agents/mohnish_pabrai_helpers.py:51,121` | 同上 older bucket 不一致 (`_score_pabrai_fcf_stability` + `_score_pabrai_fcf_growth`) | P1 |
+| 4 | `agents/technicals.py:670-676` | Hurst 指数用 `std(diffs)` 而非 `(max-min)/std`, 近似了不同统计量 | P0 |
+| 5 | `agents/risk_manager_helpers.py:41` | NaN/None `current_price` 静默传播到 max_shares / 仓位限制 | P0 |
+| 6 | `agents/risk_manager_helpers.py:172` | 移除 `max_position_size` 的 cash 截断 (cash 约束应在 portfolio_manager 而非 risk 层) | P1 |
+
+#### Beta — Portfolio / Risk Manager / Paper Trading (0 项, 进程超时)
+
+#### Gamma — 回测引擎 (2 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 7 | `backtesting/controller.py:56` | `Action(action).value` 大小写敏感, 大写 "BUY"/"SELL" 静默退化为 HOLD → 交易被丢弃 | P0 |
+| 8 | `backtesting/metrics.py:80` | `trading_days = len(clean_returns)` 是 N-1 而非 N, 年化因子在短回测下被放大 28x | P0 |
+
+### 11.2 Bug 模式分析
+
+本轮 8 个 bug 呈现 3 个新的系统性模式:
+
+1. **时间序列排序方向错误 (1/8)**: 财务 line items 按 newest→oldest 排序,
+   比较相邻两年时 `index-1` 是新值, `index` 是旧值。原代码用 `>` 误把"新值 > 旧值"(增长) 标为 "declining",
+   严重扭曲成长一致性的判定。
+
+2. **窗口均值 vs 单值不一致 (3/8)**: 多处"older" 桶在数据不足时退化为单值, 而"recent" 桶始终用窗口均值,
+   造成两端不对称的偏差。
+
+3. **StrEnum/标准库大小写敏感 (1/8)**: `Action("BUY")` 抛 ValueError 被 `except Exception` 吞掉,
+   映射为 HOLD。任何 agent 输出大写 action 都会被静默丢弃。
+
+4. **下层 NaN 传播 (1/8)**: 与 R3 同一模式, 但发生在 risk manager 层的 current_price 路径。
+
+5. **年化因子下溢出 (1/8)**: `pct_change` 丢掉首行, `len(clean_returns) = N-1` 而非 `N`,
+   短回测年化收益被夸大 28x。
+
+### 11.3 下一步行动
+
+**所有 P0/P1 bug 已修复, 646 回归测试全部通过。**
 
 剩余未实施的功能 (均为 P2, 可在下一轮迭代中完成):
 
