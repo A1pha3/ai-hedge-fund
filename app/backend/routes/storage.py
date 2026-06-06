@@ -33,7 +33,7 @@ async def save_json_file(request: SaveJsonRequest):
 
         outputs_root = outputs_dir.resolve()
         file_path = (outputs_root / raw_path).resolve()
-        if outputs_root not in file_path.parents:
+        if file_path == outputs_root or outputs_root not in file_path.parents:
             raise HTTPException(status_code=400, detail="Invalid filename")
 
         file_path.parent.mkdir(parents=True, exist_ok=True)

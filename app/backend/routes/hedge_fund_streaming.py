@@ -330,6 +330,9 @@ def create_backtest_completion_event(result: dict[str, Any] | None) -> CompleteE
     if not result:
         return ErrorEvent(message="Failed to complete backtest")
 
+    if "performance_metrics" not in result or not result["performance_metrics"]:
+        return ErrorEvent(message="Backtest completed but performance_metrics is missing from result")
+
     performance_metrics = BacktestPerformanceMetrics(**result["performance_metrics"])
     final_portfolio = result.get("final_portfolio", {})
 

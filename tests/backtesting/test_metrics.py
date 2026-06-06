@@ -63,9 +63,10 @@ def test_cvar_95_uses_ceil_alpha_n_for_tail_mean():
     nothing, NOR the broken floor+1 of the old code. The tail mean is the
     conditional expectation E[R | R < VaR_alpha]."""
     calc = PerformanceMetricsCalculator(annual_trading_days=252, annual_rf_rate=0.0)
-    # 20 daily returns: 18 small positive days, 2 large negative days
-    # Worst day is -0.10, second-worst is -0.05
-    daily_pcts = [0.01] * 18 + [-0.05, -0.10]
+    # Need exactly 20 daily returns (after pct_change) for CVaR sample-size guard.
+    # 20 daily_pct values → 21 portfolio values → 20 daily returns via pct_change.
+    # ceil(0.05 * 20) = 1 → tail = 1 worst observation = -0.10
+    daily_pcts = [0.01] * 17 + [-0.05, -0.10, 0.01]
     values = [100.0]
     for r in daily_pcts:
         values.append(values[-1] * (1 + r))
@@ -74,8 +75,6 @@ def test_cvar_95_uses_ceil_alpha_n_for_tail_mean():
     cvar_95 = metrics.get("cvar_95")
     assert cvar_95 is not None
     # ceil(0.05 * 20) = 1 → tail mean = worst observation = -0.10
-    # (NB: there are only 19 daily returns because pct_change drops the first)
-    # so actual k = ceil(0.05 * 19) = 1 → -0.10
     assert cvar_95 < -0.09, f"Expected tail-mean ≈ -0.10, got {cvar_95}"
 
 
@@ -110,7 +109,8 @@ def test_cvar_95_is_negative_for_lossy_returns():
     The buggy `abs(cvar_95) > 0.03` guard elsewhere assumed magnitude, but
     the metric itself is signed (negative for losses)."""
     calc = PerformanceMetricsCalculator(annual_trading_days=252, annual_rf_rate=0.0)
-    daily_pcts = [0.005] * 18 + [-0.03, -0.04]  # two big loss days
+    # Need >= 20 daily returns for the sample-size guard.
+    daily_pcts = [0.005] * 19 + [-0.03, -0.04]  # two big loss days
     values = [100.0]
     for r in daily_pcts:
         values.append(values[-1] * (1 + r))
@@ -119,11 +119,10 @@ def test_cvar_95_is_negative_for_lossy_returns():
     assert metrics["cvar_95"] < 0.0, "CVaR(95%) of a lossy series must be negative"
 
 
-def test_cvar_95_small_sample_does_not_silently_use_min():
-    """ALPHA-002: for N < ~20 the old code returned sorted_returns[0] (just
-    the single min). The fix should still return a tail mean (over 1+
-    observations) — it is allowed to be small but must be computed by
-    formula, not by 'return the worst observation verbatim' branch."""
+def test_cvar_95_small_sample_returns_none():
+    """Sample-size guard: for N < 20 returns, CVaR is statistically meaningless
+    (tail is a single point = sample minimum, not a conditional tail expectation).
+    The function must return None instead of a misleading number."""
     calc = PerformanceMetricsCalculator(annual_trading_days=252, annual_rf_rate=0.0)
     # Only 5 daily returns, worst is -0.08
     daily_pcts = [0.01, 0.02, -0.05, -0.08, 0.01]
@@ -133,10 +132,8 @@ def test_cvar_95_small_sample_does_not_silently_use_min():
     metrics = {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None}
     calc.update_metrics(metrics, _build_values(values))
     cvar_95 = metrics["cvar_95"]
-    # For N=5 returns, k = ceil(0.05 * 5) = 1 → tail mean = worst = -0.08
-    # Result: -0.08 ≤ cvar_95 < -0.05 (must be at least as bad as the worst)
-    assert -0.085 <= cvar_95 < -0.05, (
-        f"Expected CVaR in [-0.085, -0.05) for this sample, got {cvar_95}"
+    assert cvar_95 is None, (
+        f"CVaR should be None for N<20 observations, got {cvar_95}"
     )
 
 

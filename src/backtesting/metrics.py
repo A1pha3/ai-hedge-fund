@@ -85,10 +85,13 @@ class PerformanceMetricsCalculator:
         # CVaR(95%) = mean of the worst 5% of daily returns (historical
         # simulation). Tail count is ceil(0.05 * N), k >= 1. See
         # docs/bugs/2026-06-05 for derivation rationale.
+        # Minimum 20 observations required: with N<20 the tail is a single
+        # point (ceil(0.05*N)=1), which is just the sample minimum, not a
+        # meaningful conditional tail expectation.
         sorted_returns = np.sort(clean_returns.values)
         n_obs = len(sorted_returns)
-        if n_obs == 0:
-            cvar_95 = 0.0
+        if n_obs < 20:
+            cvar_95 = None
         else:
             tail_count = max(1, int(np.ceil(0.05 * n_obs)))
             cvar_95 = float(sorted_returns[:tail_count].mean())

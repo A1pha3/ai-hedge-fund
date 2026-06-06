@@ -148,6 +148,34 @@ async def get_latest_flow_run(flow_id: int, db: Session = Depends(get_db)):
 
 
 @router.get(
+    "/count",
+    responses={
+        200: {"description": "Flow run count"},
+        404: {"model": ErrorResponse, "description": "Flow not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_flow_run_count(flow_id: int, db: Session = Depends(get_db)):
+    """Get the total count of runs for the specified flow"""
+    try:
+        # Verify flow exists
+        flow_repo = FlowRepository(db)
+        flow = flow_repo.get_flow_by_id(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+
+        # Get run count
+        run_repo = FlowRunRepository(db)
+        count = run_repo.get_flow_run_count(flow_id)
+
+        return {"flow_id": flow_id, "total_runs": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get flow run count: {str(e)}")
+
+
+@router.get(
     "/{run_id}",
     response_model=FlowRunResponse,
     responses={
@@ -283,34 +311,6 @@ async def delete_all_flow_runs(flow_id: int, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete flow runs: {str(e)}")
-
-
-@router.get(
-    "/count",
-    responses={
-        200: {"description": "Flow run count"},
-        404: {"model": ErrorResponse, "description": "Flow not found"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
-async def get_flow_run_count(flow_id: int, db: Session = Depends(get_db)):
-    """Get the total count of runs for the specified flow"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
-        
-        # Get run count
-        run_repo = FlowRunRepository(db)
-        count = run_repo.get_flow_run_count(flow_id)
-        
-        return {"flow_id": flow_id, "total_runs": count}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get flow run count: {str(e)}")
 
 
 @router.post(
