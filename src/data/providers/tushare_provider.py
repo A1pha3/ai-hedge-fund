@@ -43,7 +43,8 @@ class TushareProvider(BaseDataProvider):
         super().__init__("tushare", priority)
         self._token = token or os.environ.get("TUSHARE_TOKEN")
         self._pro = None
-        self._loop = asyncio.get_event_loop()
+        # R6-BETA-003: avoid asyncio.get_event_loop() which raises RuntimeError
+        # on Python 3.12+ when no loop is running. Use lazy lookup instead.
         self._init_tushare()
 
     def _init_tushare(self):
@@ -95,7 +96,7 @@ class TushareProvider(BaseDataProvider):
         Returns:
             函数执行结果
         """
-        return await self._loop.run_in_executor(None, func, *args, **kwargs)
+        return await asyncio.get_running_loop().run_in_executor(None, func, *args, **kwargs)
 
     async def get_prices(self, ticker: str, start_date: str, end_date: str) -> DataResponse:
         """
@@ -163,7 +164,11 @@ class TushareProvider(BaseDataProvider):
             end_fmt = end_date.replace("-", "")
 
             # 获取日线行情数据（包含市值等指标）
-            await self._run_sync(self._pro.daily_basic, ts_code=ts_code, trade_date=end_fmt)
+            # R6-BETA-002: capture daily_basic result for P/E, P/B, market_cap
+            df_basic = await self._run_sync(self._pro.daily_basic, ts_code=ts_code, trade_date=end_fmt)
+            basic_row = None
+            if df_basic is not None and not df_basic.empty:
+                basic_row = df_basic.iloc[0]
 
             # 获取财务指标数据
             df_fin = await self._run_sync(self._pro.fina_indicator, ts_code=ts_code, end_date=end_fmt, limit=10)
@@ -172,16 +177,28 @@ class TushareProvider(BaseDataProvider):
 
             if df_fin is not None and not df_fin.empty:
                 for _, row in df_fin.iterrows():
+                    # R6-BETA-001: price_to_earnings_ratio was mapped to q_sales_yoy
+                    # (revenue growth), not pe_ttm. Use daily_basic pe_ttm when available.
+                    pe_ratio = None
+                    if basic_row is not None and pd.notna(basic_row.get("pe_ttm")):
+                        pe_ratio = float(basic_row["pe_ttm"])
+                    pb_ratio = None
+                    if basic_row is not None and pd.notna(basic_row.get("pb")):
+                        pb_ratio = float(basic_row["pb"])
+                    market_cap_val = None
+                    if basic_row is not None and pd.notna(basic_row.get("total_mv")):
+                        market_cap_val = float(basic_row["total_mv"]) * 10000
+
                     metric = FinancialMetrics(
                         ticker=ticker,
                         report_period=str(row.get("end_date", "")),
                         period="ttm",
                         currency="CNY",
-                        market_cap=float(row.get("total_mv", 0)) * 10000 if pd.notna(row.get("total_mv")) else None,
-                        price_to_earnings_ratio=float(row.get("q_sales_yoy", 0)) if pd.notna(row.get("q_sales_yoy")) else None,
-                        price_to_book_ratio=float(row.get("bps", 0)) if pd.notna(row.get("bps")) else None,
-                        return_on_equity=float(row.get("roe", 0)) if pd.notna(row.get("roe")) else None,
-                        debt_to_equity=float(row.get("debt_to_assets", 0)) if pd.notna(row.get("debt_to_assets")) else None,
+                        market_cap=market_cap_val,
+                        price_to_earnings_ratio=pe_ratio,
+                        price_to_book_ratio=pb_ratio,
+                        return_on_equity=float(row.get("roe", 0)) / 100 if pd.notna(row.get("roe")) else None,
+                        debt_to_equity=float(row.get("debt_to_assets", 0)) / 100 if pd.notna(row.get("debt_to_assets")) else None,
                         revenue_growth=float(row.get("q_sales_yoy", 0)) / 100 if pd.notna(row.get("q_sales_yoy")) else None,
                     )
                     metrics.append(metric)

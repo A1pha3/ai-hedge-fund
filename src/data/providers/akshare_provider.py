@@ -41,7 +41,8 @@ class AKShareProvider(BaseDataProvider):
         super().__init__("akshare", priority)
         self._akshare_available = False
         self._ak = None
-        self._loop = asyncio.get_event_loop()
+        # R6-BETA-003: avoid asyncio.get_event_loop() which raises RuntimeError
+        # on Python 3.12+ when no loop is running. Use lazy lookup instead.
         self._init_akshare()
 
     def _init_akshare(self):
@@ -98,7 +99,7 @@ class AKShareProvider(BaseDataProvider):
         Returns:
             函数执行结果
         """
-        return await self._loop.run_in_executor(None, func, *args, **kwargs)
+        return await asyncio.get_running_loop().run_in_executor(None, func, *args, **kwargs)
 
     async def get_prices(self, ticker: str, start_date: str, end_date: str) -> DataResponse:
         """

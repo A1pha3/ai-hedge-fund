@@ -267,7 +267,14 @@ class BaseDataProvider(ABC):
         Args:
             headers: HTTP 响应头
         """
-        if "X-RateLimit-Remaining" in headers:
-            self._rate_limit_remaining = int(headers["X-RateLimit-Remaining"])
-        if "X-RateLimit-Reset" in headers:
-            self._rate_limit_reset = datetime.fromtimestamp(int(headers["X-RateLimit-Reset"]))
+        # R6-BETA-004: guard against malformed rate limit headers
+        try:
+            if "X-RateLimit-Remaining" in headers:
+                self._rate_limit_remaining = int(headers["X-RateLimit-Remaining"])
+        except (ValueError, TypeError):
+            pass
+        try:
+            if "X-RateLimit-Reset" in headers:
+                self._rate_limit_reset = datetime.fromtimestamp(int(headers["X-RateLimit-Reset"]))
+        except (ValueError, TypeError, OSError):
+            pass

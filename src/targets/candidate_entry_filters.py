@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import Counter
 from typing import Any
 
@@ -90,10 +91,27 @@ def evaluate_candidate_entry_filter_rule(entry: dict[str, Any], rule: dict[str, 
             metric_gate_status = dict(metric_snapshot.get("__gate_status__") or {})
             metric_data_pass = str(metric_gate_status.get("data") or "") == "pass"
             if metric_data_pass:
-                exceeds_max_threshold = any(float(metric_snapshot.get(name)) > threshold for name, threshold in metric_max_thresholds.items() if metric_snapshot.get(name) is not None)
-                missing_max_metric = any(metric_snapshot.get(name) is None for name in metric_max_thresholds)
-                below_min_threshold = any(float(metric_snapshot.get(name)) < threshold for name, threshold in metric_min_thresholds.items() if metric_snapshot.get(name) is not None)
-                missing_min_metric = any(metric_snapshot.get(name) is None for name in metric_min_thresholds)
+                def _is_present(raw: Any) -> bool:
+                    """Return True only for non-None, finite numeric values.
+
+                    NaN must be treated as missing: float('nan') > threshold and
+                    float('nan') < threshold both return False, so a NaN metric
+                    would silently satisfy max/min gates without this check.
+                    """
+                    if raw is None:
+                        return False
+                    try:
+                        return math.isfinite(float(raw))
+                    except (TypeError, ValueError):
+                        return False
+
+                def _value(raw: Any) -> float:
+                    return float(raw)
+
+                exceeds_max_threshold = any(_value(metric_snapshot.get(name)) > threshold for name, threshold in metric_max_thresholds.items() if _is_present(metric_snapshot.get(name)))
+                missing_max_metric = any(not _is_present(metric_snapshot.get(name)) for name in metric_max_thresholds)
+                below_min_threshold = any(_value(metric_snapshot.get(name)) < threshold for name, threshold in metric_min_thresholds.items() if _is_present(metric_snapshot.get(name)))
+                missing_min_metric = any(not _is_present(metric_snapshot.get(name)) for name in metric_min_thresholds)
                 metric_thresholds_match = not (exceeds_max_threshold or missing_max_metric or below_min_threshold or missing_min_metric)
         else:
             metric_thresholds_match = True

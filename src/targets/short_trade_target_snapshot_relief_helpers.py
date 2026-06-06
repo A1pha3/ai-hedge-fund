@@ -1087,7 +1087,7 @@ def _build_snapshot_score_payload(
 ) -> dict[str, Any]:
     historical_continuation_prior_score = score_short_trade_historical_continuation_prior(state.historical_prior)
     trend_continuation_strength_adjustment = compute_trend_continuation_strength_adjustment(
-        trend_continuation=state.trend_acceleration,
+        trend_continuation=state.trend_continuation,
         close_strength=state.close_strength,
         volume_expansion_quality=threshold_state.volume_expansion_quality,
         continuation_weight=float(getattr(profile, "trend_continuation_strength_weight", 0.0) or 0.0),
@@ -1156,6 +1156,8 @@ def _build_snapshot_score_payload(
         + (positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal)
         + (positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength)
         + (positive_score_weights.get("reversal_2d", 0.0) * state.reversal_2d)
+        + (positive_score_weights.get("trend_continuation", 0.0) * state.trend_continuation)
+        + (positive_score_weights.get("trend_continuation_2d", 0.0) * state.trend_continuation_2d)
         + trend_continuation_strength_adjustment
         - (score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty)
         - (profile.overhead_score_penalty_weight * score_penalty_state.overhead_supply_penalty)

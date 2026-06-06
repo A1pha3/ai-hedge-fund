@@ -175,7 +175,10 @@ def _build_selected_evaluation(
         research_result.execution_eligible = research_execution_eligible
     if short_trade_result is not None:
         short_trade_result.execution_eligible = short_trade_execution_eligible
-    evaluation.execution_eligible = short_trade_execution_eligible if short_trade_result is not None else research_execution_eligible
+    # Mirror _is_execution_eligible() — dual evaluation is execution-eligible when
+    # EITHER target is formally selected. Previously this used the short_trade
+    # signal alone in dual_target mode, hiding research-only selections.
+    evaluation.execution_eligible = research_execution_eligible or short_trade_execution_eligible
     evaluation.delta_classification = _classify_delta(evaluation)
     if evaluation.delta_classification == "research_pass_short_reject":
         short_trade_decision = getattr(short_trade_result, "decision", "rejected") if short_trade_result is not None else "rejected"
