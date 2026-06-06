@@ -1,6 +1,6 @@
 # 特性提案 (Feature Proposals)
 
-> 最近更新: 2026-06-06 (第五轮策略团队审查: 16 bug 修复 + display/look-ahead/health/格式 报告)
+> 最近更新: 2026-06-06 (第六轮策略团队审查: 7 critical bug 修复 + P/E 数据损坏 + NaN 目标过滤器)
 > 目标: 提升产品易用性, 让用户在 30 天投资窗口内更高效地找到最有价值的股票
 
 ## 0. 方法论与范围
@@ -1051,3 +1051,53 @@
 
 3. **空 PIPE buffer 阻塞 (1 处)**: subprocess 频繁被忽视的"无 timeout"和"PIPE 满"两类故障。
    修复模式: PIPE → DEVNULL, 关键命令加 `timeout=N`。
+
+---
+
+## 13. 2026-06-06 第六轮策略研究团队审查更新
+
+> alpha/beta/gamma 三团队第六轮全量代码审查, 聚焦于前轮未覆盖的
+> 目标标记系统、数据 Provider、基础工具层。
+> 本轮共发现并修复 7 个关键 bug (116 回归测试通过)。
+
+### 13.1 本轮 Bug 修复清单 (7 项)
+
+#### Beta — Data Providers (4 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 1 | `data/providers/tushare_provider.py:181` | **CRITICAL**: `price_to_earnings_ratio` 映射到 `q_sales_yoy` (营收增长率), 不是 P/E。所有 A 股基本面分析一直使用营收增长率作为 P/E | P0 |
+| 2 | `data/providers/tushare_provider.py:166` | `daily_basic` API 调用但结果被丢弃 — market_cap/P/E/P/B 始终为 None 或来自错误来源 | P0 |
+| 3 | `data/providers/tushare_provider.py:46` + `akshare_provider.py:44` | `asyncio.get_event_loop()` 在 Python 3.12+ 抛 RuntimeError | P1 |
+| 4 | `data/base_provider.py:273` | Rate limit header 解析在畸形值时崩溃 | P1 |
+
+**附修**: roe/debt_to_assets 在 tushare_provider 增加 `/100` (与 akshare_provider 对齐)
+
+#### Alpha/Gamma — Targets/Labeling (3 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 5 | `targets/candidate_entry_filters.py` | NaN 静默通过 `>` / `<` 阈值检查 (延续 R3 的 NaN 传播模式), 用 `math.isfinite()` 守卫 | P0 |
+| 6 | `targets/router.py:178` | dual_target 模式下仅用 short_trade 信号判定 execution_eligible, 隐藏 research-only 选股 | P0 |
+| 7 | `targets/snapshot_relief_helpers.py` | 使用 `trend_acceleration` 替代 `trend_continuation`; `trend_continuation` + `trend_continuation_2d` 未计入 positive_score_weights (评分偏低) | P0 |
+
+### 13.2 Bug 影响分析
+
+**Bug #1 (P/E 映射错误)** 是本轮最重要的发现:
+- 所有使用 Tushare 数据源的基本面分析 agent (warren_buffett, peter_lynch, phil_fisher, bill_ackman 等) 一直在使用营收增长率 (q_sales_yoy) 作为市盈率 (P/E)
+- 这意味着 P/E > 50 的股票可能被误判为"便宜"(因为增长率可能是 15%), P/E < 5 的股票可能被误判为"贵"
+- 修复后所有基本面策略评分将产生显著变化
+
+**Bug #6 (dual_target 执行判定)** 意味着在 dual_target 模式下:
+- 如果 research_target 选了某票但 short_trade_target 没选, 执行会被阻止
+- 这导致部分有价值的 research-only 选股被静默丢弃
+
+### 13.3 累计审查统计 (R3-R6)
+
+| 轮次 | bug 修复 | 关键发现 |
+|------|----------|----------|
+| R3 | 17 | NaN/None 传播系统性模式 |
+| R4 | 8 | 时间序列排序方向 + StrEnum 大小写 |
+| R5 | 16 | f-string None 崩溃 + look-ahead 偏差 |
+| R6 | 7 | **P/E 数据损坏** + NaN 目标过滤器 |
+| **合计** | **48** | 覆盖 309 源文件, 391 测试文件 |
