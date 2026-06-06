@@ -87,6 +87,7 @@ INTRADAY_SCORE_MAX_CANDIDATES = int(
 )
 HEAVY_SCORE_MIN_PROVISIONAL_SCORE = float(os.getenv("SCORE_BATCH_MIN_PROVISIONAL_SCORE", "0.05"))
 HEAVY_SCORE_MIN_TREND_CONFIDENCE = float(os.getenv("SCORE_BATCH_MIN_TREND_CONFIDENCE", "35"))
+_EVENT_DECAY_LAMBDA = float(os.getenv("EVENT_DECAY_LAMBDA", "0.35"))
 TECHNICAL_STAGE_LIQUIDITY_RANK_BUCKET = float(os.getenv("CANDIDATE_POOL_BTST_LIQUIDITY_RANK_BUCKET", "2500"))
 SCORE_BATCH_CONCURRENCY = int(os.getenv("SCORE_BATCH_CONCURRENCY", "4"))
 
@@ -103,8 +104,8 @@ def _safe_date(date_str: str) -> datetime | None:
 
 
 def compute_event_decay(days_old: int) -> float:
-    """事件衰减函数，按文档要求使用 e^(-0.35t)。"""
-    return math.exp(-0.35 * max(days_old, 0))
+    """事件衰减函数，按文档要求使用 e^(-lambda * t)。"""
+    return math.exp(-_EVENT_DECAY_LAMBDA * max(days_old, 0))
 
 
 def _event_weight_multiplier(days_old: int, strength: int) -> float:

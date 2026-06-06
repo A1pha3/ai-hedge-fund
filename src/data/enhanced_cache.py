@@ -553,58 +553,127 @@ class CacheAdapter:
         """
         self._cache = enhanced_cache or EnhancedCache()
 
-    def _make_key(self, prefix: str, identifier: str) -> str:
-        """生成缓存键"""
+    def _make_key(self, prefix: str, identifier: str, provider: str = "") -> str:
+        """生成缓存键
+
+        Args:
+            prefix: 缓存前缀（如 "prices", "metrics"）
+            identifier: 标识符（如 ticker 或复合键）
+            provider: 数据源（如 "akshare", "tushare", "financial_datasets"）。
+                      为空时退化为旧格式，保持向后兼容。
+
+        Returns:
+            缓存键字符串。provider 非空时格式为 "{prefix}:{provider}:{identifier}"，
+            否则为 "{prefix}:{identifier}"。
+        """
+        if provider:
+            return f"{prefix}:{provider}:{identifier}"
         return f"{prefix}:{identifier}"
 
-    def get_prices(self, ticker: str) -> list[dict] | None:
-        """获取价格数据"""
-        key = self._make_key("prices", ticker)
+    def get_prices(self, ticker: str, provider: str = "") -> list[dict] | None:
+        """获取价格数据
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("prices", ticker, provider)
         return self._cache.get(key)
 
-    def set_prices(self, ticker: str, data: list[dict]):
-        """设置价格数据"""
-        key = self._make_key("prices", ticker)
+    def set_prices(self, ticker: str, data: list[dict], provider: str = ""):
+        """设置价格数据
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            data: 价格数据
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("prices", ticker, provider)
         self._cache.set(key, data, ttl=86400)
 
-    def get_financial_metrics(self, ticker: str) -> list[dict] | None:
-        """获取财务指标"""
-        key = self._make_key("metrics", ticker)
+    def get_financial_metrics(self, ticker: str, provider: str = "") -> list[dict] | None:
+        """获取财务指标
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("metrics", ticker, provider)
         return self._cache.get(key)
 
-    def set_financial_metrics(self, ticker: str, data: list[dict]):
-        """设置财务指标"""
-        key = self._make_key("metrics", ticker)
+    def set_financial_metrics(self, ticker: str, data: list[dict], provider: str = ""):
+        """设置财务指标
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            data: 财务指标数据
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("metrics", ticker, provider)
         self._cache.set(key, data, ttl=604800)
 
-    def get_line_items(self, ticker: str) -> list[dict] | None:
-        """获取行项目数据"""
-        key = self._make_key("line_items", ticker)
+    def get_line_items(self, ticker: str, provider: str = "") -> list[dict] | None:
+        """获取行项目数据
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("line_items", ticker, provider)
         return self._cache.get(key)
 
-    def set_line_items(self, ticker: str, data: list[dict]):
-        """设置行项目数据"""
-        key = self._make_key("line_items", ticker)
+    def set_line_items(self, ticker: str, data: list[dict], provider: str = ""):
+        """设置行项目数据
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            data: 行项目数据
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("line_items", ticker, provider)
         self._cache.set(key, data, ttl=604800)
 
-    def get_insider_trades(self, ticker: str) -> list[dict] | None:
-        """获取内部交易数据"""
-        key = self._make_key("insider", ticker)
+    def get_insider_trades(self, ticker: str, provider: str = "") -> list[dict] | None:
+        """获取内部交易数据
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("insider", ticker, provider)
         return self._cache.get(key)
 
-    def set_insider_trades(self, ticker: str, data: list[dict]):
-        """设置内部交易数据"""
-        key = self._make_key("insider", ticker)
+    def set_insider_trades(self, ticker: str, data: list[dict], provider: str = ""):
+        """设置内部交易数据
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            data: 内部交易数据
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("insider", ticker, provider)
         self._cache.set(key, data, ttl=86400)
 
-    def get_company_news(self, ticker: str) -> list[dict] | None:
-        """获取公司新闻"""
-        key = self._make_key("news", ticker)
+    def get_company_news(self, ticker: str, provider: str = "") -> list[dict] | None:
+        """获取公司新闻
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("news", ticker, provider)
         return self._cache.get(key)
 
-    def set_company_news(self, ticker: str, data: list[dict], ttl: int | None = None):
-        """设置公司新闻"""
-        key = self._make_key("news", ticker)
+    def set_company_news(self, ticker: str, data: list[dict], ttl: int | None = None, provider: str = ""):
+        """设置公司新闻
+
+        Args:
+            ticker: 股票代码或复合缓存键
+            data: 公司新闻数据
+            ttl: 过期时间（秒）
+            provider: 数据源（如 "akshare", "tushare"）
+        """
+        key = self._make_key("news", ticker, provider)
         self._cache.set(key, data, ttl=10800 if ttl is None else ttl)
 
 

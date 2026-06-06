@@ -355,7 +355,7 @@ def compute_score_b(signals: dict[str, StrategySignal], weights: dict[str, float
         score += weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
 
     if ArbitrationAction.CONSENSUS_BONUS.value in arbitration_applied:
-        score *= 1.15
+        score = min(1.0, score + 0.05)
     return max(-1.0, min(1.0, score))
 
 

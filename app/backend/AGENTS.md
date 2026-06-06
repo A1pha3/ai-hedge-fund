@@ -49,7 +49,7 @@ backend/
 
 ## CONVENTIONS
 
-- **No authentication** — all endpoints are currently public (no JWT, no API-key gating on routes). CORS is scoped to `localhost:5173` only. Adding auth would require updating all frontend API calls; see `docs/zh-cn/product/auth_design.md` for the planned design.
+- **JWT authentication** — all endpoints require a valid JWT bearer token (except `/auth/login`, `/auth/register`). Roles: `admin`, `writer`, `viewer`. API-key gating available on selected routes. Set `AUTH_DISABLED=true` (dev only) to bypass auth. See `app/backend/auth/` for implementation and `docs/zh-cn/product/auth_design.md` for design rationale.
 - **SSE for execution** — hedge fund run + backtest stream events, not request-response
 - **Repository pattern** — `__init__(self, db: Session)`, CRUD methods return ORM models
 - **Error handling** — `HTTPException` with status codes; generic catch-all wraps to 500
@@ -59,4 +59,4 @@ backend/
 ## ANTI-PATTERNS
 
 - **DO NOT** use `allow_origins=["*"]` — currently scoped to localhost:5173
-- **DO NOT** add auth middleware without updating all frontend API calls
+- **DO NOT** set `AUTH_DISABLED=true` in production — the app enforces this via `is_production_environment()` guard

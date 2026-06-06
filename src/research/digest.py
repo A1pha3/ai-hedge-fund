@@ -107,11 +107,11 @@ def _extract_scores(entries: list[dict[str, Any]]) -> list[float]:
 
 
 def _compute_std(values: list[float]) -> float | None:
-    """Population standard deviation. Returns None for < 2 values."""
+    """Sample standard deviation (Bessel-corrected). Returns None for < 2 values."""
     if len(values) < 2:
         return None
     mean = sum(values) / len(values)
-    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
     return round(math.sqrt(variance), 6)
 
 

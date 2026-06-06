@@ -110,7 +110,8 @@ class TestComputeStd:
     def test_two_values(self) -> None:
         result = _compute_std([1.0, 3.0])
         assert result is not None
-        assert abs(result - 1.0) < 1e-6
+        # Sample std: variance = ((1-2)^2 + (3-2)^2) / (2-1) = 2.0; std = sqrt(2)
+        assert abs(result - 2.0**0.5) < 1e-6
 
     def test_single_value(self) -> None:
         assert _compute_std([1.0]) is None
@@ -626,9 +627,9 @@ class TestEdgeCases:
             )
         result = run_digest(start_date="2026-05-01", end_date="2026-05-03", artifact_root=tmp_path)
         assert result.summary["score_std"] is not None
-        # Three avg scores: 0.5, 0.7, 0.9 -> std of [0.5, 0.7, 0.9]
-        # population std = sqrt(((0.5-0.7)^2 + (0.7-0.7)^2 + (0.9-0.7)^2) / 3)
-        #                = sqrt((0.04 + 0 + 0.04) / 3) = sqrt(0.08/3) ≈ 0.1633
+        # Three avg scores: 0.5, 0.7, 0.9 -> sample std of [0.5, 0.7, 0.9]
+        # sample std = sqrt(((0.5-0.7)^2 + (0.7-0.7)^2 + (0.9-0.7)^2) / (3-1))
+        #            = sqrt((0.04 + 0 + 0.04) / 2) = sqrt(0.08/2) = 0.2
         import math
-        expected = math.sqrt(0.08 / 3)
+        expected = math.sqrt(0.08 / 2)
         assert abs(result.summary["score_std"] - expected) < 0.001
