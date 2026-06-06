@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
@@ -5,6 +6,8 @@ from src.llm.defaults import get_default_model_config
 from src.llm.models import ModelProvider
 from enum import Enum
 from app.backend.services.graph import extract_base_agent_key
+
+_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class FlowRunStatus(str, Enum):
@@ -95,7 +98,14 @@ class BaseHedgeFundRequest(BaseModel):
 class BacktestRequest(BaseHedgeFundRequest):
     start_date: str
     end_date: str
-    initial_capital: float = 100000.0
+    initial_capital: float = Field(default=100000.0, gt=0)
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date_format(cls, v: str) -> str:
+        if not _DATE_PATTERN.match(v):
+            raise ValueError(f"Date must be in YYYY-MM-DD format, got: {v}")
+        return v
 
 
 class BacktestDayResult(BaseModel):
@@ -132,7 +142,21 @@ class BacktestResponse(BaseModel):
 class HedgeFundRequest(BaseHedgeFundRequest):
     end_date: Optional[str] = Field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))
     start_date: Optional[str] = None
-    initial_cash: float = 100000.0
+    initial_cash: float = Field(default=100000.0, gt=0)
+
+    @field_validator("end_date")
+    @classmethod
+    def validate_end_date_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _DATE_PATTERN.match(v):
+            raise ValueError(f"end_date must be in YYYY-MM-DD format, got: {v}")
+        return v
+
+    @field_validator("start_date")
+    @classmethod
+    def validate_start_date_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _DATE_PATTERN.match(v):
+            raise ValueError(f"start_date must be in YYYY-MM-DD format, got: {v}")
+        return v
 
     def get_start_date(self) -> str:
         """Calculate start date if not provided"""

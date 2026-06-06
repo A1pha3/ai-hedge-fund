@@ -93,16 +93,17 @@ class ApiKeyRepository:
         self.db.commit()
         return True
 
-    def deactivate_api_key(self, provider: str) -> bool:
+    def deactivate_api_key(self, provider: str) -> Optional[ApiKey]:
         """Deactivate an API key instead of deleting it"""
         api_key = self.db.query(ApiKey).filter(ApiKey.provider == provider).first()
         if not api_key:
-            return False
-        
+            return None
+
         api_key.is_active = False
         api_key.updated_at = func.now()
         self.db.commit()
-        return True
+        self.db.refresh(api_key)
+        return api_key
 
     def update_last_used(self, provider: str) -> bool:
         """Update the last_used timestamp for an API key"""

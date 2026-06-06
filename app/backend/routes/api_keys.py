@@ -77,7 +77,7 @@ async def create_or_update_api_key(request: ApiKeyCreateRequest, db: Session = D
         return _to_api_key_response(api_key)
     except Exception as e:
         logger.exception("Failed to create/update API key for provider %s", request.provider)
-        raise HTTPException(status_code=500, detail=f"Failed to create/update API key: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get(
@@ -95,7 +95,7 @@ async def get_api_keys(include_inactive: bool = False, db: Session = Depends(get
         return [_to_api_key_summary(key) for key in api_keys]
     except Exception as e:
         logger.exception("Failed to retrieve API key summaries")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve API keys: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get(
@@ -118,7 +118,7 @@ async def get_api_key(provider: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.exception("Failed to retrieve API key for provider %s", provider)
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve API key: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put(
@@ -146,7 +146,7 @@ async def update_api_key(provider: str, request: ApiKeyUpdateRequest, db: Sessio
         raise
     except Exception as e:
         logger.exception("Failed to update API key for provider %s", provider)
-        raise HTTPException(status_code=500, detail=f"Failed to update API key: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete(
@@ -169,7 +169,7 @@ async def delete_api_key(provider: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.exception("Failed to delete API key for provider %s", provider)
-        raise HTTPException(status_code=500, detail=f"Failed to delete API key: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.patch(
@@ -184,18 +184,16 @@ async def deactivate_api_key(provider: str, db: Session = Depends(get_db)):
     """Deactivate an API key without deleting it"""
     try:
         repo = ApiKeyRepository(db)
-        success = repo.deactivate_api_key(provider)
-        if not success:
+        api_key = repo.deactivate_api_key(provider)
+        if not api_key:
             raise HTTPException(status_code=404, detail="API key not found")
-        
-        # Return the updated key
-        api_key = repo.get_api_key_by_provider(provider)
+
         return _to_api_key_summary(api_key)
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Failed to deactivate API key for provider %s", provider)
-        raise HTTPException(status_code=500, detail=f"Failed to deactivate API key: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post(
@@ -223,7 +221,7 @@ async def bulk_update_api_keys(request: ApiKeyBulkUpdateRequest, db: Session = D
         return [_to_api_key_response(key) for key in api_keys]
     except Exception as e:
         logger.exception("Failed to bulk update API keys")
-        raise HTTPException(status_code=500, detail=f"Failed to bulk update API keys: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.patch(
@@ -246,4 +244,4 @@ async def update_last_used(provider: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.exception("Failed to update last-used timestamp for provider %s", provider)
-        raise HTTPException(status_code=500, detail=f"Failed to update last used timestamp: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

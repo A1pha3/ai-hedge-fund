@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -15,6 +17,8 @@ from app.backend.services.graph import create_graph
 from app.backend.services.portfolio import create_portfolio
 from src.utils.analysts import get_agents_list
 from src.utils.progress import progress
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hedge-fund")
 
@@ -42,7 +46,8 @@ async def run(request_data: HedgeFundRequest, request: Request, db: Session = De
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred while processing the request: {str(e)}")
+        logger.exception("Failed to process hedge fund run")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post(
@@ -87,7 +92,8 @@ async def backtest(request_data: BacktestRequest, request: Request, db: Session 
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred while processing the backtest request: {str(e)}")
+        logger.exception("Failed to process backtest run")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get(
@@ -102,4 +108,5 @@ async def get_agents():
     try:
         return {"agents": get_agents_list()}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve agents: {str(e)}")
+        logger.exception("Failed to retrieve agents")
+        raise HTTPException(status_code=500, detail="Internal server error")

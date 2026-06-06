@@ -238,7 +238,7 @@ def apply_adjustments(
 
         if ticker not in adj_lookup:
             # No adjustment for this ticker — simulate the planned decision
-            _simulate_decision(adj_positions, prices, adj_cash, ticker, decision)
+            adj_cash += _simulate_decision(adj_positions, prices, adj_cash, ticker, decision)
             ticker_results[ticker] = TickerAdjustmentResult(
                 ticker=ticker,
                 original_action=original_action,
@@ -376,36 +376,45 @@ def _simulate_decision(
     cash: float,
     ticker: str,
     decision: DecisionInput,
-) -> None:
+) -> float:
     """Apply a planned decision to positions in-place (for unadjusted tickers).
 
     This simulates what would happen if the planned action executes, so the
     "before" metrics reflect the fully-executed plan.
+
+    Returns the cash delta caused by the decision (negative for buy/short,
+    positive for sell/cover). The caller must add this to its cash variable.
     """
     price = prices.get(ticker, 0.0)
     if price <= 0:
-        return
+        return 0.0
 
     pos = positions.get(ticker, {"long": 0, "short": 0, "long_cost_basis": 0.0, "short_cost_basis": 0.0})
+    cash_delta = 0.0
 
     if decision.action == "buy" and decision.quantity > 0:
         pos["long"] = pos.get("long", 0) + decision.quantity
         pos["long_cost_basis"] = price
+        cash_delta = -decision.quantity * price
     elif decision.action == "sell" and decision.quantity > 0:
         sell_qty = min(decision.quantity, pos.get("long", 0))
         pos["long"] = max(0, pos.get("long", 0) - sell_qty)
         if pos["long"] == 0:
             pos["long_cost_basis"] = 0.0
+        cash_delta = sell_qty * price
     elif decision.action == "short" and decision.quantity > 0:
         pos["short"] = pos.get("short", 0) + decision.quantity
         pos["short_cost_basis"] = price
+        cash_delta = decision.quantity * price
     elif decision.action == "cover" and decision.quantity > 0:
         cover_qty = min(decision.quantity, pos.get("short", 0))
         pos["short"] = max(0, pos.get("short", 0) - cover_qty)
         if pos["short"] == 0:
             pos["short_cost_basis"] = 0.0
+        cash_delta = -cover_qty * price
 
     positions[ticker] = pos
+    return cash_delta
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +446,7 @@ def simulate_adjustment(req: SimulateAdjustmentRequest) -> SimulateAdjustmentRes
 
     # Apply all decisions to get "before" state (fully executed plan)
     for ticker, decision in req.decisions.items():
-        _simulate_decision(before_positions, req.current_prices, before_cash, ticker, decision)
+        before_cash += _simulate_decision(before_positions, req.current_prices, before_cash, ticker, decision)
 
     before_metrics = _compute_risk_from_state(before_positions, req.current_prices, before_cash)
 
@@ -453,7 +462,7 @@ def simulate_adjustment(req: SimulateAdjustmentRequest) -> SimulateAdjustmentRes
     # For "after" we still need to simulate the non-adjusted decisions
     for ticker, decision in adj_decisions.items():
         if ticker not in {a.ticker for a in req.adjustments}:
-            _simulate_decision(adj_positions, req.current_prices, adj_cash, ticker, decision)
+            adj_cash += _simulate_decision(adj_positions, req.current_prices, adj_cash, ticker, decision)
 
     after_metrics = _compute_risk_from_state(adj_positions, req.current_prices, adj_cash)
 
