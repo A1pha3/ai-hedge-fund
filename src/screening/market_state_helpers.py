@@ -131,7 +131,7 @@ def calculate_market_state_metrics(
         breadth_ratio=breadth_ratio,
         total_volume=total_volume,
         northbound_flow_days=northbound_flow_days,
-        is_low_volume=total_volume < 5000.0 if total_volume > 0 else False,
+        is_low_volume=total_volume < 5000.0,  # GAMMA-010: total_volume==0 means API failure, treat as low-volume (conservative)
         breadth_is_weak=breadth_ratio <= 0.42,
         breadth_is_strong=breadth_ratio >= 0.58,
         style_dispersion=style_dispersion,

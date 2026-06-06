@@ -1,6 +1,7 @@
 import datetime
 import os
 import time
+from datetime import timezone
 
 import pandas as pd
 import requests
@@ -90,7 +91,7 @@ def _get_snapshot():
     return get_snapshot_exporter()
 
 
-def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict | None = None, max_retries: int = 3) -> requests.Response:
+def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict | None = None, max_retries: int = 3) -> requests.Response | None:
     """
     Make an API request with rate limiting handling and moderate backoff.
 
@@ -102,16 +103,23 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
         max_retries: Maximum number of retries (default: 3)
 
     Returns:
-        requests.Response: The response object
+        requests.Response or None if all retries exhausted on 429
 
     Raises:
         Exception: If the request fails with a non-429 error
     """
     for attempt in range(max_retries + 1):  # +1 for initial attempt
-        if method.upper() == "POST":
-            response = requests.post(url, headers=headers, json=json_data)
-        else:
-            response = requests.get(url, headers=headers)
+        try:
+            if method.upper() == "POST":
+                response = requests.post(url, headers=headers, json=json_data)
+            else:
+                response = requests.get(url, headers=headers)
+        except requests.RequestException as e:
+            print(f"Request error for {url}: {e}")
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+                continue
+            return None
 
         if response.status_code == 429 and attempt < max_retries:
             # Linear backoff: 60s, 90s, 120s, 150s...
@@ -163,7 +171,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str | None 
 
     url = f"https://api.financialdatasets.ai/prices/?ticker={ticker}&interval=day&interval_multiplier=1&start_date={start_date}&end_date={end_date}"
     response = _make_api_request(url, headers)
-    if response.status_code != 200:
+    if response is None or response.status_code != 200:
         return []
 
     # Parse response with Pydantic model
@@ -226,7 +234,7 @@ def get_financial_metrics(
 
     url = f"https://api.financialdatasets.ai/financial-metrics/?ticker={ticker}&report_period_lte={end_date}&limit={limit}&period={period}"
     response = _make_api_request(url, headers)
-    if response.status_code != 200:
+    if response is None or response.status_code != 200:
         return []
 
     # Parse response with Pydantic model
@@ -284,7 +292,7 @@ def search_line_items(
         "limit": limit,
     }
     response = _make_api_request(url, headers, method="POST", json_data=body)
-    if response.status_code != 200:
+    if response is None or response.status_code != 200:
         return []
 
     try:
@@ -398,7 +406,7 @@ def get_market_cap(
         return get_ashare_market_cap_with_tushare(ticker, end_date)
 
     # Check if end_date is today
-    if end_date == datetime.datetime.now().strftime("%Y-%m-%d"):
+    if end_date == datetime.datetime.now(timezone.utc).strftime("%Y-%m-%d"):
         # Get the market cap from company facts API
         headers = {}
         financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
@@ -407,8 +415,9 @@ def get_market_cap(
 
         url = f"https://api.financialdatasets.ai/company/facts/?ticker={ticker}"
         response = _make_api_request(url, headers)
-        if response.status_code != 200:
-            print(f"Error fetching company facts: {ticker} - {response.status_code}")
+        if response is None or response.status_code != 200:
+            if response is not None:
+                print(f"Error fetching company facts: {ticker} - {response.status_code}")
             return None
 
         data = response.json()

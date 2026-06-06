@@ -1286,6 +1286,18 @@ def _ensure_plan_target_shells(
         # Only clear sidecar-backed selection_targets when shell inputs exist and recomputation is possible.
         plan.selection_targets = {}
 
+    # When a frozen plan has no shell inputs and no profile mismatch beyond an empty config
+    # (meaning the plan was created without explicitly setting a profile config), skip the
+    # ensure_plan_target_shells_impl call entirely so the frozen plan is preserved as-is.
+    has_shell_inputs = _has_rebuildable_target_shell_inputs(plan, target_mode=target_mode)
+    is_empty_config_mismatch = (
+        profile_mismatch
+        and not existing_profile_config
+        and existing_profile_name == requested_profile.name
+    )
+    if not has_shell_inputs and not replay_sidecar_can_rebuild and (not profile_mismatch or is_empty_config_mismatch):
+        return plan
+
     return ensure_plan_target_shells_impl(
         plan=plan,
         target_mode=target_mode,

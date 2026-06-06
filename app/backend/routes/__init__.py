@@ -17,6 +17,7 @@ from app.backend.routes.cache import router as cache_router
 from app.backend.routes.llm_metrics import router as llm_metrics_router
 from app.backend.routes.research import router as research_router
 from app.backend.routes.portfolio_simulator import router as portfolio_simulator_router
+from app.backend.routes.admin_audit import router as admin_audit_router
 from app.backend.auth.dependencies import get_current_user
 
 # Main API router
@@ -46,3 +47,5 @@ api_router.include_router(language_models_router, tags=["language-models"], depe
 api_router.include_router(api_keys_router, tags=["api-keys"], dependencies=_auth)
 api_router.include_router(replay_artifacts_router, tags=["replay-artifacts"], dependencies=_auth)
 api_router.include_router(research_router, tags=["research"], dependencies=_auth)
+# P2 2.5: admin audit + session revoke — endpoints individually enforce require_admin
+api_router.include_router(admin_audit_router, tags=["admin"])

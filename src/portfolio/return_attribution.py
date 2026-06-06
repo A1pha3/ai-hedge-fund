@@ -127,7 +127,7 @@ def compute_portfolio_weights(
 
     Handles shorts by treating their market value as negative contribution.
     """
-    if total_portfolio_value == 0.0:
+    if total_portfolio_value <= 0.0:  # GAMMA-011: negative total (e.g. net-short) would invert weights
         return {t: 0.0 for t in ticker_market_values}
     return {t: mv / total_portfolio_value for t, mv in ticker_market_values.items()}
 
@@ -160,7 +160,7 @@ def brinson_attribution(
     Returns:
         AttributionResult with per-ticker and aggregate attribution.
     """
-    if not ticker_returns or total_portfolio_value == 0.0:
+    if not ticker_returns or total_portfolio_value <= 0.0:  # GAMMA-011
         return AttributionResult(start_date=start_date, end_date=end_date)
 
     # Guard against NaN/Inf silently propagating through the decomposition
@@ -233,7 +233,10 @@ def brinson_attribution(
     # Total benchmark return = sum of (benchmark_weight * benchmark_return)
     total_benchmark_return = sum(b_weights.get(t, 0.0) * b_returns.get(t, 0.0) for t in tickers)
 
-    # Residual = what the Brinson decomposition cannot explain
+    # Residual = what the Brinson decomposition cannot explain.
+    # In the simplified model (selection = w_p*(r_p-r_b), no interaction term),
+    # this equals total_benchmark_return by construction. The identity
+    # total_alloc + total_select + residual = total_portfolio_return still holds.
     residual = total_portfolio_return - total_alloc - total_select
 
     return AttributionResult(

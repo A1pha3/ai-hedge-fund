@@ -78,7 +78,9 @@ class PerformanceMetricsCalculator:
         # Calmar Ratio = 年化收益 / |最大回撤|
         total_return = (df["Portfolio Value"].iloc[-1] / df["Portfolio Value"].iloc[0]) - 1
         trading_days = len(clean_returns)
-        annual_return = (1 + total_return) ** (self.annual_trading_days / max(trading_days, 1)) - 1
+        annualized_factor = self.annual_trading_days / max(trading_days, 1)
+        base = 1.0 + total_return
+        annual_return = base ** annualized_factor - 1.0 if base > 0 else -1.0
         abs_mdd = abs(min_dd) if min_dd < 0 else 0
         calmar = float(annual_return / abs_mdd) if abs_mdd > 1e-12 else (float("inf") if annual_return > 0 else 0.0)
 

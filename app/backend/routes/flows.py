@@ -40,7 +40,7 @@ async def create_flow(request: FlowCreateRequest, db: Session = Depends(get_db))
             is_template=request.is_template,
             tags=request.tags
         )
-        return FlowResponse.from_orm(flow)
+        return FlowResponse.model_validate(flow)
     except Exception as e:
         logger.exception("Failed to create flow")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -58,7 +58,7 @@ async def get_flows(include_templates: bool = True, db: Session = Depends(get_db
     try:
         repo = FlowRepository(db)
         flows = repo.get_all_flows(include_templates=include_templates)
-        return [FlowSummaryResponse.from_orm(flow) for flow in flows]
+        return [FlowSummaryResponse.model_validate(flow) for flow in flows]
     except Exception as e:
         logger.exception("Failed to retrieve flows")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -79,7 +79,7 @@ async def get_flow(flow_id: int, db: Session = Depends(get_db)):
         flow = repo.get_flow_by_id(flow_id)
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
-        return FlowResponse.from_orm(flow)
+        return FlowResponse.model_validate(flow)
     except HTTPException:
         raise
     except Exception as e:
@@ -112,7 +112,7 @@ async def update_flow(flow_id: int, request: FlowUpdateRequest, db: Session = De
         )
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
-        return FlowResponse.from_orm(flow)
+        return FlowResponse.model_validate(flow)
     except HTTPException:
         raise
     except Exception as e:
@@ -122,6 +122,7 @@ async def update_flow(flow_id: int, request: FlowUpdateRequest, db: Session = De
 
 @router.delete(
     "/{flow_id}",
+    status_code=204,
     responses={
         204: {"description": "Flow deleted successfully"},
         404: {"model": ErrorResponse, "description": "Flow not found"},
@@ -135,7 +136,6 @@ async def delete_flow(flow_id: int, db: Session = Depends(get_db)):
         success = repo.delete_flow(flow_id)
         if not success:
             raise HTTPException(status_code=404, detail="Flow not found")
-        return {"message": "Flow deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:
@@ -158,7 +158,7 @@ async def duplicate_flow(flow_id: int, new_name: str = None, db: Session = Depen
         flow = repo.duplicate_flow(flow_id, new_name)
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
-        return FlowResponse.from_orm(flow)
+        return FlowResponse.model_validate(flow)
     except HTTPException:
         raise
     except Exception as e:
@@ -178,7 +178,7 @@ async def search_flows(name: str, db: Session = Depends(get_db)):
     try:
         repo = FlowRepository(db)
         flows = repo.get_flows_by_name(name)
-        return [FlowSummaryResponse.from_orm(flow) for flow in flows]
+        return [FlowSummaryResponse.model_validate(flow) for flow in flows]
     except Exception as e:
         logger.exception("Failed to search flows")
         raise HTTPException(status_code=500, detail="Internal server error") 

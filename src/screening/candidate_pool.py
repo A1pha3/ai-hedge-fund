@@ -651,7 +651,8 @@ def _get_avg_amount_20d_map(pro, ts_codes: list[str], trade_date: str, lookback_
         try:
             df = _cached_tushare_dataframe_call(pro, "daily", trade_date=open_date, fields="ts_code,amount")
         except Exception:
-            return {}
+            # GAMMA-006: continue to next date instead of aborting entire batch
+            continue
         if df is None or df.empty:
             continue
         filtered = df[df["ts_code"].isin(target_codes)]

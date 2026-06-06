@@ -40,8 +40,10 @@ class FlowRepository:
     
     def get_flows_by_name(self, name: str) -> List[HedgeFundFlow]:
         """Search flows by name (case-insensitive partial match)"""
+        # Escape LIKE wildcards in user input to prevent pattern injection
+        escaped = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return self.db.query(HedgeFundFlow).filter(
-            HedgeFundFlow.name.ilike(f"%{name}%")
+            HedgeFundFlow.name.ilike(f"%{escaped}%", escape="\\")
         ).order_by(HedgeFundFlow.updated_at.desc()).all()
     
     def update_flow(self, flow_id: int, name: str = None, description: str = None,

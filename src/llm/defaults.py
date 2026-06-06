@@ -55,15 +55,11 @@ def _read_env(*names: str) -> str | None:
 
 
 def _ensure_default_env_loaded() -> None:
-    sentinel_names = set(_MODEL_NAME_ENV_VARS + _MODEL_PROVIDER_ENV_VARS)
-
-    if os.getenv("PYTEST_CURRENT_TEST"):
-        sentinel_names.update(_API_KEY_ENV_VARS)
-
-    if any(os.getenv(name) for name in sentinel_names):
-        return
-
-    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
+    # Always load .env so that LLM_DEFAULT_MODEL_* variables are available even when
+    # API key sentinels already exist in the shell environment (e.g. MINIMAX_API_KEY exported).
+    # If *any* sentinel (model config vars OR API keys) is already set, this is a no-op
+    # because override=False preserves existing values.
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 
 
 def normalize_provider_name(provider_name: str | None) -> str:

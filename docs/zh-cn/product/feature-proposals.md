@@ -1,6 +1,6 @@
 # 特性提案 (Feature Proposals)
 
-> 最近更新: 2026-06-05 (补充 5.x 优化建议 + 6.x 新功能提案 + 7.x 合并路线图)
+> 最近更新: 2026-06-06 (第三轮策略团队审查: 17 bug 修复 + NaN/None 系统性模式分析)
 > 目标: 提升产品易用性, 让用户在 30 天投资窗口内更高效地找到最有价值的股票
 
 ## 0. 方法论与范围
@@ -135,7 +135,7 @@
 
 ## 2. 待新增功能 (Add new)
 
-### 2.1 30 天期望收益 / 风险预算 / 胜率三联卡片  ✅ DONE 2026-06-09
+### 2.1 30 天期望收益 / 风险预算 / 胜率三联卡片  ✅ DONE 2026-06-09 / 2026-06-06
 - **现状**: `src/research/artifacts.py` 已经把 `risk_budget_ratio`、
   `expected_edge` 等字段写入 artifact, 但当前没有任何模块把"过去 60 日该票
   在当前策略下的历史胜率 / 期望收益 / 30 天最大可能回撤"算出来。
@@ -154,11 +154,15 @@
   §0 "目标函数: Sortino Ratio 最大化" 在单票层面的体现。
 - **估算工作量**: M (3-5 天)
 - **优先级**: P0
-- **实施状态** (2026-06-09): 后端 `compute_stock_history_expectation()` +
-  `StockHistoryExpectation` dataclass 已实现并通过 10 个单元测试。位于
-  `src/portfolio/stock_history_expectation.py`, 测试于
-  `tests/portfolio/test_stock_history_expectation.py`。前端 `ExpectationCard`
-  组件待实施 (见 1.1 路线图)。
+- **实施状态**:
+  - 2026-06-09: 后端 `compute_stock_history_expectation()` +
+    `StockHistoryExpectation` dataclass 已实现并通过 10 个单元测试。位于
+    `src/portfolio/stock_history_expectation.py`, 测试于
+    `tests/portfolio/test_stock_history_expectation.py`。
+  - 2026-06-06: 前端 `ExpectationCard` 组件完成并集成到
+    `InvestmentReportDialog` (新增 `app/frontend/src/components/expectation-card.tsx`
+    + 5 个 vitest 用例，集成进 dialog 30D Empirical Expectation section)。
+    86/86 前端测试通过。
 
 > 来源: `institutional_multi_strategy_framework_v1.4.md` §0 / §7.1 / §8.2,
 > `2026-04-19-backtesting-engine-refactor.md` 已为 backtest 引擎搭好骨架。
@@ -217,6 +221,14 @@
   落到 UI, 让"回测 vs 实盘偏差"首次可视化。
 - **估算工作量**: L (1-2 周)
 - **优先级**: P2
+- **实施状态** (2026-06-06): NEW-B 看板组件已实现 ——
+  `app/frontend/src/components/lookback-audit-panel.tsx` 调用现有
+  `GET /research/lookback-audit` API (后端 `app/backend/routes/research.py`),
+  渲染 hit rate / avg return / best-worst-median 4 个数字 + per-ticker
+  table (rank / score / entry-exit 价格 / 收益 / 最大回撤 / 数据状态),
+  支持 audit date + days + top_n 三个参数, 6 个 vitest 用例覆盖加载 / 重载 /
+  错误 / 空状态 / 颜色规则。92/92 前端测试通过。后续可作为
+  "Confirm Conditions Replay" tab 的骨架 (P2 未实施)。
 
 > 来源: `institutional_multi_strategy_framework_v1.4.md` §5.2 注释 +
   `2026-04-19-backtesting-engine-refactor.md` 暗示的回放分离方向。
@@ -237,6 +249,20 @@
   风险。
 - **估算工作量**: S (1-2 天)
 - **优先级**: P2
+- **实施状态** (2026-06-06): 后端 + 前端 + 测试全部完成。
+  - 新增 `app/backend/routes/admin_audit.py` (250+ 行), 暴露:
+    - `GET /admin/audit-log?since=&limit=` — 进程内 1000 条环形缓冲 (admin only)
+    - `POST /admin/revoke-session/{user_id}` — 通过 `user.token_version++` 撤销所有 JWT
+    - `GET /admin/users` — 列出所有用户 (admin only)
+    - `POST /admin/users/{user_id}/toggle-active` — 启用 / 禁用用户
+  - 路由已注册到 `app/backend/routes/__init__.py`, 端点级 `require_admin` 校验。
+  - 防止自锁定: revoke/toggle 都拒绝 `user_id == admin.id`。
+  - 前端 `app/frontend/src/pages/AdminPage.tsx` (270+ 行) ——
+    用户表 + 操作按钮 (revoke / enable / disable) + 审计事件表,
+    自动调用 `/auth/me` 检测当前管理员身份以禁用 self-action 按钮。
+  - 前端 `app/frontend/src/services/admin-api.ts` — 类型化的 4 个 API 包装。
+  - 测试: 12 个 pytest (后端) + 8 个 vitest (前端) 全部通过。
+  - 100/100 前端测试 + 101/101 backend 测试通过。
 
 > 来源: `auth_design.md` §1.3 设计原则 + §7 安全设计。
 
@@ -253,6 +279,10 @@
 - **替代方案**: 保留 v1.2.1 与 v1.3 作为历史快照, 其它移到 `docs/zh-cn/product/
   archive/` 目录; `stock_selection_mvp_design_v0.md` 直接删除。
 - **风险**: 0 — 全部是产品文档, 不影响代码。
+- **实施状态** (2026-06-06): ✅ 已完成。`v1.0.md` / `v1.1.md` / `v1.2.1.md` /
+  `v1.3.md` 当前只剩 `v1.2.1` 与 `v1.3` (符合"保留历史快照"原则);
+  `stock_selection_mvp_design_v0.md` 已不存在 (符合"直接删除"原则)。
+  无需进一步操作。
 
 ### 3.2 早期 P0 baseline / 边界 quarantine 一批 BTST 实验脚本
 - **位置**: `scripts/_p0_baseline_stats.py` 28KB + `scripts/analyze_btst_5d_15pct_*.py`
@@ -264,6 +294,14 @@
 - **替代方案**: 移到 `scripts/archive/2026Q2_baseline/` 子目录, README
   说明"实验性脚本, 不再维护, 仅供复盘"。
 - **风险**: 低 — 仅影响命令行, 不影响 BTST 文档流或回测引擎。
+- **实施状态** (2026-06-06): ✅ 部分完成 (软归档)。
+  - 创建 `scripts/archive/2026Q2_baseline/README.md` 说明归档范围 + 替代方案。
+  - `scripts/_p0_baseline_stats.py` 顶部新增 `# Status: deprecated` 标记 (grep 可发现)。
+  - 19 个 `analyze_btst_5d_15pct_*.py` 脚本**仍留在 `scripts/` 根目录** —
+    它们被 19 个对应单元测试 (`tests/scripts/test_*.py`) 引用, 物理移入需要同步
+    更新测试 import 路径。`scripts/README.md` §5 / §8 已标记这些为
+    "⚠️ 大多已废弃" / "⚠️ 一次性" + 提供 `archive/2026Q2_baseline/README.md`
+    双向链接。完整物理归档命令已写入 archive README, 需后续团队评估迁移成本。
 
 ### 3.3 `app/backend/AGENTS.md` 标注的 "No auth" 警告
 - **位置**: `app/backend/AGENTS.md` 中 "No auth — All backend endpoints public"。
@@ -273,6 +311,13 @@
 - **替代方案**: 把这行更新为 "Auth required — see `app/backend/auth/`
   + `docs/zh-cn/product/auth_design.md` (v1.0 已实现, v1.1 规划中)"。
 - **风险**: 0 — 文案修改, 不会改任何代码行为。
+- **实施状态** (2026-06-06): ✅ 已完成。`app/backend/AGENTS.md` 当前在
+  CONVENTIONS 一节明确写出 "**JWT authentication** — all endpoints require
+  a valid JWT bearer token (except `/auth/login`, `/auth/register`).
+  Roles: `admin`, `writer`, `viewer`. API-key gating available on selected
+  routes. Set `AUTH_DISABLED=true` (dev only) to bypass auth. See
+  `app/backend/auth/` for implementation and `docs/zh-cn/product/auth_design.md`
+  for design rationale." — "No auth" 字样已完全消失。无需进一步操作。
 
 ---
 
@@ -568,6 +613,18 @@
 - **预期收益**: 让 LLM 成本从"月底看账单才知道"变成"每次运行后可见"。
 - **估算工作量**: M (3-5 天)
 - **优先级**: P2
+- **实施状态** (2026-06-06): 后端 + 前端 + 测试全部完成。
+  - 后端 `app/backend/routes/llm_metrics.py` 扩展:
+    - 新增 `_estimate_cost_usd()` 按 model_name 子串匹配每 1K 字符的近似 USD 成本 (12 个模型族: gpt-4o / claude-3-opus / claude-3-5-sonnet / deepseek / qwen / gemini 等)
+    - 新增 per-provider 聚合 (含 error_rate / p95 / estimated_cost_usd)
+    - 新增 daily_provider 热力图矩阵 (date × provider → error_rate / calls / cost)
+    - 新增 `top_agents_by_cost` (top 10) / `top_providers_by_latency` (top 5)
+    - 新增 `cost_savings_suggestions` —— 单次调用成本 ≥ 2x 中位数的 agent 自动列入
+  - 前端 `app/frontend/src/components/settings/llm-metrics.tsx` 扩展:
+    - 4 个新卡片: provider cost 柱状图、top-5 慢 provider、top-10 贵 agent、cost-savings 建议 (amber 警告样式)
+    - 1 个新表格: provider × day 错误率热力图 (绿/橙/红 3 色阈值)
+  - 测试: 11 个 pytest (后端) + 7 个 vitest (前端) 全部通过。
+  - 107/107 前端 + 127/127 backend 测试通过。
 
 > 来源: 代码审查 `src/monitoring/llm_metrics.py`, `scripts/summarize_llm_metrics.py`。
 
@@ -683,3 +740,155 @@
 | **P1** | 5.1 修正 | 缓存键增加 provider | S |
 | **P1** | 2.2 修正 | 筛选 Digest 脚本实现 | M |
 | **P1** | 3.1~3.3 修正 | 文档/脚本归档清理 | S |
+
+---
+
+## 9. 2026-06-06 第二轮策略研究团队审查更新
+
+> alpha/beta/gamma 三团队进行第二轮全量代码审查，重点修复测试失败和隐含 bug。
+> 本轮共发现并修复 20 个 bug（1270+ 测试通过），清理 1 个孤立测试文件。
+
+### 9.1 已验证完成的条目 (8.4 部分条目已由前轮完成)
+
+| 条目 | 验证结果 | 说明 |
+|------|----------|------|
+| OPT-A 风控死代码 | ✅ 已完成 | `evaluate_portfolio_risk_guardrails` 已删除，仅留 REF-001 注释 |
+| OPT-B 回测盈亏 | ✅ 已完成 | `apply_long_buy`/`apply_long_sell` 正确将佣金/印花税计入成本基础 |
+| NEW-A 一键全流程 | ✅ 已完成 | `--screen-only`、`--auto`、`--pipeline` 均已实现 |
+| 5.1 缓存键 provider | ✅ 已完成 | `_make_key` 支持 `provider` 参数，格式 `{prefix}:{provider}:{identifier}` |
+
+### 9.2 仍待实现的条目
+
+| 条目 | 状态 | 优先级 |
+|------|------|--------|
+| **OPT-C ExpectationCard 前端** | ✅ 前端组件完成 (`app/frontend/src/components/expectation-card.tsx` + 集成到 `investment-report-dialog.tsx`)；后端 `stock_history_expectation.py` 已就绪但尚未暴露 API | P0 |
+| **NEW-B 30 天回顾看板前端** | ✅ 完成 (`app/frontend/src/components/lookback-audit-panel.tsx` + `services/lookback-audit-api.ts` + 6 个 vitest 用例) — 调用现有 `GET /research/lookback-audit` 后端 | P0 |
+| **2.2 筛选 Digest 脚本** | ✅ 已实现 (`scripts/aggregate_screening_daily_digest.py` + 15 个单元测试) | P1 |
+| **3.1~3.3 文档/脚本归档** | ✅ 软归档完成 (3.1 + 3.3 已完全清理; 3.2 创建 `scripts/archive/2026Q2_baseline/README.md` + Status 标记, 19 个脚本待物理迁移时同步更新测试 import) | P1 |
+| **2.5 Admin 审计 + 会话撤销** | ✅ 完成 (`app/backend/routes/admin_audit.py` + `app/frontend/src/pages/AdminPage.tsx` + `services/admin-api.ts` + 12 pytest + 8 vitest) | P2 |
+| **6.4 LLM 调用成本热力图面板** | ✅ 完成 (`app/backend/routes/llm_metrics.py` 扩展 per-provider/cost + `llm-metrics.tsx` 4 个新面板 + 11 pytest + 7 vitest) | P2 |
+| **2.3 早盘"取消 / 减仓" 一键模拟器** | ❌ L-sized, 后端 / 前端均未实施 | P2 |
+| **2.4 历史回放中的"信号 vs 实际成交"对比层** | ❌ P2 未实施 (NEW-B 已作为骨架) | P2 |
+| **6.3 组合归因面板** | ❌ L-sized, 后端 + 前端均未实施 (后端有 `src/portfolio/return_attribution.py` + `/api/portfolio/attribution` 路由, 但前端无 `AttributionPage.tsx`) | P2 |
+
+### 9.3 本轮 Bug 修复清单 (20 项)
+
+#### Alpha (执行引擎 — 2 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 1 | `src/execution/daily_pipeline.py` | 冻结计划回放时 `short_trade_target_profile_config` 被默认配置污染（原始测试失败根因） | P0 |
+| 2 | `src/llm/defaults.py` | Shell 环境有 API key sentinel 时 `.env` 不加载，导致 `LLM_DEFAULT_MODEL_*` 丢失 | P0 |
+
+#### Beta (后端 + 数据层 + 工具 — 11 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 3 | `app/backend/main.py` | `@app.on_event("startup")` 迁移为 `lifespan` 上下文管理器 | P1 |
+| 4 | `app/backend/models/schemas.py` | 4 处 Pydantic `class Config` → `model_config = ConfigDict(...)` | P1 |
+| 5 | `app/backend/routes/flows.py` + `flow_runs.py` | 7 处 `from_orm()` → `model_validate()` | P1 |
+| 6 | `app/backend/database/connection.py` | `declarative_base` 导入路径从 `sqlalchemy.ext.declarative` 迁移 | P1 |
+| 7 | `app/backend/repositories/flow_run_repository.py` | `datetime.utcnow()` → `datetime.now(timezone.utc)` | P1 |
+| 8 | `app/backend/repositories/api_key_repository.py` | `func.now()` 赋值改为 Python `datetime`（4 处） | P1 |
+| 9 | `app/backend/routes/storage.py` + `ollama.py` + `language_models.py` | 内部错误信息泄露修复（12 处） | P1 |
+| 10 | `app/backend/routes/portfolio_simulator.py` | `apply_adjustments` 双重计算修复 | P0 |
+| 11 | `app/backend/repositories/flow_repository.py` | LIKE 通配符注入修复 | P1 |
+| 12 | `src/tools/api.py` + helpers | `_make_api_request` 返回 None 时 `.status_code` 崩溃修复（5 处） | P0 |
+| 13 | `src/tools/api.py` | `datetime.now()` 无时区 → `datetime.now(timezone.utc)` | P1 |
+
+#### Gamma (选股 + 组合 + 研究 — 7 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 14 | `src/screening/strategy_scorer.py` | 不可解析的新闻日期视为"今天"→ 改为 9999（最大陈旧度） | P0 |
+| 15 | `src/screening/strategy_scorer.py` | 事件新鲜度日期同上 | P0 |
+| 16 | `src/screening/strategy_scorer_trend.py` | 供应压力分母硬编码 60 → `len(prior_closes)` | P1 |
+| 17 | `src/screening/strategy_scorer_fundamental.py` | 负 PE 产生无意义"便宜"看多信号 → 拒绝负值 | P0 |
+| 18 | `src/screening/candidate_pool.py` | 单个 API 异常导致全部流动性数据归零 → `continue` | P0 |
+| 19 | `src/research/lookback_audit.py` | 偶数长度列表中位数计算偏高 → 正确双元素均值 | P1 |
+| 20 | `src/portfolio/position_calculator.py` | 零金额计划浪费交易限额槽位 → 提前跳过 | P1 |
+
+### 9.4 清理项
+
+- 删除孤立测试文件 `tests/scripts/test_analyze_btst_5d_15pct_boundary_missing_six_core_keys_script.py`（引用已不存在的脚本）
+
+### 9.5 下一步行动
+
+**最高优先级 P0 未完成项:**
+
+| 优先级 | 编号 | 功能 | 工作量 | 类型 |
+|--------|------|------|--------|------|
+| **P0** | OPT-C | ExpectationCard 前端渲染 | S | 前端 |
+| **P0** | NEW-B | 30 天回顾看板前端 | S | 前端 |
+| **P1** | 2.2 | 筛选 Digest 脚本实现 | M | 后端 Python |
+| **P1** | 3.1~3.3 | 文档/脚本归档清理 | S | 文档整理 |
+
+---
+
+## 10. 2026-06-06 第三轮策略研究团队审查更新
+
+> alpha/beta/gamma 三团队第三轮全量代码审查, 聚焦于 NaN 传播、隐含类型错误、
+> API 合约不一致等深层 bug。本轮共发现并修复 17 个 bug (1003 回归测试通过)。
+
+### 10.1 本轮 Bug 修复清单 (17 项)
+
+#### Alpha — 因子 / 评分 / 回测 (6 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 1 | `strategy_scorer_trend.py:288` | `_log_regression_slope` NaN 通过 `<= 0.0` 守卫 → NaN 污染 `attack_slope_258` | P0 |
+| 2 | `strategy_scorer_trend.py:307` | `_compute_breakout_quality_20_atr` NaN `prev_high`/`close` → NaN `breakout_quality` | P0 |
+| 3 | `strategy_scorer_trend.py:327` | `_compute_close_structure_components` NaN OHLC → NaN `close_structure` + `retention_proxy` | P0 |
+| 4 | `strategy_scorer_trend.py:380` | `_compute_amount_ratio_5` NaN amount/volume → NaN ratio | P1 |
+| 5 | `strategy_scorer_trend.py:427` | `_compute_close_return` NaN close → NaN `ret_2d`/`ret_5d` | P1 |
+| 6 | `backtesting/metrics.py:81` | `(negative) ** fraction` 杠杆组合总收益 < -1 时产生 NaN → NaN `calmar_ratio` | P0 |
+
+#### Beta — 后端 / API / 数据层 (7 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 7 | `schemas.py:165` | `get_start_date()` 当 `end_date=None` 时 `strptime(None)` 崩溃 | P0 |
+| 8 | `api_insider_trade_helpers.py:56` | `min(trade.filing_date ...)` 含 None 时 TypeError 崩溃 | P0 |
+| 9 | `api_company_news_helpers.py:63` | `min(news.date ...)` 含 None 时 TypeError 崩溃 | P0 |
+| 10 | `routes/flows.py:131` | DELETE 返回 HTTP 200+JSON 但 OpenAPI 声明 204 → 合约不一致 | P1 |
+| 11 | `routes/flow_runs.py:264` | DELETE 返回 HTTP 200+JSON 但 OpenAPI 声明 204 | P1 |
+| 12 | `routes/flow_runs.py:299` | DELETE 返回 HTTP 200+JSON 但 OpenAPI 声明 204 | P1 |
+| 13 | `flow_run_repository.py:126` | `_get_next_run_number` 并发竞态 → 相同 `run_number` | P1 |
+
+#### Gamma — 组合 / 风控 / 选股 (3 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 14 | `position_calculator.py:127` | `float(NaN or 0.0)` 返回 NaN (NaN is truthy) → 流动性约束被静默绕过 → 超额仓位 | P0 |
+| 15 | `market_state_helpers.py:134` | API 失败返回 `total_volume=0` 被视为"正常量能" → 全额仓位 | P0 |
+| 16 | `return_attribution.py:130,163` | 负组合市值 (`<=0` 改 `==0`) → Brinson 归因权重反转 | P1 |
+
+#### 主代理修复 (1 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 17 | `test_llm_models.py` | `_ensure_default_env_loaded` 从 .env 恢复被 monkeypatch 删除的 `LLM_DEFAULT_MODEL_NAME` → 测试误判 | P1 |
+
+### 10.2 Bug 模式分析
+
+本轮 17 个 bug 呈现两个系统性模式:
+
+1. **NaN 传播 (6/17)**: Python 中 `float('nan') <= 0.0` 返回 `False`, `float('nan') or 0.0` 返回 NaN。
+   数据管线中任何 NaN 值 (来自 API 缺失字段、pandas 空行) 能穿透 `<= 0.0` 和 `or 0.0` 守卫,
+   静默污染下游所有因子评分。修复方式统一为 `math.isnan()` + `math.isfinite()` 显式检查。
+
+2. **None 传播 (3/17)**: `min()` / `strptime()` 等内置函数遇到 `None` 直接抛 TypeError,
+   但上游 `FinancialMetrics` / `CompanyNews` / `InsiderTrade` 的字段均为 `Optional`。
+   修复方式统一为在 generator 表达式中添加 `if field is not None` 过滤。
+
+### 10.3 下一步行动
+
+**所有 P0/P1 bug 已修复, 1003 回归测试全部通过。**
+
+剩余未实施的功能 (均为 P2, 可在下一轮迭代中完成):
+
+| 优先级 | 编号 | 功能 | 工作量 | 类型 |
+|--------|------|------|--------|------|
+| **P2** | 2.3 | 早盘"取消/减仓"一键模拟器 | L | 前后端 |
+| **P2** | 2.4 | 信号 vs 实际成交对比层 | L | 前后端 |
+| **P2** | 6.3 | 组合归因面板前端 `AttributionPage.tsx` | L | 前端 |

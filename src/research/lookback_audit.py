@@ -325,7 +325,15 @@ def run_lookback_audit(
         returns = [r.return_pct for r in ok_results if r.return_pct is not None]
         if returns:
             summary["avg_return_pct"] = round(sum(returns) / len(returns), 4)
-            summary["median_return_pct"] = round(sorted(returns)[len(returns) // 2], 4)
+            sorted_returns = sorted(returns)
+            n = len(sorted_returns)
+            if n % 2 == 1:
+                median_return = sorted_returns[n // 2]
+            else:
+                # GAMMA-007: correct median for even-length lists — average
+                # of the two middle values, not just the upper-middle element.
+                median_return = (sorted_returns[n // 2 - 1] + sorted_returns[n // 2]) / 2.0
+            summary["median_return_pct"] = round(median_return, 4)
             summary["hit_rate"] = round(sum(1 for r in returns if r > 0) / len(returns), 4)
             summary["best_return_pct"] = round(max(returns), 4)
             summary["worst_return_pct"] = round(min(returns), 4)

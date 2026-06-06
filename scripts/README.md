@@ -58,6 +58,7 @@
 | `run_short_trade_boundary_variant_validation.py` | 短交易边界变体验证 | 验证 |
 | `run_targeted_short_trade_boundary_experiment_pack.py` | 定向短交易边界实验包 | 实验 |
 | `run_lookback_audit.py` | Lookback 窗口审计 | 审计 |
+| `aggregate_screening_daily_digest.py` | **筛选 Daily Digest** (Feature 2.2): 聚合 N 日候选池/评分,输出 CSV/JSON/MD | `python scripts/aggregate_screening_daily_digest.py --latest-30-days` |
 | `batch_run_hedge_fund.py` | 批量跑 hedge fund 分析 (从 Markdown 读股票列表) | `python scripts/batch_run_hedge_fund.py` |
 
 ### Shell 入口
@@ -628,4 +629,4 @@ source .env
 
 ---
 
-**最后更新**: 2026-06-05 (Feature 5.6 实现)
+**最后更新**: 2026-06-06 (策略研究团队第二轮审计 + 2.2 摘要脚本 + 新增目录条目)

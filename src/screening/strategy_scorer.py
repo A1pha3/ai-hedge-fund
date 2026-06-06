@@ -262,7 +262,9 @@ def _build_news_article_metrics(
 
 def _resolve_news_article_days_old(news_date: str, trade_dt: datetime) -> int:
     item_dt = _safe_date(news_date)
-    return (trade_dt - item_dt).days if item_dt else 0
+    # GAMMA-001: unparseable dates should be treated as very old (stale),
+    # not as "today" (which would give maximum freshness weight).
+    return max((trade_dt - item_dt).days, 0) if item_dt else 9999
 
 
 def _resolve_news_direction_and_strength(pos_hits: int, neg_hits: int) -> tuple[int, int]:
@@ -383,7 +385,9 @@ def _build_event_freshness_metrics(snapshot: EventFreshnessSnapshot) -> dict[str
 def _resolve_event_freshness_days_old(news_date: str, trade_date: str) -> int:
     trade_dt = datetime.strptime(trade_date, "%Y%m%d")
     latest_dt = _safe_date(news_date)
-    return (trade_dt - latest_dt).days if latest_dt else 0
+    # GAMMA-002: unparseable dates should be treated as very old (stale),
+    # not as "today" (which would give maximum freshness weight).
+    return max((trade_dt - latest_dt).days, 0) if latest_dt else 9999
 
 
 def _count_event_keyword_hits(news_item: CompanyNews) -> tuple[int, int]:

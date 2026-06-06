@@ -1,9 +1,13 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.backend.database.models import ApiKey
+
+
+def _utcnow_naive() -> datetime:
+    """Return current UTC time as naive datetime for SQLite compatibility."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class ApiKeyRepository:
@@ -28,7 +32,7 @@ class ApiKeyRepository:
             existing_key.key_value = key_value
             existing_key.description = description
             existing_key.is_active = is_active
-            existing_key.updated_at = func.now()
+            existing_key.updated_at = _utcnow_naive()
             self.db.commit()
             self.db.refresh(existing_key)
             return existing_key
@@ -78,7 +82,7 @@ class ApiKeyRepository:
         if is_active is not None:
             api_key.is_active = is_active
         
-        api_key.updated_at = func.now()
+        api_key.updated_at = _utcnow_naive()
         self.db.commit()
         self.db.refresh(api_key)
         return api_key
@@ -100,7 +104,7 @@ class ApiKeyRepository:
             return None
 
         api_key.is_active = False
-        api_key.updated_at = func.now()
+        api_key.updated_at = _utcnow_naive()
         self.db.commit()
         self.db.refresh(api_key)
         return api_key
@@ -114,7 +118,7 @@ class ApiKeyRepository:
         if not api_key:
             return False
         
-        api_key.last_used = func.now()
+        api_key.last_used = _utcnow_naive()
         self.db.commit()
         return True
 

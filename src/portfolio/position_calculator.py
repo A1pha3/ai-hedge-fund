@@ -124,7 +124,12 @@ def calculate_position(
         vol_limit = max(vol_limit, min_lot_amount)
     cash_limit = available_cash
     # CandidatePool stores avg_volume_20d in wan-CNY from Tushare amount fields.
+    # GAMMA-009: NaN is truthy in Python, so float(NaN or 0.0) yields NaN
+    # rather than 0.0, allowing NaN to propagate through liq_limit and silently
+    # bypass the liquidity constraint (min() never selects NaN as binding).
     safe_avg_volume_20d = float(avg_volume_20d or 0.0)
+    if not math.isfinite(safe_avg_volume_20d):
+        safe_avg_volume_20d = 0.0
     liq_limit = safe_avg_volume_20d * AVG_VOLUME_20D_AMOUNT_UNIT * 0.02
     industry_limit = industry_remaining_quota
 
@@ -180,6 +185,9 @@ def enforce_daily_trade_limit(plans: list[PositionPlan], portfolio_nav: float, l
     ):
         if len(selected) >= max_new_positions:
             break
+        # GAMMA-008: skip zero-amount plans (no meaningful position to add)
+        if plan.amount <= 0:
+            continue
         if consumed + plan.amount > allowed_amount:
             continue
         selected.append(plan)

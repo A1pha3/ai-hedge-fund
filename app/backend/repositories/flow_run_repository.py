@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 from app.backend.database.models import HedgeFundFlowRun
@@ -81,9 +81,9 @@ class FlowRunRepository:
             
             # Update timing based on status
             if status == FlowRunStatus.IN_PROGRESS and not flow_run.started_at:
-                flow_run.started_at = datetime.utcnow()
+                flow_run.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
             elif status in [FlowRunStatus.COMPLETE, FlowRunStatus.ERROR] and not flow_run.completed_at:
-                flow_run.completed_at = datetime.utcnow()
+                flow_run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         
         # Update results and error message
         if results is not None:
@@ -124,10 +124,20 @@ class FlowRunRepository:
         )
     
     def _get_next_run_number(self, flow_id: int) -> int:
-        """Get the next run number for a flow"""
-        max_run_number = (
+        """Get the next run number for a flow.
+        
+        Uses ``with_for_update`` when available (PostgreSQL/MySQL) to prevent
+        race conditions under concurrent requests.  For SQLite, writes are
+        already serialised at the connection level.
+        """
+        query = (
             self.db.query(func.max(HedgeFundFlowRun.run_number))
             .filter(HedgeFundFlowRun.flow_id == flow_id)
-            .scalar()
         )
+        try:
+            query = query.with_for_update()
+        except Exception:
+            # SQLite does not support FOR UPDATE; safe due to serialised writes
+            pass
+        max_run_number = query.scalar()
         return (max_run_number or 0) + 1 

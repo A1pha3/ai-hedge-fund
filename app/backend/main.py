@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -21,10 +23,6 @@ from app.backend.services.ollama_service import ollama_service
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AI Hedge Fund API", description="Backend API for AI Hedge Fund", version="0.1.0")
-
-# Initialize database tables (this is safe to run multiple times)
-Base.metadata.create_all(bind=engine)
 
 # Auto-initialize admin user if not exists
 def _auto_init_admin():
@@ -48,14 +46,50 @@ def _auto_init_admin():
             admin = User(username=ADMIN_USERNAME, password_hash=hash_password(default_password), role="admin", is_active=True)
             db.add(admin)
             db.commit()
-            logger.info(f"✓ Admin user '{ADMIN_USERNAME}' auto-created (change default password via CLI)")
+            logger.info(f"Admin user '{ADMIN_USERNAME}' auto-created (change default password via CLI)")
     except Exception as e:
         logger.warning(f"Could not auto-init admin: {e}")
     finally:
         if db:
             db.close()
 
-_auto_init_admin()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: startup and shutdown events."""
+    # --- Startup ---
+    _auto_init_admin()
+    Base.metadata.create_all(bind=engine)
+
+    try:
+        logger.info("Checking Ollama availability...")
+        status = await ollama_service.check_ollama_status()
+
+        if status["installed"]:
+            if status["running"]:
+                logger.info(f"Ollama is installed and running at {status['server_url']}")
+                if status["available_models"]:
+                    logger.info(f"Available models: {', '.join(status['available_models'])}")
+                else:
+                    logger.info("No models are currently downloaded")
+            else:
+                logger.info("Ollama is installed but not running")
+                logger.info("You can start it from the Settings page or manually with 'ollama serve'")
+        else:
+            logger.info("Ollama is not installed. Install it to use local models.")
+            logger.info("Visit https://ollama.com to download and install Ollama")
+
+    except Exception as e:
+        logger.warning(f"Could not check Ollama status: {e}")
+        logger.info("Ollama integration is available if you install it later")
+
+    yield  # Application is running
+
+    # --- Shutdown ---
+    pass
+
+
+app = FastAPI(title="AI Hedge Fund API", description="Backend API for AI Hedge Fund", version="0.1.0", lifespan=lifespan)
 
 # Configure CORS
 app.add_middleware(
@@ -85,28 +119,3 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 # Include all routes
 app.include_router(api_router)
-
-@app.on_event("startup")
-async def startup_event():
-    """Startup event to check Ollama availability."""
-    try:
-        logger.info("Checking Ollama availability...")
-        status = await ollama_service.check_ollama_status()
-        
-        if status["installed"]:
-            if status["running"]:
-                logger.info(f"✓ Ollama is installed and running at {status['server_url']}")
-                if status["available_models"]:
-                    logger.info(f"✓ Available models: {', '.join(status['available_models'])}")
-                else:
-                    logger.info("ℹ No models are currently downloaded")
-            else:
-                logger.info("ℹ Ollama is installed but not running")
-                logger.info("ℹ You can start it from the Settings page or manually with 'ollama serve'")
-        else:
-            logger.info("ℹ Ollama is not installed. Install it to use local models.")
-            logger.info("ℹ Visit https://ollama.com to download and install Ollama")
-            
-    except Exception as e:
-        logger.warning(f"Could not check Ollama status: {e}")
-        logger.info("ℹ Ollama integration is available if you install it later")

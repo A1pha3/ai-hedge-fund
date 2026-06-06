@@ -17,6 +17,7 @@ export interface LLMMetricsTotals {
   prompt_chars: number;
   response_chars: number;
   sessions_scanned: number;
+  estimated_cost_usd?: number;
 }
 
 export interface AgentMetrics {
@@ -29,6 +30,40 @@ export interface AgentMetrics {
   total_duration_ms: number;
   prompt_chars: number;
   response_chars: number;
+  estimated_cost_usd?: number;
+}
+
+export interface ProviderMetrics {
+  provider: string;
+  calls: number;
+  successes: number;
+  errors: number;
+  error_rate: number;
+  avg_duration_ms: number;
+  p95_duration_ms: number;
+  total_duration_ms: number;
+  estimated_cost_usd?: number;
+}
+
+export interface DailyProviderEntry {
+  provider: string;
+  calls: number;
+  errors: number;
+  error_rate: number;
+  estimated_cost_usd: number;
+}
+
+export interface DailyProviderAggregate {
+  date: string;
+  providers: DailyProviderEntry[];
+}
+
+export interface CostSavingsSuggestion {
+  agent_name: string;
+  current_cost_per_call: number;
+  median_cost_per_call: number;
+  potential_savings_pct: number;
+  calls: number;
 }
 
 export interface DailyMetrics {
@@ -37,12 +72,18 @@ export interface DailyMetrics {
   successes: number;
   avg_duration_ms: number;
   total_duration_ms: number;
+  estimated_cost_usd?: number;
 }
 
 export interface LLMMetricsSummary {
   totals: LLMMetricsTotals;
   agents: AgentMetrics[];
+  providers?: ProviderMetrics[];
   daily_trend: DailyMetrics[];
+  daily_provider?: DailyProviderAggregate[];
+  top_agents_by_cost?: AgentMetrics[];
+  top_providers_by_latency?: ProviderMetrics[];
+  cost_savings_suggestions?: CostSavingsSuggestion[];
   lookback_days: number;
 }
 

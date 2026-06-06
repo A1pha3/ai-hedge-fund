@@ -433,6 +433,8 @@ def test_default_model_config_requires_explicit_global_model_name(monkeypatch):
     monkeypatch.delenv("LLM_DEFAULT_MODEL_NAME", raising=False)
     monkeypatch.delenv("BACKTEST_MODEL_NAME", raising=False)
     monkeypatch.setenv("MINIMAX_MODEL", "MiniMax-M2.7")
+    # Prevent .env from re-populating LLM_DEFAULT_MODEL_NAME after we deleted it
+    monkeypatch.setattr(llm_defaults, "_ensure_default_env_loaded", lambda: None)
 
     with pytest.raises(llm_defaults.DefaultModelConfigurationError, match="默认模型配置不完整"):
         llm_defaults.get_default_model_config()

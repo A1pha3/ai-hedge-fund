@@ -57,7 +57,7 @@ async def create_flow_run(
             flow_id=flow_id,
             request_data=request.request_data
         )
-        return FlowRunResponse.from_orm(flow_run)
+        return FlowRunResponse.model_validate(flow_run)
     except HTTPException:
         raise
     except Exception as e:
@@ -90,7 +90,7 @@ async def get_flow_runs(
         # Get flow runs
         run_repo = FlowRunRepository(db)
         flow_runs = run_repo.get_flow_runs_by_flow_id(flow_id, limit=limit, offset=offset)
-        return [FlowRunSummaryResponse.from_orm(run) for run in flow_runs]
+        return [FlowRunSummaryResponse.model_validate(run) for run in flow_runs]
     except HTTPException:
         raise
     except Exception as e:
@@ -118,7 +118,7 @@ async def get_active_flow_run(flow_id: int, db: Session = Depends(get_db)):
         # Get active flow run
         run_repo = FlowRunRepository(db)
         active_run = run_repo.get_active_flow_run(flow_id)
-        return FlowRunResponse.from_orm(active_run) if active_run else None
+        return FlowRunResponse.model_validate(active_run) if active_run else None
     except HTTPException:
         raise
     except Exception as e:
@@ -146,7 +146,7 @@ async def get_latest_flow_run(flow_id: int, db: Session = Depends(get_db)):
         # Get latest flow run
         run_repo = FlowRunRepository(db)
         latest_run = run_repo.get_latest_flow_run(flow_id)
-        return FlowRunResponse.from_orm(latest_run) if latest_run else None
+        return FlowRunResponse.model_validate(latest_run) if latest_run else None
     except HTTPException:
         raise
     except Exception as e:
@@ -206,7 +206,7 @@ async def get_flow_run(flow_id: int, run_id: int, db: Session = Depends(get_db))
         if not flow_run or flow_run.flow_id != flow_id:
             raise HTTPException(status_code=404, detail="Flow run not found")
         
-        return FlowRunResponse.from_orm(flow_run)
+        return FlowRunResponse.model_validate(flow_run)
     except HTTPException:
         raise
     except Exception as e:
@@ -253,7 +253,7 @@ async def update_flow_run(
         if not flow_run:
             raise HTTPException(status_code=404, detail="Flow run not found")
         
-        return FlowRunResponse.from_orm(flow_run)
+        return FlowRunResponse.model_validate(flow_run)
     except HTTPException:
         raise
     except Exception as e:
@@ -263,6 +263,7 @@ async def update_flow_run(
 
 @router.delete(
     "/{run_id}",
+    status_code=204,
     responses={
         204: {"description": "Flow run deleted successfully"},
         404: {"model": ErrorResponse, "description": "Flow or run not found"},
@@ -287,8 +288,6 @@ async def delete_flow_run(flow_id: int, run_id: int, db: Session = Depends(get_d
         success = run_repo.delete_flow_run(run_id)
         if not success:
             raise HTTPException(status_code=404, detail="Flow run not found")
-        
-        return {"message": "Flow run deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:
@@ -298,6 +297,7 @@ async def delete_flow_run(flow_id: int, run_id: int, db: Session = Depends(get_d
 
 @router.delete(
     "/",
+    status_code=204,
     responses={
         204: {"description": "All flow runs deleted successfully"},
         404: {"model": ErrorResponse, "description": "Flow not found"},
@@ -315,9 +315,7 @@ async def delete_all_flow_runs(flow_id: int, db: Session = Depends(get_db)):
         
         # Delete all flow runs
         run_repo = FlowRunRepository(db)
-        deleted_count = run_repo.delete_flow_runs_by_flow_id(flow_id)
-        
-        return {"message": f"Deleted {deleted_count} flow runs successfully"}
+        run_repo.delete_flow_runs_by_flow_id(flow_id)
     except HTTPException:
         raise
     except Exception as e:

@@ -1,6 +1,6 @@
 import re
 from datetime import datetime, timedelta
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import List, Optional, Dict, Any
 from src.llm.defaults import get_default_model_config
 from src.llm.models import ModelProvider
@@ -162,7 +162,8 @@ class HedgeFundRequest(BaseHedgeFundRequest):
         """Calculate start date if not provided"""
         if self.start_date:
             return self.start_date
-        return (datetime.strptime(self.end_date, "%Y-%m-%d") - timedelta(days=90)).strftime("%Y-%m-%d")
+        effective_end = self.end_date or datetime.now().strftime("%Y-%m-%d")
+        return (datetime.strptime(effective_end, "%Y-%m-%d") - timedelta(days=90)).strftime("%Y-%m-%d")
 
 
 # Flow-related schemas
@@ -201,8 +202,7 @@ class FlowResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FlowSummaryResponse(BaseModel):
@@ -215,11 +215,9 @@ class FlowSummaryResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
-# Flow Run schemas
 class FlowRunCreateRequest(BaseModel):
     """Request to create a new flow run"""
     request_data: Optional[Dict[str, Any]] = None
@@ -246,8 +244,7 @@ class FlowRunResponse(BaseModel):
     results: Optional[Dict[str, Any]]
     error_message: Optional[str]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FlowRunSummaryResponse(BaseModel):
@@ -261,8 +258,7 @@ class FlowRunSummaryResponse(BaseModel):
     completed_at: Optional[datetime]
     error_message: Optional[str]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # API Key schemas
@@ -293,8 +289,7 @@ class ApiKeyResponse(BaseModel):
     last_used: Optional[datetime]
     has_key: bool = True
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ApiKeySummaryResponse(BaseModel):
@@ -309,8 +304,7 @@ class ApiKeySummaryResponse(BaseModel):
     masked_key_value: Optional[str] = None
     has_key: bool = True  # Indicates if a key is set
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ApiKeyBulkUpdateRequest(BaseModel):

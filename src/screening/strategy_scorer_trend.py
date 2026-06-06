@@ -285,7 +285,7 @@ def _log_regression_slope(close: pd.Series, window: int) -> float:
     if len(close) < window or window < 2:
         return 0.0
     values = [float(value) for value in close.tail(window)]
-    if any(value <= 0.0 for value in values):
+    if any(math.isnan(value) or value <= 0.0 for value in values):
         return 0.0
     log_values = [math.log(value) for value in values]
     x_mean = (window - 1) / 2.0
@@ -306,6 +306,8 @@ def _compute_breakout_quality_20_atr(prices_df: pd.DataFrame) -> float:
         return 0.0
     prev_high = float(prices_df["high"].iloc[-21:-1].max())
     close = float(prices_df["close"].iloc[-1])
+    if math.isnan(prev_high) or math.isnan(close):
+        return 0.0
     return round((close - prev_high) / current_atr, 4)
 
 
@@ -323,6 +325,8 @@ def _compute_close_structure_components(prices_df: pd.DataFrame) -> tuple[float,
     low = float(prices_df["low"].iloc[-1])
     open_ = float(prices_df["open"].iloc[-1])
     close = float(prices_df["close"].iloc[-1])
+    if any(math.isnan(v) for v in (high, low, open_, close)):
+        return 0.0, 0.0
     trading_range = high - low
     if trading_range <= 0.0:
         return 0.0, 0.0
@@ -366,7 +370,9 @@ def _compute_supply_pressure_60(prices_df: pd.DataFrame) -> float:
         return 0.0
     upper_bound = 1.03 * current_close
     matches = ((prior_closes >= current_close) & (prior_closes <= upper_bound)).sum()
-    return round(float(matches) / 60.0, 4)
+    # GAMMA-003: divide by actual count of prior closes examined,
+    # not the hardcoded 60 — avoids undercounting when fewer than 60 bars exist.
+    return round(float(matches) / float(len(prior_closes)), 4)
 
 
 def _compute_amount_ratio_5(prices_df: pd.DataFrame) -> float:
@@ -375,7 +381,7 @@ def _compute_amount_ratio_5(prices_df: pd.DataFrame) -> float:
         return 0.0
     current_amount = float(prices_df[source_column].iloc[-1])
     amount_ma_5 = float(prices_df[source_column].tail(5).mean())
-    if amount_ma_5 <= 0.0:
+    if math.isnan(current_amount) or math.isnan(amount_ma_5) or amount_ma_5 <= 0.0:
         return 0.0
     return round(current_amount / amount_ma_5, 4)
 
@@ -422,7 +428,7 @@ def _compute_close_return(prices_df: pd.DataFrame, *, sessions: int) -> float:
         return 0.0
     current_close = float(prices_df["close"].iloc[-1])
     prior_close = float(prices_df["close"].iloc[-(sessions + 1)])
-    if prior_close <= 0.0:
+    if math.isnan(current_close) or math.isnan(prior_close) or prior_close <= 0.0:
         return 0.0
     return round((current_close / prior_close) - 1.0, 4)
 

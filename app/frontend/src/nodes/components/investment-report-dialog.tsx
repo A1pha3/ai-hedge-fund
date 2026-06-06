@@ -29,6 +29,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { type EdgeCardData, EdgeCard } from '@/components/edge-card';
+import {
+  type StockHistoryExpectationData,
+  ExpectationCard,
+} from '@/components/expectation-card';
 import { RiskMonitorPanel } from '@/components/risk-monitor-panel';
 import { AdjustmentSimulator } from '@/components/adjustment-simulator';
 import { BtstDecisionCardOnePagerTabs } from '@/nodes/components/btst/btst-decision-card-one-pager-tabs';
@@ -82,6 +86,19 @@ export function InvestmentReportDialog({
     () => (outputNodeData?.edge_data as Record<string, EdgeCardData>) || {},
     [outputNodeData],
   );
+
+  // P0 OPT-C: per-ticker 30-day empirical expectation (win rate / avg / worst).
+  // The backend (`src.portfolio.stock_history_expectation`) is already implemented
+  // and tested. When `outputNodeData.expectation_data` is provided by the backend
+  // we render one ExpectationCard per ticker; otherwise we skip the section to
+  // avoid implying a number that wasn't actually computed.
+  const expectationData: Record<string, StockHistoryExpectationData> = useMemo(
+    () =>
+      (outputNodeData?.expectation_data as Record<string, StockHistoryExpectationData>) ||
+      {},
+    [outputNodeData],
+  );
+  const hasExpectationData = Object.keys(expectationData).length > 0;
 
   // P0 1.4: BTST 决策卡 + ONE-PAGER 共享数据 (single source of truth)。
   // 同一份 BtstPanelData 同时供给两个视图，避免双消费入口产生数据漂移。
@@ -406,6 +423,30 @@ export function InvestmentReportDialog({
                     />
                   );
                 })}
+              </div>
+            </section>
+          )}
+
+          {/* P0 OPT-C: 30-Day Expectation Cards (empirical win rate / avg / worst).
+              Renders only when the backend supplied `expectation_data`. Each card
+              shows the historical win rate and best/worst/avg 30-day return for
+              the strategy, with a small-sample warning when n < 5. */}
+          {hasExpectationData && (
+            <section data-testid="expectation-section">
+              <h2 className="text-lg font-semibold mb-4">30D Empirical Expectation</h2>
+              <p className="text-sm text-muted-foreground mb-4">
+                过去 60 日内该票在当前策略下的历史实证 ——
+                胜率、期望收益、最坏 / 最好表现。样本 &lt; 5 时仅作参考。
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {sortedTickers
+                  .filter(ticker => expectationData[ticker] !== undefined)
+                  .map(ticker => (
+                    <ExpectationCard
+                      key={ticker}
+                      data={expectationData[ticker]}
+                    />
+                  ))}
               </div>
             </section>
           )}

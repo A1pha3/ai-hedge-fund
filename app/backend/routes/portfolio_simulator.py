@@ -459,10 +459,8 @@ def simulate_adjustment(req: SimulateAdjustmentRequest) -> SimulateAdjustmentRes
         adjustments=req.adjustments,
     )
 
-    # For "after" we still need to simulate the non-adjusted decisions
-    for ticker, decision in adj_decisions.items():
-        if ticker not in {a.ticker for a in req.adjustments}:
-            adj_cash += _simulate_decision(adj_positions, req.current_prices, adj_cash, ticker, decision)
+    # Note: apply_adjustments() already simulates non-adjusted decisions internally,
+    # so we do NOT re-simulate them here (that would double-count).
 
     after_metrics = _compute_risk_from_state(adj_positions, req.current_prices, adj_cash)
 

@@ -5,8 +5,10 @@ import {
   type LLMMetricsSummary,
   type AgentMetrics,
   type DailyMetrics,
+  type DailyProviderEntry,
 } from '@/services/llm-metrics-api';
 import { Activity, Clock, Zap, AlertTriangle } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 function formatMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -262,8 +264,261 @@ export function LLMMetricsPanel({ className }: LLMMetricsPanelProps) {
       {/* Agent Call Volume */}
       <AgentHeatmapGrid agents={agentsByCalls} metric="calls" label="Agent Call Volume" />
 
+      {/* P2 6.4: Cost Heatmap Panels */}
+      {data.providers && data.providers.length > 0 && (
+        <ProviderCostLatencyPanels
+          providers={data.providers}
+          topByLatency={data.top_providers_by_latency}
+          topAgentsByCost={data.top_agents_by_cost}
+        />
+      )}
+
+      {data.cost_savings_suggestions && data.cost_savings_suggestions.length > 0 && (
+        <CostSavingsSuggestionsCard suggestions={data.cost_savings_suggestions} />
+      )}
+
+      {data.daily_provider && data.daily_provider.length > 0 && (
+        <DailyProviderHeatmap days={data.daily_provider} />
+      )}
+
       {/* Daily Trend */}
       <DailyTrendChart daily={daily_trend} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// P2 6.4: Cost / latency heatmap panels
+// ---------------------------------------------------------------------------
+
+function formatUsd(value: number | undefined): string {
+  if (value === undefined || value === null) return '--';
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
+
+function ProviderCostLatencyPanels({
+  providers,
+  topByLatency,
+  topAgentsByCost,
+}: {
+  providers: LLMMetricsSummary['providers'] | undefined;
+  topByLatency: LLMMetricsSummary['top_providers_by_latency'];
+  topAgentsByCost: LLMMetricsSummary['top_agents_by_cost'];
+}) {
+  if (!providers) return null;
+  // Build a per-provider cost bar chart.
+  const sortedByCost = [...providers].sort(
+    (a, b) => (b.estimated_cost_usd ?? 0) - (a.estimated_cost_usd ?? 0),
+  );
+  const maxCost = Math.max(1, ...sortedByCost.map(p => p.estimated_cost_usd ?? 0));
+  return (
+    <div className="space-y-4" data-testid="provider-cost-latency-panels">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Provider Cost &amp; Latency</CardTitle>
+          <CardDescription>按 provider 聚合的成本 / 延迟柱状图</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {sortedByCost.map(p => {
+            const costPct = ((p.estimated_cost_usd ?? 0) / maxCost) * 100;
+            return (
+              <div
+                key={p.provider}
+                className="space-y-1"
+                data-testid="provider-cost-row"
+                data-provider={p.provider}
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-mono">{p.provider}</span>
+                  <span className="text-muted-foreground">
+                    {formatUsd(p.estimated_cost_usd)} · {formatMs(p.avg_duration_ms)} avg
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full bg-blue-500/80"
+                    style={{ width: `${costPct}%` }}
+                    data-testid="provider-cost-bar"
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      {/* Top-5 slowest providers (already sorted by latency desc) */}
+      {topByLatency && topByLatency.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Top {topByLatency.length} Slowest Providers</CardTitle>
+            <CardDescription>平均延迟倒序,可作为 health-check 关注对象</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {topByLatency.map(p => (
+                <div
+                  key={p.provider}
+                  data-testid="slow-provider-row"
+                  data-provider={p.provider}
+                  className="flex items-center justify-between rounded-md border border-border/40 bg-muted/10 px-3 py-2 text-xs"
+                >
+                  <span className="font-mono">{p.provider}</span>
+                  <span>
+                    {formatMs(p.avg_duration_ms)} avg · {formatMs(p.p95_duration_ms)} p95 ·{' '}
+                    {(p.error_rate * 100).toFixed(1)}% err
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Top agents by cost */}
+      {topAgentsByCost && topAgentsByCost.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Top {topAgentsByCost.length} Most Expensive Agents</CardTitle>
+            <CardDescription>累计花费最高的 agent — 是成本节省的优先目标</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {topAgentsByCost.map(a => (
+                <div
+                  key={a.agent_name}
+                  data-testid="expensive-agent-row"
+                  data-agent={a.agent_name}
+                  className="flex items-center justify-between rounded-md border border-border/40 bg-muted/10 px-3 py-2 text-xs"
+                >
+                  <span className="font-mono">{a.agent_name}</span>
+                  <span>
+                    {formatUsd(a.estimated_cost_usd)} · {a.calls} calls ·{' '}
+                    {formatUsd(a.calls > 0 ? (a.estimated_cost_usd ?? 0) / a.calls : 0)} /call
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function CostSavingsSuggestionsCard({
+  suggestions,
+}: {
+  suggestions: NonNullable<LLMMetricsSummary['cost_savings_suggestions']>;
+}) {
+  return (
+    <Card data-testid="cost-savings-suggestions">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">Cost-Saving Suggestions</CardTitle>
+        <CardDescription>
+          单次调用成本 ≥ 2 倍全局中位数的 agent — 切换更便宜的模型可显著降低费用
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="space-y-2">
+          {suggestions.map(s => (
+            <li
+              key={s.agent_name}
+              data-testid="cost-savings-suggestion"
+              data-agent={s.agent_name}
+              className="flex items-center justify-between rounded-md border border-amber-500/40 bg-amber-50/40 px-3 py-2 text-xs dark:bg-amber-950/20"
+            >
+              <span>
+                <span className="font-mono font-medium">{s.agent_name}</span>
+                <span className="text-muted-foreground">
+                  {' '}
+                  当前 {formatUsd(s.current_cost_per_call)} /call
+                </span>
+              </span>
+              <span className="text-amber-700 dark:text-amber-300">
+                可省 {s.potential_savings_pct.toFixed(0)}% · {s.calls} 次调用
+              </span>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DailyProviderHeatmap({
+  days,
+}: {
+  days: NonNullable<LLMMetricsSummary['daily_provider']>;
+}) {
+  // Collect the full provider list across the window so the grid is
+  // rectangular even when some providers didn't run on some days.
+  const providerSet = new Set<string>();
+  for (const d of days) for (const p of d.providers) providerSet.add(p.provider);
+  const providers = Array.from(providerSet).sort();
+  // Build lookup
+  const matrix: Record<string, Record<string, DailyProviderEntry | undefined>> = {};
+  for (const d of days) {
+    matrix[d.date] = {};
+    for (const p of d.providers) matrix[d.date][p.provider] = p;
+  }
+  return (
+    <Card data-testid="daily-provider-heatmap">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">Provider × Day Error-Rate Heatmap</CardTitle>
+        <CardDescription>
+          红色 = 高错误率 / 灰色 = 无调用 / 浅绿 = 健康
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr>
+                <th className="text-left p-1">provider</th>
+                {days.map(d => (
+                  <th key={d.date} className="p-1 font-mono text-muted-foreground">
+                    {d.date.slice(5)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {providers.map(provider => (
+                <tr key={provider} data-testid="heatmap-row" data-provider={provider}>
+                  <td className="p-1 font-mono">{provider}</td>
+                  {days.map(d => {
+                    const cell = matrix[d.date]?.[provider];
+                    if (!cell) {
+                      return (
+                        <td
+                          key={d.date}
+                          className="p-1 text-center bg-muted/30 text-muted-foreground"
+                        >
+                          ·
+                        </td>
+                      );
+                    }
+                    let color = 'bg-green-200 dark:bg-green-900/40';
+                    if (cell.error_rate >= 0.2) color = 'bg-red-300 dark:bg-red-900/50';
+                    else if (cell.error_rate >= 0.1) color = 'bg-amber-200 dark:bg-amber-900/40';
+                    return (
+                      <td
+                        key={d.date}
+                        className={`p-1 text-center ${color}`}
+                        title={`${cell.calls} calls, ${(cell.error_rate * 100).toFixed(1)}% err`}
+                      >
+                        {cell.calls}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

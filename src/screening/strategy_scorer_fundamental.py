@@ -233,10 +233,15 @@ def _resolve_industry_pe_inputs(
 ) -> tuple[float, float] | None:
     if not industry_name or not industry_pe_medians or metrics.price_to_earnings_ratio is None:
         return None
+    # GAMMA-004: negative PE (loss-making company) should not be compared
+    # to industry median — the premium ratio is meaningless for negative PE.
+    current_pe = metrics.price_to_earnings_ratio
+    if current_pe <= 0:
+        return None
     industry_median = industry_pe_medians.get(industry_name)
     if industry_median is None or industry_median <= 0:
         return None
-    return metrics.price_to_earnings_ratio, industry_median
+    return current_pe, industry_median
 
 
 def _resolve_industry_pe_direction_and_confidence(premium: float) -> tuple[int, float]:
