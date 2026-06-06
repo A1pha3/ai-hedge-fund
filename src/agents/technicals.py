@@ -668,12 +668,18 @@ def calculate_hurst_exponent(price_series: pd.Series, max_lag: int = 20) -> floa
         return 0.5  # Not enough data
 
     lags = range(2, max_lag)
-    # Calculate variance of lagged differences (no spurious sqrt)
+    # Rescaled range (R/S) method: tau[lag] = (max(diff) - min(diff)) / std(diff)
+    # Using std(diffs) alone is incorrect — it omits the (max - min) term, which
+    # captures the range spanned by the lagged increments. Guard against zero std
+    # (constant series at a given lag) to avoid divide-by-zero.
     tau = []
     for lag in lags:
         diffs = ts[lag:] - ts[:-lag]
         std_val = np.std(diffs)
-        tau.append(max(1e-8, std_val))
+        if std_val == 0:
+            tau.append(1e-8)
+        else:
+            tau.append((np.max(diffs) - np.min(diffs)) / std_val)
 
     # Return the Hurst exponent from linear fit of log(lag) vs log(tau)
     try:

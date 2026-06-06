@@ -41,7 +41,19 @@ def _collect_market_data(
 
         prices_df = prices_to_df_callable(prices)
         if not prices_df.empty and len(prices_df) > 1:
-            current_price = prices_df["close"].iloc[-1]
+            raw_current_price = prices_df["close"].iloc[-1]
+            # Guard against NaN/None in the most recent close. Treating NaN as
+            # a usable price silently propagates NaN through downstream
+            # max_shares and remaining_position_limit calculations, leading
+            # to undefined division behavior in the portfolio manager.
+            if raw_current_price is None or (
+                isinstance(raw_current_price, float) and raw_current_price != raw_current_price
+            ):
+                progress_callback(agent_id, ticker, "Warning: NaN price in last bar")
+                current_prices[ticker] = 0
+                volatility_data[ticker] = _fallback_volatility_metrics(len(prices_df))
+                continue
+            current_price = float(raw_current_price)
             current_prices[ticker] = current_price
             volatility_metrics = calculate_volatility_metrics_callable(prices_df)
             volatility_data[ticker] = volatility_metrics
@@ -157,10 +169,14 @@ def _build_risk_analysis_entry(
     combined_limit_pct = vol_adjusted_limit_pct * corr_multiplier
     position_limit = total_portfolio_value * combined_limit_pct
     remaining_position_limit = max(0.0, position_limit - current_position_value)
-    max_position_size = min(remaining_position_limit, portfolio.get("cash", 0))
+    # NOTE: do not clip by cash here. Cash/margin constraints are enforced
+    # downstream in portfolio_manager._resolve_max_buy / _resolve_max_short.
+    # Clipping here under-reports shorting capacity (which is bounded by margin,
+    # not cash) and shrinks the headroom shown to the LLM.
+    max_position_size = float(remaining_position_limit)
 
     return {
-        "remaining_position_limit": float(max_position_size),
+        "remaining_position_limit": max_position_size,
         "current_price": float(current_price),
         "volatility_metrics": {
             "daily_volatility": float(vol_data.get("daily_volatility", 0.05)),

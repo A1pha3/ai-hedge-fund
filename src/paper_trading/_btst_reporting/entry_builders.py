@@ -430,7 +430,19 @@ def _extract_next_day_outcome(
     next_open = _as_float(next_row.get("open"))
     next_high = _as_float(next_row.get("high"))
     next_close = _as_float(next_row.get("close"))
-    if trade_close <= 0 or next_open <= 0 or next_high <= 0 or next_close <= 0:
+    # _as_float can return NaN for NaN/None numeric inputs; NaN comparisons
+    # are always False, so the <= 0 guard would otherwise let NaN through and
+    # silently poison next_open_return / next_close_return computations.
+    if (
+        trade_close != trade_close
+        or next_open != next_open
+        or next_high != next_high
+        or next_close != next_close
+        or trade_close <= 0
+        or next_open <= 0
+        or next_high <= 0
+        or next_close <= 0
+    ):
         return {"data_status": "incomplete_price_bar"}
 
     return {

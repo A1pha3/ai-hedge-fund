@@ -48,7 +48,12 @@ def _score_pabrai_fcf_stability(financial_line_items: list) -> tuple[int, str | 
         return 0, None
 
     recent_avg = sum(fcf_values[:3]) / 3
-    older = sum(fcf_values[-3:]) / 3 if len(fcf_values) >= 6 else fcf_values[-1]
+    # Use a windowed average for the older bucket when we have enough data;
+    # fall back to the single oldest value only when there are fewer than 3 older samples.
+    if len(fcf_values) >= 6:
+        older = sum(fcf_values[-3:]) / 3
+    else:
+        older = fcf_values[-1] if fcf_values else 0
     if recent_avg > 0 and recent_avg >= older:
         return 2, "Positive and improving/stable FCF"
     if recent_avg > 0:
@@ -118,7 +123,12 @@ def _score_pabrai_fcf_growth(financial_line_items: list) -> tuple[int, str | Non
         return 0, None
 
     recent_fcf = sum(fcfs[:3]) / 3
-    older_fcf = sum(fcfs[-3:]) / 3 if len(fcfs) >= 6 else fcfs[-1]
+    # Use a windowed average for the older bucket when we have enough data;
+    # fall back to the single oldest value only when there are fewer than 3 older samples.
+    if len(fcfs) >= 6:
+        older_fcf = sum(fcfs[-3:]) / 3
+    else:
+        older_fcf = fcfs[-1] if fcfs else 0
     if older_fcf == 0:
         return 0, None
 

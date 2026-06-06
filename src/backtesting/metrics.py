@@ -77,7 +77,11 @@ class PerformanceMetricsCalculator:
         # --- Phase 0.3 新增指标 ---
         # Calmar Ratio = 年化收益 / |最大回撤|
         total_return = (df["Portfolio Value"].iloc[-1] / df["Portfolio Value"].iloc[0]) - 1
-        trading_days = len(clean_returns)
+        # R4-GAMMA-002: pct_change drops the first row, so len(clean_returns) is
+        # N-1 where N is the number of portfolio values. Using N-1 in the
+        # denominator inflates annualization (e.g. 10-day backtest → 252/9 ≈ 28x).
+        # Use max(N, 1) where N is the number of portfolio values.
+        trading_days = max(len(clean_returns) + 1, 1)
         annualized_factor = self.annual_trading_days / max(trading_days, 1)
         base = 1.0 + total_return
         annual_return = base ** annualized_factor - 1.0 if base > 0 else -1.0

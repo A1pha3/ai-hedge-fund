@@ -259,7 +259,12 @@ def _score_munger_margin_of_safety(reasonable_value: float, market_cap: float) -
 
 def _score_munger_fcf_trend(fcf_values: list[float]) -> tuple[int, str]:
     recent_avg = sum(fcf_values[:3]) / 3
-    older_avg = sum(fcf_values[-3:]) / 3 if len(fcf_values) >= 6 else fcf_values[-1]
+    # Use a windowed average for the older bucket when we have enough data;
+    # fall back to the single oldest value only when there are fewer than 3 older samples.
+    if len(fcf_values) >= 6:
+        older_avg = sum(fcf_values[-3:]) / 3
+    else:
+        older_avg = fcf_values[-1] if fcf_values else 0
 
     if recent_avg > older_avg * 1.2:
         return 3, "Growing FCF trend adds to intrinsic value"

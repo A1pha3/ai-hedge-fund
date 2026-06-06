@@ -53,7 +53,10 @@ class AgentController:
             except Exception:
                 qty_val = 0.0
             try:
-                action = Action(action).value  # validate/coerce
+                # R4-GAMMA-001: Coerce to lower-case before validating so agents
+                # that emit "BUY"/"SELL" (uppercase) don't silently fall through
+                # to HOLD. StrEnum value lookup is case-sensitive on the value.
+                action = Action(str(action).strip().lower()).value
             except Exception:
                 action = Action.HOLD.value  # type: ignore[assignment]
             normalized_decisions[ticker] = {"action": action, "quantity": qty_val}  # type: ignore[assignment]

@@ -35,16 +35,18 @@ def test_analyze_profitability_preserves_missing_data_messages():
     }
 
 
-def test_analyze_growth_preserves_income_cagr_and_inconsistent_revenue_message():
+def test_analyze_growth_preserves_income_cagr_and_consistent_revenue_message():
     financial_line_items = [
         SimpleNamespace(revenue=180.0, net_income=72.0),
         SimpleNamespace(revenue=150.0, net_income=54.0),
         SimpleNamespace(revenue=120.0, net_income=36.0),
     ]
 
+    # Revenues sorted newest -> oldest (180, 150, 120) chronologically grow
+    # (120 -> 150 -> 180), so no declining years => consistent growth pattern.
     assert analyze_growth(financial_line_items) == {
-        "score": 3,
-        "details": "Insufficient revenue data for CAGR calculation; Excellent income CAGR: 41.4%; Inconsistent growth pattern (0% of years)",
+        "score": 4,
+        "details": "Insufficient revenue data for CAGR calculation; Excellent income CAGR: 41.4%; Consistent growth pattern (100% of years)",
     }
 
 
@@ -55,9 +57,11 @@ def test_analyze_growth_preserves_negative_income_cagr_wording():
         SimpleNamespace(revenue=130.0, net_income=10.0),
     ]
 
+    # Revenues sorted newest -> oldest (100, 110, 130) chronologically decline
+    # (130 -> 110 -> 100), so every year is a declining year => inconsistent.
     assert analyze_growth(financial_line_items) == {
-        "score": 1,
-        "details": "Insufficient revenue data for CAGR calculation; Moderate income CAGR: -10.6%; Consistent growth pattern (100% of years)",
+        "score": 0,
+        "details": "Insufficient revenue data for CAGR calculation; Moderate income CAGR: -10.6%; Inconsistent growth pattern (0% of years)",
     }
 
 

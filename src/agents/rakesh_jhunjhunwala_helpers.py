@@ -95,7 +95,9 @@ def _score_rakesh_growth_consistency(revenues: list) -> tuple[int, str] | None:
     if len(revenues) < 3:
         return None
 
-    declining_years = sum(1 for index in range(1, len(revenues)) if revenues[index - 1] > revenues[index])
+    # Financial line items are sorted newest -> oldest, so revenues[index - 1] is newer;
+    # a declining year is one where the newer value is strictly less than the older value.
+    declining_years = sum(1 for index in range(1, len(revenues)) if revenues[index - 1] < revenues[index])
     consistency_ratio = 1 - (declining_years / (len(revenues) - 1))
     if consistency_ratio >= 0.8:
         return 1, f"Consistent growth pattern ({consistency_ratio*100:.0f}% of years)"

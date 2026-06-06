@@ -7,6 +7,10 @@ def _resolve_portfolio_position(positions: dict, ticker: str) -> tuple[int, int]
 
 
 def _resolve_max_buy(cash: float, price: float, max_qty: int) -> int:
+    if cash != cash or price != price:
+        # NaN guard: NaN comparisons are always False, so the cash/price <= 0
+        # guard would otherwise pass through NaN and crash int(NaN // price).
+        return 0
     if cash <= 0 or price <= 0:
         return 0
     max_buy_cash = int(cash // price)
@@ -14,7 +18,10 @@ def _resolve_max_buy(cash: float, price: float, max_qty: int) -> int:
 
 
 def _resolve_max_short(price: float, max_qty: int, margin_requirement: float, margin_used: float, equity: float) -> int:
-    if price <= 0 or max_qty <= 0:
+    if price != price or price <= 0 or max_qty <= 0:
+        return 0
+    if equity != equity:
+        # NaN equity would propagate through available_margin and crash int().
         return 0
     if margin_requirement <= 0.0:
         return max_qty
