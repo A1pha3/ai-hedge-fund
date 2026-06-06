@@ -420,7 +420,11 @@ def prepare_buy_order_execution_context(
     selection_targets: dict[str, Any] | None,
 ) -> dict[str, Any]:
     cash = float(portfolio_snapshot.get("cash", 0.0))
-    nav = cash + sum(float(position.get("long", 0)) * float(position.get("long_cost_basis", 0.0)) for position in portfolio_snapshot.get("positions", {}).values())
+    # Use market price per position when available; fall back to cost basis
+    nav = cash + sum(
+        float(position.get("long", 0)) * float(position.get("current_price") or position.get("last_price") or position.get("long_cost_basis", 0.0))
+        for position in portfolio_snapshot.get("positions", {}).values()
+    )
     nav = nav if nav > 0 else cash
     return {
         "cash": cash,

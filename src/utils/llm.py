@@ -347,21 +347,41 @@ def call_llm(
 
 def create_default_response(model_class: type[BaseModel]) -> BaseModel:
     """Creates a safe default response based on the model's fields."""
+    import typing as _typing
+
     default_values = {}
     for field_name, field in model_class.model_fields.items():
-        if field.annotation is str:
+        annotation = field.annotation
+        if annotation is str:
             default_values[field_name] = "Error in analysis, using default"
-        elif field.annotation is float:
+        elif annotation is float:
             default_values[field_name] = 0.0
-        elif field.annotation is int:
+        elif annotation is int:
             default_values[field_name] = 0
-        elif hasattr(field.annotation, "__origin__") and field.annotation.__origin__ is dict:
+        elif annotation is bool:
+            default_values[field_name] = False
+        elif annotation is dict:
+            # Bare dict (not parameterized) — default to {}
             default_values[field_name] = {}
-        else:
-            if hasattr(field.annotation, "__args__"):
-                default_values[field_name] = field.annotation.__args__[0]
-            else:
+        elif annotation is list:
+            # Bare list (not parameterized) — default to []
+            default_values[field_name] = []
+        elif hasattr(annotation, "__origin__") and annotation.__origin__ is dict:
+            default_values[field_name] = {}
+        elif hasattr(annotation, "__origin__") and annotation.__origin__ is list:
+            # list[X] -> [] instead of X
+            default_values[field_name] = []
+        elif hasattr(annotation, "__args__"):
+            # Handle Optional[X] which is Union[X, None]
+            origin = getattr(annotation, "__origin__", None)
+            if origin is _typing.Union:
+                # Optional[X] (Union[X, None]) — default to None
                 default_values[field_name] = None
+            else:
+                # Other generic with args — safe fallback
+                default_values[field_name] = None
+        else:
+            default_values[field_name] = None
 
     return model_class(**default_values)
 
@@ -456,9 +476,9 @@ def extract_json_from_response(content: str) -> dict | None:
             extract_common_signal_payload=_extract_common_signal_payload,
         )
     except Exception as error:
-        print(f"Error extracting JSON from response: {error}")
+        logger.warning("Error extracting JSON from response: %s", error)
         if content:
-            print(f"Content preview: {content[:500]}...")
+            logger.warning("Content preview: %s...", content[:500])
     return None
 
 

@@ -34,6 +34,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from src.utils.date_utils import format_date as _format_date, parse_date as _parse_date
+
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -80,17 +82,6 @@ class DigestResult:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-
-def _format_date(date_str: str) -> str:
-    """Normalize date to YYYY-MM-DD. Accepts YYYYMMDD or YYYY-MM-DD."""
-    date_str = str(date_str).strip()
-    if len(date_str) == 8 and date_str.isdigit():
-        return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-    return date_str
-
-
-def _parse_date(date_str: str) -> datetime:
-    return datetime.strptime(_format_date(date_str), "%Y-%m-%d")
 
 
 def _read_selection_snapshot(artifact_root: Path, trade_date: str) -> dict[str, Any] | None:

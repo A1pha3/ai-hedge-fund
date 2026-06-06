@@ -443,11 +443,16 @@ def _compute_portfolio_nav(portfolio_snapshot: dict[str, Any] | None) -> float:
     snapshot = dict(portfolio_snapshot or {})
     cash = float(snapshot.get("cash") or 0.0)
     positions = dict(snapshot.get("positions") or {})
-    long_book = sum(
-        max(float(position.get("long") or 0.0), 0.0) * max(float(position.get("long_cost_basis") or 0.0), 0.0)
-        for position in positions.values()
-        if isinstance(position, dict)
-    )
+    long_book = 0.0
+    for position in positions.values():
+        if not isinstance(position, dict):
+            continue
+        shares = max(float(position.get("long") or 0.0), 0.0)
+        if shares <= 0:
+            continue
+        # Use current market price when available; fall back to cost basis
+        price = float(position.get("current_price") or position.get("last_price") or position.get("long_cost_basis", 0.0) or 0.0)
+        long_book += shares * max(price, 0.0)
     return cash + long_book
 
 

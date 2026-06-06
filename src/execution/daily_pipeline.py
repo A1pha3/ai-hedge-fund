@@ -452,6 +452,7 @@ def _attach_btst_regime_gate_shadow(plan: ExecutionPlan) -> ExecutionPlan:
     gate_payload = _build_btst_regime_gate_payload(getattr(plan, "market_state", None))
     if not gate_payload:
         return plan
+    plan = plan.model_copy(deep=True)
     risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
     risk_metrics["btst_regime_gate"] = gate_payload
     funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
@@ -496,6 +497,7 @@ def _enforce_btst_regime_gate_p2(plan: ExecutionPlan) -> ExecutionPlan:
     if _resolve_btst_regime_gate_p2_mode() != "enforce":
         return plan
 
+    plan = plan.model_copy(deep=True)
     gate = _get_or_classify_gate(plan)
     if gate is None:
         return plan
@@ -594,6 +596,7 @@ def _enforce_btst_prior_quality_p3(plan: ExecutionPlan, *, prior_by_ticker: dict
     if mode != "enforce":
         return plan
 
+    plan = plan.model_copy(deep=True)
     selection_targets = plan.selection_targets or {}
     if selection_targets:
         apply_p3_prior_quality_gate_to_selection_targets(
@@ -663,6 +666,7 @@ def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
     if _resolve_btst_execution_contract_p5_mode() != "enforce":
         return plan
 
+    plan = plan.model_copy(deep=True)
     selection_targets = plan.selection_targets or {}
     if not selection_targets:
         return plan
@@ -796,6 +800,7 @@ def _attach_btst_risk_budget_p6(plan: ExecutionPlan) -> ExecutionPlan:
     mode = _resolve_btst_risk_budget_p6_mode()
     if mode != "enforce":
         return plan
+    plan = plan.model_copy(deep=True)
     selection_targets = dict(getattr(plan, "selection_targets", {}) or {})
     watchlist_by_ticker = {str(item.ticker): item for item in list(getattr(plan, "watchlist", []) or [])}
     buy_order_by_ticker = {str(order.ticker): order for order in list(getattr(plan, "buy_orders", []) or [])}
@@ -924,6 +929,9 @@ def _backfill_btst_post_p5_buy_orders(
     if not missing_order_tickers:
         return plan
 
+    plan = plan.model_copy(deep=True)
+    # Re-read selection_targets from the deep copy to ensure isolation
+    selection_targets = dict(getattr(plan, "selection_targets", {}) or {})
     risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
     shell_inputs = dict(risk_metrics.get("selection_target_shell_inputs", {}) or {})
     shell_entries = [
@@ -1255,6 +1263,7 @@ def _ensure_plan_target_shells(
     short_trade_target_profile_name: str = "default",
     short_trade_target_profile_overrides: dict[str, object] | None = None,
 ) -> ExecutionPlan:
+    plan = plan.model_copy(deep=True)
     requested_profile = build_short_trade_target_profile(
         short_trade_target_profile_name,
         short_trade_target_profile_overrides,

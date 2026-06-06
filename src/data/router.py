@@ -7,6 +7,7 @@
 """
 
 import logging
+import threading
 from datetime import datetime
 from typing import Any
 
@@ -425,6 +426,7 @@ class DataRouter:
 
 # 全局路由器实例
 _router: DataRouter | None = None
+_router_lock = threading.Lock()
 
 
 def get_router() -> DataRouter:
@@ -437,31 +439,36 @@ def get_router() -> DataRouter:
     global _router
 
     if _router is None:
-        _router = DataRouter()
+        with _router_lock:
+            # Double-check after acquiring lock
+            if _router is not None:
+                return _router
 
-        # 自动注册可用的提供商
-        try:
-            from src.data.providers.akshare_provider import AKShareProvider
+            _router = DataRouter()
 
-            _router.register_provider(AKShareProvider())
-        except Exception as e:
-            logger.warning(f"Failed to register AKShareProvider: {e}")
+            # 自动注册可用的提供商
+            try:
+                from src.data.providers.akshare_provider import AKShareProvider
 
-        try:
-            from src.data.providers.tushare_provider import TushareProvider
+                _router.register_provider(AKShareProvider())
+            except Exception as e:
+                logger.warning(f"Failed to register AKShareProvider: {e}")
 
-            _router.register_provider(TushareProvider())
-        except Exception as e:
-            logger.warning(f"Failed to register TushareProvider: {e}")
+            try:
+                from src.data.providers.tushare_provider import TushareProvider
 
-        # 始终注册 Mock 提供商作为最终降级方案
-        try:
-            from src.data.providers.mock_provider import MockProvider
+                _router.register_provider(TushareProvider())
+            except Exception as e:
+                logger.warning(f"Failed to register TushareProvider: {e}")
 
-            _router.register_provider(MockProvider())
-            logger.info("Registered MockProvider as fallback")
-        except Exception as e:
-            logger.warning(f"Failed to register MockProvider: {e}")
+            # 始终注册 Mock 提供商作为最终降级方案
+            try:
+                from src.data.providers.mock_provider import MockProvider
+
+                _router.register_provider(MockProvider())
+                logger.info("Registered MockProvider as fallback")
+            except Exception as e:
+                logger.warning(f"Failed to register MockProvider: {e}")
 
     return _router
 

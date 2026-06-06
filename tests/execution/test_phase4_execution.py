@@ -4765,6 +4765,68 @@ def test_t1_confirmation_blocks_failed_breakout_gap_chase() -> None:
     assert result["hard_failures"]["open_gap_overextended"] is True
 
 
+def test_t1_confirmation_intraday_uses_current_price_instead_of_day_low() -> None:
+    """When is_intraday=True, day_low is unavailable so current_price substitutes."""
+    # In backtest mode (default): day_low=9.8 supports ema30*0.99=9.9 → False
+    result_backtest = confirm_buy_signal(
+        day_low=9.80,
+        ema30=10.0,
+        current_price=10.30,
+        vwap=10.1,
+        intraday_volume=800000,
+        avg_same_time_volume=900000,
+        industry_percentile=0.4,
+    )
+    # day_low=9.80 < ema30*0.99=9.90 → price_support is False
+    assert result_backtest["checks"]["price_support"] is False
+
+    # In intraday mode: current_price=10.30 replaces day_low → price_support True
+    result_intraday = confirm_buy_signal(
+        day_low=9.80,
+        ema30=10.0,
+        current_price=10.30,
+        vwap=10.1,
+        intraday_volume=800000,
+        avg_same_time_volume=900000,
+        industry_percentile=0.4,
+        is_intraday=True,
+    )
+    # effective_low = current_price = 10.30 >= ema30*0.99 = 9.90 → True
+    assert result_intraday["checks"]["price_support"] is True
+
+
+def test_t1_confirmation_intraday_breakout_anchor_uses_current_price() -> None:
+    """When is_intraday=True, breakout_anchor_hold also uses current_price."""
+    result_backtest = confirm_buy_signal(
+        day_low=9.95,
+        ema30=10.0,
+        current_price=10.15,
+        vwap=10.1,
+        intraday_volume=800000,
+        avg_same_time_volume=900000,
+        industry_percentile=0.4,
+        breakout_anchor=10.0,
+        is_intraday=False,
+    )
+    # day_low=9.95 >= 10.0*0.995=9.95 → True, current_price=10.15 >= 10.0 → True
+    assert result_backtest["checks"]["breakout_anchor_hold"] is True
+
+    # Now with day_low below anchor threshold but current_price above
+    result_intraday = confirm_buy_signal(
+        day_low=9.90,
+        ema30=10.0,
+        current_price=10.15,
+        vwap=10.1,
+        intraday_volume=800000,
+        avg_same_time_volume=900000,
+        industry_percentile=0.4,
+        breakout_anchor=10.0,
+        is_intraday=True,
+    )
+    # effective_low=current_price=10.15 >= 9.95, current_price=10.15 >= 10.0
+    assert result_intraday["checks"]["breakout_anchor_hold"] is True
+
+
 def test_btst_position_budget_shrinks_growth_board_under_risk_off() -> None:
     budget = _resolve_btst_position_budget(
         item=LayerCResult(ticker="300724", score_c=0.2, score_final=0.31, score_b=0.6, quality_score=0.68, decision="watch"),

@@ -53,6 +53,17 @@ def add_common_args(
     if include_ollama:
         parser.add_argument("--ollama", action="store_true", help="Use Ollama for local LLM inference")
     parser.add_argument("--model", type=str, required=False, help="Model name to use (e.g., gpt-4o)")
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Auto mode: run full-market screening pipeline (A-share only, no --ticker needed)",
+    )
+    parser.add_argument(
+        "--top-n",
+        type=int,
+        default=10,
+        help="Return top N recommendations in --auto mode (default: 10)",
+    )
     return parser
 
 
@@ -206,6 +217,8 @@ class CLIInputs:
     margin_requirement: float
     show_reasoning: bool = False
     show_agent_graph: bool = False
+    auto: bool = False
+    top_n: int = 10
     raw_args: argparse.Namespace | None = None
 
 
@@ -247,6 +260,8 @@ def parse_cli_inputs(
 
     args = parser.parse_args()
 
+    is_auto = getattr(args, "auto", False)
+
     if getattr(args, "show_default_model", False):
         default_model_name, default_model_provider = get_default_model_config()
         print(f"default_model_provider={default_model_provider}")
@@ -255,16 +270,21 @@ def parse_cli_inputs(
 
     # Normalize parsed values
     tickers = parse_tickers(getattr(args, "tickers", None))
-    if require_tickers and not tickers:
+    if require_tickers and not tickers and not is_auto:
         parser.error("the following arguments are required: --tickers")
 
-    selected_analysts = select_analysts(
-        {
-            "analysts_all": getattr(args, "analysts_all", False),
-            "analysts": getattr(args, "analysts", None),
-        }
-    )
-    model_name, model_provider = select_model(getattr(args, "ollama", False), getattr(args, "model", None))
+    # In --auto mode, skip interactive analyst/model selection
+    if is_auto:
+        selected_analysts = [a[1] for a in ANALYST_ORDER]
+        model_name, model_provider = get_default_model_config()
+    else:
+        selected_analysts = select_analysts(
+            {
+                "analysts_all": getattr(args, "analysts_all", False),
+                "analysts": getattr(args, "analysts", None),
+            }
+        )
+        model_name, model_provider = select_model(getattr(args, "ollama", False), getattr(args, "model", None))
     start_date, end_date = resolve_dates(getattr(args, "start_date", None), getattr(args, "end_date", None), default_months_back=default_months_back)
 
     return CLIInputs(
@@ -278,5 +298,7 @@ def parse_cli_inputs(
         margin_requirement=getattr(args, "margin_requirement", 0.0),
         show_reasoning=getattr(args, "show_reasoning", False),
         show_agent_graph=getattr(args, "show_agent_graph", False),
+        auto=is_auto,
+        top_n=getattr(args, "top_n", 10),
         raw_args=args,
     )

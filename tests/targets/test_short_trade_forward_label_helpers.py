@@ -59,3 +59,47 @@ def test_build_short_trade_forward_labels_rejects_nan_forward_prices() -> None:
                 {"high": float("nan"), "close": 10.1},
             ],
         )
+
+
+def test_data_sufficient_true_when_at_least_3_forward_days() -> None:
+    labels = build_short_trade_forward_labels(
+        entry_price=10.0,
+        forward_days=[
+            {"high": 10.10, "close": 10.00},
+            {"high": 10.05, "close": 9.98},
+            {"high": 10.02, "close": 9.95},
+        ],
+    )
+    assert labels["data_sufficient"] is True
+    # With 3 days, labels are computed (booleans), not None
+    assert labels["label_fast_confirm"] is False
+    assert labels["label_retention"] is False
+    assert labels["label_tail_20"] is False
+
+
+def test_data_sufficient_false_when_fewer_than_3_forward_days() -> None:
+    labels = build_short_trade_forward_labels(
+        entry_price=10.0,
+        forward_days=[
+            {"high": 10.50, "close": 10.30},
+            {"high": 10.80, "close": 10.60},
+        ],
+    )
+    assert labels["data_sufficient"] is False
+    assert labels["observed_forward_days"] == 2
+    # Labels should be None when data is insufficient
+    assert labels["label_fast_confirm"] is None
+    assert labels["label_retention"] is None
+    assert labels["label_tail_20"] is None
+
+
+def test_data_sufficient_false_when_zero_forward_days() -> None:
+    labels = build_short_trade_forward_labels(
+        entry_price=10.0,
+        forward_days=[],
+    )
+    assert labels["data_sufficient"] is False
+    assert labels["observed_forward_days"] == 0
+    assert labels["label_fast_confirm"] is None
+    assert labels["label_retention"] is None
+    assert labels["label_tail_20"] is None

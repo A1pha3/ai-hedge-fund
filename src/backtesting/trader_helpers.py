@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import re
+
 from src.backtesting.portfolio import Portfolio
 
 from .types import Action
+
+
+def _compact_date(date_str: str) -> str:
+    """Normalize a date string to ``%Y%m%d`` for safe comparison."""
+    return re.sub(r"\D", "", date_str) if date_str else ""
 
 
 def coerce_trade_action(action) -> Action:
@@ -100,7 +107,7 @@ def execute_sell_trade(
         if ticker in positions:
             position = positions[ticker]
             entry_date = position.get("entry_date", "")
-            if entry_date and entry_date == trade_date and position.get("long", 0) > 0:
+            if entry_date and _compact_date(entry_date) == _compact_date(trade_date) and position.get("long", 0) > 0:
                 return 0
 
     executable_quantity = min(int(quantity), int(positions.get(ticker, {}).get("long", 0))) if quantity > 0 else 0

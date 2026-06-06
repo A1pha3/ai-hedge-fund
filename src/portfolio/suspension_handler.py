@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from src.portfolio.models import HoldingState
+
+logger = logging.getLogger(__name__)
 
 
 def handle_suspension_emergency(
@@ -16,7 +20,22 @@ def handle_suspension_emergency(
     liquid_holdings: list[HoldingState] = []
     liquid_value = 0.0
     for holding in holdings:
-        market_value = prices.get(holding.ticker, holding.entry_price) * holding.shares
+        # When a stock is suspended its ticker will not appear in the prices
+        # dict, forcing the fallback to entry_price.  This can significantly
+        # under-estimate market value if the stock moved substantially
+        # before suspension (e.g. +30% would be valued at entry_price).
+        # Callers should provide a last-known closing price in the prices
+        # dict where possible to avoid this valuation gap.
+        price = prices.get(holding.ticker)
+        if price is None:
+            logger.warning(
+                "suspension_handler: no market price for ticker=%s, "
+                "falling back to entry_price=%.4f — market value may be inaccurate",
+                holding.ticker,
+                holding.entry_price,
+            )
+            price = holding.entry_price
+        market_value = price * holding.shares
         if holding.ticker in suspended_tickers:
             suspended_value += market_value
         else:

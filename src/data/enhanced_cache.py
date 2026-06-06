@@ -161,26 +161,32 @@ class RedisCache:
         """
         return f"ai-hedge-fund:{key}"
 
-    def get(self, key: str) -> Any | None:
+    # Sentinel for cache miss — distinguishes "key not present" from "cached None".
+    _MISSING = object()
+
+    def get(self, key: str, *, _sentinel: Any = None) -> Any | None:
         """
         获取缓存值
 
         Args:
             key: 缓存键
+            _sentinel: if provided, return this instead of None on miss.
+                       Callers can pass a unique sentinel to distinguish
+                       "cached None" from "key not present".
 
         Returns:
-            缓存值或 None
+            缓存值，或 _sentinel（未命中时），或 None（默认未命中时）
         """
         if not self.is_available():
-            return None
+            return _sentinel
         try:
             data = self._client.get(self._make_key(key))
             if data is None:
-                return None
+                return _sentinel
             return pickle.loads(data)
         except Exception as e:
             logger.warning(f"Redis get error: {e}")
-            return None
+            return _sentinel
 
     def set(self, key: str, value: Any, ttl: int | None = None):
         """
@@ -285,35 +291,41 @@ class DiskCache:
         """
         return int(datetime.now().timestamp())
 
-    def get(self, key: str) -> Any | None:
+    # Sentinel for cache miss — distinguishes "key not present" from "cached None".
+    _MISSING = object()
+
+    def get(self, key: str, *, _sentinel: Any = None) -> Any | None:
         """
         获取缓存值
 
         Args:
             key: 缓存键
+            _sentinel: if provided, return this instead of None on miss.
+                       Callers can pass a unique sentinel to distinguish
+                       "cached None" from "key not present".
 
         Returns:
-            缓存值或 None
+            缓存值，或 _sentinel（未命中时），或 None（默认未命中时）
         """
         if not self.is_available():
-            return None
+            return _sentinel
         try:
             conn = self._get_conn()
             try:
                 cursor = conn.execute("SELECT value, expires_at FROM cache WHERE key = ?", (key,))
                 row = cursor.fetchone()
                 if not row:
-                    return None
+                    return _sentinel
                 value, expires_at = row
                 if expires_at and expires_at < self._now_ts():
                     self.delete(key)
-                    return None
+                    return _sentinel
                 return pickle.loads(value)
             finally:
                 conn.close()
         except Exception as e:
             logger.warning(f"Disk cache get error: {e}")
-            return None
+            return _sentinel
 
     def set(self, key: str, value: Any, ttl: int | None = None):
         """
@@ -457,16 +469,16 @@ class EnhancedCache:
             return value
 
         # 2. 查 Redis
-        value = self.redis.get(key)
-        if value is not None:
+        value = self.redis.get(key, _sentinel=self._MISSING)
+        if value is not self._MISSING:
             self._stats["redis_hits"] += 1
             # 回填 LRU
             self.lru.set(key, value)
             return value
 
         # 3. 查 Disk
-        value = self.disk.get(key)
-        if value is not None:
+        value = self.disk.get(key, _sentinel=self._MISSING)
+        if value is not self._MISSING:
             self._stats["disk_hits"] += 1
             # 回填 Redis 和 LRU
             self.redis.set(key, value)

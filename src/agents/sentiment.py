@@ -13,7 +13,7 @@ from src.utils.progress import progress
 ##### Sentiment Agent #####
 def sentiment_analyst_agent(state: AgentState, agent_id: str = "sentiment_analyst_agent"):
     """Analyzes market sentiment and generates trading signals for multiple tickers."""
-    data = state.get("data", {})
+    data = state["data"]
     end_date = data.get("end_date")
     tickers = data.get("tickers")
     api_key = get_api_key_from_state(state, "FINANCIAL_DATASETS_API_KEY")
@@ -122,6 +122,6 @@ def sentiment_analyst_agent(state: AgentState, agent_id: str = "sentiment_analys
     progress.update_status(agent_id, None, "Done")
 
     return {
-        "messages": [message],
+        "messages": state["messages"] + [message],
         "data": data,
     }

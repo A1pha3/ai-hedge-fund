@@ -278,6 +278,151 @@ def run_screen_only_mode(trade_date: str) -> int:
     return 0
 
 
+def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
+    """一键跑全流程：全市场筛选 -> 因子评分 -> 信号融合 -> Top N 推荐。
+
+    仅支持 A 股市场。流程：
+      Step 1: build_candidate_pool()  全市场快筛 (Layer A)
+      Step 2: score_batch()           四策略评分
+      Step 3: fuse_batch()            信号融合与冲突仲裁 (Layer B)
+      Step 4: 按 score_b 排序输出 Top N
+
+    Args:
+        trade_date: 交易日期，格式 YYYYMMDD
+        top_n: 返回 Top N 推荐（默认 10）
+
+    Returns:
+        退出码（0 = 成功）
+    """
+    from colorama import Fore, Style
+    from tabulate import tabulate
+
+    progress.start()
+    try:
+        # Step 1: Layer A 候选池快筛
+        progress.update_status("auto_screening", None, "Step 1/4: 全市场快筛 (Layer A)")
+        logger.info("[Auto] Step 1/4: 全市场快筛 (Layer A) — trade_date=%s", trade_date)
+        candidates = build_candidate_pool(trade_date)
+        logger.info("[Auto] Layer A 候选池: %d 只", len(candidates))
+        if not candidates:
+            print(f"{Fore.YELLOW}[Auto] 候选池为空，终止流程。{Style.RESET_ALL}")
+            return 1
+
+        # Step 2: 四策略评分
+        progress.update_status("auto_screening", None, f"Step 2/4: 四策略评分 ({len(candidates)} 只)")
+        logger.info("[Auto] Step 2/4: 四策略评分 — %d 只候选", len(candidates))
+        scored = score_batch(candidates, trade_date)
+
+        # Step 3: 信号融合
+        progress.update_status("auto_screening", None, "Step 3/4: 信号融合 + 冲突仲裁")
+        logger.info("[Auto] Step 3/4: 市场状态检测 + 信号融合")
+        market_state = detect_market_state(trade_date)
+        fused = fuse_batch(scored, market_state, trade_date)
+
+        # Step 4: 排序输出 Top N
+        progress.update_status("auto_screening", None, f"Step 4/4: 输出 Top {top_n} 推荐")
+        sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
+        top_results = sorted_results[:top_n]
+
+        # Save full report
+        report_payload = {
+            "mode": "auto_screening",
+            "date": trade_date,
+            "market_state": market_state.model_dump(),
+            "layer_a_count": len(candidates),
+            "total_scored": len(fused),
+            "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
+            "top_n": top_n,
+            "recommendations": [item.model_dump() for item in top_results],
+        }
+        report_path = _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+
+        # Print formatted table
+        _print_auto_screening_table(trade_date, top_results, market_state, len(candidates), top_n, report_path)
+        return 0
+    finally:
+        progress.stop()
+
+
+def _print_auto_screening_table(
+    trade_date: str,
+    top_results: list,
+    market_state: object,
+    pool_size: int,
+    top_n: int,
+    report_path: Path,
+) -> None:
+    """打印格式化的自动筛选推荐表格。"""
+    from colorama import Fore, Style
+    from tabulate import tabulate
+
+    state_type = getattr(market_state, "state_type", "mixed")
+    position_scale = getattr(market_state, "position_scale", 1.0)
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Auto Screening] 一键全流程{Style.RESET_ALL}")
+    print(f"  日期: {trade_date}  |  市场状态: {state_type}  |  仓位系数: {position_scale:.2f}")
+    print(f"  Layer A 候选池: {pool_size} 只  |  Top {top_n} 推荐")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+
+    if not top_results:
+        print(f"{Fore.YELLOW}  无符合条件的推荐标的{Style.RESET_ALL}\n")
+        return
+
+    table_data = []
+    for idx, item in enumerate(top_results, 1):
+        decision = item.decision
+        score_b = item.score_b
+
+        # Color-code the decision
+        if score_b >= 0.35:
+            decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
+            score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
+        elif score_b >= 0.0:
+            decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
+            score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
+        else:
+            decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
+            score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
+
+        # Signal summary: direction + confidence per strategy
+        signals = item.strategy_signals
+        signal_parts = []
+        for strategy_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+            sig = signals.get(strategy_name)
+            if sig is None:
+                signal_parts.append("—")
+                continue
+            arrow = "↑" if sig.direction > 0 else "↓" if sig.direction < 0 else "—"
+            signal_parts.append(f"{arrow}{sig.confidence:.0f}")
+        signal_summary = " ".join(signal_parts)
+
+        # Arbitration flags
+        arbitration = ", ".join(item.arbitration_applied) if item.arbitration_applied else ""
+
+        table_data.append([
+            f"{idx}",
+            item.ticker,
+            score_colored,
+            decision_colored,
+            signal_summary,
+            arbitration,
+        ])
+
+    headers = [
+        f"{Fore.WHITE}#",
+        "Ticker",
+        "Score B",
+        "Decision",
+        "Signals (T MR F E)",
+        "Arbitration",
+    ]
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "right", "center", "center", "left")))
+
+    print(f"\n  详细报告已保存: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
+    print()
+
+
 if __name__ == "__main__":
     if "--daily-gainers" in sys.argv:
         raise SystemExit(run_daily_gainers_cli())
@@ -293,13 +438,21 @@ if __name__ == "__main__":
         if args.screen_only:
             raise SystemExit(run_screen_only_mode(args.trade_date))
 
+    # Detect --auto early via sys.argv to bypass interactive prompts
+    is_auto = "--auto" in sys.argv
+
     inputs = parse_cli_inputs(
         description="Run the hedge fund trading system",
-        require_tickers=True,
+        require_tickers=not is_auto,
         default_months_back=None,
         include_graph_flag=True,
         include_reasoning_flag=True,
     )
+
+    # --auto mode: run the full screening pipeline
+    if inputs.auto:
+        trade_date = inputs.end_date.replace("-", "")
+        raise SystemExit(run_auto_screening(trade_date, top_n=inputs.top_n))
 
     tickers = inputs.tickers
     selected_analysts = inputs.selected_analysts

@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import re
 from types import MappingProxyType
 from collections.abc import Mapping
 
 from .types import PortfolioSnapshot, PositionState, TickerRealizedGains
+
+
+def _compact_date(date_str: str) -> str:
+    """Normalize a date string to compact ``%Y%m%d`` format for safe
+    lexicographic comparison regardless of whether the input uses
+    ``%Y-%m-%d`` or ``%Y%m%d``.
+    """
+    return re.sub(r"\D", "", date_str) if date_str else ""
 
 
 # REF-006: single source of truth for an "empty" per-ticker position.
@@ -198,6 +207,7 @@ class Portfolio:
             position["profit_take_stage"] = max(int(position.get("profit_take_stage", 0)), 3)
 
     def refresh_position_lifecycle(self, current_prices: Mapping[str, float], trade_date: str) -> None:
+        compact_trade_date = _compact_date(trade_date)
         for ticker, position in self._portfolio["positions"].items():
             if position["long"] <= 0:
                 continue
@@ -212,12 +222,12 @@ class Portfolio:
                 position["max_unrealized_pnl_pct"] = max(float(position.get("max_unrealized_pnl_pct", 0.0)), pnl_pct)
             last_trade_date = str(position.get("last_trade_date") or "")
             if not last_trade_date:
-                if trade_date > entry_date:
+                if compact_trade_date > _compact_date(entry_date):
                     position["holding_days"] = max(0, int(position.get("holding_days", 0))) + 1
                 position["last_trade_date"] = trade_date
                 continue
-            if trade_date > last_trade_date:
-                if trade_date > entry_date:
+            if compact_trade_date > _compact_date(last_trade_date):
+                if compact_trade_date > _compact_date(entry_date):
                     position["holding_days"] = max(0, int(position.get("holding_days", 0))) + 1
                 position["last_trade_date"] = trade_date
 

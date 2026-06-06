@@ -7,6 +7,7 @@ managing exit reentry cooldowns, and loading price / turnover / limit state.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 import os
 from typing import Sequence
@@ -25,6 +26,8 @@ from src.tools.api import (
 from src.tools.akshare_api import is_ashare
 
 from .portfolio import Portfolio
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -180,10 +183,15 @@ class MarketDataLoader:
             try:
                 price_data = get_price_data(ticker, previous_date_str, current_date_str)
                 if price_data.empty:
-                    return None
+                    logger.warning("load_current_prices: no price data for ticker=%s (%s ~ %s)", ticker, previous_date_str, current_date_str)
+                    continue
                 current_prices[ticker] = float(price_data.iloc[-1]["close"])
             except Exception:
-                return None
+                logger.warning("load_current_prices: exception loading price for ticker=%s (%s ~ %s)", ticker, previous_date_str, current_date_str, exc_info=True)
+                continue
+        if not current_prices:
+            logger.warning("load_current_prices: all %d tickers failed (%s ~ %s)", len(tickers), previous_date_str, current_date_str)
+            return None
         return current_prices
 
     def hydrate_position_prices(self, current_prices: dict[str, float], previous_date_str: str, current_date_str: str) -> dict[str, float]:

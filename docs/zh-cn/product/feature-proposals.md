@@ -601,3 +601,85 @@
 - [x] 5.6 scripts/ 目录 README 索引 (S) ✅ DONE 2026-06-05
 - [x] 6.3 组合归因面板 (L) ✅ DONE 2026-06-06
 - [x] 6.4 LLM 调用成本热力图面板 (M) ✅ DONE 2026-06-06
+
+---
+
+## 8. 2026-06-06 策略研究团队审查更新
+
+> alpha/beta/gamma 三团队对代码库进行全量审查（277 核心文件，79 个问题发现），
+> 修复了 P0×7 + P1×12 个 bug（1508 测试通过），并逐条验证了本文档中 DONE 标记的落地状态。
+
+### 8.1 DONE 标记验证差异
+
+以下条目标记为 DONE 但经验证**与实际代码状态不符**：
+
+| 条目 | 标记 | 实际状态 | 差异说明 |
+|------|------|----------|----------|
+| 2.1 期望收益三联卡 | 后端完成 | 前端未实现 | `stock_history_expectation.py` 后端 OK，但前端 `InvestmentReportDialog` 无 `ExpectationCard` 组件 |
+| 2.2 候选池 digest | DONE | 脚本缺失 | `scripts/aggregate_screening_daily_digest.py` 不存在 |
+| 5.1 缓存键 provider | DONE | 未修改 | `enhanced_cache.py` 的 `_make_key` 仍为 `f"{prefix}:{identifier}"`，无 provider 参数 |
+| 3.1~3.3 清理 | DONE | 未执行 | `v1.0`/`v1.1` 旧文档未移至 `archive/`，`scripts/archive/` 不存在 |
+| 2.5 审计 API | DONE | 路由缺失 | `app/backend/routes/admin_audit.py` 不存在 |
+
+### 8.2 新发现的关键问题
+
+#### OPT-A: 风控止损为死代码 (P0)
+- **文件**: `src/portfolio/position_calculator.py` L166-200 `evaluate_portfolio_risk_guardrails` 零调用点
+- **影响**: 系统声称有 HHI/CVaR/beta 限仓保护，实际 portfolio manager 可无限制开仓
+- **建议**: 接入下单路径或删除死代码并更新文档
+
+#### OPT-B: 回测盈亏系统性虚高 (P0)
+- **文件**: `src/backtesting/portfolio.py` L234-281
+- **影响**: `apply_long_buy`/`apply_long_sell` 在 gross 价格上计算成本基础，佣金事后扣款
+- **建议**: 重构为 net price（含佣金/印花税），确保成本基础正确
+
+#### OPT-C: 期望卡片前端缺失 (P0)
+- **文件**: 后端 `stock_history_expectation.py` 已完成（10 测试通过）
+- **影响**: 用户无法在 UI 看到"这只票策略以前 30 天赚多少、最坏多少"
+- **建议**: 在 `InvestmentReportDialog` 顶部新增 `ExpectationCard`，样本 < 5 时打"小样本"警告
+- **工作量**: S (1-2 天)
+
+#### NEW-A: "一键跑全流程" 入口 (P0)
+- **现状**: 用户需手动运行 3-4 条命令才能从全市场筛选到 Top10 推荐
+- **建议**: 新增 `--screen-only --auto` 模式，串联 Layer A → Layer B → Layer C → Top10 排行榜
+- **后端**: `build_candidate_pool` + `score_batch` + `fuse_batch` 已存在，只需编排层
+- **工作量**: M (3-5 天)
+
+#### NEW-B: 30 天回顾看板前端 (P0)
+- **现状**: `lookback_audit` 后端 + API 已就绪，但前端无回顾视图
+- **建议**: 新增 "30-Day Lookback" Tab，展示历史推荐命中率和涨跌幅
+- **工作量**: S (1-2 天)
+
+### 8.3 已完成的 Bug 修复清单
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 1 | `agents/fundamentals.py` | 消息返回 `state["messages"] + [message]` | P0 |
+| 2 | `agents/sentiment.py` | 同上 | P0 |
+| 3 | `agents/news_sentiment.py` | 同上 | P0 |
+| 4 | `data/enhanced_cache.py` | 区分缓存 None 和未命中（哨兵值） | P0 |
+| 5 | `data/cache.py` | `_merge_data()` 丢弃数据时记录 warning | P0 |
+| 6 | `utils/llm.py` | `create_default_response()` 正确处理 list/Optional | P0 |
+| 7 | `targets/short_trade_forward_label_helpers.py` | 数据不足时 `data_sufficient=False` | P0 |
+| 8 | `execution/t1_confirmation.py` | 添加 `is_intraday` 参数消除前视偏差 | P0 |
+| 9 | `execution/daily_pipeline.py` | 7 个方法添加 `model_copy(deep=True)` | P1 |
+| 10 | `execution/daily_pipeline.py` + 3 文件 | NAV 使用 `current_price` 优先 | P1 |
+| 11 | `portfolio/suspension_handler.py` | fallback 时添加 warning log | P1 |
+| 12 | `backtesting/engine_market_data.py` | 单 ticker 失败不跳过全部 | P1 |
+| 13 | `backtesting/portfolio.py` + `trader_helpers.py` | `_compact_date()` 日期标准化 | P1 |
+| 14 | `data/validation_rules.py` | `debt_to_equity` 允许负值 | P1 |
+| 15 | `data/router.py` | 双重检查锁定（线程安全） | P1 |
+| 16 | `agents/sentiment.py` | `state["data"]` 快速失败 | P1 |
+
+### 8.4 下一阶段优先级排序
+
+| 优先级 | 编号 | 功能 | 工作量 |
+|--------|------|------|--------|
+| **P0** | OPT-C | ExpectationCard 前端渲染 | S |
+| **P0** | OPT-A | 风控止损接入下单路径或清理 | S |
+| **P0** | NEW-A | 一键跑全流程入口 | M |
+| **P0** | NEW-B | 30 天回顾看板前端 | S |
+| **P0** | OPT-B | 回测盈亏修复 | M |
+| **P1** | 5.1 修正 | 缓存键增加 provider | S |
+| **P1** | 2.2 修正 | 筛选 Digest 脚本实现 | M |
+| **P1** | 3.1~3.3 修正 | 文档/脚本归档清理 | S |

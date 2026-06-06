@@ -59,11 +59,11 @@ FINANCIAL_METRICS_RULES: list[ValidationRule] = [
     ),
     ValidationRule(
         field="debt_to_equity",
-        min_value=0.0,
+        min_value=-50.0,
         max_value=10.0,
         allow_null=True,
         severity="warning",
-        description="资产负债率正常范围 0% 到 1000%",
+        description="资产负债率正常范围 -5000% 到 +1000%（负值表示负权益）",
     ),
     ValidationRule(
         field="debt_to_assets",

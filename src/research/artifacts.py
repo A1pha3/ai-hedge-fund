@@ -98,7 +98,12 @@ def _portfolio_nav(portfolio_snapshot: dict[str, Any]) -> float:
     positions = dict((portfolio_snapshot or {}).get("positions", {}) or {})
     total = cash
     for position in positions.values():
-        total += float(position.get("long", 0) or 0) * float(position.get("long_cost_basis", 0.0) or 0.0)
+        shares = float(position.get("long", 0) or 0)
+        if shares <= 0:
+            continue
+        # Use market price when available; fall back to cost basis
+        price = float(position.get("current_price") or position.get("last_price") or position.get("long_cost_basis", 0.0) or 0.0)
+        total += shares * price
     return total if total > 0 else cash
 
 

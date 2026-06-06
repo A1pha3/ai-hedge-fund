@@ -142,7 +142,7 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
     progress.update_status(agent_id, None, "Done")
 
     return {
-        "messages": [message],
+        "messages": state["messages"] + [message],
         "data": state["data"],
     }
 
