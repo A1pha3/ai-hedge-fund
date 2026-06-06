@@ -459,12 +459,28 @@ def fuse_batch(
     scored_signals: dict[str, dict[str, StrategySignal]],
     market_state: MarketState,
     trade_date: str | None = None,
+    candidates: list | None = None,
 ) -> list[FusedScore]:
     results = []
     current_cooldown = get_cooled_tickers(trade_date) if trade_date else set()
+    # Build lookup from candidates for name/industry propagation
+    cand_lookup: dict[str, dict[str, str]] = {}
+    if candidates:
+        for c in candidates:
+            ticker = getattr(c, "ticker", None)
+            if ticker:
+                cand_lookup[ticker] = {
+                    "name": getattr(c, "name", ""),
+                    "industry_sw": getattr(c, "industry_sw", ""),
+                }
     for ticker, signals in scored_signals.items():
         if trade_date and ticker in current_cooldown and signals.get("fundamental") and signals["fundamental"].direction > 0:
             maybe_release_cooldown_early(ticker, trade_date, signals["fundamental"])
-        results.append(fuse_signals_for_ticker(ticker, signals, market_state, trade_date))
+        fused = fuse_signals_for_ticker(ticker, signals, market_state, trade_date)
+        # Propagate name/industry from candidate pool
+        if ticker in cand_lookup:
+            fused.name = cand_lookup[ticker]["name"]
+            fused.industry_sw = cand_lookup[ticker]["industry_sw"]
+        results.append(fused)
     _apply_cross_sectional_attention_metrics(results)
     return results

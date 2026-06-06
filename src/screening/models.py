@@ -91,6 +91,8 @@ DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
 class FusedScore(BaseModel):
     """单标的 Layer B 融合得分（§3.1 融合公式 + §3.4 决策阈值）"""
     ticker: str
+    name: str = ""
+    industry_sw: str = ""
     score_b: float = Field(ge=-1, le=1)
     strategy_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     metrics: dict = Field(default_factory=dict)

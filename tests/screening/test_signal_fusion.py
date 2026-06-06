@@ -109,3 +109,74 @@ def test_fuse_batch_computes_cross_sectional_attention_composite() -> None:
     assert metrics_by_ticker["000001"]["attention_composite"] == pytest.approx(1.0 / 3.0, abs=1e-4)
     assert metrics_by_ticker["000002"]["attention_composite"] == pytest.approx(2.0 / 3.0, abs=1e-4)
     assert metrics_by_ticker["000003"]["attention_composite"] == pytest.approx(1.0, abs=1e-4)
+
+
+def test_fuse_batch_propagates_name_and_industry_from_candidates() -> None:
+    """fuse_batch should propagate name and industry_sw from CandidateStock list."""
+    from src.screening.models import CandidateStock
+
+    candidates = [
+        CandidateStock(ticker="000001", name="平安银行", industry_sw="银行"),
+        CandidateStock(ticker="000002", name="万科A", industry_sw="房地产"),
+    ]
+    fused_scores = fuse_batch(
+        {
+            "000001": {
+                "trend": StrategySignal(
+                    direction=1, confidence=70.0, completeness=1.0, sub_factors={}
+                )
+            },
+            "000002": {
+                "trend": StrategySignal(
+                    direction=1, confidence=70.0, completeness=1.0, sub_factors={}
+                )
+            },
+        },
+        market_state=MarketState(),
+        candidates=candidates,
+    )
+
+    by_ticker = {f.ticker: f for f in fused_scores}
+    assert by_ticker["000001"].name == "平安银行"
+    assert by_ticker["000001"].industry_sw == "银行"
+    assert by_ticker["000002"].name == "万科A"
+    assert by_ticker["000002"].industry_sw == "房地产"
+
+
+def test_fuse_batch_without_candidates_leaves_name_industry_empty() -> None:
+    """fuse_batch without candidates parameter should still work (backward compat)."""
+    fused_scores = fuse_batch(
+        {
+            "000001": {
+                "trend": StrategySignal(
+                    direction=1, confidence=70.0, completeness=1.0, sub_factors={}
+                )
+            }
+        },
+        market_state=MarketState(),
+    )
+    assert fused_scores[0].name == ""
+    assert fused_scores[0].industry_sw == ""
+
+
+def test_fuse_batch_ignores_candidates_not_in_signals() -> None:
+    """Candidates whose tickers have no signals should be silently ignored."""
+    from src.screening.models import CandidateStock
+
+    candidates = [
+        CandidateStock(ticker="000001", name="在池中", industry_sw="银行"),
+        CandidateStock(ticker="000999", name="未评分", industry_sw="—"),
+    ]
+    fused_scores = fuse_batch(
+        {
+            "000001": {
+                "trend": StrategySignal(
+                    direction=1, confidence=70.0, completeness=1.0, sub_factors={}
+                )
+            }
+        },
+        market_state=MarketState(),
+        candidates=candidates,
+    )
+    assert len(fused_scores) == 1
+    assert fused_scores[0].name == "在池中"

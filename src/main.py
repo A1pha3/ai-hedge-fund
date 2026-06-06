@@ -262,7 +262,7 @@ def run_screen_only_mode(trade_date: str) -> int:
     candidates = build_candidate_pool(trade_date)
     market_state = detect_market_state(trade_date)
     scored = score_batch(candidates, trade_date)
-    fused = fuse_batch(scored, market_state, trade_date)
+    fused = fuse_batch(scored, market_state, trade_date, candidates=candidates)
     high_pool = [item for item in fused if item.score_b >= 0.35]
     output = {
         "date": trade_date,
@@ -317,12 +317,15 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         progress.update_status("auto_screening", None, "Step 3/4: 信号融合 + 冲突仲裁")
         logger.info("[Auto] Step 3/4: 市场状态检测 + 信号融合")
         market_state = detect_market_state(trade_date)
-        fused = fuse_batch(scored, market_state, trade_date)
+        fused = fuse_batch(scored, market_state, trade_date, candidates=candidates)
 
         # Step 4: 排序输出 Top N
         progress.update_status("auto_screening", None, f"Step 4/4: 输出 Top {top_n} 推荐")
         sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
         top_results = sorted_results[:top_n]
+
+        # Sector concentration guard
+        sector_warnings = _check_sector_concentration(top_results)
 
         # Save full report
         report_payload = {
@@ -334,11 +337,12 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
             "top_n": top_n,
             "recommendations": [item.model_dump() for item in top_results],
+            "sector_concentration_warnings": sector_warnings,
         }
         report_path = _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
 
         # Print formatted table
-        _print_auto_screening_table(trade_date, top_results, market_state, len(candidates), top_n, report_path)
+        _print_auto_screening_table(trade_date, top_results, market_state, len(candidates), top_n, report_path, sector_warnings)
         return 0
     finally:
         progress.stop()
@@ -351,6 +355,7 @@ def _print_auto_screening_table(
     pool_size: int,
     top_n: int,
     report_path: Path,
+    sector_warnings: list[str] | None = None,
 ) -> None:
     """打印格式化的自动筛选推荐表格。"""
     from colorama import Fore, Style
@@ -402,7 +407,8 @@ def _print_auto_screening_table(
 
         table_data.append([
             f"{idx}",
-            item.ticker,
+            f"{item.ticker} {item.name}" if item.name else item.ticker,
+            item.industry_sw or "—",
             score_colored,
             decision_colored,
             signal_summary,
@@ -412,15 +418,124 @@ def _print_auto_screening_table(
     headers = [
         f"{Fore.WHITE}#",
         "Ticker",
+        "Industry",
         "Score B",
         "Decision",
         "Signals (T MR F E)",
         "Arbitration",
     ]
-    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "right", "center", "center", "left")))
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "left")))
 
     print(f"\n  详细报告已保存: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
+
+    # Sector concentration warnings
+    if sector_warnings:
+        for w in sector_warnings:
+            print(f"  {Fore.YELLOW}⚠️  {w}{Style.RESET_ALL}")
     print()
+
+
+def _check_sector_concentration(top_results: list, threshold: float = 0.4) -> list[str]:
+    """Check sector concentration in top recommendations and return warnings."""
+    from collections import Counter
+
+    if not top_results:
+        return []
+
+    warnings: list[str] = []
+    sectors = [item.industry_sw for item in top_results if item.industry_sw]
+    if not sectors:
+        return warnings
+
+    total = len(top_results)
+    sector_counts = Counter(sectors)
+    for sector, count in sector_counts.most_common(3):
+        ratio = count / total
+        if ratio > threshold and sector:
+            warnings.append(f"行业集中度: {sector} {count}/{total} ({ratio:.0%}). 建议分散配置。")
+    return warnings
+
+
+def run_explain(ticker: str) -> int:
+    """Explain why a ticker was recommended by reading the latest auto-screening report.
+
+    Loads the most recent auto_screening_*.json from data/reports/, finds the ticker,
+    and prints a 10-line readable breakdown of each strategy's contribution.
+    """
+    import json as _json
+
+    from colorama import Fore, Style
+
+    # Find the most recent auto_screening report
+    reports_dir = _REPORT_DIR if hasattr(__import__(__name__), "_REPORT_DIR") else Path("data/reports")
+    if not reports_dir.exists():
+        print(f"{Fore.RED}未找到 reports 目录: {reports_dir}{Style.RESET_ALL}")
+        return 1
+
+    report_files = sorted(reports_dir.glob("auto_screening_*.json"), reverse=True)
+    if not report_files:
+        print(f"{Fore.RED}没有 auto_screening_*.json 报告, 请先运行 --auto{Style.RESET_ALL}")
+        return 1
+
+    latest = report_files[0]
+    try:
+        with open(latest) as f:
+            data = _json.load(f)
+    except Exception as exc:  # pragma: no cover
+        print(f"{Fore.RED}读取报告失败: {exc}{Style.RESET_ALL}")
+        return 1
+
+    recs = data.get("recommendations", [])
+    match = next((r for r in recs if r.get("ticker") == ticker), None)
+    if not match:
+        print(f"{Fore.YELLOW}在 {latest.name} 中未找到 {ticker}, 该票未在 Top 推荐中{Style.RESET_ALL}")
+        available = ", ".join(r.get("ticker", "") for r in recs[:10])
+        print(f"  Top 10 票: {available}")
+        return 1
+
+    name = match.get("name", "")
+    industry = match.get("industry_sw", "")
+    score_b = match.get("score_b", 0.0)
+    decision = match.get("decision", "neutral")
+    signals = match.get("strategy_signals", {})
+    arbitration = match.get("arbitration_applied", [])
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Explain] {ticker} {name} ({industry}){Style.RESET_ALL}")
+    print(f"  报告: {latest.name}")
+    print(f"  决策: {decision}  |  Score B: {score_b:+.4f}")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+
+    # Market state at scoring time
+    ms = data.get("market_state", {})
+    if ms:
+        print(f"{Fore.CYAN}市场状态:{Style.RESET_ALL} {ms.get('state_type', '?')}  |  "
+              f"仓位系数: {ms.get('position_scale', 1.0):.2f}  |  "
+              f"regime: {ms.get('regime_gate_level', 'normal')}")
+
+    # Per-strategy breakdown
+    print(f"\n{Fore.CYAN}策略贡献:{Style.RESET_ALL}")
+    for strat_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+        sig = signals.get(strat_name)
+        if not sig:
+            print(f"  {strat_name:18s}  —  数据缺失")
+            continue
+        direction = sig.get("direction", 0)
+        conf = sig.get("confidence", 0.0)
+        arrow = "↑" if direction > 0 else "↓" if direction < 0 else "—"
+        color = Fore.GREEN if direction > 0 else Fore.RED if direction < 0 else Fore.YELLOW
+        print(f"  {strat_name:18s}  {color}{arrow} {conf:5.1f}{Style.RESET_ALL}")
+
+    # Arbitration
+    if arbitration:
+        print(f"\n{Fore.CYAN}仲裁规则:{Style.RESET_ALL}")
+        for rule in arbitration:
+            print(f"  • {rule}")
+    else:
+        print(f"\n{Fore.CYAN}仲裁规则:{Style.RESET_ALL} 无")
+
+    print()
+    return 0
 
 
 if __name__ == "__main__":
@@ -453,6 +568,10 @@ if __name__ == "__main__":
     if inputs.auto:
         trade_date = inputs.end_date.replace("-", "")
         raise SystemExit(run_auto_screening(trade_date, top_n=inputs.top_n))
+
+    # --explain mode: read the latest auto-screening report and explain a ticker
+    if inputs.explain:
+        raise SystemExit(run_explain(inputs.explain))
 
     tickers = inputs.tickers
     selected_analysts = inputs.selected_analysts

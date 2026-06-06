@@ -64,6 +64,13 @@ def add_common_args(
         default=10,
         help="Return top N recommendations in --auto mode (default: 10)",
     )
+    parser.add_argument(
+        "--explain",
+        type=str,
+        default=None,
+        metavar="TICKER",
+        help="Explain why TICKER was recommended (reads latest auto-screening report)",
+    )
     return parser
 
 
@@ -219,6 +226,7 @@ class CLIInputs:
     show_agent_graph: bool = False
     auto: bool = False
     top_n: int = 10
+    explain: str = ""
     raw_args: argparse.Namespace | None = None
 
 
@@ -300,5 +308,6 @@ def parse_cli_inputs(
         show_agent_graph=getattr(args, "show_agent_graph", False),
         auto=is_auto,
         top_n=getattr(args, "top_n", 10),
+        explain=getattr(args, "explain", None) or "",
         raw_args=args,
     )
