@@ -64,7 +64,7 @@ def print_trading_output(result: dict) -> None:
 
     for ticker, decision in decisions.items():
         action = decision.get("action", "").upper()
-        confidence = decision.get("confidence", 0)
+        confidence = decision.get("confidence") or 0
         logger.info(f"Trading decision for {ticker}: {action} with {confidence:.1f}% confidence")
         print(f"\n{Fore.WHITE}{Style.BRIGHT}Analysis for {Fore.CYAN}{ticker}{Style.RESET_ALL}")
         print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 50}{Style.RESET_ALL}")

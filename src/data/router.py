@@ -8,6 +8,7 @@
 
 import logging
 import threading
+import time
 from datetime import datetime
 from typing import Any
 
@@ -363,26 +364,38 @@ class DataRouter:
         if not providers:
             return DataResponse(data=[], source="router", error="No healthy providers available")
 
-        # 依次尝试每个提供商
+        # 依次尝试每个提供商，同时记录健康状态到全局 HealthMonitor
+        monitor = get_health_monitor()
         last_error = None
 
         for provider in providers:
+            start = time.monotonic()
             try:
                 response = await provider.get_company_news(ticker, start_date, end_date)
+                latency_ms = (time.monotonic() - start) * 1000
 
                 if response.error:
                     last_error = response.error
+                    monitor.record_failure(provider.name, latency_ms, error=response.error)
                     continue
 
                 if response.data:
+                    monitor.record_success(provider.name, latency_ms)
                     # 缓存结果
                     if use_cache:
-                        self._set_to_cache(cache_key, DataType.NEWS, [n.model_dump() for n in response.data])
+                        self._set_to_cache(cache_key, DataType.NEWS, serialize_cache_records(response.data))
 
                     return response
 
+                # 空数据但无 error —— 视为成功（provider 正常返回，只是没有数据）
+                monitor.record_success(provider.name, latency_ms)
+                last_error = "empty response"
+                continue
+
             except Exception as e:
+                latency_ms = (time.monotonic() - start) * 1000
                 last_error = str(e)
+                monitor.record_failure(provider.name, latency_ms, error=last_error)
                 continue
 
         return DataResponse(data=[], source="router", error=f"All providers failed. Last error: {last_error}")

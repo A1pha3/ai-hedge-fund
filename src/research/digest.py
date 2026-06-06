@@ -149,7 +149,7 @@ def _extract_daily_digest(snapshot: dict[str, Any], trade_date: str) -> DailyDig
             for e in sorted_sel[:10]
             if str(e.get("symbol", "")).strip()
         ]
-        top_score = float(sorted_sel[0].get("score_final") or 0) if sorted_sel else None
+        top_score = float(sorted_sel[0].get("score_final") or 0)
 
     avg_score: float | None = None
     if scores:

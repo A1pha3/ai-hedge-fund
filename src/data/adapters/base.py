@@ -83,7 +83,6 @@ class DataSourceAdapter(ABC):
         if value is None:
             return default
         try:
-            result = float(value)
-            return result if result != 0 else default
+            return float(value)
         except (ValueError, TypeError):
             return default

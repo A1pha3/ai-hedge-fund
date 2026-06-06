@@ -1996,6 +1996,7 @@ class DailyPipeline:
                 open_gap_pct=data.get("open_gap_pct"),
                 minutes_since_open=data.get("minutes_since_open"),
                 failed_breakout=bool(data.get("failed_breakout", False)),
+                is_intraday=True,
             )
             if result["confirmed"]:
                 confirmed_orders.append(order)

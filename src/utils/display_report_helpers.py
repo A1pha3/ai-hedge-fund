@@ -130,7 +130,7 @@ def _build_analyst_signal_summary_lines(ticker: str, result: dict) -> list[str]:
         elif signal_type == "NEUTRAL":
             neutral_count += 1
 
-        lines.append(f"| {agent_name} | {signal_type} | {confidence}% |")
+        lines.append(f"| {agent_name} | {signal_type} | {confidence or 0}% |")
 
     lines.append(f"\n**信号统计**: 看涨 {bullish_count} | 看跌 {bearish_count} | 中性 {neutral_count}\n")
     return lines
@@ -150,7 +150,7 @@ def _build_analyst_detail_lines(ticker: str, result: dict, format_reasoning_to_m
 
         lines.append(f"#### {agent_name}\n")
         lines.append(f"- **信号**: {signal_type}")
-        lines.append(f"- **置信度**: {confidence}%")
+        lines.append(f"- **置信度**: {confidence or 0}%")
         lines.append("- **推理过程**:\n")
         lines.append(f"{formatted_reasoning}\n")
 
@@ -224,7 +224,7 @@ def _build_final_decision_lines(decision: dict) -> list[str]:
         "|------|------|",
         f"| 操作 | {action_emoji} **{action}** |",
         f"| 数量 | {quantity} 股 |",
-        f"| 置信度 | {confidence:.1f}% |",
+        f"| 置信度 | {(confidence or 0):.1f}% |",
         f"| 决策理由 | {reasoning} |",
         "",
     ]

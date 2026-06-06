@@ -349,7 +349,7 @@ def _append_recommendation_line_if_entries(
 ) -> None:
     _append_recommendation_line_if_tickers(
         recommendation_lines,
-        [entry["ticker"] for entry in entries],
+        [str(entry.get("ticker") or "") for entry in entries if entry.get("ticker")],
         prefix=prefix,
         suffix=suffix,
     )
@@ -373,7 +373,7 @@ def _append_historical_prior_recommendation(
     prefix: str,
 ) -> None:
     historical_prior_lines = [
-        f"{entry['ticker']}={entry.get('historical_prior', {}).get('summary')}"
+        f"{entry.get('ticker', '?')}={entry.get('historical_prior', {}).get('summary')}"
         for entry in entries
         if (entry.get("historical_prior") or {}).get("summary")
     ]

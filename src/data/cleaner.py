@@ -192,10 +192,16 @@ class SmartDataCleaner:
             fixed = metric.copy()
 
             for field, threshold in self.UNIT_ERROR_THRESHOLDS.items():
-                value = metric.get(field)
-                if value is not None and abs(float(value)) > threshold:
-                    logger.warning(f"[{ticker}] {field}={value} 疑似单位错误，自动除以100")
-                    fixed[field] = float(value) / 100
+                raw = metric.get(field)
+                if raw is None:
+                    continue
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if abs(value) > threshold:
+                    logger.warning(f"[{ticker}] {field}={raw} 疑似单位错误，自动除以100")
+                    fixed[field] = value / 100
 
             fixed_metrics.append(fixed)
 

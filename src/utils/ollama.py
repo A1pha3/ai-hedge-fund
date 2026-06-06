@@ -96,9 +96,19 @@ def start_ollama_server() -> bool:
 
     try:
         if system == "darwin" or system == "linux":  # macOS or Linux
-            subprocess.Popen(["ollama", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
         elif system == "windows":  # Windows
-            subprocess.Popen(["ollama", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=True,
+            )
         else:
             logger.error(f"Unsupported operating system: {system}")
             print(f"{Fore.RED}Unsupported operating system: {system}{Style.RESET_ALL}")
@@ -141,7 +151,12 @@ def _verify_installed_and_running(restart_message: str) -> bool:
 
 def _run_install_script(success_message: str, failure_message: str) -> bool:
     try:
-        install_process = subprocess.run(["bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh"], capture_output=True, text=True)
+        install_process = subprocess.run(
+            ["bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
         if install_process.returncode == 0:
             print(f"{Fore.GREEN}{success_message}{Style.RESET_ALL}")
             return True
@@ -241,7 +256,10 @@ def download_model(model_name: str) -> bool:
 
 def _should_use_remote_ollama_workflow(ollama_url: str) -> bool:
     env_override = os.environ.get("OLLAMA_BASE_URL")
-    return bool(env_override or ollama_url.startswith(("http://ollama:", "http://host.docker.internal:")))
+    env_override_is_remote = bool(env_override) and (
+        env_override.startswith(("http://ollama:", "http://host.docker.internal:"))
+    )
+    return env_override_is_remote or ollama_url.startswith(("http://ollama:", "http://host.docker.internal:"))
 
 
 def _ensure_local_ollama_installed() -> bool:

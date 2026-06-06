@@ -58,7 +58,7 @@ def build_decision_table_rows(decision: dict) -> list[list[str]]:
     return [
         ["Action", f"{action_color}{action}{Style.RESET_ALL}"],
         ["Quantity", f"{action_color}{decision.get('quantity')}{Style.RESET_ALL}"],
-        ["Confidence", f"{Fore.WHITE}{decision.get('confidence'):.1f}%{Style.RESET_ALL}"],
+        ["Confidence", f"{Fore.WHITE}{(decision.get('confidence') or 0):.1f}%{Style.RESET_ALL}"],
         ["Reasoning", f"{Fore.WHITE}{wrap_output_text(decision.get('reasoning', ''))}{Style.RESET_ALL}"],
     ]
 
@@ -95,7 +95,7 @@ def build_portfolio_summary_rows(decisions: dict, analyst_signals: dict) -> list
                 f"{Fore.CYAN}{ticker}{Style.RESET_ALL}",
                 f"{action_color}{action}{Style.RESET_ALL}",
                 f"{action_color}{decision.get('quantity')}{Style.RESET_ALL}",
-                f"{Fore.WHITE}{decision.get('confidence'):.1f}%{Style.RESET_ALL}",
+                f"{Fore.WHITE}{(decision.get('confidence') or 0):.1f}%{Style.RESET_ALL}",
                 f"{Fore.GREEN}{bullish_count}{Style.RESET_ALL}",
                 f"{Fore.RED}{bearish_count}{Style.RESET_ALL}",
                 f"{Fore.YELLOW}{neutral_count}{Style.RESET_ALL}",

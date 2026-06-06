@@ -815,7 +815,7 @@ def build_selection_snapshot(
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
         pipeline_config_snapshot=_build_pipeline_config_snapshot(plan, pipeline, selected_analysts),
         universe_summary={
-            "input_symbol_count": int(counts.get("layer_a_count", plan.layer_a_count) or 0),
+            "input_symbol_count": int(counts.get("universe_count", counts.get("input_symbol_count", 0)) or 0),
             "candidate_count": int(counts.get("layer_a_count", plan.layer_a_count) or 0),
             "high_pool_count": int(counts.get("layer_b_count", plan.layer_b_count) or 0),
             "watchlist_count": int(counts.get("watchlist_count", len(plan.watchlist)) or 0),
