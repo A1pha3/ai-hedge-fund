@@ -112,8 +112,11 @@ def _compute_expected_adjustment_from_raw_signal(*, trade_date: str, entry: dict
     profile = build_short_trade_target_profile(profile_name, overrides=profile_overrides)
     input_data = short_trade_target_module._build_target_input_from_entry(trade_date=trade_date, entry=entry)
     signal_snapshot = short_trade_target_module._compute_short_trade_signal_snapshot(input_data, profile=profile)
+    # R6 fix: use trend_continuation (correct field) instead of trend_acceleration.
+    # Fall back to trend_acceleration if trend_continuation is not in snapshot.
+    trend_cont = signal_snapshot.get("trend_continuation", signal_snapshot.get("trend_acceleration", 0.0))
     return compute_trend_continuation_strength_adjustment(
-        trend_continuation=signal_snapshot["trend_acceleration"],
+        trend_continuation=trend_cont,
         close_strength=signal_snapshot["close_strength"],
         volume_expansion_quality=signal_snapshot["volume_expansion_quality"],
         continuation_weight=profile.trend_continuation_strength_weight,
