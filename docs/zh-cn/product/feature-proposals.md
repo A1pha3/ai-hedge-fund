@@ -1,6 +1,6 @@
 # 特性提案 (Feature Proposals)
 
-> 最近更新: 2026-06-06 (第四轮策略团队审查: 8 bug 修复 + R4 NaN/case-sensitivity/统计/agent 报告)
+> 最近更新: 2026-06-06 (第五轮策略团队审查: 16 bug 修复 + display/look-ahead/health/格式 报告)
 > 目标: 提升产品易用性, 让用户在 30 天投资窗口内更高效地找到最有价值的股票
 
 ## 0. 方法论与范围
@@ -997,3 +997,57 @@
 | **P2** | 2.3 | 早盘"取消/减仓"一键模拟器 | L | 前后端 |
 | **P2** | 2.4 | 信号 vs 实际成交对比层 | L | 前后端 |
 | **P2** | 6.3 | 组合归因面板前端 `AttributionPage.tsx` | L | 前端 |
+
+---
+
+## 12. 2026-06-06 第五轮策略研究团队审查更新
+
+> alpha/beta/gamma 三团队第五轮全量代码审查, 聚焦于前轮未覆盖的
+> 研究反馈、数据层、工具、执行管线、paper trading 子系统。
+> 本轮共发现并修复 ~16 个 bug (564 回归测试通过)。
+
+### 12.1 本轮 Bug 修复清单 (16 项)
+
+#### Alpha — Research / Feedback / Candidate Pool helpers (2 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 1 | `research/artifacts.py:818` | `input_symbol_count` 和 `candidate_count` 读同一 `layer_a_count` key, funnel 显示相同数字 | P1 |
+| 2 | `research/digest.py:152` | 死分支 `else None` (sorted_sel 在 selected truthy 时必非空) | P2 |
+
+#### Beta — Data Layer (~4 项, 进程超时)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 3 | `data/adapters/base.py` | `_to_float` 把合法 0.0 误判为 missing, 改为不做 0→default 转换 | P1 |
+| 4 | `data/cleaner.py` | `UNIT_ERROR_THRESHOLDS` 循环中 float() 无 try/except 守卫 | P0 |
+| 5 | `data/router.py` | `get_company_news` 路径无 HealthMonitor 记录, 阻塞 6.1 数据源健康可见性 | P0 |
+| 6+ | 其他 data/* 改进 | (Beta 进程被 kill, 部分修改未应用) | - |
+
+#### Gamma — Utils / Display / Execution / Paper Trading (10 项)
+
+| # | 文件 | 修复内容 | 级别 |
+|---|------|----------|------|
+| 7 | `utils/display.py:68` | `f"{confidence:.1f}%"` 在 confidence=None 时 TypeError 崩溃 | P0 |
+| 8 | `utils/display_print_helpers.py:61,98` | 同上, 2 处 | P0 |
+| 9 | `utils/display_report_helpers.py:124,153,227` | 同上, 3 处 (会丢整个报告) | P0 |
+| 10 | `execution/daily_pipeline.py:1983-1999` | `run_intraday` 调 `confirm_buy_signal` 未传 `is_intraday=True` → look-ahead 偏差 | P0 |
+| 11 | `utils/ollama.py:99-101` | `Popen` PIPE 满 64KB 阻塞 server | P0 |
+| 12 | `utils/ollama.py:144` | `curl|sh` 缺 `timeout=180` | P1 |
+| 13 | `utils/ollama.py:242-244` | localhost 误判为 docker remote | P1 |
+| 14 | `paper_trading/btst_reporting.py:350-352,376-377` | KeyError on missing 'ticker' | P1 |
+
+### 12.2 Bug 模式分析
+
+本轮新发现的系统性模式:
+
+1. **None 在 f-string 中的隐性崩溃 (6 处)**: `f"{x:.1f}"` 在 x=None 时不返回 'None' 而抛 TypeError。
+   影响: 任何 confidence 字段为 None 的决策会丢失整段输出甚至整个报告。
+   修复模式: `(x or 0)` 显式 None-guard。
+
+2. **Look-ahead 偏差通过缺参数 (1 处)**: 函数 `confirm_buy_signal(low=...)` 默认按收盘价算,
+   但日内需要传 `is_intraday=True` 才能用 current_price 而非 day_low。
+   修复模式: 关键时间敏感参数必须有显式 `is_intraday` 字段。
+
+3. **空 PIPE buffer 阻塞 (1 处)**: subprocess 频繁被忽视的"无 timeout"和"PIPE 满"两类故障。
+   修复模式: PIPE → DEVNULL, 关键命令加 `timeout=N`。
