@@ -254,9 +254,14 @@ class Portfolio:
         if quantity <= 0:
             return 0
         quantity = int(quantity)
+        assert commission_rate >= 0, f"apply_long_buy: commission_rate must be non-negative, got {commission_rate}"
         position = self._portfolio["positions"][ticker]
         commission_rate = float(commission_rate)
         all_in_price = float(price) * (1.0 + commission_rate)
+        assert all_in_price >= float(price), (
+            f"apply_long_buy: all_in_price ({all_in_price}) must be >= raw price ({price}) "
+            f"when commission_rate={commission_rate}"
+        )
         cost = quantity * all_in_price
         if cost <= self._portfolio["cash"]:
             old_shares = position["long"]
@@ -307,10 +312,15 @@ class Portfolio:
         quantity = min(int(quantity), position["long"]) if quantity > 0 else 0
         if quantity <= 0:
             return 0
+        assert commission_rate >= 0, f"apply_long_sell: commission_rate must be non-negative, got {commission_rate}"
+        assert stamp_duty_rate >= 0, f"apply_long_sell: stamp_duty_rate must be non-negative, got {stamp_duty_rate}"
         avg_cost = position["long_cost_basis"] if position["long"] > 0 else 0.0
         commission_rate = float(commission_rate)
         stamp_duty_rate = float(stamp_duty_rate)
         net_proceeds_price = float(price) * (1.0 - commission_rate - stamp_duty_rate)
+        assert net_proceeds_price <= float(price), (
+            f"apply_long_sell: net_proceeds_price ({net_proceeds_price}) must be <= raw price ({price})"
+        )
         realized_gain = (net_proceeds_price - avg_cost) * quantity
         self._portfolio["realized_gains"][ticker]["long"] += realized_gain
         position["long"] -= quantity

@@ -4,7 +4,7 @@ import math
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Literal
+from typing import Any, Literal
 
 from src.agents.ben_graham_helpers import (
     _score_graham_current_ratio,
@@ -263,7 +263,7 @@ def analyze_valuation_graham(financial_line_items: list, market_cap: float) -> d
 
 def generate_graham_output(
     ticker: str,
-    analysis_data: dict[str, any],
+    analysis_data: dict[str, Any],
     state: AgentState,
     agent_id: str,
 ) -> BenGrahamSignal:

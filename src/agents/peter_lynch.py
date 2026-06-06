@@ -3,7 +3,7 @@ import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Literal
+from typing import Any, Literal
 
 from src.agents.peter_lynch_helpers import (
     _describe_lynch_pe_and_growth,
@@ -331,7 +331,7 @@ def analyze_insider_activity(insider_trades: list) -> dict:
 
 def generate_lynch_output(
     ticker: str,
-    analysis_data: dict[str, any],
+    analysis_data: dict[str, Any],
     state: AgentState,
     agent_id: str,
 ) -> PeterLynchSignal:

@@ -3,7 +3,7 @@ import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Literal
+from typing import Any, Literal
 
 from src.agents.bill_ackman_helpers import (
     _score_ackman_buybacks,
@@ -304,7 +304,7 @@ def analyze_valuation(financial_line_items: list, market_cap: float) -> dict:
 
 def generate_ackman_output(
     ticker: str,
-    analysis_data: dict[str, any],
+    analysis_data: dict[str, Any],
     state: AgentState,
     agent_id: str,
 ) -> BillAckmanSignal:

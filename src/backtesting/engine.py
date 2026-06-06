@@ -181,7 +181,11 @@ class BacktestEngine:
             initial_cash=initial_capital,
             margin_requirement=initial_margin_requirement,
         )
-        self._executor = TradeExecutor(TradingConstraints() if backtest_mode == "pipeline" else TradingConstraints(commission_rate=0.0, stamp_duty_rate=0.0, base_slippage_rate=0.0, low_liquidity_slippage_rate=0.0))
+        # P0 fix: both pipeline and agent modes use real commission + stamp duty +
+        # slippage so that cost basis and realized P&L reflect true economic costs.
+        # Previously agent mode passed zero fees, making backtest results (Sharpe,
+        # win rate, P&L ratio) systematically inflated.
+        self._executor = TradeExecutor(TradingConstraints())
         self._agent_controller = AgentController()
         self._perf = PerformanceMetricsCalculator()
         self._results = OutputBuilder(initial_capital=self._initial_capital)

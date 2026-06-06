@@ -3,7 +3,7 @@ import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Literal
+from typing import Any, Literal
 
 from src.agents.stanley_druckenmiller_helpers import (
     _collect_druckenmiller_valuation_inputs,
@@ -349,7 +349,7 @@ def analyze_druckenmiller_valuation(financial_line_items: list, market_cap: floa
 
 def generate_druckenmiller_output(
     ticker: str,
-    analysis_data: dict[str, any],
+    analysis_data: dict[str, Any],
     state: AgentState,
     agent_id: str,
 ) -> StanleyDruckenmillerSignal:

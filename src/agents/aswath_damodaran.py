@@ -6,7 +6,7 @@ import math
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Literal
+from typing import Any, Literal
 
 from src.graph.state import AgentState, show_agent_reasoning
 from src.agents.prompt_rules import with_fact_grounding_rules
@@ -165,7 +165,7 @@ def aswath_damodaran_agent(state: AgentState, agent_id: str = "aswath_damodaran_
 # ────────────────────────────────────────────────────────────────────────────────
 # Helper analyses
 # ────────────────────────────────────────────────────────────────────────────────
-def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str, any]:
+def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str, Any]:
     """
     Growth score (0-4):
       +2  5-yr CAGR of revenue > 8 %
@@ -216,7 +216,7 @@ def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str
     return {"score": score, "max_score": max_score, "details": "; ".join(details), "metrics": latest.model_dump()}
 
 
-def analyze_risk_profile(metrics: list, line_items: list, ticker: str | None = None) -> dict[str, any]:
+def analyze_risk_profile(metrics: list, line_items: list, ticker: str | None = None) -> dict[str, Any]:
     """
     Risk score (0-3):
       +1  Beta < 1.3
@@ -281,7 +281,7 @@ def analyze_risk_profile(metrics: list, line_items: list, ticker: str | None = N
     }
 
 
-def analyze_relative_valuation(metrics: list) -> dict[str, any]:
+def analyze_relative_valuation(metrics: list) -> dict[str, Any]:
     """
     Simple PE check vs. historical median (proxy since sector comps unavailable):
       +1 if TTM P/E < 70 % of 5-yr median
@@ -312,7 +312,7 @@ def analyze_relative_valuation(metrics: list) -> dict[str, any]:
 # ────────────────────────────────────────────────────────────────────────────────
 # Intrinsic value via FCFF DCF (Damodaran style)
 # ────────────────────────────────────────────────────────────────────────────────
-def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis: dict) -> dict[str, any]:
+def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis: dict) -> dict[str, Any]:
     """
     FCFF DCF with:
       • Base FCFF = latest free cash flow
@@ -418,7 +418,7 @@ def estimate_cost_of_equity(beta: float | None, ticker: str | None = None, debt_
 # ────────────────────────────────────────────────────────────────────────────────
 def generate_damodaran_output(
     ticker: str,
-    analysis_data: dict[str, any],
+    analysis_data: dict[str, Any],
     state: AgentState,
     agent_id: str,
 ) -> AswathDamodaranSignal:
