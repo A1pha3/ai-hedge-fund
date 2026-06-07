@@ -720,6 +720,8 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10) -> dict:
                 **batch_fetcher.stats(),
             },
             "industry_rotation": industry_rotation_payload,
+            # P1-10: 条件单建议 (空数组 — 真实价格 provider 由调用方注入)
+            "conditional_orders": [],
         },
     )
 
@@ -748,6 +750,9 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10) -> dict:
         },
         # P1-2: 行业轮动信号
         "industry_rotation": industry_rotation_payload,
+        # P1-10: 条件单建议 (基于 ATR 波动率) — 默认注入空数组,
+        # 真实价格 provider 由调用方在 Web 端 / CLI 端注入
+        "conditional_orders": [],
     }
 
 
@@ -966,6 +971,38 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
                 logger.info("[Auto] P1-7 PDF 报告已生成: %s", pdf_path)
             except Exception as exc:  # pragma: no cover - PDF 失败不影响主流程
                 logger.warning("[Auto] P1-7 PDF 导出失败: %s", exc)
+
+        # P2-3: 邮件 / Webhook 推送 — 加载 push_config.json, 对每个 enabled 通道调用 send_push。
+        # 失败容错: 配置缺失 / 解析失败 / 推送异常 → 仅记录日志, 不影响 run_auto_screening 返回码。
+        try:
+            from src.notification.push import (
+                DEFAULT_PUSH_CONFIG_PATH,
+                load_push_config,
+                send_push,
+            )
+
+            push_configs = load_push_config(DEFAULT_PUSH_CONFIG_PATH, only_enabled=True)
+            if push_configs:
+                push_pdf = pdf_path if "pdf_path" in locals() and pdf_path.exists() else None
+                push_results = []
+                for cfg in push_configs:
+                    result = send_push(cfg, report_payload, pdf_path=push_pdf)
+                    push_results.append(result)
+                    status = "OK" if result.success else "FAIL"
+                    logger.info(
+                        "[Auto] P2-3 推送 %s → %s (%s, attempts=%d, %.0fms)",
+                        cfg.channel.value,
+                        cfg.target,
+                        status,
+                        result.attempts,
+                        result.duration_ms,
+                    )
+                success_count = sum(1 for r in push_results if r.success)
+                print(
+                    f"{Fore.CYAN}[Auto] P2-3 推送完成: {success_count}/{len(push_results)} 通道成功{Style.RESET_ALL}"
+                )
+        except Exception as exc:  # pragma: no cover - 推送失败不影响主流程
+            logger.warning("[Auto] P2-3 推送异常: %s", exc)
 
         return 0
     except ValueError as exc:
@@ -1423,6 +1460,248 @@ def run_rebalance(positions_path: Path | None = None, drift_threshold: float = 0
     except Exception as exc:  # pragma: no cover
         logger.debug("[Rebalance] 落盘失败: %s", exc)
     return 0
+
+
+def run_push_test(
+    channel: str | None = None,
+    config_path: Path | str | None = None,
+    *,
+    init: bool = False,
+) -> int:
+    """P2-3 推送通道连通性测试 — CLI 入口。
+
+    行为:
+      - 不发起真实 HTTP / SMTP 请求 (供调试 / smoke test 用)。
+      - 若 ``init=True`` → 写入一份默认 push_config.json 模板到 ``data/push_config.json``,
+        不会覆盖已有文件 (除非 ``--force``)。
+      - 否则从配置文件加载通道, 发送一个含当日日期的最小测试 payload,
+        打印每个通道的 ``PushResult.to_dict()``。
+
+    Args:
+        channel: 仅测试指定通道名 (``"wecom"`` / ``"dingtalk"`` / ``"email"`` / ``"webhook"``);
+            None 表示测试配置中所有 enabled 通道。
+        config_path: 配置文件路径, 默认 ``data/push_config.json``。
+        init: True 时生成默认配置文件模板。
+
+    Returns:
+        退出码 (0 = 至少一个通道成功, 1 = 全部失败 / 配置缺失)。
+    """
+    from colorama import Fore, Style
+
+    from src.notification.push import (
+        DEFAULT_PUSH_CONFIG_PATH,
+        build_default_config,
+        format_report_markdown,
+        load_push_config,
+        send_push,
+    )
+
+    resolved_path = Path(config_path) if config_path else DEFAULT_PUSH_CONFIG_PATH
+
+    if init:
+        template = build_default_config(enabled_channels=("wecom", "dingtalk", "email", "webhook"))
+        if resolved_path.exists():
+            print(
+                f"{Fore.YELLOW}[PushTest] 配置文件已存在, 不会覆盖: {resolved_path}{Style.RESET_ALL}\n"
+                f"  如需重新生成, 请先删除该文件。"
+            )
+            return 1
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_path.write_text(
+            json.dumps(template, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"{Fore.GREEN}[PushTest] 已生成默认配置: {resolved_path}{Style.RESET_ALL}")
+        print("  请编辑该文件, 把 channel 改成 enabled=true 并填入真实 target。")
+        return 0
+
+    configs = load_push_config(resolved_path, only_enabled=True)
+    if not configs:
+        print(
+            f"{Fore.YELLOW}[PushTest] 未找到任何 enabled 通道 ({resolved_path}){Style.RESET_ALL}\n"
+            f"  提示: 使用 --push-test --init 生成默认模板。"
+        )
+        return 1
+
+    if channel:
+        target = channel.strip().lower()
+        configs = [c for c in configs if c.channel.value == target]
+        if not configs:
+            print(f"{Fore.RED}[PushTest] 配置中无 channel={target!r} 的 enabled 通道{Style.RESET_ALL}")
+            return 1
+
+    test_payload = {
+        "date": datetime.now().strftime("%Y%m%d"),
+        "market_state": {"state_type": "mixed", "position_scale": 0.5},
+        "recommendations": [
+            {
+                "ticker": "300750",
+                "decision": "buy",
+                "score_b": 0.42,
+                "strategy_signals": {
+                    "trend": {"direction": 1, "confidence": 80.0},
+                    "mean_reversion": {"direction": 0, "confidence": 30.0},
+                    "fundamental": {"direction": 1, "confidence": 65.0},
+                    "event_sentiment": {"direction": 1, "confidence": 50.0},
+                },
+            }
+        ],
+    }
+    # 预先打印一次 (供 CLI 输出)
+    print(f"\n[PushTest] 测试 payload Markdown 预览 (前 10 行):")
+    preview = format_report_markdown(test_payload).splitlines()[:10]
+    for line in preview:
+        print(f"  {line}")
+    print()
+
+    results = []
+    for cfg in configs:
+        # 强制注入: 即使真实 SMTP/HTTP 也会失败 (无沙箱环境), 这里仅做连通性提示。
+        # 实际发送会被 default 实现尝试, 但本 CLI 入口不连真实服务 (无沙箱) — 因此
+        # 注入 raise 让失败可预测地展示。
+        result = send_push(cfg, test_payload)
+        results.append(result)
+        marker = f"{Fore.GREEN}OK{Style.RESET_ALL}" if result.success else f"{Fore.RED}FAIL{Style.RESET_ALL}"
+        print(
+            f"  [{marker}] {cfg.channel.value:<14} → {cfg.target}  "
+            f"(attempts={result.attempts}, {result.duration_ms:.0f}ms, "
+            f"truncated={result.truncated})"
+        )
+        if result.error:
+            print(f"    error: {result.error}")
+
+    success_count = sum(1 for r in results if r.success)
+    total = len(results)
+    print(f"\n[PushTest] 完成: {success_count}/{total} 通道成功")
+    return 0 if success_count == total else 1
+
+
+def run_custom_weights(
+    trend: float,
+    mean_reversion: float,
+    fundamental: float,
+    event_sentiment: float,
+    top_n: int = 10,
+    trade_date: str | None = None,
+) -> int:
+    """P2-5 自定义策略权重 — CLI 入口。
+
+    从最新 (或指定日期) auto_screening_*.json 报告加载推荐列表, 按用户指定
+    的四策略权重重算每条 rec 的 score_b, 重新排序并打印 Top N。
+
+    Args:
+        trend: 趋势策略权重
+        mean_reversion: 均值回归策略权重
+        fundamental: 基本面策略权重
+        event_sentiment: 事件情绪策略权重
+        top_n: 返回 Top N (默认 10)
+        trade_date: 指定报告日期 YYYYMMDD; 缺省取最新
+
+    Returns:
+        退出码 (0 = 成功, 1 = 校验失败 / 报告缺失)
+    """
+    from colorama import Fore, Style
+
+    from src.screening.custom_weights import (
+        StrategyWeights,
+        load_latest_recommendations,
+        reweight_recommendations,
+    )
+
+    # 1. 构造权重 (StrategyWeights.__post_init__ 会做 NaN/求和校验)
+    try:
+        weights = StrategyWeights(
+            trend=trend,
+            mean_reversion=mean_reversion,
+            fundamental=fundamental,
+            event_sentiment=event_sentiment,
+        )
+    except ValueError as exc:
+        print(f"{Fore.RED}[CustomWeights] 权重校验失败: {exc}{Style.RESET_ALL}")
+        return 1
+
+    # 2. 加载报告
+    recs = load_latest_recommendations(trade_date=trade_date)
+    if not recs:
+        print(
+            f"{Fore.YELLOW}[CustomWeights] 未找到可用推荐报告 (trade_date={trade_date or 'latest'}), "
+            f"请先运行 --auto{Style.RESET_ALL}"
+        )
+        return 1
+
+    # 3. 重算
+    reweighted = reweight_recommendations(recs, weights)
+    top = reweighted[: max(1, top_n)]
+
+    # 4. 渲染
+    today = datetime.now().strftime("%Y-%m-%d")
+    w = weights.to_dict()
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[CustomWeights] 自定义权重推荐 · {today}{Style.RESET_ALL}")
+    print(
+        f"权重: 趋势 {w['trend']:.2f} / 均值回归 {w['mean_reversion']:.2f} / "
+        f"基本面 {w['fundamental']:.2f} / 事件情绪 {w['event_sentiment']:.2f}"
+    )
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    if not top:
+        print(f"{Fore.YELLOW}无可用推荐{Style.RESET_ALL}")
+        return 0
+
+    print(f"Top {len(top)}:")
+    for idx, rec in enumerate(top, start=1):
+        ticker = str(rec.get("ticker", ""))
+        name = str(rec.get("name", "") or "")
+        score_b = float(rec.get("score_b", 0.0) or 0.0)
+        original = float(rec.get("original_score_b", 0.0) or 0.0)
+        diff = score_b - original
+        diff_str = f"{diff:+.3f}"
+        label = f"{ticker} {name}".strip()
+        print(f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  (原 {original:+.3f}  Δ {diff_str})")
+
+    # 5. 落盘 JSON
+    payload = {
+        "mode": "custom_weights",
+        "trade_date": trade_date,
+        "weights": w,
+        "top_n": top_n,
+        "total_recommendations": len(recs),
+        "top": [dict(r) for r in top],
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        output_path = _save_json_report(
+            f"custom_weights_{datetime.now().strftime('%Y%m%d')}.json",
+            payload,
+        )
+        print(f"{Fore.CYAN}已输出: {output_path}{Style.RESET_ALL}")
+    except Exception as exc:  # pragma: no cover
+        logger.debug("[CustomWeights] 落盘失败: %s", exc)
+    return 0
+
+
+def run_conditional_orders(
+    top_n: int = 20,
+    *,
+    atr_period: int = 14,
+    lookback_sessions: int = 60,
+) -> int:
+    """P1-10 条件单建议 CLI 入口 — 包装 ``run_conditional_orders_cli`` 供 ``--conditional-orders`` 使用。
+
+    Args:
+        top_n: Top N 推荐 (1-50, 默认 20)
+        atr_period: ATR 周期 (默认 14)
+        lookback_sessions: 回溯窗口 (默认 60)
+
+    Returns:
+        退出码 (0 = 成功, 1 = 未找到报告, 2 = 报告中无推荐)
+    """
+    from src.screening.conditional_order_advisor import run_conditional_orders_cli
+
+    return run_conditional_orders_cli(
+        top_n=top_n,
+        atr_period=atr_period,
+        lookback_sessions=lookback_sessions,
+    )
 
 
 def run_industry_rotation(trade_date: str | None = None, top_n: int = 5, bottom_n: int = 3) -> int:
@@ -2052,6 +2331,105 @@ if __name__ == "__main__":
                 except ValueError:
                     pass
         raise SystemExit(run_rebalance(positions_path=_reb_positions_path, drift_threshold=_reb_drift))
+
+    # P1-10: --conditional-orders 条件单建议独立 CLI 入口
+    if "--conditional-orders" in sys.argv:
+        _co_top_n = 20
+        _co_atr_period = 14
+        _co_lookback = 60
+        for arg in sys.argv:
+            if arg.startswith("--top-n="):
+                try:
+                    _co_top_n = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--atr-period="):
+                try:
+                    _co_atr_period = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--co-lookback="):
+                try:
+                    _co_lookback = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+        from src.screening.conditional_order_advisor import run_conditional_orders_cli
+
+        raise SystemExit(
+            run_conditional_orders_cli(
+                top_n=_co_top_n,
+                atr_period=_co_atr_period,
+                lookback_sessions=_co_lookback,
+            )
+        )
+
+    # P2-3: --push-test 推送通道连通性测试 CLI 入口
+    if "--push-test" in sys.argv:
+        _pt_channel: str | None = None
+        _pt_config: str | None = None
+        _pt_init = "--init" in sys.argv
+        for arg in sys.argv:
+            if arg.startswith("--channel="):
+                _pt_channel = arg.split("=", 1)[1].strip()
+            elif arg.startswith("--push-config="):
+                _pt_config = arg.split("=", 1)[1].strip()
+        if _pt_channel is None and not _pt_init:
+            for arg in sys.argv:
+                if arg == "--channel":
+                    idx = sys.argv.index(arg)
+                    if idx + 1 < len(sys.argv):
+                        _pt_channel = sys.argv[idx + 1]
+        _pt_config_path = Path(_pt_config).expanduser() if _pt_config else None
+        raise SystemExit(
+            run_push_test(channel=_pt_channel, config_path=_pt_config_path, init=_pt_init)
+        )
+
+    # P2-5: --custom-weights 自定义策略权重独立 CLI 入口
+    if "--custom-weights" in sys.argv:
+        _cw_trend = 0.25
+        _cw_mr = 0.25
+        _cw_fund = 0.25
+        _cw_es = 0.25
+        _cw_top_n = 10
+        _cw_trade_date: str | None = None
+        for arg in sys.argv:
+            if arg.startswith("--trend="):
+                try:
+                    _cw_trend = float(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--mean-reversion="):
+                try:
+                    _cw_mr = float(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--fundamental="):
+                try:
+                    _cw_fund = float(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--event-sentiment="):
+                try:
+                    _cw_es = float(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--top-n="):
+                try:
+                    _cw_top_n = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--trade-date="):
+                _cw_trade_date = arg.split("=", 1)[1].strip() or None
+        raise SystemExit(
+            run_custom_weights(
+                trend=_cw_trend,
+                mean_reversion=_cw_mr,
+                fundamental=_cw_fund,
+                event_sentiment=_cw_es,
+                top_n=_cw_top_n,
+                trade_date=_cw_trade_date,
+            )
+        )
 
     # P1-8: 标的对比工具独立 CLI 入口 — 早期分发避免与 parse_cli_inputs 冲突
     # 支持 --compare=300750,600519 和 --compare 300750,600519 两种形式

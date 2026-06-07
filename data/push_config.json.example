@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "push_version": "1.0.0",
+  "_comment": "P2-3 推送配置示例。复制为 push_config.json 并填写实际 URL/地址 + enabled=true。SMTP 密码推荐使用环境变量名 (smtp_password_env) 引用, 不要在 JSON 中明文存储。",
+  "channels": [
+    {
+      "channel": "wecom",
+      "target": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY_HERE",
+      "enabled": false
+    },
+    {
+      "channel": "dingtalk",
+      "target": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_HERE",
+      "enabled": false
+    },
+    {
+      "channel": "email",
+      "target": "user@example.com",
+      "smtp_host": "smtp.gmail.com",
+      "smtp_port": 587,
+      "smtp_user": "user@example.com",
+      "smtp_password_env": "SMTP_PASSWORD",
+      "timeout": 15.0,
+      "enabled": false
+    },
+    {
+      "channel": "webhook",
+      "target": "https://example.com/api/notifications/ai-screening",
+      "enabled": false
+    }
+  ]
+}

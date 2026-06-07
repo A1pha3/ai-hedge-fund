@@ -452,3 +452,232 @@ async def compare_endpoint(
             "max_compare_tickers": MAX_COMPARE_TICKERS,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# P1-10: 条件单建议端点
+# ---------------------------------------------------------------------------
+
+
+class ConditionalOrderItem(BaseModel):
+    """P1-10 单条条件单建议。"""
+
+    ticker: str
+    name: str
+    current_price: float | None = None
+    atr: float | None = None
+    suggested_buy_zone: list[float]
+    suggested_buy_zone_low: float | None = None
+    suggested_buy_zone_high: float | None = None
+    suggested_stop_loss: float | None = None
+    suggested_take_profit: float | None = None
+    confidence: float | None = None
+    reasoning: str = ""
+    historical_hit_rate: float | None = None
+    risk_reward_ratio: float | None = None
+    n_sessions: int = 0
+    degraded: bool = False
+    atr_period: int = 14
+    params: dict = Field(default_factory=dict)
+
+
+class ConditionalOrdersResponse(BaseModel):
+    """P1-10 条件单建议响应体。"""
+
+    trade_date: str | None = None
+    items: list[ConditionalOrderItem] = Field(default_factory=list)
+    meta: dict = Field(default_factory=dict)
+
+
+@router.get(
+    path="/conditional-orders",
+    response_model=ConditionalOrdersResponse,
+    responses={
+        200: {"description": "成功 — 返回 Top N 条件单建议"},
+        404: {"description": "未找到有效 auto_screening 报告"},
+        422: {"description": "参数校验失败 (top_n 越界)"},
+    },
+)
+async def conditional_orders_endpoint(
+    top_n: int = Query(20, ge=1, le=50, description="Top N 推荐 (1-50)"),
+    atr_period: int = Query(14, ge=2, le=60, description="ATR 周期 (2-60)"),
+    trade_date: str | None = Query(None, description="报告日期 YYYYMMDD, 缺省取最新"),
+) -> ConditionalOrdersResponse:
+    """P1-10 Web 端条件单建议 API。
+
+    复用 :func:`src.screening.compare_tool.load_latest_recommendations` 加载报告,
+    再用 :func:`src.screening.conditional_order_advisor.compute_conditional_advice` 计算建议。
+    价格历史来自 caller 注入的 provider (本端点默认走 fallback → 全部降级占位)。
+
+    Returns:
+        :class:`ConditionalOrdersResponse` 含 ``items`` (Top N 建议) /
+        ``trade_date`` / ``meta`` 字段。
+    """
+    from src.screening.conditional_order_advisor import (
+        DEFAULT_LOOKBACK_SESSIONS,
+        attach_conditional_orders_to_payload,
+    )
+    from src.screening.compare_tool import load_latest_recommendations
+
+    # 1. trade_date 校验
+    resolved_date: str | None = None
+    if trade_date:
+        cleaned = trade_date.strip().replace("-", "")
+        if len(cleaned) != 8 or not cleaned.isdigit():
+            raise HTTPException(
+                status_code=422,
+                detail=f"trade_date 格式无效: {trade_date!r} (期望 YYYYMMDD)",
+            )
+        resolved_date = cleaned
+
+    # 2. 加载推荐
+    recommendations = load_latest_recommendations(trade_date=resolved_date)
+    if not recommendations:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"未找到有效 auto_screening 报告 "
+                f"(trade_date={trade_date or 'latest'}), 请先运行 --auto"
+            ),
+        )
+
+    # 3. 推断 trade_date
+    if resolved_date is None:
+        for rec in recommendations:
+            if isinstance(rec, dict) and isinstance(rec.get("date"), str):
+                resolved_date = rec["date"].replace("-", "")
+                break
+
+    # 4. 调用 attach_conditional_orders_to_payload (无价格 provider → 全部降级)
+    payload: dict[str, Any] = {"recommendations": recommendations}
+    raw_items = attach_conditional_orders_to_payload(
+        payload,
+        top_n=top_n,
+        atr_period=atr_period,
+        lookback_sessions=DEFAULT_LOOKBACK_SESSIONS,
+    )
+
+    # 5. NaN 清洗
+    def _sanitize(value: Any) -> Any:
+        if isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                return None
+            return value
+        if isinstance(value, dict):
+            return {k: _sanitize(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_sanitize(v) for v in value]
+        return value
+
+    items = [ConditionalOrderItem(**_sanitize(item)) for item in raw_items]
+
+    return ConditionalOrdersResponse(
+        trade_date=resolved_date,
+        items=items,
+        meta={
+            "top_n": top_n,
+            "atr_period": atr_period,
+            "lookback_sessions": DEFAULT_LOOKBACK_SESSIONS,
+            "degraded_count": sum(1 for it in items if it.degraded),
+            "total_count": len(items),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# P2-5: 自定义策略权重端点
+# ---------------------------------------------------------------------------
+
+
+class CustomWeightsRequest(BaseModel):
+    """P2-5 自定义策略权重请求体。
+
+    四策略权重必须和为 1.0 (Pydantic ``consumed`` 约束在 service 层执行,
+    端点层只校验单值范围 [0, 1], 避免 422 误报 sum=0.999999 的合法值)。
+    """
+
+    trend: float = Field(ge=0, le=1)
+    mean_reversion: float = Field(ge=0, le=1)
+    fundamental: float = Field(ge=0, le=1)
+    event_sentiment: float = Field(ge=0, le=1)
+    top_n: int = Field(default=20, ge=1, le=50)
+    trade_date: str | None = None
+
+
+@router.post(
+    path="/custom-weights",
+    response_model=ScreeningResponse,
+    responses={
+        200: {"description": "成功 — 返回按自定义权重重排的 Top N 推荐"},
+        422: {"description": "参数校验失败 (权重和 != 1.0)"},
+        404: {"description": "未找到有效 auto_screening 报告"},
+    },
+)
+async def apply_custom_weights(req: CustomWeightsRequest) -> ScreeningResponse:
+    """P2-5 应用自定义策略权重, 重新计算 score_b 并返回 Top N 推荐。
+
+    数据源: ``data/reports/auto_screening_<date>.json`` (或最新一份)。
+
+    与 ``/api/screening/auto`` 的区别: 后者使用市场状态调整后的默认权重,
+    本端点使用用户自定义权重覆盖, 适合高级用户做敏感性分析 / 偏好测试。
+    """
+    # 1. 校验权重和 (Pydantic Field 只校验单值范围, sum 校验放在端点层)
+    weight_sum = req.trend + req.mean_reversion + req.fundamental + req.event_sentiment
+    if abs(weight_sum - 1.0) > 1e-6:
+        raise HTTPException(
+            status_code=422,
+            detail=f"权重之和必须为 1.0, 当前: {weight_sum:.9f}",
+        )
+
+    # 2. 解析 trade_date
+    resolved_date: str | None = None
+    if req.trade_date:
+        resolved_date = _normalize_trade_date(req.trade_date)
+
+    # 3. 加载 + 重算
+    from src.screening.custom_weights import (
+        StrategyWeights,
+        load_latest_recommendations,
+        reweight_recommendations,
+    )
+
+    recs = load_latest_recommendations(trade_date=resolved_date)
+    if not recs:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"未找到有效 auto_screening 报告 "
+                f"(trade_date={req.trade_date or 'latest'}), 请先运行 --auto"
+            ),
+        )
+
+    weights = StrategyWeights(
+        trend=req.trend,
+        mean_reversion=req.mean_reversion,
+        fundamental=req.fundamental,
+        event_sentiment=req.event_sentiment,
+    )
+    reweighted = reweight_recommendations(recs, weights)
+    top = reweighted[: max(1, req.top_n)]
+
+    return ScreeningResponse(
+        trade_date=resolved_date or _resolve_default_trade_date(),
+        recommendations=_sanitize_nan(top),
+        market_state=None,
+        tracking_summary=None,
+        consecutive_recommendation=None,
+        industry_rotation=None,
+        execution_time_seconds=0.0,
+        batch_data_fetcher=None,
+        signal_decay_summary=None,
+        sector_concentration_warnings=[],
+        layer_a_count=0,
+        total_scored=len(recs),
+        high_pool_count=0,
+        top_n=len(top),
+        meta={
+            "weights": weights.to_dict(),
+            "total_recommendations": len(recs),
+            "applied_top_n": req.top_n,
+        },
+    )
