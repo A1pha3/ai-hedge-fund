@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 import os
 
@@ -395,7 +396,14 @@ def _extract_attention_component_values(results: list[FusedScore], metric_name: 
         metric_value = result.metrics.get(metric_name)
         if metric_value is None:
             continue
-        value = float(metric_value)
+        # ALPHA-003: 防御 NaN/Inf/非数值输入 — 否则会让 sorted() 顺序不确定
+        # (NaN 比较恒为 False, 会卡在任意位置), 并污染所有 ticker 的分位数排序。
+        try:
+            value = float(metric_value)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value):
+            continue
         values[result.ticker] = abs(value) if absolute else value
     return values
 

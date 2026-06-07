@@ -154,14 +154,33 @@ def test_resolve_max_short_returns_zero_for_negative_equity():
 
 
 def test_resolve_max_short_returns_zero_for_nan_inputs():
-    import math
-
     assert _resolve_max_short(float("nan"), 1000, 0.5, 0.0, 1000.0) == 0
     assert _resolve_max_short(10.0, 1000, 0.5, 0.0, float("nan")) == 0
 
 
 def test_resolve_max_short_returns_max_qty_when_margin_requirement_zero():
     assert _resolve_max_short(10.0, 42, 0.0, 0.0, 1000.0) == 42
+
+
+def test_resolve_max_short_returns_zero_for_nan_margin_requirement():
+    """NaN margin_requirement must not crash; treat as 0 (max_qty cap)."""
+    assert _resolve_max_short(10.0, 1000, float("nan"), 0.0, 1000.0) == 0
+
+
+def test_resolve_max_short_returns_zero_for_nan_max_qty():
+    """NaN max_qty must not crash; treat as 0 (no short allowed)."""
+    assert _resolve_max_short(10.0, float("nan"), 0.5, 0.0, 1000.0) == 0
+
+
+def test_resolve_max_buy_returns_zero_for_none_max_qty():
+    """_resolve_max_buy must not crash when caller passes None max_qty.
+
+    A None max_qty is the convention for 'no constraint from the risk
+    manager' and must degrade to 0 (no buy allowed) rather than raise.
+    """
+    from src.agents.portfolio_manager_helpers import _resolve_max_buy
+
+    assert _resolve_max_buy(1000.0, 10.0, None) == 0
 
 
 def test_resolve_max_short_respects_max_qty_cap():

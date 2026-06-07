@@ -13,18 +13,31 @@ def _resolve_max_buy(cash: float, price: float, max_qty: int) -> int:
         return 0
     if cash <= 0 or price <= 0:
         return 0
+    if max_qty is None or max_qty != max_qty:
+        # None or NaN max_qty means no cap was provided by the risk manager;
+        # treat as 0 (no buy allowed) rather than crashing min(None, int).
+        return 0
     max_buy_cash = int(cash // price)
-    return max(0, min(max_qty, max_buy_cash))
+    return max(0, min(int(max_qty), max_buy_cash))
 
 
 def _resolve_max_short(price: float, max_qty: int, margin_requirement: float, margin_used: float, equity: float) -> int:
-    if price != price or price <= 0 or max_qty <= 0:
+    if price != price or price <= 0:
+        return 0
+    if max_qty is None or max_qty != max_qty or max_qty <= 0:
+        # None or NaN max_qty must degrade to 0 (no short allowed) rather
+        # than crashing int(NaN // per_share_cost).
         return 0
     if equity != equity:
         # NaN equity would propagate through available_margin and crash int().
         return 0
+    if margin_requirement != margin_requirement:
+        # NaN margin_requirement would crash int(available // NaN).
+        # Fail closed (return 0) — risk budget must not be silently bypassed
+        # by corrupt config / upstream NaN.
+        return 0
     if margin_requirement <= 0.0:
-        return max_qty
+        return int(max_qty)
 
     # Standard short-selling margin formula:
     # Each short share requires `price * margin_requirement` of margin collateral.
@@ -34,7 +47,7 @@ def _resolve_max_short(price: float, max_qty: int, margin_requirement: float, ma
     #   and per_share_cost = price * margin_requirement
     available_equity = max(0.0, equity - margin_used)
     max_short_margin = int(available_equity // (price * margin_requirement))
-    return max(0, min(max_qty, max_short_margin))
+    return max(0, min(int(max_qty), max_short_margin))
 
 
 def _prune_zero_actions(actions: dict[str, int]) -> dict[str, int]:

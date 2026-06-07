@@ -69,30 +69,46 @@ def sentiment_analyst_agent(state: AgentState, agent_id: str = "sentiment_analys
             confidence = round((max(bullish_signals, bearish_signals) / total_weighted_signals) * 100, 2)
 
         # Create structured reasoning similar to technical analysis
+        insider_bullish = insider_signals.count("bullish")
+        insider_bearish = insider_signals.count("bearish")
+        news_bullish = news_signals.count("bullish")
+        news_bearish = news_signals.count("bearish")
+        news_neutral = news_signals.count("neutral")
+
+        def _dominant_signal(bullish: int, bearish: int) -> str:
+            if bullish > bearish:
+                return "bullish"
+            if bearish > bullish:
+                return "bearish"
+            return "neutral"
+
+        def _dominance_confidence(bullish: int, bearish: int, total: int) -> int:
+            return round((max(bullish, bearish) / max(total, 1)) * 100)
+
         reasoning = {
             "insider_trading": {
-                "signal": "bullish" if insider_signals.count("bullish") > insider_signals.count("bearish") else "bearish" if insider_signals.count("bearish") > insider_signals.count("bullish") else "neutral",
-                "confidence": round((max(insider_signals.count("bullish"), insider_signals.count("bearish")) / max(len(insider_signals), 1)) * 100),
+                "signal": _dominant_signal(insider_bullish, insider_bearish),
+                "confidence": _dominance_confidence(insider_bullish, insider_bearish, len(insider_signals)),
                 "metrics": {
                     "total_trades": len(insider_signals),
-                    "bullish_trades": insider_signals.count("bullish"),
-                    "bearish_trades": insider_signals.count("bearish"),
+                    "bullish_trades": insider_bullish,
+                    "bearish_trades": insider_bearish,
                     "weight": insider_weight,
-                    "weighted_bullish": round(insider_signals.count("bullish") * insider_weight, 1),
-                    "weighted_bearish": round(insider_signals.count("bearish") * insider_weight, 1),
+                    "weighted_bullish": round(insider_bullish * insider_weight, 1),
+                    "weighted_bearish": round(insider_bearish * insider_weight, 1),
                 },
             },
             "news_sentiment": {
-                "signal": "bullish" if news_signals.count("bullish") > news_signals.count("bearish") else "bearish" if news_signals.count("bearish") > news_signals.count("bullish") else "neutral",
-                "confidence": round((max(news_signals.count("bullish"), news_signals.count("bearish")) / max(len(news_signals), 1)) * 100),
+                "signal": _dominant_signal(news_bullish, news_bearish),
+                "confidence": _dominance_confidence(news_bullish, news_bearish, len(news_signals)),
                 "metrics": {
                     "total_articles": len(news_signals),
-                    "bullish_articles": news_signals.count("bullish"),
-                    "bearish_articles": news_signals.count("bearish"),
-                    "neutral_articles": news_signals.count("neutral"),
+                    "bullish_articles": news_bullish,
+                    "bearish_articles": news_bearish,
+                    "neutral_articles": news_neutral,
                     "weight": news_weight,
-                    "weighted_bullish": round(news_signals.count("bullish") * news_weight, 1),
-                    "weighted_bearish": round(news_signals.count("bearish") * news_weight, 1),
+                    "weighted_bullish": round(news_bullish * news_weight, 1),
+                    "weighted_bearish": round(news_bearish * news_weight, 1),
                 },
             },
             "combined_analysis": {"total_weighted_bullish": round(bullish_signals, 1), "total_weighted_bearish": round(bearish_signals, 1), "signal_determination": f"{'Bullish' if bullish_signals > bearish_signals else 'Bearish' if bearish_signals > bullish_signals else 'Neutral'} based on weighted signal comparison"},

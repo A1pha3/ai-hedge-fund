@@ -18,7 +18,7 @@ from src.tools.tushare_daily_gainers_helpers import (
     fallback_trade_date_dataframe,
     fill_missing_pct_change,
 )
-from src.tools.tushare_batch_fetch_helpers import fetch_batch_cached_frame, fetch_process_cached_frame
+from src.tools.tushare_batch_fetch_helpers import fetch_batch_cached_frame
 from src.tools.tushare_financial_metrics_helpers import build_financial_metric_support_maps, build_financial_metrics_from_frames, fetch_financial_metric_frames, resolve_financial_metrics_fetch_limit
 from src.tools.tushare_insider_trade_helpers import build_holdertrade_query_kwargs, build_insider_trade_from_row
 from src.tools.tushare_line_items_helpers import build_line_items_from_frames, fetch_line_item_statement_frames

@@ -19,6 +19,11 @@ from src.llm.defaults import get_default_model_config
 from src.execution.daily_pipeline import DailyPipeline
 from src.graph.state import AgentState
 from src.screening.candidate_pool import build_candidate_pool
+from src.screening.consecutive_recommendation import (
+    DEFAULT_LOOKBACK_DAYS,
+    enrich_recommendations_with_history,
+    resolve_report_dir as _resolve_consecutive_report_dir,
+)
 from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
@@ -299,6 +304,18 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
 
     progress.start()
     try:
+        # P0-1: 创建批量数据获取器 (默认开启，可通过 USE_BATCH_FETCHER=false 关闭)
+        from src.screening.batch_data_fetcher import (
+            get_global_batch_data_fetcher,
+        )
+
+        batch_fetcher = get_global_batch_data_fetcher()
+        logger.info(
+            "[Auto] P0-1 BatchDataFetcher: use_batch=%s, max_concurrency=%d",
+            batch_fetcher.use_batch,
+            batch_fetcher._max_concurrency,
+        )
+
         # Step 1: Layer A 候选池快筛
         progress.update_status("auto_screening", None, "Step 1/4: 全市场快筛 (Layer A)")
         logger.info("[Auto] Step 1/4: 全市场快筛 (Layer A) — trade_date=%s", trade_date)
@@ -327,6 +344,19 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         # Sector concentration guard
         sector_warnings = _check_sector_concentration(top_results)
 
+        # P0-6 多日推荐聚合 — 附加连续推荐标记
+        consecutive_report_dir = _resolve_consecutive_report_dir()
+        top_results_serializable = [item.model_dump() for item in top_results]
+        top_results_serializable = enrich_recommendations_with_history(
+            recommendations=top_results_serializable,
+            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            report_dir=consecutive_report_dir,
+            end_date=trade_date,
+        )
+        consecutive_highlight = sum(
+            1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3
+        )
+
         # Save full report
         report_payload = {
             "mode": "auto_screening",
@@ -336,13 +366,42 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             "total_scored": len(fused),
             "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
             "top_n": top_n,
-            "recommendations": [item.model_dump() for item in top_results],
+            "recommendations": top_results_serializable,
             "sector_concentration_warnings": sector_warnings,
+            "consecutive_recommendation": {
+                "lookback_days": DEFAULT_LOOKBACK_DAYS,
+                "high_streak_count": consecutive_highlight,
+            },
+            # P0-1: 批量获取层统计
+            "batch_data_fetcher": {
+                "use_batch": batch_fetcher.use_batch,
+                **batch_fetcher.stats(),
+            },
         }
         report_path = _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
 
+        # P0-1: 输出 batch fetcher 统计
+        fetcher_stats = batch_fetcher.stats()
+        logger.info(
+            "[Auto] P0-1 BatchDataFetcher stats: batch_calls=%d, batch_failures=%d, "
+            "single_ticker_calls=%d, cache_hits=%d",
+            fetcher_stats["batch_calls"],
+            fetcher_stats["batch_failures"],
+            fetcher_stats["single_ticker_calls"],
+            fetcher_stats["cache_hits"],
+        )
+
         # Print formatted table
-        _print_auto_screening_table(trade_date, top_results, market_state, len(candidates), top_n, report_path, sector_warnings)
+        _print_auto_screening_table(
+            trade_date,
+            top_results,
+            market_state,
+            len(candidates),
+            top_n,
+            report_path,
+            sector_warnings,
+            consecutive_recommendations=top_results_serializable,
+        )
         return 0
     finally:
         progress.stop()
@@ -356,13 +415,26 @@ def _print_auto_screening_table(
     top_n: int,
     report_path: Path,
     sector_warnings: list[str] | None = None,
+    consecutive_recommendations: list[dict] | None = None,
 ) -> None:
-    """打印格式化的自动筛选推荐表格。"""
+    """打印格式化的自动筛选推荐表格。
+
+    Args:
+        consecutive_recommendations: 与 ``top_results`` 顺序对应的连续推荐元数据列表
+            (每个 dict 包含 ``consecutive_days`` / ``stability_bonus`` 等字段)。
+    """
     from colorama import Fore, Style
     from tabulate import tabulate
 
     state_type = getattr(market_state, "state_type", "mixed")
     position_scale = getattr(market_state, "position_scale", 1.0)
+
+    consecutive_lookup: dict[str, dict] = {}
+    if consecutive_recommendations:
+        for rec in consecutive_recommendations:
+            ticker = rec.get("ticker", "")
+            if ticker:
+                consecutive_lookup[ticker] = rec
 
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[Auto Screening] 一键全流程{Style.RESET_ALL}")
@@ -405,13 +477,31 @@ def _print_auto_screening_table(
         # Arbitration flags
         arbitration = ", ".join(item.arbitration_applied) if item.arbitration_applied else ""
 
+        # P0-6 连续推荐标记
+        consecutive_info = consecutive_lookup.get(item.ticker, {})
+        consecutive_days = int(consecutive_info.get("consecutive_days", 0) or 0)
+        if consecutive_days >= 3:
+            consecutive_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}d{Style.RESET_ALL}"
+        elif consecutive_days == 2:
+            consecutive_str = f"{Fore.YELLOW}{consecutive_days}d{Style.RESET_ALL}"
+        elif consecutive_days == 1:
+            consecutive_str = f"{Fore.WHITE}{consecutive_days}d{Style.RESET_ALL}"
+        else:
+            consecutive_str = f"{Fore.RED}—{Style.RESET_ALL}"
+
+        # 高亮连续 3+ 天的 ticker
+        ticker_label = f"{item.ticker} {item.name}" if item.name else item.ticker
+        if consecutive_days >= 3:
+            ticker_label = f"{Fore.GREEN}{Style.BRIGHT}{ticker_label}{Style.RESET_ALL}"
+
         table_data.append([
             f"{idx}",
-            f"{item.ticker} {item.name}" if item.name else item.ticker,
+            ticker_label,
             item.industry_sw or "—",
             score_colored,
             decision_colored,
             signal_summary,
+            consecutive_str,
             arbitration,
         ])
 
@@ -422,9 +512,10 @@ def _print_auto_screening_table(
         "Score B",
         "Decision",
         "Signals (T MR F E)",
+        "Consecutive",
         "Arbitration",
     ]
-    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "left")))
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "left")))
 
     print(f"\n  详细报告已保存: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
 

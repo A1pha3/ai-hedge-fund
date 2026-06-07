@@ -12,8 +12,6 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-import pytest
-
 import src.tools.api as api
 from src.data.base_provider import DataResponse, DataType
 from src.data.router import DataRouter

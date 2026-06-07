@@ -1,16 +1,9 @@
 """Tests for progress tracker, LLM helpers, and streaming utilities."""
 
-import asyncio
-import math
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 from src.utils.progress import AgentProgress
 from src.utils.llm import (
     _is_rate_limit_error,
     _is_transport_error,
-    _is_provider_fallback_disabled,
     _compute_retry_delay,
     create_default_response,
     extract_json_from_response,

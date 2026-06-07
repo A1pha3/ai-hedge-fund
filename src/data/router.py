@@ -19,7 +19,7 @@ from src.data.base_provider import (
     DataType,
 )
 from src.data.enhanced_cache import get_cache
-from src.data.health import DataSourceHealth, HealthMonitor, get_health_monitor, reset_health_monitor
+from src.data.health import DataSourceHealth, HealthMonitor, get_health_monitor
 from src.data.router_helpers import build_router_failure_response, fetch_from_providers, serialize_cache_records
 
 # 配置日志

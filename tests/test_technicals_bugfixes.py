@@ -13,7 +13,6 @@ import pytest
 from src.agents.technicals import (
     calculate_adx,
     calculate_atr,
-    calculate_bollinger_bands,
     calculate_hurst_exponent,
     calculate_mean_reversion_signals,
     calculate_momentum_signals,

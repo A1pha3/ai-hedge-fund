@@ -91,8 +91,6 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
         total_signals = signal_summary["total_signals"]
         confidence = _calculate_confidence_score(
             sentiment_confidences=sentiment_confidences,
-            company_news=company_news,
-            overall_signal=overall_signal,
             bullish_signals=bullish_signals,
             bearish_signals=bearish_signals,
             total_signals=total_signals,
@@ -147,7 +145,7 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
     }
 
 
-def _calculate_confidence_score(sentiment_confidences: dict, company_news: list, overall_signal: str, bullish_signals: int, bearish_signals: int, total_signals: int) -> float:
+def _calculate_confidence_score(sentiment_confidences: dict, bullish_signals: int, bearish_signals: int, total_signals: int) -> float:
     """
     Calculate confidence score for a sentiment signal.
 
@@ -156,8 +154,6 @@ def _calculate_confidence_score(sentiment_confidences: dict, company_news: list,
 
     Args:
         sentiment_confidences: Dictionary mapping news article IDs to confidence scores.
-        company_news: List of CompanyNews objects.
-        overall_signal: The overall sentiment signal ("bullish", "bearish", or "neutral").
         bullish_signals: Count of bullish signals.
         bearish_signals: Count of bearish signals.
         total_signals: Total number of signals.

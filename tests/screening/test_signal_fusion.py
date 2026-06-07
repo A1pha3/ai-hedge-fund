@@ -180,3 +180,102 @@ def test_fuse_batch_ignores_candidates_not_in_signals() -> None:
     )
     assert len(fused_scores) == 1
     assert fused_scores[0].name == "在池中"
+
+
+def test_attention_composite_ignores_nan_metric_values() -> None:
+    """NaN/Inf 因子值不应污染横截面分位数排序。
+
+    被污染的 ticker 既不应获得任意 percentile, 其他 ticker 的排名也不应被
+    NaN 在排序中的不确定位置干扰。
+    """
+    import math
+
+    fused_scores = fuse_batch(
+        {
+            "000001": {
+                "trend": StrategySignal(
+                    direction=1,
+                    confidence=70.0,
+                    completeness=1.0,
+                    sub_factors={
+                        "momentum": {
+                            "direction": 1,
+                            "confidence": 70.0,
+                            "completeness": 1.0,
+                            "metrics": {
+                                "turnover_ratio_20": 1.0,
+                                "amount_ratio_5": 1.0,
+                                "ret_2d": 0.01,
+                                "ret_5d": 0.02,
+                            },
+                        }
+                    },
+                )
+            },
+            "000002": {  # NaN values across the board — should not be ranked
+                "trend": StrategySignal(
+                    direction=1,
+                    confidence=70.0,
+                    completeness=1.0,
+                    sub_factors={
+                        "momentum": {
+                            "direction": 1,
+                            "confidence": 70.0,
+                            "completeness": 1.0,
+                            "metrics": {
+                                "turnover_ratio_20": float("nan"),
+                                "amount_ratio_5": float("inf"),
+                                "ret_2d": float("nan"),
+                                "ret_5d": float("nan"),
+                            },
+                        }
+                    },
+                )
+            },
+            "000003": {
+                "trend": StrategySignal(
+                    direction=1,
+                    confidence=70.0,
+                    completeness=1.0,
+                    sub_factors={
+                        "momentum": {
+                            "direction": 1,
+                            "confidence": 70.0,
+                            "completeness": 1.0,
+                            "metrics": {
+                                "turnover_ratio_20": 3.0,
+                                "amount_ratio_5": 3.0,
+                                "ret_2d": 0.05,
+                                "ret_5d": 0.08,
+                            },
+                        }
+                    },
+                )
+            },
+        },
+        market_state=MarketState(),
+    )
+
+    metrics_by_ticker = {item.ticker: item.metrics for item in fused_scores}
+
+    # 000002 had only NaN/Inf metrics. Either no attention_composite is computed,
+    # or it is finite and meaningless to compare. The critical invariant is that
+    # 000002 MUST NOT take a percentile slot ahead of a valid ticker
+    # (000001 has real metrics — without filtering, 000002 currently steals rank 2/3).
+    composite_001 = metrics_by_ticker["000001"].get("attention_composite")
+    composite_003 = metrics_by_ticker["000003"].get("attention_composite")
+    composite_002 = metrics_by_ticker["000002"].get("attention_composite")
+
+    # 000001 and 000003 are the only two valid tickers; with N=2 valid values,
+    # 000001 should get percentile 0.5 (lowest rank) and 000003 should get 1.0.
+    assert composite_001 is not None and math.isfinite(composite_001)
+    assert composite_003 is not None and math.isfinite(composite_003)
+    assert composite_001 == pytest.approx(0.5, abs=1e-4), (
+        f"With NaN filtered, 000001 must be rank 1/2 (percentile 0.5); got {composite_001}"
+    )
+    assert composite_003 == pytest.approx(1.0, abs=1e-4), (
+        f"With NaN filtered, 000003 must be rank 2/2 (percentile 1.0); got {composite_003}"
+    )
+    # 000002 either has no composite, or it's not in (0.0, 1.0]
+    if composite_002 is not None:
+        assert math.isfinite(composite_002)

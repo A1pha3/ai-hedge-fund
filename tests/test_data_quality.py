@@ -1,11 +1,9 @@
 import pytest
 
 from src.data.adapters.akshare_adapter import AKShareAdapter
-from src.data.adapters.base import DataSourceAdapter
 from src.data.adapters.tushare_adapter import TushareAdapter
 from src.data.cleaner import OutlierDetector, SmartDataCleaner
 from src.data.validation_rules import (
-    FINANCIAL_METRICS_RULES,
     get_error_rules,
     get_rule_by_field,
     get_warning_rules,
@@ -198,6 +196,63 @@ class TestEnhancedDataValidator:
         is_valid, results = validator.validate_metric(metric)
         assert is_valid is True
 
+    def test_nan_value_is_rejected_even_when_allow_null(self, validator):
+        """NaN values must be rejected by validation.
+
+        All FINANCIAL_METRICS_RULES have allow_null=True, so a NaN that is
+        not technically None would silently pass min/max checks (every NaN
+        comparison is False). This is a data-quality gate regression:
+        corrupt upstream data would propagate to portfolio decisions
+        without any signal.
+        """
+        metric = create_metric_dict(
+            return_on_equity=float("nan"),
+            gross_margin=0.30,
+            net_margin=0.12,
+        )
+
+        is_valid, results = validator.validate_metric(metric)
+
+        assert is_valid is False
+        nan_failures = [r for r in results if r.field == "return_on_equity" and not r.is_valid]
+        assert len(nan_failures) > 0, "NaN must trigger a validation failure"
+
+    def test_inf_value_is_rejected_even_when_allow_null(self, validator):
+        """Inf values must be rejected by validation, same rationale as NaN.
+
+        Use a metric that would otherwise pass range checks (debt_to_assets
+        ∈ [0, 1]) to make sure the rejection comes from the non-finite
+        guard, not from range overflow. Because debt_to_assets is a
+        warning-severity rule, the rejection is recorded as a warning,
+        not an error — verify both the failure record and the warning
+        classification.
+        """
+        metric = create_metric_dict(
+            return_on_equity=0.15,
+            gross_margin=0.30,
+            net_margin=0.12,
+            debt_to_assets=float("inf"),
+        )
+
+        _, results = validator.validate_metric(metric)
+        inf_failures = [r for r in results if r.field == "debt_to_assets" and not r.is_valid]
+        assert len(inf_failures) > 0, "Inf must trigger a validation failure"
+
+    def test_inf_value_on_error_severity_rule_makes_metric_invalid(self, validator):
+        """Inf on an error-severity rule (return_on_equity) must make the
+        entire metric invalid — risk-budget data must be clean."""
+        metric = create_metric_dict(
+            return_on_equity=float("inf"),
+            gross_margin=0.30,
+            net_margin=0.12,
+        )
+
+        is_valid, results = validator.validate_metric(metric)
+
+        assert is_valid is False
+        inf_failures = [r for r in results if r.field == "return_on_equity" and not r.is_valid]
+        assert len(inf_failures) > 0, "Inf on error-severity rule must fail the metric"
+
     def test_invalid_roe_too_high(self, validator):
         """测试 ROE 过高验证失败"""
         metric = create_metric_dict(return_on_equity=5.19)
@@ -306,7 +361,6 @@ class TestIntegration:
         """测试端到端数据流"""
         adapter = AKShareAdapter()
         validator = EnhancedDataValidator()
-        cleaner = SmartDataCleaner()
 
         raw_data = {
             "ticker": "600519",
