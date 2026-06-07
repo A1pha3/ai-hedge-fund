@@ -687,8 +687,8 @@
 
 | # | 项目 | 现状 | 建议 |
 |---|------|------|------|
-| 1 | 数据源容错 | 已有 `tushare` + `akshare` 双源但非自动切换 | 增加自动 Fallback：主源失败自动切换到备用源 |
-| 2 | 网络超时处理 | 各 API 调用有基本超时 | 增加重试策略 (exponential backoff) + 断路器模式 |
+| 1 | 数据源容错 ✅ | `router_helpers.fetch_from_providers` 已实现依次尝试每个 provider，失败自动切换下一个；`HealthTracker` 滑动窗口追踪成功率，DEGRADED/HEALTHY 状态自动切换（滞后机制防止抖动） | 已满足需求，无需额外工作 |
+| 2 | 网络超时处理 ✅ | `_call_tushare_dataframe_api` 已实现 exponential backoff 重试（默认 2 次，延迟 1s→2s→4s）；非瞬时错误（TypeError/ValueError/AttributeError）不重试直接返回 None；`TUSHARE_MAX_RETRIES` / `TUSHARE_RETRY_BASE_DELAY` 环境变量可配置 | 已满足需求 |
 
 ### 代码质量
 

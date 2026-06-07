@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import threading
+import time
 from datetime import datetime
 from typing import Any
 
@@ -123,14 +124,38 @@ def _get_persisted_tushare_cached_df(cache_key: str) -> pd.DataFrame | None:
 
 
 def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> pd.DataFrame | None:
+    """调用 Tushare Pro API，带 exponential backoff 重试。
+
+    瞬时错误（网络超时 / 限速 / 服务端 5xx）通过最多 ``TUSHARE_MAX_RETRIES`` 次
+    重试恢复，重试间隔按 2^attempt 秒递增（1s → 2s → 4s）。
+    非瞬时错误（参数错误 / 数据不存在）不重试，直接返回 None。
+    """
+    max_retries = int(os.environ.get("TUSHARE_MAX_RETRIES", "2"))
+    base_delay = float(os.environ.get("TUSHARE_RETRY_BASE_DELAY", "1.0"))
+
     api_func = getattr(pro, api_name, None)
     if api_func is None:
         return None
-    try:
-        return api_func(**kwargs)
-    except Exception as e:
-        print(f"[Tushare] API {api_name}({kwargs}) 调用失败: {e}")
-        return None
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return api_func(**kwargs)
+        except Exception as e:
+            last_exc = e
+            exc_name = type(e).__name__
+            # 非瞬时错误不重试（参数错误、数据不存在等）
+            non_retryable = ("TypeError", "ValueError", "AttributeError", "KeyError")
+            if exc_name in non_retryable:
+                print(f"[Tushare] API {api_name} 调用失败 (不可重试): {e}")
+                return None
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                print(f"[Tushare] API {api_name} 调用失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}，{delay:.1f}s 后重试...")
+                time.sleep(delay)
+            else:
+                print(f"[Tushare] API {api_name}({kwargs}) 调用失败 (已重试 {max_retries} 次): {e}")
+    return None
 
 
 def _persist_tushare_dataframe_result(cache_key: str, df: pd.DataFrame, *, api_name: str, ttl: int | None, **kwargs) -> pd.DataFrame:
