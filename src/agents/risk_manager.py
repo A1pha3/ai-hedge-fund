@@ -123,26 +123,43 @@ def calculate_volatility_adjusted_limit(annualized_volatility: float) -> float:
     """
     Calculate position limit as percentage of portfolio based on volatility.
 
-    Logic:
-    - Low volatility (<15%): Up to 25% allocation
-    - Medium volatility (15-30%): 15-20% allocation
-    - High volatility (>30%): 10-15% allocation
-    - Very high volatility (>50%): Max 10% allocation
+    Uses a continuous linear interpolation between anchor points to avoid
+    step-discontinuities at category boundaries (GAMMA-007 fix).
+
+    Anchor points:
+    - vol=0.00: 25% allocation (very low volatility)
+    - vol=0.15: 20% allocation (low-medium boundary)
+    - vol=0.30: 15% allocation (medium-high boundary)
+    - vol=0.50: 10% allocation (high-very high boundary)
+    - vol>=1.0:  5% allocation (extreme volatility floor)
     """
     base_limit = 0.20  # 20% baseline
 
-    if annualized_volatility < 0.15:  # Low volatility
-        # Allow higher allocation for stable stocks
-        vol_multiplier = 1.25  # Up to 25%
-    elif annualized_volatility < 0.30:  # Medium volatility
-        # Standard allocation with slight adjustment based on volatility
-        vol_multiplier = 1.0 - (annualized_volatility - 0.15) * 0.5  # 20% -> 12.5%
-    elif annualized_volatility < 0.50:  # High volatility
-        # Reduce allocation significantly
-        vol_multiplier = 0.75 - (annualized_volatility - 0.30) * 0.5  # 15% -> 5%
-    else:  # Very high volatility (>50%)
-        # Minimum allocation for very risky stocks
-        vol_multiplier = 0.50  # Max 10%
+    # Anchor points: (vol_threshold, vol_multiplier)
+    # Multiplier = allocation / base_limit
+    anchors = [
+        (0.00, 1.25),  # 25%
+        (0.15, 1.00),  # 20%
+        (0.30, 0.75),  # 15%
+        (0.50, 0.50),  # 10%
+        (1.00, 0.25),  #  5%
+    ]
+
+    # Clamp to the first anchor
+    if annualized_volatility <= anchors[0][0]:
+        vol_multiplier = anchors[0][1]
+    # Clamp to the last anchor
+    elif annualized_volatility >= anchors[-1][0]:
+        vol_multiplier = anchors[-1][1]
+    # Linear interpolation between adjacent anchors
+    else:
+        for i in range(len(anchors) - 1):
+            vol_low, mult_low = anchors[i]
+            vol_high, mult_high = anchors[i + 1]
+            if vol_low <= annualized_volatility < vol_high:
+                frac = (annualized_volatility - vol_low) / (vol_high - vol_low)
+                vol_multiplier = mult_low + frac * (mult_high - mult_low)
+                break
 
     # Apply bounds to ensure reasonable limits
     vol_multiplier = max(0.25, min(1.25, vol_multiplier))  # 5% to 25% range

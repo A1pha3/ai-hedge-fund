@@ -115,6 +115,12 @@ class TestComputeAllowedActionsEquity:
                 "margin_used": 0.0,
             },
         )
+        # equity = cash + margin_used + position_value
+        #        = 1000 + 0 + (100*200 - 0) = 21000
+        # available_equity = 21000 - 0 = 21000
+        # per_share_margin = 200 * 0.5 = 100
+        # max_short = int(21000 // 100) = 210
+        # capped by max_qty=1000 → 210
         assert result_with_position["BBB"]["short"] == 210
 
     def test_equity_without_positions_falls_back_gracefully(self):
@@ -143,7 +149,13 @@ class TestComputeAllowedActionsEquity:
                 "margin_used": 5_000.0,
             },
         )
-        assert result["DDD"]["short"] == 300
+        # GAMMA-007 fix: equity now includes margin_used.
+        # equity = cash + margin_used = 10000 + 5000 = 15000
+        # available_equity = 15000 - 5000 = 10000
+        # per_share_margin = 50 * 0.5 = 25
+        # max_short = int(10000 // 25) = 400
+        # capped by max_qty=1000 → 400
+        assert result["DDD"]["short"] == 400
 
 
 # ===========================================================================

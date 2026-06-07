@@ -84,7 +84,16 @@ class PerformanceMetricsCalculator:
         trading_days = max(len(clean_returns) + 1, 1)
         annualized_factor = self.annual_trading_days / max(trading_days, 1)
         base = 1.0 + total_return
-        annual_return = base ** annualized_factor - 1.0 if base > 0 else -1.0
+        # GAMMA-007: negative base (total_return < -1.0) can occur when short
+        # positions cause portfolio value to go negative (extreme short squeeze).
+        # Raising a negative base to a non-integer power produces complex numbers
+        # and crashes. Clamp to -1.0 (total loss) in that pathological case.
+        if base < 0:
+            annual_return = -1.0
+        elif base > 0:
+            annual_return = base ** annualized_factor - 1.0
+        else:
+            annual_return = -1.0
         abs_mdd = abs(min_dd) if min_dd < 0 else 0
         calmar = float(annual_return / abs_mdd) if abs_mdd > 1e-12 else (float("inf") if annual_return > 0 else 0.0)
 

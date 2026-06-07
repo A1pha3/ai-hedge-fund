@@ -178,9 +178,13 @@ def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str
         return {"score": 0, "max_score": max_score, "details": "Insufficient history"}
 
     # Revenue CAGR (oldest to latest)
+    # TTM metrics are spaced ~3 months apart, so n TTM periods = (n-1)*0.25 years
     revs = [m.revenue for m in reversed(metrics) if hasattr(m, "revenue") and m.revenue]
     if len(revs) >= 2 and revs[0] > 0:
-        cagr = (revs[-1] / revs[0]) ** (1 / (len(revs) - 1)) - 1
+        n_periods = len(revs) - 1
+        # Estimate years from TTM data: each consecutive TTM period is ~0.25 years apart
+        n_years = max(n_periods * 0.25, 1.0)  # at least 1 year
+        cagr = (revs[-1] / revs[0]) ** (1 / n_years) - 1
     else:
         cagr = None
 
@@ -255,13 +259,16 @@ def analyze_risk_profile(metrics: list, line_items: list, ticker: str | None = N
     # Interest coverage
     ebit = _latest_line_item_number(line_items, "ebit") or getattr(latest, "ebit", None)
     interest = _latest_line_item_number(line_items, "interest_expense") or getattr(latest, "interest_expense", None)
-    if ebit and interest and interest != 0:
-        coverage = ebit / abs(interest)
-        if coverage > 3:
-            score += 1
-            details.append(f"Interest coverage × {coverage:.1f}")
+    if interest is not None and interest != 0:
+        if ebit is not None:
+            coverage = ebit / abs(interest)
+            if coverage > 3:
+                score += 1
+                details.append(f"Interest coverage × {coverage:.1f}")
+            else:
+                details.append(f"Weak coverage × {coverage:.1f}")
         else:
-            details.append(f"Weak coverage × {coverage:.1f}")
+            details.append("Interest coverage NA (EBIT missing)")
     else:
         details.append("Interest coverage NA")
 
@@ -337,10 +344,18 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
         return {"intrinsic_value": None, "details": ["Missing FCFF or share count"]}
 
     # Growth assumptions
-    revs = [getattr(m, "revenue", None) for m in reversed(metrics) if getattr(m, "revenue", None) is not None]
+    # Prefer annual line-item revenues over TTM metrics for accurate annual CAGR
+    revs = [getattr(li, "revenue", None) for li in reversed(line_items) if getattr(li, "revenue", None) is not None]
     if not revs:
-        revs = [getattr(li, "revenue", None) for li in reversed(line_items) if getattr(li, "revenue", None) is not None]
-    if len(revs) >= 2 and revs[0] > 0:
+        # Fallback to TTM metrics — adjust period count (each TTM ~0.25 years apart)
+        revs = [getattr(m, "revenue", None) for m in reversed(metrics) if getattr(m, "revenue", None) is not None]
+        if len(revs) >= 2 and revs[0] > 0:
+            n_periods = len(revs) - 1
+            n_years = max(n_periods * 0.25, 1.0)
+            base_growth = min((revs[-1] / revs[0]) ** (1 / n_years) - 1, 0.12)
+        else:
+            base_growth = 0.04  # fallback
+    elif len(revs) >= 2 and revs[0] > 0:
         base_growth = min((revs[-1] / revs[0]) ** (1 / (len(revs) - 1)) - 1, 0.12)
     else:
         base_growth = 0.04  # fallback
@@ -410,7 +425,9 @@ def estimate_cost_of_equity(beta: float | None, ticker: str | None = None, debt_
     if is_loss_making:
         cost += 0.03  # 3% distress premium for negative earnings
 
-    return cost
+    # Cap cost of equity at 30% to avoid nonsensical discount rates
+    # (e.g. extremely high beta * D/E can produce 50%+ rates)
+    return min(cost, 0.30)
 
 
 # ────────────────────────────────────────────────────────────────────────────────

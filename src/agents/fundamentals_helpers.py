@@ -112,7 +112,18 @@ def _finalize_fundamentals_signal(signals: list[str], reasoning: dict) -> dict:
     else:
         overall_signal = "neutral"
 
-    confidence = round(max(bullish_signals, bearish_signals) / len(signals), 2) * 100
+    # Confidence reflects how strongly the sub-analyses agree on the direction.
+    # For neutral signals (equal bullish/bearish), use the proportion of neutral
+    # sub-signals as a proxy for confidence in the neutral determination.
+    neutral_signals = signals.count("neutral")
+    if overall_signal == "neutral" and bullish_signals == 0 and bearish_signals == 0:
+        # All sub-analyses agree on neutral — high confidence in neutrality
+        confidence = 50
+    elif overall_signal == "neutral":
+        # Mixed signals — confidence reflects agreement level
+        confidence = round(max(neutral_signals, bullish_signals, bearish_signals) / len(signals), 2) * 100
+    else:
+        confidence = round(max(bullish_signals, bearish_signals) / len(signals), 2) * 100
     return {
         "signal": overall_signal,
         "confidence": confidence,

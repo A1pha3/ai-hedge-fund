@@ -227,6 +227,11 @@ def calculate_intrinsic_value(
     if free_cash_flow is None or free_cash_flow <= 0:
         return 0
 
+    # Guard against discount_rate <= terminal_growth_rate to avoid
+    # division by zero or negative terminal value.
+    if discount_rate <= terminal_growth_rate:
+        terminal_growth_rate = discount_rate * 0.5  # safe default
+
     pv = 0.0
     for yr in range(1, num_years + 1):
         fcft = free_cash_flow * (1 + growth_rate) ** yr
@@ -317,12 +322,16 @@ def calculate_residual_income_value(
         # No terminal value for negative RI (assumed to recover)
         pv_term = 0.0
     else:
+        # Guard against cost_of_equity <= terminal_growth_rate to prevent
+        # division by zero in the perpetuity formula.
+        effective_terminal_growth = min(terminal_growth_rate, cost_of_equity * 0.5)
+
         pv_ri = 0.0
         for yr in range(1, num_years + 1):
             ri_t = ri0 * (1 + book_value_growth) ** yr
             pv_ri += ri_t / (1 + cost_of_equity) ** yr
 
-        term_ri = ri0 * (1 + book_value_growth) ** (num_years + 1) / (cost_of_equity - terminal_growth_rate)
+        term_ri = ri0 * (1 + book_value_growth) ** (num_years + 1) / (cost_of_equity - effective_terminal_growth)
         pv_term = term_ri / (1 + cost_of_equity) ** num_years
 
     intrinsic = book_val + pv_ri + pv_term

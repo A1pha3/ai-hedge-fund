@@ -1,4 +1,5 @@
 from src.agents.portfolio_manager import _build_consistent_reasoning, _make_decision_from_signals, compute_allowed_actions
+from src.agents.portfolio_manager_helpers import _resolve_max_short
 
 
 def test_compute_allowed_actions_preserves_long_short_and_cover_capacities():
@@ -103,3 +104,97 @@ def test_build_consistent_reasoning_preserves_directional_wording():
     assert _build_consistent_reasoning(signals, "sell") == "看跌1票/中性1票/看涨2票，News(61%)偏空"
     assert _build_consistent_reasoning(signals, "hold") == "看涨2票/看跌1票/中性1票，信号分歧"
     assert _build_consistent_reasoning({}, "hold") == "无分析师信号，保持观望"
+
+
+# ---------------------------------------------------------------------------
+# BUG A fix: _resolve_max_short must divide by price * margin_requirement,
+# not just price.  With 50% margin the old formula over-counted by ~2x.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_max_short_accounts_for_margin_requirement():
+    """Short capacity must be limited by margin, not just raw price.
+
+    With equity=1000, margin_requirement=0.5, margin_used=0, price=10:
+      available_equity = 1000 - 0 = 1000
+      per_share_margin = 10 * 0.5 = 5
+      max_shares = int(1000 // 5) = 200
+    """
+    # margin_requirement = 0.5
+    assert _resolve_max_short(10.0, 1000, 0.5, 0.0, 1000.0) == 200
+
+    # margin_requirement = 1.0 (100% margin -- each share costs full price)
+    # available_equity = 1000 - 0 = 1000, max = int(1000 // (10*1.0)) = 100
+    assert _resolve_max_short(10.0, 1000, 1.0, 0.0, 1000.0) == 100
+
+    # With existing margin used
+    # available_equity = 1000 - 500 = 500
+    # max = int(500 // 5) = 100
+    assert _resolve_max_short(10.0, 1000, 0.5, 500.0, 1000.0) == 100
+
+
+def test_resolve_max_short_with_high_margin_requirement_reduces_capacity():
+    """Higher margin_requirement reduces short capacity.
+
+    capacity = equity / (price * margin_requirement)
+    Doubling margin_requirement halves capacity (linear inverse).
+    With mr=0.25: capacity = 1000 / (10*0.25) = 400
+    With mr=0.50: capacity = 1000 / (10*0.50) = 200
+    So low (400) = 2 * high (200).
+    """
+    low = _resolve_max_short(10.0, 1000, 0.25, 0.0, 1000.0)
+    high = _resolve_max_short(10.0, 1000, 0.50, 0.0, 1000.0)
+    assert low == 2 * high
+    assert low == 400
+    assert high == 200
+
+
+def test_resolve_max_short_returns_zero_for_negative_equity():
+    assert _resolve_max_short(10.0, 1000, 0.5, 0.0, -100.0) == 0
+
+
+def test_resolve_max_short_returns_zero_for_nan_inputs():
+    import math
+
+    assert _resolve_max_short(float("nan"), 1000, 0.5, 0.0, 1000.0) == 0
+    assert _resolve_max_short(10.0, 1000, 0.5, 0.0, float("nan")) == 0
+
+
+def test_resolve_max_short_returns_max_qty_when_margin_requirement_zero():
+    assert _resolve_max_short(10.0, 42, 0.0, 0.0, 1000.0) == 42
+
+
+def test_resolve_max_short_respects_max_qty_cap():
+    """Even if margin allows more, max_qty must cap the result."""
+    assert _resolve_max_short(1.0, 10, 0.5, 0.0, 10000.0) == 10
+
+
+def test_compute_allowed_actions_short_capacity_respects_margin():
+    """End-to-end: compute_allowed_actions short qty must shrink when margin
+    requirement increases (not stay constant as the old bug did)."""
+    portfolio_lo = {
+        "cash": 1000.0,
+        "positions": {},
+        "margin_requirement": 0.25,
+        "margin_used": 0.0,
+    }
+    portfolio_hi = {
+        "cash": 1000.0,
+        "positions": {},
+        "margin_requirement": 0.50,
+        "margin_used": 0.0,
+    }
+    result_lo = compute_allowed_actions(
+        tickers=["X"],
+        current_prices={"X": 10.0},
+        max_shares={"X": 9999},
+        portfolio=portfolio_lo,
+    )
+    result_hi = compute_allowed_actions(
+        tickers=["X"],
+        current_prices={"X": 10.0},
+        max_shares={"X": 9999},
+        portfolio=portfolio_hi,
+    )
+    # Higher margin requirement means fewer shares can be shorted
+    assert result_lo["X"]["short"] > result_hi["X"]["short"]

@@ -35,13 +35,15 @@ def test_risk_management_agent_preserves_single_ticker_limit_payload(monkeypatch
     monkeypatch.setattr(risk_manager_module, "get_api_key_from_state", lambda state, key: "fake")
     monkeypatch.setattr(risk_manager_module, "get_prices", lambda **kwargs: ["stub"])
     monkeypatch.setattr(risk_manager_module, "prices_to_df", lambda prices: pd.DataFrame({"close": [10, 11, 12, 11, 13, 14]}))
+    # Use vol=0.00 so the continuous interpolation returns the first anchor (1.25 -> 25%)
+    # exactly, avoiding float-precision issues in the test comparison.
     monkeypatch.setattr(
         risk_manager_module,
         "calculate_volatility_metrics",
         lambda df: {
-            "daily_volatility": 0.02,
-            "annualized_volatility": 0.12,
-            "volatility_percentile": 20,
+            "daily_volatility": 0.0,
+            "annualized_volatility": 0.0,
+            "volatility_percentile": 0,
             "data_points": 5,
         },
     )
@@ -60,13 +62,19 @@ def test_risk_management_agent_preserves_single_ticker_limit_payload(monkeypatch
 
     result = risk_management_agent(state)
 
+    # With vol=0.00, the first anchor (1.25 multiplier) applies exactly:
+    # combined_limit_pct = 0.20 * 1.25 = 0.25
+    # portfolio_value = 1000 + 10*14 = 1140
+    # position_limit = 1140 * 0.25 = 285.0
+    # current_position_value = 10*14 = 140
+    # remaining = 285 - 140 = 145
     assert result["data"]["analyst_signals"]["risk_management_agent"]["AAA"] == {
         "remaining_position_limit": 145.0,
         "current_price": 14.0,
         "volatility_metrics": {
-            "daily_volatility": 0.02,
-            "annualized_volatility": 0.12,
-            "volatility_percentile": 20.0,
+            "daily_volatility": 0.0,
+            "annualized_volatility": 0.0,
+            "volatility_percentile": 0.0,
             "data_points": 5,
         },
         "correlation_metrics": {

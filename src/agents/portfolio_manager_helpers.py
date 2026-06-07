@@ -26,8 +26,14 @@ def _resolve_max_short(price: float, max_qty: int, margin_requirement: float, ma
     if margin_requirement <= 0.0:
         return max_qty
 
-    available_margin = max(0.0, (equity / margin_requirement) - margin_used)
-    max_short_margin = int(available_margin // price)
+    # Standard short-selling margin formula:
+    # Each short share requires `price * margin_requirement` of margin collateral.
+    # Available margin is the portion of equity not already locked as margin.
+    # Max shares = available_equity / per_share_margin_cost
+    #   where available_equity = equity - margin_used
+    #   and per_share_cost = price * margin_requirement
+    available_equity = max(0.0, equity - margin_used)
+    max_short_margin = int(available_equity // (price * margin_requirement))
     return max(0, min(max_qty, max_short_margin))
 
 

@@ -13,8 +13,14 @@ def create_performance_metrics() -> dict[str, float | None]:
 
 
 def calculate_exposures(portfolio: dict[str, Any], tickers: list[str], current_prices: dict[str, float]) -> dict[str, float | None]:
-    long_exposure = sum(portfolio["positions"][ticker]["long"] * current_prices[ticker] for ticker in tickers)
-    short_exposure = sum(portfolio["positions"][ticker]["short"] * current_prices[ticker] for ticker in tickers)
+    long_exposure = 0.0
+    short_exposure = 0.0
+    for ticker in tickers:
+        price = current_prices.get(ticker)
+        if price is None:
+            continue
+        long_exposure += portfolio["positions"][ticker]["long"] * price
+        short_exposure += portfolio["positions"][ticker]["short"] * price
     gross_exposure = long_exposure + short_exposure
     net_exposure = long_exposure - short_exposure
     long_short_ratio = long_exposure / short_exposure if short_exposure > 1e-9 else None
@@ -57,21 +63,22 @@ def build_ticker_details(
     ticker_details = []
 
     for ticker in tickers:
+        price = current_prices.get(ticker, 0.0)
         ticker_signals = {agent_name: signals[ticker] for agent_name, signals in analyst_signals.items() if ticker in signals}
         bullish_count = len([signal for signal in ticker_signals.values() if signal.get("signal", "").lower() == "bullish"])
         bearish_count = len([signal for signal in ticker_signals.values() if signal.get("signal", "").lower() == "bearish"])
         neutral_count = len([signal for signal in ticker_signals.values() if signal.get("signal", "").lower() == "neutral"])
 
         position = portfolio["positions"][ticker]
-        long_value = position["long"] * current_prices[ticker]
-        short_value = position["short"] * current_prices[ticker]
+        long_value = position["long"] * price
+        short_value = position["short"] * price
 
         ticker_details.append(
             {
                 "ticker": ticker,
                 "action": decisions.get(ticker, {}).get("action", "hold"),
                 "quantity": executed_trades.get(ticker, 0),
-                "price": current_prices[ticker],
+                "price": price,
                 "shares_owned": position["long"] - position["short"],
                 "long_shares": position["long"],
                 "short_shares": position["short"],

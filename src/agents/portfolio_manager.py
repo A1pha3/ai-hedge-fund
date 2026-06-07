@@ -117,15 +117,18 @@ def compute_allowed_actions(
     margin_requirement = float(portfolio.get("margin_requirement", 0.5))
     margin_used = float(portfolio.get("margin_used", 0.0))
 
-    # Compute true equity from cash + position values, not a missing "equity" key.
-    # Previously fell back to just cash, which ignored existing positions and
-    # could drastically under-estimate shorting capacity.
+    # Compute true equity from cash + position values + margin_used.
+    # margin_used is cash locked as collateral for open short positions.
+    # It belongs to the portfolio but is excluded from the cash balance,
+    # so it must be added back to get the true equity available for
+    # margin calculations (GAMMA-007 fix).
     position_value = 0.0
     for t, pos in positions.items():
         pos_price = float(current_prices.get(t, 0.0))
         position_value += float(pos.get("long", 0)) * pos_price
         position_value -= float(pos.get("short", 0)) * pos_price
-    equity = cash + position_value
+    margin_used = float(portfolio.get("margin_used", 0.0))
+    equity = cash + position_value + margin_used
 
     for ticker in tickers:
         price = float(current_prices.get(ticker, 0.0))

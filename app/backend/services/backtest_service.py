@@ -79,14 +79,26 @@ class BacktestService:
         return 0
 
     def calculate_portfolio_value(self, current_prices: dict[str, float]) -> float:
-        """Calculate total portfolio value."""
+        """Calculate total portfolio value.
+
+        Includes cash, net position value, and margin_used (which is cash
+        locked as collateral for open short positions and excluded from the
+        cash balance).  Consistent with ``_calculate_total_portfolio_value``
+        in ``risk_manager_helpers``.
+
+        Tickers missing from ``current_prices`` are skipped (their position
+        value is not included), which handles the case where some price
+        fetches failed while others succeeded.
+        """
         total_value = self.portfolio["cash"]
         for ticker in self.tickers:
+            price = current_prices.get(ticker)
+            if price is None:
+                continue
             position = self.portfolio["positions"][ticker]
-            price = current_prices[ticker]
             total_value += position["long"] * price
-            if position["short"] > 0:
-                total_value -= position["short"] * price
+            total_value -= position["short"] * price
+        total_value += float(self.portfolio.get("margin_used", 0.0))
         return total_value
 
     def prefetch_data(self) -> None:
@@ -158,14 +170,14 @@ class BacktestService:
             try:
                 price_data = get_price_data(ticker, previous_date_str, current_date_str)
             except Exception:
-                return None
+                continue
 
             if price_data.empty:
-                return None
+                continue
 
             current_prices[ticker] = price_data.iloc[-1]["close"]
 
-        return current_prices
+        return current_prices if current_prices else None
 
     def _create_portfolio_for_graph(self) -> dict[str, Any]:
         portfolio_for_graph = create_portfolio(
@@ -202,12 +214,16 @@ class BacktestService:
         executed_trades: dict[str, int] = {}
 
         for ticker in self.tickers:
+            price = current_prices.get(ticker)
+            if price is None:
+                executed_trades[ticker] = 0
+                continue
             decision = decisions.get(ticker, {"action": "hold", "quantity": 0})
             executed_trades[ticker] = self.execute_trade(
                 ticker=ticker,
                 action=decision.get("action", "hold"),
                 quantity=decision.get("quantity", 0),
-                current_price=current_prices[ticker],
+                current_price=price,
             )
 
         return executed_trades
