@@ -605,6 +605,12 @@ def run_explain(ticker: str) -> int:
               f"regime: {ms.get('regime_gate_level', 'normal')}")
 
     # Per-strategy breakdown
+    _STRATEGY_CN_LABELS = {
+        "trend": "趋势策略",
+        "mean_reversion": "均值回归",
+        "fundamental": "基本面",
+        "event_sentiment": "事件情绪",
+    }
     print(f"\n{Fore.CYAN}策略贡献:{Style.RESET_ALL}")
     for strat_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
         sig = signals.get(strat_name)
@@ -617,6 +623,15 @@ def run_explain(ticker: str) -> int:
         color = Fore.GREEN if direction > 0 else Fore.RED if direction < 0 else Fore.YELLOW
         print(f"  {strat_name:18s}  {color}{arrow} {conf:5.1f}{Style.RESET_ALL}")
 
+    # ── Block A: 因子贡献度明细 ──
+    _print_factor_detail_block(signals, _STRATEGY_CN_LABELS)
+
+    # ── Block B: 近 5 日关键事件 ──
+    _print_recent_events_block(data, match)
+
+    # ── Block C: 同行业排名 ──
+    _print_industry_ranking_block(recs, match)
+
     # Arbitration
     if arbitration:
         print(f"\n{Fore.CYAN}仲裁规则:{Style.RESET_ALL}")
@@ -627,6 +642,138 @@ def run_explain(ticker: str) -> int:
 
     print()
     return 0
+
+
+def _build_factor_bar(confidence: float, max_bar_width: int = 10) -> str:
+    """Build a 10-cell ASCII bar chart proportional to confidence (0-100)."""
+    filled = min(max(int(round(confidence / 10.0)), 0), max_bar_width)
+    return "█" * filled + "░" * (max_bar_width - filled)
+
+
+def _print_factor_detail_block(signals: dict, strategy_labels: dict) -> None:
+    """Block A: Print top-3 sub-factor detail per strategy, grouped and bar-charted."""
+    from colorama import Fore, Style
+
+    print(f"\n{Fore.CYAN}因子明细:{Style.RESET_ALL}")
+    has_any_factor = False
+    for strat_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+        sig = signals.get(strat_name)
+        if not sig or not isinstance(sig, dict):
+            continue
+        sub_factors = sig.get("sub_factors")
+        if not sub_factors or not isinstance(sub_factors, dict):
+            continue
+        # Collect (name, direction, confidence) for each sub-factor
+        factor_items: list[tuple[str, int, float]] = []
+        for _fname, fpayload in sub_factors.items():
+            if not isinstance(fpayload, dict):
+                continue
+            fname = fpayload.get("name", _fname)
+            fdir = fpayload.get("direction", 0)
+            fconf = fpayload.get("confidence", 0.0)
+            factor_items.append((str(fname), int(fdir), float(fconf)))
+        if not factor_items:
+            continue
+        # Sort by |confidence| descending, take top 3
+        factor_items.sort(key=lambda x: abs(x[2]), reverse=True)
+        label = strategy_labels.get(strat_name, strat_name)
+        print(f"  {label}:")
+        for fname, fdir, fconf in factor_items[:3]:
+            arrow = "↑" if fdir > 0 else "↓" if fdir < 0 else "—"
+            color = Fore.GREEN if fdir > 0 else Fore.RED if fdir < 0 else Fore.YELLOW
+            bar = _build_factor_bar(fconf)
+            print(f"    {fname:20s} {color}{arrow} {fconf:5.2f}{Style.RESET_ALL}  {bar}")
+            has_any_factor = True
+    if not has_any_factor:
+        print("  暂无因子明细数据")
+
+
+def _print_recent_events_block(report_data: dict, match: dict) -> None:
+    """Block B: Print recent 5-day key events from report or event_sentiment sub-factors."""
+    from colorama import Fore, Style
+
+    print(f"\n{Fore.CYAN}近期事件 (5 日):{Style.RESET_ALL}")
+
+    # Priority 1: report-level recent_events field
+    events = report_data.get("recent_events")
+    if events and isinstance(events, list) and len(events) > 0:
+        for evt in events[:5]:
+            if isinstance(evt, dict):
+                date_str = str(evt.get("date", evt.get("time", "")))
+                desc = str(evt.get("description", evt.get("text", str(evt))))
+                print(f"  {date_str}  {desc}")
+            else:
+                print(f"  {evt}")
+        return
+
+    # Priority 2: extract from event_sentiment strategy's sub-factors metrics
+    signals = match.get("strategy_signals", {})
+    event_sig = signals.get("event_sentiment")
+    if event_sig and isinstance(event_sig, dict):
+        sub_factors = event_sig.get("sub_factors")
+        if isinstance(sub_factors, dict):
+            articles = _extract_articles_from_event_subfactors(sub_factors)
+            if articles:
+                for art in articles[:5]:
+                    date_str = str(art.get("days_old", "?"))
+                    title = str(art.get("title", ""))
+                    if title:
+                        day_label = f"{int(date_str)}天前" if date_str.isdigit() else date_str
+                        print(f"  {day_label}  新闻: \"{title}\"")
+                return
+
+    print("  暂无近期事件数据")
+
+
+def _extract_articles_from_event_subfactors(sub_factors: dict) -> list[dict]:
+    """Extract article metrics from news_sentiment sub-factor within event_sentiment."""
+    news_sf = sub_factors.get("news_sentiment")
+    if not isinstance(news_sf, dict):
+        return []
+    metrics = news_sf.get("metrics")
+    if not isinstance(metrics, dict):
+        return []
+    articles = metrics.get("articles")
+    if not isinstance(articles, list):
+        return []
+    return [a for a in articles if isinstance(a, dict)]
+
+
+def _print_industry_ranking_block(recs: list[dict], match: dict) -> None:
+    """Block C: Print industry ranking and percentile among same-industry recommendations."""
+    from colorama import Fore, Style
+
+    industry = match.get("industry_sw", "")
+    ticker = match.get("ticker", "")
+    my_score = match.get("score_b", 0.0)
+
+    if not industry:
+        print(f"\n{Fore.CYAN}同行业排名:{Style.RESET_ALL} 无行业信息")
+        return
+
+    # Filter recommendations in the same industry, sort by score_b descending
+    peers = [
+        (r.get("ticker", ""), r.get("score_b", 0.0))
+        for r in recs
+        if r.get("industry_sw") == industry
+    ]
+    if not peers:
+        print(f"\n{Fore.CYAN}同行业排名:{Style.RESET_ALL} 无同行业数据")
+        return
+
+    peers_sorted = sorted(peers, key=lambda x: x[1], reverse=True)
+    total = len(peers_sorted)
+
+    # Find current ticker's rank
+    rank = 1
+    for idx, (t, _s) in enumerate(peers_sorted, 1):
+        if t == ticker:
+            rank = idx
+            break
+
+    percentile = rank / total if total > 0 else 1.0
+    pct_label = f"前 {percentile:.0%}" if percentile <= 1.0 else "—"
+    print(f"\n{Fore.CYAN}同行业排名:{Style.RESET_ALL} {industry} — 第 {rank}/{total} 名 ({pct_label})")
 
 
 if __name__ == "__main__":
