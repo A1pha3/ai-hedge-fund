@@ -352,6 +352,18 @@ class TestIndustryRank:
         assert rank == 1
         assert total == 3
 
+    def test_compute_industry_rank_ticker_not_in_peers(self) -> None:
+        """R16 bug: ticker in industry but not in peers_sorted should return None rank, not 1."""
+        recs = [
+            {"ticker": "A", "industry_sw": "X", "score_b": 0.8},
+            {"ticker": "B", "industry_sw": "X", "score_b": 0.5},
+        ]
+        # ticker C has industry_sw=X but is not in the recs list
+        match = {"ticker": "C", "industry_sw": "X", "score_b": 0.3}
+        rank, total = _compute_industry_rank(recs, match)
+        assert rank is None, f"Expected None, got {rank}"
+        assert total == 2
+
 
 # ============================================================================
 # Test 6: 龙虎榜检测

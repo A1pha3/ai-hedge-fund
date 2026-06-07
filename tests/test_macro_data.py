@@ -414,3 +414,59 @@ class TestCacheBehavior:
         assert snap.cpi_yoy == 1.5
         # PPI 应该为 None (不崩溃)
         assert snap.ppi_yoy is None
+
+
+# ---------------------------------------------------------------------------
+# 11. R16 BUG — _extract_latest_pmi 未知列名不崩溃
+# ---------------------------------------------------------------------------
+
+
+class TestExtractLatestPMIEdgeCases:
+    """R16: _extract_latest_pmi 应安全处理不认识的列名。"""
+
+    @patch("src.data.macro_data._get_pro")
+    def test_pmi_with_unexpected_columns(self, mock_get_pro):
+        """PMI DataFrame 列名不匹配时返回 None, 不崩溃。"""
+        import pandas as pd
+
+        mock_pro = MagicMock()
+        mock_get_pro.return_value = mock_pro
+
+        pmi_df = pd.DataFrame({"month": ["202605", "202604"], "unknown_col": [50.0, 51.0]})
+
+        def mock_cached_call(pro, api_name, **kwargs):
+            if api_name == "cn_pmi":
+                return pmi_df
+            return None
+
+        with patch("src.data.macro_data._cached_tushare_dataframe_call", side_effect=mock_cached_call):
+            snap = fetch_macro_snapshot()
+
+        # PMI 字段应为 None (列名不匹配), 不崩溃
+        assert snap.pmi_manufacturing is None
+        assert snap.pmi_non_manufacturing is None
+
+    @patch("src.data.macro_data._get_pro")
+    def test_pmi_with_standard_columns(self, mock_get_pro):
+        """PMI DataFrame 含 pmi_make / pmi_service 时正确解析。"""
+        import pandas as pd
+
+        mock_pro = MagicMock()
+        mock_get_pro.return_value = mock_pro
+
+        pmi_df = pd.DataFrame({
+            "month": ["202605", "202604"],
+            "pmi_make": [50.8, 49.5],
+            "pmi_service": [53.2, 52.1],
+        })
+
+        def mock_cached_call(pro, api_name, **kwargs):
+            if api_name == "cn_pmi":
+                return pmi_df
+            return None
+
+        with patch("src.data.macro_data._cached_tushare_dataframe_call", side_effect=mock_cached_call):
+            snap = fetch_macro_snapshot()
+
+        assert snap.pmi_manufacturing == 50.8
+        assert snap.pmi_non_manufacturing == 53.2

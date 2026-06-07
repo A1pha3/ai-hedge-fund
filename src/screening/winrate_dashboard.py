@@ -191,6 +191,9 @@ def _compute_horizon_stats(records: list[dict[str, Any]], return_field: str) -> 
 def _determine_trend(daily_rates: list[DailyWinRate], window: int = 7) -> str:
     """判定趋势方向: 最近 window 天 vs 前 window 天。
 
+    确保两组窗口不重叠: 取最近 window 个作为 recent, 往前数 window 个作为 earlier。
+    当数据不足以填满两个 window 时, 取中点前后各半。
+
     Returns:
         ``"improving"`` / ``"declining"`` / ``"stable"``
     """
@@ -198,8 +201,15 @@ def _determine_trend(daily_rates: list[DailyWinRate], window: int = 7) -> str:
     if len(t1_rates) < 2:
         return "stable"
 
-    recent = t1_rates[-window:] if len(t1_rates) >= window else t1_rates[len(t1_rates) // 2:]
-    earlier = t1_rates[:window] if len(t1_rates) >= window else t1_rates[: len(t1_rates) // 2]
+    if len(t1_rates) >= 2 * window:
+        # 足够数据: 严格无重叠
+        recent = t1_rates[-window:]
+        earlier = t1_rates[-2 * window : -window]
+    else:
+        # 数据不够 2*window: 取前后各半 (中点分割, 无重叠)
+        mid = len(t1_rates) // 2
+        earlier = t1_rates[:mid]
+        recent = t1_rates[mid:]
 
     if not recent or not earlier:
         return "stable"

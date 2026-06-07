@@ -88,17 +88,25 @@ def _fetch_task_data(task_id: str, trade_date: str, force: bool) -> pd.DataFrame
 
 
 def _is_cached(cache_key: str) -> bool:
-    """检查 EnhancedCache 中是否已有该 key。"""
+    """检查 EnhancedCache 中是否已有该 key。
+
+    通过 get_enhanced_cache().get() 查询所有层级 (LRU + Redis + Disk)。
+    注意: 返回 None 时无法区分 "cached None" vs "not cached",
+    但本模块不会缓存 None 值, 所以 None = not cached 是安全的。
+    """
     from src.data.enhanced_cache import get_enhanced_cache
 
     cache = get_enhanced_cache()
-    sentinel = cache._MISSING
-    value = cache.disk.get(cache_key, _sentinel=sentinel)
-    return value is not sentinel
+    value = cache.get(cache_key)
+    return value is not None
 
 
 def _fetch_daily_basic(trade_date: str, force: bool) -> pd.DataFrame | None:
-    """预热 daily_basic（全市场每日基本面）。"""
+    """预热 daily_basic（全市场每日基本面）。
+
+    注意: get_daily_basic_batch 内部已通过 fetch_batch_cached_frame 缓存,
+    此处额外写入 preheat: key 作为标记, 避免重复拉取。
+    """
     from src.tools.tushare_api import get_daily_basic_batch
 
     cache_key = f"preheat:daily_basic:{trade_date}"
@@ -115,7 +123,11 @@ def _fetch_daily_basic(trade_date: str, force: bool) -> pd.DataFrame | None:
 
 
 def _fetch_daily_prices(trade_date: str, force: bool) -> pd.DataFrame | None:
-    """预热 daily（全市场每日行情）。"""
+    """预热 daily（全市场每日行情）。
+
+    注意: get_daily_price_batch 内部已通过 fetch_batch_cached_frame 缓存,
+    此处额外写入 preheat: key 作为标记, 避免重复拉取。
+    """
     from src.tools.tushare_api import get_daily_price_batch
 
     cache_key = f"preheat:daily_prices:{trade_date}"

@@ -451,3 +451,46 @@ class TestWebEndpointSmoke:
         assert "total_days" in data
         assert "daily" in data
         assert "trend" in data
+
+
+# ---------------------------------------------------------------------------
+# Test 13: R16 BUG — _determine_trend window overlap
+# ---------------------------------------------------------------------------
+
+
+class TestTrendWindowOverlap:
+    """R16 bug: _determine_trend used overlapping recent/earlier windows
+    when len(t1_rates) < 2 * window (14). This contaminated the trend signal.
+    """
+
+    def test_no_overlap_10_days(self, tmp_path: Path) -> None:
+        """10 days of data, window=7 — recent and earlier should NOT overlap.
+        Earlier: [0.1]*5, Recent: [0.9]*5 → should be 'improving'.
+        """
+        records = []
+        for i in range(10):
+            d = _days_ago(10 - i)
+            if i < 5:
+                # early: all losers → wr=0
+                records.append(_make_record(f"00{i}01", d, next_day_return=-1.0))
+            else:
+                # recent: all winners → wr=1
+                records.append(_make_record(f"00{i}01", d, next_day_return=1.0))
+
+        path = _write_history(tmp_path, records)
+        summary = compute_winrate_dashboard(path, lookback_days=30)
+        # With fix: earlier avg ~ 0.0, recent avg ~ 1.0, diff > 0.05 → improving
+        assert summary.trend == "improving", f"Expected improving, got {summary.trend}"
+
+    def test_no_overlap_8_days_declining(self, tmp_path: Path) -> None:
+        """8 days of data, window=7 — earlier: high, recent: low → declining."""
+        records = []
+        for i in range(8):
+            d = _days_ago(8 - i)
+            if i < 4:
+                records.append(_make_record(f"00{i}01", d, next_day_return=3.0))
+            else:
+                records.append(_make_record(f"00{i}01", d, next_day_return=-3.0))
+        path = _write_history(tmp_path, records)
+        summary = compute_winrate_dashboard(path, lookback_days=30)
+        assert summary.trend == "declining", f"Expected declining, got {summary.trend}"

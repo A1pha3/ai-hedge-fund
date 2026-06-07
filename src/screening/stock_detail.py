@@ -184,11 +184,13 @@ def _compute_industry_rank(
 
     peers_sorted = sorted(peers, key=lambda x: x[1], reverse=True)
     total = len(peers_sorted)
-    rank = 1
+    rank: int | None = None
     for idx, (t, _s) in enumerate(peers_sorted, 1):
         if t == ticker:
             rank = idx
             break
+    if rank is None:
+        return None, total
     return rank, total
 
 

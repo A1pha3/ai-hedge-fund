@@ -242,3 +242,32 @@ def test_preheat_concurrency_param(mock_fetch):
         stats = preheat_cache("20260607", concurrency=cc, force=True)
         assert stats.tasks_total == 5
         assert stats.tasks_success == 5
+
+
+# ── Test 14: R16 BUG — _is_cached checks all cache tiers ──────────────
+
+
+class TestIsCachedAllTiers:
+    """R16 fix: _is_cached should check all cache tiers (LRU + Redis + Disk),
+    not just Disk. Previously only disk was checked, causing false negatives
+    when data was in LRU but not yet persisted to disk.
+    """
+
+    def test_is_cached_checks_enhanced_cache(self) -> None:
+        """_is_cached should find data stored via get_enhanced_cache().set()."""
+        from src.data.cache_preheater import _is_cached
+
+        test_key = "test_preheat_is_cached_check_20260607"
+        # Ensure it's not there first
+        from src.data.enhanced_cache import get_enhanced_cache
+
+        cache = get_enhanced_cache()
+        cache.delete(test_key)
+        assert not _is_cached(test_key), "Key should not be cached initially"
+
+        # Store via enhanced cache (all tiers)
+        cache.set(test_key, pd.DataFrame({"x": [1]}), ttl=60)
+        assert _is_cached(test_key), "Key should be found after set()"
+
+        # Cleanup
+        cache.delete(test_key)

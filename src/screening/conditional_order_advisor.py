@@ -138,7 +138,7 @@ def _clean_price_series(values: Iterable[object]) -> list[float]:
 def compute_atr(price_history: Sequence[float], *, period: int = DEFAULT_ATR_PERIOD) -> float:
     """计算平均真实波幅 (Average True Range)。
 
-    算法 (经典 Wilder 平滑):
+    算法 (SMA 简单移动平均, 非 Wilder 平滑):
       TR_t = max(high-low, |high - prev_close|, |low - prev_close|)
       当仅有 close 单序列时, 退化为:
         TR_t = |close_t - close_{t-1}|  (近似, 业界常见 fallback)
