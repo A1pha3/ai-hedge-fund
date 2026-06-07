@@ -17,7 +17,9 @@ from app.backend.routes.cache import router as cache_router
 from app.backend.routes.llm_metrics import router as llm_metrics_router
 from app.backend.routes.research import router as research_router
 from app.backend.routes.portfolio_simulator import router as portfolio_simulator_router
+from app.backend.routes.risk_metrics import router as risk_metrics_router
 from app.backend.routes.admin_audit import router as admin_audit_router
+from app.backend.routes.screening import router as screening_router
 from app.backend.auth.dependencies import get_current_user
 
 # Main API router
@@ -35,6 +37,10 @@ api_router.include_router(invites_router, tags=["invites"])
 api_router.include_router(attribution_router, tags=["portfolio"])
 # P2 2.3: Portfolio adjustment simulator (public analytics endpoint)
 api_router.include_router(portfolio_simulator_router, tags=["portfolio"])
+# P1-6: Portfolio risk snapshot (VaR / CVaR / drawdown / concentration)
+api_router.include_router(risk_metrics_router, tags=["portfolio"])
+# P1-5: Web 端一键选股 (public analytics endpoint, may take up to 60s)
+api_router.include_router(screening_router, tags=["screening"])
 
 # Protected routes (require valid JWT token)
 _auth = [Depends(get_current_user)]

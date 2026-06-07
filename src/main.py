@@ -33,6 +33,11 @@ from src.screening.industry_rotation import (
     format_rotation_block,
     top_strong_industries,
 )
+from src.screening.recommendation_tracker import (
+    get_tracking_summary,
+    render_tracking_summary,
+    update_tracking_history,
+)
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
@@ -323,18 +328,54 @@ def _state_type_cn(state_type: str) -> str:
     }.get(str(state_type or "").lower(), str(state_type or "—"))
 
 
+def _safe_float(value: object, default: float) -> float:
+    """将 value 安全转为 float, 处理 None / NaN / Inf / 异常类型。
+
+    不能使用 ``float(value or default)`` — 当 value 是 NaN 时,
+    ``NaN or default`` 仍为 NaN (NaN 是 truthy), 会污染下游。
+    """
+    if value is None:
+        return default
+    try:
+        fv = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(fv) or math.isinf(fv):
+        return default
+    return fv
+
+
+def _safe_int(value: object, default: int) -> int:
+    """将 value 安全转为 int, 处理 None / NaN / 异常类型。"""
+    if value is None:
+        return default
+    try:
+        fv = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(fv) or math.isinf(fv):
+        return default
+    try:
+        return int(fv)
+    except (TypeError, ValueError):
+        return default
+
+
 def _extract_market_status(market_state: object) -> dict:
-    """从 MarketState 对象提取温度计所需的字段，含 NaN/None 兜底。"""
+    """从 MarketState 对象提取温度计所需的字段，含 NaN/None 兜底。
+
+    所有数值字段均经过 ``_safe_float`` / ``_safe_int`` 处理, 杜绝 NaN 污染。
+    """
     return {
-        "adx": float(getattr(market_state, "adx", 0.0) or 0.0),
-        "atr_ratio": float(getattr(market_state, "atr_price_ratio", 0.0) or 0.0),
-        "breadth_ratio": float(getattr(market_state, "breadth_ratio", 0.5) or 0.5),
-        "daily_return": float(getattr(market_state, "daily_return", 0.0) or 0.0),
-        "limit_up": int(getattr(market_state, "limit_up_count", 0) or 0),
-        "limit_down": int(getattr(market_state, "limit_down_count", 0) or 0),
-        "northbound_days": int(getattr(market_state, "northbound_flow_days", 0) or 0),
+        "adx": _safe_float(getattr(market_state, "adx", 0.0), 0.0),
+        "atr_ratio": _safe_float(getattr(market_state, "atr_price_ratio", 0.0), 0.0),
+        "breadth_ratio": _safe_float(getattr(market_state, "breadth_ratio", 0.5), 0.5),
+        "daily_return": _safe_float(getattr(market_state, "daily_return", 0.0), 0.0),
+        "limit_up": _safe_int(getattr(market_state, "limit_up_count", 0), 0),
+        "limit_down": _safe_int(getattr(market_state, "limit_down_count", 0), 0),
+        "northbound_days": _safe_int(getattr(market_state, "northbound_flow_days", 0), 0),
         "state_type": str(getattr(market_state, "state_type", None) or "mixed"),
-        "position_scale": float(getattr(market_state, "position_scale", 1.0) or 1.0),
+        "position_scale": _safe_float(getattr(market_state, "position_scale", 1.0), 1.0),
         "regime_gate_level": str(getattr(market_state, "regime_gate_level", None) or "normal"),
     }
 
@@ -553,6 +594,163 @@ def run_screen_only_mode(trade_date: str) -> int:
     return 0
 
 
+def compute_auto_screening_results(trade_date: str, top_n: int = 10) -> dict:
+    """Run the full --auto pipeline and return a JSON-serializable payload (no IO side effects).
+
+    这是 ``run_auto_screening`` 的纯函数版本 — 不打印表格, 不保存文件,
+    不写日志, 仅返回完整的 payload dict (含 recommendations / market_state /
+    industry_rotation / batch_data_fetcher 统计 / consecutive_recommendation /
+    signal_decay_summary 等).
+
+    复用此函数可让 Web 端点 ``POST /api/screening/auto`` 与 CLI ``--auto`` 输出
+    保持完全一致。
+
+    Args:
+        trade_date: 交易日期, 格式 YYYYMMDD
+        top_n: 返回 Top N 推荐 (默认 10)
+
+    Returns:
+        dict 包含所有 auto_screening 输出字段, 可直接 ``json.dumps`` 序列化。
+
+    Raises:
+        ValueError: 候选池为空 (供 Web 端返回 503)
+        RuntimeError: 数据获取失败 (e.g. tushare token 缺失)
+    """
+    # P0-1: 创建批量数据获取器 (默认开启, 可通过 USE_BATCH_FETCHER=false 关闭)
+    from src.screening.batch_data_fetcher import (
+        get_global_batch_data_fetcher,
+    )
+    from src.screening.signal_decay_detector import (
+        DecayLevel,
+        build_decay_summary,
+        detect_signal_decay,
+    )
+
+    batch_fetcher = get_global_batch_data_fetcher()
+    batch_fetcher.reset_stats()
+    logger.info(
+        "[Auto] P0-1 BatchDataFetcher: use_batch=%s, max_concurrency=%d",
+        batch_fetcher.use_batch,
+        batch_fetcher._max_concurrency,
+    )
+
+    # Step 1: Layer A 候选池快筛
+    progress.update_status("auto_screening", None, "Step 1/4: 全市场快筛 (Layer A)")
+    logger.info("[Auto] Step 1/4: 全市场快筛 (Layer A) — trade_date=%s", trade_date)
+    candidates = build_candidate_pool(trade_date)
+    logger.info("[Auto] Layer A 候选池: %d 只", len(candidates))
+    if not candidates:
+        raise ValueError(f"候选池为空 (trade_date={trade_date}), 请检查市场数据源是否可用")
+
+    # Step 2: 四策略评分
+    progress.update_status("auto_screening", None, f"Step 2/4: 四策略评分 ({len(candidates)} 只)")
+    logger.info("[Auto] Step 2/4: 四策略评分 — %d 只候选", len(candidates))
+    scored = score_batch(candidates, trade_date)
+
+    # Step 3: 信号融合
+    progress.update_status("auto_screening", None, "Step 3/4: 信号融合 + 冲突仲裁")
+    logger.info("[Auto] Step 3/4: 市场状态检测 + 信号融合")
+    market_state = detect_market_state(trade_date)
+    fused = fuse_batch(scored, market_state, trade_date, candidates=candidates)
+
+    # Step 4: 排序输出 Top N
+    progress.update_status("auto_screening", None, f"Step 4/4: 输出 Top {top_n} 推荐")
+    sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
+    top_results = sorted_results[:top_n]
+
+    # Sector concentration guard
+    sector_warnings = _check_sector_concentration(top_results)
+
+    # P0-6 多日推荐聚合 — 附加连续推荐标记
+    consecutive_report_dir = _resolve_consecutive_report_dir()
+    top_results_serializable = [item.model_dump() for item in top_results]
+    top_results_serializable = enrich_recommendations_with_history(
+        recommendations=top_results_serializable,
+        lookback_days=DEFAULT_LOOKBACK_DAYS,
+        report_dir=consecutive_report_dir,
+        end_date=trade_date,
+    )
+    consecutive_highlight = sum(1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3)
+
+    # P0-3 信号衰减检测 — 对比当前与历史 score_b
+    decay_map = detect_signal_decay(
+        current_recommendations=top_results_serializable,
+        report_dir=consecutive_report_dir,
+        lookback_days=DEFAULT_LOOKBACK_DAYS,
+        end_date=trade_date,
+    )
+    decay_summary = build_decay_summary(decay_map)
+    # Attach decay info to each recommendation in the serializable list
+    for rec in top_results_serializable:
+        ticker = rec.get("ticker", "")
+        decay_info = decay_map.get(ticker)
+        if decay_info is not None:
+            rec["decay"] = decay_info.to_dict()
+        else:
+            rec["decay"] = {"level": "none", "current_score": rec.get("score_b", 0), "previous_score": None, "change_pct": None, "days_since_peak": 0}
+
+    # P1-2 行业轮动信号 — 申万一级行业动量 + 强度排名
+    industry_signals = calculate_industry_rotation(
+        recommendations=top_results_serializable,
+        trade_date=trade_date,
+    )
+    industry_rotation_payload = [sig.to_dict() for sig in industry_signals]
+
+    # 落盘当前报告 — 让后续 P1-3 追踪 / P0-6 连续推荐 / P0-3 信号衰减
+    # 等跨日模块能读到最新文件。
+    _save_json_report(
+        f"auto_screening_{trade_date}.json",
+        {
+            "mode": "auto_screening",
+            "date": trade_date,
+            "market_state": market_state.model_dump(),
+            "layer_a_count": len(candidates),
+            "total_scored": len(fused),
+            "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
+            "top_n": top_n,
+            "recommendations": top_results_serializable,
+            "sector_concentration_warnings": sector_warnings,
+            "consecutive_recommendation": {
+                "lookback_days": DEFAULT_LOOKBACK_DAYS,
+                "high_streak_count": consecutive_highlight,
+            },
+            "signal_decay_summary": decay_summary,
+            "batch_data_fetcher": {
+                "use_batch": batch_fetcher.use_batch,
+                **batch_fetcher.stats(),
+            },
+            "industry_rotation": industry_rotation_payload,
+        },
+    )
+
+    # 构建 payload (不再包含 market_state.model_dump() 自身 — caller 单独获取)
+    fetcher_stats = batch_fetcher.stats()
+    return {
+        "mode": "auto_screening",
+        "date": trade_date,
+        "market_state": market_state.model_dump(),
+        "layer_a_count": len(candidates),
+        "total_scored": len(fused),
+        "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
+        "top_n": top_n,
+        "recommendations": top_results_serializable,
+        "sector_concentration_warnings": sector_warnings,
+        "consecutive_recommendation": {
+            "lookback_days": DEFAULT_LOOKBACK_DAYS,
+            "high_streak_count": consecutive_highlight,
+        },
+        # P0-3: 信号衰减汇总
+        "signal_decay_summary": decay_summary,
+        # P0-1: 批量获取层统计
+        "batch_data_fetcher": {
+            "use_batch": batch_fetcher.use_batch,
+            **fetcher_stats,
+        },
+        # P1-2: 行业轮动信号
+        "industry_rotation": industry_rotation_payload,
+    }
+
+
 def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
     """一键跑全流程：全市场筛选 -> 因子评分 -> 信号融合 -> Top N 推荐。
 
@@ -574,122 +772,82 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
 
     progress.start()
     try:
-        # P0-1: 创建批量数据获取器 (默认开启，可通过 USE_BATCH_FETCHER=false 关闭)
-        from src.screening.batch_data_fetcher import (
-            get_global_batch_data_fetcher,
+        # 调用纯函数 — 复用 Web 端点的核心逻辑
+        report_payload = compute_auto_screening_results(trade_date, top_n)
+
+        # 重建 top_results 对象 (供 CLI 表格打印)
+        from src.screening.signal_fusion import FusedScore  # noqa: F401
+
+        top_results = [FusedScore.model_validate(item) for item in report_payload["recommendations"]]
+
+        # 反查 market_state (供 _print_auto_screening_table 使用)
+        market_state_payload = report_payload["market_state"]
+        from src.screening.market_state import MarketState
+
+        market_state = MarketState.model_validate(market_state_payload)
+
+        # 反查行业轮动信号 (供 CLI 打印)
+        industry_signals = [
+            IndustrySignal(
+                industry_name=item.get("industry_name", ""),
+                industry_code=item.get("industry_code", ""),
+                momentum_score=item.get("momentum_score", 0.0),
+                avg_score_b=item.get("avg_score_b", 0.0),
+                candidate_count=item.get("candidate_count", 0),
+                north_money_flow=item.get("north_money_flow", 0.0),
+                rank=item.get("rank", 0),
+                tickers=list(item.get("tickers", []) or []),
+            )
+            for item in report_payload.get("industry_rotation", [])
+        ]
+
+        # 反查信号衰减映射 (供 CLI 打印)
+        from src.screening.signal_decay_detector import DecayInfo
+
+        decay_map: dict = {}
+        for rec in report_payload["recommendations"]:
+            decay_payload = rec.get("decay") or {}
+            if decay_payload.get("level") and decay_payload.get("level") != "none":
+                try:
+                    decay_map[rec["ticker"]] = DecayInfo.from_dict(decay_payload)
+                except Exception:
+                    pass
+
+        # Save full report — 报告已由 compute_auto_screening_results 写入,
+        # 这里复用同一路径返回给 _print_auto_screening_table 用于 UI 提示。
+        report_path = _resolve_consecutive_report_dir() / f"auto_screening_{trade_date}.json"
+
+        # P1-3 推荐标的自动追踪 — 记录本次 Top N, 并补全历史 T+1/T+3/T+5 收益
+        tracking_dir = report_path.parent
+        try:
+            updated_records = update_tracking_history(
+                reports_dir=tracking_dir,
+                trade_date=trade_date,
+            )
+            logger.info("[Auto] P1-3 追踪历史已更新: %d 条记录", updated_records)
+        except Exception as exc:  # pragma: no cover - 追踪失败不影响主流程
+            logger.warning("[Auto] P1-3 追踪更新失败: %s", exc)
+            updated_records = 0
+        tracking_summary = get_tracking_summary(
+            history_path=tracking_dir / "tracking_history.json",
+            lookback_days=30,
         )
-        from src.screening.signal_decay_detector import (
-            DecayLevel,
-            build_decay_summary,
-            detect_signal_decay,
-        )
-
-        batch_fetcher = get_global_batch_data_fetcher()
-        batch_fetcher.reset_stats()
-        logger.info(
-            "[Auto] P0-1 BatchDataFetcher: use_batch=%s, max_concurrency=%d",
-            batch_fetcher.use_batch,
-            batch_fetcher._max_concurrency,
-        )
-
-        # Step 1: Layer A 候选池快筛
-        progress.update_status("auto_screening", None, "Step 1/4: 全市场快筛 (Layer A)")
-        logger.info("[Auto] Step 1/4: 全市场快筛 (Layer A) — trade_date=%s", trade_date)
-        candidates = build_candidate_pool(trade_date)
-        logger.info("[Auto] Layer A 候选池: %d 只", len(candidates))
-        if not candidates:
-            print(f"{Fore.YELLOW}[Auto] 候选池为空，终止流程。{Style.RESET_ALL}")
-            return 1
-
-        # Step 2: 四策略评分
-        progress.update_status("auto_screening", None, f"Step 2/4: 四策略评分 ({len(candidates)} 只)")
-        logger.info("[Auto] Step 2/4: 四策略评分 — %d 只候选", len(candidates))
-        scored = score_batch(candidates, trade_date)
-
-        # Step 3: 信号融合
-        progress.update_status("auto_screening", None, "Step 3/4: 信号融合 + 冲突仲裁")
-        logger.info("[Auto] Step 3/4: 市场状态检测 + 信号融合")
-        market_state = detect_market_state(trade_date)
-        fused = fuse_batch(scored, market_state, trade_date, candidates=candidates)
-
-        # Step 4: 排序输出 Top N
-        progress.update_status("auto_screening", None, f"Step 4/4: 输出 Top {top_n} 推荐")
-        sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
-        top_results = sorted_results[:top_n]
-
-        # Sector concentration guard
-        sector_warnings = _check_sector_concentration(top_results)
-
-        # P0-6 多日推荐聚合 — 附加连续推荐标记
-        consecutive_report_dir = _resolve_consecutive_report_dir()
-        top_results_serializable = [item.model_dump() for item in top_results]
-        top_results_serializable = enrich_recommendations_with_history(
-            recommendations=top_results_serializable,
-            lookback_days=DEFAULT_LOOKBACK_DAYS,
-            report_dir=consecutive_report_dir,
-            end_date=trade_date,
-        )
-        consecutive_highlight = sum(1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3)
-
-        # P0-3 信号衰减检测 — 对比当前与历史 score_b
-        decay_map = detect_signal_decay(
-            current_recommendations=top_results_serializable,
-            report_dir=consecutive_report_dir,
-            lookback_days=DEFAULT_LOOKBACK_DAYS,
-            end_date=trade_date,
-        )
-        decay_summary = build_decay_summary(decay_map)
-        # Attach decay info to each recommendation in the serializable list
-        for rec in top_results_serializable:
-            ticker = rec.get("ticker", "")
-            decay_info = decay_map.get(ticker)
-            if decay_info is not None:
-                rec["decay"] = decay_info.to_dict()
-            else:
-                rec["decay"] = {"level": "none", "current_score": rec.get("score_b", 0), "previous_score": None, "change_pct": None, "days_since_peak": 0}
-
-        # P1-2 行业轮动信号 — 申万一级行业动量 + 强度排名
-        industry_signals = calculate_industry_rotation(
-            recommendations=top_results_serializable,
-            trade_date=trade_date,
-        )
-        industry_rotation_payload = [sig.to_dict() for sig in industry_signals]
-
-        # Save full report
-        report_payload = {
-            "mode": "auto_screening",
-            "date": trade_date,
-            "market_state": market_state.model_dump(),
-            "layer_a_count": len(candidates),
-            "total_scored": len(fused),
-            "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
-            "top_n": top_n,
-            "recommendations": top_results_serializable,
-            "sector_concentration_warnings": sector_warnings,
-            "consecutive_recommendation": {
-                "lookback_days": DEFAULT_LOOKBACK_DAYS,
-                "high_streak_count": consecutive_highlight,
-            },
-            # P0-3: 信号衰减汇总
-            "signal_decay_summary": decay_summary,
-            # P0-1: 批量获取层统计
-            "batch_data_fetcher": {
-                "use_batch": batch_fetcher.use_batch,
-                **batch_fetcher.stats(),
-            },
-            # P1-2: 行业轮动信号
-            "industry_rotation": industry_rotation_payload,
-        }
-        report_path = _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+        if tracking_summary.get("total_recommendations", 0) > 0:
+            report_payload["tracking_summary"] = tracking_summary
+            # 重新落盘 — 让 tracking_summary 出现在 JSON 中
+            try:
+                _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+            except Exception as exc:  # pragma: no cover
+                logger.debug("[Auto] tracking_summary 二次落盘失败: %s", exc)
 
         # P0-1: 输出 batch fetcher 统计
-        fetcher_stats = batch_fetcher.stats()
+        fetcher_stats = report_payload.get("batch_data_fetcher", {})
         logger.info(
             "[Auto] P0-1 BatchDataFetcher stats: batch_calls=%d, batch_failures=%d, " "single_ticker_calls=%d, cache_hits=%d",
-            fetcher_stats["batch_calls"],
-            fetcher_stats["batch_failures"],
-            fetcher_stats["single_ticker_calls"],
-            fetcher_stats["cache_hits"],
+            fetcher_stats.get("batch_calls", 0),
+            fetcher_stats.get("batch_failures", 0),
+            fetcher_stats.get("single_ticker_calls", 0),
+            fetcher_stats.get("cache_hits", 0),
         )
 
         # Print formatted table
@@ -697,15 +855,19 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             trade_date,
             top_results,
             market_state,
-            len(candidates),
+            report_payload["layer_a_count"],
             top_n,
             report_path,
-            sector_warnings,
-            consecutive_recommendations=top_results_serializable,
+            report_payload.get("sector_concentration_warnings") or [],
+            consecutive_recommendations=report_payload["recommendations"],
             decay_map=decay_map,
             industry_signals=industry_signals,
         )
         return 0
+    except ValueError as exc:
+        # 候选池为空 — 纯函数明确抛出的 ValueError
+        print(f"{Fore.YELLOW}[Auto] {exc}{Style.RESET_ALL}")
+        return 1
     finally:
         progress.stop()
 
@@ -875,6 +1037,36 @@ def _check_sector_concentration(top_results: list, threshold: float = 0.4) -> li
     return warnings
 
 
+def run_tracking_summary(lookback_days: int = 30) -> int:
+    """P1-3 独立 CLI: 展示历史推荐胜率与平均收益。
+
+    Args:
+        lookback_days: 回溯天数 (默认 30)
+
+    Returns:
+        退出码 (0 = 成功, 1 = 历史文件不存在)
+    """
+    from colorama import Fore, Style
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+
+    report_dir = resolve_report_dir()
+    if not report_dir.exists():
+        print(f"{Fore.RED}未找到 reports 目录: {report_dir}{Style.RESET_ALL}")
+        return 1
+    history_path = report_dir / "tracking_history.json"
+    if not history_path.exists():
+        print(f"{Fore.YELLOW}暂无追踪历史 (请先运行 --auto 至少一次){Style.RESET_ALL}")
+        return 1
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Tracking Summary] 推荐标的持续性追踪 (P1-3){Style.RESET_ALL}")
+    print(f"  历史文件: {Fore.WHITE}{history_path}{Style.RESET_ALL}")
+    print(f"  回溯天数: {lookback_days} 天")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+    print(render_tracking_summary(history_path, lookback_days=lookback_days), end="")
+    return 0
+
+
 def run_industry_rotation(trade_date: str | None = None, top_n: int = 5, bottom_n: int = 3) -> int:
     """从最新 (或指定日期) auto_screening 报告中读取推荐结果, 计算并展示行业轮动信号。
 
@@ -942,11 +1134,11 @@ def run_industry_rotation(trade_date: str | None = None, top_n: int = 5, bottom_
             IndustrySignal(
                 industry_name=item.get("industry_name", ""),
                 industry_code=item.get("industry_code", ""),
-                momentum_score=float(item.get("momentum_score", 0.0) or 0.0),
-                avg_score_b=float(item.get("avg_score_b", 0.0) or 0.0),
-                candidate_count=int(item.get("candidate_count", 0) or 0),
-                north_money_flow=float(item.get("north_money_flow", 0.0) or 0.0),
-                rank=int(item.get("rank", 0) or 0),
+                momentum_score=_safe_float(item.get("momentum_score", 0.0), 0.0),
+                avg_score_b=_safe_float(item.get("avg_score_b", 0.0), 0.0),
+                candidate_count=_safe_int(item.get("candidate_count", 0), 0),
+                north_money_flow=_safe_float(item.get("north_money_flow", 0.0), 0.0),
+                rank=_safe_int(item.get("rank", 0), 0),
                 tickers=list(item.get("tickers", []) or []),
             )
             for item in cached_rotation
@@ -1255,6 +1447,17 @@ if __name__ == "__main__":
                 except ValueError:
                     pass
         raise SystemExit(run_industry_rotation(_ir_trade_date, top_n=_ir_top_n, bottom_n=_ir_bottom_n))
+
+    # P1-3: --tracking-summary 独立 CLI 入口
+    if "--tracking-summary" in sys.argv:
+        _ts_lookback = 30
+        for arg in sys.argv:
+            if arg.startswith("--tracking-lookback="):
+                try:
+                    _ts_lookback = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+        raise SystemExit(run_tracking_summary(lookback_days=_ts_lookback))
 
     # Detect --auto early via sys.argv to bypass interactive prompts
     is_auto = "--auto" in sys.argv

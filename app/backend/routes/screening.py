@@ -1,0 +1,305 @@
+"""Web 端一键选股端点 — 包装 ``--auto`` 模式为简单的 HTTP API。
+
+P1-5: 用户希望在 Web 端一键运行全市场自动筛选, 获得与 CLI ``--auto``
+完全一致的 payload (推荐 / 市场状态 / 行业轮动 / 连续推荐 / 批量统计)。
+
+本端点不重新实现核心筛选逻辑, 而是直接复用
+:func:`src.main.compute_auto_screening_results` 纯函数。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import math
+import os
+import re
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from src.main import compute_auto_screening_results
+
+router = APIRouter(prefix="/api/screening", tags=["screening"])
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+#: 单次请求最长执行时间 — 防止 Web 请求挂死
+DEFAULT_TIMEOUT_SECONDS: float = 60.0
+
+#: trade_date 格式校验 — YYYYMMDD 或 YYYY-MM-DD
+_TRADE_DATE_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})$|^(\d{4})-(\d{2})-(\d{2})$")
+
+#: top_n 合法区间
+MIN_TOP_N: int = 1
+MAX_TOP_N: int = 100
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
+
+
+class ScreeningRequest(BaseModel):
+    """一键选股请求体。
+
+    Attributes:
+        trade_date: 交易日期 (``YYYYMMDD`` 或 ``YYYY-MM-DD``),
+            ``None`` 表示取最新可用交易日 (即 ``datetime.now()`` 当天)
+        top_n: 返回 Top N 推荐 (1-100, 默认 20)
+        score_threshold: 最小 ``score_b`` 阈值 (默认 0.0, 不过滤)
+        strategies: 启用的策略列表, ``None`` 表示全部四策略
+            (trend / mean_reversion / fundamental / event_sentiment)
+        use_explain: 是否在响应中附加因子明细 (默认 True)
+    """
+
+    trade_date: str | None = None
+    top_n: int = Field(default=20, ge=MIN_TOP_N, le=MAX_TOP_N)
+    score_threshold: float = Field(default=0.0, ge=-1.0, le=1.0)
+    strategies: list[str] | None = None
+    use_explain: bool = True
+
+
+class ScreeningResponse(BaseModel):
+    """一键选股响应体。
+
+    字段命名与 CLI ``--auto`` 报告 JSON 一致, 便于 Web 前端与 CLI
+    共享同一份解析代码。
+    """
+
+    trade_date: str
+    recommendations: list[dict] = Field(default_factory=list)
+    market_state: dict | None = None
+    tracking_summary: dict | None = None
+    consecutive_recommendation: dict | None = None
+    industry_rotation: list[dict] | None = None
+    execution_time_seconds: float
+    batch_data_fetcher: dict | None = None
+    signal_decay_summary: dict | None = None
+    sector_concentration_warnings: list[str] | None = None
+    layer_a_count: int = 0
+    total_scored: int = 0
+    high_pool_count: int = 0
+    top_n: int = 0
+    meta: dict = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_trade_date(raw: str | None) -> str:
+    """将 ``YYYYMMDD`` / ``YYYY-MM-DD`` 统一为 ``YYYYMMDD`` 格式。
+
+    Raises:
+        HTTPException 422: 格式非法
+    """
+    if raw is None or not isinstance(raw, str) or not raw.strip():
+        raise HTTPException(status_code=422, detail="trade_date 不能为空")
+    cleaned = raw.strip()
+    if not _TRADE_DATE_RE.match(cleaned):
+        raise HTTPException(status_code=422, detail=f"trade_date 格式无效: {raw!r} (期望 YYYYMMDD 或 YYYY-MM-DD)")
+    # 统一为 YYYYMMDD
+    return cleaned.replace("-", "")
+
+
+def _resolve_default_trade_date() -> str:
+    """解析默认 trade_date — 取当前日期 YYYYMMDD。
+
+    注意: 不查交易日历 (避免引入 akshare 依赖, 加重请求);
+    若当天为非交易日, 由 ``compute_auto_screening_results`` 内部
+    通过数据获取失败来体现。
+    """
+    return datetime.now().strftime("%Y%m%d")
+
+
+def _check_tushare_token() -> None:
+    """检查 tushare token 是否配置 — 缺失时返回 503。
+
+    Raises:
+        HTTPException 503: tushare token 缺失
+    """
+    token = os.environ.get("TUSHARE_TOKEN") or os.environ.get("TUSHARE_API_KEY")
+    if not token:
+        raise HTTPException(status_code=503, detail="TUSHARE_TOKEN 未配置, 无法运行 A 股一键选股")
+
+
+def _sanitize_nan(value: Any) -> Any:
+    """递归清洗 NaN/Inf 字段, 替换为 None, 保证 JSON 合法。
+
+    ``json.dumps`` 默认会把 ``NaN`` / ``Inf`` 序列化为非标准 JSON (无引号),
+    严格 JSON parser (前端 ``JSON.parse``) 会拒绝。统一转为 ``None``。
+    """
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    if isinstance(value, dict):
+        return {k: _sanitize_nan(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_nan(v) for v in value]
+    if isinstance(value, tuple):
+        return [_sanitize_nan(v) for v in value]
+    return value
+
+
+def _apply_score_threshold(
+    recommendations: list[dict],
+    threshold: float,
+) -> list[dict]:
+    """按 ``score_b >= threshold`` 过滤推荐列表。
+
+    处理 None / NaN / 非数字 score_b 视为不通过 (保守过滤)。
+    """
+    if threshold <= 0.0:
+        return recommendations
+    out: list[dict] = []
+    for rec in recommendations:
+        raw = rec.get("score_b")
+        try:
+            fv = float(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(fv) or math.isinf(fv):
+            continue
+        if fv >= threshold:
+            out.append(rec)
+    return out
+
+
+def _attach_explain(
+    recommendations: list[dict],
+    enabled: bool,
+) -> list[dict]:
+    """根据 ``use_explain`` 决定是否在响应中保留因子明细。
+
+    当前 ``compute_auto_screening_results`` 已通过 ``strategy_signals``
+    内嵌每个策略的 ``sub_factors``, 因此 ``use_explain=False`` 时
+    需剔除 ``sub_factors`` 以减小 payload 体积。
+    """
+    if enabled:
+        return recommendations
+    trimmed: list[dict] = []
+    for rec in recommendations:
+        rec_copy = dict(rec)
+        signals = rec_copy.get("strategy_signals")
+        if isinstance(signals, dict):
+            # 必须更新 signals[_name] — 仅重绑定局部 sig 不会影响原 dict
+            new_signals: dict = {}
+            for name, sig in signals.items():
+                if isinstance(sig, dict):
+                    new_sig = dict(sig)
+                    new_sig.pop("sub_factors", None)
+                    new_signals[name] = new_sig
+                else:
+                    new_signals[name] = sig
+            rec_copy["strategy_signals"] = new_signals
+        trimmed.append(rec_copy)
+    return trimmed
+
+
+def _validate_strategies(strategies: list[str] | None) -> list[str] | None:
+    """校验 strategies 字段, 拒绝非法值。
+
+    合法值: ``trend`` / ``mean_reversion`` / ``fundamental`` / ``event_sentiment``
+    """
+    if strategies is None:
+        return None
+    valid = {"trend", "mean_reversion", "fundamental", "event_sentiment"}
+    invalid = [s for s in strategies if s not in valid]
+    if invalid:
+        raise HTTPException(status_code=422, detail=f"未知策略: {invalid} (合法: {sorted(valid)})")
+    return strategies
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    path="/auto",
+    response_model=ScreeningResponse,
+    responses={
+        200: {"description": "成功 — 返回完整推荐 payload"},
+        422: {"description": "参数校验失败 (trade_date 格式非法 / 策略非法)"},
+        503: {"description": "TUSHARE_TOKEN 缺失 / 候选池为空"},
+        504: {"description": "执行超时 (默认 60s)"},
+        500: {"description": "其他内部错误"},
+    },
+)
+async def run_auto_screening(req: ScreeningRequest) -> ScreeningResponse:
+    """Web 端一键运行全市场自动筛选。
+
+    等价于 CLI::
+
+        uv run python src/main.py --auto --top-n N
+
+    返回完整的推荐结果 + 市场状态 + 行业轮动 + 连续推荐 + 信号衰减
+    + 批量获取层统计 + 推荐标的追踪汇总。
+
+    Notes:
+        1. 默认超时 60s — 防止 Web 请求挂死
+        2. NaN/Inf 字段会被统一替换为 ``None`` (保证 JSON 严格合法)
+        3. 复用 :func:`src.main.compute_auto_screening_results` 纯函数
+    """
+    _check_tushare_token()
+    strategies = _validate_strategies(req.strategies)
+
+    # trade_date 解析
+    if req.trade_date:
+        trade_date = _normalize_trade_date(req.trade_date)
+    else:
+        trade_date = _resolve_default_trade_date()
+
+    # 复用 main 纯函数 — 顶部已 import, 便于测试 patch
+    start = time.monotonic()
+    try:
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(compute_auto_screening_results, trade_date, req.top_n),
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail=f"一键选股超时 (>{DEFAULT_TIMEOUT_SECONDS}s)")
+    except ValueError as exc:
+        # 候选池为空 — 503 而非 500 (上游数据问题)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        # 其他内部错误
+        raise HTTPException(status_code=500, detail=f"一键选股失败: {exc}")
+
+    elapsed = time.monotonic() - start
+
+    # 后处理: NaN 清洗 + 阈值过滤 + 因子明细开关
+    raw_recs = payload.get("recommendations", []) or []
+    recs = _apply_score_threshold(raw_recs, req.score_threshold)
+    recs = _attach_explain(recs, req.use_explain)
+
+    return ScreeningResponse(
+        trade_date=trade_date,
+        recommendations=_sanitize_nan(recs),
+        market_state=_sanitize_nan(payload.get("market_state")),
+        tracking_summary=_sanitize_nan(payload.get("tracking_summary")),
+        consecutive_recommendation=_sanitize_nan(payload.get("consecutive_recommendation")),
+        industry_rotation=_sanitize_nan(payload.get("industry_rotation")),
+        execution_time_seconds=round(elapsed, 3),
+        batch_data_fetcher=_sanitize_nan(payload.get("batch_data_fetcher")),
+        signal_decay_summary=_sanitize_nan(payload.get("signal_decay_summary")),
+        sector_concentration_warnings=payload.get("sector_concentration_warnings") or [],
+        layer_a_count=int(payload.get("layer_a_count", 0) or 0),
+        total_scored=int(payload.get("total_scored", 0) or 0),
+        high_pool_count=int(payload.get("high_pool_count", 0) or 0),
+        top_n=int(payload.get("top_n", req.top_n) or req.top_n),
+        meta={
+            "score_threshold": req.score_threshold,
+            "use_explain": req.use_explain,
+            "strategies": strategies or ["trend", "mean_reversion", "fundamental", "event_sentiment"],
+            "data_dir": str(Path(__file__).resolve().parents[3] / "data" / "reports"),
+        },
+    )

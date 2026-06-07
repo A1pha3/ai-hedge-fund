@@ -346,10 +346,10 @@
 |---|------|------|----------|----------|
 | P1-1 | **缓存命中率优化** | SQLite 缓存已实现但过期策略简单 | 增加「主动预热」模式：在盘后自动预拉取常用数据；增加按因子依赖的批量预加载 | 减少 `--auto` 运行时的冷启动延迟 |
 | P1-2 | **行业轮动信号** ✅ | 行业暴露控制已有 (`industry_exposure.py`)，但仅限风控 | 增加行业动量/轮动评分，输出「本周强势行业 Top 5」，在推荐结果中标注行业标签 | 用户从行业视角筛选，减少信息噪音 |
-| P1-3 | **推荐标的持续性追踪** | Lookback Audit 已有 (`lookback_audit.py`)，但需要手动触发 | 增加「自动追踪」：每次 `--auto` 运行后自动记录 Top 10 标的，次日盘后自动计算实际收益 | 无需手动对比，系统自动闭环验证 |
+| P1-3 | **推荐标的持续性追踪** ✅ | Lookback Audit 已有 (`lookback_audit.py`)，但需要手动触发 | 增加「自动追踪」：每次 `--auto` 运行后自动记录 Top 10 标的，次日盘后自动计算实际收益 | 无需手动对比，系统自动闭环验证 — 已实现：`src/screening/recommendation_tracker.py` + `--tracking-summary` CLI |
 | P1-4 | **因子重要性排行** | 四策略各有子因子，但缺少全局排序 | 定期计算因子 IC (信息系数)，输出「本周最强因子 Top 10」，用于辅助用户理解市场风格 | 用户了解当前市场驱动因素 |
 | P1-5 | **Web 端筛选一键执行** | 后端有 `/hedge-fund/run` 但无专门的筛选端点 | 新增 `POST /api/screening/auto` 端点，前端增加「一键选股」按钮 | Web 用户无需 CLI 即可使用核心功能 |
-| P1-6 | **组合风险预警仪表盘** | `risk-monitor-panel.tsx` 已有基础展示 | 增加实时 VaR / CVaR 计算 + 行业集中度动态图 + 回撤预警线 | 用户对组合风险一目了然 |
+| P1-6 | **组合风险预警仪表盘** | ✅ | `risk-monitor-panel.tsx` 已有基础展示 — 已增强: 实时 VaR / CVaR + 行业集中度 + 回撤预警线 | 用户对组合风险一目了然 |
 
 ### P2 — 可以做
 
@@ -519,6 +519,48 @@
 
 ---
 
+### P1-6 实现细节
+
+**目标**: 为前端 `risk-monitor-panel.tsx` 提供实时 VaR / CVaR / 行业集中度 / 回撤预警的 API 端点 + 后端计算模块, 解决现有面板只展示静态 HHI/CVaR proxy 的局限。
+
+**实现组件**:
+
+- **新模块**: `src/portfolio/risk_metrics.py` — 纯函数 + dataclass, 无 I/O
+  - `RiskSnapshot` dataclass: `portfolio_value / var_95 / var_99 / cvar_95 / cvar_99 / max_drawdown / current_drawdown / drawdown_warning / industry_concentration / concentration_warning / single_position_max / position_count / beta_adjusted / timestamp`
+  - `compute_risk_snapshot(positions, lookback_returns, *, timestamp, initial_portfolio_value, var_horizon_days, confidence_levels, benchmark_returns, ...)` — 主入口
+  - 内部工具: `_histogram_var` / `_histogram_cvar` (历史模拟法), `_max_drawdown_from_equity` / `_current_drawdown_from_equity`, `_weighted_portfolio_daily_returns` (按市值加权聚合 per-ticker → portfolio-level 日收益), `_aggregate_industry_weights`, `_resolve_beta`
+  - 阈值常量: `INDUSTRY_CONCENTRATION_WARNING_THRESHOLD=0.25`, `SINGLE_POSITION_WARNING_THRESHOLD=0.12`, `DRAWDOWN_WARNING_THRESHOLD=0.10`
+
+- **新模块**: `app/backend/routes/risk_metrics.py` — FastAPI 端点
+  - `GET /api/portfolio/risk-snapshot?lookback_days=60` — 空快照 (前端初始加载用)
+  - `POST /api/portfolio/risk-snapshot` — 完整 payload: positions + lookback_returns + 阈值参数
+  - `GET /api/portfolio/risk-snapshot/thresholds` — 诊断端点, 返回当前生效阈值
+  - Pydantic model: `PositionInput` / `LookbackReturnInput` / `RiskSnapshotRequest` / `RiskSnapshotResponse`
+
+- **集成点**: `app/backend/routes/__init__.py` 注册 `risk_metrics_router` (public, `tags=["portfolio"]`)
+
+- **算法选择**:
+  - VaR / CVaR: 历史模拟法 (sorted tail), 不依赖参数分布假设; 95% / 99% 同时输出
+  - 多日 VaR: `sqrt(T)` 缩放 (约定)
+  - 行业集中度: `max(weight) > 0.25` 触发; 单一标的: `max(weight) > 0.12` 也触发集中度预警
+  - 回撤: `current_dd >= 0.10` 触发预警; `max_dd` 始终计算
+  - Beta: 至少 10 个观测点 + benchmark 序列; 不足则回退到 1.0 (market-neutral proxy), 避免误报 (GAMMA-005 / ALPHA-007)
+
+- **数值安全**: 所有输入经 `_safe_float` 过滤, NaN/Inf → 0.0 (GAMMA-009 兼容)
+- **无状态**: 路由层不绑 paper_trading 运行时, 由调用方 (前端/回测/审计) 注入持仓 + 回溯收益
+
+- **测试覆盖**: `tests/test_risk_metrics.py` (18 个测试用例)
+  - VaR/CVaR: 单一持仓 / 多持仓分散 VaR 更低 / 加权日收益聚合
+  - 行业集中度: 求和归一化 / 阈值触发 / 分散解除预警
+  - 回撤: 当前回撤 / 最大回撤 / 预警线
+  - 单一标的: 占比上限触发预警
+  - 端点: GET/POST / 阈值端点 / 路由注册
+  - 边界: 空输入零快照 / NaN/Inf 不崩溃 / 无 industry_sw 退化为 "UNKNOWN" / var_horizon_days 缩放 / 响应模型往返
+
+- **回归验证**: `tests/test_risk_metrics.py` (18/18 通过); 路由注册测试通过
+
+---
+
 ## 十二、优先级路线图
 
 ### Phase 1: 核心体验 (1-2 周)
@@ -534,7 +576,7 @@
 6. **P1-9** 市场温度计 — 首页实时状态
 7. **P1-2** 行业轮动信号 — 强势行业标签
 8. **P1-3** 推荐标的自动追踪 — 闭环验证
-9. **P1-6** 组合风险预警仪表盘增强
+9. **P1-6** 组合风险预警仪表盘增强 ✅ *(已实现 — 见下文 P1-6 实现细节)*
 
 ### Phase 3: 深度分析 (4-6 周)
 
@@ -600,4 +642,4 @@
 
 > **文档维护说明**: 本文档应在每次功能迭代后更新。已完成功能标记 ✅，新增功能按优先级添加到对应章节。
 >
-> **最后更新**: 2026-06-07 (Round 9: BatchDataFetcher集成+市场温度计+行业轮动)
+> **最后更新**: 2026-06-07 (Round 10: P1-6 组合风险预警仪表盘增强)
