@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from src.data.adapters.akshare_adapter import AKShareAdapter
@@ -9,6 +10,7 @@ from src.data.validation_rules import (
     get_warning_rules,
 )
 from src.data.validator_v2 import EnhancedDataValidator
+from src.data.validator_v2_helpers import _is_invalid_value
 
 
 def create_metric_dict(**kwargs):
@@ -295,6 +297,123 @@ class TestEnhancedDataValidator:
 
         assert len(valid_metrics) == 1
         assert valid_metrics[0]["return_on_equity"] == 0.15
+
+
+class TestStringNaNDefense:
+    """validator_v2_helpers._is_invalid_value 字符串 NaN/Inf 防御 (R18 / GAMMA-012 补丁).
+
+    Round 15 拦截了 float NaN/Inf，但 R16 审查发现仍有缺口:
+    上游 CSV/JSON 偶尔会把 NaN/Inf 序列化为字符串 "nan"/"NaN"/"Infinity"/"-inf" 等,
+    而 numpy 的 np.float64(nan) 在某些 numpy 版本上不再 isinstance(float).
+    这些值如果只用 isinstance(value, float) + math.isnan 检查都会逃逸,
+    最终带着 NaN 一路传到组合 / 评分层。
+    """
+
+    def test_string_nan_uppercase_is_rejected(self):
+        """字符串 'NaN' 必须被拒绝。"""
+        assert _is_invalid_value("NaN") is True
+
+    def test_string_nan_lowercase_is_rejected(self):
+        """字符串 'nan' (pandas 默认 NaN 序列化形式) 必须被拒绝。"""
+        assert _is_invalid_value("nan") is True
+
+    def test_string_infinity_is_rejected(self):
+        """字符串 'Infinity' (JSON.stringify NaN 后的形式) 必须被拒绝。"""
+        assert _is_invalid_value("Infinity") is True
+
+    def test_string_negative_inf_is_rejected(self):
+        """字符串 '-inf' 必须被拒绝。"""
+        assert _is_invalid_value("-inf") is True
+
+    def test_string_inf_short_form_is_rejected(self):
+        """字符串 'inf' 必须被拒绝。"""
+        assert _is_invalid_value("inf") is True
+
+    def test_string_nan_with_whitespace_is_rejected(self):
+        """字符串 '  NaN  ' (带空白) 必须被拒绝, strip 后匹配。"""
+        assert _is_invalid_value("  NaN  ") is True
+
+    def test_empty_string_is_not_rejected(self):
+        """空字符串不属于 NaN, 由 allow_null / 上游清洗控制。"""
+        assert _is_invalid_value("") is False
+
+    def test_numeric_string_is_not_rejected(self):
+        """合法数字字符串 '123' 不被本函数拒绝 (上游类型转换的职责)。"""
+        assert _is_invalid_value("123") is False
+
+    def test_arbitrary_string_is_not_rejected(self):
+        """非 NaN 形式的普通字符串不应被拒绝。"""
+        assert _is_invalid_value("hello") is False
+
+    def test_numpy_nan_is_rejected(self):
+        """np.nan (顶层 float) 必须被拒绝。"""
+        assert _is_invalid_value(np.nan) is True
+
+    def test_numpy_float64_nan_is_rejected(self):
+        """np.float64(nan) 即使 numpy 版本不再 isinstance(float) 也必须被拒绝。"""
+        assert _is_invalid_value(np.float64("nan")) is True
+
+    def test_numpy_float64_inf_is_rejected(self):
+        """np.float64(inf) 必须被拒绝。"""
+        assert _is_invalid_value(np.float64("inf")) is True
+
+    def test_numpy_float32_nan_is_rejected(self):
+        """np.float32(nan) 也是 numpy 浮点子类, 必须被拒绝。"""
+        assert _is_invalid_value(np.float32("nan")) is True
+
+    def test_numpy_finite_value_is_not_rejected(self):
+        """numpy 上的合法有限值不应被拒绝。"""
+        assert _is_invalid_value(np.float64(0.15)) is False
+        assert _is_invalid_value(np.int64(42)) is False
+
+    def test_none_is_not_rejected_by_invalid_value(self):
+        """None 由 allow_null 上游控制, 此函数不视为 invalid。"""
+        assert _is_invalid_value(None) is False
+
+    def test_bool_is_not_rejected(self):
+        """bool 不是数值, 不应被本函数判定为 invalid。"""
+        assert _is_invalid_value(True) is False
+        assert _is_invalid_value(False) is False
+
+    def test_int_is_not_rejected(self):
+        """整数永远不可能是 NaN/Inf。"""
+        assert _is_invalid_value(0) is False
+        assert _is_invalid_value(42) is False
+        assert _is_invalid_value(-1) is False
+
+    def test_finite_float_is_not_rejected(self):
+        """合法的有限 float 不应被拒绝。"""
+        assert _is_invalid_value(0.0) is False
+        assert _is_invalid_value(3.14) is False
+        assert _is_invalid_value(-2.71) is False
+
+    def test_native_float_nan_still_rejected(self):
+        """回归检查: 原有的 float('nan') 拦截路径仍然工作。"""
+        assert _is_invalid_value(float("nan")) is True
+
+    def test_native_float_inf_still_rejected(self):
+        """回归检查: 原有的 float('inf') / -inf 拦截路径仍然工作。"""
+        assert _is_invalid_value(float("inf")) is True
+        assert _is_invalid_value(float("-inf")) is True
+
+    def test_string_nan_via_validator_is_rejected(self):
+        """端到端: 字符串 'NaN' 通过 EnhancedDataValidator 时也会被拒绝。
+
+        这是 GAMMA-012 R18 补丁的核心保证 — 哪怕上游适配器忘了类型转换,
+        把 "NaN" 直接灌进 metric dict, 数据质量门也能拦住。
+        """
+        validator = EnhancedDataValidator()
+        metric = create_metric_dict(
+            return_on_equity="NaN",
+            gross_margin=0.30,
+            net_margin=0.12,
+        )
+
+        is_valid, results = validator.validate_metric(metric)
+
+        assert is_valid is False
+        nan_failures = [r for r in results if r.field == "return_on_equity" and not r.is_valid]
+        assert len(nan_failures) > 0, "字符串 NaN 必须被验证器拦截"
 
 
 class TestOutlierDetector:

@@ -1,0 +1,424 @@
+"""统一 CLI 分发器 — 集中管理所有早期命令入口。
+
+设计目标:
+- 100% 保留现有 CLI 行为 (不破坏任何现有 flag)
+- 将 ``src/main.py`` ``__main__`` 块中约 340 行的 ``if "--xxx" in sys.argv`` 重复模式集中管理
+- 早期分发 (early dispatch): 这些命令在 ``parse_cli_inputs`` 之前执行, 避免与
+  ``argparse`` 的 required 校验冲突 (如 tickers)
+- 每个 handler 返回 ``int`` (退出码) 或 ``None`` (不匹配)
+
+使用::
+
+    from src.cli.dispatcher import dispatch
+    if __name__ == "__main__":
+        rc = dispatch()
+        if rc is not None:
+            raise SystemExit(rc)
+        # ... 走主 parser 流程
+
+新增长期命令: 在 ``COMMAND_REGISTRY`` 注册 flag + handler 即可。
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Callable
+
+# 这些是早期分发的所有命令。每个 flag 在 ``COMMAND_REGISTRY`` 中
+# 映射到一个 handler 函数。handler 签名: (argv: list[str]) -> int | None
+#
+# 返回 ``None`` 表示该 flag 不在 argv 中 (继续下一个候选)
+# 返回 ``int`` 表示已执行命令, 直接返回该退出码
+
+
+def _has_flag(argv: list[str], flag: str) -> bool:
+    """检查 ``--flag`` 或 ``--flag=value`` 形式是否在 argv 中。"""
+    if flag in argv:
+        return True
+    prefix = flag + "="
+    return any(a.startswith(prefix) for a in argv)
+
+
+def _get_kv(argv: list[str], prefix: str) -> str | None:
+    """从 argv 中提取 ``--key=value`` 形式参数的值。"""
+    for a in argv:
+        if a.startswith(prefix + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def _next_arg(argv: list[str], flag: str) -> str | None:
+    """获取 ``--flag VALUE`` 紧邻的下一个 argv (VALUE 不以 ``-`` 开头)。"""
+    try:
+        idx = argv.index(flag)
+    except ValueError:
+        return None
+    if idx + 1 < len(argv) and not argv[idx + 1].startswith("-"):
+        return argv[idx + 1]
+    return None
+
+
+def _parse_int(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_float(value: str | None, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _normalize_date(value: str | None, default_today: bool = True) -> str:
+    """将 ``YYYY-MM-DD`` 标准化为 ``YYYYMMDD``。"""
+    if not value:
+        return datetime.now().strftime("%Y%m%d") if default_today else ""
+    if len(value) == 10 and value[4] == "-":
+        return value.replace("-", "")
+    return value
+
+
+# ---- handler imports (延迟导入避免循环依赖) ----
+def _resolve_preheat(argv: list[str]) -> int | None:
+    from src.main import run_preheat
+
+    if not _has_flag(argv, "--preheat"):
+        return None
+    trade_date = _get_kv(argv, "--preheat-date")
+    tasks_raw = _get_kv(argv, "--preheat-tasks")
+    tasks = [t.strip() for t in tasks_raw.split(",") if t.strip()] if tasks_raw else None
+    if trade_date:
+        trade_date = trade_date.strip().replace("-", "")
+    force = "--force" in argv
+    list_tasks = "--list-tasks" in argv
+    return run_preheat(trade_date=trade_date, tasks=tasks, force=force, list_tasks=list_tasks)
+
+
+def _resolve_daily_gainers(argv: list[str]) -> int | None:
+    from src.main import run_daily_gainers_cli
+
+    if "--daily-gainers" not in argv:
+        return None
+    return run_daily_gainers_cli()
+
+
+def _resolve_macro(argv: list[str]) -> int | None:
+    if "--macro" not in argv:
+        return None
+    from src.data.macro_data import run_macro_cli
+
+    return run_macro_cli()
+
+
+def _resolve_performance_report(argv: list[str]) -> int | None:
+    from src.main import run_performance_report_cli
+
+    if "--performance-report" not in argv:
+        return None
+    period_raw = _get_kv(argv, "--period")
+    period = (period_raw.strip().lower() if period_raw else "weekly")
+    if period not in ("weekly", "monthly"):
+        period = "weekly"
+    end_date_raw = _get_kv(argv, "--pr-end-date")
+    end_date = end_date_raw.strip().replace("-", "") if end_date_raw else None
+    return run_performance_report_cli(period=period, end_date=end_date)
+
+
+def _resolve_market_status(argv: list[str]) -> int | None:
+    from src.main import run_market_status
+
+    if "--market-status" not in argv:
+        return None
+    trade_date = _get_kv(argv, "--market-date") or datetime.now().strftime("%Y%m%d")
+    if len(trade_date) == 10 and trade_date[4] == "-":
+        trade_date = trade_date.replace("-", "")
+    return run_market_status(trade_date)
+
+
+def _resolve_pipeline(argv: list[str]) -> int | None:
+    from src.main import run_pipeline_mode, run_screen_only_mode
+
+    if "--pipeline" not in argv and "--screen-only" not in argv:
+        return None
+    parser = argparse.ArgumentParser(description="Institutional multi-strategy pipeline runner")
+    parser.add_argument("--pipeline", action="store_true", help="运行全流水线模式")
+    parser.add_argument("--screen-only", action="store_true", help="仅运行 Layer A + Layer B")
+    parser.add_argument("--trade-date", required=True, help="交易日期 YYYYMMDD")
+    args = parser.parse_args()
+    if args.pipeline:
+        return run_pipeline_mode(args.trade_date)
+    if args.screen_only:
+        return run_screen_only_mode(args.trade_date)
+    return 1
+
+
+def _resolve_industry_rotation(argv: list[str]) -> int | None:
+    from src.main import run_industry_rotation
+
+    if "--industry-rotation" not in argv:
+        return None
+    trade_date = _get_kv(argv, "--ir-date")
+    top_n = _parse_int(_get_kv(argv, "--ir-top"), 5)
+    bottom_n = _parse_int(_get_kv(argv, "--ir-bottom"), 3)
+    return run_industry_rotation(trade_date, top_n=top_n, bottom_n=bottom_n)
+
+
+def _resolve_tracking_summary(argv: list[str]) -> int | None:
+    from src.main import run_tracking_summary
+
+    if "--tracking-summary" not in argv:
+        return None
+    lookback = _parse_int(_get_kv(argv, "--tracking-lookback"), 30)
+    return run_tracking_summary(lookback_days=lookback)
+
+
+def _resolve_export_pdf(argv: list[str]) -> int | None:
+    from src.main import run_export_pdf
+
+    if "--export-pdf" not in argv:
+        return None
+    trade_date_raw = _get_kv(argv, "--pdf-date")
+    trade_date = trade_date_raw.strip().replace("-", "") if trade_date_raw else None
+    output = _get_kv(argv, "--pdf-output")
+    output = output.strip() if output else None
+    return run_export_pdf(trade_date=trade_date, output_path=output)
+
+
+def _resolve_attribution_daily(argv: list[str]) -> int | None:
+    from src.main import run_attribution_daily
+
+    if "--attribution-daily" not in argv:
+        return None
+    trade_date = _normalize_date(_get_kv(argv, "--date"))
+    positions_raw = _get_kv(argv, "--positions")
+    positions_path = Path(positions_raw).expanduser() if positions_raw else None
+    return run_attribution_daily(trade_date, positions_path=positions_path)
+
+
+def _resolve_factor_ic(argv: list[str]) -> int | None:
+    if "--factor-ic" not in argv:
+        return None
+    lookback = _parse_int(_get_kv(argv, "--ic-lookback"), 30)
+    method_raw = _get_kv(argv, "--ic-method")
+    method = method_raw.strip().lower() if method_raw else "spearman"
+    from src.research.factor_ic_analysis import run_factor_ic
+
+    return run_factor_ic(lookback_days=lookback, method=method)
+
+
+def _resolve_rebalance(argv: list[str]) -> int | None:
+    from src.main import run_rebalance
+
+    if "--rebalance" not in argv:
+        return None
+    positions_raw = _get_kv(argv, "--positions-path") or _get_kv(argv, "--positions")
+    positions_path = Path(positions_raw).expanduser() if positions_raw else None
+    drift = _parse_float(_get_kv(argv, "--drift-threshold"), 0.05)
+    return run_rebalance(positions_path=positions_path, drift_threshold=drift)
+
+
+def _resolve_conditional_orders(argv: list[str]) -> int | None:
+    if "--conditional-orders" not in argv:
+        return None
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
+    atr_period = _parse_int(_get_kv(argv, "--atr-period"), 14)
+    lookback = _parse_int(_get_kv(argv, "--co-lookback"), 60)
+    from src.screening.conditional_order_advisor import run_conditional_orders_cli
+
+    return run_conditional_orders_cli(
+        top_n=top_n,
+        atr_period=atr_period,
+        lookback_sessions=lookback,
+    )
+
+
+def _resolve_push_test(argv: list[str]) -> int | None:
+    from src.main import run_push_test
+
+    if "--push-test" not in argv:
+        return None
+    channel = _get_kv(argv, "--channel")
+    if channel:
+        channel = channel.strip()
+    else:
+        channel = _next_arg(argv, "--channel")
+    config_raw = _get_kv(argv, "--push-config")
+    config_path = Path(config_raw).expanduser() if config_raw else None
+    init = "--init" in argv
+    return run_push_test(channel=channel, config_path=config_path, init=init)
+
+
+def _resolve_winrate_dashboard(argv: list[str]) -> int | None:
+    from src.main import run_winrate_dashboard
+
+    if "--winrate-dashboard" not in argv:
+        return None
+    lookback = _parse_int(_get_kv(argv, "--winrate-lookback"), 30)
+    return run_winrate_dashboard(lookback_days=lookback)
+
+
+def _resolve_stock_detail(argv: list[str]) -> int | None:
+    if not _has_flag(argv, "--stock-detail"):
+        return None
+    # 支持 ``--stock-detail=300750`` 或 ``--stock-detail 300750`` 两种形式
+    ticker = _get_kv(argv, "--stock-detail")
+    if ticker is None:
+        ticker = _next_arg(argv, "--stock-detail")
+    if not ticker:
+        from colorama import Fore, Style
+
+        print(
+            f"{Fore.RED}[StockDetail] 用法: --stock-detail 300750 [--sd-date YYYYMMDD]"
+            f"{Style.RESET_ALL}"
+        )
+        return 1
+    trade_date = _get_kv(argv, "--sd-date")
+    if trade_date:
+        trade_date = trade_date.strip()
+    from src.screening.stock_detail import run_stock_detail_cli
+
+    return run_stock_detail_cli(ticker, trade_date=trade_date)
+
+
+def _resolve_custom_weights(argv: list[str]) -> int | None:
+    from src.main import run_custom_weights
+
+    if "--custom-weights" not in argv:
+        return None
+    trend = _parse_float(_get_kv(argv, "--trend"), 0.25)
+    mr = _parse_float(_get_kv(argv, "--mean-reversion"), 0.25)
+    fund = _parse_float(_get_kv(argv, "--fundamental"), 0.25)
+    es = _parse_float(_get_kv(argv, "--event-sentiment"), 0.25)
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 10)
+    trade_date_raw = _get_kv(argv, "--trade-date")
+    trade_date = trade_date_raw.strip() or None if trade_date_raw else None
+    return run_custom_weights(
+        trend=trend,
+        mean_reversion=mr,
+        fundamental=fund,
+        event_sentiment=es,
+        top_n=top_n,
+        trade_date=trade_date,
+    )
+
+
+def _resolve_compare(argv: list[str]) -> int | None:
+    if not (_has_flag(argv, "--compare")):
+        return None
+    tickers_arg = _get_kv(argv, "--compare") or _next_arg(argv, "--compare")
+    if not tickers_arg:
+        from colorama import Fore, Style
+
+        print(
+            f"{Fore.RED}[Compare] 用法: --compare 300750,600519,000001 "
+            f"[--metrics trend_score,score_b] [--no-radar]{Style.RESET_ALL}"
+        )
+        return 1
+    metrics_arg = _get_kv(argv, "--metrics")
+    no_radar = "--no-radar" in argv
+    from src.screening.compare_tool import run_compare_cli
+
+    return run_compare_cli(
+        tickers_arg=tickers_arg,
+        metrics_arg=metrics_arg,
+        show_radar=not no_radar,
+    )
+
+
+def _resolve_watchlist(argv: list[str]) -> int | None:
+    from src.main import run_watchlist_add, run_watchlist_list, run_watchlist_remove, run_watchlist_status
+
+    flags = ("--watchlist-add", "--watchlist-remove", "--watchlist-list", "--watchlist-status")
+    if not any(f in argv for f in flags):
+        return None
+    parser = argparse.ArgumentParser(description="Watchlist management (P0-5)")
+    parser.add_argument("--watchlist-add", type=str, default=None, metavar="TICKER", help="添加标的到自选池")
+    parser.add_argument("--watchlist-remove", type=str, default=None, metavar="TICKER", help="从自选池移除标的")
+    parser.add_argument("--watchlist-list", action="store_true", help="列出自选池所有标的")
+    parser.add_argument("--watchlist-status", action="store_true", help="展示自选池最新评分 + 信号")
+    parser.add_argument("--name", type=str, default="", help="标的名称 (与 --watchlist-add 配合)")
+    parser.add_argument("--tags", type=str, nargs="*", default=None, help="标签列表 (空格分隔)")
+    parser.add_argument("--note", type=str, default="", help="备注 (可选)")
+    parser.add_argument("--filter-tag", type=str, default=None, help="--watchlist-list 时按标签过滤")
+    args, _ = parser.parse_known_args()
+
+    if args.watchlist_add:
+        return run_watchlist_add(
+            ticker=args.watchlist_add,
+            name=args.name,
+            tags=list(args.tags) if args.tags else None,
+            note=args.note,
+        )
+    if args.watchlist_remove:
+        return run_watchlist_remove(args.watchlist_remove)
+    if args.watchlist_list:
+        return run_watchlist_list(tag=args.filter_tag)
+    if args.watchlist_status:
+        return run_watchlist_status()
+    return None
+
+
+# 命令注册表: flag -> handler function
+# 顺序敏感 — 越靠前越先匹配。``--auto`` / ``--explain`` 不在此处 (走主 parser)
+COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
+    ("--preheat", _resolve_preheat),
+    ("--daily-gainers", _resolve_daily_gainers),
+    ("--macro", _resolve_macro),
+    ("--performance-report", _resolve_performance_report),
+    ("--market-status", _resolve_market_status),
+    ("--pipeline", _resolve_pipeline),
+    ("--screen-only", _resolve_pipeline),
+    ("--industry-rotation", _resolve_industry_rotation),
+    ("--tracking-summary", _resolve_tracking_summary),
+    ("--export-pdf", _resolve_export_pdf),
+    ("--attribution-daily", _resolve_attribution_daily),
+    ("--factor-ic", _resolve_factor_ic),
+    ("--rebalance", _resolve_rebalance),
+    ("--conditional-orders", _resolve_conditional_orders),
+    ("--push-test", _resolve_push_test),
+    ("--winrate-dashboard", _resolve_winrate_dashboard),
+    ("--stock-detail", _resolve_stock_detail),
+    ("--custom-weights", _resolve_custom_weights),
+    ("--compare", _resolve_compare),
+    ("--watchlist-add", _resolve_watchlist),
+    ("--watchlist-remove", _resolve_watchlist),
+    ("--watchlist-list", _resolve_watchlist),
+    ("--watchlist-status", _resolve_watchlist),
+]
+
+
+def dispatch(sys_argv: list[str] | None = None) -> int | None:
+    """检查 sys.argv 并分发到对应 early-dispatch handler。
+
+    返回:
+    - ``None``: 没有匹配的早期命令, 让主 parser 继续
+    - ``int``: 已执行命令的退出码, 调用方应 ``SystemExit(rc)``
+    """
+    argv = sys_argv if sys_argv is not None else sys.argv[1:]
+
+    for _flag, handler in COMMAND_REGISTRY:
+        try:
+            rc = handler(argv)
+        except SystemExit as e:
+            code = e.code
+            return code if isinstance(code, int) else 1
+        except Exception as e:  # noqa: BLE001 — 保持与原行为一致: 错误打印 + 返回 1
+            flag = _flag
+            print(f"Error in {flag}: {e}", file=sys.stderr)
+            return 1
+        if rc is not None:
+            return rc
+    return None
+
+
+__all__ = ["COMMAND_REGISTRY", "dispatch"]

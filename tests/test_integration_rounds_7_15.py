@@ -611,38 +611,34 @@ class TestPreheatCacheHit:
     def test_preheat_then_cache_hit(self, tmp_path: Path) -> None:
         from src.data.cache_preheater import preheat_cache, PreheatStats
 
-        # We patch at the source: src.data.enhanced_cache.get_enhanced_cache
-        # because cache_preheater does local imports inside each _fetch_* function.
+        # R17 fix: preheater uses BatchDataFetcher's BatchDataCache for daily_basic/daily_prices,
+        # and the preheat:* key namespace for the other 3 tasks. To mock "cached" for
+        # daily_basic / daily_prices we need to either (a) pre-populate the global BatchDataFetcher
+        # cache, or (b) mock the underlying BatchDataFetcher method to return None (simulating cache hit).
+        # We use approach (b) — mock the _fetch_* functions to return None for "cached" tasks.
 
-        # Strategy: mock _is_cached to simulate cached/uncached keys,
-        # and mock the actual data-fetching functions to avoid network calls.
+        with patch("src.data.cache_preheater._fetch_daily_basic", return_value=None) as mock_db, \
+             patch("src.data.cache_preheater._fetch_daily_prices", return_value=None) as mock_dp, \
+             patch("src.data.cache_preheater._fetch_industry_classify") as mock_industry:
 
-        with patch("src.data.cache_preheater._is_cached") as mock_is_cached:
-            # daily_basic and daily_prices are "cached" -> will be skipped
-            # industry_classify is NOT cached -> will attempt to fetch
-            def is_cached_side_effect(key: str) -> bool:
-                return key in ("preheat:daily_basic:20260601", "preheat:daily_prices:20260601")
+            import pandas as pd
 
-            mock_is_cached.side_effect = is_cached_side_effect
+            mock_industry.return_value = pd.DataFrame({"ts_code": ["000001.SZ"], "industry": ["银行"]})
 
-            # Mock the actual fetch for industry_classify (the only uncached task)
-            with patch("src.data.cache_preheater._fetch_industry_classify") as mock_fetch_industry:
-                import pandas as pd
-
-                mock_fetch_industry.return_value = pd.DataFrame({"ts_code": ["000001.SZ"], "industry": ["银行"]})
-
-                # Mock get_enhanced_cache at source to avoid real DB access
-                mock_cache = MagicMock()
-                with patch("src.data.enhanced_cache.get_enhanced_cache", return_value=mock_cache):
-                    stats = preheat_cache(
-                        trade_date="20260601",
-                        tasks=["daily_basic", "daily_prices", "industry_classify"],
-                        force=False,
-                    )
+            stats = preheat_cache(
+                trade_date="20260601",
+                tasks=["daily_basic", "daily_prices", "industry_classify"],
+                force=False,
+            )
 
         assert stats.tasks_total == 3
-        assert stats.cache_hits >= 2  # daily_basic + daily_prices skipped (cached)
-        assert stats.tasks_skipped >= 2  # both counted as skipped
+        # daily_basic and daily_prices returned None -> counted as skipped (cache hit)
+        assert stats.tasks_skipped >= 2
+        # industry_classify actually ran
+        assert stats.cache_hits >= 2
+        mock_db.assert_called_once()
+        mock_dp.assert_called_once()
+        mock_industry.assert_called_once()
 
 
 # ============================================================================
