@@ -646,6 +646,136 @@ class TestPreheatCacheHit:
 
 
 # ============================================================================
+# R17 BUG FIX VERIFICATION: preheat key alignment with BatchDataFetcher
+# ============================================================================
+
+
+class TestPreheatKeyAlignment:
+    """R17 修复验证: preheat 写入的 key 必须与下游 BatchDataFetcher 读取的 key 一致。
+
+    历史 bug: preheater 写入 ``preheat:daily_basic:{date}`` / ``preheat:daily_prices:{date}``,
+    下游 ``BatchDataFetcher.fetch_daily_basic_batch()`` 读取 ``daily_basic_batch:{date}``
+    和 ``daily_price_batch:{date}``, 两边 key 不一致, 预热形同虚设。
+
+    本测试验证:
+    1. 预热 daily_basic / daily_prices 后, BatchDataCache 中应出现
+       ``daily_basic_batch:{date}`` 和 ``daily_price_batch:{date}`` 键 (而不是 preheat: 前缀)
+    2. 下游 fetch_daily_basic_batch / fetch_daily_prices_batch 调用
+       会触发 cache_hits 计数增加
+    """
+
+    def test_preheat_writes_to_batch_data_cache_keys(self) -> None:
+        """预热后 BatchDataCache 出现的 key 必须与 BatchDataFetcher 读取的一致。"""
+        from src.screening import batch_data_fetcher
+        from src.screening.batch_data_fetcher import (
+            get_global_batch_data_fetcher,
+            reset_global_batch_data_fetcher,
+        )
+
+        # 重置全局单例, 确保从空 BatchDataCache 开始
+        reset_global_batch_data_fetcher()
+        try:
+            from src.data.cache_preheater import _fetch_daily_basic, _fetch_daily_prices
+
+            # Mock 底层 tushare 调用, 返回固定 DataFrame。
+            # 必须 patch 在 batch_data_fetcher 模块上 (而非 tushare_api),
+            # 因为 batch_data_fetcher 在 import 时已绑定本地引用。
+            import pandas as pd
+
+            sample_basic = pd.DataFrame({"ts_code": ["000001.SZ"], "pe": [10.0], "trade_date": ["20260601"]})
+            sample_prices = pd.DataFrame({"ts_code": ["000001.SZ"], "close": [10.0], "trade_date": ["20260601"]})
+
+            with patch.object(batch_data_fetcher, "get_daily_basic_batch", return_value=sample_basic):
+                with patch.object(batch_data_fetcher, "get_daily_price_batch", return_value=sample_prices):
+                    result_basic = _fetch_daily_basic("20260601", force=True)
+                    result_prices = _fetch_daily_prices("20260601", force=True)
+
+            assert result_basic is not None and not result_basic.empty
+            assert result_prices is not None and not result_prices.empty
+
+            # 获取 BatchDataFetcher 单例, 检查 BatchDataCache 是否含正确的 key
+            global_fetcher = get_global_batch_data_fetcher()
+            assert global_fetcher._cache.get("daily_basic_batch:20260601") is not None, (  # type: ignore[attr-defined]
+                "下游 BatchDataFetcher.fetch_daily_basic_batch() 读取的 key 'daily_basic_batch:20260601' 必须存在"
+            )
+            assert global_fetcher._cache.get("daily_price_batch:20260601") is not None, (  # type: ignore[attr-defined]
+                "下游 BatchDataFetcher.fetch_daily_prices_batch() 读取的 key 'daily_price_batch:20260601' 必须存在"
+            )
+
+            # 关键回归断言: 旧的 buggy preheat:* 键不应再出现在 BatchDataCache
+            assert global_fetcher._cache.get("preheat:daily_basic:20260601") is None, (  # type: ignore[attr-defined]
+                "R17 修复: preheat 不应再写 'preheat:' 前缀的 key 到 BatchDataCache"
+            )
+        finally:
+            reset_global_batch_data_fetcher()
+
+    def test_downstream_fetcher_hits_preheated_cache(self) -> None:
+        """下游 BatchDataFetcher.fetch_*_batch 必须能从预热的 BatchDataCache 中读到数据。"""
+        from src.screening import batch_data_fetcher
+        from src.screening.batch_data_fetcher import (
+            reset_global_batch_data_fetcher,
+        )
+
+        reset_global_batch_data_fetcher()
+        try:
+            from src.data.cache_preheater import _fetch_daily_basic
+
+            import pandas as pd
+
+            sample = pd.DataFrame({"ts_code": ["000001.SZ"], "pe": [10.0], "trade_date": ["20260601"]})
+            with patch.object(batch_data_fetcher, "get_daily_basic_batch", return_value=sample):
+                preheat_result = _fetch_daily_basic("20260601", force=True)
+            assert preheat_result is not None
+
+            # 模拟下游调用: 直接调 fetch_daily_basic_batch, 应该命中 BatchDataCache
+            from src.screening.batch_data_fetcher import get_global_batch_data_fetcher
+
+            global_fetcher = get_global_batch_data_fetcher()
+            before_hits = global_fetcher._cache_hits  # type: ignore[attr-defined]
+
+            with patch.object(batch_data_fetcher, "get_daily_basic_batch") as mock_tushare:
+                downstream_result = global_fetcher.fetch_daily_basic_batch("20260601")
+
+            after_hits = global_fetcher._cache_hits  # type: ignore[attr-defined]
+            assert downstream_result is not None
+            assert after_hits == before_hits + 1, (
+                f"下游调用应触发 cache hit 计数 +1 (before={before_hits}, after={after_hits})"
+            )
+            # 关键: 下游命中缓存时, 底层 tushare 调用不应该被触发
+            mock_tushare.assert_not_called()
+        finally:
+            reset_global_batch_data_fetcher()
+
+    def test_preheat_skipped_when_already_in_batch_cache(self) -> None:
+        """当 BatchDataCache 已有数据时, preheat 应返回 None (skipped) 而非重复拉取。"""
+        from src.screening import batch_data_fetcher
+        from src.screening.batch_data_fetcher import (
+            reset_global_batch_data_fetcher,
+        )
+
+        reset_global_batch_data_fetcher()
+        try:
+            from src.data.cache_preheater import _fetch_daily_basic
+
+            import pandas as pd
+
+            sample = pd.DataFrame({"ts_code": ["000001.SZ"], "pe": [10.0], "trade_date": ["20260601"]})
+            with patch.object(batch_data_fetcher, "get_daily_basic_batch", return_value=sample):
+                # 第一次拉取: 写入 BatchDataCache
+                first = _fetch_daily_basic("20260601", force=True)
+                assert first is not None
+
+                # 第二次拉取 (force=False): 已缓存, 应跳过 (返回 None)
+                with patch.object(batch_data_fetcher, "get_daily_basic_batch") as mock_tushare:
+                    second = _fetch_daily_basic("20260601", force=False)
+
+                assert second is None, "已缓存时应返回 None (skipped)"
+                mock_tushare.assert_not_called()
+        finally:
+            reset_global_batch_data_fetcher()
+
+
+# ============================================================================
 # Cross-module edge cases
 # ============================================================================
 

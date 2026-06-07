@@ -104,20 +104,18 @@ def _is_cached(cache_key: str) -> bool:
 def _fetch_daily_basic(trade_date: str, force: bool) -> pd.DataFrame | None:
     """预热 daily_basic（全市场每日基本面）。
 
-    注意: get_daily_basic_batch 内部已通过 fetch_batch_cached_frame 缓存,
-    此处额外写入 preheat: key 作为标记, 避免重复拉取。
+    直接通过 BatchDataFetcher 拉取并写入其内部 BatchDataCache，
+    下游 candidate_pool / screening 走 fetch_daily_basic_batch 时会命中。
     """
-    from src.tools.tushare_api import get_daily_basic_batch
+    from src.screening.batch_data_fetcher import get_global_batch_data_fetcher
 
-    cache_key = f"preheat:daily_basic:{trade_date}"
-    if not force and _is_cached(cache_key):
+    fetcher = get_global_batch_data_fetcher()
+    cache_key = f"daily_basic_batch:{trade_date}"
+    if not force and fetcher._cache.get(cache_key) is not None:  # type: ignore[attr-defined]
         return None
 
-    df = get_daily_basic_batch(trade_date)
+    df = fetcher.fetch_daily_basic_batch(trade_date)
     if df is not None and not df.empty:
-        from src.data.enhanced_cache import get_enhanced_cache
-
-        get_enhanced_cache().set(cache_key, df, ttl=6 * 3600)
         return df
     return None
 
@@ -125,26 +123,28 @@ def _fetch_daily_basic(trade_date: str, force: bool) -> pd.DataFrame | None:
 def _fetch_daily_prices(trade_date: str, force: bool) -> pd.DataFrame | None:
     """预热 daily（全市场每日行情）。
 
-    注意: get_daily_price_batch 内部已通过 fetch_batch_cached_frame 缓存,
-    此处额外写入 preheat: key 作为标记, 避免重复拉取。
+    直接通过 BatchDataFetcher 拉取并写入其内部 BatchDataCache，
+    下游 candidate_pool / screening 走 fetch_daily_prices_batch 时会命中。
     """
-    from src.tools.tushare_api import get_daily_price_batch
+    from src.screening.batch_data_fetcher import get_global_batch_data_fetcher
 
-    cache_key = f"preheat:daily_prices:{trade_date}"
-    if not force and _is_cached(cache_key):
+    fetcher = get_global_batch_data_fetcher()
+    cache_key = f"daily_price_batch:{trade_date}"
+    if not force and fetcher._cache.get(cache_key) is not None:  # type: ignore[attr-defined]
         return None
 
-    df = get_daily_price_batch(trade_date)
+    df = fetcher.fetch_daily_prices_batch(trade_date)
     if df is not None and not df.empty:
-        from src.data.enhanced_cache import get_enhanced_cache
-
-        get_enhanced_cache().set(cache_key, df, ttl=6 * 3600)
         return df
     return None
 
 
 def _fetch_industry_classify(force: bool) -> pd.DataFrame | None:
-    """预热申万行业分类。"""
+    """预热申万行业分类。
+
+    调用 get_sw_industry_classification() 会填充 tushare 持久层 (tushare_df:index_classify)
+    和进程级 _sw_industry_cache；preheat:industry_classify 仅作为"已预热"标记避免重复拉取。
+    """
     from src.tools.tushare_api import get_sw_industry_classification
 
     cache_key = "preheat:industry_classify"
@@ -161,7 +161,11 @@ def _fetch_industry_classify(force: bool) -> pd.DataFrame | None:
 
 
 def _fetch_money_flow(trade_date: str, force: bool) -> pd.DataFrame | None:
-    """预热北向资金/资金流。"""
+    """预热北向资金/资金流。
+
+    调用 get_northbound_flow() 会填充 tushare 持久层 (tushare_df:moneyflow_hsgt)
+    和 northbound_* 内存缓存；preheat:money_flow:{date} 仅作为"已预热"标记。
+    """
     from src.tools.tushare_api import get_northbound_flow
 
     cache_key = f"preheat:money_flow:{trade_date}"
@@ -178,7 +182,11 @@ def _fetch_money_flow(trade_date: str, force: bool) -> pd.DataFrame | None:
 
 
 def _fetch_financial_metrics(trade_date: str, force: bool) -> pd.DataFrame | None:
-    """预热 Top 100 候选标的财务指标。"""
+    """预热 Top 100 候选标的财务指标。
+
+    调用 get_ashare_financial_metrics_with_tushare() 走 tushare 持久层缓存
+    (tushare_df:fina_indicator 等)；preheat:financial_metrics:{date} 仅作为"已预热"标记。
+    """
     from src.tools.tushare_api import get_all_stock_basic, get_ashare_financial_metrics_with_tushare
 
     cache_key = f"preheat:financial_metrics:{trade_date}"
