@@ -681,3 +681,165 @@ async def apply_custom_weights(req: CustomWeightsRequest) -> ScreeningResponse:
             "applied_top_n": req.top_n,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# P2-4: 历史推荐胜率看板端点
+# ---------------------------------------------------------------------------
+
+
+class WinRateDashboardResponse(BaseModel):
+    """P2-4 历史推荐胜率看板响应体。"""
+
+    period_days: int = 30
+    total_days: int = 0
+    total_recommendations: int = 0
+    avg_t1_win_rate: float | None = None
+    avg_t1_return: float | None = None
+    avg_t3_win_rate: float | None = None
+    avg_t3_return: float | None = None
+    avg_t5_win_rate: float | None = None
+    avg_t5_return: float | None = None
+    trend: str = "stable"
+    daily: list[dict] = Field(default_factory=list)
+
+
+@router.get(
+    path="/winrate-dashboard",
+    response_model=WinRateDashboardResponse,
+    responses={
+        200: {"description": "成功 — 返回近 N 天推荐胜率趋势 + 平均收益率曲线"},
+    },
+)
+async def get_winrate_dashboard(
+    lookback_days: int = Query(30, ge=1, le=365, description="回溯天数 (默认 30)"),
+) -> WinRateDashboardResponse:
+    """P2-4 历史推荐胜率看板 API。
+
+    从 P1-3 ``tracking_history.json`` 读取历史推荐和实际收益,
+    按日聚合 T+1/T+3/T+5 胜率和平均收益率, 并判定趋势方向。
+
+    Returns:
+        :class:`WinRateDashboardResponse` 含汇总统计和日度趋势数据。
+    """
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.screening.winrate_dashboard import compute_winrate_dashboard
+
+    report_dir = resolve_report_dir()
+    history_path = report_dir / "tracking_history.json"
+
+    summary = compute_winrate_dashboard(history_path, lookback_days=lookback_days)
+
+    # Convert DailyWinRate list to list of dicts for Pydantic serialization
+    daily_dicts = [_sanitize_nan(d.to_dict()) for d in summary.daily]
+
+    return WinRateDashboardResponse(
+        period_days=summary.period_days,
+        total_days=summary.total_days,
+        total_recommendations=summary.total_recommendations,
+        avg_t1_win_rate=_sanitize_nan(summary.avg_t1_win_rate),
+        avg_t1_return=_sanitize_nan(summary.avg_t1_return),
+        avg_t3_win_rate=_sanitize_nan(summary.avg_t3_win_rate),
+        avg_t3_return=_sanitize_nan(summary.avg_t3_return),
+        avg_t5_win_rate=_sanitize_nan(summary.avg_t5_win_rate),
+        avg_t5_return=_sanitize_nan(summary.avg_t5_return),
+        trend=summary.trend,
+        daily=daily_dicts,
+    )
+
+
+# ---------------------------------------------------------------------------
+# P2-6: 标的深度分析详情页端点
+# ---------------------------------------------------------------------------
+
+
+class StockDetailResponse(BaseModel):
+    """P2-6 标的深度分析详情响应体。"""
+
+    ticker: str
+    name: str
+    industry_sw: str
+    pe_ratio: float | None = None
+    pb_ratio: float | None = None
+    roe: float | None = None
+    revenue_growth: float | None = None
+    profit_growth: float | None = None
+    dividend_yield: float | None = None
+    price: float = 0.0
+    change_pct: float = 0.0
+    ma5: float | None = None
+    ma20: float | None = None
+    ma60: float | None = None
+    rsi_14: float | None = None
+    macd_signal: str = "neutral"
+    atr_pct: float | None = None
+    money_flow_net: float | None = None
+    north_money_net: float | None = None
+    dragon_tiger: bool = False
+    recommendation_count_30d: int = 0
+    latest_score_b: float | None = None
+    latest_decision: str | None = None
+    consecutive_days: int = 0
+    decay_level: str = "none"
+    industry_rank: int | None = None
+    industry_total: int | None = None
+
+
+@router.get(
+    path="/stock-detail/{ticker}",
+    response_model=StockDetailResponse,
+    responses={
+        200: {"description": "成功 — 返回标的深度分析报告"},
+        404: {"description": "未找到有效的 auto_screening 报告"},
+    },
+)
+async def get_stock_detail(
+    ticker: str,
+    trade_date: str | None = Query(None, description="报告日期 YYYYMMDD, 缺省取最新"),
+) -> StockDetailResponse:
+    """P2-6 标的深度分析 API。
+
+    聚合 auto_screening 报告中单只标的的全部数据: 基本面 + 技术面 + 资金流 +
+    系统历史 (推荐次数 / 连续推荐 / 信号衰减) + 同行业排名。
+
+    不调用外部 API — 完全基于已有报告数据聚合。
+
+    Returns:
+        :class:`StockDetailResponse` 含所有分析维度。
+    """
+    from src.screening.compare_tool import load_latest_recommendations
+    from src.screening.stock_detail import compute_stock_detail
+
+    # 1. trade_date 校验
+    resolved_date: str | None = None
+    if trade_date:
+        cleaned = trade_date.strip().replace("-", "")
+        if len(cleaned) != 8 or not cleaned.isdigit():
+            raise HTTPException(
+                status_code=422,
+                detail=f"trade_date 格式无效: {trade_date!r} (期望 YYYYMMDD)",
+            )
+        resolved_date = cleaned
+
+    # 2. 加载推荐
+    recommendations = load_latest_recommendations(trade_date=resolved_date)
+    if not recommendations:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"未找到有效 auto_screening 报告 "
+                f"(trade_date={trade_date or 'latest'}), 请先运行 --auto"
+            ),
+        )
+
+    # 3. 计算详情
+    detail = compute_stock_detail(
+        ticker=ticker,
+        recommendations=recommendations,
+        trade_date=resolved_date,
+    )
+
+    # 4. NaN 清洗 + 响应
+    d = detail.to_dict()
+    sanitized = _sanitize_nan(d)
+    return StockDetailResponse(**sanitized)

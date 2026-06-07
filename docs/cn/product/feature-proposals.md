@@ -358,7 +358,7 @@
 | P2-1 | **Agent 推理过程可视化** | Agent 信号以 JSON 传递，前端无推理链展示 | 在 Web 端增加每个 Agent 的推理摘要卡片，点击可展开详细推理过程 | 理解每个 Agent 的决策依据 |
 | P2-2 | **回测参数对比面板** | `param_grid.py` 支持参数搜索但无前端展示 | 增加参数对比表格 + 收益散点图 + Pareto 前沿图 | 对比不同参数组合的效果 |
 | P2-3 | **邮件/Webhook 推送** ✅ | 所有报告仅本地存储 | 增加可选的每日选股结果推送 (邮件/企微/钉钉/通用 Webhook) — 已实现：`src/notification/push.py` + `data/push_config.json.example` + `--push-test` CLI + `--push-test --init` 生成默认模板 + 集成到 `--auto` 流程末尾 (失败容错不影响主流程) | 用户无需登录即可获取每日推荐 |
-| P2-4 | **历史推荐胜率看板** | 历史数据已有 (`lookback_audit.py`) | 增加「近 30 天推荐胜率趋势图 + 平均收益率曲线」到前端 | 持续评估系统表现 |
+| P2-4 | **历史推荐胜率看板** ✅ | 历史数据已有 (`lookback_audit.py`) | 增加「近 30 天推荐胜率趋势图 + 平均收益率曲线」到前端 — 已实现：`src/screening/winrate_dashboard.py` + `--winrate-dashboard [--winrate-lookback=30]` CLI + `GET /api/screening/winrate-dashboard?lookback_days=30` Web 端点 | 持续评估系统表现 |
 
 ---
 
@@ -389,7 +389,7 @@
 | P2-5 | **自定义策略权重** | 用户在 Web 端通过滑块调整四个策略的权重（趋势/均值回归/基本面/事件情绪），实时看到推荐变化 — 已实现：`src/screening/custom_weights.py` + `src/main.py --custom-weights` + `POST /api/screening/custom-weights`；前端待加滑块面板（建议 0.25/0.25/0.25/0.25 默认 + 重置按钮 + 实时重算） | 高级用户自定义选股偏好 |
 | P2-6 | **标的分析详情页** | 输入单只股票，输出完整的分析报告：基本面+技术面+资金流+新闻+同行业对比+历史推荐记录 | 用户深度研究单个标的 |
 | P2-7 | **回测场景回放** | 在 Web 端可视化回放历史某段时间的选股过程，逐日展示筛选结果和实际走势 | 理解系统在不同市场环境下的行为 |
-| P2-8 | **组合绩效周报/月报** | 自动生成周/月度绩效报告：收益率、胜率、最大回撤、归因分析、与基准对比 | 定期评估投资系统整体表现 |
+| P2-8 | **组合绩效周报/月报** ✅ | 自动生成周/月度绩效报告：收益率、胜率、最大回撤、归因分析、与基准对比 — 已实现：`src/portfolio/performance_report.py` + `src/main.py --performance-report` + `GET/POST /api/portfolio/performance-report` | 定期评估投资系统整体表现 |
 | P2-9 | **宏观数据集成** | 集成 CPI、PMI、社融、利率等宏观数据，作为市场状态判断的补充维度 | 更全面的市场环境判断 |
 
 ---
@@ -664,7 +664,7 @@
 ### Phase 4: 高级功能 (6+ 周)
 
 16. **P2-5** 自定义策略权重 ✅
-17. **P2-6** 标的分析详情页
+17. **P2-6** 标的分析详情页 ✅
 18. **P2-1** Agent 推理过程可视化
 19. **P2-7** 回测场景回放
 20. **P2-8** 组合绩效周报/月报

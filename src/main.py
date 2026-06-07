@@ -1974,6 +1974,135 @@ def update_watchlist_from_screening(
     return {"scored_count": scored_count, "top_picks": top_picks[:5]}
 
 
+def run_winrate_dashboard(lookback_days: int = 30) -> int:
+    """P2-4 历史推荐胜率看板 — CLI 入口。
+
+    Args:
+        lookback_days: 回溯天数 (默认 30)
+
+    Returns:
+        退出码 (0 = 成功, 1 = 无数据)
+    """
+    from colorama import Fore, Style
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.screening.winrate_dashboard import (
+        compute_winrate_dashboard,
+        render_winrate_dashboard,
+    )
+
+    report_dir = resolve_report_dir()
+    history_path = report_dir / "tracking_history.json"
+
+    if not history_path.exists():
+        print(f"{Fore.YELLOW}暂无追踪历史 (请先运行 --auto 至少一次): {history_path}{Style.RESET_ALL}")
+        return 1
+
+    summary = compute_winrate_dashboard(history_path, lookback_days=lookback_days)
+
+    if summary.total_days == 0:
+        print(f"{Fore.YELLOW}近 {lookback_days} 天内无推荐记录: {history_path}{Style.RESET_ALL}")
+        return 1
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[WinRate Dashboard] 历史推荐胜率看板 (P2-4){Style.RESET_ALL}")
+    print(f"  历史文件: {Fore.WHITE}{history_path}{Style.RESET_ALL}")
+    print(f"  回溯天数: {lookback_days} 天")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+    print(render_winrate_dashboard(summary), end="")
+    return 0
+
+
+def run_performance_report_cli(period: str = "weekly", end_date: str | None = None) -> int:
+    """P2-8 组合绩效周报/月报独立 CLI 入口。
+
+    从 data/positions.json 读取持仓, 从 data/reports/ 读取追踪历史,
+    生成指定周期的绩效报告并打印。
+
+    Args:
+        period: "weekly" / "monthly"
+        end_date: 结束日期 YYYYMMDD; None = 今天
+
+    Returns:
+        退出码 (0 = 成功, 1 = 无数据)
+    """
+    from colorama import Fore, Style
+
+    from src.portfolio.performance_report import (
+        generate_performance_report,
+        render_performance_report,
+    )
+    from src.screening.consecutive_recommendation import resolve_report_dir
+
+    # 1. 加载持仓历史 — 从 data/positions.json 读取当前持仓作为单一快照
+    positions_path = _resolve_positions_path()
+    positions = _load_positions_for_attribution(positions_path)
+    portfolio_value = 0.0
+    if positions:
+        portfolio_value = sum(float(p.get("current_value", 0.0) or 0.0) for p in positions if isinstance(p.get("current_value"), (int, float)))
+    positions_history: list[dict] = []
+    if positions and portfolio_value > 0:
+        today_str = (end_date or datetime.now().strftime("%Y%m%d")).replace("-", "")
+        positions_history.append({"date": today_str, "portfolio_value": portfolio_value, "positions": positions})
+
+    # 2. 加载追踪历史 (P1-3)
+    report_dir = resolve_report_dir()
+    tracking_history: list[dict] = []
+    tracking_path = report_dir / "tracking_history.json"
+    if tracking_path.exists():
+        try:
+            with open(tracking_path, encoding="utf-8") as f:
+                payload = json.load(f)
+            records = payload.get("records") if isinstance(payload, dict) else payload
+            if isinstance(records, list):
+                tracking_history = records
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # 3. 从追踪历史中构建交易记录 (每条有 next_day_return 的视为一笔已结算交易)
+    trades: list[dict] = []
+    for rec in tracking_history:
+        t1 = rec.get("next_day_return")
+        if t1 is not None:
+            trades.append({
+                "date": rec.get("recommended_date", ""),
+                "ticker": rec.get("ticker", ""),
+                "name": rec.get("name", ""),
+                "pnl": _safe_float(t1) / 100.0 if _safe_float(t1) != 0 else 0.0,
+                "return_pct": _safe_float(t1) / 100.0,
+                "strategy": "unknown",
+            })
+
+    # 4. 生成报告
+    report = generate_performance_report(
+        positions_history=positions_history,
+        trades=trades,
+        recommendations=[],
+        tracking_history=tracking_history,
+        period=period,
+        end_date=end_date,
+        benchmark_return=0.0,
+    )
+
+    # 5. 打印
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Performance Report] 组合绩效周报/月报 (P2-8){Style.RESET_ALL}")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(render_performance_report(report))
+
+    # 6. 落盘 JSON
+    payload = report.to_dict()
+    try:
+        output_path = _save_json_report(
+            f"performance_{period}_{report.end_date}.json",
+            payload,
+        )
+        print(f"{Fore.CYAN}已输出: {output_path}{Style.RESET_ALL}")
+    except Exception as exc:  # pragma: no cover
+        logger.debug("[PerformanceReport] 落盘失败: %s", exc)
+    return 0
+
+
 def run_explain(ticker: str) -> int:
     """Explain why a ticker was recommended by reading the latest auto-screening report.
 
@@ -2221,6 +2350,19 @@ if __name__ == "__main__":
     if "--daily-gainers" in sys.argv:
         raise SystemExit(run_daily_gainers_cli())
 
+    # P2-8: --performance-report 组合绩效周报/月报独立 CLI 入口
+    if "--performance-report" in sys.argv:
+        _pr_period = "weekly"
+        _pr_end_date: str | None = None
+        for arg in sys.argv:
+            if arg.startswith("--period="):
+                _pr_period = arg.split("=", 1)[1].strip().lower()
+                if _pr_period not in ("weekly", "monthly"):
+                    _pr_period = "weekly"
+            elif arg.startswith("--pr-end-date="):
+                _pr_end_date = arg.split("=", 1)[1].strip().replace("-", "")
+        raise SystemExit(run_performance_report_cli(period=_pr_period, end_date=_pr_end_date))
+
     # P1-9: --market-status 一键查看市场温度计
     if "--market-status" in sys.argv:
         _market_status_trade_date = datetime.now().strftime("%Y%m%d")
@@ -2383,6 +2525,37 @@ if __name__ == "__main__":
         raise SystemExit(
             run_push_test(channel=_pt_channel, config_path=_pt_config_path, init=_pt_init)
         )
+
+    # P2-4: --winrate-dashboard 历史推荐胜率看板 CLI 入口
+    if "--winrate-dashboard" in sys.argv:
+        _wr_lookback = 30
+        for arg in sys.argv:
+            if arg.startswith("--winrate-lookback="):
+                try:
+                    _wr_lookback = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+        raise SystemExit(run_winrate_dashboard(lookback_days=_wr_lookback))
+
+    # P2-6: --stock-detail 标的深度分析独立 CLI 入口
+    if "--stock-detail" in sys.argv:
+        _sd_ticker: str | None = None
+        _sd_trade_date: str | None = None
+        for arg in sys.argv:
+            if arg == "--stock-detail":
+                idx = sys.argv.index(arg)
+                if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+                    _sd_ticker = sys.argv[idx + 1]
+            elif arg.startswith("--stock-detail="):
+                _sd_ticker = arg.split("=", 1)[1].strip()
+            elif arg.startswith("--sd-date="):
+                _sd_trade_date = arg.split("=", 1)[1].strip()
+        if not _sd_ticker:
+            from colorama import Fore, Style
+            print(f"{Fore.RED}[StockDetail] 用法: --stock-detail 300750 [--sd-date YYYYMMDD]{Style.RESET_ALL}")
+            raise SystemExit(1)
+        from src.screening.stock_detail import run_stock_detail_cli
+        raise SystemExit(run_stock_detail_cli(_sd_ticker, trade_date=_sd_trade_date))
 
     # P2-5: --custom-weights 自定义策略权重独立 CLI 入口
     if "--custom-weights" in sys.argv:

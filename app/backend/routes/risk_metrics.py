@@ -261,3 +261,100 @@ def post_rebalance_actions(req: RebalanceRequest) -> RebalanceResponse:
         drift_threshold=req.drift_threshold,
         actions=[RebalanceActionResponse(**a.to_dict()) for a in actions],
     )
+
+
+# ---------------------------------------------------------------------------
+# P2-8: 组合绩效周报/月报 (Performance Report)
+# ---------------------------------------------------------------------------
+
+from src.portfolio.performance_report import (  # noqa: E402
+    PerformanceReport as PerformanceReportData,
+    generate_performance_report,
+)
+
+
+class PerformanceReportResponse(BaseModel):
+    """P2-8 绩效报告响应 — 与 PerformanceReport 同构。"""
+
+    period: str
+    start_date: str
+    end_date: str
+    total_return: float
+    annualized_return: float
+    benchmark_return: float
+    excess_return: float
+    max_drawdown: float
+    sharpe_ratio: float
+    sortino_ratio: float
+    volatility: float
+    total_trades: int
+    win_count: int
+    loss_count: int
+    win_rate: float
+    avg_win: float
+    avg_loss: float
+    profit_factor: float
+    strategy_attribution: dict[str, float] = {}
+    top_winners: list[dict] = []
+    top_losers: list[dict] = []
+    total_recommendations: int = 0
+    recommendation_hit_rate: float = 0.0
+
+    @classmethod
+    def from_report(cls, report: PerformanceReportData) -> "PerformanceReportResponse":
+        return cls(**report.to_dict())
+
+
+class PerformanceReportRequest(BaseModel):
+    """POST 请求体 — 完整数据 payload。"""
+
+    positions_history: list[dict] = []
+    trades: list[dict] = []
+    recommendations: list[dict] = []
+    tracking_history: list[dict] = []
+    period: str = "weekly"
+    end_date: str | None = None
+    benchmark_return: float = 0.0
+
+
+@router.get(
+    path="/performance-report",
+    response_model=PerformanceReportResponse,
+    summary="Portfolio performance report (empty payload)",
+    description="Returns a zero-value performance report. Use the POST variant for full analysis.",
+)
+def get_performance_report(
+    period: str = Query("weekly", pattern="^(weekly|monthly)$", description="报告周期: weekly / monthly"),
+    end_date: str | None = Query(None, description="结束日期 YYYYMMDD"),
+    benchmark_return: float = Query(0.0, description="基准收益率 (小数)"),
+) -> PerformanceReportResponse:
+    """GET 端点 — 无数据时返回零值报告。"""
+    report = generate_performance_report(
+        positions_history=[],
+        trades=[],
+        recommendations=[],
+        tracking_history=[],
+        period=period,
+        end_date=end_date,
+        benchmark_return=benchmark_return,
+    )
+    return PerformanceReportResponse.from_report(report)
+
+
+@router.post(
+    path="/performance-report",
+    response_model=PerformanceReportResponse,
+    summary="Portfolio performance report (POST with full payload)",
+)
+def post_performance_report(req: PerformanceReportRequest) -> PerformanceReportResponse:
+    """接收完整数据, 生成绩效报告。"""
+    report = generate_performance_report(
+        positions_history=req.positions_history,
+        trades=req.trades,
+        recommendations=req.recommendations,
+        tracking_history=req.tracking_history,
+        period=req.period,
+        end_date=req.end_date,
+        benchmark_return=req.benchmark_return,
+    )
+    return PerformanceReportResponse.from_report(report)
