@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import sys
 from datetime import datetime
@@ -25,6 +26,13 @@ from src.screening.consecutive_recommendation import (
     resolve_report_dir as _resolve_consecutive_report_dir,
 )
 from src.screening.market_state import detect_market_state
+from src.screening.industry_rotation import (
+    IndustrySignal,
+    bottom_weak_industries,
+    calculate_industry_rotation,
+    format_rotation_block,
+    top_strong_industries,
+)
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
@@ -204,6 +212,268 @@ def _build_analyst_batches(selected_analysts: list[str], concurrency_limit: int)
     return [selected_analysts[index : index + concurrency_limit] for index in range(0, len(selected_analysts), concurrency_limit)]
 
 
+def _is_finite_number(value: object) -> bool:
+    """检查 value 是否为有限数 (非 NaN / Inf / None)。"""
+    if value is None:
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _adx_level(value: float) -> tuple[str, str]:
+    """ADX -> 强度等级 + 颜色码（colorama 颜色常量字符串）。
+
+    Thresholds (matches market_state_helpers regime logic):
+        >= 25 : 偏强 (green)
+        >= 20 : 正常 (yellow)
+        >= 15 : 偏弱 (yellow)
+        else  : 弱势 (red)
+        NaN   : 无数据 (white)
+    """
+    from colorama import Fore
+
+    if not _is_finite_number(value):
+        return ("无数据", Fore.WHITE)
+    if value >= 25:
+        return ("偏强", Fore.GREEN)
+    if value >= 20:
+        return ("正常", Fore.YELLOW)
+    if value >= 15:
+        return ("偏弱", Fore.YELLOW)
+    return ("弱势", Fore.RED)
+
+
+def _atr_level(value: float) -> tuple[str, str]:
+    """ATR 比率 -> 波动等级 + 颜色码。
+
+    Thresholds:
+        >= 3.0% : 高波动 (red)
+        >= 1.8% : 偏大   (yellow)
+        >= 1.0% : 正常   (green)
+        else    : 低波   (cyan)
+        NaN     : 无数据 (white)
+    """
+    from colorama import Fore
+
+    if not _is_finite_number(value):
+        return ("无数据", Fore.WHITE)
+    if value >= 0.030:
+        return ("高波动", Fore.RED)
+    if value >= 0.018:
+        return ("偏大", Fore.YELLOW)
+    if value >= 0.010:
+        return ("正常", Fore.GREEN)
+    return ("低波", Fore.CYAN)
+
+
+def _breadth_level(value: float) -> tuple[str, str]:
+    """市场宽度 (0-1 涨跌比) -> 等级 + 颜色码。
+
+    Thresholds:
+        >= 0.60 : 强势 (green)
+        >= 0.50 : 均衡 (yellow)
+        >= 0.40 : 偏弱 (yellow)
+        else    : 弱势 (red)
+        NaN     : 无数据 (white)
+    """
+    from colorama import Fore
+
+    if not _is_finite_number(value):
+        return ("无数据", Fore.WHITE)
+    if value >= 0.60:
+        return ("强势", Fore.GREEN)
+    if value >= 0.50:
+        return ("均衡", Fore.YELLOW)
+    if value >= 0.40:
+        return ("偏弱", Fore.YELLOW)
+    return ("弱势", Fore.RED)
+
+
+def _northbound_label(days: int) -> tuple[str, str]:
+    """北向资金连续天数 -> 文本 + 颜色码。"""
+    from colorama import Fore
+
+    if days > 0:
+        return (f"+{days}日 净流入", Fore.GREEN)
+    if days < 0:
+        return (f"{days}日 净流出", Fore.RED)
+    return ("无连续方向", Fore.YELLOW)
+
+
+def _regime_gate_color(level: str) -> str:
+    """Regime Gate 级别 -> 颜色码。"""
+    from colorama import Fore
+
+    return {
+        "normal": Fore.GREEN,
+        "risk_off": Fore.YELLOW,
+        "crisis": Fore.RED,
+    }.get(str(level or "").lower(), Fore.WHITE)
+
+
+def _state_type_cn(state_type: str) -> str:
+    """state_type 英文枚举 -> 中文标签。"""
+    return {
+        "trend": "趋势型",
+        "range": "震荡型",
+        "mixed": "混合型",
+        "crisis": "危机型",
+    }.get(str(state_type or "").lower(), str(state_type or "—"))
+
+
+def _extract_market_status(market_state: object) -> dict:
+    """从 MarketState 对象提取温度计所需的字段，含 NaN/None 兜底。"""
+    return {
+        "adx": float(getattr(market_state, "adx", 0.0) or 0.0),
+        "atr_ratio": float(getattr(market_state, "atr_price_ratio", 0.0) or 0.0),
+        "breadth_ratio": float(getattr(market_state, "breadth_ratio", 0.5) or 0.5),
+        "daily_return": float(getattr(market_state, "daily_return", 0.0) or 0.0),
+        "limit_up": int(getattr(market_state, "limit_up_count", 0) or 0),
+        "limit_down": int(getattr(market_state, "limit_down_count", 0) or 0),
+        "northbound_days": int(getattr(market_state, "northbound_flow_days", 0) or 0),
+        "state_type": str(getattr(market_state, "state_type", None) or "mixed"),
+        "position_scale": float(getattr(market_state, "position_scale", 1.0) or 1.0),
+        "regime_gate_level": str(getattr(market_state, "regime_gate_level", None) or "normal"),
+    }
+
+
+def _format_market_status_table(data: dict) -> str:
+    """根据提取的字段生成温度计文本 (彩色 ANSI 序列)。"""
+    from colorama import Fore, Style
+
+    adx = data["adx"]
+    atr = data["atr_ratio"]
+    breadth = data["breadth_ratio"]
+    daily_return = data["daily_return"]
+    limit_up = data["limit_up"]
+    limit_down = data["limit_down"]
+    north_days = data["northbound_days"]
+    state_type = data["state_type"]
+    position_scale = data["position_scale"]
+    regime_gate = data["regime_gate_level"]
+
+    has_index_data = _is_finite_number(adx) and adx > 0
+    has_price_data = _is_finite_number(atr) and atr > 0
+
+    adx_label, adx_color = _adx_level(adx)
+    atr_label, atr_color = _atr_level(atr)
+    breadth_label, breadth_color = _breadth_level(breadth)
+
+    if not has_index_data:
+        northbound_segment = f"{Fore.WHITE}数据暂不可用{Style.RESET_ALL}"
+    else:
+        nb_text, nb_color = _northbound_label(north_days)
+        northbound_segment = nb_color + nb_text + Style.RESET_ALL
+
+    regime_color = _regime_gate_color(regime_gate)
+    state_type_cn = _state_type_cn(state_type)
+
+    if _is_finite_number(breadth) and 0.0 <= breadth <= 1.0:
+        total_est = 5000
+        advancers = int(round(breadth * total_est))
+        decliners = total_est - advancers
+        breadth_detail = f"  ↓{decliners}/↑{advancers}"
+    else:
+        breadth_detail = ""
+
+    def _bar(value: float, full_scale: float, width: int = 10) -> str:
+        if not _is_finite_number(value) or value <= 0:
+            return "░" * width
+        ratio = max(0.0, min(1.0, value / full_scale))
+        filled = int(round(ratio * width))
+        return "█" * filled + "░" * (width - filled)
+
+    adx_bar = _bar(adx, 50.0)
+    atr_bar = _bar(atr, 0.030)
+
+    border = "═" * 54
+    lines: list[str] = []
+    lines.append(Fore.CYAN + Style.BRIGHT + f"╔{border}╗" + Style.RESET_ALL)
+    lines.append(Fore.CYAN + Style.BRIGHT + f"║{'市场温度计 · ' + str(data.get('date', '')):^54}║" + Style.RESET_ALL)
+    lines.append(Fore.CYAN + Style.BRIGHT + f"╠{border}╣" + Style.RESET_ALL)
+    lines.append(Fore.CYAN + "║" + " " * 54 + "║" + Style.RESET_ALL)
+
+    if has_index_data:
+        adx_value_str = f"{adx:.1f}"
+    else:
+        adx_value_str = "数据暂不可用"
+    lines.append(Fore.CYAN + "║  " + Style.RESET_ALL + f"趋势强度 (ADX)    {adx_bar}  {adx_value_str:>10}  " + adx_color + adx_label + Style.RESET_ALL)
+
+    if has_price_data:
+        atr_value_str = f"{atr * 100:.2f}%"
+    else:
+        atr_value_str = "数据暂不可用"
+    lines.append(Fore.CYAN + "║  " + Style.RESET_ALL + f"波动率 (ATR)      {atr_bar}  {atr_value_str:>10}  " + atr_color + atr_label + Style.RESET_ALL)
+
+    breadth_value_str = f"{breadth:.2f}{breadth_detail}" if _is_finite_number(breadth) else "数据暂不可用"
+    lines.append(Fore.CYAN + "║  " + Style.RESET_ALL + f"市场宽度 (涨跌比)  {breadth_value_str:<20}  " + breadth_color + breadth_label + Style.RESET_ALL)
+
+    lines.append(Fore.CYAN + "║  " + Style.RESET_ALL + f"北向资金          {northbound_segment}")
+
+    limit_str = f"涨停{Fore.GREEN}{limit_up}{Style.RESET_ALL} / 跌停{Fore.RED}{limit_down}{Style.RESET_ALL}"
+    lines.append(Fore.CYAN + "║  " + Style.RESET_ALL + f"涨跌停            {limit_str:<40}  ")
+
+    lines.append(Fore.CYAN + "║" + " " * 54 + "║" + Style.RESET_ALL)
+
+    summary_line = f"综合状态: {state_type_cn}  |  仓位系数: {position_scale:.2f}"
+    lines.append(Fore.CYAN + "║  " + Style.RESET_ALL + Fore.WHITE + Style.BRIGHT + summary_line + Style.RESET_ALL)
+
+    regime_line = f"Regime Gate: {regime_gate}"
+    lines.append(Fore.CYAN + "║  " + Style.RESET_ALL + regime_color + Style.BRIGHT + regime_line + Style.RESET_ALL)
+
+    if _is_finite_number(daily_return):
+        return_pct = daily_return * 100
+        if return_pct > 0:
+            return_color = Fore.RED if return_pct > 1 else Fore.WHITE
+        else:
+            return_color = Fore.GREEN if return_pct < -1 else Fore.WHITE
+        return_line = f"指数日收益: {return_pct:+.2f}%"
+        lines.append(Fore.CYAN + "║  " + Style.RESET_ALL + return_color + return_line + Style.RESET_ALL)
+
+    lines.append(Fore.CYAN + "║" + " " * 54 + "║" + Style.RESET_ALL)
+    lines.append(Fore.CYAN + Style.BRIGHT + f"╚{border}╝" + Style.RESET_ALL)
+
+    return "\n".join(lines)
+
+
+def run_market_status(trade_date: str) -> int:
+    """P1-9 一键查看市场温度计 — 不跑全流程，仅展示市场状态。
+
+    调用 ``market_state.py`` 的 ``detect_market_state()``，
+    以彩色表格形式输出 ADX、ATR、涨跌比、北向资金、涨跌停等核心指标，
+    并给出综合 state_type / 仓位系数 / Regime Gate。
+
+    Args:
+        trade_date: 交易日期，格式 YYYYMMDD
+
+    Returns:
+        退出码（0 = 成功，1 = 数据暂不可用或异常）
+    """
+    from colorama import Fore, Style
+
+    try:
+        market_state = detect_market_state(trade_date)
+    except Exception as exc:
+        print(f"{Fore.RED}市场温度计: 数据获取失败: {exc}{Style.RESET_ALL}")
+        return 1
+
+    data = _extract_market_status(market_state)
+    data["date"] = trade_date
+
+    output = _format_market_status_table(data)
+    print()
+    print(output)
+    print()
+
+    has_index_data = _is_finite_number(data["adx"]) and data["adx"] > 0
+    has_price_data = _is_finite_number(data["atr_ratio"]) and data["atr_ratio"] > 0
+    if not has_index_data and not has_price_data:
+        return 1
+    return 0
+
+
 def run_daily_gainers_cli() -> int:
     """
     运行每日涨幅筛选 CLI
@@ -359,9 +629,7 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             report_dir=consecutive_report_dir,
             end_date=trade_date,
         )
-        consecutive_highlight = sum(
-            1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3
-        )
+        consecutive_highlight = sum(1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3)
 
         # P0-3 信号衰减检测 — 对比当前与历史 score_b
         decay_map = detect_signal_decay(
@@ -379,6 +647,13 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
                 rec["decay"] = decay_info.to_dict()
             else:
                 rec["decay"] = {"level": "none", "current_score": rec.get("score_b", 0), "previous_score": None, "change_pct": None, "days_since_peak": 0}
+
+        # P1-2 行业轮动信号 — 申万一级行业动量 + 强度排名
+        industry_signals = calculate_industry_rotation(
+            recommendations=top_results_serializable,
+            trade_date=trade_date,
+        )
+        industry_rotation_payload = [sig.to_dict() for sig in industry_signals]
 
         # Save full report
         report_payload = {
@@ -402,14 +677,15 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
                 "use_batch": batch_fetcher.use_batch,
                 **batch_fetcher.stats(),
             },
+            # P1-2: 行业轮动信号
+            "industry_rotation": industry_rotation_payload,
         }
         report_path = _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
 
         # P0-1: 输出 batch fetcher 统计
         fetcher_stats = batch_fetcher.stats()
         logger.info(
-            "[Auto] P0-1 BatchDataFetcher stats: batch_calls=%d, batch_failures=%d, "
-            "single_ticker_calls=%d, cache_hits=%d",
+            "[Auto] P0-1 BatchDataFetcher stats: batch_calls=%d, batch_failures=%d, " "single_ticker_calls=%d, cache_hits=%d",
             fetcher_stats["batch_calls"],
             fetcher_stats["batch_failures"],
             fetcher_stats["single_ticker_calls"],
@@ -427,6 +703,7 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             sector_warnings,
             consecutive_recommendations=top_results_serializable,
             decay_map=decay_map,
+            industry_signals=industry_signals,
         )
         return 0
     finally:
@@ -443,6 +720,7 @@ def _print_auto_screening_table(
     sector_warnings: list[str] | None = None,
     consecutive_recommendations: list[dict] | None = None,
     decay_map: dict | None = None,
+    industry_signals: list[IndustrySignal] | None = None,
 ) -> None:
     """打印格式化的自动筛选推荐表格。
 
@@ -450,6 +728,7 @@ def _print_auto_screening_table(
         consecutive_recommendations: 与 ``top_results`` 顺序对应的连续推荐元数据列表
             (每个 dict 包含 ``consecutive_days`` / ``stability_bonus`` 等字段)。
         decay_map: P0-3 信号衰减映射 ``{ticker: DecayInfo}``，用于显示 Decay 列。
+        industry_signals: P1-2 行业轮动信号列表 (已按 momentum_score 降序)。
     """
     from colorama import Fore, Style
     from tabulate import tabulate
@@ -535,17 +814,19 @@ def _print_auto_screening_table(
         else:  # SEVERE
             decay_str = f"{Fore.RED}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
 
-        table_data.append([
-            f"{idx}",
-            ticker_label,
-            item.industry_sw or "—",
-            score_colored,
-            decision_colored,
-            signal_summary,
-            consecutive_str,
-            decay_str,
-            arbitration,
-        ])
+        table_data.append(
+            [
+                f"{idx}",
+                ticker_label,
+                item.industry_sw or "—",
+                score_colored,
+                decision_colored,
+                signal_summary,
+                consecutive_str,
+                decay_str,
+                arbitration,
+            ]
+        )
 
     headers = [
         f"{Fore.WHITE}#",
@@ -566,7 +847,11 @@ def _print_auto_screening_table(
     if sector_warnings:
         for w in sector_warnings:
             print(f"  {Fore.YELLOW}⚠️  {w}{Style.RESET_ALL}")
-    print()
+
+    # P1-2 行业轮动信号块
+    if industry_signals:
+        print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 24} 行业轮动信号 {'━' * 24}{Style.RESET_ALL}")
+        print(format_rotation_block(industry_signals, top_n=5, bottom_n=3), end="")
 
 
 def _check_sector_concentration(top_results: list, threshold: float = 0.4) -> list[str]:
@@ -588,6 +873,99 @@ def _check_sector_concentration(top_results: list, threshold: float = 0.4) -> li
         if ratio > threshold and sector:
             warnings.append(f"行业集中度: {sector} {count}/{total} ({ratio:.0%}). 建议分散配置。")
     return warnings
+
+
+def run_industry_rotation(trade_date: str | None = None, top_n: int = 5, bottom_n: int = 3) -> int:
+    """从最新 (或指定日期) auto_screening 报告中读取推荐结果, 计算并展示行业轮动信号。
+
+    Args:
+        trade_date: 指定交易日期 YYYYMMDD, 缺省取最新报告。
+        top_n: 强势行业显示数量 (默认 5)。
+        bottom_n: 弱势行业显示数量 (默认 3)。
+
+    Returns:
+        退出码 (0 = 成功, 1 = 错误)。
+    """
+    from colorama import Fore, Style
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+
+    report_dir = resolve_report_dir()
+    if not report_dir.exists():
+        print(f"{Fore.RED}未找到 reports 目录: {report_dir}{Style.RESET_ALL}")
+        return 1
+
+    if trade_date:
+        # 标准化为 YYYYMMDD
+        candidate_dates = [trade_date.replace("-", "")]
+    else:
+        report_files = sorted(report_dir.glob("auto_screening_*.json"), reverse=True)
+        if not report_files:
+            print(f"{Fore.RED}没有 auto_screening_*.json 报告, 请先运行 --auto{Style.RESET_ALL}")
+            return 1
+        candidate_dates = []
+        for f in report_files[:5]:  # 最多看最近 5 个文件
+            stem = f.stem  # e.g., auto_screening_20260607
+            date_part = stem.replace("auto_screening_", "")
+            if len(date_part) == 8 and date_part.isdigit():
+                candidate_dates.append(date_part)
+
+    # 选最近一个含 industry_rotation 字段的; 否则退回到含 recommendations 的
+    chosen_payload: dict | None = None
+    chosen_date: str = ""
+    for date_str in candidate_dates:
+        path = report_dir / f"auto_screening_{date_str}.json"
+        if not path.exists():
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception as exc:  # pragma: no cover
+            print(f"{Fore.YELLOW}读取 {path.name} 失败: {exc}{Style.RESET_ALL}")
+            continue
+        recs = payload.get("recommendations", [])
+        if not recs:
+            continue
+        chosen_payload = payload
+        chosen_date = date_str
+        break
+
+    if not chosen_payload:
+        print(f"{Fore.RED}在候选报告中未找到 recommendations 字段{Style.RESET_ALL}")
+        return 1
+
+    # 优先使用 report 内嵌的 industry_rotation (避免重复计算)
+    cached_rotation = chosen_payload.get("industry_rotation")
+    if cached_rotation and isinstance(cached_rotation, list) and len(cached_rotation) > 0:
+        # 反序列化为 IndustrySignal
+        signals = [
+            IndustrySignal(
+                industry_name=item.get("industry_name", ""),
+                industry_code=item.get("industry_code", ""),
+                momentum_score=float(item.get("momentum_score", 0.0) or 0.0),
+                avg_score_b=float(item.get("avg_score_b", 0.0) or 0.0),
+                candidate_count=int(item.get("candidate_count", 0) or 0),
+                north_money_flow=float(item.get("north_money_flow", 0.0) or 0.0),
+                rank=int(item.get("rank", 0) or 0),
+                tickers=list(item.get("tickers", []) or []),
+            )
+            for item in cached_rotation
+        ]
+    else:
+        recs = chosen_payload.get("recommendations", [])
+        signals = calculate_industry_rotation(recs, chosen_date)
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Industry Rotation] 行业轮动信号{Style.RESET_ALL}")
+    print(f"  报告日期: {chosen_date}  |  推荐数: {len(chosen_payload.get('recommendations', []))}")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+
+    if not signals:
+        print(f"{Fore.YELLOW}  无有效行业信号 (候选数不足, 或全部行业候选数 < 2){Style.RESET_ALL}\n")
+        return 0
+
+    print(format_rotation_block(signals, top_n=top_n, bottom_n=bottom_n), end="")
+    return 0
 
 
 def run_explain(ticker: str) -> int:
@@ -643,9 +1021,7 @@ def run_explain(ticker: str) -> int:
     # Market state at scoring time
     ms = data.get("market_state", {})
     if ms:
-        print(f"{Fore.CYAN}市场状态:{Style.RESET_ALL} {ms.get('state_type', '?')}  |  "
-              f"仓位系数: {ms.get('position_scale', 1.0):.2f}  |  "
-              f"regime: {ms.get('regime_gate_level', 'normal')}")
+        print(f"{Fore.CYAN}市场状态:{Style.RESET_ALL} {ms.get('state_type', '?')}  |  " f"仓位系数: {ms.get('position_scale', 1.0):.2f}  |  " f"regime: {ms.get('regime_gate_level', 'normal')}")
 
     # Per-strategy breakdown
     _STRATEGY_CN_LABELS = {
@@ -768,7 +1144,7 @@ def _print_recent_events_block(report_data: dict, match: dict) -> None:
                     title = str(art.get("title", ""))
                     if title:
                         day_label = f"{int(date_str)}天前" if date_str.isdigit() else date_str
-                        print(f"  {day_label}  新闻: \"{title}\"")
+                        print(f'  {day_label}  新闻: "{title}"')
                         printed_any = True
                 if printed_any:
                     return
@@ -815,11 +1191,7 @@ def _print_industry_ranking_block(recs: list[dict], match: dict) -> None:
         except (TypeError, ValueError):
             return 0.0
 
-    peers = [
-        (r.get("ticker", ""), _safe_score(r.get("score_b")))
-        for r in recs
-        if r.get("industry_sw") == industry
-    ]
+    peers = [(r.get("ticker", ""), _safe_score(r.get("score_b"))) for r in recs if r.get("industry_sw") == industry]
     if not peers:
         print(f"\n{Fore.CYAN}同行业排名:{Style.RESET_ALL} 无同行业数据")
         return
@@ -843,6 +1215,16 @@ if __name__ == "__main__":
     if "--daily-gainers" in sys.argv:
         raise SystemExit(run_daily_gainers_cli())
 
+    # P1-9: --market-status 一键查看市场温度计
+    if "--market-status" in sys.argv:
+        _market_status_trade_date = datetime.now().strftime("%Y%m%d")
+        for arg in sys.argv:
+            if arg.startswith("--market-date="):
+                _market_status_trade_date = arg.split("=", 1)[1]
+        if len(_market_status_trade_date) == 10 and _market_status_trade_date[4] == "-":
+            _market_status_trade_date = _market_status_trade_date.replace("-", "")
+        raise SystemExit(run_market_status(_market_status_trade_date))
+
     if "--pipeline" in sys.argv or "--screen-only" in sys.argv:
         parser = argparse.ArgumentParser(description="Institutional multi-strategy pipeline runner")
         parser.add_argument("--pipeline", action="store_true", help="运行全流水线模式")
@@ -853,6 +1235,26 @@ if __name__ == "__main__":
             raise SystemExit(run_pipeline_mode(args.trade_date))
         if args.screen_only:
             raise SystemExit(run_screen_only_mode(args.trade_date))
+
+    # P1-2: --industry-rotation 独立 CLI 入口
+    if "--industry-rotation" in sys.argv:
+        _ir_trade_date: str | None = None
+        _ir_top_n = 5
+        _ir_bottom_n = 3
+        for arg in sys.argv:
+            if arg.startswith("--ir-date="):
+                _ir_trade_date = arg.split("=", 1)[1]
+            elif arg.startswith("--ir-top="):
+                try:
+                    _ir_top_n = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--ir-bottom="):
+                try:
+                    _ir_bottom_n = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+        raise SystemExit(run_industry_rotation(_ir_trade_date, top_n=_ir_top_n, bottom_n=_ir_bottom_n))
 
     # Detect --auto early via sys.argv to bypass interactive prompts
     is_auto = "--auto" in sys.argv

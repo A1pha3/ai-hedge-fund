@@ -639,20 +639,32 @@ def _extract_recent_open_dates(df_cal: pd.DataFrame, lookback_sessions: int) -> 
 
 
 def _get_avg_amount_20d_map(pro, ts_codes: list[str], trade_date: str, lookback_sessions: int = 20) -> dict[str, float]:
-    """按交易日批量获取全市场成交额并在本地聚合，避免逐票调用 `daily`。"""
+    """按交易日批量获取全市场成交额并在本地聚合，避免逐票调用 `daily`。
+
+    当 BatchDataFetcher 启用时，per-trade-date 的全市场 daily 调用会路由到
+    ``BatchDataFetcher.fetch_daily_prices_batch``：该接口复用 tushare 底层数据，
+    但额外提供：
+      - 进程内 60s TTL 缓存（避免同进程内多次 ``run_auto_screening`` 重复拉取）
+      - 统一的 batch_calls / cache_hits 统计入口
+      - USE_BATCH_FETCHER=false 时的快速 kill switch
+
+    失败/未启用场景自动回退到 ``_cached_tushare_dataframe_call`` 原路径。
+    """
     recent_open_dates = _get_recent_open_dates(pro, trade_date, lookback_sessions=lookback_sessions)
     if not recent_open_dates or not ts_codes:
         return {}
 
     target_codes = set(ts_codes)
     amount_buckets: dict[str, list[float]] = defaultdict(list)
+    batch_fetcher = _resolve_batch_fetcher_for_avg_amount()
+    use_batch_fetcher = batch_fetcher is not None and batch_fetcher.use_batch
 
     for open_date in recent_open_dates:
-        try:
-            df = _cached_tushare_dataframe_call(pro, "daily", trade_date=open_date, fields="ts_code,amount")
-        except Exception:
-            # GAMMA-006: continue to next date instead of aborting entire batch
-            continue
+        df = _fetch_avg_amount_daily_frame(
+            pro=pro,
+            trade_date=open_date,
+            batch_fetcher=batch_fetcher if use_batch_fetcher else None,
+        )
         if df is None or df.empty:
             continue
         filtered = df[df["ts_code"].isin(target_codes)]
@@ -661,6 +673,48 @@ def _get_avg_amount_20d_map(pro, ts_codes: list[str], trade_date: str, lookback_
         _accumulate_daily_amount_rows(filtered, amount_buckets)
 
     return _build_avg_amount_map(amount_buckets)
+
+
+def _resolve_batch_fetcher_for_avg_amount() -> "BatchDataFetcher | None":
+    """获取 (lazy) 全局 BatchDataFetcher 单例；导入失败/未安装时返回 None。"""
+    try:
+        from src.screening.batch_data_fetcher import get_global_batch_data_fetcher
+    except Exception:
+        return None
+    try:
+        return get_global_batch_data_fetcher()
+    except Exception:
+        return None
+
+
+def _fetch_avg_amount_daily_frame(
+    *,
+    pro: object,
+    trade_date: str,
+    batch_fetcher: "BatchDataFetcher | None",
+) -> pd.DataFrame | None:
+    """按 trade_date 拉取全市场 daily ``(ts_code, amount)`` 帧。
+
+    - 优先走 ``BatchDataFetcher.fetch_daily_prices_batch``：自带 60s 内存缓存 + 统计
+    - 失败 → 回退到 ``_cached_tushare_dataframe_call`` (tushare 长期缓存)
+    """
+    if batch_fetcher is not None:
+        try:
+            df = batch_fetcher.fetch_daily_prices_batch(trade_date)
+        except Exception:
+            df = None
+        if df is not None and not df.empty:
+            return df[["ts_code", "amount"]] if "amount" in df.columns else df
+    try:
+        return _cached_tushare_dataframe_call(
+            pro,
+            "daily",
+            trade_date=trade_date,
+            fields="ts_code,amount",
+        )
+    except Exception:
+        # GAMMA-006: continue to next date instead of aborting entire batch
+        return None
 
 
 def _accumulate_daily_amount_rows(filtered: pd.DataFrame, amount_buckets: dict[str, list[float]]) -> None:

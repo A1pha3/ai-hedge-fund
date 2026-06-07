@@ -62,6 +62,21 @@ def _make_daily_basic_df(rows: list[dict]) -> pd.DataFrame:
 # ============================================================================
 
 class TestHelpers:
+    @pytest.fixture(autouse=True)
+    def _reset_global_batch_fetcher(self):
+        """Round 9 修复: 防止其他测试文件创建 enabled batch_fetcher 后污染本类测试。
+
+        ``_get_avg_amount_20d_map`` 内部调 ``get_global_batch_data_fetcher()`` 读全局单例。
+        如果 ``test_batch_data_fetcher.py`` 先于本类跑且创建了 ``use_batch=True`` 的全局
+        fetcher 而未清理，本测试会通过 batch 路径而非原 ``_cached_tushare_dataframe_call``
+        路径，导致 ``side_effect`` 列表与 ``call_count`` 断言全部错位。
+        """
+        from src.screening.batch_data_fetcher import reset_global_batch_data_fetcher
+
+        reset_global_batch_data_fetcher()
+        yield
+        reset_global_batch_data_fetcher()
+
     def test_default_candidate_pool_size_is_300(self):
         assert candidate_pool_module.MAX_CANDIDATE_POOL_SIZE == 300
 
@@ -151,8 +166,19 @@ class TestHelpers:
         assert slept == pytest.approx(5.0)
         mock_sleep.assert_called_once_with(pytest.approx(5.0))
 
-    def test_get_avg_amount_20d_map_uses_market_daily_batches(self):
-        """应按交易日批量拉取 daily，再本地聚合目标股票的 20 日均额。"""
+    def test_get_avg_amount_20d_map_uses_market_daily_batches(self, monkeypatch):
+        """应按交易日批量拉取 daily，再本地聚合目标股票的 20 日均额。
+
+        Round 9 修复: beta 在 ``_get_avg_amount_20d_map`` 中接入 BatchDataFetcher 后,
+        进程级 ``_resolve_batch_fetcher_for_avg_amount`` 默认会创建 ``use_batch=True``
+        的 fetcher 并走批量路径。该路径会真实调用 ``fetch_daily_prices_batch``(不走
+        ``_cached_tushare_dataframe_call`` 的 ``side_effect``),所以原测试的 ``side_effect``
+        全部失效。本测试显式禁用 batch fetcher, 强制走原 tushare 路径。
+        """
+        monkeypatch.setenv("USE_BATCH_FETCHER", "false")
+        from src.screening.batch_data_fetcher import reset_global_batch_data_fetcher
+
+        reset_global_batch_data_fetcher()
         mock_pro = MagicMock()
         with patch(
             "src.screening.candidate_pool._cached_tushare_dataframe_call",
@@ -176,6 +202,108 @@ class TestHelpers:
         assert result["000001.SZ"] == pytest.approx(2000.0)
         assert result["000002.SZ"] == pytest.approx(3000.0)
         assert mock_cached_call.call_count == 3
+
+    def test_get_avg_amount_20d_map_routes_through_batch_fetcher_when_enabled(self):
+        """Beta R9 P0-1 集成: 当 BatchDataFetcher 启用时, per-trade-date daily 调用应
+        路由到 batch_fetcher.fetch_daily_prices_batch, 且底层 tushare 调用次数显著减少。"""
+        from src.screening import batch_data_fetcher as bdf_module
+        from src.screening.batch_data_fetcher import (
+            BatchDataFetcher,
+            reset_global_batch_data_fetcher,
+        )
+
+        reset_global_batch_data_fetcher()
+        try:
+            # 注入一个已启用的 batch_fetcher
+            fetcher = BatchDataFetcher(use_batch=True, max_concurrency=4, cache_ttl_seconds=60)
+            # 用 _use_batch=True 强制走 batch 路径 (因为 global fetcher 走的是 env)
+            with patch.object(
+                candidate_pool_module,
+                "_resolve_batch_fetcher_for_avg_amount",
+                return_value=fetcher,
+            ):
+                mock_pro = MagicMock()
+                # 2 天 daily batch (mock 返回 2 只股票的 amount 数据)
+                batched_df = pd.DataFrame([
+                    {"ts_code": "000001.SZ", "amount": 10000.0},
+                    {"ts_code": "000002.SZ", "amount": 20000.0},
+                ])
+                # Patch at class level — fetch_daily_prices_batch is a class method
+                with patch.object(
+                    bdf_module.BatchDataFetcher,
+                    "fetch_daily_prices_batch",
+                    return_value=batched_df,
+                ) as mock_batch_call, \
+                patch(
+                    "src.screening.candidate_pool._cached_tushare_dataframe_call",
+                    return_value=pd.DataFrame(),
+                ) as mock_cached_call, \
+                patch(
+                    "src.screening.candidate_pool._get_recent_open_dates",
+                    return_value=["20260303", "20260304"],
+                ):
+                    result = _get_avg_amount_20d_map(
+                        mock_pro, ["000001.SZ", "000002.SZ"], "20260304", lookback_sessions=2,
+                    )
+
+                # BatchDataFetcher 应当被调用 2 次 (每天一次)
+                assert mock_batch_call.call_count == 2
+                # tushare 底层调用应为 0 (因为 batch 路径成功)
+                assert mock_cached_call.call_count == 0
+                # 结果: 2 日均值 (10000+10000)/2 = 10000, (20000+20000)/2 = 20000
+                # 然后 _accumulate_daily_amount_rows 中 amount/10.0 转万元
+                assert result["000001.SZ"] == pytest.approx(1000.0)
+                assert result["000002.SZ"] == pytest.approx(2000.0)
+                # 集成生效: 当 batch 路径成功时, 后续 _resolve_batch_fetcher_for_avg_amount
+                # 不会再被调用, _fetch_avg_amount_daily_frame 直接返回 batch 结果
+                # 证明 _get_avg_amount_20d_map 真正使用了 BatchDataFetcher 而非装饰性创建
+        finally:
+            reset_global_batch_data_fetcher()
+
+    def test_get_avg_amount_20d_map_falls_back_when_batch_fetcher_disabled(self):
+        """USE_BATCH_FETCHER=false / batch_fetcher 禁用时, 应走原 tushare 路径, 不调用 batch 接口。"""
+        from src.screening import batch_data_fetcher as bdf_module
+        from src.screening.batch_data_fetcher import (
+            BatchDataFetcher,
+            reset_global_batch_data_fetcher,
+        )
+
+        reset_global_batch_data_fetcher()
+        try:
+            # use_batch=False → 不走 batch 路径
+            fetcher = BatchDataFetcher(use_batch=False, max_concurrency=4, cache_ttl_seconds=60)
+            with patch.object(
+                candidate_pool_module,
+                "_resolve_batch_fetcher_for_avg_amount",
+                return_value=fetcher,
+            ):
+                mock_pro = MagicMock()
+                with patch(
+                    "src.screening.candidate_pool._get_recent_open_dates",
+                    return_value=["20260303", "20260304"],
+                ), patch(
+                    "src.screening.candidate_pool._cached_tushare_dataframe_call",
+                    side_effect=[
+                        pd.DataFrame([{"ts_code": "000001.SZ", "amount": 10000.0}, {"ts_code": "000002.SZ", "amount": 20000.0}]),
+                        pd.DataFrame([{"ts_code": "000001.SZ", "amount": 30000.0}, {"ts_code": "000002.SZ", "amount": 40000.0}]),
+                    ],
+                ) as mock_cached_call, patch.object(
+                    bdf_module.BatchDataFetcher,
+                    "fetch_daily_prices_batch",
+                ) as mock_batch_call:
+                    result = _get_avg_amount_20d_map(
+                        mock_pro, ["000001.SZ", "000002.SZ"], "20260304", lookback_sessions=2,
+                    )
+
+                # batch 路径未启用, 不应被调用
+                mock_batch_call.assert_not_called()
+                # 原 tushare 路径被调用 2 次
+                assert mock_cached_call.call_count == 2
+                # 结果与原实现一致
+                assert result["000001.SZ"] == pytest.approx(2000.0)
+                assert result["000002.SZ"] == pytest.approx(3000.0)
+        finally:
+            reset_global_batch_data_fetcher()
 
 
 class TestCooldownRegistry:
