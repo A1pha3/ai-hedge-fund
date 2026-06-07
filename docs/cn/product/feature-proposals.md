@@ -347,7 +347,7 @@
 | P1-1 | **缓存命中率优化** | SQLite 缓存已实现但过期策略简单 | 增加「主动预热」模式：在盘后自动预拉取常用数据；增加按因子依赖的批量预加载 | 减少 `--auto` 运行时的冷启动延迟 |
 | P1-2 | **行业轮动信号** ✅ | 行业暴露控制已有 (`industry_exposure.py`)，但仅限风控 | 增加行业动量/轮动评分，输出「本周强势行业 Top 5」，在推荐结果中标注行业标签 | 用户从行业视角筛选，减少信息噪音 |
 | P1-3 | **推荐标的持续性追踪** ✅ | Lookback Audit 已有 (`lookback_audit.py`)，但需要手动触发 | 增加「自动追踪」：每次 `--auto` 运行后自动记录 Top 10 标的，次日盘后自动计算实际收益 | 无需手动对比，系统自动闭环验证 — 已实现：`src/screening/recommendation_tracker.py` + `--tracking-summary` CLI |
-| P1-4 | **因子重要性排行** | 四策略各有子因子，但缺少全局排序 | 定期计算因子 IC (信息系数)，输出「本周最强因子 Top 10」，用于辅助用户理解市场风格 | 用户了解当前市场驱动因素 |
+| P1-4 | **因子重要性排行** ✅ | 四策略各有子因子，但缺少全局排序 | 定期计算因子 IC (信息系数)，输出「本周最强因子 Top 10」，用于辅助用户理解市场风格 — 已实现：`src/research/factor_ic_analysis.py` + `--factor-ic [--ic-lookback=N] [--ic-method=spearman]` CLI | 用户了解当前市场驱动因素 |
 | P1-5 | **Web 端筛选一键执行** | 后端有 `/hedge-fund/run` 但无专门的筛选端点 | 新增 `POST /api/screening/auto` 端点，前端增加「一键选股」按钮 | Web 用户无需 CLI 即可使用核心功能 |
 | P1-6 | **组合风险预警仪表盘** | ✅ | `risk-monitor-panel.tsx` 已有基础展示 — 已增强: 实时 VaR / CVaR + 行业集中度 + 回撤预警线 | 用户对组合风险一目了然 |
 
@@ -376,11 +376,11 @@
 | # | 功能 | 说明 | 用户价值 |
 |---|------|------|----------|
 | P1-7 | **选股报告 PDF 导出** ✅ | 每次筛选结果生成结构化 PDF 报告（含图表），可直接分享 — 已实现：`src/reporting/pdf_exporter.py` + `src/main.py --export-pdf` + `AUTO_EXPORT_PDF=true` 环境变量 | 专业用户需要可归档的报告格式 |
-| P1-8 | **标的对比工具** | 输入 2-5 只股票，输出多维度雷达图对比（趋势/估值/动量/资金流/行业排名） | 用户在候选股之间做最终选择 |
+| P1-8 | **标的对比工具** ✅ | 输入 2-5 只股票，输出多维度雷达图对比（趋势/估值/动量/资金流/行业排名） — 已实现：`src/screening/compare_tool.py` + `--compare` CLI + `GET /api/screening/compare` | 用户在候选股之间做最终选择 |
 | P1-9 | **市场温度计** ✅ | 在首页展示实时市场状态仪表盘：ADK 趋势强度、涨跌比、北向资金方向、涨停/跌停数、行业领涨 Top 3 | 用户一眼判断当日市场环境 |
 | P1-10 | **条件单建议** | 基于回测历史统计各标的的最佳买入区间，输出「建议在 X 元附近关注」的条件单建议 | 用户获得具体操作价位参考 |
 | P1-11 | **策略归因日报** ✅ | 每日收盘后自动生成「今日策略表现归因」：哪个策略贡献最大、哪个策略失效、原因分析 | 用户持续了解策略风格匹配度 |
-| P1-12 | **组合再平衡建议** | 基于当前持仓和市场状态，输出「建议加仓/减仓/调仓」的具体操作列表 | 用户获得可执行的调仓建议 |
+| P1-12 | **组合再平衡建议** ✅ | 基于当前持仓和市场状态，输出「建议加仓/减仓/调仓」的具体操作列表 — 已实现：`src/portfolio/rebalance_advisor.py` + `src/main.py --rebalance` + `GET/POST /api/portfolio/rebalance` + `--auto` 自动附加到报告顶层 `rebalance_actions` | 用户获得可执行的调仓建议 |
 
 ### P2 — 可以做
 
@@ -519,6 +519,80 @@
 
 ---
 
+### P1-4 实现细节
+
+**目标**: 用 **IC (Information Coefficient)** 量化每个子因子对下期收益的预测能力, 输出「本周最强因子 Top 10」, 让研究员了解当前市场驱动因素, 为下次回测 / 调参提供数据支撑。
+
+**IC 标准定义**:
+- IC = corr(因子值序列, 下期收益序列), Spearman 秩相关 (推荐) 或 Pearson
+- IR (Information Ratio) = mean(IC) / std(IC), 反映 IC 跨期稳健性
+- ic_positive_rate = IC > 0 的比例, 反映胜率
+
+**实现组件**:
+
+- **新模块**: `src/research/factor_ic_analysis.py` — 纯函数, 无网络/数据库依赖
+  - `FactorICResult` dataclass: `factor_name / strategy / ic_mean / ic_std / ir / ic_positive_rate / n_periods / rank / significance / method`
+  - `compute_factor_ic(factor_history, return_history, *, method, rolling_window)`:
+    - **单次模式** (默认): 整段时间序列算一个 IC; IR=0
+    - **Rolling 模式** (`rolling_window > 1`): 滑动窗口, 收集 IC 序列, 计算 IR + ic_positive_rate
+  - `classify_significance(ic_mean, ir)` — high / medium / low / insignificant 四级
+  - `extract_factor_panel_from_history(reports_dir, lookback_days, end_date)` — 从 `data/reports/auto_screening_*.json` + `tracking_history.json` 提取因子面板 + 下期收益 (T+1)
+  - `render_factor_ic_ranking(results, end_date, lookback_days)` — 中文文本排行表
+  - `run_factor_ic(lookback_days, method)` — CLI 入口
+  - 内部 helpers: `_pearson_correlation` / `_spearman_correlation` (基于秩, 处理 ties 用平均秩) / `_rank_average` / `_safe_stdev` (过滤 NaN) / `_is_finite`
+  - 数值安全: 全部输入经 `_is_finite` 过滤, NaN/Inf/None → 0.0 (避免污染); 单次模式 IR=0 而非 NaN; ties 用平均秩
+
+- **集成点**: `src/main.py` CLI 早期分发 (在 `parse_cli_inputs` 之前)
+  - `--factor-ic` 主开关
+  - `--ic-lookback=N` 回溯天数 (默认 30)
+  - `--ic-method=spearman|pearson` (默认 spearman)
+  - 数据来源: `data/reports/auto_screening_*.json` + `data/reports/tracking_history.json` (P1-3 自动追踪)
+  - 阈值常量: `IC_HIGH=0.10 / IC_MEDIUM=0.05 / IC_LOW=0.02 / IR_HIGH=1.0 / IR_MEDIUM=0.5`
+  - 最小输入: `MIN_FACTORS=3` 个因子 + `MIN_OBSERVATIONS=3` 期数据
+
+- **降级策略**:
+  - reports 目录不存在 / 历史报告数 < 3 → 友好提示退出码 1
+  - 因子数 < MIN_FACTORS → 跳过 (返回空 dict)
+  - 跟踪历史缺失 → 自动用 `score_b` 截面均值作代理 (粗略, 但能产生可计算序列)
+  - 报告 JSON 损坏 → 跳过该日, 不影响其他日
+
+- **CLI 输出格式**:
+  ```
+  ━━━ 因子重要性排行 · 20260607 · 近 30 天 ━━━
+
+  排名 | 因子名                | 策略      | IC      | IR    | 胜率  | 显著性
+  ----------------------------------------------------------------
+   1  | trend.momentum_20d    | 趋势      | +0.142  | 1.85  | 67%   | 高
+   2  | fundamental.pe_ratio  | 基本面    | +0.118  | 1.42  | 62%   | 高
+   3  | event_sentiment.news  | 事件情绪  | +0.095  | 1.18  | 58%   | 中
+  ...
+  20  | mean_reversion.bounce | 均值回归  | +0.022  | 0.18  | 51%   | 低
+
+  按 IR 降序排列, 共 20 个因子 (高 3 / 中 5 / 无效 12)。前 1/3 建议保留; 后 1/3 建议淘汰。
+  ```
+
+- **测试覆盖**: `tests/test_factor_ic_analysis.py` (**30 个测试用例, 全部通过**)
+  - 相关性: 完美正/负/无相关 (Spearman + Pearson)
+  - IR 计算: rolling 模式下 mean/std 验证
+  - ic_positive_rate: 单次模式 (0/1) + rolling 模式 (按符号计数)
+  - Spearman vs Pearson 差异: 异常值时 Spearman 优于 Pearson
+  - 边界: 空输入 / 因子数 < 3 / 收益长度 < 3 → 空 dict
+  - NaN 处理: 因子值含 NaN 时该位置被丢弃, n_periods 减 1
+  - 显著性分级: 4 个等级 + 边界值 (0.02/0.05/0.10)
+  - 排名: NaN IR 不破坏排序; rank 1..N 完整分配
+  - 内部: `_pearson_correlation` / `_spearman_correlation` (ties) / `_safe_stdev` (NaN 过滤)
+  - 集成: mock 报告 + tracking_history → extract + compute
+  - 渲染: 中文表格头 + 行内容验证
+  - 策略推断: `trend.momentum_20d` → strategy=trend; 无前缀 → "unknown"
+
+- **回归验证**: `tests/test_factor_ic_analysis.py` 30/30 通过; 周边关键模块 (screening/consecutive_recommendation 等) 无回归
+
+- **设计取舍**:
+  - **不依赖 scipy**: 手动实现 Spearman/Pearson + 平均秩, 避免引入科学计算依赖 (~50 行代码)
+  - **单次 vs rolling 双模式**: 简单用例直接拿单值, 严谨用例可传 `rolling_window` 拿 IR
+  - **策略推断用前缀**: `trend.xxx` → strategy=trend; 比要求调用方传 strategy 映射更轻量
+  - **T+1 收益来源**: 优先用 `tracking_history.json` (P1-3 已有数据), 缺失时 fallback 到 `score_b` 截面均值
+
 ### P1-6 实现细节
 
 **目标**: 为前端 `risk-monitor-panel.tsx` 提供实时 VaR / CVaR / 行业集中度 / 回撤预警的 API 端点 + 后端计算模块, 解决现有面板只展示静态 HHI/CVaR proxy 的局限。
@@ -581,11 +655,11 @@
 ### Phase 3: 深度分析 (4-6 周)
 
 10. **P0-4** 回测结果可视化 — 净值曲线 + 回撤图
-11. **P1-8** 标的对比工具 — 多维雷达图
-12. **P1-4** 因子重要性排行 — IC 分析
+11. **P1-8** 标的对比工具 — 多维雷达图 ✅
+12. **P1-4** 因子重要性排行 — IC 分析 ✅ *(已实现 — 见下文 P1-4 实现细节)*
 13. **P1-10** 条件单建议 — 买入区间参考
 14. **P1-11** 策略归因日报 ✅
-15. **P1-12** 组合再平衡建议
+15. **P1-12** 组合再平衡建议 ✅
 
 ### Phase 4: 高级功能 (6+ 周)
 
@@ -642,4 +716,4 @@
 
 > **文档维护说明**: 本文档应在每次功能迭代后更新。已完成功能标记 ✅，新增功能按优先级添加到对应章节。
 >
-> **最后更新**: 2026-06-07 (Round 10: P1-6 组合风险预警仪表盘增强)
+> **最后更新**: 2026-06-07 (Round 12: P1-4 因子重要性排行 — IC 分析)

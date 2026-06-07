@@ -28,6 +28,14 @@ from src.portfolio.risk_metrics import (
     RiskSnapshot,
     compute_risk_snapshot,
 )
+from src.portfolio.rebalance_advisor import (
+    DEFAULT_DRIFT_THRESHOLD,
+    DEFAULT_MIN_TRADE_AMOUNT,
+    INDUSTRY_HARD_LIMIT,
+    SINGLE_NAME_HARD_LIMIT,
+    STRONG_DRIFT_THRESHOLD,
+    compute_rebalance_actions,
+)
 
 router = APIRouter(prefix="/portfolio")
 
@@ -163,3 +171,93 @@ def _thresholds_dict() -> dict[str, float]:
 def get_risk_thresholds() -> dict[str, Any]:
     """返回当前生效的预警阈值, 便于前端对齐展示口径。"""
     return {"thresholds": _thresholds_dict()}
+
+
+# ---------------------------------------------------------------------------
+# P1-12: 组合再平衡建议 (Rebalance Advisor)
+# ---------------------------------------------------------------------------
+
+
+class RebalancePositionInput(BaseModel):
+    """单条持仓(供再平衡使用)。"""
+
+    ticker: str
+    name: str = ""
+    sector: str = "UNKNOWN"
+    current_value: float = Field(default=0.0, ge=0.0)
+    target_weight: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class RebalanceRequest(BaseModel):
+    """POST 请求体 (持仓 + 阈值)。"""
+
+    portfolio_value: float = Field(..., gt=0.0, description="组合总价值 (元)")
+    positions: list[RebalancePositionInput] = Field(default_factory=list)
+    drift_threshold: float = Field(default=DEFAULT_DRIFT_THRESHOLD, ge=0.0, le=1.0)
+    strong_drift_threshold: float = Field(default=STRONG_DRIFT_THRESHOLD, ge=0.0, le=1.0)
+    min_trade_amount: float = Field(default=DEFAULT_MIN_TRADE_AMOUNT, ge=0.0)
+    industry_hard_limit: float = Field(default=INDUSTRY_HARD_LIMIT, ge=0.0, le=1.0)
+    single_name_hard_limit: float = Field(default=SINGLE_NAME_HARD_LIMIT, ge=0.0, le=1.0)
+
+
+class RebalanceActionResponse(BaseModel):
+    """单条再平衡操作 — 与 RebalanceAction.to_dict 同构。"""
+
+    ticker: str
+    name: str
+    action: str
+    sector: str
+    current_weight: float
+    target_weight: float
+    delta_weight: float
+    delta_amount: float
+    reason: str
+    priority: int
+
+
+class RebalanceResponse(BaseModel):
+    """再平衡建议响应。"""
+
+    portfolio_value: float
+    drift_threshold: float
+    actions: list[RebalanceActionResponse]
+
+
+@router.get(
+    path="/rebalance",
+    response_model=RebalanceResponse,
+    summary="Portfolio rebalance advice (empty payload returns thresholds + empty actions)",
+)
+def get_rebalance_actions(
+    drift_threshold: float = Query(DEFAULT_DRIFT_THRESHOLD, ge=0.0, le=1.0, description="漂移阈值"),
+) -> RebalanceResponse:
+    """GET 端点 — 无持仓时返回空 actions, 用于前端首次加载。"""
+    return RebalanceResponse(
+        portfolio_value=0.0,
+        drift_threshold=float(drift_threshold),
+        actions=[],
+    )
+
+
+@router.post(
+    path="/rebalance",
+    response_model=RebalanceResponse,
+    summary="Portfolio rebalance advice (POST with positions)",
+)
+def post_rebalance_actions(req: RebalanceRequest) -> RebalanceResponse:
+    """接收 ``positions`` + ``portfolio_value``, 返回 ``actions``。"""
+    positions_payload = [p.model_dump() for p in req.positions]
+    actions = compute_rebalance_actions(
+        positions_payload,
+        req.portfolio_value,
+        drift_threshold=req.drift_threshold,
+        strong_drift_threshold=req.strong_drift_threshold,
+        min_trade_amount=req.min_trade_amount,
+        industry_hard_limit=req.industry_hard_limit,
+        single_name_hard_limit=req.single_name_hard_limit,
+    )
+    return RebalanceResponse(
+        portfolio_value=req.portfolio_value,
+        drift_threshold=req.drift_threshold,
+        actions=[RebalanceActionResponse(**a.to_dict()) for a in actions],
+    )

@@ -5,6 +5,9 @@ P1-5: 用户希望在 Web 端一键运行全市场自动筛选, 获得与 CLI ``
 
 本端点不重新实现核心筛选逻辑, 而是直接复用
 :func:`src.main.compute_auto_screening_results` 纯函数。
+
+P1-8: 新增 ``GET /api/screening/compare`` 端点 — 对 2-5 只标的做
+多维度对比, 复用 :func:`src.screening.compare_tool.compare_tickers`。
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src.main import compute_auto_screening_results
@@ -301,5 +304,151 @@ async def run_auto_screening(req: ScreeningRequest) -> ScreeningResponse:
             "use_explain": req.use_explain,
             "strategies": strategies or ["trend", "mean_reversion", "fundamental", "event_sentiment"],
             "data_dir": str(Path(__file__).resolve().parents[3] / "data" / "reports"),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-8: 标的对比端点
+# ---------------------------------------------------------------------------
+
+
+class CompareResponse(BaseModel):
+    """P1-8 标的对比响应体。
+
+    字段命名与 CLI ``--compare`` 输出一致, 便于 Web 前端与 CLI
+    共享同一份解析代码。
+    """
+
+    tickers: list[str]
+    metrics: list[dict[str, Any]]
+    summary: dict[str, int]
+    winner: str | None = None
+    report_date: str | None = None
+    meta: dict = Field(default_factory=dict)
+
+
+@router.get(
+    path="/compare",
+    response_model=CompareResponse,
+    responses={
+        200: {"description": "成功 — 返回对比报告"},
+        422: {"description": "参数校验失败 (ticker 数量不在 2-5 / 指标非法 / 日期格式错误)"},
+        404: {"description": "未找到有效的 auto_screening 报告"},
+    },
+)
+async def compare_endpoint(
+    tickers: str = Query(..., description="逗号分隔的 ticker, 2-5 只 (e.g. '300750,600519,000001')"),
+    metrics: str | None = Query(None, description="逗号分隔的指标, 缺省全部 (e.g. 'trend_score,score_b')"),
+    trade_date: str | None = Query(None, description="报告日期 YYYYMMDD, 缺省取最新"),
+) -> CompareResponse:
+    """P1-8 Web 端标的对比 API。
+
+    复用 :func:`src.screening.compare_tool.compare_tickers` 计算多维对比,
+    数据来源为 ``data/reports/auto_screening_<date>.json`` (或最新一份报告)。
+
+    Returns:
+        :class:`CompareResponse` 含 ``tickers`` / ``metrics`` / ``summary`` /
+        ``winner`` / ``report_date`` 字段, 字段类型严格 JSON-safe (NaN 已转 None)。
+    """
+    # 延迟导入 — 避免循环依赖 + 测试时可单独 patch
+    from src.screening.compare_tool import (
+        DEFAULT_METRIC_KEYS,
+        MAX_COMPARE_TICKERS,
+        MIN_COMPARE_TICKERS,
+        CompareReport,
+        compare_tickers,
+        load_latest_recommendations,
+    )
+
+    # 1. 解析 + 校验 tickers
+    raw_tickers = [t.strip() for t in (tickers or "").split(",") if t.strip()]
+    if not (MIN_COMPARE_TICKERS <= len(raw_tickers) <= MAX_COMPARE_TICKERS):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"tickers 数量必须为 {MIN_COMPARE_TICKERS}-{MAX_COMPARE_TICKERS} 只, "
+                f"实际: {len(raw_tickers)}"
+            ),
+        )
+
+    # 2. 解析 + 校验 metrics
+    metric_keys: list[str] | None = None
+    if metrics:
+        metric_keys = [m.strip() for m in metrics.split(",") if m.strip()]
+        valid_metrics = set(DEFAULT_METRIC_KEYS)
+        unknown = [m for m in metric_keys if m not in valid_metrics]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"未知指标: {unknown} (合法: {sorted(valid_metrics)})",
+            )
+
+    # 3. 校验 trade_date
+    if trade_date:
+        cleaned = trade_date.strip().replace("-", "")
+        if len(cleaned) != 8 or not cleaned.isdigit():
+            raise HTTPException(
+                status_code=422,
+                detail=f"trade_date 格式无效: {trade_date!r} (期望 YYYYMMDD)",
+            )
+        resolved_date = cleaned
+    else:
+        resolved_date = None
+
+    # 4. 加载推荐数据
+    recommendations = load_latest_recommendations(trade_date=resolved_date)
+    if not recommendations:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"未找到有效 auto_screening 报告 "
+                f"(trade_date={trade_date or 'latest'}), 请先运行 --auto"
+            ),
+        )
+
+    # 5. 执行对比
+    try:
+        report: CompareReport = compare_tickers(
+            tickers=raw_tickers,
+            recommendations=recommendations,
+            metric_keys=metric_keys,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    # 6. NaN 清洗 (统一 None)
+    def _sanitize(value: Any) -> Any:
+        if isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                return None
+            return value
+        if isinstance(value, dict):
+            return {k: _sanitize(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_sanitize(v) for v in value]
+        return value
+
+    sanitized_metrics = [_sanitize(m.to_dict()) for m in report.metrics]
+
+    # 7. 从 trade_date 字段提取 (load_latest_recommendations 不返回日期,
+    #    从 recommendations 中尝试推断 — 若 report_date 不明则置 None)
+    inferred_date: str | None = resolved_date
+    if inferred_date is None and recommendations:
+        for rec in recommendations:
+            if isinstance(rec, dict) and isinstance(rec.get("date"), str):
+                inferred_date = rec["date"].replace("-", "")
+                break
+
+    return CompareResponse(
+        tickers=list(report.tickers),
+        metrics=sanitized_metrics,
+        summary=dict(report.summary),
+        winner=report.winner,
+        report_date=inferred_date,
+        meta={
+            "metric_keys": metric_keys or list(DEFAULT_METRIC_KEYS),
+            "min_compare_tickers": MIN_COMPARE_TICKERS,
+            "max_compare_tickers": MAX_COMPARE_TICKERS,
         },
     )

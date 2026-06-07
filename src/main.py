@@ -902,6 +902,31 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         except Exception as exc:  # pragma: no cover - 归因失败不影响主流程
             logger.warning("[Auto] P1-11 策略归因日报附加失败: %s", exc)
 
+        # P1-12: 组合再平衡建议 — 若当前有持仓则附加到 report payload (rebalance_actions 顶层字段)。
+        try:
+            from src.portfolio.rebalance_advisor import compute_rebalance_actions
+
+            reb_positions, reb_pv = _load_positions_for_rebalance(_resolve_positions_path())
+            if reb_positions and reb_pv > 0.0:
+                reb_actions = compute_rebalance_actions(reb_positions, reb_pv)
+                report_payload["rebalance_actions"] = {
+                    "portfolio_value": reb_pv,
+                    "drift_threshold": 0.05,
+                    "actions": [a.to_dict() for a in reb_actions],
+                }
+                if reb_actions:
+                    logger.info(
+                        "[Auto] P1-12 组合再平衡: %d 条建议 (优先级1=%d)",
+                        len(reb_actions),
+                        sum(1 for a in reb_actions if a.priority == 1),
+                    )
+                try:
+                    _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+                except Exception as exc:  # pragma: no cover
+                    logger.debug("[Auto] rebalance_actions 二次落盘失败: %s", exc)
+        except Exception as exc:  # pragma: no cover - 再平衡失败不影响主流程
+            logger.warning("[Auto] P1-12 组合再平衡附加失败: %s", exc)
+
         # P0-1: 输出 batch fetcher 统计
         fetcher_stats = report_payload.get("batch_data_fetcher", {})
         logger.info(
@@ -1306,6 +1331,97 @@ def run_attribution_daily(trade_date: str, positions_path: Path | None = None) -
         print(f"{Fore.CYAN}已输出: {output_path}{Style.RESET_ALL}")
     except Exception as exc:  # pragma: no cover
         logger.debug("[Attribution] 落盘失败: %s", exc)
+    return 0
+
+
+def _load_positions_for_rebalance(positions_path: Path | None) -> tuple[list[dict], float]:
+    """读取 ``positions.json``, 返回 ``(positions, portfolio_value)``。
+
+    支持两种 schema:
+      1. ``{"portfolio_value": N, "positions": [...]}`` (推荐, 显式总市值)
+      2. ``[{"ticker": ..., "current_value": ..., ...}, ...]`` (退化, 总市值 = sum(current_value))
+
+    任何 IO / JSON 错误返回 ``([], 0.0)``。
+    """
+    if positions_path is None or not positions_path.exists():
+        return [], 0.0
+    try:
+        with open(positions_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("[Rebalance] 读取持仓文件失败 (%s): %s", positions_path, exc)
+        return [], 0.0
+
+    if isinstance(data, list):
+        positions = [item for item in data if isinstance(item, dict)]
+        pv = sum(float(p.get("current_value", 0.0) or 0.0) for p in positions)
+        return positions, pv
+    if isinstance(data, dict):
+        positions = data.get("positions") or []
+        if not isinstance(positions, list):
+            positions = []
+        positions = [item for item in positions if isinstance(item, dict)]
+        pv_raw = data.get("portfolio_value")
+        try:
+            pv = float(pv_raw) if pv_raw is not None else 0.0
+        except (TypeError, ValueError):
+            pv = 0.0
+        if pv <= 0.0:
+            pv = sum(float(p.get("current_value", 0.0) or 0.0) for p in positions)
+        return positions, pv
+    return [], 0.0
+
+
+def run_rebalance(positions_path: Path | None = None, drift_threshold: float = 0.05) -> int:
+    """P1-12 组合再平衡建议独立 CLI 入口。
+
+    Args:
+        positions_path: 持仓 JSON 路径; 缺省时从 ``_resolve_positions_path`` 解析。
+        drift_threshold: 漂移阈值, 默认 5%。
+
+    Returns:
+        退出码 (0 = 成功, 1 = 无持仓)。
+    """
+    from colorama import Fore, Style
+
+    from src.portfolio.rebalance_advisor import (
+        compute_rebalance_actions,
+        format_rebalance_actions,
+    )
+
+    resolved_path = positions_path or _resolve_positions_path()
+    positions, portfolio_value = _load_positions_for_rebalance(resolved_path)
+    if not positions or portfolio_value <= 0.0:
+        print(f"{Fore.YELLOW}[Rebalance] 未找到可用持仓 — 请在 data/positions.json 提供 {{portfolio_value, positions: [...]}}{Style.RESET_ALL}")
+        return 1
+
+    actions = compute_rebalance_actions(positions, portfolio_value, drift_threshold=drift_threshold)
+    text = format_rebalance_actions(actions, portfolio_value, drift_threshold=drift_threshold)
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Rebalance] 组合再平衡建议 (P1-12){Style.RESET_ALL}")
+    if resolved_path is not None:
+        print(f"  持仓来源: {Fore.WHITE}{resolved_path}{Style.RESET_ALL}")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(text)
+
+    # 落盘 JSON 报告
+    payload = {
+        "mode": "rebalance_advice",
+        "portfolio_value": portfolio_value,
+        "drift_threshold": drift_threshold,
+        "positions_path": str(resolved_path) if resolved_path else None,
+        "actions": [a.to_dict() for a in actions],
+        "report_text": text,
+    }
+    try:
+        output_path = _save_json_report(
+            f"rebalance_{datetime.now().strftime('%Y%m%d')}.json",
+            payload,
+        )
+        print(f"{Fore.CYAN}已输出: {output_path}{Style.RESET_ALL}")
+    except Exception as exc:  # pragma: no cover
+        logger.debug("[Rebalance] 落盘失败: %s", exc)
     return 0
 
 
@@ -1904,6 +2020,74 @@ if __name__ == "__main__":
         if len(_attr_trade_date) == 10 and _attr_trade_date[4] == "-":
             _attr_trade_date = _attr_trade_date.replace("-", "")
         raise SystemExit(run_attribution_daily(_attr_trade_date, positions_path=_attr_positions_path))
+
+    # P1-4: --factor-ic 独立 CLI 入口 — 因子重要性 IC 分析
+    if "--factor-ic" in sys.argv:
+        _ic_lookback = 30
+        _ic_method = "spearman"
+        for arg in sys.argv:
+            if arg.startswith("--ic-lookback="):
+                try:
+                    _ic_lookback = int(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith("--ic-method="):
+                _ic_method = arg.split("=", 1)[1].strip().lower()
+        from src.research.factor_ic_analysis import run_factor_ic
+
+        raise SystemExit(run_factor_ic(lookback_days=_ic_lookback, method=_ic_method))
+
+    # P1-12: --rebalance 组合再平衡建议独立 CLI 入口
+    if "--rebalance" in sys.argv:
+        _reb_positions_path: Path | None = None
+        _reb_drift = 0.05
+        for arg in sys.argv:
+            if arg.startswith("--positions-path="):
+                _reb_positions_path = Path(arg.split("=", 1)[1]).expanduser()
+            elif arg.startswith("--positions="):
+                _reb_positions_path = Path(arg.split("=", 1)[1]).expanduser()
+            elif arg.startswith("--drift-threshold="):
+                try:
+                    _reb_drift = float(arg.split("=", 1)[1])
+                except ValueError:
+                    pass
+        raise SystemExit(run_rebalance(positions_path=_reb_positions_path, drift_threshold=_reb_drift))
+
+    # P1-8: 标的对比工具独立 CLI 入口 — 早期分发避免与 parse_cli_inputs 冲突
+    # 支持 --compare=300750,600519 和 --compare 300750,600519 两种形式
+    if any(arg == "--compare" or arg.startswith("--compare=") for arg in sys.argv):
+        from colorama import Fore, Style
+
+        _compare_tickers_arg: str | None = None
+        _compare_metrics_arg: str | None = None
+        _compare_no_radar = False
+        for arg in sys.argv:
+            if arg.startswith("--compare="):
+                _compare_tickers_arg = arg.split("=", 1)[1]
+            elif arg == "--compare":
+                # 支持 --compare 300750,600519,000001 的下个 argv 形式
+                idx = sys.argv.index(arg)
+                if idx + 1 < len(sys.argv):
+                    _compare_tickers_arg = sys.argv[idx + 1]
+            elif arg.startswith("--metrics="):
+                _compare_metrics_arg = arg.split("=", 1)[1]
+            elif arg == "--no-radar":
+                _compare_no_radar = True
+        if not _compare_tickers_arg:
+            print(
+                f"{Fore.RED}[Compare] 用法: --compare 300750,600519,000001 "
+                f"[--metrics trend_score,score_b] [--no-radar]{Style.RESET_ALL}"
+            )
+            raise SystemExit(1)
+        from src.screening.compare_tool import run_compare_cli
+
+        raise SystemExit(
+            run_compare_cli(
+                tickers_arg=_compare_tickers_arg,
+                metrics_arg=_compare_metrics_arg,
+                show_radar=not _compare_no_radar,
+            )
+        )
 
     # P0-5: Watchlist 独立 CLI 入口 — 早期分发, 避免与 parse_cli_inputs 的 required 校验冲突
     if any(arg in sys.argv for arg in ("--watchlist-add", "--watchlist-remove", "--watchlist-list", "--watchlist-status")):
