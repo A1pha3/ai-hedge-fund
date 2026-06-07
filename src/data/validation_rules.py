@@ -163,7 +163,7 @@ RULE_VOLUME_NON_NEGATIVE = "price_volume_non_negative"  # volume >= 0
 RULE_PRICE_REASONABLE_RANGE = "price_reasonable_range"  # 0.01 <= close <= 10000
 
 
-def _row_get(obj: Any, key: str) -> Any:
+def _row_get(obj: Any, key: str) -> float | str | None:
     """Unified row field accessor — supports both dict and object attribute access.
 
     Extracted from 5 price-rule validators that each defined an identical local ``_get``

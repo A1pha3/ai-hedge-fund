@@ -1,7 +1,8 @@
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union
 
+from src.data.models import FinancialMetrics, Price
 from src.data.validation_rules import (
     FINANCIAL_METRICS_RULES,
     PRICE_RULES,
@@ -12,6 +13,11 @@ from src.data.validator_v2_helpers import evaluate_metric_rule
 
 logger = logging.getLogger(__name__)
 
+# Type aliases — validator accepts Pydantic models or raw dicts for both
+# metrics and prices.  Keeping `Any` in the union for forward compat.
+MetricRow = Union[FinancialMetrics, dict[str, Any]]
+PriceRow = Union[Price, dict[str, Any]]
+
 
 @dataclass
 class ValidationResult:
@@ -19,7 +25,7 @@ class ValidationResult:
 
     is_valid: bool
     field: str
-    value: Any
+    value: float | str | None
     rule: ValidationRule
     message: str
 
@@ -63,7 +69,7 @@ class EnhancedDataValidator:
         self.rules = {rule.field: rule for rule in rules}
         self.data_type = data_type
 
-    def validate_metric(self, metric: Any) -> tuple[bool, list[ValidationResult]]:
+    def validate_metric(self, metric: MetricRow) -> tuple[bool, list[ValidationResult]]:
         """验证单个指标对象
 
         Args:
@@ -102,7 +108,7 @@ class EnhancedDataValidator:
 
         return not has_error, results
 
-    def validate_batch(self, metrics: list[Any]) -> ValidationReport:
+    def validate_batch(self, metrics: list[MetricRow]) -> ValidationReport:
         """批量验证并生成报告
 
         Args:
@@ -151,7 +157,7 @@ class EnhancedDataValidator:
             warnings_list=warnings_list[:50],
         )
 
-    def filter_valid_metrics(self, metrics: list[Any], min_pass_rate: float = 0.8) -> tuple[list[Any], ValidationReport]:
+    def filter_valid_metrics(self, metrics: list[MetricRow], min_pass_rate: float = 0.8) -> tuple[list[MetricRow], ValidationReport]:
         """过滤出有效的指标
 
         Args:
@@ -166,7 +172,7 @@ class EnhancedDataValidator:
         if report.pass_rate < min_pass_rate:
             logger.warning(f"数据质量过低: 通过率 {report.pass_rate:.2%}, " f"错误数 {len(report.errors)}, " f"警告数 {len(report.warnings_list)}")
 
-        valid_metrics: list[Any] = []
+        valid_metrics: list[MetricRow] = []
         for metric in metrics:
             is_valid, _ = self.validate_metric(metric)
             if is_valid:
@@ -174,7 +180,7 @@ class EnhancedDataValidator:
 
         return valid_metrics, report
 
-    def _get_field_value(self, metric: Any, field_name: str) -> Any:
+    def _get_field_value(self, metric: MetricRow, field_name: str) -> float | str | None:
         """获取字段值，支持对象属性和字典"""
         if hasattr(metric, field_name):
             return getattr(metric, field_name)
@@ -201,7 +207,7 @@ class EnhancedDataValidator:
         *,
         field_name: str,
         rule: ValidationRule,
-        row: Any,
+        row: MetricRow,
     ) -> tuple[list[ValidationResult], bool]:
         """行级规则评估: 整行 row 喂给 custom_validator, 失败时记一条结果。"""
         try:
@@ -230,7 +236,7 @@ class EnhancedDataValidator:
         return math.isnan(value)
 
 
-def validate_financial_metrics(metrics: list[Any], min_pass_rate: float = 0.8) -> tuple[list[Any], ValidationReport]:
+def validate_financial_metrics(metrics: list[MetricRow], min_pass_rate: float = 0.8) -> tuple[list[MetricRow], ValidationReport]:
     """验证财务指标的便捷函数
 
     Args:
@@ -244,7 +250,7 @@ def validate_financial_metrics(metrics: list[Any], min_pass_rate: float = 0.8) -
     return validator.filter_valid_metrics(metrics, min_pass_rate)
 
 
-def validate_prices(prices: list[Any], min_pass_rate: float = 0.8) -> tuple[list[Any], ValidationReport]:
+def validate_prices(prices: list[PriceRow], min_pass_rate: float = 0.8) -> tuple[list[PriceRow], ValidationReport]:
     """验证价格行的便捷函数 (R20 新增).
 
     应用 PRICE_RULES 5 条价格类规则 (OHLC 一致性 / 价格正负 / 未来日期 /
