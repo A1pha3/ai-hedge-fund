@@ -1033,6 +1033,72 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         progress.stop()
 
 
+def _print_score_decomposition(
+    top_results: list,
+    consecutive_lookup: dict[str, dict],
+) -> None:
+    """O-2: 在 --auto 表格下方打印 Top N 评分构成摘要，让用户理解排序依据。
+
+    每行显示: ticker | score_b | 各策略贡献(方向×权重×置信) | attention | stability_bonus
+    """
+    from colorama import Fore, Style
+
+    if not top_results:
+        return
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 24} 评分构成 (Top {len(top_results)}) {'━' * 24}{Style.RESET_ALL}")
+
+    for item in top_results:
+        ticker = item.ticker
+        score_b = item.score_b
+        weights = item.weights_used or {}
+        signals = item.strategy_signals or {}
+
+        # 各策略贡献值 = weight * direction * (confidence/100) * completeness
+        parts: list[str] = []
+        strategy_names = ("trend", "mean_reversion", "fundamental", "event_sentiment")
+        strategy_labels = ("T", "MR", "F", "E")
+        for sname, slabel in zip(strategy_names, strategy_labels):
+            w = weights.get(sname, 0.0)
+            sig = signals.get(sname)
+            if sig is None or w == 0.0:
+                parts.append(f"{slabel}:—")
+                continue
+            contribution = w * sig.direction * (sig.confidence / 100.0) * sig.completeness
+            arrow = "↑" if contribution > 0 else "↓" if contribution < 0 else "—"
+            parts.append(f"{slabel}:{arrow}{abs(contribution):.3f}")
+
+        # attention_composite (from metrics)
+        attention = float((item.metrics or {}).get("attention_composite", 0.0) or 0.0)
+        att_str = f"att:{attention:.2f}" if attention > 0 else "att:—"
+
+        # stability_bonus (from consecutive_lookup)
+        consecutive_info = consecutive_lookup.get(ticker, {})
+        stability_bonus = float(consecutive_info.get("stability_bonus", 0.0) or 0.0)
+        stab_str = f"stab:{stability_bonus:.1f}" if stability_bonus > 0 else "stab:—"
+
+        # Consensus bonus indicator
+        consensus = "★" if "consensus_bonus" in (item.arbitration_applied or []) else " "
+
+        # Color by score
+        if score_b >= 0.35:
+            score_color = Fore.GREEN
+        elif score_b >= 0.0:
+            score_color = Fore.YELLOW
+        else:
+            score_color = Fore.RED
+
+        print(
+            f"  {consensus} {Fore.CYAN}{ticker:<8s}{Style.RESET_ALL} "
+            f"{score_color}{score_b:+.4f}{Style.RESET_ALL}  "
+            f"{' | '.join(parts)}  "
+            f"{att_str}  {stab_str}"
+        )
+
+    print(f"{Fore.WHITE}{'━' * 72}{Style.RESET_ALL}")
+    print(f"  {Fore.WHITE}T=趋势 MR=均值回归 F=基本面 E=事件情绪  att=注意力  stab=连续推荐加成  ★=共识加成{Style.RESET_ALL}\n")
+
+
 def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
     """O-1: 在 --auto 表格后打印一行缓存命中率摘要，让用户感知缓存提速效果。
 
@@ -1192,6 +1258,9 @@ def _print_auto_screening_table(
     print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center", "left")))
 
     print(f"\n  详细报告已保存: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
+
+    # O-2: 推荐排序策略透明化 — 在表格下方打印 Top 5 的评分构成摘要
+    _print_score_decomposition(top_results[:5], consecutive_lookup)
 
     # Sector concentration warnings
     if sector_warnings:

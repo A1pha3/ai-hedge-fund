@@ -846,7 +846,7 @@
 | # | 类型 | 项目 | 说明 | 用户价值 |
 |---|------|------|------|----------|
 | O-1 | 优化 | **缓存命中率可观测性** ✅ | `--auto` 运行结束时 CLI 表格底部增加缓存命中率摘要行（如 `Cache: 78% hit (80 cached / 102 requests) | Batch: 2 calls (0 failures)`）— 已实现：`src/main.py:_print_cache_hit_summary()` + `tests/test_cache_hit_summary.py` (6 tests) | 用户直观感知速度提升来源 |
-| O-2 | 优化 | **推荐排序策略透明化** | `--explain` 输出中已有因子明细和行业排名，建议在 `--auto` 的 Top N 表格中增加一列显示排序依据拆分（score_b / attention / stability_bonus 的各自贡献百分比） | 用户理解为什么 A 排在 B 前面 |
+| O-2 | 优化 | **推荐排序策略透明化** ✅ | `--auto` 表格下方新增评分构成摘要块，显示 Top 5 标的的各策略贡献值(T/MR/F/E)、attention_composite、stability_bonus 和共识加成标记。— 已实现：`src/main.py:_print_score_decomposition()` + `tests/test_score_decomposition.py` (10 tests) | 用户理解为什么 A 排在 B 前面 |
 
 ---
 
