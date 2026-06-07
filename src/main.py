@@ -1045,8 +1045,6 @@ def run_top(top_n: int = 10) -> int:
     Returns:
         退出码 (0=成功, 1=无报告)
     """
-    import json
-
     from colorama import Fore, Style
     from tabulate import tabulate
 
@@ -1128,11 +1126,18 @@ def run_top(top_n: int = 10) -> int:
     headers = [f"{Fore.WHITE}#", "Ticker", "Industry", "Score B", "Decision", "Consec", "Decay"]
     print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center")))
 
-    # Score decomposition for top 5
+    # Score decomposition for top 5 (skip on validation failure — preserve backward compat with older reports)
     consecutive_lookup = {r.get("ticker", ""): r for r in recs}
     from src.screening.signal_fusion import FusedScore
-    top_results = [FusedScore.model_validate(r) for r in recs[:5]]
-    _print_score_decomposition(top_results, consecutive_lookup)
+    top_results: list = []
+    for r in recs[:5]:
+        try:
+            top_results.append(FusedScore.model_validate(r))
+        except Exception:
+            # Older report format — skip decomposition rather than crash
+            continue
+    if top_results:
+        _print_score_decomposition(top_results, consecutive_lookup)
 
     # Cache stats if available
     fetcher_stats = payload.get("batch_data_fetcher", {})

@@ -139,3 +139,19 @@ class TestRunTop:
         assert rc == 0
         output = capsys.readouterr().out
         assert "Cache:" in output
+
+    def test_malformed_score_b_does_not_crash(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+        """score_b 越界或缺字段时不崩溃，优雅降级。"""
+        # score_b > 1 violates FusedScore field constraint — must be caught
+        recs = [
+            {"ticker": "300750", "name": "宁德时代", "industry_sw": "电气设备", "score_b": 5.0, "decision": "watch", "consecutive_days": 1, "decay": {"level": "none"}},
+            {"ticker": "000001", "name": "平安银行", "industry_sw": "银行", "score_b": 0.35, "decision": "watch", "consecutive_days": 1, "decay": {"level": "none"}},
+        ]
+        report_path = _write_report(tmp_path, recs=recs)
+        with patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=report_path.parent):
+            with patch("src.reporting.pdf_exporter.find_latest_report", return_value=report_path):
+                rc = run_top()
+        # Should not crash — table still shows, decomposition may be skipped
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "300750" in output  # ticker shown in table even if decomposition fails
