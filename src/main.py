@@ -1033,6 +1033,116 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         progress.stop()
 
 
+def run_top(top_n: int = 10) -> int:
+    """``--top [N]`` — 显示最近一次 ``--auto`` 的 Top N 推荐，无需重跑流水线。
+
+    从 ``data/reports/auto_screening_*.json`` 加载最新报告，重建 FusedScore 对象
+    并打印格式化表格。秒级返回，适合快速查看当前推荐。
+
+    Args:
+        top_n: 显示前 N 个推荐 (默认 10)
+
+    Returns:
+        退出码 (0=成功, 1=无报告)
+    """
+    import json
+
+    from colorama import Fore, Style
+    from tabulate import tabulate
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.reporting.pdf_exporter import find_latest_report, load_report
+
+    report_dir = resolve_report_dir()
+    report_path = find_latest_report(report_dir)
+    if report_path is None:
+        print(f"{Fore.RED}[Top] 未找到 auto_screening 报告。请先运行 --auto{Style.RESET_ALL}")
+        return 1
+
+    try:
+        payload = load_report(report_path)
+    except ValueError as exc:
+        print(f"{Fore.RED}[Top] {exc}{Style.RESET_ALL}")
+        return 1
+
+    recs = payload.get("recommendations", [])
+    if not recs:
+        print(f"{Fore.YELLOW}[Top] 最新报告无推荐结果{Style.RESET_ALL}")
+        return 0
+
+    # Trim to top_n
+    recs = recs[:top_n]
+    trade_date = payload.get("date", report_path.stem.replace("auto_screening_", ""))
+    market_state = payload.get("market_state", {})
+    state_type = market_state.get("state_type", "mixed")
+    pool_size = payload.get("layer_a_count", len(recs))
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Top] 最近推荐{Style.RESET_ALL}")
+    print(f"  报告日期: {trade_date}  |  市场状态: {state_type}  |  候选池: {pool_size}")
+    print(f"  报告路径: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+
+    table_data = []
+    for idx, rec in enumerate(recs, 1):
+        score_b = float(rec.get("score_b", 0.0))
+        decision = rec.get("decision", "neutral")
+
+        if score_b >= 0.35:
+            score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
+            decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
+        elif score_b >= 0.0:
+            score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
+            decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
+        else:
+            score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
+            decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
+
+        ticker = rec.get("ticker", "—")
+        name = rec.get("name", "")
+        industry = rec.get("industry_sw", "—")
+        ticker_label = f"{ticker} {name}" if name else ticker
+
+        # Consecutive days
+        consecutive_days = int(rec.get("consecutive_days", 0) or 0)
+        if consecutive_days >= 3:
+            cons_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}d{Style.RESET_ALL}"
+        elif consecutive_days == 2:
+            cons_str = f"{Fore.YELLOW}{consecutive_days}d{Style.RESET_ALL}"
+        elif consecutive_days == 1:
+            cons_str = f"{Fore.WHITE}{consecutive_days}d{Style.RESET_ALL}"
+        else:
+            cons_str = f"{Fore.RED}—{Style.RESET_ALL}"
+
+        # Decay
+        decay = rec.get("decay", {})
+        decay_level = decay.get("level", "none")
+        if decay_level == "none" or not decay_level:
+            decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
+        else:
+            decay_pct = abs(float(decay.get("change_pct", 0) or 0))
+            decay_str = f"{Fore.YELLOW}↓{decay_pct:.0f}%{Style.RESET_ALL}"
+
+        table_data.append([idx, ticker_label, industry, score_colored, decision_colored, cons_str, decay_str])
+
+    headers = [f"{Fore.WHITE}#", "Ticker", "Industry", "Score B", "Decision", "Consec", "Decay"]
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center")))
+
+    # Score decomposition for top 5
+    consecutive_lookup = {r.get("ticker", ""): r for r in recs}
+    from src.screening.signal_fusion import FusedScore
+    top_results = [FusedScore.model_validate(r) for r in recs[:5]]
+    _print_score_decomposition(top_results, consecutive_lookup)
+
+    # Cache stats if available
+    fetcher_stats = payload.get("batch_data_fetcher", {})
+    if fetcher_stats:
+        _print_cache_hit_summary(fetcher_stats)
+
+    print(f"  完整报告: {Fore.CYAN}{report_path}{Style.RESET_ALL}\n")
+    return 0
+
+
 def _print_score_decomposition(
     top_results: list,
     consecutive_lookup: dict[str, dict],

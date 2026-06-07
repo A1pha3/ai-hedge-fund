@@ -368,6 +368,26 @@ def _resolve_watchlist(argv: list[str]) -> int | None:
     return None
 
 
+def _resolve_top(argv: list[str]) -> int | None:
+    """``--top [N]`` — 显示最近一次 ``--auto`` 运行的 Top N 推荐 (无需重跑)。"""
+    if "--top" not in argv:
+        return None
+    from src.main import run_top
+
+    # Parse optional N: --top 20 or --top=20
+    top_n = 10
+    idx = argv.index("--top")
+    if idx + 1 < len(argv) and argv[idx + 1].isdigit():
+        top_n = int(argv[idx + 1])
+    else:
+        for a in argv:
+            if a.startswith("--top="):
+                val = a.split("=", 1)[1]
+                if val.isdigit():
+                    top_n = int(val)
+    return run_top(top_n=top_n)
+
+
 # 命令注册表: flag -> handler function
 # 顺序敏感 — 越靠前越先匹配。``--auto`` / ``--explain`` 不在此处 (走主 parser)
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
@@ -394,6 +414,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--watchlist-remove", _resolve_watchlist),
     ("--watchlist-list", _resolve_watchlist),
     ("--watchlist-status", _resolve_watchlist),
+    ("--top", _resolve_top),
 ]
 
 
