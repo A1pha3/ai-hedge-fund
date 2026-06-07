@@ -351,29 +351,32 @@ def test_akshare_api_cache_keys_include_provider_prefix():
 class _RecordingCache:
     def __init__(self):
         self.saved: list[tuple[str, list[dict]]] = []
+        self.read_keys: list[str] = []
 
-    def get_prices(self, key):
+    def get_prices(self, key, provider=""):
+        self.read_keys.append(key)
         return None
 
-    def set_prices(self, key, data):
+    def set_prices(self, key, data, provider=""):
         self.saved.append((key, data))
 
-    def get_financial_metrics(self, key):
+    def get_financial_metrics(self, key, provider=""):
+        self.read_keys.append(key)
         return None
 
-    def set_financial_metrics(self, key, data):
+    def set_financial_metrics(self, key, data, provider=""):
         self.saved.append((key, data))
 
-    def get_company_news(self, key):
+    def get_company_news(self, key, provider=""):
         return None
 
-    def set_company_news(self, key, data):
+    def set_company_news(self, key, data, provider="", ttl=None):
         pass
 
-    def get_insider_trades(self, key):
+    def get_insider_trades(self, key, provider=""):
         return None
 
-    def set_insider_trades(self, key, data):
+    def set_insider_trades(self, key, data, provider=""):
         pass
 
 

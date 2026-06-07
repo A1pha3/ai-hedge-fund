@@ -2,7 +2,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from src.data.validation_rules import FINANCIAL_METRICS_RULES, ValidationRule
+from src.data.validation_rules import (
+    FINANCIAL_METRICS_RULES,
+    PRICE_RULES,
+    ValidationRule,
+    get_rules_for_data_type,
+)
 from src.data.validator_v2_helpers import evaluate_metric_rule
 
 logger = logging.getLogger(__name__)
@@ -39,15 +44,24 @@ class EnhancedDataValidator:
     1. 范围验证：检查值是否在合理范围内
     2. 空值验证：检查必需字段是否为空
     3. 自定义验证：支持自定义验证函数
+
+    R20 起新增 ``data_type`` 维度: ``"metrics"`` 走字段级 min/max 检查,
+    ``"prices"`` 走行级 custom_validator (OHLC 一致性, 价格 / 成交量正负,
+    未来日期等)。两种规则集互不重叠, 调用方按 data_type 切换。
     """
 
-    def __init__(self, rules: list[ValidationRule] | None = None):
+    def __init__(self, rules: list[ValidationRule] | None = None, data_type: str = "metrics"):
         """初始化验证器
 
         Args:
-            rules: 验证规则列表，默认使用财务指标规则
+            rules: 验证规则列表; 不提供时按 ``data_type`` 取默认规则集。
+            data_type: ``"metrics"`` (默认) 走财务指标字段级规则, ``"prices"``
+                走价格行级规则。仅在 ``rules`` 未显式提供时生效。
         """
-        self.rules = {rule.field: rule for rule in (rules or FINANCIAL_METRICS_RULES)}
+        if rules is None:
+            rules = get_rules_for_data_type(data_type) or FINANCIAL_METRICS_RULES
+        self.rules = {rule.field: rule for rule in rules}
+        self.data_type = data_type
 
     def validate_metric(self, metric: Any) -> tuple[bool, list[ValidationResult]]:
         """验证单个指标对象
@@ -62,6 +76,19 @@ class EnhancedDataValidator:
         has_error = False
 
         for field_name, rule in self.rules.items():
+            # 价格规则: custom_validator 接收整行 row, field 名仅是虚拟标签。
+            # 跳过 _get_field_value 否则会在 metric 上找不到 "price_ohlc_consistency"
+            # 这种虚拟字段 → 全部返回 None → 误判通过。
+            if self._is_row_level_rule(rule):
+                field_results, field_has_error = self._evaluate_row_level_rule(
+                    field_name=field_name,
+                    rule=rule,
+                    row=metric,
+                )
+                results.extend(field_results)
+                has_error = has_error or field_has_error
+                continue
+
             value = self._get_field_value(metric, field_name)
             field_results, field_has_error = evaluate_metric_rule(
                 field_name=field_name,
@@ -155,6 +182,47 @@ class EnhancedDataValidator:
             return metric.get(field_name)
         return None
 
+    @staticmethod
+    def _is_row_level_rule(rule: ValidationRule) -> bool:
+        """判断规则是否走行级路径 (custom_validator 接收整行 row 而非字段值).
+
+        判定: 同时满足 (a) 无 min/max 范围 (b) 有 custom_validator (c) 注册在
+        PRICE_RULES 里。这样既兼容 R20 新增的价格规则, 又不影响 R3-R19 财务规则
+        的旧行为 (财务规则全部走 evaluate_metric_rule 字段级路径)。
+        """
+        if rule.min_value is not None or rule.max_value is not None:
+            return False
+        if rule.custom_validator is None:
+            return False
+        return any(r.field == rule.field for r in PRICE_RULES)
+
+    @staticmethod
+    def _evaluate_row_level_rule(
+        *,
+        field_name: str,
+        rule: ValidationRule,
+        row: Any,
+    ) -> tuple[list[ValidationResult], bool]:
+        """行级规则评估: 整行 row 喂给 custom_validator, 失败时记一条结果。"""
+        try:
+            ok = bool(rule.custom_validator(row)) if rule.custom_validator else True
+        except Exception as exc:  # custom validator 自身崩了等同于校验失败
+            ok = False
+            message = f"{field_name} 行级校验抛错: {exc}"
+        else:
+            message = "" if ok else f"{field_name} 行级校验未通过: {rule.description}"
+
+        if ok:
+            return [], False
+        result = ValidationResult(
+            is_valid=False,
+            field=field_name,
+            value=None,
+            rule=rule,
+            message=message,
+        )
+        return [result], rule.severity == "error"
+
     def _is_nan(self, value: float) -> bool:
         """检查值是否为 NaN"""
         import math
@@ -174,3 +242,20 @@ def validate_financial_metrics(metrics: list[Any], min_pass_rate: float = 0.8) -
     """
     validator = EnhancedDataValidator()
     return validator.filter_valid_metrics(metrics, min_pass_rate)
+
+
+def validate_prices(prices: list[Any], min_pass_rate: float = 0.8) -> tuple[list[Any], ValidationReport]:
+    """验证价格行的便捷函数 (R20 新增).
+
+    应用 PRICE_RULES 5 条价格类规则 (OHLC 一致性 / 价格正负 / 未来日期 /
+    成交量非负 / 收盘价合理区间)。返回过滤后的有效价格行 + 验证报告。
+
+    Args:
+        prices: 价格行列表 (Price 对象或 dict, 需含 open/high/low/close/volume/time)
+        min_pass_rate: 最低通过率阈值, 低于该阈值会打 warning
+
+    Returns:
+        (有效价格行列表, 验证报告)
+    """
+    validator = EnhancedDataValidator(data_type="prices")
+    return validator.filter_valid_metrics(prices, min_pass_rate)

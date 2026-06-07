@@ -352,3 +352,208 @@ class TestBatchFetcherIntegrationGap:
         assert "batch_fetcher" not in sig.parameters, (
             "fuse_batch now accepts batch_fetcher — update this test and remove the integration gap note"
         )
+
+
+# ============================================================================
+# R20: BatchDataFetcher 公开缓存方法 (has_cached / get_cached)
+# ============================================================================
+
+
+class TestBatchDataFetcherPublicCacheAccessors:
+    """R20: 公开 has_cached() / get_cached() 方法替代直接访问 _cache。"""
+
+    def test_has_cached_returns_false_for_missing_key(self):
+        """未缓存的 key 返回 False。"""
+        fetcher = BatchDataFetcher(use_batch=True)
+        assert fetcher.has_cached("nonexistent_key") is False
+
+    def test_has_cached_returns_true_after_set(self):
+        """set 之后 has_cached 返回 True。"""
+        fetcher = BatchDataFetcher(use_batch=True)
+        fetcher._cache.set("test_key", {"foo": "bar"})
+        assert fetcher.has_cached("test_key") is True
+
+    def test_get_cached_returns_value(self):
+        """get_cached 返回缓存值。"""
+        fetcher = BatchDataFetcher(use_batch=True)
+        fetcher._cache.set("test_key", [1, 2, 3])
+        assert fetcher.get_cached("test_key") == [1, 2, 3]
+
+    def test_get_cached_returns_none_for_missing_key(self):
+        """未缓存的 key 返回 None (与 BatchDataCache.get 一致)。"""
+        fetcher = BatchDataFetcher(use_batch=True)
+        assert fetcher.get_cached("nonexistent_key") is None
+
+
+# ============================================================================
+# R20: 单 ticker 路径共享批量缓存
+# ============================================================================
+
+
+class TestSingleTickerBatchCacheSharing:
+    """R20: _fetch_single_ticker_prices_sync 应优先命中批量缓存, 避免重复拉 tushare。"""
+
+    def test_single_ticker_hits_batch_cache(self):
+        """批量缓存命中时, 单 ticker 路径直接 filter, 不调 tushare。"""
+        fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
+        # 预先填充批量缓存
+        batch_df = _make_daily_prices_df([
+            {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
+            {"ts_code": "000002.SZ", "close": 20.5, "trade_date": "20260601"},
+        ])
+        fetcher._cache.set("daily_price_batch:20260601", batch_df)
+
+        # 不 patch 底层 tushare, 走原同步方法
+        result = fetcher._fetch_single_ticker_prices_sync("000001", "20260601", "20260601")
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["ts_code"] == "000001.SZ"
+        assert result[0]["close"] == 10.5
+        assert result[0]["trade_date"] == "20260601"
+
+    def test_single_ticker_not_in_batch_returns_empty(self):
+        """批量缓存命中但 ticker 不在批量结果中 -> 返回空列表 (视为停牌/未上市)。"""
+        fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
+        batch_df = _make_daily_prices_df([
+            {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
+        ])
+        fetcher._cache.set("daily_price_batch:20260601", batch_df)
+
+        result = fetcher._fetch_single_ticker_prices_sync("000999", "20260601", "20260601")
+        assert result == []
+
+    def test_single_ticker_cache_miss_falls_back_to_tushare(self):
+        """批量缓存未命中时, 走原 tushare 路径。"""
+        fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
+        # 模拟底层 tushare 调用 (从 tushare_api 源模块 patch, 因为 _fetch_single_ticker_prices_sync
+        # 内部使用的是函数体内 import 的本地引用)
+        import src.tools.tushare_api as tushare_api_module
+
+        mock_df = _make_daily_prices_df([
+            {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
+        ])
+
+        with patch.object(tushare_api_module, "_get_pro", return_value=MagicMock()):
+            with patch.object(tushare_api_module, "_cached_tushare_dataframe_call", return_value=mock_df) as mock_call:
+                result = fetcher._fetch_single_ticker_prices_sync("000001", "20260601", "20260601")
+
+        mock_call.assert_called_once()
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["ts_code"] == "000001.SZ"
+
+        # 命中走 tushare 成功路径, 不应记 cache_miss
+        stats = fetcher.stats()
+        assert stats["single_ticker_cache_misses"] == 0
+
+    def test_single_ticker_tushare_exception_records_miss(self):
+        """tushare 异常时, 记 cache_miss。"""
+        fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
+        import src.tools.tushare_api as tushare_api_module
+
+        with patch.object(tushare_api_module, "_get_pro", return_value=MagicMock()):
+            with patch.object(tushare_api_module, "_cached_tushare_dataframe_call", side_effect=RuntimeError("tushare down")):
+                result = fetcher._fetch_single_ticker_prices_sync("000001", "20260601", "20260601")
+
+        assert result == []
+        stats = fetcher.stats()
+        assert stats["single_ticker_cache_misses"] >= 1
+
+    def test_single_ticker_tushare_empty_records_miss(self):
+        """tushare 返回空 DataFrame 时, 记 cache_miss。"""
+        fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
+        import src.tools.tushare_api as tushare_api_module
+
+        with patch.object(tushare_api_module, "_get_pro", return_value=MagicMock()):
+            with patch.object(tushare_api_module, "_cached_tushare_dataframe_call", return_value=pd.DataFrame()):
+                result = fetcher._fetch_single_ticker_prices_sync("000001", "20260601", "20260601")
+
+        assert result == []
+        stats = fetcher.stats()
+        assert stats["single_ticker_cache_misses"] >= 1
+
+    def test_single_ticker_cache_hit_increments_stats(self):
+        """缓存命中时, single_ticker_cache_hits 计数 +1, cache_hits 也 +1。"""
+        fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
+        batch_df = _make_daily_prices_df([{"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"}])
+        fetcher._cache.set("daily_price_batch:20260601", batch_df)
+
+        before_hits = fetcher.stats()["single_ticker_cache_hits"]
+        before_cache_hits = fetcher.stats()["cache_hits"]
+        result = fetcher._fetch_single_ticker_prices_sync("000001", "20260601", "20260601")
+        assert len(result) == 1
+
+        stats = fetcher.stats()
+        assert stats["single_ticker_cache_hits"] == before_hits + 1
+        assert stats["cache_hits"] == before_cache_hits + 1
+
+    def test_batch_df_missing_ts_code_column_falls_back(self):
+        """批量缓存存在但缺少 ts_code 列 -> 回退到 tushare, 记 cache_miss。"""
+        fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
+        # 故意构造缺少 ts_code 的 DataFrame
+        bad_df = pd.DataFrame({"trade_date": ["20260601"], "close": [10.0]})
+        fetcher._cache.set("daily_price_batch:20260601", bad_df)
+
+        import src.tools.tushare_api as tushare_api_module
+
+        mock_df = _make_daily_prices_df([{"ts_code": "000001.SZ", "close": 10.5}])
+        with patch.object(tushare_api_module, "_get_pro", return_value=MagicMock()):
+            with patch.object(tushare_api_module, "_cached_tushare_dataframe_call", return_value=mock_df):
+                result = fetcher._fetch_single_ticker_prices_sync("000001", "20260601", "20260601")
+
+        assert len(result) == 1
+        assert fetcher.stats()["single_ticker_cache_misses"] >= 1
+
+
+# ============================================================================
+# R20: 集成 — preheater 预热后, 单 ticker 自动命中
+# ============================================================================
+
+
+class TestPreheatSingleTickerIntegration:
+    """R20 集成验证: preheater 预热 daily_price_batch 后,
+    单 ticker 路径自动命中, 不再调 tushare。"""
+
+    def test_preheat_then_single_ticker_auto_hits(self):
+        """preheater 写入批量缓存后, _fetch_single_ticker_prices_sync 不调 tushare。"""
+        from src.screening import batch_data_fetcher
+        from src.screening.batch_data_fetcher import (
+            get_global_batch_data_fetcher,
+            reset_global_batch_data_fetcher,
+        )
+
+        reset_global_batch_data_fetcher()
+        try:
+            from src.data.cache_preheater import _fetch_daily_prices
+
+            sample = _make_daily_prices_df([
+                {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
+                {"ts_code": "000002.SZ", "close": 20.5, "trade_date": "20260601"},
+            ])
+            with patch.object(batch_data_fetcher, "get_daily_price_batch", return_value=sample):
+                preheat_result = _fetch_daily_prices("20260601", force=True)
+            assert preheat_result is not None
+
+            # 模拟下游: 单 ticker 价格拉取。函数内 import 引用 src.tools.tushare_api,
+            # patch 源模块 (而非 batch_data_fetcher)。
+            import src.tools.tushare_api as tushare_api_module
+
+            fetcher = get_global_batch_data_fetcher()
+            with patch.object(tushare_api_module, "_get_pro") as mock_pro, \
+                 patch.object(tushare_api_module, "_cached_tushare_dataframe_call") as mock_tushare_call:
+                mock_pro.return_value = MagicMock()
+                result = fetcher._fetch_single_ticker_prices_sync("000001", "20260601", "20260601")
+
+            # 单 ticker 应从批量缓存读取, 底层 _cached_tushare_dataframe_call 不应被调
+            mock_tushare_call.assert_not_called()
+            assert isinstance(result, list)
+            assert len(result) == 1
+            assert result[0]["ts_code"] == "000001.SZ"
+            assert result[0]["close"] == 10.5
+
+            # 命中统计应反映
+            stats = fetcher.stats()
+            assert stats["single_ticker_cache_hits"] >= 1
+        finally:
+            reset_global_batch_data_fetcher()

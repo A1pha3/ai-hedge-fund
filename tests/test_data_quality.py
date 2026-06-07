@@ -5,11 +5,18 @@ from src.data.adapters.akshare_adapter import AKShareAdapter
 from src.data.adapters.tushare_adapter import TushareAdapter
 from src.data.cleaner import OutlierDetector, SmartDataCleaner
 from src.data.validation_rules import (
+    PRICE_RULES,
+    RULE_NO_FUTURE_DATE,
+    RULE_NO_NEGATIVE_PRICE,
+    RULE_OHLC_CONSISTENCY,
+    RULE_PRICE_REASONABLE_RANGE,
+    RULE_VOLUME_NON_NEGATIVE,
     get_error_rules,
     get_rule_by_field,
+    get_rules_for_data_type,
     get_warning_rules,
 )
-from src.data.validator_v2 import EnhancedDataValidator
+from src.data.validator_v2 import EnhancedDataValidator, validate_prices
 from src.data.validator_v2_helpers import _is_invalid_value
 
 
@@ -522,3 +529,188 @@ class TestIntegration:
 
         is_valid, _ = validator.validate_metric(fixed[0])
         assert is_valid is True
+
+
+class TestPriceValidatorRules:
+    """R20 价格类 validator 规则测试.
+
+    R19 审查发现 16 条 metrics 规则全部针对财务指标, 价格类 (OHLC / volume /
+    日期) 没有任何 validator 兜底; 低质量价格直通到技术指标 → 信号 → 组合。
+    R20 新增 5 条价格规则做硬门槛, 这里覆盖每条规则的正反例 + 注册表完整性。
+    """
+
+    @pytest.fixture
+    def price_validator(self):
+        return EnhancedDataValidator(data_type="prices")
+
+    @staticmethod
+    def _make_price(**overrides):
+        """构造一条合法价格行作为测试基线, 调用方按需 override 个别字段."""
+        base = {
+            "ticker": "600519",
+            "open": 100.0,
+            "high": 105.0,
+            "low": 98.0,
+            "close": 102.0,
+            "volume": 1_000_000,
+            "time": "2026-05-30",
+        }
+        base.update(overrides)
+        return base
+
+    # ------- 规则注册表完整性 --------------------------------------------
+
+    def test_price_rules_registry_contains_all_five(self):
+        """PRICE_RULES 应当注册 5 条规则, 与 R20 设计对齐."""
+        assert len(PRICE_RULES) == 5
+        names = {r.field for r in PRICE_RULES}
+        assert names == {
+            RULE_OHLC_CONSISTENCY,
+            RULE_NO_NEGATIVE_PRICE,
+            RULE_NO_FUTURE_DATE,
+            RULE_VOLUME_NON_NEGATIVE,
+            RULE_PRICE_REASONABLE_RANGE,
+        }
+
+    def test_get_rules_for_data_type_prices(self):
+        """get_rules_for_data_type('prices') 应当返回 PRICE_RULES 全集."""
+        rules = get_rules_for_data_type("prices")
+        assert len(rules) == 5
+        assert {r.field for r in rules} == {r.field for r in PRICE_RULES}
+
+    def test_get_rule_by_field_finds_price_rule(self):
+        """price 规则可通过 get_rule_by_field 查询."""
+        rule = get_rule_by_field(RULE_OHLC_CONSISTENCY)
+        assert rule is not None
+        assert rule.severity == "error"
+
+    def test_get_error_rules_includes_price_errors(self):
+        """get_error_rules 应当同时包含财务 error 规则与价格 error 规则."""
+        error_fields = {r.field for r in get_error_rules()}
+        # 4 条 error 级价格规则 (OHLC / 负价格 / 未来日期 / 负成交量) 都在
+        assert RULE_OHLC_CONSISTENCY in error_fields
+        assert RULE_NO_NEGATIVE_PRICE in error_fields
+        assert RULE_NO_FUTURE_DATE in error_fields
+        assert RULE_VOLUME_NON_NEGATIVE in error_fields
+
+    def test_get_warning_rules_includes_reasonable_range(self):
+        """合理价格区间属 warning 级 (允许极端但不离谱的边界)."""
+        warning_fields = {r.field for r in get_warning_rules()}
+        assert RULE_PRICE_REASONABLE_RANGE in warning_fields
+
+    # ------- 单条规则验证: 失败用例 --------------------------------------
+
+    def test_ohlc_inconsistency_high_below_open_fails(self, price_validator):
+        """OHLC 一致性: high < open → 校验失败."""
+        bad_row = self._make_price(open=100.0, high=99.0, low=95.0, close=98.0)
+        is_valid, results = price_validator.validate_metric(bad_row)
+        assert is_valid is False
+        assert any(r.field == RULE_OHLC_CONSISTENCY and not r.is_valid for r in results)
+
+    def test_ohlc_inconsistency_low_above_close_fails(self, price_validator):
+        """OHLC 一致性: low > close → 校验失败."""
+        bad_row = self._make_price(open=100.0, high=105.0, low=103.0, close=101.0)
+        is_valid, results = price_validator.validate_metric(bad_row)
+        assert is_valid is False
+        assert any(r.field == RULE_OHLC_CONSISTENCY and not r.is_valid for r in results)
+
+    def test_negative_price_fails(self, price_validator):
+        """所有价格必须 > 0: close 为负 → 失败."""
+        bad_row = self._make_price(close=-1.0, low=-2.0)
+        is_valid, results = price_validator.validate_metric(bad_row)
+        assert is_valid is False
+        assert any(r.field == RULE_NO_NEGATIVE_PRICE and not r.is_valid for r in results)
+
+    def test_zero_price_fails(self, price_validator):
+        """价格 == 0 也属非法 (停牌应当无 row, 不是 0 价)."""
+        bad_row = self._make_price(open=0.0)
+        is_valid, results = price_validator.validate_metric(bad_row)
+        assert is_valid is False
+        assert any(r.field == RULE_NO_NEGATIVE_PRICE and not r.is_valid for r in results)
+
+    def test_future_date_fails(self, price_validator):
+        """未来日期 → 校验失败 (10 年后)."""
+        bad_row = self._make_price(time="2036-01-01")
+        is_valid, results = price_validator.validate_metric(bad_row)
+        assert is_valid is False
+        assert any(r.field == RULE_NO_FUTURE_DATE and not r.is_valid for r in results)
+
+    def test_negative_volume_fails(self, price_validator):
+        """负成交量 → 校验失败."""
+        bad_row = self._make_price(volume=-100)
+        is_valid, results = price_validator.validate_metric(bad_row)
+        assert is_valid is False
+        assert any(r.field == RULE_VOLUME_NON_NEGATIVE and not r.is_valid for r in results)
+
+    def test_close_below_reasonable_range_warns(self, price_validator):
+        """close=0.001 低于合理区间下界 0.01 → 出现 warning 级失败 (不影响 is_valid)."""
+        edge_row = self._make_price(close=0.001, low=0.001, open=0.001, high=0.002)
+        # 负价格规则要求 > 0, 0.001 满足; 仅触发合理区间 warning。
+        is_valid, results = price_validator.validate_metric(edge_row)
+        # warning 级规则不让 is_valid 翻为 False
+        assert is_valid is True
+        assert any(r.field == RULE_PRICE_REASONABLE_RANGE and not r.is_valid for r in results)
+
+    def test_close_above_reasonable_range_warns(self, price_validator):
+        """close=99999 超出合理区间上界 10000 → warning 级失败."""
+        edge_row = self._make_price(close=99999.0, low=98000.0, open=98500.0, high=99999.0)
+        is_valid, results = price_validator.validate_metric(edge_row)
+        assert is_valid is True
+        assert any(r.field == RULE_PRICE_REASONABLE_RANGE and not r.is_valid for r in results)
+
+    # ------- 合法用例: 必须放行 ------------------------------------------
+
+    def test_valid_price_row_passes(self, price_validator):
+        """合法价格行 → 全部规则通过."""
+        good_row = self._make_price()
+        is_valid, results = price_validator.validate_metric(good_row)
+        assert is_valid is True
+        # 也不应触发任何 warning 级失败
+        assert not any(not r.is_valid for r in results)
+
+    def test_today_date_passes(self, price_validator):
+        """今天日期 → 不算未来日期, 必须通过."""
+        from datetime import datetime, timezone
+
+        today = datetime.now(timezone.utc).date().isoformat()
+        good_row = self._make_price(time=today)
+        is_valid, results = price_validator.validate_metric(good_row)
+        assert is_valid is True
+
+    # ------- 批量入口 ----------------------------------------------------
+
+    def test_validate_prices_helper_filters_invalid(self):
+        """validate_prices 便捷函数: 过滤掉非法行, 保留合法行."""
+        rows = [
+            self._make_price(close=102.0),  # ok
+            self._make_price(close=-5.0, low=-10.0),  # 负价格 → 失败
+            self._make_price(time="2099-12-31"),  # 未来日期 → 失败
+        ]
+        valid, report = validate_prices(rows, min_pass_rate=0.0)
+        assert report.total == 3
+        assert len(valid) == 1
+        assert valid[0]["close"] == 102.0
+
+    def test_validate_prices_batch_report_records_errors(self):
+        """批量验证: 错误条目落到 report.errors, warning 落到 warnings_list."""
+        rows = [
+            self._make_price(close=-1.0, low=-2.0),  # error: 负价格
+            self._make_price(close=99999.0, low=98000.0, open=98500.0, high=99999.0),  # warning: 超区间
+        ]
+        _, report = validate_prices(rows, min_pass_rate=0.0)
+        # 至少一条 error (负价格), 至少一条 warning (合理区间)
+        assert len(report.errors) >= 1
+        assert any(e["field"] == RULE_NO_NEGATIVE_PRICE for e in report.errors)
+        assert len(report.warnings_list) >= 1
+        assert any(w["field"] == RULE_PRICE_REASONABLE_RANGE for w in report.warnings_list)
+
+    def test_default_validator_does_not_apply_price_rules(self):
+        """回归保护: 默认 (metrics) validator 不应误用价格规则, 否则普通 metric
+        dict 会因为缺 OHLC 字段被误判失败。"""
+        validator = EnhancedDataValidator()
+        metric = create_metric_dict(return_on_equity=0.15, gross_margin=0.30, net_margin=0.12)
+        is_valid, results = validator.validate_metric(metric)
+        assert is_valid is True
+        # 结果里不应含任何价格规则的 field
+        price_rule_names = {r.field for r in PRICE_RULES}
+        assert not any(r.field in price_rule_names for r in results)

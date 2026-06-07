@@ -137,7 +137,25 @@ class BatchDataFetcher:
         self._batch_calls = 0
         self._batch_failures = 0
         self._single_ticker_calls = 0
+        self._single_ticker_cache_hits = 0
+        self._single_ticker_cache_misses = 0
         self._cache_hits = 0
+
+    # ---- 公开缓存访问方法 (供 R20+ 集成方使用, 避免直接访问 _cache) ----
+
+    def has_cached(self, key: str) -> bool:
+        """检查 BatchDataCache 是否已缓存 key (在 TTL 内)。
+
+        替代直接访问 ``fetcher._cache`` 私有属性的方式。
+        """
+        return self._cache.get(key) is not None
+
+    def get_cached(self, key: str) -> Any:
+        """读取 BatchDataCache 中 key 的值 (未命中/过期返回 None)。
+
+        同样替代直接访问 ``fetcher._cache`` 私有属性。
+        """
+        return self._cache.get(key)
 
     # ---- 批量接口 (tushare) ----
 
@@ -190,10 +208,40 @@ class BatchDataFetcher:
         start_date: str,
         end_date: str,
     ) -> list[dict[str, Any]]:
-        """单 ticker 价格拉取的同步实现 (可被 mock 覆盖)。"""
+        """单 ticker 价格拉取的同步实现 (可被 mock 覆盖)。
+
+        优化 (R20): 如果 end_date 对应的 ``daily_price_batch:{end_date}`` 已在
+        BatchDataCache 中, 直接 filter 该 ticker 的 row 返回, 避免重复拉 tushare。
+        """
         # 延迟导入避免循环引用
         from src.tools.tushare_api import _get_pro, _cached_tushare_dataframe_call
 
+        # R20: 尝试命中批量缓存 (单 ticker 共享)
+        # 约定: end_date 形如 "20260601" -> 批量 key = "daily_price_batch:20260601"
+        # 注: start_date 可能 < end_date, 但批量缓存按 trade_date 拉取,
+        # 因此仅在 start_date == end_date 时可直接命中; 否则仍需走单 ticker 接口
+        # 对 [start_date, end_date] 区间过滤。
+        batch_df: pd.DataFrame | None = None
+        batch_cache_key = f"daily_price_batch:{end_date}"
+        cached = self._cache.get(batch_cache_key)
+        if isinstance(cached, pd.DataFrame) and not cached.empty:
+            batch_df = cached
+            self._single_ticker_cache_hits += 1
+            self._cache_hits += 1
+
+        if batch_df is not None:
+            ts_code = _to_ts_code(ticker)
+            if "ts_code" in batch_df.columns:
+                rows = batch_df[batch_df["ts_code"] == ts_code]
+                if not rows.empty:
+                    # 批量行已是单日数据, 直接 dict 化
+                    return rows.to_dict(orient="records")
+                # ticker 不在批量结果中 (可能停牌 / 退市), 视为空数据
+                return []
+            # 批量 DF 缺少 ts_code 列, 视为缓存格式不匹配, 回退到 tushare
+            self._single_ticker_cache_misses += 1
+
+        # 走原 tushare 路径
         pro = _get_pro()
         if pro is None:
             return []
@@ -207,8 +255,10 @@ class BatchDataFetcher:
                 fields="ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg",
             )
         except Exception:
+            self._single_ticker_cache_misses += 1
             return []
         if df is None or df.empty:
+            self._single_ticker_cache_misses += 1
             return []
         return df.to_dict(orient="records")
 
@@ -250,6 +300,8 @@ class BatchDataFetcher:
         self._batch_calls = 0
         self._batch_failures = 0
         self._single_ticker_calls = 0
+        self._single_ticker_cache_hits = 0
+        self._single_ticker_cache_misses = 0
         self._cache_hits = 0
         self._cache.clear()
 
@@ -259,6 +311,8 @@ class BatchDataFetcher:
             "batch_calls": self._batch_calls,
             "batch_failures": self._batch_failures,
             "single_ticker_calls": self._single_ticker_calls,
+            "single_ticker_cache_hits": self._single_ticker_cache_hits,
+            "single_ticker_cache_misses": self._single_ticker_cache_misses,
             "cache_hits": self._cache_hits,
             "cache_hits_internal": cache_stats["hits"],
             "cache_misses_internal": cache_stats["misses"],

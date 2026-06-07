@@ -126,13 +126,13 @@ class DataRouter:
         cached_data = None
 
         if data_type == DataType.PRICE:
-            cached_data = self.cache.get_prices(cache_key)
+            cached_data = self.cache.get_prices(cache_key, provider="router")
         elif data_type == DataType.FUNDAMENTAL:
-            cached_data = self.cache.get_financial_metrics(cache_key)
+            cached_data = self.cache.get_financial_metrics(cache_key, provider="router")
         elif data_type == DataType.NEWS:
-            cached_data = self.cache.get_company_news(cache_key)
+            cached_data = self.cache.get_company_news(cache_key, provider="router")
         elif data_type == DataType.INSIDER_TRADE:
-            cached_data = self.cache.get_insider_trades(cache_key)
+            cached_data = self.cache.get_insider_trades(cache_key, provider="router")
 
         if cached_data:
             return DataResponse(data=cached_data, source="cache", cached=True)
@@ -143,6 +143,9 @@ class DataRouter:
         """
         设置缓存数据
 
+        显式传 provider="router" 以保持与 _get_from_cache 的 cache key 一致
+        （R20 修复：避免空 provider 走旧 key 格式导致读写不一致）。
+
         Args:
             cache_key: 缓存键
             data_type: 数据类型
@@ -150,13 +153,13 @@ class DataRouter:
         """
         try:
             if data_type == DataType.PRICE:
-                self.cache.set_prices(cache_key, data)
+                self.cache.set_prices(cache_key, data, provider="router")
             elif data_type == DataType.FUNDAMENTAL:
-                self.cache.set_financial_metrics(cache_key, data)
+                self.cache.set_financial_metrics(cache_key, data, provider="router")
             elif data_type == DataType.NEWS:
-                self.cache.set_company_news(cache_key, data)
+                self.cache.set_company_news(cache_key, data, provider="router")
             elif data_type == DataType.INSIDER_TRADE:
-                self.cache.set_insider_trades(cache_key, data)
+                self.cache.set_insider_trades(cache_key, data, provider="router")
         except Exception as e:
             logger.warning(f"Failed to cache data: {e}")
 

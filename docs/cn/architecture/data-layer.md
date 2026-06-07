@@ -141,12 +141,9 @@ daily_basic_batch:{trade_date}
 
 ## 5. 数据质量监控
 
-`DataQualityMonitor`（`src/data/quality_monitor.py`）：
-
-- 存储路径默认 `data/quality_reports/`，按日期分文件 `<YYYYMMDD>.jsonl`。
-- 阈值 0.8 —— `quality_score < 0.8` 时 `_send_alert`（仅写 logger.error，无外发通道）。
-- 每日报告 / 趋势接口只在 `metrics_history` 内存列表上计算 —— 进程重启后**历史归零**。
-- `DataQualityMonitor` 是**单实例类**（无 global singleton），目前 `src/` 内零调用方（`grep` 结果仅自身），是 dead code 状态。
+> **R20 更新 (2026-06-08)**: `src/data/quality_monitor.py` 已被删除 (零调用方,
+> 全文唯一引用是此文档与设计稿)。如需重新引入, 应在 `DataRouter` 出口埋点而
+> 非作为独立单实例类暴露。
 
 ## 6. 性能优化
 
@@ -176,9 +173,9 @@ daily_basic_batch:{trade_date}
 | 3 | `DiskCache` 每次 get/set 重建连接，未启用 WAL | `enhanced_cache.py:272-275, 312-325` |
 | 4 | 磁盘缓存无后台 TTL 清理线程 | `enhanced_cache.py:392-406` |
 | 5 | Redis 在生产环境通常不可用，第二层是占位 | `enhanced_cache.py:131-141` |
-| 6 | 价格类数据无 validator_v2 规则 | `validation_rules.py`（全无 price_*） |
+| 6 | ~~价格类数据无 validator_v2 规则~~ → **R20 修复**: 已新增 5 条价格规则 (OHLC/负价/未来日期/负量/合理区间) | `validation_rules.py PRICE_RULES` |
 | 7 | 批量回填的 DataFrame 不经过 validator_v2 | `batch_data_fetcher.py:187-213` |
-| 8 | `DataQualityMonitor` 无调用方，是 dead code | `quality_monitor.py` 全文 |
+| 8 | ~~`DataQualityMonitor` 无调用方，是 dead code~~ → **R20 删除** | (已移除) |
 | 9 | 空响应会被视为"成功"且继续尝试下一个 provider —— N 个 provider 一定全部跑完 | `router_helpers.py:58-63` |
 | 10 | `BatchDataFetcher` 无内建 rate limiter，仅 Semaphore | `batch_data_fetcher.py:225-239` |
 | 11 | `cache_preheater` 直接访问 `fetcher._cache` 私有属性 | `cache_preheater.py:114, 133` |

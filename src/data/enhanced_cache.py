@@ -258,20 +258,114 @@ class DiskCache:
             cache_path = os.path.join(os.path.expanduser("~"), ".cache", "ai-hedge-fund", "cache.sqlite")
         self._path = cache_path
 
-        # 初始化数据库表（只执行一次）
+        # 长连接 + 写锁 + WAL：避免每次 get/set/delete 都新建 sqlite3 连接，
+        # 启用 WAL 模式以降低并发读写时的 SQLITE_BUSY 风险（R20 修复）。
+        self._conn: sqlite3.Connection | None = None
+        self._write_lock = threading.Lock()
+        self._journal_mode: str | None = None
         try:
             os.makedirs(os.path.dirname(self._path), exist_ok=True)
-            conn = sqlite3.connect(self._path)
-            conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expires_at INTEGER)")
-            conn.commit()
-            conn.close()
+            self._conn = sqlite3.connect(
+                self._path,
+                check_same_thread=False,
+                timeout=30.0,
+                isolation_level=None,  # autocommit；显式控制事务
+            )
+            # WAL 模式：reader 与 writer 不互斥；首次设置后 SQLite 会持久化
+            # journal_mode，下次再开连接会保留 WAL 标记，但我们仍每次显式
+            # 确认一次以便测试断言。
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA synchronous=NORMAL")
+                self._conn.execute("PRAGMA temp_store=MEMORY")
+                cur = self._conn.execute("PRAGMA journal_mode")
+                row = cur.fetchone()
+                self._journal_mode = (row[0] if row else "").lower()
+            except Exception as pragma_err:
+                logger.debug(f"Disk cache PRAGMA setup error: {pragma_err}")
+            self._conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expires_at INTEGER)")
         except Exception as e:
             logger.warning(f"Disk cache init error: {e}")
             self._available = False
+            # 关闭失败的连接，避免 fd 泄漏
+            try:
+                if self._conn is not None:
+                    self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+    def _is_alive(self) -> bool:
+        """检查长连接是否仍可用（未关闭且底层 fd 有效）。"""
+        if self._conn is None:
+            return False
+        try:
+            # 低成本 ping：单行 SELECT，失败时抛 sqlite3.ProgrammingError
+            self._conn.execute("SELECT 1").fetchone()
+            return True
+        except Exception as e:
+            logger.debug(f"Disk cache connection dead, will recreate: {e}")
+            return False
+
+    def _ensure_conn(self) -> sqlite3.Connection | None:
+        """确保长连接可用；失效时尝试重建一次。"""
+        if not self.is_available():
+            return None
+        if self._is_alive():
+            return self._conn
+        # 重建
+        try:
+            try:
+                if self._conn is not None:
+                    self._conn.close()
+            except Exception:
+                pass
+            self._conn = sqlite3.connect(
+                self._path,
+                check_same_thread=False,
+                timeout=30.0,
+                isolation_level=None,
+            )
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA synchronous=NORMAL")
+                cur = self._conn.execute("PRAGMA journal_mode")
+                row = cur.fetchone()
+                self._journal_mode = (row[0] if row else "").lower()
+            except Exception:
+                pass
+            self._conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expires_at INTEGER)")
+            return self._conn
+        except Exception as e:
+            logger.warning(f"Disk cache reconnect failed: {e}")
+            self._available = False
+            self._conn = None
+            return None
 
     def _get_conn(self):
-        """获取新的数据库连接（线程安全）"""
-        return sqlite3.connect(self._path)
+        """获取底层 sqlite 连接。
+
+        行为说明：保持向后兼容。早期实现每次返回新连接（线程隔离），
+        现在改为返回长连接；调用方在使用完连接后 **不应** 再调用
+        .close()，否则会断开整个缓存的长连接。
+        """
+        return self._ensure_conn()
+
+    def close(self):
+        """显式关闭底层 sqlite 连接（供测试 teardown / 进程退出时使用）。"""
+        with self._write_lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except Exception as e:
+                    logger.debug(f"Disk cache close error: {e}")
+                finally:
+                    self._conn = None
+
+    @property
+    def journal_mode(self) -> str | None:
+        """返回当前 SQLite 的 journal_mode（"wal"/"delete"/...），便于测试断言。"""
+        return self._journal_mode
 
     def is_available(self) -> bool:
         """
@@ -309,20 +403,20 @@ class DiskCache:
         """
         if not self.is_available():
             return _sentinel
+        conn = self._ensure_conn()
+        if conn is None:
+            return _sentinel
         try:
-            conn = self._get_conn()
-            try:
-                cursor = conn.execute("SELECT value, expires_at FROM cache WHERE key = ?", (key,))
-                row = cursor.fetchone()
-                if not row:
-                    return _sentinel
-                value, expires_at = row
-                if expires_at and expires_at < self._now_ts():
-                    self.delete(key)
-                    return _sentinel
-                return pickle.loads(value)
-            finally:
-                conn.close()
+            cursor = conn.execute("SELECT value, expires_at FROM cache WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            if not row:
+                return _sentinel
+            value, expires_at = row
+            if expires_at and expires_at < self._now_ts():
+                # 惰性删除过期项（走 set 的写锁路径，幂等）
+                self.delete(key)
+                return _sentinel
+            return pickle.loads(value)
         except Exception as e:
             logger.warning(f"Disk cache get error: {e}")
             return _sentinel
@@ -338,16 +432,15 @@ class DiskCache:
         """
         if not self.is_available():
             return
+        conn = self._ensure_conn()
+        if conn is None:
+            return
         try:
-            conn = self._get_conn()
-            try:
-                ttl_seconds = self.default_ttl if ttl is None else ttl
-                expires_at = 0 if ttl_seconds == 0 else self._now_ts() + ttl_seconds
-                data = pickle.dumps(value)
+            ttl_seconds = self.default_ttl if ttl is None else ttl
+            expires_at = 0 if ttl_seconds == 0 else self._now_ts() + ttl_seconds
+            data = pickle.dumps(value)
+            with self._write_lock:
                 conn.execute("INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, ?)", (key, data, expires_at))
-                conn.commit()
-            finally:
-                conn.close()
         except Exception as e:
             logger.warning(f"Disk cache set error: {e}")
 
@@ -360,13 +453,12 @@ class DiskCache:
         """
         if not self.is_available():
             return
+        conn = self._ensure_conn()
+        if conn is None:
+            return
         try:
-            conn = self._get_conn()
-            try:
+            with self._write_lock:
                 conn.execute("DELETE FROM cache WHERE key = ?", (key,))
-                conn.commit()
-            finally:
-                conn.close()
         except Exception as e:
             logger.warning(f"Disk cache delete error: {e}")
 
@@ -379,13 +471,12 @@ class DiskCache:
         """
         if not self.is_available():
             return
+        conn = self._ensure_conn()
+        if conn is None:
+            return
         try:
-            conn = self._get_conn()
-            try:
+            with self._write_lock:
                 conn.execute("DELETE FROM cache")
-                conn.commit()
-            finally:
-                conn.close()
         except Exception as e:
             logger.warning(f"Disk cache clear error: {e}")
 
@@ -393,14 +484,13 @@ class DiskCache:
         """返回当前磁盘缓存中的条目数。"""
         if not self.is_available():
             return 0
+        conn = self._ensure_conn()
+        if conn is None:
+            return 0
         try:
-            conn = self._get_conn()
-            try:
-                cursor = conn.execute("SELECT COUNT(*) FROM cache")
-                row = cursor.fetchone()
-                return int(row[0]) if row else 0
-            finally:
-                conn.close()
+            cursor = conn.execute("SELECT COUNT(*) FROM cache")
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
         except Exception as e:
             logger.warning(f"Disk cache count error: {e}")
             return 0

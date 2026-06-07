@@ -111,7 +111,7 @@ def _fetch_daily_basic(trade_date: str, force: bool) -> pd.DataFrame | None:
 
     fetcher = get_global_batch_data_fetcher()
     cache_key = f"daily_basic_batch:{trade_date}"
-    if not force and fetcher._cache.get(cache_key) is not None:  # type: ignore[attr-defined]
+    if not force and fetcher.has_cached(cache_key):
         return None
 
     df = fetcher.fetch_daily_basic_batch(trade_date)
@@ -130,7 +130,7 @@ def _fetch_daily_prices(trade_date: str, force: bool) -> pd.DataFrame | None:
 
     fetcher = get_global_batch_data_fetcher()
     cache_key = f"daily_price_batch:{trade_date}"
-    if not force and fetcher._cache.get(cache_key) is not None:  # type: ignore[attr-defined]
+    if not force and fetcher.has_cached(cache_key):
         return None
 
     df = fetcher.fetch_daily_prices_batch(trade_date)
