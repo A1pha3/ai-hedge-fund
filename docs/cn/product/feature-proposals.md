@@ -749,8 +749,133 @@
 - Phase 3: 6/6 全部完成
 - P2 系列: 7/8 (剩 Web 前端任务)
 
+### v2.1 (2026-06-07) — Round 19: 文档体系完善
+
+#### 主要变更
+- **CLI 早期分发统一 (Round 18 完成)**: `src/cli/dispatcher.py` 集中管理 23 个早期命令 handler, 消除 `src/main.py` 中约 340 行的重复 `if "--xxx" in sys.argv` 模式
+- **文档体系 v2.1**: 新增 CLI 命令速查表、路线图完成度、用户快速开始三章
+
+#### 文档章节
+- 第十六章: CLI 命令速查表
+- 第十七章: 路线图完成度
+- 第十八章: 快速开始
+
+---
+
+## 十六、CLI 命令速查表
+
+### 数据获取与缓存
+- `--preheat` — 缓存预热（5 任务并发）
+- `--preheat --preheat-tasks=daily_basic,daily_prices` — 指定任务
+- `--preheat --force` — 强制刷新
+- `--preheat --list-tasks` — 查看可用任务
+
+### 核心选股
+- `--auto` — 全市场自动筛选
+- `--auto --top-n=20` — Top N 推荐
+- `--auto --trade-date=20260607` — 指定日期
+- `--explain 000001` — 解释推荐原因（因子明细+事件线+行业排名）
+- `--screen-only` — 仅 Layer A+B 评分
+
+### 市场分析
+- `--market-status` — 市场温度计
+- `--industry-rotation` — 行业轮动信号
+- `--factor-ic` — 因子 IC 排行
+- `--macro` — 宏观经济面板
+
+### 推荐辅助
+- `--tracking-summary` — 历史推荐胜率
+- `--winrate-dashboard` — 胜率看板
+- `--conditional-orders` — 条件单建议
+- `--compare 300750,600519,000001` — 标的对比
+- `--stock-detail 300750` — 标的深度分析
+- `--custom-weights --trend=0.4 --mean-reversion=0.1 --fundamental=0.3 --event-sentiment=0.2` — 自定义权重
+
+### 组合管理
+- `--rebalance` — 组合再平衡建议
+- `--performance-report` — 组合绩效周报/月报
+- `--attribution-daily` — 策略归因日报
+
+### 自选池
+- `--watchlist-add 000001 --name "平安银行" --tags 银行 高股息` — 添加
+- `--watchlist-remove 000001` — 移除
+- `--watchlist-list` — 列表
+- `--watchlist-status` — 状态评分
+
+### 报告导出与推送
+- `--export-pdf` — PDF 报告导出
+- `--push-test --channel=wecom` — 测试推送配置
+
+### 单股分析
+- `--ticker 000001,300750` — 单票分析
+- `--pipeline` — 完整日度流水线
+
+---
+
+## 十七、路线图完成度（截至 v2.1）
+
+| 阶段 | 完成度 | 剩余 |
+|------|--------|------|
+| Phase 1 (P0) | 5/6 (83%) | P0-4 Web 前端回测可视化 |
+| Phase 2 (P1) | 10/10 (100%) ✅ | - |
+| Phase 3 (P1) | 6/6 (100%) ✅ | - |
+| P2 系列 | 7/8 (88%) | P2-1/2/7 需 Web 前端 |
+| **总体** | **28/32 (88%)** | **4 项需前端支持** |
+
+---
+
+## 十八、快速开始
+
+### 第一次使用
+```bash
+# 1. 预热缓存（盘后或首次运行前）
+uv run python src/main.py --preheat
+
+# 2. 全市场自动筛选
+uv run python src/main.py --auto
+
+# 3. 解释某只票的推荐原因
+uv run python src/main.py --explain 000001
+
+# 4. 生成 PDF 报告
+AUTO_EXPORT_PDF=true uv run python src/main.py --auto
+
+# 5. 每日定时运行
+# 0 17 * * 1-5 cd /path/to/project && uv run python src/main.py --auto
+```
+
+### 进阶用法
+```bash
+# 自定义权重
+uv run python src/main.py --custom-weights --trend=0.5 --mean-reversion=0.1 --fundamental=0.3 --event-sentiment=0.1
+
+# 对比多只候选
+uv run python src/main.py --compare 300750,600519,000001
+
+# 查看自选池
+uv run python src/main.py --watchlist-list
+
+# 推送日报到企微
+uv run python src/main.py --preheat && uv run python src/main.py --auto --export-pdf
+```
+
+### Web 端访问
+```bash
+# 启动后端 + 前端
+./app/run.sh
+
+# 浏览器访问
+open http://localhost:5173
+```
+
+### 常用 API 端点
+- `POST /api/screening/auto` — 一键选股
+- `GET /api/screening/compare?tickers=300750,600519` — 标的对比
+- `GET /api/portfolio/risk-snapshot` — 风险快照
+- `GET /api/portfolio/performance-report?period=weekly` — 绩效报告
+
 ---
 
 > **文档维护说明**: 本文档应在每次功能迭代后更新。已完成功能标记 ✅，新增功能按优先级添加到对应章节。
 >
-> **最后更新**: 2026-06-07 (Round 18: v2.0 版本里程碑 — Round 7-18 累积成果汇总)
+> **最后更新**: 2026-06-07 (Round 19: v2.1 文档体系完善 — CLI 速查表 + 路线图完成度 + 快速开始)
