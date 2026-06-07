@@ -241,6 +241,18 @@ class BatchDataFetcher:
 
     # ---- 统计 ----
 
+    def reset_stats(self) -> None:
+        """重置调用统计计数器（不清理缓存）。
+
+        适用于全局单例在多次 ``run_auto_screening`` 调用间重置计数，
+        使 ``stats()`` 反映当次运行的真实数据。
+        """
+        self._batch_calls = 0
+        self._batch_failures = 0
+        self._single_ticker_calls = 0
+        self._cache_hits = 0
+        self._cache.clear()
+
     def stats(self) -> dict[str, int]:
         cache_stats = self._cache.stats()
         return {

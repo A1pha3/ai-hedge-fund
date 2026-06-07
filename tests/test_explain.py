@@ -216,6 +216,34 @@ class TestExplainIndustryRanking:
         assert rc == 0
         assert "无行业信息" in output
 
+    def test_explain_industry_ranking_none_score_b_no_crash(self):
+        """GAMMA-008: score_b=None in peers must not crash sorted() with TypeError."""
+        recs = [
+            _make_recommendation(ticker="000001", industry_sw="电子", score_b=0.60),
+            _make_recommendation(ticker="000002", industry_sw="电子", score_b=None),
+            _make_recommendation(ticker="000003", industry_sw="电子", score_b=0.50),
+        ]
+        report = _make_report(recommendations=recs)
+
+        rc, output = _run_explain_capture(report, ticker="000001")
+
+        assert rc == 0
+        assert "电子" in output
+        assert "第" in output
+
+    def test_explain_industry_ranking_nan_score_b_no_crash(self):
+        """GAMMA-008: score_b=NaN in peers must not produce undefined ordering."""
+        recs = [
+            _make_recommendation(ticker="000001", industry_sw="电子", score_b=float("nan")),
+            _make_recommendation(ticker="000002", industry_sw="电子", score_b=0.55),
+        ]
+        report = _make_report(recommendations=recs)
+
+        rc, output = _run_explain_capture(report, ticker="000001")
+
+        assert rc == 0
+        assert "电子" in output
+
 
 # ---------------------------------------------------------------------------
 # Test 3: Recent events
@@ -271,6 +299,29 @@ class TestExplainRecentEvents:
         assert rc == 0
         assert "公司发布业绩预增公告" in output
         assert "1天前" in output
+
+    def test_explain_articles_all_empty_titles_falls_back(self):
+        """When articles exist but all have empty titles, should show fallback message."""
+        articles = [
+            {"title": "", "days_old": 1},
+            {"title": "", "days_old": 2},
+        ]
+        sub_factors_event = {
+            "news_sentiment": _make_sub_factor(
+                "news_sentiment", 1, 60.0,
+                metrics={"articles": articles},
+            ),
+        }
+        signals = {
+            "event_sentiment": _make_strategy_signal(1, 55.0, sub_factors=sub_factors_event),
+        }
+        rec = _make_recommendation(strategy_signals=signals)
+        report = _make_report(recommendations=[rec])
+
+        rc, output = _run_explain_capture(report)
+
+        assert rc == 0
+        assert "暂无近期事件数据" in output
 
 
 # ---------------------------------------------------------------------------
@@ -329,3 +380,10 @@ class TestHelperFunctions:
         arts = [{"title": "a"}, {"title": "b"}]
         result = _extract_articles_from_event_subfactors({"news_sentiment": {"metrics": {"articles": arts}}})
         assert len(result) == 2
+
+    def test_build_factor_bar_nan_returns_empty(self):
+        """GAMMA-008: NaN confidence should not crash and should produce empty bar."""
+        from src.main import _build_factor_bar
+        import math
+        result = _build_factor_bar(float("nan"))
+        assert result == "░░░░░░░░░░"

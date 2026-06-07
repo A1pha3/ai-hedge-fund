@@ -18,7 +18,7 @@ def evaluate_crisis_response(
         "alerts": [],
     }
 
-    if hs300_daily_return <= -0.05 or limit_down_count > 500:
+    if hs300_daily_return <= -0.05 or limit_down_count >= 500:
         response.update({"mode": "defense", "position_cap": 0.3, "pause_new_buys": True})
         response["alerts"].append("crisis_defense_mode")
 

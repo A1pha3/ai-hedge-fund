@@ -23,6 +23,7 @@ import pytest
 from src.screening.batch_data_fetcher import (
     BatchDataCache,
     BatchDataFetcher,
+    get_global_batch_data_fetcher,
     is_batch_fetcher_enabled,
     reset_global_batch_data_fetcher,
 )
@@ -248,3 +249,106 @@ class TestBatchDataFetcherStats:
         stats = fetcher.stats()
         assert stats["batch_calls"] == 1
         assert stats["cache_hits"] == 1
+
+
+# ============================================================================
+# reset_stats() — 全局单例多次调用间状态重置
+# ============================================================================
+
+class TestBatchDataFetcherResetStats:
+    def test_reset_stats_clears_counters(self):
+        """reset_stats() should zero all counters and clear cache."""
+        fetcher = BatchDataFetcher(use_batch=True, max_concurrency=4)
+        expected = _make_daily_prices_df([{"ts_code": "000001.SZ"}])
+        with patch("src.screening.batch_data_fetcher.get_daily_price_batch", return_value=expected):
+            fetcher.fetch_daily_prices_batch("20260305")
+            fetcher.fetch_daily_prices_batch("20260305")
+        stats_before = fetcher.stats()
+        assert stats_before["batch_calls"] == 1
+        assert stats_before["cache_hits"] == 1
+        assert stats_before["cache_size"] == 1
+
+        fetcher.reset_stats()
+        stats_after = fetcher.stats()
+        assert stats_after["batch_calls"] == 0
+        assert stats_after["batch_failures"] == 0
+        assert stats_after["single_ticker_calls"] == 0
+        assert stats_after["cache_hits"] == 0
+        assert stats_after["cache_size"] == 0
+
+    def test_reset_stats_then_fresh_call_works(self):
+        """After reset_stats(), the fetcher should work again from scratch."""
+        fetcher = BatchDataFetcher(use_batch=True, max_concurrency=4)
+        expected = _make_daily_prices_df([{"ts_code": "000001.SZ"}])
+        with patch("src.screening.batch_data_fetcher.get_daily_price_batch", return_value=expected):
+            fetcher.fetch_daily_prices_batch("20260305")
+        fetcher.reset_stats()
+
+        with patch("src.screening.batch_data_fetcher.get_daily_price_batch", return_value=expected):
+            result = fetcher.fetch_daily_prices_batch("20260305")
+        assert isinstance(result, pd.DataFrame)
+        stats = fetcher.stats()
+        assert stats["batch_calls"] == 1
+        assert stats["cache_hits"] == 0
+
+    def test_global_fetcher_stats_reset_between_runs(self):
+        """Global singleton: reset_stats() gives per-run stats isolation."""
+        reset_global_batch_data_fetcher()
+        try:
+            fetcher1 = get_global_batch_data_fetcher()
+            expected = _make_daily_prices_df([{"ts_code": "000001.SZ"}])
+            with patch("src.screening.batch_data_fetcher.get_daily_price_batch", return_value=expected):
+                fetcher1.fetch_daily_prices_batch("20260305")
+            assert fetcher1.stats()["batch_calls"] == 1
+
+            fetcher1.reset_stats()
+            assert fetcher1.stats()["batch_calls"] == 0
+
+            with patch("src.screening.batch_data_fetcher.get_daily_price_batch", return_value=expected):
+                fetcher1.fetch_daily_prices_batch("20260306")
+            assert fetcher1.stats()["batch_calls"] == 1
+        finally:
+            reset_global_batch_data_fetcher()
+
+
+# ============================================================================
+# Integration gap test: batch_fetcher is NOT passed to downstream scoring
+# ============================================================================
+
+class TestBatchFetcherIntegrationGap:
+    def test_score_batch_signature_has_no_batch_fetcher_param(self):
+        """GAMMA-008: score_batch() does not accept a batch_fetcher parameter.
+
+        This test documents the current integration gap:
+        run_auto_screening() creates BatchDataFetcher but score_batch(),
+        build_candidate_pool(), and fuse_batch() have no batch_fetcher parameter,
+        so the fetcher is decorative-only and does not accelerate anything.
+        When the gap is fixed, this test should be updated/removed.
+        """
+        import inspect
+        from src.screening.strategy_scorer import score_batch
+
+        sig = inspect.signature(score_batch)
+        assert "batch_fetcher" not in sig.parameters, (
+            "score_batch now accepts batch_fetcher — update this test and remove the integration gap note"
+        )
+
+    def test_build_candidate_pool_signature_has_no_batch_fetcher_param(self):
+        """GAMMA-008: build_candidate_pool() does not accept batch_fetcher."""
+        import inspect
+        from src.screening.candidate_pool import build_candidate_pool
+
+        sig = inspect.signature(build_candidate_pool)
+        assert "batch_fetcher" not in sig.parameters, (
+            "build_candidate_pool now accepts batch_fetcher — update this test and remove the integration gap note"
+        )
+
+    def test_fuse_batch_signature_has_no_batch_fetcher_param(self):
+        """GAMMA-008: fuse_batch() does not accept batch_fetcher."""
+        import inspect
+        from src.screening.signal_fusion import fuse_batch
+
+        sig = inspect.signature(fuse_batch)
+        assert "batch_fetcher" not in sig.parameters, (
+            "fuse_batch now accepts batch_fetcher — update this test and remove the integration gap note"
+        )

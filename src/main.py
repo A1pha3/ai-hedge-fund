@@ -308,8 +308,14 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         from src.screening.batch_data_fetcher import (
             get_global_batch_data_fetcher,
         )
+        from src.screening.signal_decay_detector import (
+            DecayLevel,
+            build_decay_summary,
+            detect_signal_decay,
+        )
 
         batch_fetcher = get_global_batch_data_fetcher()
+        batch_fetcher.reset_stats()
         logger.info(
             "[Auto] P0-1 BatchDataFetcher: use_batch=%s, max_concurrency=%d",
             batch_fetcher.use_batch,
@@ -357,6 +363,23 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3
         )
 
+        # P0-3 信号衰减检测 — 对比当前与历史 score_b
+        decay_map = detect_signal_decay(
+            current_recommendations=top_results_serializable,
+            report_dir=consecutive_report_dir,
+            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            end_date=trade_date,
+        )
+        decay_summary = build_decay_summary(decay_map)
+        # Attach decay info to each recommendation in the serializable list
+        for rec in top_results_serializable:
+            ticker = rec.get("ticker", "")
+            decay_info = decay_map.get(ticker)
+            if decay_info is not None:
+                rec["decay"] = decay_info.to_dict()
+            else:
+                rec["decay"] = {"level": "none", "current_score": rec.get("score_b", 0), "previous_score": None, "change_pct": None, "days_since_peak": 0}
+
         # Save full report
         report_payload = {
             "mode": "auto_screening",
@@ -372,6 +395,8 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
                 "lookback_days": DEFAULT_LOOKBACK_DAYS,
                 "high_streak_count": consecutive_highlight,
             },
+            # P0-3: 信号衰减汇总
+            "signal_decay_summary": decay_summary,
             # P0-1: 批量获取层统计
             "batch_data_fetcher": {
                 "use_batch": batch_fetcher.use_batch,
@@ -401,6 +426,7 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             report_path,
             sector_warnings,
             consecutive_recommendations=top_results_serializable,
+            decay_map=decay_map,
         )
         return 0
     finally:
@@ -416,15 +442,19 @@ def _print_auto_screening_table(
     report_path: Path,
     sector_warnings: list[str] | None = None,
     consecutive_recommendations: list[dict] | None = None,
+    decay_map: dict | None = None,
 ) -> None:
     """打印格式化的自动筛选推荐表格。
 
     Args:
         consecutive_recommendations: 与 ``top_results`` 顺序对应的连续推荐元数据列表
             (每个 dict 包含 ``consecutive_days`` / ``stability_bonus`` 等字段)。
+        decay_map: P0-3 信号衰减映射 ``{ticker: DecayInfo}``，用于显示 Decay 列。
     """
     from colorama import Fore, Style
     from tabulate import tabulate
+
+    from src.screening.signal_decay_detector import DecayInfo, DecayLevel
 
     state_type = getattr(market_state, "state_type", "mixed")
     position_scale = getattr(market_state, "position_scale", 1.0)
@@ -494,6 +524,17 @@ def _print_auto_screening_table(
         if consecutive_days >= 3:
             ticker_label = f"{Fore.GREEN}{Style.BRIGHT}{ticker_label}{Style.RESET_ALL}"
 
+        # P0-3 信号衰减标记
+        decay_info = decay_map.get(item.ticker) if decay_map else None
+        if decay_info is None or decay_info.level == DecayLevel.NONE:
+            decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
+        elif decay_info.level == DecayLevel.MILD:
+            decay_str = f"{Fore.YELLOW}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
+        elif decay_info.level == DecayLevel.MODERATE:
+            decay_str = f"{Fore.YELLOW}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
+        else:  # SEVERE
+            decay_str = f"{Fore.RED}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
+
         table_data.append([
             f"{idx}",
             ticker_label,
@@ -502,6 +543,7 @@ def _print_auto_screening_table(
             decision_colored,
             signal_summary,
             consecutive_str,
+            decay_str,
             arbitration,
         ])
 
@@ -513,9 +555,10 @@ def _print_auto_screening_table(
         "Decision",
         "Signals (T MR F E)",
         "Consecutive",
+        "Decay",
         "Arbitration",
     ]
-    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "left")))
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center", "left")))
 
     print(f"\n  详细报告已保存: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
 
@@ -646,6 +689,11 @@ def run_explain(ticker: str) -> int:
 
 def _build_factor_bar(confidence: float, max_bar_width: int = 10) -> str:
     """Build a 10-cell ASCII bar chart proportional to confidence (0-100)."""
+    import math as _math
+
+    # Guard against NaN — cannot convert NaN to int
+    if _math.isnan(confidence) if isinstance(confidence, float) else False:
+        confidence = 0.0
     filled = min(max(int(round(confidence / 10.0)), 0), max_bar_width)
     return "█" * filled + "░" * (max_bar_width - filled)
 
@@ -714,13 +762,16 @@ def _print_recent_events_block(report_data: dict, match: dict) -> None:
         if isinstance(sub_factors, dict):
             articles = _extract_articles_from_event_subfactors(sub_factors)
             if articles:
+                printed_any = False
                 for art in articles[:5]:
                     date_str = str(art.get("days_old", "?"))
                     title = str(art.get("title", ""))
                     if title:
                         day_label = f"{int(date_str)}天前" if date_str.isdigit() else date_str
                         print(f"  {day_label}  新闻: \"{title}\"")
-                return
+                        printed_any = True
+                if printed_any:
+                    return
 
     print("  暂无近期事件数据")
 
@@ -745,15 +796,27 @@ def _print_industry_ranking_block(recs: list[dict], match: dict) -> None:
 
     industry = match.get("industry_sw", "")
     ticker = match.get("ticker", "")
-    my_score = match.get("score_b", 0.0)
 
     if not industry:
         print(f"\n{Fore.CYAN}同行业排名:{Style.RESET_ALL} 无行业信息")
         return
 
     # Filter recommendations in the same industry, sort by score_b descending
+    # GAMMA-008: coerce None / NaN score_b to 0.0 — .get() only substitutes
+    # when the key is missing, not when the value is explicitly None or NaN.
+    import math as _math
+
+    def _safe_score(v: object) -> float:
+        if v is None:
+            return 0.0
+        try:
+            fv = float(v)
+            return 0.0 if _math.isnan(fv) else fv
+        except (TypeError, ValueError):
+            return 0.0
+
     peers = [
-        (r.get("ticker", ""), r.get("score_b", 0.0))
+        (r.get("ticker", ""), _safe_score(r.get("score_b")))
         for r in recs
         if r.get("industry_sw") == industry
     ]
