@@ -840,6 +840,68 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             except Exception as exc:  # pragma: no cover
                 logger.debug("[Auto] tracking_summary 二次落盘失败: %s", exc)
 
+        # P0-5: 智能自选池 — 更新 watchlist 中标的的评分和信号
+        try:
+            watchlist_update = update_watchlist_from_screening(report_payload)
+        except Exception as exc:  # pragma: no cover - 自选池更新失败不影响主流程
+            logger.warning("[Auto] P0-5 自选池更新失败: %s", exc)
+            watchlist_update = {"scored_count": 0, "top_picks": []}
+        if watchlist_update.get("scored_count", 0) > 0:
+            report_payload["watchlist_update"] = watchlist_update
+            logger.info(
+                "[Auto] P0-5 Watchlist: %d 只自选标的已更新评分",
+                watchlist_update["scored_count"],
+            )
+            try:
+                _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+            except Exception as exc:  # pragma: no cover
+                logger.debug("[Auto] watchlist_update 二次落盘失败: %s", exc)
+
+        # P1-11: 策略归因日报 — 若当前有持仓 (data/positions.json) 则附加归因摘要到 JSON 报告。
+        try:
+            from src.screening.strategy_attribution_daily import (
+                compute_strategy_daily_attribution,
+                render_attribution_report,
+            )
+
+            attr_positions_path = _resolve_positions_path()
+            attr_positions = _load_positions_for_attribution(attr_positions_path)
+            if attr_positions:
+                attributions = compute_strategy_daily_attribution(
+                    attr_positions, today_date=trade_date
+                )
+                if attributions:
+                    attr_total_pnl = sum(a.daily_pnl for a in attributions.values())
+                    attr_base = sum(
+                        float(p.get("prev_value", 0.0) or 0.0)
+                        for p in attr_positions
+                        if isinstance(p.get("prev_value"), (int, float))
+                    )
+                    report_payload["strategy_attribution_daily"] = {
+                        "date": trade_date,
+                        "portfolio_total_pnl": attr_total_pnl,
+                        "portfolio_value_base": attr_base,
+                        "positions_path": str(attr_positions_path) if attr_positions_path else None,
+                        "attributions": {n: a.to_dict() for n, a in attributions.items()},
+                        "report_text": render_attribution_report(
+                            attributions,
+                            attr_total_pnl,
+                            trade_date,
+                            portfolio_value_base=attr_base if attr_base > 0 else None,
+                        ),
+                    }
+                    logger.info(
+                        "[Auto] P1-11 策略归因日报: %d 条策略归因 (总 PnL=%.2f)",
+                        len(attributions),
+                        attr_total_pnl,
+                    )
+                    try:
+                        _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+                    except Exception as exc:  # pragma: no cover
+                        logger.debug("[Auto] strategy_attribution_daily 二次落盘失败: %s", exc)
+        except Exception as exc:  # pragma: no cover - 归因失败不影响主流程
+            logger.warning("[Auto] P1-11 策略归因日报附加失败: %s", exc)
+
         # P0-1: 输出 batch fetcher 统计
         fetcher_stats = report_payload.get("batch_data_fetcher", {})
         logger.info(
@@ -863,6 +925,23 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             decay_map=decay_map,
             industry_signals=industry_signals,
         )
+
+        # P1-7: 可选 — 自动导出 PDF 报告 (环境变量 AUTO_EXPORT_PDF=true)
+        if os.environ.get("AUTO_EXPORT_PDF", "").strip().lower() in ("1", "true", "yes", "on"):
+            try:
+                from src.reporting.pdf_exporter import (
+                    PDFReportConfig,
+                    generate_screening_pdf,
+                )
+
+                pdf_dir = report_path.parent
+                pdf_path = pdf_dir / f"auto_screening_{trade_date}.pdf"
+                generate_screening_pdf(report_payload, pdf_path, PDFReportConfig())
+                print(f"{Fore.CYAN}[Auto] P1-7 PDF 报告已生成: {pdf_path}{Style.RESET_ALL}")
+                logger.info("[Auto] P1-7 PDF 报告已生成: %s", pdf_path)
+            except Exception as exc:  # pragma: no cover - PDF 失败不影响主流程
+                logger.warning("[Auto] P1-7 PDF 导出失败: %s", exc)
+
         return 0
     except ValueError as exc:
         # 候选池为空 — 纯函数明确抛出的 ValueError
@@ -1067,6 +1146,169 @@ def run_tracking_summary(lookback_days: int = 30) -> int:
     return 0
 
 
+def run_export_pdf(trade_date: str | None = None, output_path: str | None = None) -> int:
+    """P1-7 选股报告 PDF 导出入口 (CLI: ``--export-pdf``)。
+
+    Args:
+        trade_date: 指定交易日期 ``YYYYMMDD``; 缺省取最新报告。
+        output_path: 自定义输出路径; 缺省写到 ``data/reports/auto_screening_<date>.pdf``。
+
+    Returns:
+        退出码 (0 = 成功, 1 = 错误)。
+    """
+    from colorama import Fore, Style
+
+    from src.reporting.pdf_exporter import (
+        PDFReportConfig,
+        find_latest_report,
+        generate_screening_pdf,
+        load_report,
+    )
+    from src.screening.consecutive_recommendation import resolve_report_dir
+
+    report_dir = resolve_report_dir()
+    if trade_date:
+        # 标准化 YYYYMMDD (8 位) — 接受含分隔符的输入
+        cleaned = trade_date.replace("-", "").replace("/", "")
+        if len(cleaned) != 8 or not cleaned.isdigit():
+            print(f"{Fore.RED}[PDF Export] 日期格式错误: {trade_date} (期望 YYYYMMDD){Style.RESET_ALL}")
+            return 1
+        report_path = report_dir / f"auto_screening_{cleaned}.json"
+    else:
+        report_path = find_latest_report(report_dir)
+
+    if not report_path or not report_path.exists():
+        print(f"{Fore.RED}[PDF Export] 未找到报告 (trade_date={trade_date or 'latest'}), 请先运行 --auto{Style.RESET_ALL}")
+        return 1
+
+    try:
+        report_data = load_report(report_path)
+    except ValueError as exc:
+        print(f"{Fore.RED}[PDF Export] {exc}{Style.RESET_ALL}")
+        return 1
+
+    if output_path:
+        target = Path(output_path).expanduser()
+    else:
+        target = report_path.with_suffix(".pdf")
+
+    try:
+        result = generate_screening_pdf(report_data, target, PDFReportConfig())
+    except Exception as exc:
+        print(f"{Fore.RED}[PDF Export] 生成失败: {exc}{Style.RESET_ALL}")
+        return 1
+
+    print(f"{Fore.GREEN}[PDF Export] 已生成: {result} ({result.stat().st_size:,} bytes){Style.RESET_ALL}")
+    return 0
+
+
+def _resolve_positions_path() -> Path | None:
+    """定位 ``data/positions.json`` (P1-11 归因日报使用的持仓快照)。
+
+    解析顺序:
+      1. 环境变量 ``ATTRIBUTION_POSITIONS_PATH`` (用户自定义路径)
+      2. ``<repo_root>/data/positions.json``
+
+    返回 None 表示文件不存在 — 此时归因日报会回落到「暂无持仓」提示。
+    """
+    env_override = os.getenv("ATTRIBUTION_POSITIONS_PATH")
+    if env_override:
+        candidate = Path(env_override).expanduser()
+        return candidate if candidate.exists() else None
+    repo_root = Path(__file__).resolve().parents[1]
+    default = repo_root / "data" / "positions.json"
+    return default if default.exists() else None
+
+
+def _load_positions_for_attribution(positions_path: Path | None) -> list[dict]:
+    """读取持仓快照, 返回 ``list[dict]``;
+    任何 IO / JSON 解析错误统一返回空列表 (归因日报会优雅降级)。
+    """
+    if positions_path is None or not positions_path.exists():
+        return []
+    try:
+        with open(positions_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("[Attribution] 读取持仓文件失败 (%s): %s", positions_path, exc)
+        return []
+    # 支持两种 schema:
+    #   1. 直接是 list[dict]
+    #   2. {"positions": [...]} 包装
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        positions = data.get("positions")
+        if isinstance(positions, list):
+            return [item for item in positions if isinstance(item, dict)]
+    logger.warning("[Attribution] 持仓文件格式不识别 (期望 list 或 {'positions': [...]})", )
+    return []
+
+
+def run_attribution_daily(trade_date: str, positions_path: Path | None = None) -> int:
+    """P1-11 策略归因日报独立 CLI 入口。
+
+    Args:
+        trade_date: 交易日期 (YYYYMMDD 或 YYYY-MM-DD)。
+        positions_path: 可选, 持仓 JSON 路径; 缺省时从 ``_resolve_positions_path`` 解析。
+
+    Returns:
+        退出码 (0 = 成功, 1 = 无持仓)。
+    """
+    from colorama import Fore, Style
+
+    from src.screening.strategy_attribution_daily import (
+        compute_strategy_daily_attribution,
+        render_attribution_report,
+    )
+
+    resolved_path = positions_path or _resolve_positions_path()
+    positions = _load_positions_for_attribution(resolved_path)
+    if not positions:
+        print(f"{Fore.YELLOW}[Attribution] 未找到可归因的持仓 — 请在 data/positions.json 或 ATTRIBUTION_POSITIONS_PATH 提供持仓快照。{Style.RESET_ALL}")
+        # 仍然渲染空报告, 便于联调
+        print(render_attribution_report({}, 0.0, trade_date))
+        return 1
+
+    attributions = compute_strategy_daily_attribution(positions, today_date=trade_date)
+    total_pnl = sum(a.daily_pnl for a in attributions.values())
+    portfolio_value_base = sum(
+        float(p.get("prev_value", 0.0) or 0.0)
+        for p in positions
+        if isinstance(p.get("prev_value"), (int, float))
+    )
+    report_text = render_attribution_report(
+        attributions,
+        total_pnl,
+        trade_date,
+        portfolio_value_base=portfolio_value_base if portfolio_value_base > 0 else None,
+    )
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Attribution Daily] 策略归因日报 (P1-11){Style.RESET_ALL}")
+    if resolved_path is not None:
+        print(f"  持仓来源: {Fore.WHITE}{resolved_path}{Style.RESET_ALL}")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(report_text)
+
+    # 落盘 JSON 报告 (供 Web / 其他流程消费)
+    payload = {
+        "mode": "attribution_daily",
+        "date": trade_date,
+        "portfolio_total_pnl": total_pnl,
+        "portfolio_value_base": portfolio_value_base,
+        "positions_path": str(resolved_path) if resolved_path else None,
+        "attributions": {name: attr.to_dict() for name, attr in attributions.items()},
+        "report_text": report_text,
+    }
+    try:
+        output_path = _save_json_report(f"attribution_daily_{trade_date}.json", payload)
+        print(f"{Fore.CYAN}已输出: {output_path}{Style.RESET_ALL}")
+    except Exception as exc:  # pragma: no cover
+        logger.debug("[Attribution] 落盘失败: %s", exc)
+    return 0
+
+
 def run_industry_rotation(trade_date: str | None = None, top_n: int = 5, bottom_n: int = 3) -> int:
     """从最新 (或指定日期) auto_screening 报告中读取推荐结果, 计算并展示行业轮动信号。
 
@@ -1158,6 +1400,183 @@ def run_industry_rotation(trade_date: str | None = None, top_n: int = 5, bottom_
 
     print(format_rotation_block(signals, top_n=top_n, bottom_n=bottom_n), end="")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# P0-5: Watchlist CLI handlers
+# ---------------------------------------------------------------------------
+
+
+def run_watchlist_add(ticker: str, name: str, tags: list[str] | None = None, note: str = "") -> int:
+    """添加标的到自选池 (P0-5)。"""
+    from colorama import Fore, Style
+
+    from src.screening.watchlist import Watchlist
+
+    wl = Watchlist()
+    try:
+        entry = wl.add(ticker=ticker, name=name, tags=tags, note=note)
+    except ValueError as exc:
+        print(f"{Fore.RED}[Watchlist] 添加失败: {exc}{Style.RESET_ALL}")
+        return 1
+    print(f"{Fore.GREEN}[Watchlist] 已添加 {entry.ticker} {entry.name}{Style.RESET_ALL}")
+    if entry.tags:
+        print(f"  标签: {', '.join(entry.tags)}")
+    if entry.note:
+        print(f"  备注: {entry.note}")
+    print(f"  共 {len(wl)} 只自选标的 | 文件: {wl.path}")
+    return 0
+
+
+def run_watchlist_remove(ticker: str) -> int:
+    """从自选池移除标的 (P0-5)。"""
+    from colorama import Fore, Style
+
+    from src.screening.watchlist import Watchlist
+
+    wl = Watchlist()
+    ok = wl.remove(ticker)
+    if ok:
+        print(f"{Fore.GREEN}[Watchlist] 已移除 {ticker}{Style.RESET_ALL}")
+        print(f"  共 {len(wl)} 只自选标的")
+        return 0
+    print(f"{Fore.YELLOW}[Watchlist] {ticker} 不在自选池中{Style.RESET_ALL}")
+    return 1
+
+
+def run_watchlist_list(tag: str | None = None) -> int:
+    """列出自选池所有标的 (P0-5)。"""
+    from colorama import Fore, Style
+    from tabulate import tabulate
+
+    from src.screening.watchlist import Watchlist
+
+    wl = Watchlist()
+    entries = wl.list(tag=tag)
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}━━━ 智能自选池 ━━━{Style.RESET_ALL}")
+    print(f"共 {len(entries)} 只关注标的" + (f" (标签: {tag})" if tag else ""))
+    print(f"文件: {Fore.CYAN}{wl.path}{Style.RESET_ALL}\n")
+
+    if not entries:
+        print(f"{Fore.YELLOW}  自选池为空。使用 --watchlist-add 添加标的{Style.RESET_ALL}\n")
+        return 0
+
+    rows = []
+    for entry in entries:
+        tags_str = ", ".join(entry.tags) if entry.tags else "—"
+        history_len = len(entry.score_history)
+        latest = entry.score_history[-1] if entry.score_history else None
+        latest_str = f"{latest.get('score', 0):+.2f} {latest.get('signal', '')}" if latest else "—"
+        rows.append([entry.ticker, entry.name or "—", entry.added_at, tags_str, entry.note or "—", latest_str, history_len])
+
+    headers = ["Ticker", "名称", "加入日期", "标签", "备注", "最新评分", "历史天数"]
+    print(tabulate(rows, headers=headers, tablefmt="grid"))
+    print()
+    return 0
+
+
+def run_watchlist_status() -> int:
+    """展示自选池最新评分 + 信号 + 连续推荐 (P0-5)。"""
+    from colorama import Fore, Style
+
+    from src.screening.consecutive_recommendation import (
+        DEFAULT_LOOKBACK_DAYS,
+        compute_consecutive_recommendations,
+        resolve_report_dir,
+    )
+    from src.screening.watchlist import Watchlist, format_watchlist_status
+
+    wl = Watchlist()
+    if len(wl) == 0:
+        print(f"\n{Fore.YELLOW}自选池为空。使用 --watchlist-add 添加标的{Style.RESET_ALL}\n")
+        return 0
+
+    # 计算连续推荐 (若有历史报告)
+    consecutive_lookup: dict[str, dict] = {}
+    try:
+        report_dir = resolve_report_dir()
+        if report_dir.exists():
+            stats_map = compute_consecutive_recommendations(
+                lookback_days=DEFAULT_LOOKBACK_DAYS,
+                report_dir=report_dir,
+            )
+            for ticker, stats in stats_map.items():
+                consecutive_lookup[ticker] = {
+                    "consecutive_days": stats.consecutive_days,
+                    "status": stats.status.value,
+                }
+    except Exception as exc:  # pragma: no cover - 容错: 历史读取失败仍展示自选池
+        logger.debug("[Watchlist] 连续推荐查询失败: %s", exc)
+
+    output = format_watchlist_status(wl, consecutive_lookup=consecutive_lookup)
+    print("\n" + output)
+    return 0
+
+
+def update_watchlist_from_screening(
+    report_payload: dict,
+    watchlist_path: Path | None = None,
+) -> dict:
+    """从 auto_screening 报告中提取与自选池相关的标的, 更新评分, 返回汇总。
+
+    集成点 (P0-5 step 3):
+      1. 加载自选池
+      2. 对 ``report_payload['recommendations']`` 中属于自选池的标的写入 score_history
+      3. 返回 ``{scored_count, top_picks}``
+
+    Args:
+        report_payload: ``compute_auto_screening_results`` 返回的 dict
+        watchlist_path: 自定义 watchlist 路径 (供测试用); None 使用默认。
+
+    Returns:
+        ``{"scored_count": N, "top_picks": [...]}``
+    """
+    from src.screening.watchlist import Watchlist
+
+    wl = Watchlist(watchlist_path) if watchlist_path else Watchlist()
+    if len(wl) == 0:
+        return {"scored_count": 0, "top_picks": []}
+
+    trade_date_raw = str(report_payload.get("date", "")).strip()
+    # 将 YYYYMMDD 规范化为 YYYY-MM-DD 便于人类阅读 / 与 added_at 风格一致
+    if len(trade_date_raw) == 8 and trade_date_raw.isdigit():
+        date_iso = f"{trade_date_raw[:4]}-{trade_date_raw[4:6]}-{trade_date_raw[6:]}"
+    else:
+        date_iso = trade_date_raw or datetime.now().strftime("%Y-%m-%d")
+
+    recommendations = report_payload.get("recommendations", []) or []
+    rec_lookup: dict[str, dict] = {}
+    for rec in recommendations:
+        if not isinstance(rec, dict):
+            continue
+        ticker = str(rec.get("ticker", "")).strip()
+        if ticker:
+            rec_lookup[ticker] = rec
+
+    scored_count = 0
+    top_picks: list[dict] = []
+    for ticker in wl.all_tickers():
+        rec = rec_lookup.get(ticker)
+        if rec is None:
+            continue
+        score = _safe_float(rec.get("score_b"), 0.0)
+        signal = str(rec.get("decision", "neutral"))
+        wl.update_score(ticker, score=score, signal=signal, date=date_iso)
+        scored_count += 1
+        entry = wl.get(ticker)
+        top_picks.append(
+            {
+                "ticker": ticker,
+                "name": entry.name if entry else "",
+                "score_b": score,
+                "decision": signal,
+                "consecutive_days": int(rec.get("consecutive_days", 0) or 0),
+            }
+        )
+
+    # 按 score 降序排列后取 Top 5
+    top_picks.sort(key=lambda item: item.get("score_b", 0.0), reverse=True)
+    return {"scored_count": scored_count, "top_picks": top_picks[:5]}
 
 
 def run_explain(ticker: str) -> int:
@@ -1458,6 +1877,62 @@ if __name__ == "__main__":
                 except ValueError:
                     pass
         raise SystemExit(run_tracking_summary(lookback_days=_ts_lookback))
+
+    # P1-7: --export-pdf 独立 CLI 入口 — 从已有 auto_screening_*.json 报告生成 PDF
+    if "--export-pdf" in sys.argv:
+        _ep_trade_date: str | None = None
+        _ep_output: str | None = None
+        for arg in sys.argv:
+            if arg.startswith("--pdf-date="):
+                _ep_trade_date = arg.split("=", 1)[1].strip().replace("-", "")
+            elif arg.startswith("--pdf-output="):
+                _ep_output = arg.split("=", 1)[1].strip()
+        raise SystemExit(run_export_pdf(trade_date=_ep_trade_date, output_path=_ep_output))
+
+    # P1-11: --attribution-daily 独立 CLI 入口
+    if "--attribution-daily" in sys.argv:
+        _attr_trade_date: str | None = None
+        _attr_positions_path: Path | None = None
+        for arg in sys.argv:
+            if arg.startswith("--date="):
+                _attr_trade_date = arg.split("=", 1)[1]
+            elif arg.startswith("--positions="):
+                _attr_positions_path = Path(arg.split("=", 1)[1]).expanduser()
+        if not _attr_trade_date:
+            _attr_trade_date = datetime.now().strftime("%Y%m%d")
+        # 标准化日期 YYYY-MM-DD -> YYYYMMDD
+        if len(_attr_trade_date) == 10 and _attr_trade_date[4] == "-":
+            _attr_trade_date = _attr_trade_date.replace("-", "")
+        raise SystemExit(run_attribution_daily(_attr_trade_date, positions_path=_attr_positions_path))
+
+    # P0-5: Watchlist 独立 CLI 入口 — 早期分发, 避免与 parse_cli_inputs 的 required 校验冲突
+    if any(arg in sys.argv for arg in ("--watchlist-add", "--watchlist-remove", "--watchlist-list", "--watchlist-status")):
+        _wl_parser = argparse.ArgumentParser(description="Watchlist management (P0-5)")
+        _wl_parser.add_argument("--watchlist-add", type=str, default=None, metavar="TICKER", help="添加标的到自选池")
+        _wl_parser.add_argument("--watchlist-remove", type=str, default=None, metavar="TICKER", help="从自选池移除标的")
+        _wl_parser.add_argument("--watchlist-list", action="store_true", help="列出自选池所有标的")
+        _wl_parser.add_argument("--watchlist-status", action="store_true", help="展示自选池最新评分 + 信号")
+        _wl_parser.add_argument("--name", type=str, default="", help="标的名称 (与 --watchlist-add 配合)")
+        _wl_parser.add_argument("--tags", type=str, nargs="*", default=None, help="标签列表 (空格分隔)")
+        _wl_parser.add_argument("--note", type=str, default="", help="备注 (可选)")
+        _wl_parser.add_argument("--filter-tag", type=str, default=None, help="--watchlist-list 时按标签过滤")
+        _wl_args, _ = _wl_parser.parse_known_args()
+
+        if _wl_args.watchlist_add:
+            raise SystemExit(
+                run_watchlist_add(
+                    ticker=_wl_args.watchlist_add,
+                    name=_wl_args.name,
+                    tags=list(_wl_args.tags) if _wl_args.tags else None,
+                    note=_wl_args.note,
+                )
+            )
+        if _wl_args.watchlist_remove:
+            raise SystemExit(run_watchlist_remove(_wl_args.watchlist_remove))
+        if _wl_args.watchlist_list:
+            raise SystemExit(run_watchlist_list(tag=_wl_args.filter_tag))
+        if _wl_args.watchlist_status:
+            raise SystemExit(run_watchlist_status())
 
     # Detect --auto early via sys.argv to bypass interactive prompts
     is_auto = "--auto" in sys.argv
