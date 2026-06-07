@@ -163,6 +163,18 @@ RULE_VOLUME_NON_NEGATIVE = "price_volume_non_negative"  # volume >= 0
 RULE_PRICE_REASONABLE_RANGE = "price_reasonable_range"  # 0.01 <= close <= 10000
 
 
+def _row_get(obj: Any, key: str) -> Any:
+    """Unified row field accessor — supports both dict and object attribute access.
+
+    Extracted from 5 price-rule validators that each defined an identical local ``_get``
+    (R20.1 DRY refactor).  Returns ``None`` when the key is missing rather than raising,
+    so validators can safely skip absent fields.
+    """
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
 def _ohlc_consistent(row: Any) -> bool:
     """OHLC 一致性: high >= max(open, close), low <= min(open, close).
 
@@ -170,12 +182,7 @@ def _ohlc_consistent(row: Any) -> bool:
     或 schema 校验拦截缺失场景), 避免把 schema 问题误判成 OHLC 不一致。
     """
 
-    def _get(obj: Any, key: str) -> Any:
-        if isinstance(obj, dict):
-            return obj.get(key)
-        return getattr(obj, key, None)
-
-    o, h, lo, c = _get(row, "open"), _get(row, "high"), _get(row, "low"), _get(row, "close")
+    o, h, lo, c = _row_get(row, "open"), _row_get(row, "high"), _row_get(row, "low"), _row_get(row, "close")
     try:
         o_f, h_f, lo_f, c_f = float(o), float(h), float(lo), float(c)
     except (TypeError, ValueError):
@@ -186,13 +193,8 @@ def _ohlc_consistent(row: Any) -> bool:
 def _all_prices_positive(row: Any) -> bool:
     """所有价格字段 (open/high/low/close) > 0。缺失 → 默认通过, 由 schema 兜底。"""
 
-    def _get(obj: Any, key: str) -> Any:
-        if isinstance(obj, dict):
-            return obj.get(key)
-        return getattr(obj, key, None)
-
     for key in ("open", "high", "low", "close"):
-        v = _get(row, key)
+        v = _row_get(row, key)
         if v is None:
             continue
         try:
@@ -210,12 +212,7 @@ def _date_not_in_future(row: Any) -> bool:
     datetime 几种形式。无法解析 → 默认通过 (schema 层会拒绝非法格式)。
     """
 
-    def _get(obj: Any, key: str) -> Any:
-        if isinstance(obj, dict):
-            return obj.get(key)
-        return getattr(obj, key, None)
-
-    t = _get(row, "time")
+    t = _row_get(row, "time")
     if t is None:
         return True
     today = datetime.now(timezone.utc).date()
@@ -236,12 +233,7 @@ def _date_not_in_future(row: Any) -> bool:
 def _volume_non_negative(row: Any) -> bool:
     """volume >= 0。缺失 → 默认通过。"""
 
-    def _get(obj: Any, key: str) -> Any:
-        if isinstance(obj, dict):
-            return obj.get(key)
-        return getattr(obj, key, None)
-
-    v = _get(row, "volume")
+    v = _row_get(row, "volume")
     if v is None:
         return True
     try:
@@ -257,12 +249,7 @@ def _close_in_reasonable_range(row: Any) -> bool:
     10000 / 0.01 兼容极端但不离谱的值, 真正异常 (浮点垃圾或单位错误) 会触发。
     """
 
-    def _get(obj: Any, key: str) -> Any:
-        if isinstance(obj, dict):
-            return obj.get(key)
-        return getattr(obj, key, None)
-
-    c = _get(row, "close")
+    c = _row_get(row, "close")
     if c is None:
         return True
     try:

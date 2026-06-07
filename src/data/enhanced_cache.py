@@ -352,7 +352,12 @@ class DiskCache:
         return self._ensure_conn()
 
     def close(self):
-        """显式关闭底层 sqlite 连接（供测试 teardown / 进程退出时使用）。"""
+        """显式关闭底层 sqlite 连接（供测试 teardown / 进程退出时使用）。
+
+        R20.1 修复：关闭后必须将 _available 置 False，否则 _ensure_conn()
+        会因 is_available() 返回 True 而重建连接，从磁盘文件恢复已缓存的数据，
+        导致 close() 无法真正切断后续读写。
+        """
         with self._write_lock:
             if self._conn is not None:
                 try:
@@ -361,6 +366,7 @@ class DiskCache:
                     logger.debug(f"Disk cache close error: {e}")
                 finally:
                     self._conn = None
+            self._available = False
 
     @property
     def journal_mode(self) -> str | None:

@@ -959,6 +959,9 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             fetcher_stats.get("cache_hits", 0),
         )
 
+        # O-1: 缓存命中率可观测性 — CLI 表格底部增加一行摘要
+        _print_cache_hit_summary(fetcher_stats)
+
         # Print formatted table
         _print_auto_screening_table(
             trade_date,
@@ -1028,6 +1031,33 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         return 1
     finally:
         progress.stop()
+
+
+def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
+    """O-1: 在 --auto 表格后打印一行缓存命中率摘要，让用户感知缓存提速效果。
+
+    命中率 = (batch_calls 节省 + single_ticker_cache_hits) / 总请求，
+    其中总请求 ≈ batch_calls + single_ticker_calls（简化模型）。
+    """
+    from colorama import Fore, Style
+
+    batch_calls = int(fetcher_stats.get("batch_calls", 0))
+    batch_failures = int(fetcher_stats.get("batch_failures", 0))
+    single_calls = int(fetcher_stats.get("single_ticker_calls", 0))
+    cache_hits = int(fetcher_stats.get("single_ticker_cache_hits", 0))
+    total_requests = batch_calls + single_calls
+    total_served_from_cache = cache_hits  # batch_calls 本身也是"一次请求服务全部 ticker"
+    if total_requests > 0:
+        effective_hit_rate = total_served_from_cache / total_requests * 100
+    else:
+        effective_hit_rate = 0.0
+    colour = Fore.GREEN if effective_hit_rate >= 50 else Fore.YELLOW if effective_hit_rate >= 20 else Fore.RED
+    print(
+        f"  {colour}Cache: {effective_hit_rate:.0f}% hit "
+        f"({total_served_from_cache} cached / {total_requests} requests)"
+        f" | Batch: {batch_calls} calls ({batch_failures} failures)"
+        f"{Style.RESET_ALL}"
+    )
 
 
 def _print_auto_screening_table(

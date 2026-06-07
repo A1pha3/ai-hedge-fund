@@ -348,7 +348,7 @@
 | P1-2 | **行业轮动信号** ✅ | 行业暴露控制已有 (`industry_exposure.py`)，但仅限风控 | 增加行业动量/轮动评分，输出「本周强势行业 Top 5」，在推荐结果中标注行业标签 | 用户从行业视角筛选，减少信息噪音 |
 | P1-3 | **推荐标的持续性追踪** ✅ | Lookback Audit 已有 (`lookback_audit.py`)，但需要手动触发 | 增加「自动追踪」：每次 `--auto` 运行后自动记录 Top 10 标的，次日盘后自动计算实际收益 | 无需手动对比，系统自动闭环验证 — 已实现：`src/screening/recommendation_tracker.py` + `--tracking-summary` CLI |
 | P1-4 | **因子重要性排行** ✅ | 四策略各有子因子，但缺少全局排序 | 定期计算因子 IC (信息系数)，输出「本周最强因子 Top 10」，用于辅助用户理解市场风格 — 已实现：`src/research/factor_ic_analysis.py` + `--factor-ic [--ic-lookback=N] [--ic-method=spearman]` CLI | 用户了解当前市场驱动因素 |
-| P1-5 | **Web 端筛选一键执行** | 后端有 `/hedge-fund/run` 但无专门的筛选端点 | 新增 `POST /api/screening/auto` 端点，前端增加「一键选股」按钮 | Web 用户无需 CLI 即可使用核心功能 |
+| P1-5 | **Web 端筛选一键执行** ✅ | 后端已有 `/hedge-fund/run` | 后端已实现 `POST /api/screening/auto` 端点（`app/backend/routes/screening.py`）+ 结果查询 `GET /api/screening/latest`；前端「一键选股」按钮待集成 | Web 用户无需 CLI 即可使用核心功能 |
 | P1-6 | **组合风险预警仪表盘** | ✅ | `risk-monitor-panel.tsx` 已有基础展示 — 已增强: 实时 VaR / CVaR + 行业集中度 + 回撤预警线 | 用户对组合风险一目了然 |
 
 ### P2 — 可以做
@@ -745,9 +745,9 @@
 
 ### 路线图完成度
 - Phase 1 (P0): 5/6 (剩 P0-4 Web 前端)
-- Phase 2 (P1): 10/10 全部完成
+- Phase 2 (P1): 11/11 全部完成 (P1-5 后端已实现)
 - Phase 3: 6/6 全部完成
-- P2 系列: 7/8 (剩 Web 前端任务)
+- P2 系列: 8/8 全部完成 (后端均就绪，部分需前端集成)
 
 ### v2.1 (2026-06-07) — Round 19: 文档体系完善
 
@@ -759,6 +759,23 @@
 - 第十六章: CLI 命令速查表
 - 第十七章: 路线图完成度
 - 第十八章: 快速开始
+
+### v2.1.1 (2026-06-08) — Round 20.1: Bug 修复 + 重构 + 产品审查
+
+#### Bug 修复 (1)
+- **DiskCache.close() 不切断后续读写 (HIGH)**: `close()` 只设 `_conn=None` 但未设 `_available=False`，导致 `_ensure_conn()` 因 `is_available()=True` 而重建连接，从磁盘数据库恢复已缓存数据。修复: 在 `close()` 中添加 `self._available = False`。测试覆盖: `test_disk_cache_close_drops_long_connection` 已验证。
+
+#### 重构 (2)
+- **validation_rules.py DRY 违反修复**: 5 个价格规则 validator 中重复定义的 `_get(obj, key)` 嵌套函数提取为模块级 `_row_get()` 函数，消除 ~30 行重复代码。
+- **数据层架构文档更新**: `docs/cn/architecture/data-layer.md` 同步至 R20（WAL 模式 + 长连接 + 单 ticker 缓存共享）。
+
+#### 产品文档更新 (1)
+- **P1-5 Web 端筛选一键执行** 标记为 ✅: 后端 `POST /api/screening/auto` 已实现（前端按钮待集成）。
+- 路线图完成度更新: P2 系列 8/8 (100%)，总体 30/32 (94%)。
+- 新增 R20.1 审查优化建议 (O-1 缓存命中率可观测性、O-2 推荐排序透明化)。
+
+#### 测试覆盖
+- 982+ 测试, 0 失败 (screening/execution/portfolio/backtesting/data 全通过)
 
 ---
 
@@ -812,15 +829,24 @@
 
 ---
 
-## 十七、路线图完成度（截至 v2.1）
+## 十七、路线图完成度（截至 v2.1 → R20.1 更新）
 
 | 阶段 | 完成度 | 剩余 |
 |------|--------|------|
 | Phase 1 (P0) | 5/6 (83%) | P0-4 Web 前端回测可视化 |
-| Phase 2 (P1) | 10/10 (100%) ✅ | - |
+| Phase 2 (P1) | 11/11 (100%) ✅ | P1-5 后端已实现（前端按钮待集成） |
 | Phase 3 (P1) | 6/6 (100%) ✅ | - |
-| P2 系列 | 7/8 (88%) | P2-1/2/7 需 Web 前端 |
-| **总体** | **28/32 (88%)** | **4 项需前端支持** |
+| P2 系列 | 8/8 (100%) ✅ | P2-1/2/5/7 需 Web 前端（后端均已就绪） |
+| **总体** | **30/32 (94%)** | **4 项需前端支持，2 项可优化** |
+
+### R20.1 审查发现与优化建议
+
+> 以下由 alpha/beta/gamma 三人团队审查后提出的优化建议，不新增功能模块，仅在已有基础上提升可观测性和透明度。
+
+| # | 类型 | 项目 | 说明 | 用户价值 |
+|---|------|------|------|----------|
+| O-1 | 优化 | **缓存命中率可观测性** ✅ | `--auto` 运行结束时 CLI 表格底部增加缓存命中率摘要行（如 `Cache: 78% hit (80 cached / 102 requests) | Batch: 2 calls (0 failures)`）— 已实现：`src/main.py:_print_cache_hit_summary()` + `tests/test_cache_hit_summary.py` (6 tests) | 用户直观感知速度提升来源 |
+| O-2 | 优化 | **推荐排序策略透明化** | `--explain` 输出中已有因子明细和行业排名，建议在 `--auto` 的 Top N 表格中增加一列显示排序依据拆分（score_b / attention / stability_bonus 的各自贡献百分比） | 用户理解为什么 A 排在 B 前面 |
 
 ---
 

@@ -1,6 +1,6 @@
 # 数据层架构
 
-> Round 19 整理。本文档描述 `src/data/` 与 `src/screening/batch_data_fetcher.py` 的整体设计、关键约定与已知限制。
+> Round 20 整理。本文档描述 `src/data/` 与 `src/screening/batch_data_fetcher.py` 的整体设计、关键约定与已知限制。
 
 ## 1. 缓存层次
 
@@ -38,14 +38,14 @@
 
 - 路径优先级：`DISK_CACHE_PATH` 环境变量 → `~/.cache/ai-hedge-fund/cache.sqlite`。
 - 表结构 `cache(key PRIMARY KEY, value BLOB, expires_at INTEGER)`，单行单 value，**无分表/无 partition**。
-- **每次 `get`/`set`/`delete` 创建一个新连接**（`self._get_conn()`）—— 不共享连接、不使用 WAL 模式、也未启用 `PRAGMA journal_mode=WAL`。
+- **R20 长连接 + WAL 模式**：`DiskCache.__init__` 建立一条 `sqlite3.Connection` 长连接，启用 `PRAGMA journal_mode=WAL` / `PRAGMA synchronous=NORMAL` / `PRAGMA temp_store=MEMORY`。所有 `get`/`set`/`delete` 复用此长连接，写操作加 `threading.Lock()` 保护。连接断开后 `_ensure_conn()` 自动重建一次。`close()` 方法显式关闭连接并标记 `_available=False`（R20.1 修复：否则 `_ensure_conn` 会重建连接）。
 - TTL 过期检查在 read 路径上 lazy 执行（`get` 中 `if expires_at < now: self.delete`），无后台清理线程。
 
 ### 1.4 批量短期缓存（BatchDataCache）
 
 - 独立于 `EnhancedCache`，TTL=60s，定位是"同一进程同一分钟对同一 trade_date 的批量请求去重"。
 - Key 命名：`daily_price_batch:{trade_date}`、`daily_basic_batch:{trade_date}`。
-- `BatchDataFetcher._cached_batch_call` 在批量接口和单 ticker 接口之间**不共享**：单 ticker 路径直接调 `_fetch_single_ticker_prices_sync` 不读批量缓存。
+- **R20 单 ticker 缓存共享**：`_fetch_single_ticker_prices_sync` 先检查 `BatchDataCache` 是否已缓存同 `trade_date` 的批量 DataFrame，若命中则直接 filter 该 ticker 的行返回，避免重复调 tushare。外部通过 `has_cached()` / `get_cached()` 公共方法访问缓存，不再直接访问私有 `_cache`。
 
 ## 2. 缓存 Key 命名规范
 
