@@ -1,272 +1,29 @@
-"""Layer B 四策略评分器。"""
+"""Intraday short-trade metric helpers.
+
+Extracted from strategy_scorer.py (Round 20.2) to improve readability.
+Contains: intraday bar/tick metric computation, dragon-tiger bonus,
+sector diffusion metrics, and flow proxy fallback.
+"""
 
 from __future__ import annotations
 
-import concurrent.futures
-from dataclasses import dataclass
 import logging
-import math
-import os
 from collections import defaultdict
-from datetime import datetime, timedelta
-from statistics import median
-from time import perf_counter
+from datetime import datetime
+from typing import Any
 
 import pandas as pd
 
+from src.screening.models import CandidateStock, StrategySignal
+from src.tools.akshare_api import (
+    get_intraday_bars,
+    get_intraday_ticks,
+    get_lhb_detail,
+    get_lhb_institutional_stats,
+    get_money_flow,
+)
+
 logger = logging.getLogger(__name__)
-
-from src.agents.growth_agent import (
-    analyze_insider_conviction,
-)
-from src.screening.strategy_scorer_utils import (
-    EVENT_SUBFACTOR_WEIGHTS,
-    POSITIVE_NEWS_KEYWORDS,
-    NEGATIVE_NEWS_KEYWORDS,
-    aggregate_sub_factors,
-    derive_completeness,
-    _make_sub_factor,
-)
-from src.screening.strategy_scorer_trend import (
-    score_trend_strategy,
-)
-from src.screening.strategy_scorer_mean_reversion import (
-    score_mean_reversion_strategy,
-)
-from src.screening.strategy_scorer_fundamental import (
-    score_fundamental_strategy,
-)
-from src.data.models import CompanyNews, InsiderTrade
-from src.screening.models import CandidateStock, StrategySignal, SubFactor
-from src.tools.akshare_api import get_intraday_bars, get_intraday_ticks, get_lhb_detail, get_lhb_institutional_stats, get_money_flow
-from src.tools.api import (
-    get_company_news,
-    get_insider_trades,
-    get_prices,
-    prices_to_df,
-)
-from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_sw_industry_classification
-
-# Re-export for backward compatibility
-__all__ = [
-    "aggregate_sub_factors",
-    "derive_completeness",
-    "score_trend_strategy",
-    "score_mean_reversion_strategy",
-    "score_fundamental_strategy",
-]
-
-LIGHT_STRATEGY_WEIGHTS = {
-    "trend": 0.65,
-    "mean_reversion": 0.35,
-}
-_DEFAULT_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "300"))
-TECHNICAL_SCORE_MAX_CANDIDATES = int(
-    os.getenv(
-        "SCORE_BATCH_TECHNICAL_MAX_CANDIDATES",
-        str(max(160, math.ceil(_DEFAULT_CANDIDATE_POOL_SIZE * 0.75))),
-    )
-)
-FUNDAMENTAL_SCORE_MAX_CANDIDATES = int(
-    os.getenv(
-        "SCORE_BATCH_FUNDAMENTAL_MAX_CANDIDATES",
-        str(max(100, math.ceil(_DEFAULT_CANDIDATE_POOL_SIZE * 0.47))),
-    )
-)
-EVENT_SENTIMENT_MAX_CANDIDATES = int(
-    os.getenv(
-        "SCORE_BATCH_EVENT_SENTIMENT_MAX_CANDIDATES",
-        str(max(40, math.ceil(_DEFAULT_CANDIDATE_POOL_SIZE * 0.20))),
-    )
-)
-INTRADAY_SCORE_MAX_CANDIDATES = int(
-    os.getenv(
-        "SCORE_BATCH_INTRADAY_MAX_CANDIDATES",
-        "12",
-    )
-)
-HEAVY_SCORE_MIN_PROVISIONAL_SCORE = float(os.getenv("SCORE_BATCH_MIN_PROVISIONAL_SCORE", "0.05"))
-HEAVY_SCORE_MIN_TREND_CONFIDENCE = float(os.getenv("SCORE_BATCH_MIN_TREND_CONFIDENCE", "35"))
-_EVENT_DECAY_LAMBDA = float(os.getenv("EVENT_DECAY_LAMBDA", "0.35"))
-TECHNICAL_STAGE_LIQUIDITY_RANK_BUCKET = float(os.getenv("CANDIDATE_POOL_BTST_LIQUIDITY_RANK_BUCKET", "2500"))
-SCORE_BATCH_CONCURRENCY = int(os.getenv("SCORE_BATCH_CONCURRENCY", "4"))
-
-# R20.2: Event sentiment helpers extracted for readability
-from src.screening.strategy_scorer_event_sentiment_helpers import (  # noqa: E402
-    EventFreshnessSnapshot,
-    compute_event_decay,
-    score_event_sentiment_strategy,
-    _empty_signal,
-    _load_price_frame,
-    _score_news_sentiment,
-    _score_insider_conviction,
-    _score_event_freshness,
-    _score_news_article,
-    _build_event_freshness_snapshot,
-    _build_event_freshness_factor,
-    _count_event_keyword_hits,
-    _resolve_news_article_days_old,
-)
-
-
-def _build_symbol_to_industry_map(stock_basic: pd.DataFrame, sw_map: dict[str, str]) -> dict[str, str]:
-    symbol_to_industry: dict[str, str] = {}
-    for _, row in stock_basic.iterrows():
-        ts_code = str(row["ts_code"])
-        symbol = str(row["symbol"])
-        symbol_to_industry[symbol] = sw_map.get(ts_code, str(row.get("industry", "")))
-    return symbol_to_industry
-
-
-def _group_industry_pe_values(daily_df: pd.DataFrame, symbol_to_industry: dict[str, str]) -> dict[str, list[float]]:
-    grouped: dict[str, list[float]] = defaultdict(list)
-    for _, row in daily_df.iterrows():
-        pe_ttm = row.get("pe_ttm")
-        if pd.isna(pe_ttm) or pe_ttm is None or float(pe_ttm) <= 0:
-            continue
-        symbol = str(row["ts_code"]).split(".")[0]
-        industry = symbol_to_industry.get(symbol, "")
-        if industry:
-            grouped[industry].append(float(pe_ttm))
-    return grouped
-
-
-def _build_industry_pe_medians(trade_date: str) -> dict[str, float]:
-    daily_df = get_daily_basic_batch(trade_date)
-    stock_basic = get_all_stock_basic()
-    sw_map = get_sw_industry_classification() or {}
-    if daily_df is None or daily_df.empty or stock_basic is None or stock_basic.empty:
-        return {}
-
-    symbol_to_industry = _build_symbol_to_industry_map(stock_basic, sw_map)
-    grouped = _group_industry_pe_values(daily_df, symbol_to_industry)
-    return {industry: median(values) for industry, values in grouped.items() if values}
-
-
-def score_candidate(
-    candidate: CandidateStock,
-    trade_date: str,
-    industry_pe_medians: dict[str, float] | None = None,
-    prices_df: pd.DataFrame | None = None,
-) -> dict[str, StrategySignal]:
-    prices_df = prices_df if prices_df is not None else _load_price_frame(candidate.ticker, trade_date)
-    industry_pe_medians = industry_pe_medians if industry_pe_medians is not None else {}
-    return {
-        "trend": score_trend_strategy(prices_df, ticker=candidate.ticker),
-        "mean_reversion": score_mean_reversion_strategy(prices_df),
-        "fundamental": score_fundamental_strategy(candidate.ticker, trade_date, candidate.industry_sw, industry_pe_medians),
-        "event_sentiment": score_event_sentiment_strategy(candidate.ticker, trade_date),
-    }
-
-
-def _compute_light_signals(candidate: CandidateStock, trade_date: str) -> tuple[dict[str, StrategySignal], pd.DataFrame]:
-    prices_df = _load_price_frame(candidate.ticker, trade_date)
-    return _build_light_signal_map(prices_df, ticker=candidate.ticker), prices_df
-
-
-def _build_light_signal_map(prices_df: pd.DataFrame, *, ticker: str | None = None) -> dict[str, StrategySignal]:
-    return {
-        "trend": score_trend_strategy(prices_df, ticker=ticker),
-        "mean_reversion": score_mean_reversion_strategy(prices_df),
-        "fundamental": _empty_signal(),
-        "event_sentiment": _empty_signal(),
-    }
-
-
-def _provisional_score(signals: dict[str, StrategySignal]) -> float:
-    score = 0.0
-    total_weight = 0.0
-    for name, weight in LIGHT_STRATEGY_WEIGHTS.items():
-        signal = signals.get(name)
-        if signal is None or signal.completeness <= 0:
-            continue
-        total_weight += weight
-        score += weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
-    if total_weight <= 0:
-        return 0.0
-    return score / total_weight
-
-
-def _rank_candidates_for_technical_stage(candidates: list[CandidateStock]) -> list[CandidateStock]:
-    return sorted(
-        candidates,
-        key=_technical_stage_ranking_key,
-        reverse=True,
-    )
-
-
-def _technical_stage_ranking_key(candidate: CandidateStock) -> tuple[int, float, float, str]:
-    liquidity_band = int(float(candidate.avg_volume_20d) / max(TECHNICAL_STAGE_LIQUIDITY_RANK_BUCKET, 1.0))
-    return (
-        liquidity_band,
-        -float(candidate.market_cap),
-        float(candidate.avg_volume_20d),
-        str(candidate.ticker),
-    )
-
-
-def _initialize_score_batch_results(candidates: list[CandidateStock]) -> dict[str, dict[str, StrategySignal]]:
-    return {
-        candidate.ticker: {
-            "trend": _empty_signal(),
-            "mean_reversion": _empty_signal(),
-            "fundamental": _empty_signal(),
-            "event_sentiment": _empty_signal(),
-        }
-        for candidate in candidates
-    }
-
-
-def _build_provisional_ranking(
-    candidates: list[CandidateStock],
-    trade_date: str,
-    results: dict[str, dict[str, StrategySignal]],
-) -> list[tuple[float, CandidateStock]]:
-    provisional_ranking: list[tuple[float, CandidateStock]] = []
-    technical_candidates = _rank_candidates_for_technical_stage(candidates)[:TECHNICAL_SCORE_MAX_CANDIDATES]
-    price_frames_by_ticker: dict[str, pd.DataFrame] = {}
-
-    # Parallel IO: load price frames and compute light signals concurrently
-    max_workers = min(SCORE_BATCH_CONCURRENCY, len(technical_candidates)) if technical_candidates else 1
-    if max_workers <= 1:
-        for candidate in technical_candidates:
-            light_signals, price_frame = _compute_light_signals(candidate, trade_date)
-            results[candidate.ticker] = light_signals
-            if price_frame is not None:
-                price_frames_by_ticker[candidate.ticker] = price_frame
-            provisional_ranking.append((_provisional_score(light_signals), candidate))
-    else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_candidate = {
-                executor.submit(_compute_light_signals, candidate, trade_date): candidate
-                for candidate in technical_candidates
-            }
-            for future in concurrent.futures.as_completed(future_to_candidate):
-                candidate = future_to_candidate[future]
-                try:
-                    light_signals, price_frame = future.result()
-                except Exception:
-                    logger.warning("Light-signal computation failed for %s", candidate.ticker, exc_info=True)
-                    light_signals, price_frame = _build_light_signal_map(pd.DataFrame(), ticker=candidate.ticker), None
-                results[candidate.ticker] = light_signals
-                if price_frame is not None:
-                    price_frames_by_ticker[candidate.ticker] = price_frame
-                provisional_ranking.append((_provisional_score(light_signals), candidate))
-
-    _populate_sector_diffusion_metrics(results, technical_candidates, price_frames_by_ticker)
-    return _append_unranked_candidates_to_provisional_ranking(provisional_ranking, candidates)
-
-
-def _append_unranked_candidates_to_provisional_ranking(
-    provisional_ranking: list[tuple[float, CandidateStock]], candidates: list[CandidateStock]
-) -> list[tuple[float, CandidateStock]]:
-    ranked_tickers = {ranked_candidate.ticker for _, ranked_candidate in provisional_ranking}
-    for candidate in candidates:
-        if candidate.ticker in ranked_tickers:
-            continue
-        provisional_ranking.append((0.0, candidate))
-    return provisional_ranking
-
 
 def _populate_sector_diffusion_metrics(
     results: dict[str, dict[str, StrategySignal]],
@@ -718,32 +475,3 @@ def _merge_metrics_into_trend_momentum(trend_signal: StrategySignal | None, raw_
     setattr(momentum_payload, "metrics", metrics)
 
 
-def _select_event_sentiment_candidates(fundamental_candidates: list[CandidateStock]) -> list[CandidateStock]:
-    return fundamental_candidates[:EVENT_SENTIMENT_MAX_CANDIDATES]
-
-
-def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, dict[str, StrategySignal]]:
-    started_at = perf_counter()
-    industry_pe_medians = _build_industry_pe_medians(trade_date)
-    results = _initialize_score_batch_results(candidates)
-    fundamental_candidates = _prepare_heavy_score_candidates(candidates, trade_date, results)
-    _populate_heavy_signals(results, fundamental_candidates, trade_date, industry_pe_medians)
-    elapsed = perf_counter() - started_at
-    logger.info(
-        "score_batch completed: %d candidates, %d heavy-scored, concurrency=%d, %.2fs",
-        len(candidates),
-        len(fundamental_candidates),
-        SCORE_BATCH_CONCURRENCY,
-        elapsed,
-    )
-    return results
-
-
-def _prepare_heavy_score_candidates(
-    candidates: list[CandidateStock],
-    trade_date: str,
-    results: dict[str, dict[str, StrategySignal]],
-) -> list[CandidateStock]:
-    provisional_ranking = _build_provisional_ranking(candidates, trade_date, results)
-    ranked_candidates = _rank_candidates_for_heavy_scoring(provisional_ranking)
-    return _select_fundamental_candidates(ranked_candidates, results)

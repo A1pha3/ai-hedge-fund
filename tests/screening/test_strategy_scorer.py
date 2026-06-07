@@ -996,8 +996,8 @@ def _news_item(title: str, date: str, content: str = "") -> CompanyNews:
 def test_event_sentiment_ignores_stale_weak_single_keyword_news():
     news = [_news_item("Company growth", "2026-02-26", "")]
 
-    with patch("src.screening.strategy_scorer.get_company_news", return_value=news), \
-         patch("src.screening.strategy_scorer.get_insider_trades", return_value=[]):
+    with patch("src.screening.strategy_scorer_event_sentiment_helpers.get_company_news", return_value=news), \
+         patch("src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades", return_value=[]):
         signal = score_event_sentiment_strategy("000001", "20260305")
 
     assert signal.direction == 0
@@ -1008,8 +1008,8 @@ def test_event_sentiment_ignores_stale_weak_single_keyword_news():
 def test_event_sentiment_keeps_fresh_multi_keyword_news_actionable():
     news = [_news_item("profit growth beat upgrade", "2026-03-05", "record order growth and profit beat")]
 
-    with patch("src.screening.strategy_scorer.get_company_news", return_value=news), \
-         patch("src.screening.strategy_scorer.get_insider_trades", return_value=[]):
+    with patch("src.screening.strategy_scorer_event_sentiment_helpers.get_company_news", return_value=news), \
+         patch("src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades", return_value=[]):
         signal = score_event_sentiment_strategy("000001", "20260305")
 
     assert signal.direction == 1
@@ -1048,6 +1048,10 @@ def test_score_event_sentiment_strategy_builds_sub_factors_from_loaded_data(monk
 
     monkeypatch.setattr(strategy_scorer_module, "get_company_news", fake_news_loader)
     monkeypatch.setattr(strategy_scorer_module, "get_insider_trades", fake_trades_loader)
+    # R20.2: also patch helpers module since score_event_sentiment_strategy now lives there
+    import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+    monkeypatch.setattr(_esh, "get_company_news", fake_news_loader)
+    monkeypatch.setattr(_esh, "get_insider_trades", fake_trades_loader)
     monkeypatch.setattr(strategy_scorer_module, "_score_news_sentiment", lambda items, trade_date: SubFactor(name="news_sentiment", direction=1, confidence=80.0, weight=0.55, metrics={"news_count": len(items), "trade_date": trade_date}))
     monkeypatch.setattr(strategy_scorer_module, "_score_insider_conviction", lambda items: SubFactor(name="insider_conviction", direction=1, confidence=40.0, weight=0.25, metrics={"trade_count": len(items)}))
     monkeypatch.setattr(strategy_scorer_module, "_score_event_freshness", lambda items, trade_date: SubFactor(name="event_freshness", direction=0, confidence=25.0, weight=0.20, metrics={"fresh_news_count": len(items), "trade_date": trade_date}))
@@ -1057,6 +1061,7 @@ def test_score_event_sentiment_strategy_builds_sub_factors_from_loaded_data(monk
         return StrategySignal(direction=1, confidence=61.0, completeness=1.0, sub_factors={})
 
     monkeypatch.setattr(strategy_scorer_module, "aggregate_sub_factors", fake_aggregate)
+    monkeypatch.setattr(_esh, "aggregate_sub_factors", fake_aggregate)
 
     signal = score_event_sentiment_strategy("000001", "20260305")
 
