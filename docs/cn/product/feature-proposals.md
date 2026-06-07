@@ -694,8 +694,8 @@
 
 | # | 项目 | 现状 | 建议 |
 |---|------|------|------|
-| 1 | 模块拆分 | 部分文件过大 (`daily_pipeline.py`, `strategy_scorer.py`) | 继续按职责拆分 helpers (已在进行中) |
-| 2 | 类型标注 | 已有 PEP 484 类型标注 | 补充 `validators` 中部分 Any 类型的精确标注 |
+| 1 | 模块拆分 ✅ | strategy_scorer.py 从 1091 行降至 749 行，事件情绪策略提取为独立 helpers 模块 (R20.2) | 已满足需求 |
+| 2 | 类型标注 ✅ | validator_v2.py 引入 MetricRow/PriceRow 类型别名，替换 10+ 处 Any 为精确类型 (R20.2) | 已满足需求 |
 
 ---
 
