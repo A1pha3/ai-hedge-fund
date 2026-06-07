@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from src.utils.numeric import safe_float as _safe_float
+
 logger = logging.getLogger(__name__)
 
 
@@ -135,21 +137,6 @@ class CompareReport:
 # ---------------------------------------------------------------------------
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    """将 ``value`` 安全转为有限 float; None / NaN / Inf / 非数值 -> ``default``。
-
-    防御 GMM-001 类 NaN 污染: ``NaN or default`` 仍为 NaN (NaN 是 truthy),
-    故必须显式 ``math.isfinite`` 校验。
-    """
-    if value is None:
-        return default
-    try:
-        fv = float(value)
-    except (TypeError, ValueError):
-        return default
-    if math.isnan(fv) or math.isinf(fv):
-        return default
-    return fv
 
 
 def _extract_raw_metric(recommendation: dict[str, Any], metric_name: str) -> float:

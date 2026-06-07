@@ -71,4 +71,17 @@ def detect_market_state(trade_date: str) -> MarketState:
         market_breadth_ratio=_market_breadth_ratio,
         northbound_streak=_northbound_streak,
     )
-    return build_market_state_from_metrics(metrics=metrics, normalize_weights=_normalize_weights)
+    state = build_market_state_from_metrics(metrics=metrics, normalize_weights=_normalize_weights)
+
+    # P2-9: 可选宏观数据集成 — 失败不阻塞现有逻辑
+    try:
+        from src.data.macro_data import compute_macro_regime, fetch_macro_snapshot
+        macro = fetch_macro_snapshot()
+        regime = compute_macro_regime(macro)
+        # 仅当至少有一个非 unknown 标签时才附加
+        if any(v != "unknown" for k, v in regime.items() if k != "summary"):
+            state.macro_context = regime
+    except Exception:
+        pass
+
+    return state

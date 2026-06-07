@@ -78,6 +78,8 @@ class MarketState(BaseModel):
         "fundamental": 0.30,
         "event_sentiment": 0.20,
     })
+    # P2-9: 宏观环境标签 (可选 — fetch_macro_snapshot 失败时为 None)
+    macro_context: dict | None = None
 
 
 DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {

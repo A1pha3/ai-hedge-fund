@@ -15,6 +15,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from src.utils.numeric import safe_float as _safe_float
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -47,17 +49,6 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 # ---------------------------------------------------------------------------
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    """NaN/Inf/非数值 -> ``default``。"""
-    if value is None or isinstance(value, bool):
-        return default
-    try:
-        fv = float(value)
-    except (TypeError, ValueError):
-        return default
-    if not math.isfinite(fv):
-        return default
-    return fv
 
 
 # ---------------------------------------------------------------------------

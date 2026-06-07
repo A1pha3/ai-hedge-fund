@@ -30,6 +30,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 
+from src.utils.numeric import safe_float as _safe_float
+
 # ---------------------------------------------------------------------------
 # Public constants
 # ---------------------------------------------------------------------------
@@ -108,17 +110,6 @@ class StrategyDailyAttribution:
 # ---------------------------------------------------------------------------
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    """非数值 / NaN / Inf → ``default``，否则返回 ``float(value)``。"""
-    if value is None:
-        return default
-    try:
-        as_float = float(value)
-    except (TypeError, ValueError):
-        return default
-    if not math.isfinite(as_float):
-        return default
-    return as_float
 
 
 def _position_daily_pnl(position: Mapping[str, Any]) -> float:

@@ -344,7 +344,7 @@
 
 | # | 功能 | 现状 | 改进方案 | 用户价值 |
 |---|------|------|----------|----------|
-| P1-1 | **缓存命中率优化** | SQLite 缓存已实现但过期策略简单 | 增加「主动预热」模式：在盘后自动预拉取常用数据；增加按因子依赖的批量预加载 | 减少 `--auto` 运行时的冷启动延迟 |
+| P1-1 | **缓存命中率优化** ✅ | SQLite 缓存已实现但过期策略简单 | 增加「主动预热」模式：在盘后自动预拉取常用数据（daily_basic / daily_prices / 行业分类 / 北向资金 / 财务指标）— 已实现：`src/data/cache_preheater.py` + `--preheat [--preheat-tasks=...] [--force] [--list-tasks]` CLI + `PREHEAT_BEFORE_AUTO=true` 自动预热 | 减少 `--auto` 运行时的冷启动延迟 |
 | P1-2 | **行业轮动信号** ✅ | 行业暴露控制已有 (`industry_exposure.py`)，但仅限风控 | 增加行业动量/轮动评分，输出「本周强势行业 Top 5」，在推荐结果中标注行业标签 | 用户从行业视角筛选，减少信息噪音 |
 | P1-3 | **推荐标的持续性追踪** ✅ | Lookback Audit 已有 (`lookback_audit.py`)，但需要手动触发 | 增加「自动追踪」：每次 `--auto` 运行后自动记录 Top 10 标的，次日盘后自动计算实际收益 | 无需手动对比，系统自动闭环验证 — 已实现：`src/screening/recommendation_tracker.py` + `--tracking-summary` CLI |
 | P1-4 | **因子重要性排行** ✅ | 四策略各有子因子，但缺少全局排序 | 定期计算因子 IC (信息系数)，输出「本周最强因子 Top 10」，用于辅助用户理解市场风格 — 已实现：`src/research/factor_ic_analysis.py` + `--factor-ic [--ic-lookback=N] [--ic-method=spearman]` CLI | 用户了解当前市场驱动因素 |
@@ -668,7 +668,7 @@
 18. **P2-1** Agent 推理过程可视化
 19. **P2-7** 回测场景回放
 20. **P2-8** 组合绩效周报/月报
-21. **P2-9** 宏观数据集成
+21. **P2-9** 宏观数据集成 ✅
 22. **P2-3** 邮件/Webhook 推送
 
 ---

@@ -21,6 +21,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from src.utils.numeric import safe_float as _coerce_score_b
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,17 +88,6 @@ def _parse_date(date_str: str) -> datetime:
     return datetime.strptime(cleaned, "%Y%m%d")
 
 
-def _coerce_score_b(value: Any) -> float:
-    """将 ``score_b`` 强制转为有限 float; None / NaN / Inf / 非数值 -> 0.0。"""
-    if value is None:
-        return 0.0
-    try:
-        as_float = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if not math.isfinite(as_float):
-        return 0.0
-    return as_float
 
 
 def _classify_decay(change_pct: float | None) -> DecayLevel:

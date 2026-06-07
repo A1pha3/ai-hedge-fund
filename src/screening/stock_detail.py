@@ -26,6 +26,7 @@ from src.screening.consecutive_recommendation import (
 )
 from src.screening.recommendation_tracker import HISTORY_FILENAME
 from src.screening.signal_decay_detector import detect_signal_decay
+from src.utils.numeric import safe_int as _safe_int
 
 
 # ---------------------------------------------------------------------------
@@ -101,17 +102,6 @@ def _safe_float(value: Any, default: float | None = None) -> float | None:
     return fv
 
 
-def _safe_int(value: Any, default: int = 0) -> int:
-    """安全转为 int; None / NaN -> ``default``."""
-    if value is None:
-        return default
-    try:
-        fv = float(value)
-    except (TypeError, ValueError):
-        return default
-    if math.isnan(fv) or math.isinf(fv):
-        return default
-    return int(fv)
 
 
 def _determine_macd_signal(metrics: dict[str, Any]) -> str:

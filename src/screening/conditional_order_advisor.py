@@ -27,6 +27,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Sequence
 
+from src.utils.numeric import safe_float as _safe_float, is_finite_number as _is_finite
+
 # ---------------------------------------------------------------------------
 # Constants & defaults
 # ---------------------------------------------------------------------------
@@ -115,30 +117,8 @@ class ConditionalOrderAdvice:
 # ---------------------------------------------------------------------------
 
 
-def _safe_float(value: object, default: float = 0.0) -> float:
-    """None / NaN / Inf / 非数值 → default, 杜绝告警污染。"""
-    if isinstance(value, bool):
-        # 避免 True/False 被当成 1.0/0.0 — bool 视为非法
-        return default
-    if value is None:
-        return default
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return default
-    if not math.isfinite(out):
-        return default
-    return out
 
 
-def _is_finite(value: object) -> bool:
-    """检查 value 是否为有限 float (None / NaN / Inf → False)。"""
-    if value is None or isinstance(value, bool):
-        return False
-    if not isinstance(value, (int, float)):
-        return False
-    fv = float(value)
-    return math.isfinite(fv)
 
 
 def _clean_price_series(values: Iterable[object]) -> list[float]:

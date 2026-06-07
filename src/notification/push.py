@@ -29,6 +29,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from src.utils.numeric import safe_float as _safe_float
+
 logger = logging.getLogger(__name__)
 
 
@@ -200,19 +202,6 @@ def _safe_str(value: Any, default: str = "") -> str:
         return default
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    """安全 float — 异常值/NaN/Inf → default。"""
-    if value is None or isinstance(value, bool):
-        return default
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return default
-    import math
-
-    if not math.isfinite(out):
-        return default
-    return out
 
 
 def format_report_markdown(report_data: Mapping[str, Any], *, max_rows: int = 10) -> str:

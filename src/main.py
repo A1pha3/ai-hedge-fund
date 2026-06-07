@@ -1,6 +1,5 @@
 import argparse
 import json
-import math
 import os
 import sys
 from datetime import datetime
@@ -50,6 +49,7 @@ from src.utils.display import (
 from src.utils.llm import build_parallel_provider_execution_plan
 from src.utils.logging import get_logger, setup_logging
 from src.utils.progress import progress
+from src.utils.numeric import safe_float as _safe_float, safe_int as _safe_int, is_finite_number as _is_finite_number
 
 # Load environment variables from .env file and override stale inherited values.
 load_dotenv(override=True)
@@ -217,14 +217,6 @@ def _build_analyst_batches(selected_analysts: list[str], concurrency_limit: int)
     return [selected_analysts[index : index + concurrency_limit] for index in range(0, len(selected_analysts), concurrency_limit)]
 
 
-def _is_finite_number(value: object) -> bool:
-    """检查 value 是否为有限数 (非 NaN / Inf / None)。"""
-    if value is None:
-        return False
-    try:
-        return math.isfinite(float(value))
-    except (TypeError, ValueError):
-        return False
 
 
 def _adx_level(value: float) -> tuple[str, str]:
@@ -328,37 +320,8 @@ def _state_type_cn(state_type: str) -> str:
     }.get(str(state_type or "").lower(), str(state_type or "—"))
 
 
-def _safe_float(value: object, default: float) -> float:
-    """将 value 安全转为 float, 处理 None / NaN / Inf / 异常类型。
-
-    不能使用 ``float(value or default)`` — 当 value 是 NaN 时,
-    ``NaN or default`` 仍为 NaN (NaN 是 truthy), 会污染下游。
-    """
-    if value is None:
-        return default
-    try:
-        fv = float(value)
-    except (TypeError, ValueError):
-        return default
-    if math.isnan(fv) or math.isinf(fv):
-        return default
-    return fv
 
 
-def _safe_int(value: object, default: int) -> int:
-    """将 value 安全转为 int, 处理 None / NaN / 异常类型。"""
-    if value is None:
-        return default
-    try:
-        fv = float(value)
-    except (TypeError, ValueError):
-        return default
-    if math.isnan(fv) or math.isinf(fv):
-        return default
-    try:
-        return int(fv)
-    except (TypeError, ValueError):
-        return default
 
 
 def _extract_market_status(market_state: object) -> dict:
@@ -756,6 +719,44 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10) -> dict:
     }
 
 
+def run_preheat(
+    trade_date: str | None = None,
+    tasks: list[str] | None = None,
+    force: bool = False,
+    list_tasks: bool = False,
+) -> int:
+    """P1-1 缓存预热 CLI 入口。
+
+    Args:
+        trade_date: 交易日期 YYYYMMDD, None = 今天。
+        tasks: 指定预热任务, None = 全部。
+        force: 强制刷新。
+        list_tasks: 列出可用任务后退出。
+
+    Returns:
+        退出码 (0 = 成功)。
+    """
+    from colorama import Fore, Style
+
+    from src.data.cache_preheater import format_preheat_report, get_preheat_tasks, preheat_cache
+
+    if list_tasks:
+        available = get_preheat_tasks()
+        print(f"\n{Fore.CYAN}{Style.BRIGHT}可用预热任务:{Style.RESET_ALL}")
+        for t in available:
+            print(f"  {t['id']:<22s}  {t['description']:<20s}  (~{t['estimated_time']})")
+        print()
+        return 0
+
+    if trade_date is None:
+        trade_date = datetime.now().strftime("%Y%m%d")
+
+    task_label = "全部" if tasks is None else ",".join(tasks)
+    stats = preheat_cache(trade_date, tasks=tasks, force=force, concurrency=4)
+    print(format_preheat_report(stats, trade_date, task_label))
+    return 0 if stats.tasks_failed == 0 else 1
+
+
 def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
     """一键跑全流程：全市场筛选 -> 因子评分 -> 信号融合 -> Top N 推荐。
 
@@ -777,6 +778,22 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
 
     progress.start()
     try:
+        # P1-1: PREHEAT_BEFORE_AUTO=true 时在 auto 开始前预热缓存
+        if os.environ.get("PREHEAT_BEFORE_AUTO", "").strip().lower() in ("1", "true", "yes", "on"):
+            try:
+                from src.data.cache_preheater import preheat_cache as _preheat
+
+                _preheat_stats = _preheat(trade_date, concurrency=4)
+                logger.info(
+                    "[Auto] P1-1 缓存预热完成: %d/%d 成功, %d 跳过, %.1fs",
+                    _preheat_stats.tasks_success,
+                    _preheat_stats.tasks_total,
+                    _preheat_stats.tasks_skipped,
+                    _preheat_stats.elapsed_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - 预热失败不阻塞主流程
+                logger.warning("[Auto] P1-1 缓存预热失败: %s", exc)
+
         # 调用纯函数 — 复用 Web 端点的核心逻辑
         report_payload = compute_auto_screening_results(trade_date, top_n)
 
@@ -2315,18 +2332,7 @@ def _print_industry_ranking_block(recs: list[dict], match: dict) -> None:
     # Filter recommendations in the same industry, sort by score_b descending
     # GAMMA-008: coerce None / NaN score_b to 0.0 — .get() only substitutes
     # when the key is missing, not when the value is explicitly None or NaN.
-    import math as _math
-
-    def _safe_score(v: object) -> float:
-        if v is None:
-            return 0.0
-        try:
-            fv = float(v)
-            return 0.0 if _math.isnan(fv) else fv
-        except (TypeError, ValueError):
-            return 0.0
-
-    peers = [(r.get("ticker", ""), _safe_score(r.get("score_b"))) for r in recs if r.get("industry_sw") == industry]
+    peers = [(r.get("ticker", ""), _safe_float(r.get("score_b"), 0.0)) for r in recs if r.get("industry_sw") == industry]
     if not peers:
         print(f"\n{Fore.CYAN}同行业排名:{Style.RESET_ALL} 无同行业数据")
         return
@@ -2347,8 +2353,26 @@ def _print_industry_ranking_block(recs: list[dict], match: dict) -> None:
 
 
 if __name__ == "__main__":
+    # P1-1: --preheat 缓存预热独立 CLI 入口
+    if "--preheat" in sys.argv:
+        _ph_trade_date: str | None = None
+        _ph_tasks: list[str] | None = None
+        _ph_force = "--force" in sys.argv
+        _ph_list = "--list-tasks" in sys.argv
+        for arg in sys.argv:
+            if arg.startswith("--preheat-date="):
+                _ph_trade_date = arg.split("=", 1)[1].strip().replace("-", "")
+            elif arg.startswith("--preheat-tasks="):
+                _ph_tasks = [t.strip() for t in arg.split("=", 1)[1].split(",") if t.strip()]
+        raise SystemExit(run_preheat(trade_date=_ph_trade_date, tasks=_ph_tasks, force=_ph_force, list_tasks=_ph_list))
+
     if "--daily-gainers" in sys.argv:
         raise SystemExit(run_daily_gainers_cli())
+
+    # P2-9: --macro 宏观经济面板独立 CLI 入口
+    if "--macro" in sys.argv:
+        from src.data.macro_data import run_macro_cli
+        raise SystemExit(run_macro_cli())
 
     # P2-8: --performance-report 组合绩效周报/月报独立 CLI 入口
     if "--performance-report" in sys.argv:

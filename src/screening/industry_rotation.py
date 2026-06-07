@@ -26,6 +26,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from src.utils.numeric import coerce_score_b as _safe_score_b
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -89,22 +91,6 @@ class IndustrySignal:
 # ---------------------------------------------------------------------------
 
 
-def _safe_score_b(value: object) -> float:
-    """GAMMA-008 兼容: 安全提取 score_b, 处理 None / NaN / 异常类型。
-
-    Returns:
-        0.0 if value is None / NaN / 不可转换, else float(value)
-    """
-    if value is None:
-        return 0.0
-    try:
-        fv = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if math.isnan(fv) or math.isinf(fv):
-        return 0.0
-    # FusedScore.score_b 范围 [-1, 1]; 截断异常值避免污染均值
-    return max(-1.0, min(1.0, fv))
 
 
 def _extract_momentum_from_signal(signal: object) -> float:

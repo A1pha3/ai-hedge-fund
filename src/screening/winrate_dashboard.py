@@ -41,6 +41,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from src.utils.numeric import optional_float as _optional_float, safe_float as _safe_float
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,30 +121,8 @@ class WinRateSummary:
 # ---------------------------------------------------------------------------
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    """将 value 转为有限 float; 异常值返回 default。"""
-    if value is None:
-        return default
-    try:
-        fv = float(value)
-    except (TypeError, ValueError):
-        return default
-    if not math.isfinite(fv):
-        return default
-    return fv
 
 
-def _optional_float(value: Any) -> float | None:
-    """将 value 转为有限 float 或 ``None``。"""
-    if value is None:
-        return None
-    try:
-        fv = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(fv):
-        return None
-    return fv
 
 
 def _parse_date(date_str: str) -> datetime | None:

@@ -22,6 +22,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from src.utils.numeric import safe_float as _coerce_score_b
+
 logger = logging.getLogger(__name__)
 
 
@@ -109,22 +111,6 @@ def _format_date(dt: datetime) -> str:
     return dt.strftime("%Y%m%d")
 
 
-def _coerce_score_b(value: Any) -> float:
-    """将 ``score_b`` 强制转为有限 float; None / NaN / Inf / 非数值 -> 0.0。
-
-    防御目的: 历史报告可能因损坏、版本不一致或缓存污染携带异常值,
-    若直接透传会污染 enrichment 后的 ``recommendation_history``,
-    进而让排序/格式化/JSON 序列化等下游消费者出现意外行为。
-    """
-    if value is None:
-        return 0.0
-    try:
-        as_float = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if not math.isfinite(as_float):
-        return 0.0
-    return as_float
 
 
 # ---------------------------------------------------------------------------
