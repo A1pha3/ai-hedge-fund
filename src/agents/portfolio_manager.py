@@ -315,12 +315,22 @@ def generate_trading_decision(
             normalized_quantity = 0
         else:
             action_limit = int(allowed_for_ticker.get(chosen.action, 0) or 0)
-            normalized_quantity = max(0, min(int(chosen.quantity), action_limit))
+            try:
+                raw_quantity = int(chosen.quantity)
+            except (TypeError, ValueError):
+                raw_quantity = 0
+            normalized_quantity = max(0, min(raw_quantity, action_limit))
 
+        # Guard against bad LLM output: int() can raise TypeError/ValueError
+        # on None, NaN, strings like "N/A", etc. Default to 50 on failure.
+        try:
+            raw_conf = int(chosen.confidence)
+        except (TypeError, ValueError):
+            raw_conf = 50
         validated_decisions[t] = PortfolioDecision(
             action=chosen.action,
             quantity=normalized_quantity,
-            confidence=max(0, min(100, int(chosen.confidence))),
+            confidence=max(0, min(100, raw_conf)),
             reasoning=_build_consistent_reasoning(compact_signals.get(t, {}), chosen.action),
         )
 
