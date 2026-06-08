@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.data.adapters.akshare_adapter import _derive_debt_to_equity_from_debt_to_assets
 from src.data.models import FinancialMetrics
 
 
@@ -134,6 +135,13 @@ def build_metrics_from_sina_profit_df(*, ticker: str, df_profit: pd.DataFrame, l
 def build_metrics_from_analysis_indicator_df(*, ticker: str, df: pd.DataFrame, limit: int) -> list[FinancialMetrics]:
     metrics: list[FinancialMetrics] = []
     for _, row in df.head(limit).iterrows():
+        # AKShare "资产负债率" is the debt-to-assets ratio (D/A, 0-1), not the
+        # debt-to-equity ratio (D/E). Map to debt_to_assets and derive D/E
+        # mathematically. D/A>=1.0 (negative equity) → D/E is None to avoid
+        # misleading values. See GAMMA-017 (R20.3 adapter fix) and GAMMA-018
+        # (R20.3 helpers path — this path was the actual production path).
+        debt_to_assets_val = (float(row.get("资产负债率", 0)) / 100) if pd.notna(row.get("资产负债率")) else None
+        debt_to_equity_val = _derive_debt_to_equity_from_debt_to_assets(debt_to_assets_val)
         metrics.append(
             FinancialMetrics(
                 ticker=ticker,
@@ -165,8 +173,8 @@ def build_metrics_from_analysis_indicator_df(*, ticker: str, df: pd.DataFrame, l
                 quick_ratio=None,
                 cash_ratio=None,
                 operating_cash_flow_ratio=None,
-                debt_to_equity=float(row.get("资产负债率", 0)) / 100 if pd.notna(row.get("资产负债率")) else None,
-                debt_to_assets=None,
+                debt_to_equity=debt_to_equity_val,
+                debt_to_assets=debt_to_assets_val,
                 interest_coverage=None,
                 revenue_growth=None,
                 earnings_growth=None,

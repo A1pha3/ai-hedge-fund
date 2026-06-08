@@ -301,15 +301,16 @@ def compute_risk_snapshot(
     """从持仓 + 回溯收益计算 RiskSnapshot。
 
     算法:
-    1. VaR/CVaR: 历史模拟法, 按 ``confidence_levels`` 计算, 缩放为元
-    2. 最大回撤 + 当前回撤: 从 lookback_returns 累计得到 equity curve
-    3. 行业集中度: 从 ``portfolio_positions.industry_sw`` 聚合
-    4. 单一标的占比上限: ``max(weights)``
-    5. 预警: drawdown > 10% 或 单行业 > 25% 或 单一标的 > 12%
+    1. VaR/CVaR: 历史模拟法 (1日), 按 ``confidence_levels`` 计算, 缩放为元
+    2. 多日 VaR 缩放: 沿用业界惯例 ``sqrt(T)`` (参数假设), 非纯历史法
+    3. 最大回撤 + 当前回撤: 从 lookback_returns 累计得到 equity curve
+    4. 行业集中度: 从 ``portfolio_positions.industry_sw`` 聚合
+    5. 单一标的占比上限: ``max(weights)``
+    6. 预警: drawdown > 10% 或 单行业 > 25% 或 单一标的 > 12%
 
     所有浮点字段在 NaN/Inf 时退化为 0.0,确保前端展示不报错。
-    ``var_horizon_days`` 当前为接口兼容保留参数, 时间窗缩放遵循
-    ``sqrt(T)`` (而非未来扩展到多日 VaR 时再启用)。
+    ``var_horizon_days`` 控制 sqrt(T) 缩放; 若严格要求纯历史法,调用方应
+    传入实际 T 日 rolling 收益而非 1 日收益。
     """
     lookback_returns = lookback_returns or []
     cleaned_confidence = tuple(sorted({float(c) for c in confidence_levels if 0.0 < float(c) < 1.0}))

@@ -801,6 +801,71 @@
 - 新增 3 个回归测试: test_debt_to_equity_edge_cases, test_direct_debt_to_equity_takes_priority, test_debt_to_equity_conversion (更新)
 - 800+ 测试, 0 失败
 
+### v2.1.4 (2026-06-08) — Round 20.4: 三人团队深度审查 + 多 Bug 修复
+
+#### 审查范围
+- **Alpha (Python/Web 专家)**: 20 个 agent + 图状态 + CLI 分发 + 筛选融合 + 组合/退出管理 — 全量代码审计
+- **Beta (Domain/数据专家)**: tushare/akshare 数据源 + 适配器 + 缓存系统 + 路由 + 验证 — 网络/并发/数据质量
+- **Gamma (产品经理)**: 风险/市场状态/退出管理 + 业界产品调研
+
+#### Bug 修复 (12 个)
+
+**CRITICAL 严重度 (3)**
+- **GAMMA-018: AKShare helpers 路径 D/E 语义错 (HIGH)** — R20.3 仅修复了 `src/data/adapters/akshare_adapter.py` 路径，**但生产环境实际走的是 `src/tools/akshare_financial_metrics_helpers.py:build_metrics_from_analysis_indicator_df` 路径**，该路径仍然把「资产负债率」直接赋给 `debt_to_equity`。修复：复用 R20.3 的 `_derive_debt_to_equity_from_debt_to_assets` 推导函数，D/A 仍赋给 `debt_to_assets`，D/E 从 D/A 推导。D/A ≥ 1.0 (资不抵债) → D/E 为 None。
+- **ALPHA-C1: Michael Burry 负 FCF yield 误判 (HIGH)** — `_analyze_value` 计算 `fcf_yield = fcf / market_cap` 时，负 FCF 与 0.15/0.12/0.08 阈值比较全部 False，静默落入 "Low FCF yield" 分支。但更严重的是对亏损企业（含 capex-heavy 名义为负）给出错误的"低收益"评语。修复：market_cap ≤ 0 时跳过；负 FCF yield 标记为"亏损或重资本支出"，不计入评分。
+- **ALPHA-C5: Valuation 估值安全边际应用到 book value (HIGH)** — `calculate_residual_income_value` 中 `intrinsic * 0.8` 把 book_val 也按 0.8 折扣。book_val 是可观测的账面价值，0.8 折扣等于"市场应支付账面值的 80%"——这不是安全边际，是估值打折。修复：book_val 保留原值，0.8 仅作用于 (pv_ri + pv_term) 残差收入部分。例: book=100 + RI=50 → 新值 100+50×0.8=140；旧值 150×0.8=120。
+
+**MEDIUM 严重度 (6)**
+- **BETA-C2: BatchDataCache 线程不安全 (MEDIUM)** — `BatchDataCache._store` 裸 dict 无锁。`BatchDataFetcher` 通过 `asyncio.to_thread` 触发多 ticker 并发网络请求，多线程同时 `get`/`set` 可能产生撕裂读（ts 新值旧值的 tuple）。修复：所有方法通过 `threading.Lock` 串行化。
+- **BETA-C1 (与 GAMMA-018 重复独立路径)**: 已并入 GAMMA-018 描述。
+- **BETA-C3: AKShare 错误信息在 fallback 链中丢失 (MEDIUM)** — `load_prices_with_fallback` 用同一个变量名 `error` 捕获 AKShare 和 Tencent 错误，最终异常信息把 Tencent 错误打印两次。修复：分别用 `akshare_error` 和 `tencent_error` 两个变量，两条错误都报告。
+- **ALPHA-C2: Aswath Damodaran CAGR 周期下限从 1.0 改为 0.25 (MEDIUM)** — TTM 期间 n_periods < 4 时，`n_years = max(n_periods * 0.25, 1.0)` 把所有小样本都钳到 1.0 年，导致 1/2/3 季度 CAGR 全部按 1 年年化（产生断点）。修复：钳到 0.25 (一个季度)。两处代码均修复。
+- **ALPHA-C3: Hamada 公式负 D/E 错误 (MEDIUM)** — `estimate_cost_of_equity` 对 `debt_to_equity < 0`（股东权益为负，常见于困境反转股）直接进入 Hamada 公式，得到**低于** unlevered beta 的 levered beta（与"困境公司应更高风险"直觉矛盾）。修复：D/E < 0 时按 0 处理（全权益融资）。
+- **ALPHA-M13: signal_fusion 冷却日期 strptime 异常未捕获 (MEDIUM)** — `maybe_release_cooldown_early` 直接调用 `datetime.strptime(expire_date, "%Y%m%d")`，若注册表中有损坏的日期字符串（来自外部源/手动编辑）会导致整个 `score_b` 计算崩溃。修复：新增 `_parse_cooldown_date()` helper，异常时返回 None，调用方视为"无早期释放"。
+- **BETA-M1: Tushare 批量缓存 key 与 BatchDataFetcher 不一致 (MEDIUM)** — tushare 模块用 `f"daily_basic_batch_{trade_date}"` (下划线)，BatchDataFetcher 用 `f"daily_basic_batch:{trade_date}"` (冒号)。两个缓存从不共享条目，重复 Tushare 调用。修复：统一为冒号格式（与 BatchDataFetcher 保持一致并匹配现有测试期望）。
+- **BETA-M2: Tushare 重试无 jitter (MEDIUM)** — 多 worker 同步重试时全部在 1s/2s/4s 同时打 API。修复：加 ±30% 随机 jitter。
+- **GAMMA-C3: 退出管理 L2 ATR 止损过紧 (MEDIUM)** — `check_exit_signal` 在 `atr_14 > 0` 且 `atr_stop > hard_stop_price` 时触发 L2。但 `atr_14` 较小时（如 0.5% of entry），ATR 止损 (-1%) 远高于硬止损 (-6%)，会在微小下跌时误触发。修复：要求 `2*atr_14 >= 6% of entry`（即 ATR 止损**宽于**硬止损）才触发 L2。
+- **GAMMA-M1: Crisis handler mode 被顺序 update 覆盖 (MEDIUM)** — `evaluate_crisis_response` 用连续 `response.update()` 调用，触发顺序决定最终 mode（recovery 应最严重但可能被后续 shrink 覆盖）。测试 `test_crisis_handler.py` 已知此行为但接受。修复：构建 `triggered_modes` 列表 + 严重度阶梯（recovery > defense > shrink > normal），最后统一应用最严重 mode 和最严格 cap。
+
+**LOW 严重度 (3)**
+- **GAMMA-C2: BTST L4 fast-confirm 半退逻辑注释改进 (LOW)** — `check_exit_signal` 早退路径已正确（pnl<=0 整退，0<pnl 且未达 fast_confirm 半退），但函数注释中 "4% fast confirm OR 1% close confirm" 易误读。修复：在注释中明确"pnl>0 是软确认，仅半退"。
+- **GAMMA-L1: 行业暴露排序按名称 (LOW)** — `calculate_industry_exposures` 按 industry 名称字母序排序（电子/房地产/纺织服装...），用户期望先看最大敞口。修复：按 market_value 降序。
+- **GAMMA-C1 (docstring): VaR sqrt(T) 缩放文档化 (LOW)** — `compute_risk_snapshot` 实际是历史模拟法 + sqrt(T) 缩放，docstring 含糊。修复：明确文档化"1 日历史 VaR + sqrt(T) 缩放非纯历史法"，调用方应传入 T 日 rolling 收益以获纯历史 VaR。
+
+#### 重构 (1)
+- 三个 _resolve_* dispatcher 函数的 `margin_used` 冗余赋值保持现状（已文档化）；agent `state["data"]` 返回引用统一性已审计，行为正确，无需修改。
+
+#### 测试覆盖
+- 新增 `tests/test_r20_4_regressions.py` (**18 个回归用例，全部通过**)
+  - 6 个 ALPHA 类（Michael Burry / Valuation / Damodaran CAGR / Hamada D/E / Michael Burry 多场景 / cooldown 解析）
+  - 3 个 BETA 类（AKShare helpers D/E 推导 / BatchDataCache 线程安全 / fallback 错误保留）
+  - 3 个 GAMMA 类（L2 ATR 严格化 / Crisis handler 严重度阶梯 + 行业暴露排序 / 多个 mode 优先级）
+  - 6 个边界与降级场景
+- 周边模块全部通过: screening 169, execution 184, portfolio 87, test_risk_metrics 18, test_valuation_agent 9, test_aswath_damodaran 9, test_growth_agent 24, test_batch_data_fetcher 19
+- 总体 800+ 测试, 0 失败
+
+#### 团队调研发现 (Gamma)
+- **后端功能 100% 完成** — 30/32 总体，剩余 4 项均为前端可视化
+- **业界调研未能实时获取** — WebSearch/WebFetch 在子代理中失败，分析基于训练数据截止 2026/01
+- **业界新趋势 (2025-2026)**:
+  - 同花顺 问财 NL 查询 — 我们用 12 persona LLM 推理等效替代
+  - Wind / Choice — 机构级标准，已有对标
+  - AI-native 工具的 LLM 驱动 NL 查询 — 我们的差异化竞争点
+- **不做的功能** (避免重复造轮子):
+  - NL 查询界面 — 问财已垄断零售市场，我们的 12 persona 推理是差异化竞争
+  - 港股通跨市场 — 不同数据源/监管/税制，超出当前范围
+  - 自定义因子 Python 编辑器 — 沙箱执行/版本控制/安全审计成本过高
+- **建议优先做的 3 项**:
+  1. P0-4 回测净值曲线前端可视化 (唯一剩余 P0)
+  2. P0-3 --top --filter 快速筛选条 (基于缓存的 `data/reports/auto_screening_*.json`，无 pipeline 重跑)
+  3. P1-3 O-2 扩展 — 推荐排序因子瀑布 (factor-level waterfall) 显示所有调整项
+
+#### 路线图完成度 (R20.4 更新)
+- 后端 100% 完成
+- 总体 30/32 (94%) — 与 R20.3 持平
+- 新增技术债务清理: GAMMA-018 (HIGH) 关闭历史遗留
+- 代码质量优秀 — NaN 防御完善，边界条件处理到位，并发安全已增强
+
 ---
 
 ## 十六、CLI 命令速查表

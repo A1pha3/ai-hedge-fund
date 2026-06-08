@@ -176,7 +176,7 @@ def _analyze_value(metrics, line_items, market_cap):
     # Free‑cash‑flow yield
     latest_item = _latest_line_item(line_items)
     fcf = getattr(latest_item, "free_cash_flow", None) if latest_item else None
-    if fcf is not None and market_cap:
+    if fcf is not None and market_cap and market_cap > 0:
         fcf_yield = fcf / market_cap
         if fcf_yield >= 0.15:
             score += 4
@@ -187,8 +187,12 @@ def _analyze_value(metrics, line_items, market_cap):
         elif fcf_yield >= 0.08:
             score += 2
             details.append(f"Respectable FCF yield {fcf_yield:.1%}")
-        else:
+        elif fcf_yield >= 0:
             details.append(f"Low FCF yield {fcf_yield:.1%}")
+        else:
+            # Negative FCF yield (loss-making / capex-heavy). Classic deep-value
+            # screen is silent on these — treat as data caveat, not as signal.
+            details.append(f"Negative FCF yield {fcf_yield:.1%} (loss-making or capex-heavy)")
     else:
         details.append("FCF data unavailable")
 

@@ -334,8 +334,13 @@ def calculate_residual_income_value(
         term_ri = ri0 * (1 + book_value_growth) ** (num_years + 1) / (cost_of_equity - effective_terminal_growth)
         pv_term = term_ri / (1 + cost_of_equity) ** num_years
 
-    intrinsic = book_val + pv_ri + pv_term
-    return max(intrinsic * 0.8, 0)  # 20% margin of safety, floor at 0
+    # Margin of safety: apply 20% discount to the *residual income* portion
+    # (pv_ri + pv_term), NOT to book value. Book value is an observable anchor
+    # and discounting it would mean "the market should value the company below
+    # its own book" — a different (and stronger) claim than "we want a 20%
+    # margin on the value we add on top of book."
+    intrinsic = book_val + max(0, (pv_ri + pv_term) * 0.8)
+    return max(intrinsic, 0)
 
 
 ####################################

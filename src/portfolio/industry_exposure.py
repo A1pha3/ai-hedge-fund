@@ -19,7 +19,9 @@ def calculate_industry_exposures(
         grouped_values[holding.industry_sw or "unknown"] += current_price * holding.shares
 
     exposures: list[IndustryExposure] = []
-    for industry, market_value in sorted(grouped_values.items()):
+    # Sort by market_value descending so the top exposures come first — analysts
+    # want to see "where am I most exposed" before the small positions.
+    for industry, market_value in sorted(grouped_values.items(), key=lambda kv: kv[1], reverse=True):
         weight = (market_value / total_nav) if total_nav > 0 else 0.0
         remaining_quota = max(industry_limit_ratio * total_nav - market_value, 0.0)
         exposures.append(

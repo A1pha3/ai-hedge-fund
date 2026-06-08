@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import time
 from typing import Any, Callable, TypeVar
 
@@ -80,6 +81,10 @@ class BatchDataCache:
 
     简单的 dict + 时间戳实现；不为高频热点优化，定位：
     "同一进程 / 同一分钟内" 对同一批量的重复请求去重。
+
+    Thread-safe: 所有读写都通过 ``self._lock`` 保护。``BatchDataFetcher``
+    内部使用 ``asyncio.to_thread`` 并发触发多个 ticker 的网络请求，
+    多个线程可能同时进入 ``get`` / ``set``。不在 GIL 假设下裸用 dict。
     """
 
     def __init__(self, ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS) -> None:
@@ -87,35 +92,40 @@ class BatchDataCache:
         self._store: dict[str, tuple[float, Any]] = {}
         self._hits = 0
         self._misses = 0
+        self._lock = threading.Lock()
 
     def get(self, key: str) -> Any | None:
-        entry = self._store.get(key)
-        if entry is None:
-            self._misses += 1
-            return None
-        ts, value = entry
-        if (time.time() - ts) > self._ttl:
-            # 过期 → 视为未命中并清理
-            self._store.pop(key, None)
-            self._misses += 1
-            return None
-        self._hits += 1
-        return value
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                self._misses += 1
+                return None
+            ts, value = entry
+            if (time.time() - ts) > self._ttl:
+                # 过期 → 视为未命中并清理
+                self._store.pop(key, None)
+                self._misses += 1
+                return None
+            self._hits += 1
+            return value
 
     def set(self, key: str, value: Any) -> None:
-        self._store[key] = (time.time(), value)
+        with self._lock:
+            self._store[key] = (time.time(), value)
 
     def clear(self) -> None:
-        self._store.clear()
-        self._hits = 0
-        self._misses = 0
+        with self._lock:
+            self._store.clear()
+            self._hits = 0
+            self._misses = 0
 
     def stats(self) -> dict[str, int]:
-        return {
-            "hits": self._hits,
-            "misses": self._misses,
-            "size": len(self._store),
-        }
+        with self._lock:
+            return {
+                "hits": self._hits,
+                "misses": self._misses,
+                "size": len(self._store),
+            }
 
 
 class BatchDataFetcher:

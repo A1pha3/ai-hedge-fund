@@ -23,6 +23,21 @@ def _analysis_excludes_neutral_mean_reversion() -> bool:
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_cooldown_date(value: str | None) -> datetime | None:
+    """Parse a YYYYMMDD string into a datetime, returning None on any error.
+
+    Cooldown registry entries come from external sources (tushare, akshare, manual
+    edits) and may be malformed. Returning None lets callers treat it as "no
+    early release" rather than crashing the entire score_b computation.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value.strip(), "%Y%m%d")
+    except (ValueError, TypeError):
+        return None
+
+
 def _get_neutral_mean_reversion_mode() -> str:
     raw_value = os.getenv("LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE")
     if raw_value is not None:
@@ -312,8 +327,10 @@ def maybe_release_cooldown_early(ticker: str, trade_date: str, fundamental_signa
     if not expire_date:
         return False
 
-    expire_dt = datetime.strptime(expire_date, "%Y%m%d")
-    trade_dt = datetime.strptime(trade_date, "%Y%m%d")
+    expire_dt = _parse_cooldown_date(expire_date)
+    trade_dt = _parse_cooldown_date(trade_date)
+    if expire_dt is None or trade_dt is None:
+        return False
     approx_start_dt = expire_dt - timedelta(days=int(15 * 1.5))
     if (trade_dt - approx_start_dt).days < min_hold_days:
         return False

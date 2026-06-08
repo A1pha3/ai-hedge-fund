@@ -80,6 +80,8 @@ def _btst_formal_contract_signal(
             return ExitSignal(ticker=holding.ticker, level="L4", trigger_reason="btst_close_retention_fail", urgency="next_day", sell_ratio=1.0)
         fast_confirmed = max_pnl >= BTST_FAST_CONFIRM_HIGH_PCT or pnl_pct >= BTST_FAST_CONFIRM_CLOSE_PCT
         if not fast_confirmed:
+            # Position is still positive on close (already returned above for pnl<=0).
+            # Treat a positive close itself as a soft confirm — only half-exit, not full.
             return ExitSignal(ticker=holding.ticker, level="L4", trigger_reason="btst_fast_fail", urgency="next_day", sell_ratio=0.5)
 
     if 4 <= holding_days <= 6:
@@ -141,7 +143,14 @@ def check_exit_signal(
 
     atr_stop = _atr_stop_price(holding, atr_14)
     hard_stop_price = holding.entry_price * (1.0 + HARD_STOP_LOSS_PCT)
-    if atr_14 > 0 and atr_stop > hard_stop_price and current_price < atr_stop:
+    # Only apply the ATR-based stop when it's *wider* than the hard stop
+    # (i.e. 2*atr_14 >= 6% of entry). Otherwise the ATR stop is a no-op that
+    # would fire on tiny dips in low-vol names, which is not the intent.
+    atr_wider_than_hard = (
+        atr_14 > 0
+        and (holding.entry_price - atr_stop) >= abs(holding.entry_price * HARD_STOP_LOSS_PCT)
+    )
+    if atr_wider_than_hard and current_price < atr_stop:
         return ExitSignal(ticker=holding.ticker, level="L2", trigger_reason="atr_stop_loss", urgency="next_day", sell_ratio=1.0)
 
     if holding.profit_take_stage == 0 and max_pnl >= profit_retrace_arm_pct and pnl_pct <= profit_retrace_exit_pct:

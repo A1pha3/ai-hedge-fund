@@ -182,8 +182,10 @@ def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str
     revs = [m.revenue for m in reversed(metrics) if hasattr(m, "revenue") and m.revenue]
     if len(revs) >= 2 and revs[0] > 0:
         n_periods = len(revs) - 1
-        # Estimate years from TTM data: each consecutive TTM period is ~0.25 years apart
-        n_years = max(n_periods * 0.25, 1.0)  # at least 1 year
+        # Estimate years from TTM data: each consecutive TTM period is ~0.25 years apart.
+        # Floor at 0.25 (one quarter) to avoid the 1-year clamp creating a discontinuity
+        # where 1, 2, and 3-quarter CAGRs all collapse to "1 year".
+        n_years = max(n_periods * 0.25, 0.25)
         cagr = (revs[-1] / revs[0]) ** (1 / n_years) - 1
     else:
         cagr = None
@@ -351,7 +353,7 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
         revs = [getattr(m, "revenue", None) for m in reversed(metrics) if getattr(m, "revenue", None) is not None]
         if len(revs) >= 2 and revs[0] > 0:
             n_periods = len(revs) - 1
-            n_years = max(n_periods * 0.25, 1.0)
+            n_years = max(n_periods * 0.25, 0.25)  # floor at one quarter, not 1 year
             base_growth = min((revs[-1] / revs[0]) ** (1 / n_years) - 1, 0.12)
         else:
             base_growth = 0.04  # fallback
@@ -407,6 +409,10 @@ def estimate_cost_of_equity(beta: float | None, ticker: str | None = None, debt_
     beta_u = beta if beta is not None else 1.0  # unlevered beta
 
     # Hamada equation: lever up beta with D/E
+    # Negative D/E (negative shareholders' equity, common in distressed names) is
+    # meaningless for Hamada — it would produce a levered beta *lower* than
+    # unlevered, which contradicts the intuition that distressed firms are riskier.
+    # Clamp at 0 (treat as all-equity financed) and cap at 5 to avoid extreme.
     if debt_to_equity is not None and debt_to_equity > 0:
         tax_rate = 0.25  # China corporate tax rate
         beta_l = beta_u * (1 + (1 - tax_rate) * min(debt_to_equity, 5.0))  # cap D/E at 5 to avoid extreme

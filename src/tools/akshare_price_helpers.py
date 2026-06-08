@@ -159,11 +159,14 @@ def load_prices_with_fallback(
     cache_key: str,
     error_factory: Callable[[str], Exception],
 ) -> list[Price]:
+    akshare_error: Exception | None = None
+    tencent_error: Exception | None = None
     try:
         akshare_prices = fetch_prices_from_akshare_fn(ak_module, ticker, start_date, end_date, period)
         if akshare_prices:
             return cache_prices_fn(cache_key, akshare_prices)
     except Exception as error:
+        akshare_error = error
         print(f"AKShare 获取数据失败，尝试腾讯接口: {error}")
 
     try:
@@ -171,11 +174,16 @@ def load_prices_with_fallback(
         if prices:
             return cache_prices_fn(cache_key, prices)
     except Exception as error:
+        tencent_error = error
+
+    # If both failed, report the actual errors from each source. Use a chained
+    # exception (Tencent is the most-recent failure) so the traceback is preserved.
+    if akshare_error is not None and tencent_error is not None:
         raise error_factory(
             f"无法获取股票 {ticker} 的历史数据（所有数据源都失败）。\n"
-            f"AKShare 错误: {error}\n"
-            f"腾讯接口错误: {error}\n"
+            f"AKShare 错误: {akshare_error}\n"
+            f"腾讯接口错误: {tencent_error}\n"
             "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
-        ) from error
+        ) from tencent_error
 
     return []

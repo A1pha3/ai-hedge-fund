@@ -130,6 +130,8 @@ def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> pd.DataFrame | 
     重试恢复，重试间隔按 2^attempt 秒递增（1s → 2s → 4s）。
     非瞬时错误（参数错误 / 数据不存在）不重试，直接返回 None。
     """
+    import random
+
     max_retries = int(os.environ.get("TUSHARE_MAX_RETRIES", "2"))
     base_delay = float(os.environ.get("TUSHARE_RETRY_BASE_DELAY", "1.0"))
 
@@ -150,7 +152,9 @@ def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> pd.DataFrame | 
                 print(f"[Tushare] API {api_name} 调用失败 (不可重试): {e}")
                 return None
             if attempt < max_retries:
-                delay = base_delay * (2 ** attempt)
+                # Exponential backoff with ±30% jitter so concurrent retries
+                # don't all hammer the API at the same instant.
+                delay = base_delay * (2 ** attempt) * (1 + random.random() * 0.3)
                 print(f"[Tushare] API {api_name} 调用失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}，{delay:.1f}s 后重试...")
                 time.sleep(delay)
             else:
@@ -784,7 +788,9 @@ def get_daily_basic_batch(trade_date: str) -> pd.DataFrame | None:
                        pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share,
                        free_share, total_mv, circ_mv, volume, amount
     """
-    cache_key = f"daily_basic_batch_{trade_date}"
+    # Cache key uses ":" separator to match BatchDataFetcher key format and
+    # share the same cache entry — see GAMMA-018 / R20.4 fix.
+    cache_key = f"daily_basic_batch:{trade_date}"
 
     pro = _get_pro()
     if pro is None:
@@ -821,7 +827,9 @@ def get_daily_price_batch(trade_date: str) -> pd.DataFrame | None:
     返回 DataFrame 列: ts_code, trade_date, open, high, low, close,
                        pre_close, vol, amount, pct_chg
     """
-    cache_key = f"daily_price_batch_{trade_date}"
+    # Cache key uses ":" separator to match BatchDataFetcher key format and
+    # share the same cache entry — see GAMMA-018 / R20.4 fix.
+    cache_key = f"daily_price_batch:{trade_date}"
 
     pro = _get_pro()
     if pro is None:
