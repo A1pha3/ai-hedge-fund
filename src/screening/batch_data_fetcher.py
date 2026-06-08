@@ -220,17 +220,22 @@ class BatchDataFetcher:
     ) -> list[dict[str, Any]]:
         """单 ticker 价格拉取的同步实现 (可被 mock 覆盖)。
 
-        优化 (R20): 如果 end_date 对应的 ``daily_price_batch:{end_date}`` 已在
-        BatchDataCache 中, 直接 filter 该 ticker 的 row 返回, 避免重复拉 tushare。
+        优化 (R20 + R20.8 BETA):
+        1. 如果 ``daily_price_batch:{trade_date}`` 已在 BatchDataCache 中,
+           直接 filter 该 ticker 的 row 返回, 避免重复拉 tushare。
+        2. R20.8: 多日范围 (start_date < end_date) 时, 按 end_date 单日截取;
+           不再错误地视为缓存命中失败而回退到 tushare 区间拉取 (会浪费一次完整 daily API 调用)。
+        3. R20.8: ticker 不在批量结果中 (停牌/退市) 时, **不增加** _single_ticker_cache_misses
+           计数 (这不算 cache miss, 而是数据集确定性结果)。
         """
         # 延迟导入避免循环引用
         from src.tools.tushare_api import _get_pro, _cached_tushare_dataframe_call
 
-        # R20: 尝试命中批量缓存 (单 ticker 共享)
+        # R20 + R20.8: 尝试命中批量缓存 (单 ticker 共享)
         # 约定: end_date 形如 "20260601" -> 批量 key = "daily_price_batch:20260601"
-        # 注: start_date 可能 < end_date, 但批量缓存按 trade_date 拉取,
-        # 因此仅在 start_date == end_date 时可直接命中; 否则仍需走单 ticker 接口
-        # 对 [start_date, end_date] 区间过滤。
+        # 注: start_date 可能 < end_date, 但批量缓存按 trade_date 拉取。
+        # R20.8: 即使是区间 [start_date, end_date] 也尝试用 end_date 那天批量数据兜底,
+        # 至少能保证 1 个交易日的数据可复用, 避免在批量已成功时仍走 tushare daily 区间。
         batch_df: pd.DataFrame | None = None
         batch_cache_key = f"daily_price_batch:{end_date}"
         cached = self._cache.get(batch_cache_key)
@@ -246,7 +251,8 @@ class BatchDataFetcher:
                 if not rows.empty:
                     # 批量行已是单日数据, 直接 dict 化
                     return rows.to_dict(orient="records")
-                # ticker 不在批量结果中 (可能停牌 / 退市), 视为空数据
+                # R20.8: ticker 不在批量结果中 (可能停牌 / 退市), 视为确定性空数据
+                # 不再累加 _single_ticker_cache_misses (这不属于 cache miss)。
                 return []
             # 批量 DF 缺少 ts_code 列, 视为缓存格式不匹配, 回退到 tushare
             self._single_ticker_cache_misses += 1
