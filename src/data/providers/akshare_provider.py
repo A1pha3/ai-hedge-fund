@@ -168,18 +168,48 @@ class AKShareProvider(BaseDataProvider):
             # 转换为 FinancialMetrics 对象
             metrics = []
             for _, row in df.head(10).iterrows():
-                metric = FinancialMetrics(
-                    ticker=ticker,
-                    report_period=str(row.get("报告期", "")),
-                    period="ttm",
-                    currency="CNY",
-                    revenue=float(row.get("营业收入", 0)) * 10000 if pd.notna(row.get("营业收入")) else None,
-                    net_income=float(row.get("净利润", 0)) * 10000 if pd.notna(row.get("净利润")) else None,
-                    price_to_earnings_ratio=float(row.get("市盈率", 0)) if pd.notna(row.get("市盈率")) else None,
-                    price_to_book_ratio=float(row.get("市净率", 0)) if pd.notna(row.get("市净率")) else None,
-                    return_on_equity=float(row.get("净资产收益率", 0)) / 100 if pd.notna(row.get("净资产收益率")) else None,
-                    debt_to_equity=float(row.get("资产负债率", 0)) / 100 if pd.notna(row.get("资产负债率")) else None,
-                )
+                # R20.11 BETA: AKShare 的「资产负债率」是 D/A (debt-to-assets),
+                # 不是 D/E (debt-to-equity)。GAMMA-017 已修复 adapter 路径, 此处
+                # 是 provider 直连路径, 仍把 D/A 写到 debt_to_equity 字段,
+                # 导致下游 agents 低估杠杆约 45%。改为只填 debt_to_assets, D/E 留 None
+                # (下游 adapter 会从 D/A 推导)。
+                #
+                # R20.11 BETA: Pydantic v2 FinancialMetrics 是 strict 模型, 缺字段会
+                # ValidationError → 走 except → 返回空 data。原实现漏 30+ 字段, 等于
+                # akshare 路径的财务指标接口**总是返回空**。补全全部字段。
+                debt_to_assets_val = float(row.get("资产负债率", 0)) / 100 if pd.notna(row.get("资产负债率")) else None
+                metric_kwargs = {
+                    "ticker": ticker,
+                    "report_period": str(row.get("报告期", "")),
+                    "period": "ttm",
+                    "currency": "CNY",
+                    "revenue": float(row.get("营业收入", 0)) * 10000 if pd.notna(row.get("营业收入")) else None,
+                    "net_income": float(row.get("净利润", 0)) * 10000 if pd.notna(row.get("净利润")) else None,
+                    "price_to_earnings_ratio": float(row.get("市盈率", 0)) if pd.notna(row.get("市盈率")) else None,
+                    "price_to_book_ratio": float(row.get("市净率", 0)) if pd.notna(row.get("市净率")) else None,
+                    "return_on_equity": float(row.get("净资产收益率", 0)) / 100 if pd.notna(row.get("净资产收益率")) else None,
+                    "debt_to_assets": debt_to_assets_val,
+                    "debt_to_equity": None,
+                }
+                # Pydantic v2 strict 必需字段 — 未知的填 None (AKShare 接口未提供)
+                for _field_name in (
+                    "market_cap", "enterprise_value", "price_to_sales_ratio",
+                    "enterprise_value_to_ebitda_ratio", "enterprise_value_to_revenue_ratio",
+                    "free_cash_flow_yield", "peg_ratio", "gross_margin",
+                    "operating_margin", "net_margin", "return_on_assets",
+                    "return_on_invested_capital", "asset_turnover",
+                    "inventory_turnover", "receivables_turnover",
+                    "days_sales_outstanding", "operating_cycle",
+                    "working_capital_turnover", "current_ratio", "quick_ratio",
+                    "cash_ratio", "operating_cash_flow_ratio", "interest_coverage",
+                    "revenue_growth", "earnings_growth", "book_value_growth",
+                    "earnings_per_share_growth", "free_cash_flow_growth",
+                    "operating_income_growth", "ebitda_growth", "payout_ratio",
+                    "earnings_per_share", "book_value_per_share",
+                    "free_cash_flow_per_share",
+                ):
+                    metric_kwargs.setdefault(_field_name, None)
+                metric = FinancialMetrics(**metric_kwargs)
                 metrics.append(metric)
 
             latency = (datetime.now() - start_time).total_seconds() * 1000

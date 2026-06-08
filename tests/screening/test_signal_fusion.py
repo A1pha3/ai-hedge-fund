@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.screening.models import MarketState, StrategySignal
-from src.screening.signal_fusion import fuse_batch, fuse_signals_for_ticker
+from src.screening.models import FusedScore, MarketState, StrategySignal
+from src.screening.signal_fusion import compute_score_decomposition, fuse_batch, fuse_signals_for_ticker
 
 
 def test_fuse_signals_for_ticker_preserves_sub_factor_raw_metrics() -> None:
@@ -279,3 +279,60 @@ def test_attention_composite_ignores_nan_metric_values() -> None:
     # 000002 either has no composite, or it's not in (0.0, 1.0]
     if composite_002 is not None:
         assert math.isfinite(composite_002)
+
+
+# ---------------------------------------------------------------------------
+# ALPHA-R20.11: consensus_bonus decomposition regression tests
+# ---------------------------------------------------------------------------
+
+
+def _make_fused_for_decomposition(*, score_b: float, arbitration_applied: list[str], weights_used: dict[str, float] | None = None) -> FusedScore:
+    """Build a minimal FusedScore for testing compute_score_decomposition."""
+    return FusedScore(
+        ticker="TEST",
+        score_b=score_b,
+        strategy_signals={
+            "trend": StrategySignal(
+                direction=1 if score_b >= 0 else -1,
+                confidence=70.0,
+                completeness=1.0,
+                sub_factors={},
+            ),
+        },
+        metrics={},
+        arbitration_applied=arbitration_applied,
+        market_state=MarketState(),
+        weights_used=weights_used or {"trend": 1.0},
+        decision="watch" if score_b >= 0.35 else "neutral",
+    )
+
+
+def test_compute_score_decomposition_recognizes_bullish_consensus_bonus() -> None:
+    """ALPHA-R20.11: ``arbitration_applied`` contains the bare enum value
+    ``"consensus_bonus"`` (not ``"consensus_bonus_bullish"``).  The decomposition
+    must infer direction from the sign of ``fused.score_b`` and surface the
+    corresponding +0.05 / -0.05 contribution.  Previously, the decomposition
+    always returned 0 because it looked for nonexistent _bullish / _bearish
+    suffix strings."""
+    fused = _make_fused_for_decomposition(score_b=0.30, arbitration_applied=["consensus_bonus"])
+    decomp = compute_score_decomposition(fused)
+    # base contribution from trend with full weight is 0.70; consensus bonus adds 0.05
+    # total = 0.70 + 0.05 = 0.75.  The key invariant is consensus_bonus == +0.05.
+    assert decomp["consensus_bonus"] == pytest.approx(0.05)
+    assert decomp["base_contributions"]["trend"] == pytest.approx(0.70)
+
+
+def test_compute_score_decomposition_recognizes_bearish_consensus_bonus() -> None:
+    """ALPHA-R20.11: bearish consensus (score_b < 0) yields a -0.05 contribution."""
+    fused = _make_fused_for_decomposition(score_b=-0.30, arbitration_applied=["consensus_bonus"])
+    decomp = compute_score_decomposition(fused)
+    assert decomp["consensus_bonus"] == pytest.approx(-0.05)
+    assert decomp["base_contributions"]["trend"] == pytest.approx(-0.70)
+
+
+def test_compute_score_decomposition_no_consensus_bonus_when_arb_absent() -> None:
+    """ALPHA-R20.11: when ``consensus_bonus`` is not in arbitration_applied,
+    the consensus_bonus decomposition must be 0."""
+    fused = _make_fused_for_decomposition(score_b=0.30, arbitration_applied=["risk_off"])
+    decomp = compute_score_decomposition(fused)
+    assert decomp["consensus_bonus"] == 0.0

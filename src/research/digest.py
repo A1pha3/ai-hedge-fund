@@ -120,13 +120,26 @@ def _extract_daily_digest(snapshot: dict[str, Any], trade_date: str) -> DailyDig
     selected: list[dict[str, Any]] = snapshot.get("selected") or []
     rejected: list[dict[str, Any]] = snapshot.get("rejected") or []
 
-    # Near-miss is embedded in target_summary or target_context
+    # Near-miss is embedded in target_summary at the top level (flat) per
+    # src.targets.models.DualTargetSummary: ``short_trade_near_miss_count`` and
+    # ``research_near_miss_count`` are sibling fields, NOT nested under a
+    # ``short_trade`` sub-dict.  We also accept the legacy nested format for
+    # backward compatibility with hand-rolled test fixtures.
     near_miss_count = 0
     target_summary = snapshot.get("target_summary") or {}
     if isinstance(target_summary, dict):
-        st = target_summary.get("short_trade") or {}
-        if isinstance(st, dict):
-            near_miss_count = st.get("near_miss_count", 0)
+        # Flat fields (canonical): add both short_trade and research near-miss counts
+        flat_short = int(target_summary.get("short_trade_near_miss_count", 0) or 0)
+        flat_research = int(target_summary.get("research_near_miss_count", 0) or 0)
+        # Use short_trade as the primary signal (Layer B); only add research
+        # if the snapshot doesn't separate them.  When both are present
+        # (canonical case), short_trade is the operational count.
+        if flat_short or flat_research:
+            near_miss_count = flat_short if flat_short else flat_research
+        # Legacy nested format fallback
+        st = target_summary.get("short_trade")
+        if isinstance(st, dict) and near_miss_count == 0:
+            near_miss_count = int(st.get("near_miss_count", 0) or 0)
 
     # Also check target_context for near_miss count as fallback
     if near_miss_count == 0:
@@ -383,6 +396,7 @@ def run_digest(
         "score_std": score_std,
         "unique_tickers_total": unique_tickers_total,
         "recurring_tickers": recurring_tickers,
+        "min_recurrence": int(min_recurrence),  # ALPHA-R20.11: propagate to formatter
     }
 
     # Sort daily by date
@@ -428,7 +442,10 @@ def format_digest_markdown(result: DigestResult) -> str:
     lines.append(f"| Avg top score | {s.get('avg_top_score', 'N/A')} |")
     lines.append(f"| Score std | {s.get('score_std', 'N/A')} |")
     lines.append(f"| Unique tickers | {s.get('unique_tickers_total', 'N/A')} |")
-    lines.append(f"| Recurring tickers (>= {5}d) | {len(s.get('recurring_tickers', []))} |")
+    # ALPHA-R20.11: read min_recurrence from the summary dict (set by run_digest)
+    # so non-default values (e.g. min_recurrence=10) are reflected in the header.
+    min_recurrence_for_header = int(s.get("min_recurrence", 5) or 5)
+    lines.append(f"| Recurring tickers (>= {min_recurrence_for_header}d) | {len(s.get('recurring_tickers', []))} |")
     lines.append("")
 
     # Recurring tickers

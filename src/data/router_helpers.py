@@ -55,12 +55,13 @@ async def fetch_from_providers(
                 monitor.record_success(provider.name, latency_ms)
                 return response, None
 
-            # 空数据但无 error —— 视为成功（provider 正常返回，只是没有数据）
-            monitor.record_success(provider.name, latency_ms)
-            # 继续尝试下一个 provider，因为可能另一个有数据
-            if not response.data:
-                last_error = "empty response"
-                continue
+            # R20.11 BETA: 空数据但无 error —— 视为 partial failure (provider 正常
+            # 返回但无数据), 记 failure 但不抛异常, 让 router 继续试下一个 provider。
+            # 旧实现 (R20.10 之前) 错误地把空响应记为 success, 污染了 HealthMonitor
+            # 统计: provider 一直返回空数据时降级阈值永远不触发, 自动降级失效。
+            monitor.record_failure(provider.name, latency_ms, error="empty response")
+            last_error = "empty response"
+            continue
 
         except Exception as exc:
             latency_ms = (time.monotonic() - start) * 1000

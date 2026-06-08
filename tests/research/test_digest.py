@@ -184,6 +184,29 @@ class TestExtractDailyDigest:
         daily = _extract_daily_digest(snapshot, "2026-05-06")
         assert daily.near_miss_count == 2
 
+    def test_near_miss_from_flat_target_summary(self) -> None:
+        """ALPHA-R20.11: real snapshots have flat top-level ``short_trade_near_miss_count`` /
+        ``research_near_miss_count`` fields on ``target_summary`` (per DualTargetSummary).
+        The legacy nested ``target_summary["short_trade"]["near_miss_count"]`` format
+        only existed in hand-rolled test fixtures."""
+        snapshot = _make_snapshot(
+            "2026-05-06",
+            selected=[_make_candidate("300724", 0.5)],
+            target_summary={"short_trade_near_miss_count": 7, "research_near_miss_count": 3},
+        )
+        daily = _extract_daily_digest(snapshot, "2026-05-06")
+        assert daily.near_miss_count == 7  # short_trade (operational) wins over research
+
+    def test_near_miss_research_fallback_when_no_short_trade(self) -> None:
+        """ALPHA-R20.11: when only research_near_miss_count is present, fall back to it."""
+        snapshot = _make_snapshot(
+            "2026-05-06",
+            selected=[_make_candidate("300724", 0.5)],
+            target_summary={"research_near_miss_count": 4},
+        )
+        daily = _extract_daily_digest(snapshot, "2026-05-06")
+        assert daily.near_miss_count == 4
+
     def test_top_tickers_limited_to_10(self) -> None:
         selected = [_make_candidate(f"T{i:04d}", 0.9 - i * 0.01) for i in range(15)]
         snapshot = _make_snapshot("2026-05-06", selected=selected)
@@ -469,6 +492,33 @@ class TestFormatDigestMarkdown:
         )
         md = format_digest_markdown(result)
         assert "and 5 more" in md
+
+    def test_markdown_uses_actual_min_recurrence(self) -> None:
+        """ALPHA-R20.11: the markdown table header was hardcoded to '5d' and ignored
+        the min_recurrence parameter. Now it should reflect the actual threshold
+        when non-default (e.g. min_recurrence=10)."""
+        result = DigestResult(
+            period_start="2026-05-01",
+            period_end="2026-05-10",
+            total_days=10,
+            days_with_data=10,
+            summary={
+                "total_days": 10,
+                "days_with_data": 10,
+                "avg_candidates": 2.0,
+                "avg_top_score": 0.7,
+                "score_std": 0.05,
+                "unique_tickers_total": 5,
+                "recurring_tickers": ["300724"],
+                "min_recurrence": 10,
+            },
+            ticker_frequency={"300724": 10},
+            daily=[],
+        )
+        md = format_digest_markdown(result)
+        assert "Recurring tickers (>= 10d)" in md
+        # Make sure the old hardcoded label is gone
+        assert ">= 5d" not in md
 
 
 # ---------------------------------------------------------------------------

@@ -189,18 +189,42 @@ class TushareProvider(BaseDataProvider):
                     if basic_row is not None and pd.notna(basic_row.get("total_mv")):
                         market_cap_val = float(basic_row["total_mv"]) * 10000
 
-                    metric = FinancialMetrics(
-                        ticker=ticker,
-                        report_period=str(row.get("end_date", "")),
-                        period="ttm",
-                        currency="CNY",
-                        market_cap=market_cap_val,
-                        price_to_earnings_ratio=pe_ratio,
-                        price_to_book_ratio=pb_ratio,
-                        return_on_equity=float(row.get("roe", 0)) / 100 if pd.notna(row.get("roe")) else None,
-                        debt_to_equity=float(row.get("debt_to_assets", 0)) / 100 if pd.notna(row.get("debt_to_assets")) else None,
-                        revenue_growth=float(row.get("q_sales_yoy", 0)) / 100 if pd.notna(row.get("q_sales_yoy")) else None,
-                    )
+                    metric_kwargs = {
+                        "ticker": ticker,
+                        "report_period": str(row.get("end_date", "")),
+                        "period": "ttm",
+                        "currency": "CNY",
+                        "market_cap": market_cap_val,
+                        "price_to_earnings_ratio": pe_ratio,
+                        "price_to_book_ratio": pb_ratio,
+                        "return_on_equity": float(row.get("roe", 0)) / 100 if pd.notna(row.get("roe")) else None,
+                        # R20.11 BETA: Tushare fina_indicator 的 debt_to_assets 是 D/A,
+                        # 之前错误地直接写入 debt_to_equity (D/E) 字段, 复刻 GAMMA-017 bug。
+                        # 改为 D/A → debt_to_assets, D/E 留 None 由 adapter 推导。
+                        "debt_to_assets": float(row.get("debt_to_assets", 0)) / 100 if pd.notna(row.get("debt_to_assets")) else None,
+                        "debt_to_equity": None,
+                        "revenue_growth": float(row.get("q_sales_yoy", 0)) / 100 if pd.notna(row.get("q_sales_yoy")) else None,
+                    }
+                    # R20.11 BETA: 补全 Pydantic v2 strict 必需字段。原实现只填 9 个,
+                    # 缺 30+ 字段会 ValidationError → 走 except → 返回空 data。
+                    for _field_name in (
+                        "enterprise_value", "price_to_sales_ratio",
+                        "enterprise_value_to_ebitda_ratio", "enterprise_value_to_revenue_ratio",
+                        "free_cash_flow_yield", "peg_ratio", "gross_margin",
+                        "operating_margin", "net_margin", "return_on_assets",
+                        "return_on_invested_capital", "asset_turnover",
+                        "inventory_turnover", "receivables_turnover",
+                        "days_sales_outstanding", "operating_cycle",
+                        "working_capital_turnover", "current_ratio", "quick_ratio",
+                        "cash_ratio", "operating_cash_flow_ratio", "interest_coverage",
+                        "earnings_growth", "book_value_growth",
+                        "earnings_per_share_growth", "free_cash_flow_growth",
+                        "operating_income_growth", "ebitda_growth", "payout_ratio",
+                        "earnings_per_share", "book_value_per_share",
+                        "free_cash_flow_per_share",
+                    ):
+                        metric_kwargs.setdefault(_field_name, None)
+                    metric = FinancialMetrics(**metric_kwargs)
                     metrics.append(metric)
 
             latency = (datetime.now() - start_time).total_seconds() * 1000

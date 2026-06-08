@@ -566,13 +566,14 @@ def compute_score_decomposition(fused: FusedScore, consecutive_info: dict | None
     stability_bonus = float(consecutive_info.get("stability_bonus", 0.0) or 0.0)
 
     # Consensus bonus: 0.05 if bullish, -0.05 if bearish (matching GAMMA-016 fix).
-    # The actual applied bonus is tracked in arbitrage_applied if present.
+    # The actual applied bonus is tracked in arbitrage_applied as the bare enum
+    # value ("consensus_bonus"); the direction is inferred from the sign of
+    # fused.score_b since the arbitrator has already applied the bonus with the
+    # correct sign (see compute_score_b's `score > 0 / < 0` branches).
     consensus_bonus = 0.0
     arb = fused.arbitration_applied or []
-    if "consensus_bonus_bullish" in arb:
-        consensus_bonus = 0.05
-    elif "consensus_bonus_bearish" in arb:
-        consensus_bonus = -0.05
+    if "consensus_bonus" in arb:
+        consensus_bonus = 0.05 if float(fused.score_b) > 0 else -0.05 if float(fused.score_b) < 0 else 0.0
 
     base_sum = sum(base_contributions.values())
     components_sum = base_sum + attention + stability_bonus + consensus_bonus

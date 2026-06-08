@@ -19,8 +19,18 @@ def build_validation_command(*, python_executable: str, repo_root: Path, trade_d
     ]
 
 
-def run_validation_subprocess(command: list[str], *, cwd: Path, env: dict[str, str]) -> dict:
-    completed = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, check=False)
+def run_validation_subprocess(command: list[str], *, cwd: Path, env: dict[str, str], timeout_seconds: float = 300.0) -> dict:
+    # R20.11 BETA: 加 timeout 防止 validation 脚本挂起时整条 pipeline 被无限阻塞。
+    # 默认 5 分钟（足够冷启动 + 大量 ticker 拉取），可通过参数覆盖。
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout_seconds,
+    )
     if completed.returncode != 0:
         stderr = (completed.stderr or "").strip()
         stdout = (completed.stdout or "").strip()
