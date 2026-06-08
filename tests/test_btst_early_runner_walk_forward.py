@@ -153,3 +153,39 @@ def test_hit_rate_on_fills_none_when_all_unfilled() -> None:
     param_set = {"ret_5d_max": 1.0, "ret_10d_max": 1.0, "gap_max": 1.0, "close_strength_max": 1.0, "volume_quality_max": 1.0, "confirm_score_min": 0.0}
     result = _summarize_param_set(rows, param_set)
     assert result["hit_rate_5d15_on_fills"] is None
+
+
+# ---------------------------------------------------------------------------
+# GAMMA-R20.16: _ranking_key treats 0.0 as real data, not missing
+# ---------------------------------------------------------------------------
+
+
+def test_ranking_key_zero_expectancy_not_confused_with_missing() -> None:
+    """GAMMA-R20.16: after_cost_expectancy=0.0 (break-even) must be ranked as 0.0,
+    not as -999.0 (missing data sentinel).  The old `x or -999.0` pattern swallowed
+    legitimate zero values."""
+    from src.backtesting.early_runner_walk_forward import _ranking_key
+
+    zero_summary = {
+        "after_cost_expectancy": 0.0,
+        "hit_rate_5d15": 0.0,
+        "unfilled_rate": 0.0,
+        "row_count": 5,
+    }
+    key = _ranking_key(zero_summary)
+    assert key[0] == 0.0, f"expectancy 0.0 should rank as 0.0, got {key[0]}"
+    assert key[1] == 0.0, f"hit_rate 0.0 should rank as 0.0, got {key[1]}"
+    assert key[2] == -0.0, f"unfilled 0.0 should rank as -0.0, got {key[2]}"
+    assert key[3] == 5
+
+
+def test_ranking_key_missing_values_get_sentinel() -> None:
+    """GAMMA-R20.16: missing (None) values must still get the sentinel defaults."""
+    from src.backtesting.early_runner_walk_forward import _ranking_key
+
+    empty_summary = {}
+    key = _ranking_key(empty_summary)
+    assert key[0] == -999.0, f"missing expectancy should be -999.0, got {key[0]}"
+    assert key[1] == -999.0, f"missing hit_rate should be -999.0, got {key[1]}"
+    assert key[2] == -999.0, f"missing unfilled should be -999.0, got {key[2]}"
+    assert key[3] == 0

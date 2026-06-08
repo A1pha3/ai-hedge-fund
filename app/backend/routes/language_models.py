@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from typing import List, Dict, Any
 
 from app.backend.models.schemas import ErrorResponse
+from app.backend.routes._common import safe_route
 from app.backend.services.ollama_service import OllamaService
 from src.llm.defaults import get_default_model_config
 from src.llm.models import get_models_list
@@ -30,16 +31,14 @@ def _build_default_model_entry(models: list[dict[str, Any]]) -> dict[str, Any]:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_language_models():
     """Get the list of available cloud-based and Ollama language models."""
-    try:
-        # Start with cloud models
-        models = get_models_list()
-        default_model = _build_default_model_entry(models)
-        if not any(model["model_name"] == default_model["model_name"] and model["provider"] == default_model["provider"] for model in models):
-            models.insert(0, default_model)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to retrieve models")
+    # Start with cloud models
+    models = get_models_list()
+    default_model = _build_default_model_entry(models)
+    if not any(model["model_name"] == default_model["model_name"] and model["provider"] == default_model["provider"] for model in models):
+        models.insert(0, default_model)
 
     # Add available Ollama models (isolated -- failure returns [] so cloud models still work)
     try:
@@ -58,13 +57,11 @@ async def get_language_models():
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_default_language_model():
     """Get the configured default model resolved from the backend environment."""
-    try:
-        models = get_models_list()
-        return {"model": _build_default_model_entry(models)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to retrieve default model")
+    models = get_models_list()
+    return {"model": _build_default_model_entry(models)}
 
 @router.get(
     path="/providers",
@@ -73,25 +70,23 @@ async def get_default_language_model():
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_language_model_providers():
     """Get the list of available model providers with their models grouped."""
-    try:
-        models = get_models_list()
-        
-        # Group models by provider
-        providers = {}
-        for model in models:
-            provider_name = model["provider"]
-            if provider_name not in providers:
-                providers[provider_name] = {
-                    "name": provider_name,
-                    "models": []
-                }
-            providers[provider_name]["models"].append({
-                "display_name": model["display_name"],
-                "model_name": model["model_name"]
-            })
-        
-        return {"providers": list(providers.values())}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to retrieve providers") 
+    models = get_models_list()
+    
+    # Group models by provider
+    providers = {}
+    for model in models:
+        provider_name = model["provider"]
+        if provider_name not in providers:
+            providers[provider_name] = {
+                "name": provider_name,
+                "models": []
+            }
+        providers[provider_name]["models"].append({
+            "display_name": model["display_name"],
+            "model_name": model["model_name"]
+        })
+    
+    return {"providers": list(providers.values())}

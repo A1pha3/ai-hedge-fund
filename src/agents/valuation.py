@@ -95,7 +95,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
             depreciation=getattr(li_curr, "depreciation_and_amortization", None),
             capex=getattr(li_curr, "capital_expenditure", None),
             working_capital_change=wc_change,
-            growth_rate=most_recent_metrics.earnings_growth or 0.05,
+            growth_rate=most_recent_metrics.earnings_growth if most_recent_metrics.earnings_growth is not None else 0.05,
         )
 
         # Enhanced Discounted Cash Flow with WACC and scenarios
@@ -126,7 +126,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
             market_cap=most_recent_metrics.market_cap,
             net_income=getattr(li_curr, "net_income", None),
             price_to_book_ratio=most_recent_metrics.price_to_book_ratio,
-            book_value_growth=most_recent_metrics.book_value_growth or 0.03,
+            book_value_growth=most_recent_metrics.book_value_growth if most_recent_metrics.book_value_growth is not None else 0.03,
         )
 
         # ------------------------------------------------------------------
@@ -426,7 +426,7 @@ def calculate_enhanced_dcf_value(fcf_history: list[float], growth_metrics: dict,
 
     # Stage 1: High Growth (Years 1-3)
     # Use revenue growth but cap based on business maturity
-    high_growth = min(revenue_growth or 0.05, 0.25) if revenue_growth else 0.05
+    high_growth = min(revenue_growth if revenue_growth is not None else 0.05, 0.25) if revenue_growth is not None else 0.05
     if market_cap > 50_000_000_000:  # Large cap
         high_growth = min(high_growth, 0.10)
 
@@ -477,7 +477,7 @@ def calculate_dcf_scenarios(fcf_history: list[float], growth_metrics: dict, wacc
     scenarios = {"bear": {"growth_adj": 0.5, "wacc_adj": 1.2, "terminal_adj": 0.8}, "base": {"growth_adj": 1.0, "wacc_adj": 1.0, "terminal_adj": 1.0}, "bull": {"growth_adj": 1.5, "wacc_adj": 0.9, "terminal_adj": 1.2}}
 
     results = {}
-    base_revenue_growth = revenue_growth or 0.05
+    base_revenue_growth = revenue_growth if revenue_growth is not None else 0.05
 
     for scenario, adjustments in scenarios.items():
         if base_revenue_growth >= 0:

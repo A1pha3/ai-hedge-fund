@@ -336,3 +336,59 @@ def test_compute_score_decomposition_no_consensus_bonus_when_arb_absent() -> Non
     fused = _make_fused_for_decomposition(score_b=0.30, arbitration_applied=["risk_off"])
     decomp = compute_score_decomposition(fused)
     assert decomp["consensus_bonus"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# R20.16 Beta bug-fix regression tests: breadth_ratio / position_scale
+# x-or-default falsy-value folding
+# ---------------------------------------------------------------------------
+
+
+def test_risk_off_demotion_does_not_mask_zero_breadth_ratio() -> None:
+    """R20.16 regression: breadth_ratio=0.0 is extreme bearish (zero stocks advancing).
+    ``or 0.5`` would promote it to neutral, masking a crash signal and skipping
+    the risk-off demotion.  The fix ensures 0.0 is preserved verbatim."""
+    from unittest.mock import patch
+
+    from src.screening.signal_fusion import _apply_risk_off_short_term_demotion
+
+    market_state = MarketState(breadth_ratio=0.0, position_scale=1.0)
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={}),
+        "event_sentiment": StrategySignal(direction=1, confidence=65.0, completeness=1.0, sub_factors={}),
+    }
+    # breadth_ratio=0.0 <= 0.42 -> should apply risk-off demotion
+    _apply_risk_off_short_term_demotion(signals, market_state, [])
+    # The demoted signals should have reduced confidence
+    assert signals["trend"].confidence < 70.0
+    assert signals["event_sentiment"].confidence < 65.0
+
+
+def test_risk_off_demotion_does_not_mask_zero_position_scale() -> None:
+    """R20.16 regression: position_scale=0.0 means "no positions allowed" (extreme risk-off).
+    ``or 1.0`` would promote it to full position, bypassing risk-off demotion."""
+    from src.screening.signal_fusion import _apply_risk_off_short_term_demotion
+
+    market_state = MarketState(breadth_ratio=0.5, position_scale=0.0)
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={}),
+        "event_sentiment": StrategySignal(direction=1, confidence=65.0, completeness=1.0, sub_factors={}),
+    }
+    # position_scale=0.0 <= 0.75 -> should apply risk-off demotion
+    _apply_risk_off_short_term_demotion(signals, market_state, [])
+    assert signals["trend"].confidence < 70.0
+    assert signals["event_sentiment"].confidence < 65.0
+
+
+def test_classify_btst_regime_gate_preserves_zero_breadth_ratio() -> None:
+    """R20.16 regression: classify_btst_regime_gate_from_market_state with breadth_ratio=0.0
+    should preserve 0.0 (extreme bearish) rather than promoting it to 0.5 (neutral)."""
+    from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state
+
+    result = classify_btst_regime_gate_from_market_state({"breadth_ratio": 0.0, "daily_return": 0.0, "style_dispersion": 0.0, "regime_flip_risk": 0.0})
+    assert result is not None
+    # breadth_ratio=0.0 should appear verbatim in the metrics output
+    assert result["metrics"]["breadth_ratio"] == 0.0
+    # Should trigger conservative profile hint (not aggressive)
+    assert result["profile_hint"] == "conservative"
+    assert "breadth_weak" in result["reason_codes"]

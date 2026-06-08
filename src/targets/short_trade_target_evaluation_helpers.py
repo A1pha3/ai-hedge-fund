@@ -1,6 +1,22 @@
+"""Short trade target evaluation — decision, verdict, orchestration, and result assembly.
+
+This module was refactored in R20.16 from a 1407-line file. Dataclasses now live in
+:mod:`src.targets.short_trade_target_evaluation_models`, explainability payload builders
+in :mod:`src.targets.short_trade_target_evaluation_explainability_helpers`, and
+reasons builders in :mod:`src.targets.short_trade_target_evaluation_reasons_helpers`.
+
+What remains here:
+- Context/threshold construction helpers
+- Decision logic (initial decision, rank cap, full resolution)
+- Tag annotation
+- Verdict construction (including confidence derivation)
+- Decision stage orchestration
+- Top-level ``evaluate_short_trade_target_impl`` and ``build_short_trade_target_result``
+- Public ``build_short_trade_metrics_payload`` / ``build_short_trade_explainability_payload``
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from src.targets.explainability import (
@@ -16,6 +32,28 @@ from src.targets.short_trade_boundary_contract_helpers import (
 from src.targets.short_trade_target_committee_helpers import (
     apply_short_trade_committee_governance,
 )
+from src.targets.short_trade_target_evaluation_explainability_helpers import (
+    _build_short_trade_committee_payload,
+    _build_short_trade_explainability_payload,
+    _build_short_trade_explainability_state,
+    _build_short_trade_top_reasons_state,
+    build_short_trade_explainability_payload as _build_public_explainability_payload,
+)
+from src.targets.short_trade_target_evaluation_models import (
+    ShortTradeDecisionSnapshotState,
+    ShortTradeEvaluationContext,
+    ShortTradeExplainabilityState,
+    ShortTradeThresholdState,
+    ShortTradeTopReasonsState,
+    ShortTradeVerdict,
+)
+from src.targets.short_trade_target_evaluation_reasons_helpers import (
+    _build_short_trade_rejection_reasons,
+    _build_short_trade_top_reasons,
+    _collect_breakout_gate_misses,
+    _summarize_penalty,
+    _summarize_positive_factor,
+)
 from src.targets.short_trade_metrics_payload_builders import (  # noqa: F401
     _build_breakout_trap_guard_metrics_payload,
     _build_carryover_evidence_deficiency_metrics_payload,
@@ -23,16 +61,12 @@ from src.targets.short_trade_metrics_payload_builders import (  # noqa: F401
     _build_market_state_threshold_adjustment_metrics_payload,
     _build_merge_approved_continuation_relief_metrics_payload,
     _build_prepared_breakout_catalyst_relief_metrics_payload,
-    _build_prepared_breakout_catalyst_threshold_metrics_payload,
     _build_prepared_breakout_continuation_relief_metrics_payload,
     _build_prepared_breakout_continuation_threshold_metrics_payload,
     _build_prepared_breakout_metrics_payload,
     _build_prepared_breakout_penalty_relief_metrics_payload,
-    _build_prepared_breakout_penalty_threshold_metrics_payload,
     _build_prepared_breakout_selected_catalyst_relief_metrics_payload,
-    _build_prepared_breakout_selected_catalyst_threshold_metrics_payload,
     _build_prepared_breakout_volume_relief_metrics_payload,
-    _build_prepared_breakout_volume_threshold_metrics_payload,
     _build_profitability_explainability_payload,
     _build_profitability_hard_cliff_boundary_relief_metrics_payload,
     _build_profitability_metrics_payload,
@@ -65,127 +99,25 @@ from src.targets.short_trade_target_rank_helpers import (
     _apply_rank_based_threshold_tightening,
 )
 
+# Re-export dataclasses so existing importers are unaffected.
+from src.targets.short_trade_target_evaluation_models import (  # noqa: F401
+    ShortTradeEvaluationContext,
+    ShortTradeThresholdState,
+    ShortTradeVerdict,
+    ShortTradeMutableVerdictState,
+    ShortTradeDecisionSnapshotState,
+    ShortTradeTopReasonsState,
+    ShortTradeExplainabilityState,
+)
 
-@dataclass(frozen=True)
-class ShortTradeEvaluationContext:
-    snapshot: dict[str, Any]
-    carryover_evidence_deficiency: dict[str, Any]
-    selected_historical_proof_deficiency: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class ShortTradeThresholdState:
-    breakout_freshness: float
-    trend_acceleration: float
-    effective_near_miss_threshold: float
-    effective_select_threshold: float
-    selected_score_tolerance: float
-    breakout_stage: str
-    selected_breakout_gate_pass: bool
-    near_miss_breakout_gate_pass: bool
-
-
-@dataclass(frozen=True)
-class ShortTradeVerdict:
-    decision: str
-    confidence: float
-    positive_tags: list[str]
-    negative_tags: list[str]
-    blockers: list[str]
-    gate_status: dict[str, Any]
-    top_reasons: list[str]
-    rejection_reasons: list[str]
-    downgrade_reasons: list[str]
-
-
-@dataclass(frozen=True)
-class ShortTradeMutableVerdictState:
-    gate_status: dict[str, Any]
-    positive_tags: list[str]
-    negative_tags: list[str]
-    blockers: list[str]
-
-
-@dataclass(frozen=True)
-class ShortTradeDecisionSnapshotState:
-    profile: Any
-    breakout_freshness: float
-    trend_acceleration: float
-    raw_catalyst_freshness: float
-    catalyst_freshness: float
-    score_target: float
-    effective_near_miss_threshold: float
-    effective_select_threshold: float
-    selected_score_tolerance: float
-    positive_tags: list[str]
-    negative_tags: list[str]
-    blockers: list[str]
-    gate_status: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class ShortTradeTopReasonsState:
-    breakout_freshness: float
-    trend_acceleration: float
-    raw_catalyst_freshness: float
-    upstream_shadow_catalyst_relief_applied: bool
-    upstream_shadow_catalyst_relief_reason: str
-    visibility_gap_continuation_relief: dict[str, Any]
-    merge_approved_continuation_relief: dict[str, Any]
-    prepared_breakout_penalty_relief: dict[str, Any]
-    prepared_breakout_catalyst_relief: dict[str, Any]
-    prepared_breakout_volume_relief: dict[str, Any]
-    prepared_breakout_continuation_relief: dict[str, Any]
-    prepared_breakout_selected_catalyst_relief: dict[str, Any]
-    profitability_relief_applied: bool
-    profitability_hard_cliff_boundary_relief: dict[str, Any]
-    historical_execution_relief: dict[str, Any]
-    event_catalyst_assessment: dict[str, Any]
-    profitability_hard_cliff: bool
-    breakout_stage: str
-    layer_c_avoid_penalty: float
-    stale_trend_repair_penalty: float
-    overhead_supply_penalty: float
-    extension_without_room_penalty: float
-    breakout_trap_guard: dict[str, Any]
-    market_state_threshold_adjustment: dict[str, Any]
-    catalyst_theme_guard: dict[str, Any]
-    watchlist_zero_catalyst_guard: dict[str, Any]
-    watchlist_zero_catalyst_crowded_guard: dict[str, Any]
-    watchlist_zero_catalyst_flat_trend_guard: dict[str, Any]
-    watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any]
-    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any]
-    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any]
-    short_trade_boundary_selected_only_shrink_guard: dict[str, Any]
-    carryover_evidence_deficiency: dict[str, Any]
-    selected_historical_proof_deficiency: dict[str, Any]
-    t_plus_2_continuation_candidate: dict[str, Any]
-    score_target: float
-
-
-@dataclass(frozen=True)
-class ShortTradeExplainabilityState:
-    profile: Any
-    market_state_threshold_adjustment: dict[str, Any]
-    breakout_trap_guard: dict[str, Any]
-    profitability_hard_cliff_boundary_relief: dict[str, Any]
-    historical_execution_relief: dict[str, Any]
-    visibility_gap_continuation_relief: dict[str, Any]
-    merge_approved_continuation_relief: dict[str, Any]
-    prepared_breakout_penalty_relief: dict[str, Any]
-    prepared_breakout_catalyst_relief: dict[str, Any]
-    prepared_breakout_volume_relief: dict[str, Any]
-    prepared_breakout_continuation_relief: dict[str, Any]
-    prepared_breakout_selected_catalyst_relief: dict[str, Any]
-    catalyst_theme_guard: dict[str, Any]
-    watchlist_zero_catalyst_guard: dict[str, Any]
-    watchlist_zero_catalyst_crowded_guard: dict[str, Any]
-    watchlist_zero_catalyst_flat_trend_guard: dict[str, Any]
-    watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any]
-    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any]
-    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any]
-    short_trade_boundary_selected_only_shrink_guard: dict[str, Any]
-    t_plus_2_continuation_candidate: dict[str, Any]
+# Re-export reasons helpers that are imported by short_trade_target.py
+from src.targets.short_trade_target_evaluation_reasons_helpers import (  # noqa: F401
+    _build_short_trade_rejection_reasons,
+    _build_short_trade_top_reasons,
+    _collect_breakout_gate_misses,
+    _summarize_positive_factor,
+    _summarize_penalty,
+)
 
 
 def build_short_trade_evaluation_context(
@@ -201,22 +133,6 @@ def build_short_trade_evaluation_context(
     )
 
 
-def _summarize_positive_factor(name: str, value: float) -> str | None:
-    if value >= 0.8:
-        return f"{name}_strong"
-    if value >= 0.65:
-        return f"{name}_supportive"
-    return None
-
-
-def _summarize_penalty(name: str, value: float) -> str | None:
-    if value >= 0.25:
-        return f"{name}_heavy"
-    if value >= 0.1:
-        return f"{name}_active"
-    return None
-
-
 def _classify_breakout_stage(*, breakout_freshness: float, trend_acceleration: float, profile: Any) -> tuple[str, bool, bool]:
     selected_breakout_gate_pass = breakout_freshness >= float(profile.selected_breakout_freshness_min) and trend_acceleration >= float(profile.selected_trend_acceleration_min)
     near_miss_breakout_gate_pass = breakout_freshness >= float(profile.near_miss_breakout_freshness_min) and trend_acceleration >= float(profile.near_miss_trend_acceleration_min)
@@ -225,15 +141,6 @@ def _classify_breakout_stage(*, breakout_freshness: float, trend_acceleration: f
     if near_miss_breakout_gate_pass:
         return "prepared_breakout", False, True
     return "watchlist_breakout", False, False
-
-
-def _collect_breakout_gate_misses(*, breakout_freshness: float, trend_acceleration: float, breakout_min: float, trend_min: float, label: str) -> list[str]:
-    misses: list[str] = []
-    if breakout_freshness < breakout_min:
-        misses.append(f"{label}_breakout_freshness_below_min")
-    if trend_acceleration < trend_min:
-        misses.append(f"{label}_trend_acceleration_below_min")
-    return misses
 
 
 def _preferred_entry_mode_from_historical_prior(historical_prior: dict[str, Any] | None) -> str:
@@ -412,375 +319,6 @@ def _annotate_short_trade_tags(
         negative_tags.append("selected_historical_proof_missing")
 
 
-def _collect_short_trade_relief_reasons(
-    *,
-    upstream_shadow_catalyst_relief_applied: bool,
-    upstream_shadow_catalyst_relief_reason: str,
-    visibility_gap_continuation_relief: dict[str, Any],
-    merge_approved_continuation_relief: dict[str, Any],
-    prepared_breakout_penalty_relief: dict[str, Any],
-    prepared_breakout_catalyst_relief: dict[str, Any],
-    prepared_breakout_volume_relief: dict[str, Any],
-    prepared_breakout_continuation_relief: dict[str, Any],
-    prepared_breakout_selected_catalyst_relief: dict[str, Any],
-    profitability_relief_applied: bool,
-    profitability_hard_cliff_boundary_relief: dict[str, Any],
-    historical_execution_relief: dict[str, Any],
-    event_catalyst_assessment: dict[str, Any],
-    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any],
-    short_trade_boundary_selected_only_shrink_guard: dict[str, Any],
-) -> list[str | None]:
-    event_catalyst_applied = event_catalyst_assessment.get("selected_uplift", 0.0) > 0.0 or event_catalyst_assessment.get("near_miss_threshold_relief", 0.0) > 0.0
-    return [
-        upstream_shadow_catalyst_relief_reason if upstream_shadow_catalyst_relief_applied else None,
-        "visibility_gap_continuation_relief" if visibility_gap_continuation_relief["applied"] else None,
-        "merge_approved_continuation_relief" if merge_approved_continuation_relief["applied"] else None,
-        "prepared_breakout_penalty_relief" if prepared_breakout_penalty_relief["applied"] else None,
-        "prepared_breakout_catalyst_relief" if prepared_breakout_catalyst_relief["applied"] else None,
-        "prepared_breakout_volume_relief" if prepared_breakout_volume_relief["applied"] else None,
-        "prepared_breakout_continuation_relief" if prepared_breakout_continuation_relief["applied"] else None,
-        "prepared_breakout_selected_catalyst_relief" if prepared_breakout_selected_catalyst_relief["applied"] else None,
-        "profitability_relief_applied" if profitability_relief_applied else None,
-        "profitability_hard_cliff_boundary_relief" if profitability_hard_cliff_boundary_relief.get("applied") else None,
-        "historical_execution_relief" if historical_execution_relief.get("applied") else None,
-        "event_catalyst_relief" if event_catalyst_applied else None,
-        "layer_c_watchlist_selected_only_shrink_applied" if layer_c_watchlist_selected_only_shrink_guard.get("applied") else None,
-        "short_trade_boundary_selected_only_shrink_applied" if short_trade_boundary_selected_only_shrink_guard.get("applied") else None,
-    ]
-
-
-def _collect_short_trade_penalty_reasons(
-    *,
-    profitability_hard_cliff: bool,
-    profitability_relief_applied: bool,
-    breakout_stage: str,
-    layer_c_avoid_penalty: float,
-    stale_trend_repair_penalty: float,
-    overhead_supply_penalty: float,
-    extension_without_room_penalty: float,
-    breakout_trap_guard: dict[str, Any],
-    market_state_threshold_adjustment: dict[str, Any],
-    catalyst_theme_guard: dict[str, Any],
-    watchlist_zero_catalyst_guard: dict[str, Any],
-    watchlist_zero_catalyst_crowded_guard: dict[str, Any],
-    watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
-    watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any],
-    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
-    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any],
-    short_trade_boundary_selected_only_shrink_guard: dict[str, Any],
-    carryover_evidence_deficiency: dict[str, Any],
-    selected_historical_proof_deficiency: dict[str, Any],
-    t_plus_2_continuation_candidate: dict[str, Any],
-    score_target: float,
-) -> list[str | None]:
-    market_risk_level = str(market_state_threshold_adjustment.get("risk_level") or "unknown").strip().lower()
-    regime_gate_level = str(market_state_threshold_adjustment.get("regime_gate_level") or market_risk_level or "unknown").strip().lower()
-    return [
-        "profitability_hard_cliff" if profitability_hard_cliff and not profitability_relief_applied else None,
-        breakout_stage,
-        _summarize_penalty("layer_c_avoid_penalty", layer_c_avoid_penalty),
-        _summarize_penalty("stale_trend_repair_penalty", stale_trend_repair_penalty),
-        _summarize_penalty("overhead_supply_penalty", overhead_supply_penalty),
-        _summarize_penalty("extension_without_room_penalty", extension_without_room_penalty),
-        "breakout_trap_penalty_applied" if breakout_trap_guard["applied"] else None,
-        "breakout_trap_risk_high" if breakout_trap_guard["blocked"] or breakout_trap_guard["execution_blocked"] else None,
-        f"market_risk_{market_risk_level}" if market_risk_level in {"risk_off", "crisis"} else None,
-        f"regime_gate_{regime_gate_level}" if regime_gate_level in {"risk_off", "crisis"} else None,
-        "catalyst_theme_penalty_applied" if catalyst_theme_guard["applied"] else None,
-        "watchlist_zero_catalyst_penalty_applied" if watchlist_zero_catalyst_guard["applied"] else None,
-        "watchlist_zero_catalyst_crowded_penalty_applied" if watchlist_zero_catalyst_crowded_guard["applied"] else None,
-        "watchlist_zero_catalyst_flat_trend_penalty_applied" if watchlist_zero_catalyst_flat_trend_guard["applied"] else None,
-        "watchlist_filter_diagnostics_flat_trend_penalty_applied" if watchlist_filter_diagnostics_flat_trend_guard["applied"] else None,
-        "watchlist_filter_diagnostics_selected_only_shrink_applied" if watchlist_filter_diagnostics_selected_only_shrink_guard.get("applied") else None,
-        "layer_c_watchlist_selected_only_shrink_applied" if layer_c_watchlist_selected_only_shrink_guard.get("applied") else None,
-        "short_trade_boundary_selected_only_shrink_applied" if short_trade_boundary_selected_only_shrink_guard.get("applied") else None,
-        "evidence_deficient_broad_family_only" if carryover_evidence_deficiency["evidence_deficient"] else None,
-        "selected_historical_proof_missing" if selected_historical_proof_deficiency["proof_missing"] else None,
-        "t_plus_2_continuation_candidate" if t_plus_2_continuation_candidate["applied"] else None,
-        f"score_short={score_target:.2f}",
-    ]
-
-
-def _collect_selected_only_shrink_top_reasons(
-    *,
-    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
-    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any],
-    short_trade_boundary_selected_only_shrink_guard: dict[str, Any],
-) -> list[str]:
-    return [
-        reason
-        for reason in [
-        "watchlist_filter_diagnostics_selected_only_shrink_applied" if watchlist_filter_diagnostics_selected_only_shrink_guard.get("applied") else None,
-        "layer_c_watchlist_selected_only_shrink_applied" if layer_c_watchlist_selected_only_shrink_guard.get("applied") else None,
-        "short_trade_boundary_selected_only_shrink_applied" if short_trade_boundary_selected_only_shrink_guard.get("applied") else None,
-        ]
-        if reason is not None
-    ]
-
-
-def _build_short_trade_top_reasons(
-    *,
-    state: ShortTradeTopReasonsState,
-) -> list[str]:
-    reasons = [
-        *_collect_selected_only_shrink_top_reasons(
-            watchlist_filter_diagnostics_selected_only_shrink_guard=state.watchlist_filter_diagnostics_selected_only_shrink_guard,
-            layer_c_watchlist_selected_only_shrink_guard=state.layer_c_watchlist_selected_only_shrink_guard,
-            short_trade_boundary_selected_only_shrink_guard=state.short_trade_boundary_selected_only_shrink_guard,
-        ),
-        _summarize_positive_factor("breakout_freshness", state.breakout_freshness),
-        _summarize_positive_factor("trend_acceleration", state.trend_acceleration),
-        _summarize_positive_factor("catalyst_freshness", state.raw_catalyst_freshness),
-        *_collect_short_trade_relief_reasons(
-            upstream_shadow_catalyst_relief_applied=state.upstream_shadow_catalyst_relief_applied,
-            upstream_shadow_catalyst_relief_reason=state.upstream_shadow_catalyst_relief_reason,
-            visibility_gap_continuation_relief=state.visibility_gap_continuation_relief,
-            merge_approved_continuation_relief=state.merge_approved_continuation_relief,
-            prepared_breakout_penalty_relief=state.prepared_breakout_penalty_relief,
-            prepared_breakout_catalyst_relief=state.prepared_breakout_catalyst_relief,
-            prepared_breakout_volume_relief=state.prepared_breakout_volume_relief,
-            prepared_breakout_continuation_relief=state.prepared_breakout_continuation_relief,
-            prepared_breakout_selected_catalyst_relief=state.prepared_breakout_selected_catalyst_relief,
-            profitability_relief_applied=state.profitability_relief_applied,
-            profitability_hard_cliff_boundary_relief=state.profitability_hard_cliff_boundary_relief,
-            historical_execution_relief=state.historical_execution_relief,
-            event_catalyst_assessment=state.event_catalyst_assessment,
-            layer_c_watchlist_selected_only_shrink_guard=state.layer_c_watchlist_selected_only_shrink_guard,
-            short_trade_boundary_selected_only_shrink_guard=state.short_trade_boundary_selected_only_shrink_guard,
-        ),
-        *_collect_short_trade_penalty_reasons(
-            profitability_hard_cliff=state.profitability_hard_cliff,
-            profitability_relief_applied=state.profitability_relief_applied,
-            breakout_stage=state.breakout_stage,
-            layer_c_avoid_penalty=state.layer_c_avoid_penalty,
-            stale_trend_repair_penalty=state.stale_trend_repair_penalty,
-            overhead_supply_penalty=state.overhead_supply_penalty,
-            extension_without_room_penalty=state.extension_without_room_penalty,
-            breakout_trap_guard=state.breakout_trap_guard,
-            market_state_threshold_adjustment=state.market_state_threshold_adjustment,
-            catalyst_theme_guard=state.catalyst_theme_guard,
-            watchlist_zero_catalyst_guard=state.watchlist_zero_catalyst_guard,
-            watchlist_zero_catalyst_crowded_guard=state.watchlist_zero_catalyst_crowded_guard,
-            watchlist_zero_catalyst_flat_trend_guard=state.watchlist_zero_catalyst_flat_trend_guard,
-            watchlist_filter_diagnostics_flat_trend_guard=state.watchlist_filter_diagnostics_flat_trend_guard,
-            watchlist_filter_diagnostics_selected_only_shrink_guard=state.watchlist_filter_diagnostics_selected_only_shrink_guard,
-            layer_c_watchlist_selected_only_shrink_guard=state.layer_c_watchlist_selected_only_shrink_guard,
-            short_trade_boundary_selected_only_shrink_guard=state.short_trade_boundary_selected_only_shrink_guard,
-            carryover_evidence_deficiency=state.carryover_evidence_deficiency,
-            selected_historical_proof_deficiency=state.selected_historical_proof_deficiency,
-            t_plus_2_continuation_candidate=state.t_plus_2_continuation_candidate,
-            score_target=state.score_target,
-        ),
-    ]
-    return trim_reasons([reason for reason in reasons if reason is not None])
-
-
-def _build_short_trade_rejection_reasons(
-    *,
-    decision: str,
-    blockers: list[str],
-    breakout_freshness: float,
-    trend_acceleration: float,
-    effective_near_miss_threshold: float,
-    score_target: float,
-    near_miss_breakout_gate_pass: bool,
-    profile: Any,
-    carryover_evidence_deficiency: dict[str, Any],
-) -> list[str]:
-    rejection_reasons = trim_reasons(
-        blockers
-        if blockers
-        else (
-            _collect_breakout_gate_misses(
-                breakout_freshness=breakout_freshness,
-                trend_acceleration=trend_acceleration,
-                breakout_min=float(profile.near_miss_breakout_freshness_min),
-                trend_min=float(profile.near_miss_trend_acceleration_min),
-                label="near_miss",
-            )
-            if decision == "rejected" and score_target >= effective_near_miss_threshold and not near_miss_breakout_gate_pass
-            else ["score_short_below_threshold"] if decision == "rejected" else []
-        )
-    )
-    if decision == "rejected" and carryover_evidence_deficiency["evidence_deficient"]:
-        return trim_reasons(["evidence_deficient_broad_family_only", *rejection_reasons])
-    return rejection_reasons
-
-
-def _build_upstream_shadow_explainability_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "enabled": bool(snapshot["upstream_shadow_catalyst_relief_enabled"]),
-        "eligible": bool(snapshot["upstream_shadow_catalyst_relief_eligible"]),
-        "applied": bool(snapshot["upstream_shadow_catalyst_relief_applied"]),
-        "reason": str(snapshot["upstream_shadow_catalyst_relief_reason"]),
-        "gate_hits": dict(snapshot["upstream_shadow_catalyst_relief_gate_hits"]),
-        "base_catalyst_freshness": round(float(snapshot["raw_catalyst_freshness"]), 4),
-        "effective_catalyst_freshness": round(float(snapshot["catalyst_freshness"]), 4),
-        "catalyst_freshness_floor": round(float(snapshot["upstream_shadow_catalyst_relief_catalyst_freshness_floor"]), 4),
-        "base_near_miss_threshold": round(float(snapshot["upstream_shadow_catalyst_relief_base_near_miss_threshold"]), 4),
-        "effective_near_miss_threshold": round(float(snapshot["effective_near_miss_threshold"]), 4),
-        "near_miss_threshold_override": round(float(snapshot["upstream_shadow_catalyst_relief_near_miss_threshold_override"]), 4),
-        "base_select_threshold": round(float(snapshot["upstream_shadow_catalyst_relief_base_select_threshold"]), 4),
-        "effective_select_threshold": round(float(snapshot["effective_select_threshold"]), 4),
-        "selected_score_tolerance": round(float(snapshot["selected_score_tolerance"]), 4),
-        "select_threshold_override": round(float(snapshot["upstream_shadow_catalyst_relief_select_threshold_override"]), 4),
-        "require_no_profitability_hard_cliff": bool(snapshot["upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff"]),
-    }
-
-
-def _build_prepared_breakout_penalty_explainability_payload(prepared_breakout_penalty_relief: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "enabled": bool(prepared_breakout_penalty_relief["enabled"]),
-        "eligible": bool(prepared_breakout_penalty_relief["eligible"]),
-        "applied": bool(prepared_breakout_penalty_relief["applied"]),
-        "candidate_source": str(prepared_breakout_penalty_relief["candidate_source"]),
-        "breakout_stage": str(prepared_breakout_penalty_relief["breakout_stage"]),
-        "gate_hits": dict(prepared_breakout_penalty_relief["gate_hits"]),
-        "base_positive_score_weights": {name: round(float(value), 4) for name, value in dict(prepared_breakout_penalty_relief["base_positive_score_weights"]).items()},
-        "effective_positive_score_weights": {name: round(float(value), 4) for name, value in dict(prepared_breakout_penalty_relief["effective_positive_score_weights"]).items()},
-        "base_stale_score_penalty_weight": round(float(prepared_breakout_penalty_relief["base_stale_score_penalty_weight"]), 4),
-        "effective_stale_score_penalty_weight": round(float(prepared_breakout_penalty_relief["effective_stale_score_penalty_weight"]), 4),
-        "base_extension_score_penalty_weight": round(float(prepared_breakout_penalty_relief["base_extension_score_penalty_weight"]), 4),
-        "effective_extension_score_penalty_weight": round(float(prepared_breakout_penalty_relief["effective_extension_score_penalty_weight"]), 4),
-    }
-
-
-def _build_prepared_breakout_catalyst_explainability_payload(prepared_breakout_catalyst_relief: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "enabled": bool(prepared_breakout_catalyst_relief["enabled"]),
-        "eligible": bool(prepared_breakout_catalyst_relief["eligible"]),
-        "applied": bool(prepared_breakout_catalyst_relief["applied"]),
-        "candidate_source": str(prepared_breakout_catalyst_relief["candidate_source"]),
-        "breakout_stage": str(prepared_breakout_catalyst_relief["breakout_stage"]),
-        "gate_hits": dict(prepared_breakout_catalyst_relief["gate_hits"]),
-        "base_catalyst_freshness": round(float(prepared_breakout_catalyst_relief["base_catalyst_freshness"]), 4),
-        "effective_catalyst_freshness": round(float(prepared_breakout_catalyst_relief["effective_catalyst_freshness"]), 4),
-        "catalyst_freshness_floor": round(float(prepared_breakout_catalyst_relief["catalyst_freshness_floor"]), 4),
-    }
-
-
-def _build_watchlist_guard_explainability_payload(watchlist_guard: dict[str, Any], *, effective_penalty: float) -> dict[str, Any]:
-    return {
-        **_build_watchlist_guard_metrics_payload(watchlist_guard),
-        "effective_penalty": round(float(effective_penalty), 4),
-    }
-
-
-def _build_short_trade_core_explainability_payload(
-    *,
-    input_data: TargetEvaluationInput,
-    profile: Any,
-    snapshot: dict[str, Any],
-    breakout_stage: str,
-) -> dict[str, Any]:
-    return {
-        "source": str(input_data.replay_context.get("source") or "short_trade_target_rules_v1"),
-        "target_profile": profile.name,
-        "breakout_stage": breakout_stage,
-        "trade_date": input_data.trade_date,
-        "layer_c_decision": input_data.layer_c_decision,
-        "bc_conflict": input_data.bc_conflict,
-        "candidate_source": str(input_data.replay_context.get("source") or ""),
-        "candidate_reason_codes": list(snapshot.get("candidate_reason_codes") or []),
-        "payoff_first_runner_recall_candidate": bool(snapshot.get("payoff_first_runner_recall_candidate")),
-        "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {})),
-        "profitability_relief": _build_profitability_explainability_payload(snapshot),
-        "upstream_shadow_catalyst_relief": _build_upstream_shadow_explainability_payload(snapshot),
-    }
-
-
-def _build_short_trade_historical_explainability_payload(
-    *,
-    snapshot: dict[str, Any],
-    profitability_hard_cliff_boundary_relief: dict[str, Any],
-    historical_execution_relief: dict[str, Any],
-    carryover_evidence_deficiency: dict[str, Any],
-    selected_historical_proof_deficiency: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "profitability_hard_cliff_boundary_relief": _build_profitability_hard_cliff_boundary_relief_metrics_payload(profitability_hard_cliff_boundary_relief),
-        "historical_prior": dict(snapshot["historical_prior"]),
-        "historical_execution_relief": _build_historical_execution_relief_metrics_payload(historical_execution_relief),
-        "carryover_evidence_deficiency": _build_carryover_evidence_deficiency_metrics_payload(carryover_evidence_deficiency),
-        "selected_historical_proof_deficiency": _build_selected_historical_proof_deficiency_metrics_payload(selected_historical_proof_deficiency),
-    }
-
-
-def _build_short_trade_continuation_explainability_payload(
-    *,
-    visibility_gap_continuation_relief: dict[str, Any],
-    merge_approved_continuation_relief: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "visibility_gap_continuation_relief": _build_visibility_gap_continuation_relief_metrics_payload(visibility_gap_continuation_relief),
-        "merge_approved_continuation_relief": _build_merge_approved_continuation_relief_metrics_payload(merge_approved_continuation_relief),
-    }
-
-
-def _build_short_trade_prepared_breakout_explainability_payload(
-    *,
-    prepared_breakout_penalty_relief: dict[str, Any],
-    prepared_breakout_catalyst_relief: dict[str, Any],
-    prepared_breakout_volume_relief: dict[str, Any],
-    prepared_breakout_continuation_relief: dict[str, Any],
-    prepared_breakout_selected_catalyst_relief: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "prepared_breakout_penalty_relief": _build_prepared_breakout_penalty_explainability_payload(prepared_breakout_penalty_relief),
-        "prepared_breakout_catalyst_relief": _build_prepared_breakout_catalyst_explainability_payload(prepared_breakout_catalyst_relief),
-        "prepared_breakout_volume_relief": _build_prepared_breakout_volume_relief_metrics_payload(prepared_breakout_volume_relief),
-        "prepared_breakout_continuation_relief": _build_prepared_breakout_continuation_relief_metrics_payload(prepared_breakout_continuation_relief),
-        "prepared_breakout_selected_catalyst_relief": _build_prepared_breakout_selected_catalyst_relief_metrics_payload(prepared_breakout_selected_catalyst_relief),
-    }
-
-
-def _build_short_trade_watchlist_explainability_payload(
-    *,
-    snapshot: dict[str, Any],
-    catalyst_theme_guard: dict[str, Any],
-    watchlist_zero_catalyst_guard: dict[str, Any],
-    watchlist_zero_catalyst_crowded_guard: dict[str, Any],
-    watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
-    watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any],
-    watchlist_filter_diagnostics_selected_only_shrink_guard: dict[str, Any],
-    layer_c_watchlist_selected_only_shrink_guard: dict[str, Any],
-    short_trade_boundary_selected_only_shrink_guard: dict[str, Any],
-    t_plus_2_continuation_candidate: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "catalyst_theme_guard": _build_watchlist_guard_explainability_payload(
-            catalyst_theme_guard,
-            effective_penalty=float(snapshot["catalyst_theme_penalty"]),
-        ),
-        "watchlist_zero_catalyst_guard": _build_watchlist_guard_explainability_payload(
-            watchlist_zero_catalyst_guard,
-            effective_penalty=float(snapshot["watchlist_zero_catalyst_penalty"]),
-        ),
-        "watchlist_zero_catalyst_crowded_guard": _build_watchlist_guard_explainability_payload(
-            watchlist_zero_catalyst_crowded_guard,
-            effective_penalty=float(snapshot["watchlist_zero_catalyst_crowded_penalty"]),
-        ),
-        "watchlist_zero_catalyst_flat_trend_guard": _build_watchlist_guard_explainability_payload(
-            watchlist_zero_catalyst_flat_trend_guard,
-            effective_penalty=float(snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
-        ),
-        "watchlist_filter_diagnostics_flat_trend_guard": _build_watchlist_guard_explainability_payload(
-            watchlist_filter_diagnostics_flat_trend_guard,
-            effective_penalty=float(snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]),
-        ),
-        "watchlist_filter_diagnostics_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(
-            watchlist_filter_diagnostics_selected_only_shrink_guard
-        ),
-        "layer_c_watchlist_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(
-            layer_c_watchlist_selected_only_shrink_guard
-        ),
-        "short_trade_boundary_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(
-            short_trade_boundary_selected_only_shrink_guard
-        ),
-        "t_plus_2_continuation_candidate": _build_t_plus_2_continuation_candidate_metrics_payload(t_plus_2_continuation_candidate),
-    }
-
-
 def _build_short_trade_metrics_payload(
     *,
     input_data: TargetEvaluationInput,
@@ -838,179 +376,6 @@ def _build_short_trade_metrics_payload(
     }
 
 
-def _build_short_trade_explainability_payload(
-    *,
-    input_data: TargetEvaluationInput,
-    snapshot: dict[str, Any],
-    breakout_stage: str,
-    state: ShortTradeExplainabilityState,
-    carryover_evidence_deficiency: dict[str, Any],
-    selected_historical_proof_deficiency: dict[str, Any],
-) -> dict[str, Any]:
-    payload = {
-        **_build_short_trade_core_explainability_payload(
-            input_data=input_data,
-            profile=state.profile,
-            snapshot=snapshot,
-            breakout_stage=breakout_stage,
-        ),
-        "market_state_threshold_adjustment": _build_market_state_threshold_adjustment_metrics_payload(state.market_state_threshold_adjustment),
-        "breakout_trap_guard": _build_breakout_trap_guard_metrics_payload(state.breakout_trap_guard),
-        **_build_short_trade_historical_explainability_payload(
-            snapshot=snapshot,
-            profitability_hard_cliff_boundary_relief=state.profitability_hard_cliff_boundary_relief,
-            historical_execution_relief=state.historical_execution_relief,
-            carryover_evidence_deficiency=carryover_evidence_deficiency,
-            selected_historical_proof_deficiency=selected_historical_proof_deficiency,
-        ),
-        **_build_short_trade_continuation_explainability_payload(
-            visibility_gap_continuation_relief=state.visibility_gap_continuation_relief,
-            merge_approved_continuation_relief=state.merge_approved_continuation_relief,
-        ),
-        **_build_short_trade_prepared_breakout_explainability_payload(
-            prepared_breakout_penalty_relief=state.prepared_breakout_penalty_relief,
-            prepared_breakout_catalyst_relief=state.prepared_breakout_catalyst_relief,
-            prepared_breakout_volume_relief=state.prepared_breakout_volume_relief,
-            prepared_breakout_continuation_relief=state.prepared_breakout_continuation_relief,
-            prepared_breakout_selected_catalyst_relief=state.prepared_breakout_selected_catalyst_relief,
-        ),
-        **_build_short_trade_watchlist_explainability_payload(
-            snapshot=snapshot,
-            catalyst_theme_guard=state.catalyst_theme_guard,
-            watchlist_zero_catalyst_guard=state.watchlist_zero_catalyst_guard,
-            watchlist_zero_catalyst_crowded_guard=state.watchlist_zero_catalyst_crowded_guard,
-            watchlist_zero_catalyst_flat_trend_guard=state.watchlist_zero_catalyst_flat_trend_guard,
-            watchlist_filter_diagnostics_flat_trend_guard=state.watchlist_filter_diagnostics_flat_trend_guard,
-            watchlist_filter_diagnostics_selected_only_shrink_guard=dict(snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
-            layer_c_watchlist_selected_only_shrink_guard=dict(snapshot["layer_c_watchlist_selected_only_shrink_guard"]),
-            short_trade_boundary_selected_only_shrink_guard=dict(snapshot["short_trade_boundary_selected_only_shrink_guard"]),
-            t_plus_2_continuation_candidate=state.t_plus_2_continuation_candidate,
-        ),
-        "committee": _build_short_trade_committee_payload(snapshot),
-        "replay_context": dict(input_data.replay_context or {}),
-    }
-    
-    # Only add event_catalyst explainability if it's meaningful (actually applied)
-    event_catalyst_assessment = dict(snapshot.get("event_catalyst_assessment") or {})
-    if event_catalyst_assessment and (event_catalyst_assessment.get("selected_uplift", 0.0) > 0 or event_catalyst_assessment.get("near_miss_threshold_relief", 0.0) > 0):
-        payload["event_catalyst"] = {
-            "score": round(event_catalyst_assessment["score"], 4),
-            "eligible": event_catalyst_assessment["eligible"],
-            "applied": True,
-            "selected_uplift": round(event_catalyst_assessment["selected_uplift"], 4),
-            "near_miss_threshold_relief": round(event_catalyst_assessment["near_miss_threshold_relief"], 4),
-            "gate_hits": dict(event_catalyst_assessment["gate_hits"]),
-            "component_scores": {k: round(v, 4) for k, v in event_catalyst_assessment["component_scores"].items()},
-        }
-    
-    return payload
-
-
-def _build_short_trade_mutable_verdict_state(snapshot: dict[str, Any]) -> ShortTradeMutableVerdictState:
-    return ShortTradeMutableVerdictState(
-        gate_status=dict(snapshot["gate_status"]),
-        positive_tags=list(snapshot["positive_tags"]),
-        negative_tags=[
-            tag for tag in list(snapshot["negative_tags"]) if tag != "watchlist_filter_diagnostics_selected_only_shrink_applied"
-        ],
-        blockers=list(snapshot["blockers"]),
-    )
-
-
-def _build_short_trade_committee_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "enabled": bool(snapshot.get("committee_enabled", False)),
-        "gate": str(snapshot.get("committee_gate") or ""),
-        "effective_gate": str(snapshot.get("committee_effective_gate") or snapshot.get("committee_gate") or ""),
-        "profile": str(snapshot.get("committee_profile") or ""),
-        "alpha_edge_score": round(float(snapshot.get("alpha_edge_score", 0.0) or 0.0), 4),
-        "beta_execution_score": round(float(snapshot.get("beta_execution_score", 0.0) or 0.0), 4),
-        "gamma_risk_score": round(float(snapshot.get("gamma_risk_score", 0.0) or 0.0), 4),
-        "committee_score": round(float(snapshot.get("committee_score", 0.0) or 0.0), 4),
-        "thresholds": dict(snapshot.get("committee_thresholds") or {}),
-        "gate_status": dict(snapshot.get("committee_gate_status") or {}),
-        "fail_reasons": list(snapshot.get("committee_fail_reasons") or []),
-        "advisory_reasons": list(snapshot.get("committee_advisory_reasons") or []),
-        "vetoes": list(snapshot.get("committee_vetoes") or []),
-        "selected_pass": bool(snapshot.get("committee_selected_pass", False)),
-        "components": dict(snapshot.get("committee_components") or {}),
-        "component_sources": dict(snapshot.get("committee_component_sources") or {}),
-        "kill_switch": dict(snapshot.get("committee_kill_switch") or {}),
-    }
-
-
-def _build_short_trade_top_reasons_state(
-    *,
-    snapshot: dict[str, Any],
-    context: ShortTradeEvaluationContext,
-    thresholds: ShortTradeThresholdState,
-) -> ShortTradeTopReasonsState:
-    return ShortTradeTopReasonsState(
-        breakout_freshness=thresholds.breakout_freshness,
-        trend_acceleration=thresholds.trend_acceleration,
-        raw_catalyst_freshness=float(snapshot["raw_catalyst_freshness"]),
-        upstream_shadow_catalyst_relief_applied=bool(snapshot["upstream_shadow_catalyst_relief_applied"]),
-        upstream_shadow_catalyst_relief_reason=str(snapshot["upstream_shadow_catalyst_relief_reason"]),
-        visibility_gap_continuation_relief=dict(snapshot["visibility_gap_continuation_relief"]),
-        merge_approved_continuation_relief=dict(snapshot["merge_approved_continuation_relief"]),
-        prepared_breakout_penalty_relief=dict(snapshot["prepared_breakout_penalty_relief"]),
-        prepared_breakout_catalyst_relief=dict(snapshot["prepared_breakout_catalyst_relief"]),
-        prepared_breakout_volume_relief=dict(snapshot["prepared_breakout_volume_relief"]),
-        prepared_breakout_continuation_relief=dict(snapshot["prepared_breakout_continuation_relief"]),
-        prepared_breakout_selected_catalyst_relief=dict(snapshot["prepared_breakout_selected_catalyst_relief"]),
-        profitability_relief_applied=bool(snapshot["profitability_relief_applied"]),
-        profitability_hard_cliff_boundary_relief=dict(snapshot["profitability_hard_cliff_boundary_relief"]),
-        historical_execution_relief=dict(snapshot["historical_execution_relief"]),
-        event_catalyst_assessment=dict(snapshot.get("event_catalyst_assessment") or {}),
-        profitability_hard_cliff=bool(snapshot["profitability_hard_cliff"]),
-        breakout_stage=thresholds.breakout_stage,
-        layer_c_avoid_penalty=float(snapshot["layer_c_avoid_penalty"]),
-        stale_trend_repair_penalty=float(snapshot["stale_trend_repair_penalty"]),
-        overhead_supply_penalty=float(snapshot["overhead_supply_penalty"]),
-        extension_without_room_penalty=float(snapshot["extension_without_room_penalty"]),
-        breakout_trap_guard=dict(snapshot.get("breakout_trap_guard") or {}),
-        market_state_threshold_adjustment=dict(snapshot.get("market_state_threshold_adjustment") or {}),
-        catalyst_theme_guard=dict(snapshot["catalyst_theme_guard"]),
-        watchlist_zero_catalyst_guard=dict(snapshot["watchlist_zero_catalyst_guard"]),
-        watchlist_zero_catalyst_crowded_guard=dict(snapshot["watchlist_zero_catalyst_crowded_guard"]),
-        watchlist_zero_catalyst_flat_trend_guard=dict(snapshot["watchlist_zero_catalyst_flat_trend_guard"]),
-        watchlist_filter_diagnostics_flat_trend_guard=dict(snapshot["watchlist_filter_diagnostics_flat_trend_guard"]),
-        watchlist_filter_diagnostics_selected_only_shrink_guard=dict(snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
-        layer_c_watchlist_selected_only_shrink_guard=dict(snapshot["layer_c_watchlist_selected_only_shrink_guard"]),
-        short_trade_boundary_selected_only_shrink_guard=dict(snapshot["short_trade_boundary_selected_only_shrink_guard"]),
-        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
-        selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
-        t_plus_2_continuation_candidate=dict(snapshot["t_plus_2_continuation_candidate"]),
-        score_target=float(snapshot["score_target"]),
-    )
-
-
-def _build_short_trade_explainability_state(snapshot: dict[str, Any]) -> ShortTradeExplainabilityState:
-    return ShortTradeExplainabilityState(
-        profile=snapshot["profile"],
-        market_state_threshold_adjustment=dict(snapshot.get("market_state_threshold_adjustment") or {}),
-        breakout_trap_guard=dict(snapshot.get("breakout_trap_guard") or {}),
-        profitability_hard_cliff_boundary_relief=dict(snapshot["profitability_hard_cliff_boundary_relief"]),
-        historical_execution_relief=dict(snapshot["historical_execution_relief"]),
-        visibility_gap_continuation_relief=dict(snapshot["visibility_gap_continuation_relief"]),
-        merge_approved_continuation_relief=dict(snapshot["merge_approved_continuation_relief"]),
-        prepared_breakout_penalty_relief=dict(snapshot["prepared_breakout_penalty_relief"]),
-        prepared_breakout_catalyst_relief=dict(snapshot["prepared_breakout_catalyst_relief"]),
-        prepared_breakout_volume_relief=dict(snapshot["prepared_breakout_volume_relief"]),
-        prepared_breakout_continuation_relief=dict(snapshot["prepared_breakout_continuation_relief"]),
-        prepared_breakout_selected_catalyst_relief=dict(snapshot["prepared_breakout_selected_catalyst_relief"]),
-        catalyst_theme_guard=dict(snapshot["catalyst_theme_guard"]),
-        watchlist_zero_catalyst_guard=dict(snapshot["watchlist_zero_catalyst_guard"]),
-        watchlist_zero_catalyst_crowded_guard=dict(snapshot["watchlist_zero_catalyst_crowded_guard"]),
-        watchlist_zero_catalyst_flat_trend_guard=dict(snapshot["watchlist_zero_catalyst_flat_trend_guard"]),
-        watchlist_filter_diagnostics_flat_trend_guard=dict(snapshot["watchlist_filter_diagnostics_flat_trend_guard"]),
-        watchlist_filter_diagnostics_selected_only_shrink_guard=dict(snapshot["watchlist_filter_diagnostics_selected_only_shrink_guard"]),
-        layer_c_watchlist_selected_only_shrink_guard=dict(snapshot["layer_c_watchlist_selected_only_shrink_guard"]),
-        short_trade_boundary_selected_only_shrink_guard=dict(snapshot["short_trade_boundary_selected_only_shrink_guard"]),
-        t_plus_2_continuation_candidate=dict(snapshot["t_plus_2_continuation_candidate"]),
-    )
-
-
 def build_short_trade_metrics_payload(
     *,
     context: ShortTradeEvaluationContext,
@@ -1052,21 +417,11 @@ def build_short_trade_explainability_payload(
     thresholds: ShortTradeThresholdState,
     input_data: TargetEvaluationInput,
 ) -> dict[str, Any]:
-    snapshot = context.snapshot
-    return {
-        "source": str(input_data.replay_context.get("source") or "short_trade_target_rules_v1"),
-        "target_profile": snapshot["profile"].name,
-        "breakout_stage": thresholds.breakout_stage,
-        "trade_date": input_data.trade_date,
-        "layer_c_decision": input_data.layer_c_decision,
-        "bc_conflict": input_data.bc_conflict,
-        "candidate_source": str(input_data.replay_context.get("source") or ""),
-        "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {})),
-        "historical_prior": dict(snapshot["historical_prior"]),
-        "carryover_evidence_deficiency": dict(context.carryover_evidence_deficiency),
-        "selected_historical_proof_deficiency": dict(context.selected_historical_proof_deficiency),
-        "replay_context": dict(input_data.replay_context or {}),
-    }
+    return _build_public_explainability_payload(
+        context=context,
+        thresholds=thresholds,
+        input_data=input_data,
+    )
 
 
 def _build_short_trade_decision_snapshot_state(snapshot: dict[str, Any]) -> ShortTradeDecisionSnapshotState:

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.backend.database import get_db
 from app.backend.models.schemas import BacktestRequest, ErrorResponse, HedgeFundRequest
+from app.backend.routes._common import safe_route
 from app.backend.routes.hedge_fund_streaming import (
     hydrate_api_keys,
     resolve_model_provider,
@@ -31,23 +32,17 @@ router = APIRouter(prefix="/hedge-fund")
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def run(request_data: HedgeFundRequest, request: Request, db: Session = Depends(get_db)):
-    try:
-        hydrate_api_keys(request_data, db)
+    hydrate_api_keys(request_data, db)
 
-        portfolio = create_portfolio(request_data.initial_cash, request_data.margin_requirement, request_data.tickers, request_data.portfolio_positions)
-        graph = create_graph(graph_nodes=request_data.graph_nodes, graph_edges=request_data.graph_edges)
-        compiled_graph = graph.compile()
+    portfolio = create_portfolio(request_data.initial_cash, request_data.margin_requirement, request_data.tickers, request_data.portfolio_positions)
+    graph = create_graph(graph_nodes=request_data.graph_nodes, graph_edges=request_data.graph_edges)
+    compiled_graph = graph.compile()
 
-        progress.update_status("system", None, "Preparing hedge fund run")
-        model_provider = resolve_model_provider(request_data.model_provider)
-        return StreamingResponse(stream_hedge_fund_run(request, request_data, compiled_graph, portfolio, model_provider), media_type="text/event-stream")
-
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.exception("Failed to process hedge fund run")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    progress.update_status("system", None, "Preparing hedge fund run")
+    model_provider = resolve_model_provider(request_data.model_provider)
+    return StreamingResponse(stream_hedge_fund_run(request, request_data, compiled_graph, portfolio, model_provider), media_type="text/event-stream")
 
 
 @router.post(
@@ -58,42 +53,36 @@ async def run(request_data: HedgeFundRequest, request: Request, db: Session = De
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def backtest(request_data: BacktestRequest, request: Request, db: Session = Depends(get_db)):
     """Run a continuous backtest over a time period with streaming updates."""
-    try:
-        hydrate_api_keys(request_data, db)
+    hydrate_api_keys(request_data, db)
 
-        model_provider = resolve_model_provider(request_data.model_provider)
+    model_provider = resolve_model_provider(request_data.model_provider)
 
-        portfolio = create_portfolio(
-            request_data.initial_capital,
-            request_data.margin_requirement,
-            request_data.tickers,
-            request_data.portfolio_positions,
-        )
+    portfolio = create_portfolio(
+        request_data.initial_capital,
+        request_data.margin_requirement,
+        request_data.tickers,
+        request_data.portfolio_positions,
+    )
 
-        graph = create_graph(graph_nodes=request_data.graph_nodes, graph_edges=request_data.graph_edges)
-        compiled_graph = graph.compile()
+    graph = create_graph(graph_nodes=request_data.graph_nodes, graph_edges=request_data.graph_edges)
+    compiled_graph = graph.compile()
 
-        backtest_service = BacktestService(
-            graph=compiled_graph,
-            portfolio=portfolio,
-            tickers=request_data.tickers,
-            start_date=request_data.start_date,
-            end_date=request_data.end_date,
-            initial_capital=request_data.initial_capital,
-            model_name=request_data.model_name,
-            model_provider=model_provider,
-            request=request_data,
-        )
+    backtest_service = BacktestService(
+        graph=compiled_graph,
+        portfolio=portfolio,
+        tickers=request_data.tickers,
+        start_date=request_data.start_date,
+        end_date=request_data.end_date,
+        initial_capital=request_data.initial_capital,
+        model_name=request_data.model_name,
+        model_provider=model_provider,
+        request=request_data,
+    )
 
-        return StreamingResponse(stream_backtest(request, backtest_service), media_type="text/event-stream")
-
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.exception("Failed to process backtest run")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return StreamingResponse(stream_backtest(request, backtest_service), media_type="text/event-stream")
 
 
 @router.get(
@@ -103,10 +92,7 @@ async def backtest(request_data: BacktestRequest, request: Request, db: Session 
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_agents():
     """Get the list of available agents."""
-    try:
-        return {"agents": get_agents_list()}
-    except Exception as e:
-        logger.exception("Failed to retrieve agents")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return {"agents": get_agents_list()}

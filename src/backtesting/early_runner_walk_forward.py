@@ -98,11 +98,15 @@ def _summarize_param_set(rows: list[dict[str, Any]], param_set: dict[str, float]
 
 def _ranking_key(summary: dict[str, Any]) -> tuple[float, float, float, int]:
     """Build the current ranking key for selecting a best parameter set."""
+    expectancy = summary.get("after_cost_expectancy")
+    hit_rate = summary.get("hit_rate_5d15")
+    unfilled = summary.get("unfilled_rate")
+    row_count = summary.get("row_count")
     return (
-        float(summary.get("after_cost_expectancy") or -999.0),
-        float(summary.get("hit_rate_5d15") or -999.0),
-        -float(summary.get("unfilled_rate") or 999.0),
-        int(summary.get("row_count") or 0),
+        float(expectancy) if expectancy is not None else -999.0,
+        float(hit_rate) if hit_rate is not None else -999.0,
+        -(float(unfilled) if unfilled is not None else 999.0),
+        int(row_count) if row_count is not None else 0,
     )
 
 

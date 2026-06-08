@@ -244,11 +244,11 @@ def classify_btst_regime_gate_from_market_state(market_state: MarketState | dict
     if existing_payload is not None:
         return existing_payload
     return classify_btst_regime_gate(
-        breadth_ratio=float(payload.get("breadth_ratio", 0.5) or 0.5),
-        daily_return=float(payload.get("daily_return", 0.0) or 0.0),
-        style_dispersion=float(payload.get("style_dispersion", 0.0) or 0.0),
-        regime_flip_risk=float(payload.get("regime_flip_risk", 0.0) or 0.0),
-        regime_gate_level=str(payload.get("regime_gate_level", "normal") or "normal"),
+        breadth_ratio=float(payload["breadth_ratio"] if payload.get("breadth_ratio") is not None else 0.5),
+        daily_return=float(payload.get("daily_return") if payload.get("daily_return") is not None else 0.0),
+        style_dispersion=float(payload.get("style_dispersion") if payload.get("style_dispersion") is not None else 0.0),
+        regime_flip_risk=float(payload.get("regime_flip_risk") if payload.get("regime_flip_risk") is not None else 0.0),
+        regime_gate_level=str(payload.get("regime_gate_level") if payload.get("regime_gate_level") is not None else "normal"),
     )
 
 
@@ -264,11 +264,11 @@ def classify_btst_regime_gate_from_market_state_metrics(market_state: MarketStat
     if not payload:
         return None
     return classify_btst_regime_gate(
-        breadth_ratio=float(payload.get("breadth_ratio", 0.5) or 0.5),
-        daily_return=float(payload.get("daily_return", 0.0) or 0.0),
-        style_dispersion=float(payload.get("style_dispersion", 0.0) or 0.0),
-        regime_flip_risk=float(payload.get("regime_flip_risk", 0.0) or 0.0),
-        regime_gate_level=str(payload.get("regime_gate_level", "normal") or "normal"),
+        breadth_ratio=float(payload["breadth_ratio"] if payload.get("breadth_ratio") is not None else 0.5),
+        daily_return=float(payload.get("daily_return") if payload.get("daily_return") is not None else 0.0),
+        style_dispersion=float(payload.get("style_dispersion") if payload.get("style_dispersion") is not None else 0.0),
+        regime_flip_risk=float(payload.get("regime_flip_risk") if payload.get("regime_flip_risk") is not None else 0.0),
+        regime_gate_level=str(payload.get("regime_gate_level") if payload.get("regime_gate_level") is not None else "normal"),
     )
 
 
@@ -285,10 +285,10 @@ def _reuse_btst_regime_gate_payload(payload: object) -> dict[str, object] | None
         "profile_hint": str(payload.get("profile_hint") or ""),
         "reason_codes": [str(code).strip() for code in list(payload.get("reason_codes") or []) if str(code or "").strip()],
         "metrics": {
-            "breadth_ratio": round(float(metrics_payload.get("breadth_ratio", 0.5) or 0.5), 6),
-            "daily_return": round(float(metrics_payload.get("daily_return", 0.0) or 0.0), 6),
-            "style_dispersion": round(float(metrics_payload.get("style_dispersion", 0.0) or 0.0), 6),
-            "regime_flip_risk": round(float(metrics_payload.get("regime_flip_risk", 0.0) or 0.0), 6),
+            "breadth_ratio": round(float(metrics_payload.get("breadth_ratio") if metrics_payload.get("breadth_ratio") is not None else 0.5), 6),
+            "daily_return": round(float(metrics_payload.get("daily_return") if metrics_payload.get("daily_return") is not None else 0.0), 6),
+            "style_dispersion": round(float(metrics_payload.get("style_dispersion") if metrics_payload.get("style_dispersion") is not None else 0.0), 6),
+            "regime_flip_risk": round(float(metrics_payload.get("regime_flip_risk") if metrics_payload.get("regime_flip_risk") is not None else 0.0), 6),
             "regime_gate_level": normalized_regime_gate_level,
         },
         **({"mode": str(payload.get("mode") or "")} if str(payload.get("mode") or "").strip() else {}),

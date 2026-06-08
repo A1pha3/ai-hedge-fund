@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from pydantic import BaseModel
+from app.backend.routes._common import safe_route
 from src.portfolio.return_attribution import (
     AttributionResult,
     brinson_attribution,
@@ -62,6 +63,7 @@ class AttributionResponse(BaseModel):
     summary="Portfolio return attribution (Brinson model)",
     description="Decomposes portfolio returns into allocation and selection contributions per ticker.",
 )
+@safe_route
 def get_attribution(
     start: str = Query(..., description="Start date (YYYY-MM-DD)"),
     end: str = Query(..., description="End date (YYYY-MM-DD)"),
@@ -145,6 +147,7 @@ def get_attribution(
     response_model=AttributionResponse,
     summary="Portfolio return attribution (POST, JSON body)",
 )
+@safe_route
 def post_attribution(req: AttributionRequest) -> AttributionResponse:
     """Compute Brinson attribution from a JSON body."""
     if not req.start_date or not req.end_date:

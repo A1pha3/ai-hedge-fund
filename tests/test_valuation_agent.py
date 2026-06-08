@@ -168,3 +168,85 @@ def test_valuation_agent_returns_neutral_error_when_metrics_are_missing(monkeypa
             }
         }
     }
+
+
+# ---------- Regression tests for ALPHA-R20.16: `x or 0.05` 0.0-swallower ----------
+
+
+def test_calculate_enhanced_dcf_value_preserves_zero_revenue_growth():
+    """When revenue_growth is exactly 0.0, it must NOT be replaced by the 0.05 default."""
+    fcf_history = [100.0, 110.0, 105.0]
+    growth_metrics = {"revenue_growth": 0.0, "fcf_growth": 0.0, "earnings_growth": 0.0}
+    result = valuation.calculate_enhanced_dcf_value(
+        fcf_history=fcf_history,
+        growth_metrics=growth_metrics,
+        wacc=0.1,
+        market_cap=1000.0,
+        revenue_growth=0.0,
+    )
+    # If the bug were present, 0.0 would become 0.05, inflating the DCF value.
+    # With 0.0 growth, the value should be lower than with 0.05 growth.
+    # We just verify it returns a finite number (the fix prevents the `or` fallback).
+    assert isinstance(result, float)
+    assert result > 0  # Still positive with positive FCF
+
+    # Cross-check: 0.0 growth should give a *lower* value than 0.05 growth
+    result_with_growth = valuation.calculate_enhanced_dcf_value(
+        fcf_history=fcf_history,
+        growth_metrics=growth_metrics,
+        wacc=0.1,
+        market_cap=1000.0,
+        revenue_growth=0.05,
+    )
+    assert result < result_with_growth, (
+        f"Zero-growth DCF ({result}) should be less than 5%-growth DCF ({result_with_growth})"
+    )
+
+
+def test_calculate_dcf_scenarios_preserves_zero_revenue_growth():
+    """When revenue_growth is exactly 0.0, all scenarios should use 0.0 as base, not 0.05."""
+    fcf_history = [100.0, 110.0, 105.0]
+    growth_metrics = {"revenue_growth": 0.0, "fcf_growth": 0.0, "earnings_growth": 0.0}
+
+    result_zero = valuation.calculate_dcf_scenarios(
+        fcf_history=fcf_history,
+        growth_metrics=growth_metrics,
+        wacc=0.1,
+        market_cap=1000.0,
+        revenue_growth=0.0,
+    )
+
+    result_default = valuation.calculate_dcf_scenarios(
+        fcf_history=fcf_history,
+        growth_metrics=growth_metrics,
+        wacc=0.1,
+        market_cap=1000.0,
+        revenue_growth=None,
+    )
+
+    # Both should produce valid results
+    assert isinstance(result_zero["expected_value"], float)
+    assert isinstance(result_default["expected_value"], float)
+
+    # revenue_growth=0.0 should give LOWER values than revenue_growth=None (which defaults to 0.05)
+    assert result_zero["expected_value"] < result_default["expected_value"], (
+        f"Zero-growth scenario ({result_zero['expected_value']}) should be less than "
+        f"default-growth scenario ({result_default['expected_value']})"
+    )
+
+
+def test_calculate_enhanced_dcf_value_handles_none_revenue_growth():
+    """When revenue_growth is None, the 0.05 default should be applied."""
+    fcf_history = [100.0, 110.0, 105.0]
+    growth_metrics = {"revenue_growth": None, "fcf_growth": None, "earnings_growth": None}
+
+    result = valuation.calculate_enhanced_dcf_value(
+        fcf_history=fcf_history,
+        growth_metrics=growth_metrics,
+        wacc=0.1,
+        market_cap=1000.0,
+        revenue_growth=None,
+    )
+
+    assert isinstance(result, float)
+    assert result > 0

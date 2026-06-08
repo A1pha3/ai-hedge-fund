@@ -258,8 +258,8 @@ def _apply_risk_off_short_term_demotion(
     market_state: MarketState,
     arbitration_applied: list[str],
 ) -> None:
-    breadth_ratio = float(getattr(market_state, "breadth_ratio", 0.5) or 0.5)
-    position_scale = float(getattr(market_state, "position_scale", 1.0) or 1.0)
+    breadth_ratio = float(getattr(market_state, "breadth_ratio", 0.5))
+    position_scale = float(getattr(market_state, "position_scale", 1.0))
     if breadth_ratio > 0.42 and position_scale > 0.75:
         return
 
@@ -307,8 +307,8 @@ def _should_apply_consensus_bonus(
     if not bullish_consensus:
         return True
 
-    breadth_ratio = float(getattr(market_state, "breadth_ratio", 0.5) or 0.5)
-    position_scale = float(getattr(market_state, "position_scale", 1.0) or 1.0)
+    breadth_ratio = float(getattr(market_state, "breadth_ratio", 0.5))
+    position_scale = float(getattr(market_state, "position_scale", 1.0))
     fundamental_signal = signals.get("fundamental", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
     strong_fundamental_support = (
         fundamental_signal.completeness > 0
