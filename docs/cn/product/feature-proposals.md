@@ -777,6 +777,20 @@
 #### 测试覆盖
 - 982+ 测试, 0 失败 (screening/execution/portfolio/backtesting/data 全通过)
 
+### v2.1.2 (2026-06-08) — Round 20.2: Bug修复 + 产品审查
+
+#### Bug 修复 (2)
+- **GAMMA-016: 熊市共识信号强化方向修正 (HIGH)**: `compute_score_b` 中 consensus bonus 始终添加 +0.05，导致熊市共识（3+ 策略 direction=-1 且 confidence>60）被削弱（如 -0.80 变 -0.75）。修复：bonus 方向跟随 score 符号。测试覆盖：`test_bearish_consensus_bonus_direction_via_compute_score_b`。
+- **strategy_scorer.py 缺少 Any 导入 (LOW)**: 第 624/648 行使用 `Any` 类型标注但未导入 `from typing import Any`。静态分析器报错，运行时因 `from __future__ import annotations` 延迟评估而不崩溃。已修复。
+
+#### 产品文档更新 (1)
+- 新增 R20.2 审查优化建议 (O-3 熊市共识修复、O-4 类型导入修复)。
+- 新增 R20.2 产品调研发现章节 — 后端 100% 完成，剩余 4 项均为前端可视化。
+- 更新路线图完成度: 总体 30/32 (94%)，后端 100%。
+
+#### 测试覆盖
+- 800+ 测试, 0 失败 (screening/execution/portfolio/backtesting 全通过)
+
 ---
 
 ## 十六、CLI 命令速查表
@@ -848,6 +862,32 @@
 |---|------|------|------|----------|
 | O-1 | 优化 | **缓存命中率可观测性** ✅ | `--auto` 运行结束时 CLI 表格底部增加缓存命中率摘要行（如 `Cache: 78% hit (80 cached / 102 requests) | Batch: 2 calls (0 failures)`）— 已实现：`src/main.py:_print_cache_hit_summary()` + `tests/test_cache_hit_summary.py` (6 tests) | 用户直观感知速度提升来源 |
 | O-2 | 优化 | **推荐排序策略透明化** ✅ | `--auto` 表格下方新增评分构成摘要块，显示 Top 5 标的的各策略贡献值(T/MR/F/E)、attention_composite、stability_bonus 和共识加成标记。— 已实现：`src/main.py:_print_score_decomposition()` + `tests/test_score_decomposition.py` (10 tests) | 用户理解为什么 A 排在 B 前面 |
+| O-3 | 修复 | **熊市共识信号强化方向修正** ✅ | GAMMA-016: `compute_score_b` 中 consensus bonus 始终添加 +0.05，导致熊市共识（3+策略方向=-1 且置信度>60）被削弱而非增强。修复：bonus 方向跟随 score 符号（牛市+0.05, 熊市-0.05）。— 已修复：`src/screening/signal_fusion.py:compute_score_b()` + `tests/screening/test_phase2_screening.py:test_bearish_consensus_bonus_direction_via_compute_score_b` | 熊市信号更准确，减少错误推荐 |
+| O-4 | 修复 | **strategy_scorer.py 缺少 Any 类型导入** ✅ | `strategy_scorer.py` 第 624/648 行使用 `Any` 类型标注但未从 `typing` 导入。`from __future__ import annotations` 延迟评估避免运行时报错，但静态分析器会报错。— 已修复：添加 `from typing import Any` | 静态类型检查通过 |
+
+### R20.2 产品调研发现
+
+> alpha/beta/gamma 三人团队完成 R20.2 轮次审查后的调研结论。
+
+#### 审查范围
+- **Alpha**: 因子/评分/数据验证 (strategy_scorer, strategy_scorer_trend/mean_reversion/fundamental, validation_rules, signal_fusion)
+- **Beta**: 执行/回测/组合管理 (daily_pipeline, backtesting engine, exit_manager, position_calculator, portfolio)
+- **Gamma**: 风险/市场状态/信号融合 + 产品路线图
+
+#### 审查结论
+1. **后端功能 100% 完成** — 30/32 总体完成度中，剩余 4 项均为前端可视化需求（P0-4, P2-1, P2-2, P2-5/7），后端 API 全部就绪
+2. **发现并修复 1 个逻辑 Bug (GAMMA-016)** — 熊市共识信号被错误削弱，直接影响推荐准确性
+3. **发现并修复 1 个类型标注缺陷** — `Any` 导入缺失，影响静态分析
+4. **代码质量优秀** — 全部模块 NaN 防御完善，边界条件处理到位，并发安全
+5. **测试覆盖 800+ 用例** — 所有测试通过（screening/execution/portfolio/backtesting 全绿）
+
+#### 下一步优先级建议
+
+| 优先级 | 项目 | 工作量 | 说明 |
+|--------|------|--------|------|
+| 1 | **前端集成** | 大 | P0-4 回测可视化 + P1-5 一键选股按钮 + P2-5 权重滑块 — 后端 API 全部就绪 |
+| 2 | **LLM 调用缓存** | 中 | 同因子短期内复用 Agent 结果，减少 API 开销 |
+| 3 | **因子级缓存** | 中 | 同一因子多标的共享数据，减少全市场评分时间 |
 
 ---
 

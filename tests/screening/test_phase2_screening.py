@@ -598,3 +598,37 @@ def test_partial_weight_quarter_event_non_negative_confidence_floor_mode_keeps_w
     assert abs(normalized["trend"] - 0.375) < 1e-12
     assert normalized["mean_reversion"] == 0.25
     assert abs(normalized["fundamental"] - 0.375) < 1e-12
+
+
+def test_bearish_consensus_bonus_direction_via_compute_score_b():
+    """GAMMA-016 regression: consensus bonus must reinforce, not weaken, bearish consensus.
+
+    Tests compute_score_b directly to avoid forced_avoid short-circuiting
+    (which prevents consensus_bonus from being appended).
+    """
+    weights = {"trend": 0.25, "mean_reversion": 0.25, "fundamental": 0.25, "event_sentiment": 0.25}
+    bearish_signals = {
+        "trend": _signal(-1, 70),
+        "mean_reversion": _signal(-1, 70),
+        "fundamental": _signal(-1, 70),
+        "event_sentiment": _signal(1, 30, completeness=0.0),
+    }
+    base_score = compute_score_b(bearish_signals, weights, [])
+    bonus_score = compute_score_b(bearish_signals, weights, ["consensus_bonus"])
+    assert bonus_score < base_score, (
+        f"GAMMA-016: bearish bonus should decrease score, got bonus={bonus_score} > base={base_score}"
+    )
+    assert -1.0 <= bonus_score <= 1.0
+
+    # Also verify bullish consensus still works
+    bullish_signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(1, 70),
+        "fundamental": _signal(1, 90),
+        "event_sentiment": _signal(-1, 30, completeness=0.0),
+    }
+    bull_base = compute_score_b(bullish_signals, weights, [])
+    bull_bonus = compute_score_b(bullish_signals, weights, ["consensus_bonus"])
+    assert bull_bonus > bull_base, (
+        f"Bullish bonus should increase score, got bonus={bull_bonus} <= base={bull_base}"
+    )

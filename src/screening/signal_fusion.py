@@ -356,7 +356,12 @@ def compute_score_b(signals: dict[str, StrategySignal], weights: dict[str, float
         score += weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
 
     if ArbitrationAction.CONSENSUS_BONUS.value in arbitration_applied:
-        score = min(1.0, score + 0.05)
+        # GAMMA-016: apply bonus in the direction of the consensus, not
+        # always positive.  A bearish consensus (score < 0) should make
+        # the score MORE bearish, not less (the old `score + 0.05` was
+        # weakening bearish consensus signals).
+        bonus = 0.05 if score >= 0 else -0.05
+        score = score + bonus
     return max(-1.0, min(1.0, score))
 
 
