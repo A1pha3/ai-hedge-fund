@@ -12,6 +12,59 @@ from src.utils.api_key import get_api_key_from_state
 from src.utils.progress import progress
 
 
+# ---------------------------------------------------------------------------
+# Technical analysis constants (extracted from magic numbers in R20.8)
+# ---------------------------------------------------------------------------
+
+# Trend strategy: short / medium / long EMA windows
+TREND_EMA_SHORT = 8
+TREND_EMA_MEDIUM = 21
+TREND_EMA_LONG = 55
+TREND_ADX_PERIOD = 14
+
+# Mean reversion strategy
+MR_MA_WINDOW = 50
+MR_RSI_FAST = 14
+MR_RSI_SLOW = 28
+MR_ZSCORE_BULL = -2
+MR_ZSCORE_BEAR = 2
+MR_ZSCORE_MAX = 4  # divisor that maps |z| to confidence ∈ [0, 1]
+MR_PRICE_VS_BB_BULL = 0.2
+MR_PRICE_VS_BB_BEAR = 0.8
+
+# Momentum strategy
+MOM_WINDOW_1M = 21
+MOM_WINDOW_3M = 63
+MOM_WINDOW_6M = 126
+MOM_WEIGHT_1M = 0.4
+MOM_WEIGHT_3M = 0.3
+MOM_WEIGHT_6M = 0.3
+MOM_THRESHOLD = 0.05
+MOM_CONFIDENCE_SCALE = 5  # multiplier mapping momentum score to confidence
+MOM_VOLUME_CONFIRM_RATIO = 1.0
+
+# Volatility strategy
+VOL_WINDOW = 21
+VOL_REGIME_WINDOW = 63
+VOL_ANNUALIZATION = 252  # trading days/year
+VOL_LOW_THRESHOLD = 0.8
+VOL_HIGH_THRESHOLD = 1.2
+VOL_Z_THRESHOLD = 1
+VOL_CONFIDENCE_SCALE = 3
+
+# Stat-arb strategy
+STAT_ARB_WINDOW = 63
+STAT_ARB_HURST_BULL = 0.4
+STAT_ARB_SKEW_THRESHOLD = 1
+STAT_ARB_HURST_SCALE = 2  # confidence = (0.5 - hurst) * SCALE
+
+# Signal combination
+SIGNAL_THRESHOLD = 0.2
+
+# Neutral signal confidence
+NEUTRAL_CONFIDENCE = 0.5
+
+
 def safe_float(value, default=0.0):
     """
     Safely convert a value to float, handling NaN/Inf cases
@@ -275,12 +328,12 @@ def calculate_trend_signals(prices_df):
     Advanced trend following strategy using multiple timeframes and indicators
     """
     # Calculate EMAs for multiple timeframes
-    ema_8 = calculate_ema(prices_df, 8)
-    ema_21 = calculate_ema(prices_df, 21)
-    ema_55 = calculate_ema(prices_df, 55)
+    ema_8 = calculate_ema(prices_df, TREND_EMA_SHORT)
+    ema_21 = calculate_ema(prices_df, TREND_EMA_MEDIUM)
+    ema_55 = calculate_ema(prices_df, TREND_EMA_LONG)
 
     # Calculate ADX for trend strength
-    adx = calculate_adx(prices_df, 14)
+    adx = calculate_adx(prices_df, TREND_ADX_PERIOD)
 
     # Determine trend direction and strength
     short_trend = ema_8 > ema_21
@@ -297,7 +350,7 @@ def calculate_trend_signals(prices_df):
         confidence = trend_strength
     else:
         signal = "neutral"
-        confidence = 0.5
+        confidence = NEUTRAL_CONFIDENCE
 
     return {
         "signal": signal,
@@ -314,8 +367,8 @@ def calculate_mean_reversion_signals(prices_df):
     Mean reversion strategy using statistical measures and Bollinger Bands
     """
     # Calculate z-score of price relative to moving average
-    ma_50 = prices_df["close"].rolling(window=50).mean()
-    std_50 = prices_df["close"].rolling(window=50).std()
+    ma_50 = prices_df["close"].rolling(window=MR_MA_WINDOW).mean()
+    std_50 = prices_df["close"].rolling(window=MR_MA_WINDOW).std()
     # Guard against inf when std_50 is 0 (constant price window)
     z_score_raw = (prices_df["close"] - ma_50) / std_50
     z_score = z_score_raw.replace([float("inf"), float("-inf")], 0.0).fillna(0.0)
@@ -324,8 +377,8 @@ def calculate_mean_reversion_signals(prices_df):
     bb_upper, bb_lower = calculate_bollinger_bands(prices_df)
 
     # Calculate RSI with multiple timeframes
-    rsi_14 = calculate_rsi(prices_df, 14)
-    rsi_28 = calculate_rsi(prices_df, 28)
+    rsi_14 = calculate_rsi(prices_df, MR_RSI_FAST)
+    rsi_28 = calculate_rsi(prices_df, MR_RSI_SLOW)
 
     # Mean reversion signals
     bb_width = bb_upper.iloc[-1] - bb_lower.iloc[-1]
@@ -335,15 +388,15 @@ def calculate_mean_reversion_signals(prices_df):
         price_vs_bb = 0.5  # No band width, default to middle
 
     # Combine signals
-    if z_score.iloc[-1] < -2 and price_vs_bb < 0.2:
+    if z_score.iloc[-1] < MR_ZSCORE_BULL and price_vs_bb < MR_PRICE_VS_BB_BULL:
         signal = "bullish"
-        confidence = min(abs(z_score.iloc[-1]) / 4, 1.0)
-    elif z_score.iloc[-1] > 2 and price_vs_bb > 0.8:
+        confidence = min(abs(z_score.iloc[-1]) / MR_ZSCORE_MAX, 1.0)
+    elif z_score.iloc[-1] > MR_ZSCORE_BEAR and price_vs_bb > MR_PRICE_VS_BB_BEAR:
         signal = "bearish"
-        confidence = min(abs(z_score.iloc[-1]) / 4, 1.0)
+        confidence = min(abs(z_score.iloc[-1]) / MR_ZSCORE_MAX, 1.0)
     else:
         signal = "neutral"
-        confidence = 0.5
+        confidence = NEUTRAL_CONFIDENCE
 
     return {
         "signal": signal,
@@ -363,33 +416,33 @@ def calculate_momentum_signals(prices_df):
     """
     # Price momentum
     returns = prices_df["close"].pct_change()
-    mom_1m = returns.rolling(21).sum()
-    mom_3m = returns.rolling(63).sum()
-    mom_6m = returns.rolling(126).sum()
+    mom_1m = returns.rolling(MOM_WINDOW_1M).sum()
+    mom_3m = returns.rolling(MOM_WINDOW_3M).sum()
+    mom_6m = returns.rolling(MOM_WINDOW_6M).sum()
 
     # Volume momentum
-    volume_ma = prices_df["volume"].rolling(21).mean()
+    volume_ma = prices_df["volume"].rolling(MOM_WINDOW_1M).mean()
     volume_momentum = prices_df["volume"] / volume_ma.replace(0, float("nan"))
 
     # Relative strength
     # (would compare to market/sector in real implementation)
 
     # Calculate momentum score
-    momentum_score = (0.4 * mom_1m + 0.3 * mom_3m + 0.3 * mom_6m).iloc[-1]
+    momentum_score = (MOM_WEIGHT_1M * mom_1m + MOM_WEIGHT_3M * mom_3m + MOM_WEIGHT_6M * mom_6m).iloc[-1]
 
     # Volume confirmation — guard against NaN from zero volume_ma
     vol_mom_val = volume_momentum.iloc[-1]
-    volume_confirmation = False if pd.isna(vol_mom_val) else vol_mom_val > 1.0
+    volume_confirmation = False if pd.isna(vol_mom_val) else vol_mom_val > MOM_VOLUME_CONFIRM_RATIO
 
-    if momentum_score > 0.05 and volume_confirmation:
+    if momentum_score > MOM_THRESHOLD and volume_confirmation:
         signal = "bullish"
-        confidence = min(abs(momentum_score) * 5, 1.0)
-    elif momentum_score < -0.05 and volume_confirmation:
+        confidence = min(abs(momentum_score) * MOM_CONFIDENCE_SCALE, 1.0)
+    elif momentum_score < -MOM_THRESHOLD and volume_confirmation:
         signal = "bearish"
-        confidence = min(abs(momentum_score) * 5, 1.0)
+        confidence = min(abs(momentum_score) * MOM_CONFIDENCE_SCALE, 1.0)
     else:
         signal = "neutral"
-        confidence = 0.5
+        confidence = NEUTRAL_CONFIDENCE
 
     return {
         "signal": signal,
@@ -411,14 +464,14 @@ def calculate_volatility_signals(prices_df):
     returns = prices_df["close"].pct_change()
 
     # Historical volatility
-    hist_vol = returns.rolling(21).std() * math.sqrt(252)
+    hist_vol = returns.rolling(VOL_WINDOW).std() * math.sqrt(VOL_ANNUALIZATION)
 
     # Volatility regime detection — guard against division by zero when vol_ma is 0
-    vol_ma = hist_vol.rolling(63).mean()
+    vol_ma = hist_vol.rolling(VOL_REGIME_WINDOW).mean()
     vol_regime = hist_vol / vol_ma.replace(0, float("nan"))
 
     # Volatility mean reversion
-    vol_std = hist_vol.rolling(63).std()
+    vol_std = hist_vol.rolling(VOL_REGIME_WINDOW).std()
     vol_z_score = (hist_vol - vol_ma) / vol_std.replace(0, float("nan"))
 
     # ATR ratio — guard against division by zero when close price is 0
@@ -431,15 +484,15 @@ def calculate_volatility_signals(prices_df):
     current_vol_regime = safe_float(vol_regime.iloc[-1], default=1.0)
     vol_z = safe_float(vol_z_score.iloc[-1], default=0.0)
 
-    if current_vol_regime < 0.8 and vol_z < -1:
+    if current_vol_regime < VOL_LOW_THRESHOLD and vol_z < -VOL_Z_THRESHOLD:
         signal = "bullish"  # Low vol regime, potential for expansion
-        confidence = min(abs(vol_z) / 3, 1.0)
-    elif current_vol_regime > 1.2 and vol_z > 1:
+        confidence = min(abs(vol_z) / VOL_CONFIDENCE_SCALE, 1.0)
+    elif current_vol_regime > VOL_HIGH_THRESHOLD and vol_z > VOL_Z_THRESHOLD:
         signal = "bearish"  # High vol regime, potential for contraction
-        confidence = min(abs(vol_z) / 3, 1.0)
+        confidence = min(abs(vol_z) / VOL_CONFIDENCE_SCALE, 1.0)
     else:
         signal = "neutral"
-        confidence = 0.5
+        confidence = NEUTRAL_CONFIDENCE
 
     return {
         "signal": signal,
@@ -461,8 +514,8 @@ def calculate_stat_arb_signals(prices_df):
     returns = prices_df["close"].pct_change()
 
     # Skewness and kurtosis
-    skew = returns.rolling(63).skew()
-    kurt = returns.rolling(63).kurt()
+    skew = returns.rolling(STAT_ARB_WINDOW).skew()
+    kurt = returns.rolling(STAT_ARB_WINDOW).kurt()
 
     # Test for mean reversion using Hurst exponent
     hurst = calculate_hurst_exponent(prices_df["close"])
@@ -471,15 +524,15 @@ def calculate_stat_arb_signals(prices_df):
     # (would include correlation with related securities in real implementation)
 
     # Generate signal based on statistical properties
-    if hurst < 0.4 and skew.iloc[-1] > 1:
+    if hurst < STAT_ARB_HURST_BULL and skew.iloc[-1] > STAT_ARB_SKEW_THRESHOLD:
         signal = "bullish"
-        confidence = (0.5 - hurst) * 2
-    elif hurst < 0.4 and skew.iloc[-1] < -1:
+        confidence = (0.5 - hurst) * STAT_ARB_HURST_SCALE
+    elif hurst < STAT_ARB_HURST_BULL and skew.iloc[-1] < -STAT_ARB_SKEW_THRESHOLD:
         signal = "bearish"
-        confidence = (0.5 - hurst) * 2
+        confidence = (0.5 - hurst) * STAT_ARB_HURST_SCALE
     else:
         signal = "neutral"
-        confidence = 0.5
+        confidence = NEUTRAL_CONFIDENCE
 
     return {
         "signal": signal,
@@ -504,13 +557,6 @@ def weighted_signal_combination(signals, weights):
     # Convert signals to numeric values
     signal_values = {"bullish": 1, "neutral": 0, "bearish": -1}
 
-    # Signal threshold — maps the normalized weighted average to a directional
-    # signal.  Because the weighted sum already accounts for confidence, this
-    # threshold effectively says "the directional confidence-weighted vote must
-    # exceed 20% of the total possible vote to be directional".
-    # Extracted from magic number to constant (R20.6).
-    SIGNAL_THRESHOLD = 0.2
-
     weighted_sum = 0
     total_confidence = 0
     total_weight = 0
@@ -527,7 +573,7 @@ def weighted_signal_combination(signals, weights):
     # Normalize the weighted sum
     final_score = weighted_sum / total_confidence if total_confidence > 0 else 0
 
-    # Convert back to signal
+    # Convert back to signal — see module-level SIGNAL_THRESHOLD for rationale
     if final_score > SIGNAL_THRESHOLD:
         signal = "bullish"
     elif final_score < -SIGNAL_THRESHOLD:
