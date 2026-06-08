@@ -22,9 +22,9 @@ function fmtW(v: number): string {
 }
 
 function contributionColor(v: number): string {
-  if (v > 0.001) return "text-green-400";
-  if (v < -0.001) return "text-red-400";
-  return "text-zinc-400";
+  if (v > 0.001) return "text-green-500";
+  if (v < -0.001) return "text-red-500";
+  return "text-muted-foreground";
 }
 
 function barWidth(v: number, maxAbs: number): string {
@@ -126,7 +126,7 @@ const AttributionPage: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {cards.map((c) => (
           <div key={c.label} className={`rounded-lg p-4 ${c.color}`}>
-            <div className="text-xs text-zinc-400 mb-1">{c.label}</div>
+            <div className="text-xs text-muted-foreground mb-1">{c.label}</div>
             <div className="text-xl font-mono font-bold">{c.fmt(c.value)}</div>
           </div>
         ))}
@@ -141,7 +141,7 @@ const AttributionPage: React.FC = () => {
     data: AttributionResponse;
   }) => {
     if (!data.tickers.length) {
-      return <p className="text-zinc-500 text-sm">No ticker data.</p>;
+      return <p className="text-muted-foreground text-sm">No ticker data.</p>;
     }
 
     const maxAbs = Math.max(
@@ -153,7 +153,7 @@ const AttributionPage: React.FC = () => {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-zinc-700 text-left text-zinc-400">
+            <tr className="border-b border-border text-left text-muted-foreground">
               <th className="py-2 px-2">Ticker</th>
               <th className="py-2 px-2 text-right">Weight</th>
               <th className="py-2 px-2 text-right">Return</th>
@@ -169,7 +169,7 @@ const AttributionPage: React.FC = () => {
             {data.tickers.map((t) => (
               <tr
                 key={t.ticker}
-                className="border-b border-zinc-800 hover:bg-zinc-800/50"
+                className="border-b border-border hover:bg-muted/50"
               >
                 <td className="py-2 px-2 font-mono">{t.ticker}</td>
                 <td className="py-2 px-2 text-right font-mono">
@@ -182,10 +182,10 @@ const AttributionPage: React.FC = () => {
                 >
                   {fmtPct(t.portfolio_return)}
                 </td>
-                <td className="py-2 px-2 text-right font-mono text-zinc-400">
+                <td className="py-2 px-2 text-right font-mono text-muted-foreground">
                   {fmtW(t.benchmark_weight)}
                 </td>
-                <td className="py-2 px-2 text-right font-mono text-zinc-400">
+                <td className="py-2 px-2 text-right font-mono text-muted-foreground">
                   {fmtPct(t.benchmark_return)}
                 </td>
                 <td
@@ -211,7 +211,7 @@ const AttributionPage: React.FC = () => {
                 </td>
                 <td className="py-2 px-2">
                   <div className="flex items-center gap-1">
-                    <div className="flex-1 bg-zinc-800 rounded h-3 relative overflow-hidden">
+                    <div className="flex-1 bg-muted rounded h-3 relative overflow-hidden">
                       <div
                         className={`h-full rounded ${
                           t.total_contribution >= 0
@@ -234,9 +234,9 @@ const AttributionPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 max-w-6xl mx-auto">
+    <div className="min-h-screen bg-background text-foreground p-6 max-w-6xl mx-auto">
       <h1 className="text-2xl font-bold mb-1">Portfolio Attribution</h1>
-      <p className="text-zinc-400 text-sm mb-6">
+      <p className="text-muted-foreground text-sm mb-6">
         Brinson model: decompose returns into allocation &amp; selection
         contributions
       </p>
@@ -258,14 +258,14 @@ const AttributionPage: React.FC = () => {
       {result && (
         <>
           <SummaryCards data={result} />
-          <div className="bg-zinc-900 rounded-lg p-4">
+          <div className="bg-card rounded-lg p-4">
             <h2 className="text-lg font-semibold mb-3">
               Per-Ticker Breakdown
             </h2>
             <AttributionTable data={result} />
           </div>
 
-          <div className="mt-4 text-xs text-zinc-500">
+          <div className="mt-4 text-xs text-muted-foreground">
             Period: {result.start_date} → {result.end_date} | Residual:{" "}
             {fmtPct(result.total_residual)}
           </div>

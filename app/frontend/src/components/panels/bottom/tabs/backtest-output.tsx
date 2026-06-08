@@ -391,6 +391,50 @@ function BacktestPerformanceMetrics({ agentData }: { agentData: Record<string, a
   );
 }
 
+// R20.10 GAMMA: 5-state machine for backtest rendering.
+// Detects IDLE / LOADING / STREAMING / COMPLETE / ERROR based on agentData
+// and outputData, so the user always sees meaningful content instead of
+// blank space during a backtest run.
+function detectBacktestState(agentData: Record<string, any>, outputData: any): 'idle' | 'loading' | 'streaming' | 'complete' {
+  const backtestAgent = agentData?.['backtest'];
+  if (outputData?.performance_metrics) {
+    return 'complete';
+  }
+  if (!backtestAgent) {
+    return 'idle';
+  }
+  const hasResults = backtestAgent.backtestResults && backtestAgent.backtestResults.length > 0;
+  return hasResults ? 'streaming' : 'loading';
+}
+
+// R20.10 GAMMA: Skeleton placeholder for LOADING/STREAMING states.
+function BacktestSkeleton({ state }: { state: 'loading' | 'streaming' }) {
+  return (
+    <Card className="bg-transparent mb-4">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-cyan-500 animate-pulse" />
+          {state === 'loading' ? '回测启动中…' : '回测进行中…'}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-16 rounded-lg bg-muted/40 animate-pulse" />
+          ))}
+        </div>
+        <div className="h-48 rounded-lg bg-muted/30 animate-pulse mb-2" />
+        <div className="h-24 rounded-lg bg-muted/20 animate-pulse" />
+        <p className="text-xs text-muted-foreground mt-3">
+          {state === 'loading'
+            ? '正在获取历史价格数据并初始化策略…'
+            : '正在逐日模拟交易，部分结果已开始流式返回…'}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 // Main component for backtest output
 export function BacktestOutput({
   agentData,
@@ -399,6 +443,27 @@ export function BacktestOutput({
   agentData: Record<string, any>;
   outputData: any;
 }) {
+  const state = detectBacktestState(agentData, outputData);
+
+  // IDLE: no backtest has been started yet — render nothing (caller decides
+  // whether to show an empty-state hint).
+  if (state === 'idle') {
+    return null;
+  }
+
+  // LOADING / STREAMING: show skeleton + progress so the user sees activity.
+  if (state === 'loading' || state === 'streaming') {
+    return (
+      <>
+        <BacktestProgress agentData={agentData} />
+        <BacktestSkeleton state={state} />
+        {state === 'streaming' && <BacktestEquityCurve agentData={agentData} />}
+        {state === 'streaming' && <BacktestTradingTable agentData={agentData} />}
+      </>
+    );
+  }
+
+  // COMPLETE: render full results.
   return (
     <>
       <BacktestProgress agentData={agentData} />
