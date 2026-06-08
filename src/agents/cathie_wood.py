@@ -1,3 +1,11 @@
+"""Cathie Wood investment-style agent.
+
+Scores stocks on disruptive innovation (revenue growth, gross margin, operating
+leverage, R&D intensity) and innovation-driven growth (R&D trends, FCF funding,
+operating efficiency, capex, reinvestment) plus a quality-adjusted DCF valuation.
+Sub-scoring helpers live in ``cathie_wood_helpers``.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage
