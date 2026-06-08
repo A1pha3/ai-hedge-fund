@@ -656,7 +656,11 @@ def get_intraday_bars(ticker: str, trade_date: str, period: str = "1", adjust: s
         period: 分钟周期，支持 1/5/15/30/60
         adjust: 复权方式
     """
-    trade_day = datetime.strptime(str(trade_date), "%Y%m%d").strftime("%Y-%m-%d")
+    try:
+        trade_day = datetime.strptime(str(trade_date), "%Y%m%d").strftime("%Y-%m-%d")
+    except ValueError:
+        trade_day = str(trade_date).replace("-", "")
+        trade_day = f"{trade_day[:4]}-{trade_day[4:6]}-{trade_day[6:8]}" if len(trade_day) == 8 else str(trade_date)
     symbol = get_ashare_symbol(ticker)
     return load_optional_market_dataframe(
         is_available=_akshare_available,
