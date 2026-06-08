@@ -301,8 +301,11 @@ def calculate_intrinsic_value(financial_line_items: list, market_cap: float) -> 
         net_incomes = [getattr(item, "net_income", None) for item in financial_line_items[:5] if getattr(item, "net_income", None) is not None and getattr(item, "net_income", None) > 0]
 
         if len(net_incomes) < 2:
-            # Use current earnings with conservative multiple for stable companies
-            return latest.net_income * 12  # Conservative P/E of 12
+            # Use current earnings with conservative multiple for stable companies.
+            # 12x P/E is a typical floor for profitable Indian mid-caps (Jhunjhunwala's
+            # core universe) and aligns with the "margin of safety" principle — it
+            # implies ~8% earnings yield, well above risk-free rates.
+            return latest.net_income * 12
 
         historical_growth = _resolve_rakesh_historical_growth(net_incomes)
         sustainable_growth = _resolve_rakesh_sustainable_growth(historical_growth)

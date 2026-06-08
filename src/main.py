@@ -527,14 +527,18 @@ def _save_json_report(filename: str, payload: dict) -> Path:
 
 
 def run_pipeline_mode(trade_date: str) -> int:
-    pipeline = DailyPipeline()
-    plan = pipeline.run_post_market(trade_date)
-    output_path = _save_json_report(f"execution_plan_{trade_date}.json", plan.model_dump())
-    print(f"[Pipeline] 日期: {trade_date}")
-    print(f"[Pipeline] Layer A: {plan.layer_a_count} | Layer B: {plan.layer_b_count} | Layer C: {plan.layer_c_count}")
-    print(f"[Pipeline] 买入: {len(plan.buy_orders)} | 卖出: {len(plan.sell_orders)}")
-    print(f"[Pipeline] 已输出: {output_path}")
-    return 0
+    try:
+        pipeline = DailyPipeline()
+        plan = pipeline.run_post_market(trade_date)
+        output_path = _save_json_report(f"execution_plan_{trade_date}.json", plan.model_dump())
+        print(f"[Pipeline] 日期: {trade_date}")
+        print(f"[Pipeline] Layer A: {plan.layer_a_count} | Layer B: {plan.layer_b_count} | Layer C: {plan.layer_c_count}")
+        print(f"[Pipeline] 买入: {len(plan.buy_orders)} | 卖出: {len(plan.sell_orders)}")
+        print(f"[Pipeline] 已输出: {output_path}")
+        return 0
+    except Exception as exc:
+        print(f"[Pipeline] 执行失败: {exc}")
+        return 1
 
 
 def run_screen_only_mode(trade_date: str) -> int:
@@ -2597,7 +2601,7 @@ def _build_factor_bar(confidence: float, max_bar_width: int = 10) -> str:
     import math as _math
 
     # Guard against NaN — cannot convert NaN to int
-    if _math.isnan(confidence) if isinstance(confidence, float) else False:
+    if isinstance(confidence, float) and _math.isnan(confidence):
         confidence = 0.0
     filled = min(max(int(round(confidence / 10.0)), 0), max_bar_width)
     return "█" * filled + "░" * (max_bar_width - filled)

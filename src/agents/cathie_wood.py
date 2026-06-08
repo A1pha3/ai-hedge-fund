@@ -33,6 +33,15 @@ class CathieWoodSignal(BaseModel):
     reasoning_cn: str
 
 
+# --- Scoring constants ---
+# Disruptive innovation analysis: gross_margin(+3) + revenue_growth(+3) + op_leverage(+3) + rnd_intensity(+3) = 12
+_DISRUPTIVE_MAX_SCORE = 12
+# Innovation growth analysis: rnd_trends(+3) + fcf_funding(+3) + op_efficiency(+3) + capex(+3) + reinvestment(+3) = 15
+_INNOVATION_MAX_SCORE = 15
+# Combined total: disruptive(12) + innovation(15) + valuation(3, out of 5) = ~30 raw, normalised differently per sub-signal
+_COMBINED_MAX_SCORE = 15  # Used for signal threshold at agent level (sum of normalised sub-scores, each out of 5)
+
+
 def cathie_wood_agent(state: AgentState, agent_id: str = "cathie_wood_agent"):
     """
     Analyzes stocks using Cathie Wood's investing principles and LLM reasoning.
@@ -91,7 +100,7 @@ def cathie_wood_agent(state: AgentState, agent_id: str = "cathie_wood_agent"):
 
         # Combine partial scores or signals
         total_score = disruptive_analysis["score"] + innovation_analysis["score"] + valuation_analysis["score"]
-        max_possible_score = 15  # Adjust weighting as desired
+        max_possible_score = _COMBINED_MAX_SCORE  # Adjust weighting as desired
 
         if total_score >= 0.7 * max_possible_score:
             signal = "bullish"
@@ -173,7 +182,7 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
         details.append(rnd_detail)
 
     # Normalize score to be out of 5
-    max_possible_score = 12  # Sum of all possible points
+    max_possible_score = _DISRUPTIVE_MAX_SCORE  # gross_margin(3) + revenue_growth(3) + op_leverage(3) + rnd_intensity(3)
     normalized_score = (score / max_possible_score) * 5
 
     return {"score": normalized_score, "details": "; ".join(details), "raw_score": score, "max_score": max_possible_score}
@@ -220,7 +229,7 @@ def analyze_innovation_growth(metrics: list, financial_line_items: list) -> dict
         details.append(reinvestment_detail)
 
     # Normalize score to be out of 5
-    max_possible_score = 15  # Sum of all possible points
+    max_possible_score = _INNOVATION_MAX_SCORE  # rnd_trends(3) + fcf_funding(3) + op_efficiency(3) + capex(3) + reinvestment(3)
     normalized_score = (score / max_possible_score) * 5
 
     return {"score": normalized_score, "details": "; ".join(details), "raw_score": score, "max_score": max_possible_score}
