@@ -1,8 +1,12 @@
 """Cache status API route — exposes cache hit-rate, disk info, and data-source health."""
 
-from fastapi import APIRouter
+import logging
+
+from fastapi import APIRouter, HTTPException
 
 from src.data.enhanced_cache import get_cache_runtime_info, get_cache_stats
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/cache", tags=["cache"])
 
@@ -32,4 +36,8 @@ async def cache_stats() -> dict:
           }
         }
     """
-    return get_cache_runtime_info()
+    try:
+        return get_cache_runtime_info()
+    except Exception as exc:
+        logger.exception("Failed to get cache stats")
+        raise HTTPException(status_code=500, detail="Failed to get cache stats") from exc

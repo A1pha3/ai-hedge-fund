@@ -68,13 +68,13 @@
 
 | # | 功能 | 说明 | 用户价值 | 业界先例 | 工作量 | 验收标准 |
 |---|------|------|----------|----------|--------|----------|
-| **P1-13** | **「条件单模板」一键生成券商格式** | 现有 `conditional_order_advisor` 仅输出建议价, 用户需手动挂单。增加 `--export-conditional-orders --broker=huatai|gtja|ths` 输出券商条件单导入格式 (CSV/JSON), 包含建议买入/止损/止盈/有效期/触发价 | 减少用户从「看建议」到「挂单」的 5 步操作 → 1 步 | 聚宽/米筐支持券商 API 推送条件单; 业界普遍 30% 用户卡在「挂单」环节 | **M (3-4 天)** | 至少支持 3 家券商格式, 验证 1 单从「建议」到「挂单」端到端 < 30s |
+| **P1-13 ✅** | **「条件单模板」一键生成券商格式** | 现有 `conditional_order_advisor` 仅输出建议价, 用户需手动挂单。增加 `--export-conditional-orders --broker=huatai|gtja|ths` 输出券商条件单导入格式 (CSV/JSON), 包含建议买入/止损/止盈/有效期/触发价 | 减少用户从「看建议」到「挂单」的 5 步操作 → 1 步 | 聚宽/米筐支持券商 API 推送条件单; 业界普遍 30% 用户卡在「挂单」环节 | **M (3-4 天)** | 至少支持 3 家券商格式, 验证 1 单从「建议」到「挂单」端到端 < 30s ✅ DONE 2026-06-09 (R20.13) |
 
 ### P2 — 可以做 (R20.13 候选)
 
 | # | 功能 | 说明 | 用户价值 | 业界先例 | 工作量 | 验收标准 |
 |---|------|------|----------|----------|--------|----------|
-| **P2-10** | **「组合体检」周报推送** | 每周日收盘后自动: ①本周组合归因 (Brinson) ②触发退出/调仓次数 + 平均收益 ③与基准对比 + 风险指标变化 ④下周关注事项 — 推送至企微/邮件 (复用 P2-3 推送框架) | 用户周末 5 分钟看完本周策略表现, 不需手动跑 `--performance-report` | 私募/公募基金周报标准格式; Numerai/WorldQuant 投资者周报 | **S (2 天)** | 复用 P2-3 推送 + 现有归因/绩效 API, 推送成功率 > 95% |
+| **P2-10** | **「组合体检」周报推送** | 每周日收盘后自动: ①本周组合归因 (Brinson) ②触发退出/调仓次数 + 平均收益 ③与基准对比 + 风险指标变化 ④下周关注事项 — 推送至企微/邮件 (复用 P2-3 推送框架) | 用户周末 5 分钟看完本周策略表现, 不需手动跑 `--performance-report` | 私募/公募基金周报标准格式; Numerai/WorldQuant 投资者周报 | **S (2 天)** | 复用 P2-3 推送 + 现有归因/绩效 API, 推送成功率 > 95% ✅ DONE 2026-06-09 (R20.13) |
 
 ---
 
@@ -380,3 +380,50 @@
   - `tests/test_frozen_replay.py` (新增断言)
   - `tests/test_progress_thread_safety.py` (新文件)
   - `tests/test_subprocess_timeout.py` (新文件)
+
+---
+
+## 10. v2.2.0 (2026-06-09) — Round 20.13: Gamma 次级问题修复 + 后端/LLM 巡逻 (本轮)
+
+### 10.1 R20.12 留下的 6 个次级问题 — 全部修复
+
+| # | 问题 | 位置 | 级别 | 修复方式 |
+|---|------|------|------|----------|
+| GAMMA-R20.13-1 | `float(r.strip())` 无 ValueError handler | `app/backend/routes/attribution.py:94-119` | P2 | 所有 `float()` 调用包 try/except ValueError → HTTPException 400 + 清晰错误信息 |
+| GAMMA-R20.13-2 | `list_replay_artifacts` / `get_replay_feedback_activity` / `get_replay_workflow_queue` 无 try/except | `app/backend/routes/replay_artifacts.py:85-122` | P2 | 加统一兜底 except → HTTPException 500 + logger.exception |
+| GAMMA-R20.13-3 | ollama 失败拖垮整个 `/language-models` 端点 | `app/backend/routes/language_models.py:33-50` | P2 | 拆分 try/except: cloud models 与 ollama 隔离, ollama 异常返回 `[]` |
+| GAMMA-R20.13-4 | `_make_api_request` 缺 timeout | `src/tools/api.py:94` | P2 | 新增 `timeout: float = 30.0` 参数, 传入 `requests.get/post` |
+| GAMMA-R20.13-5 | `_collect_metrics` 无缓存, dashboard 10s 轮询全量重读 | `app/backend/routes/llm_metrics.py:94` | P2 | 模块级 TTL 缓存 (60s), `_collect_metrics` 委托 `_collect_metrics_uncached` |
+| GAMMA-R20.13-6 | `show_agent_reasoning` 只 catch JSONDecodeError, 不 catch TypeError | `src/graph/state.py:43-49` | P2 | `except (json.JSONDecodeError, TypeError)` — output=None 时不再崩溃 |
+
+### 10.2 巡逻新发现 — 同轮修复
+
+| # | 问题 | 位置 | 级别 | 修复方式 |
+|---|------|------|------|----------|
+| GAMMA-R20.13-7 | `data_sources.py` `/data-sources/health` 端点完全无 try/except | `app/backend/routes/data_sources.py` | P2 | 包裹 `get_health_monitor()` + `get_all_health()` → HTTPException 500 |
+| GAMMA-R20.13-8 | `cache.py` `/cache/stats` 端点完全无 try/except | `app/backend/routes/cache.py` | P2 | 包裹 `get_cache_runtime_info()` → HTTPException 500 |
+
+### 10.3 审查但未发现问题的代码
+
+- `app/backend/routes/{admin_audit,invites,auth,flows,flow_runs,hedge_fund,hedge_fund_streaming,ollama,portfolio_simulator,backtest_visualization,risk_metrics,screening,research,storage,api_keys}.py` — try/except/HTTPException 处理完整
+- `src/utils/llm.py` / `src/utils/llm_call_helpers.py` / `src/utils/llm_json_helpers.py` / `src/utils/llm_provider_routing.py` — 重试/熔断/cooldown 逻辑健全, JSON brace balanced 提取完整
+- `src/monitoring/llm_metrics.py` — 锁内 IO, 兜底 `str()` 处理循环引用
+
+### 10.4 测试结果
+
+- **新增 16 个测试**: `tests/backend/test_r20_13_gamma_fixes.py` — 16 passed, 0 failed
+- **现有测试无回归**: `tests/backend/test_replay_artifact_routes.py` + `tests/backend/test_llm_metrics_routes.py` + `tests/test_graph_state.py` + `tests/portfolio/test_return_attribution.py` — 45 passed, 0 failed
+
+### 10.5 修改文件列表
+
+| 文件 | 修复项 |
+|------|--------|
+| `app/backend/routes/attribution.py` | GAMMA-R20.13-1: float() ValueError → 400 |
+| `app/backend/routes/replay_artifacts.py` | GAMMA-R20.13-2: 3 个端点加 try/except |
+| `app/backend/routes/language_models.py` | GAMMA-R20.13-3: ollama 隔离 |
+| `src/tools/api.py` | GAMMA-R20.13-4: timeout=30 |
+| `app/backend/routes/llm_metrics.py` | GAMMA-R20.13-5: TTL 缓存 |
+| `src/graph/state.py` | GAMMA-R20.13-6: TypeError catch |
+| `app/backend/routes/data_sources.py` | GAMMA-R20.13-7: 新发现, 加 try/except |
+| `app/backend/routes/cache.py` | GAMMA-R20.13-8: 新发现, 加 try/except |
+| `tests/backend/test_r20_13_gamma_fixes.py` | 新增 16 个回归测试 |

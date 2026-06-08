@@ -16,6 +16,10 @@ from .push import (
     load_push_config,
     send_push,
 )
+from .weekly_report import (
+    generate_weekly_report,
+    push_weekly_report,
+)
 
 __all__ = [
     "DEFAULT_PUSH_CONFIG_PATH",
@@ -32,4 +36,6 @@ __all__ = [
     "format_report_markdown",
     "load_push_config",
     "send_push",
+    "generate_weekly_report",
+    "push_weekly_report",
 ]

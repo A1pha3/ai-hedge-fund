@@ -91,8 +91,11 @@ def get_attribution(
         )
 
     ticker_list = [t.strip() for t in tickers.split(",")]
-    returns_list = [float(r.strip()) for r in returns.split(",")]
-    weights_list = [float(w.strip()) for w in weights.split(",")]
+    try:
+        returns_list = [float(r.strip()) for r in returns.split(",")]
+        weights_list = [float(w.strip()) for w in weights.split(",")]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="returns and weights must be comma-separated numeric values")
 
     if len(ticker_list) != len(returns_list) or len(ticker_list) != len(weights_list):
         raise HTTPException(
@@ -107,13 +110,19 @@ def get_attribution(
     b_returns: dict[str, float] | None = None
 
     if benchmark_weights_csv:
-        bw_list = [float(w.strip()) for w in benchmark_weights_csv.split(",")]
+        try:
+            bw_list = [float(w.strip()) for w in benchmark_weights_csv.split(",")]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="benchmark_weights must be comma-separated numeric values")
         if len(bw_list) != len(ticker_list):
             raise HTTPException(status_code=400, detail="benchmark_weights must match ticker count")
         b_weights = dict(zip(ticker_list, bw_list))
 
     if benchmark_returns_csv:
-        br_list = [float(r.strip()) for r in benchmark_returns_csv.split(",")]
+        try:
+            br_list = [float(r.strip()) for r in benchmark_returns_csv.split(",")]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="benchmark_returns must be comma-separated numeric values")
         if len(br_list) != len(ticker_list):
             raise HTTPException(status_code=400, detail="benchmark_returns must match ticker count")
         b_returns = dict(zip(ticker_list, br_list))

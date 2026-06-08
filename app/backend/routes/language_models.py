@@ -38,14 +38,17 @@ async def get_language_models():
         default_model = _build_default_model_entry(models)
         if not any(model["model_name"] == default_model["model_name"] and model["provider"] == default_model["provider"] for model in models):
             models.insert(0, default_model)
-        
-        # Add available Ollama models (handles all checking internally)
-        ollama_models = await ollama_service.get_available_models()
-        models.extend(ollama_models)
-        
-        return {"models": models}
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Failed to retrieve models")
+
+    # Add available Ollama models (isolated -- failure returns [] so cloud models still work)
+    try:
+        ollama_models = await ollama_service.get_available_models()
+    except Exception:
+        ollama_models = []
+    models.extend(ollama_models)
+
+    return {"models": models}
 
 
 @router.get(

@@ -44,8 +44,8 @@ def show_agent_reasoning(output, agent_name):
             # Parse the string as JSON and pretty print it
             parsed_output = json.loads(output)
             print(json.dumps(parsed_output, indent=2))
-        except json.JSONDecodeError:
-            # Fallback to original string if not valid JSON
+        except (json.JSONDecodeError, TypeError):
+            # Fallback to original string if not valid JSON or None
             print(output)
 
     print("=" * 48)

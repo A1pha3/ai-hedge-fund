@@ -1,8 +1,12 @@
 """Data source health API route — exposes provider health status with auto-degradation info."""
 
-from fastapi import APIRouter
+import logging
+
+from fastapi import APIRouter, HTTPException
 
 from src.data.health import get_health_monitor
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data-sources", tags=["data-sources"])
 
@@ -35,8 +39,12 @@ async def data_sources_health() -> dict:
           }
         }
     """
-    monitor = get_health_monitor()
-    all_health = monitor.get_all_health()
+    try:
+        monitor = get_health_monitor()
+        all_health = monitor.get_all_health()
+    except Exception as exc:
+        logger.exception("Failed to get data source health")
+        raise HTTPException(status_code=500, detail="Failed to get data source health") from exc
 
     providers_payload = {}
     summary = {"total": 0, "healthy": 0, "degraded": 0, "unknown": 0}

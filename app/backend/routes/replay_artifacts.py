@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +9,8 @@ from pydantic import BaseModel, Field
 from app.backend.auth.dependencies import get_current_user
 from app.backend.models.user import User
 from app.backend.services.replay_artifact_service import ReplayArtifactService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/replay-artifacts", tags=["replay-artifacts"])
 
@@ -84,7 +87,11 @@ class ReplayWorkflowItemUpdateResponse(BaseModel):
 @router.get("/", response_model=ReplayArtifactListResponse)
 async def list_replay_artifacts() -> ReplayArtifactListResponse:
     service = ReplayArtifactService()
-    return ReplayArtifactListResponse(items=service.list_replays())
+    try:
+        return ReplayArtifactListResponse(items=service.list_replays())
+    except Exception as exc:
+        logger.exception("Failed to list replay artifacts")
+        raise HTTPException(status_code=500, detail="Failed to list replay artifacts") from exc
 
 
 @router.get("/feedback-activity", response_model=ReplayFeedbackActivityResponse)
@@ -94,13 +101,17 @@ async def get_replay_feedback_activity(
     limit: int = 20,
 ) -> ReplayFeedbackActivityResponse:
     service = ReplayArtifactService()
-    return ReplayFeedbackActivityResponse(
-        activity=service.get_feedback_activity(
-            report_name=report_name,
-            reviewer=reviewer,
-            limit=limit,
+    try:
+        return ReplayFeedbackActivityResponse(
+            activity=service.get_feedback_activity(
+                report_name=report_name,
+                reviewer=reviewer,
+                limit=limit,
+            )
         )
-    )
+    except Exception as exc:
+        logger.exception("Failed to get replay feedback activity")
+        raise HTTPException(status_code=500, detail="Failed to get replay feedback activity") from exc
 
 
 @router.get("/workflow-queue", response_model=ReplayWorkflowQueueResponse)
@@ -111,14 +122,18 @@ async def get_replay_workflow_queue(
     limit: int = 50,
 ) -> ReplayWorkflowQueueResponse:
     service = ReplayArtifactService()
-    return ReplayWorkflowQueueResponse(
-        queue=service.list_workflow_queue(
-            assignee=assignee,
-            workflow_status=workflow_status,
-            report_name=report_name,
-            limit=limit,
+    try:
+        return ReplayWorkflowQueueResponse(
+            queue=service.list_workflow_queue(
+                assignee=assignee,
+                workflow_status=workflow_status,
+                report_name=report_name,
+                limit=limit,
+            )
         )
-    )
+    except Exception as exc:
+        logger.exception("Failed to get replay workflow queue")
+        raise HTTPException(status_code=500, detail="Failed to get replay workflow queue") from exc
 
 
 @router.patch("/workflow-queue/item", response_model=ReplayWorkflowItemUpdateResponse)

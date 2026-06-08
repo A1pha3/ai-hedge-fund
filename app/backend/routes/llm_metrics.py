@@ -91,8 +91,36 @@ def _percentile(sorted_values: list[float], pct: float) -> float:
     return d0 + (d1 - d0) * (k - f)
 
 
+# ---------------------------------------------------------------------------
+# Simple in-memory TTL cache for _collect_metrics (avoids re-reading all
+# JSONL files on every dashboard poll, default TTL = 60 seconds).
+# ---------------------------------------------------------------------------
+_metrics_cache: dict[str, Any] = {}
+_metrics_cache_ts: float = 0.0
+_METRICS_CACHE_TTL: float = 60.0  # seconds
+
+
 def _collect_metrics(logs_dir: Path, lookback_days: int) -> dict[str, Any]:
     """Parse recent JSONL files and return aggregated metrics."""
+    import time as _time
+
+    # Return cached result if still fresh
+    cache_key = f"{logs_dir}:{lookback_days}"
+    now_ts = _time.time()
+    global _metrics_cache, _metrics_cache_ts
+    if _metrics_cache.get("_key") == cache_key and (now_ts - _metrics_cache_ts) < _METRICS_CACHE_TTL:
+        return _metrics_cache
+
+    result = _collect_metrics_uncached(logs_dir, lookback_days)
+
+    # Update cache
+    _metrics_cache = {**result, "_key": cache_key}
+    _metrics_cache_ts = now_ts
+    return result
+
+
+def _collect_metrics_uncached(logs_dir: Path, lookback_days: int) -> dict[str, Any]:
+    """Parse recent JSONL files and return aggregated metrics (no caching)."""
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=lookback_days)
 

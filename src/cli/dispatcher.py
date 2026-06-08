@@ -394,6 +394,43 @@ def _resolve_why_not(argv: list[str]) -> int | None:
     return run_why_not(ticker)
 
 
+def _resolve_export_conditional_orders(argv: list[str]) -> int | None:
+    """``--export-conditional-orders [--broker=huatai|gtja|ths]`` — 导出券商条件单格式 (P1-13)。"""
+    if "--export-conditional-orders" not in argv:
+        return None
+    broker_raw = _get_kv(argv, "--broker")
+    broker = broker_raw.strip().lower() if broker_raw else "huatai"
+    from src.screening.conditional_order_export import run_export_conditional_orders_cli
+
+    return run_export_conditional_orders_cli(broker=broker)
+
+
+def _resolve_weekly_report(argv: list[str]) -> int | None:
+    """``--weekly-report`` — P2-10 组合体检周报推送。
+
+    支持 ``--start-date`` / ``--end-date`` (缺省本周一/五), ``--channel`` (缺省 wecom)。
+    """
+    if "--weekly-report" not in argv:
+        return None
+    from src.notification.weekly_report import push_weekly_report
+
+    start_date = _get_kv(argv, "--start-date")
+    end_date = _get_kv(argv, "--end-date")
+    channel = _get_kv(argv, "--channel") or "wecom"
+    positions_raw = _get_kv(argv, "--positions")
+    positions_path = Path(positions_raw).expanduser() if positions_raw else None
+    config_raw = _get_kv(argv, "--push-config")
+    config_path = Path(config_raw).expanduser() if config_raw else None
+
+    return push_weekly_report(
+        start_date=start_date.strip().replace("-", "") if start_date else None,
+        end_date=end_date.strip().replace("-", "") if end_date else None,
+        channel=channel.strip(),
+        positions_path=positions_path,
+        config_path=config_path,
+    )
+
+
 def _resolve_top(argv: list[str]) -> int | None:
     """``--top [N] [--filter KEY=VALUE ...]`` — 显示最近一次 ``--auto`` 运行的 Top N 推荐 (无需重跑)。
 
@@ -491,6 +528,8 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--watchlist-status", _resolve_watchlist),
     ("--daily-brief", _resolve_daily_brief),
     ("--why-not", _resolve_why_not),
+    ("--export-conditional-orders", _resolve_export_conditional_orders),
+    ("--weekly-report", _resolve_weekly_report),
     ("--top", _resolve_top),
 ]
 

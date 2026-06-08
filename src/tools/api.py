@@ -91,7 +91,7 @@ def _get_snapshot():
     return get_snapshot_exporter()
 
 
-def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict | None = None, max_retries: int = 3) -> requests.Response | None:
+def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict | None = None, max_retries: int = 3, timeout: float = 30.0) -> requests.Response | None:
     """
     Make an API request with rate limiting handling and moderate backoff.
 
@@ -101,6 +101,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
         method: HTTP method (GET or POST)
         json_data: JSON data for POST requests
         max_retries: Maximum number of retries (default: 3)
+        timeout: Request timeout in seconds (default: 30)
 
     Returns:
         requests.Response or None if all retries exhausted on 429
@@ -111,9 +112,9 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
     for attempt in range(max_retries + 1):  # +1 for initial attempt
         try:
             if method.upper() == "POST":
-                response = requests.post(url, headers=headers, json=json_data)
+                response = requests.post(url, headers=headers, json=json_data, timeout=timeout)
             else:
-                response = requests.get(url, headers=headers)
+                response = requests.get(url, headers=headers, timeout=timeout)
         except requests.RequestException as e:
             print(f"Request error for {url}: {e}")
             if attempt < max_retries:
