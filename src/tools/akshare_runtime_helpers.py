@@ -95,12 +95,46 @@ def cached_akshare_dataframe_call(
     return None
 
 
-def create_session():
-    import requests
+# R20.8 BETA: 模块级共享 Session 句柄（懒加载，线程安全）
+_SHARED_SESSION = None
+_SESSION_LOCK = threading.Lock()
 
-    session = requests.Session()
-    session.trust_env = False
-    return session
+
+def create_session():
+    """获取（必要时创建）模块级共享 requests.Session (R20.8 BETA 性能优化)。
+
+    早期实现每次都新建 ``requests.Session()``，导致每次 AKShare/Sina/Tencent
+    HTTP 请求都要重新建 TCP 连接 + TLS 握手。对于批量价格拉取等场景，
+    这部分开销可占端到端延迟的 20-50%。
+
+    优化：模块级单例 ``_SHARED_SESSION`` + ``HTTPAdapter`` 配
+    ``connectionpool`` 连接池，默认 10 个 keep-alive 连接，跨调用复用。
+    通过 ``AKSHARE_SESSION_POOL_SIZE`` 可调。
+    """
+    global _SHARED_SESSION
+    if _SHARED_SESSION is not None:
+        return _SHARED_SESSION
+
+    with _SESSION_LOCK:
+        if _SHARED_SESSION is not None:
+            return _SHARED_SESSION
+        import requests
+        from requests.adapters import HTTPAdapter
+
+        session = requests.Session()
+        session.trust_env = False
+        # 配 HTTPAdapter：pool_connections=连接池数, pool_maxsize=每池最多 keep-alive 连接
+        pool_size = int(os.environ.get("AKSHARE_SESSION_POOL_SIZE", "10"))
+        adapter = HTTPAdapter(
+            pool_connections=pool_size,
+            pool_maxsize=pool_size,
+            pool_block=False,  # 池耗尽时直接新建连接，不阻塞
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        _SHARED_SESSION = session
+        return _SHARED_SESSION
 
 
 # Module-level lock to serialize proxy env mutations across threads.  Without
