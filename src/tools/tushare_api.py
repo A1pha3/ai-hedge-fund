@@ -123,42 +123,83 @@ def _get_persisted_tushare_cached_df(cache_key: str) -> pd.DataFrame | None:
     return persisted_df.copy()
 
 
+def _is_tushare_rate_limit_error(exc: BaseException) -> bool:
+    """检测是否为 Tushare 限速错误 (HTTP 429 / 显式 msg 含 rate limit)。
+
+    Tushare 官方文档：免费用户 ~200 req/min，付费用户 ~10000 req/min。
+    限速时服务端通常返回：
+      - HTTP 429 Too Many Requests
+      - JSON ``code != 0`` 配合 msg 含 "rate" / "limit" / "频率" / "限速" / "too many"
+    """
+    exc_name = type(exc).__name__
+    if exc_name in {"HTTPError", "TooManyRequests", "RequestException"}:
+        return True
+    msg = str(exc).lower()
+    return any(needle in msg for needle in ("rate limit", "too many", "限速", "频率", "rate-limit", "429"))
+
+
 def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> pd.DataFrame | None:
     """调用 Tushare Pro API，带 exponential backoff 重试。
 
-    瞬时错误（网络超时 / 限速 / 服务端 5xx）通过最多 ``TUSHARE_MAX_RETRIES`` 次
-    重试恢复，重试间隔按 2^attempt 秒递增（1s → 2s → 4s）。
+    瞬时错误（网络超时 / 服务端 5xx）通过最多 ``TUSHARE_MAX_RETRIES`` 次
+    重试恢复，重试间隔按 base_delay * 2^attempt 秒递增（默认 1s → 2s → 4s）。
+    限速错误（HTTP 429 / msg 含 rate limit / 限速）走独立的限速重试通道：
+    最多 ``TUSHARE_RATE_LIMIT_MAX_RETRIES`` 次，默认退避 ``TUSHARE_RATE_LIMIT_DELAY``
+    秒（默认 30s），加 ±30% jitter 防止并发雪崩。
     非瞬时错误（参数错误 / 数据不存在）不重试，直接返回 None。
+
+    Tushare 限速配额（参考 tushare.pro 文档）：
+      - 免费用户：~200 req/min
+      - 付费用户：~10000 req/min
     """
     import random
 
     max_retries = int(os.environ.get("TUSHARE_MAX_RETRIES", "2"))
     base_delay = float(os.environ.get("TUSHARE_RETRY_BASE_DELAY", "1.0"))
+    rate_limit_delay = float(os.environ.get("TUSHARE_RATE_LIMIT_DELAY", "30.0"))
+    rate_limit_max_retries = int(os.environ.get("TUSHARE_RATE_LIMIT_MAX_RETRIES", "2"))
 
     api_func = getattr(pro, api_name, None)
     if api_func is None:
         return None
 
-    last_exc: Exception | None = None
-    for attempt in range(max_retries + 1):
+    transient_attempts = 0
+    rate_limit_attempts = 0
+    # 上限：transient + rate_limit 各自耗尽后退出，避免无限循环
+    max_total = max_retries + rate_limit_max_retries + 1
+    for _ in range(max_total):
         try:
             return api_func(**kwargs)
         except Exception as e:
-            last_exc = e
             exc_name = type(e).__name__
             # 非瞬时错误不重试（参数错误、数据不存在等）
             non_retryable = ("TypeError", "ValueError", "AttributeError", "KeyError")
             if exc_name in non_retryable:
                 print(f"[Tushare] API {api_name} 调用失败 (不可重试): {e}")
                 return None
-            if attempt < max_retries:
-                # Exponential backoff with ±30% jitter so concurrent retries
-                # don't all hammer the API at the same instant.
-                delay = base_delay * (2 ** attempt) * (1 + random.random() * 0.3)
-                print(f"[Tushare] API {api_name} 调用失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}，{delay:.1f}s 后重试...")
+
+            is_rate_limit = _is_tushare_rate_limit_error(e)
+
+            if is_rate_limit:
+                rate_limit_attempts += 1
+                if rate_limit_attempts > rate_limit_max_retries:
+                    print(f"[Tushare] API {api_name} 限速重试已用尽 ({rate_limit_max_retries} 次): {e}")
+                    return None
+                # 限速退避：默认 30s + ±30% jitter
+                delay = rate_limit_delay * (1 + random.random() * 0.3)
+                print(f"[Tushare] API {api_name} 触发限速 (尝试 {rate_limit_attempts}/{rate_limit_max_retries}): {e}，{delay:.1f}s 后重试...")
                 time.sleep(delay)
-            else:
+                continue
+
+            transient_attempts += 1
+            if transient_attempts > max_retries:
                 print(f"[Tushare] API {api_name}({kwargs}) 调用失败 (已重试 {max_retries} 次): {e}")
+                return None
+            # 常规指数退避 (base_delay * 2^(attempt-1)) + ±30% jitter
+            delay = base_delay * (2 ** (transient_attempts - 1)) * (1 + random.random() * 0.3)
+            print(f"[Tushare] API {api_name} 调用失败 (尝试 {transient_attempts}/{max_retries + 1}): {e}，{delay:.1f}s 后重试...")
+            time.sleep(delay)
+
     return None
 
 

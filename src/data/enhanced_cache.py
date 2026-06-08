@@ -541,7 +541,14 @@ class EnhancedCache:
         self.disk = DiskCache(path=disk_path, default_ttl=redis_ttl)
 
         # 统计信息
+        # R20.8 BETA: 多线程并发 get/set 时计数器用 _bump_stat 加锁以保证原子性。
         self._stats = {"lru_hits": 0, "redis_hits": 0, "disk_hits": 0, "misses": 0, "sets": 0}
+        self._stats_lock = threading.Lock()
+
+    def _bump_stat(self, key: str, delta: int = 1) -> None:
+        """原子递增计数器 (R20.8 性能优化: 避免多线程下增量丢失)。"""
+        with self._stats_lock:
+            self._stats[key] = self._stats.get(key, 0) + delta
 
     # Sentinel for cache miss — distinguishes "key not present" from "cached None".
     _MISSING = object()
@@ -561,13 +568,13 @@ class EnhancedCache:
         # 1. 查 LRU
         value = self.lru.get(key, _sentinel=self._MISSING)
         if value is not self._MISSING:
-            self._stats["lru_hits"] += 1
+            self._bump_stat("lru_hits")
             return value
 
         # 2. 查 Redis
         value = self.redis.get(key, _sentinel=self._MISSING)
         if value is not self._MISSING:
-            self._stats["redis_hits"] += 1
+            self._bump_stat("redis_hits")
             # 回填 LRU
             self.lru.set(key, value)
             return value
@@ -575,13 +582,13 @@ class EnhancedCache:
         # 3. 查 Disk
         value = self.disk.get(key, _sentinel=self._MISSING)
         if value is not self._MISSING:
-            self._stats["disk_hits"] += 1
+            self._bump_stat("disk_hits")
             # 回填 Redis 和 LRU
             self.redis.set(key, value)
             self.lru.set(key, value)
             return value
 
-        self._stats["misses"] += 1
+        self._bump_stat("misses")
         return None
 
     def set(self, key: str, value: Any, ttl: int | None = None):
@@ -598,7 +605,7 @@ class EnhancedCache:
         self.lru.set(key, value)
         self.redis.set(key, value, ttl)
         self.disk.set(key, value, ttl)
-        self._stats["sets"] += 1
+        self._bump_stat("sets")
 
     def delete(self, key: str):
         """
@@ -618,19 +625,63 @@ class EnhancedCache:
         self.lru.clear()
         self.redis.clear()
         self.disk.clear()
+        with self._stats_lock:
+            for key in self._stats:
+                self._stats[key] = 0
 
-    def get_stats(self) -> dict[str, int]:
+    def get_stats(self) -> dict[str, int | float]:
         """
         获取缓存统计信息
 
         Returns:
-            统计字典
+            统计字典，包含各层命中数、miss、set、total_hits、total_requests、hit_rate
         """
-        total_hits = self._stats["lru_hits"] + self._stats["redis_hits"] + self._stats["disk_hits"]
-        total_requests = total_hits + self._stats["misses"]
-        hit_rate = total_hits / total_requests if total_requests > 0 else 0
+        with self._stats_lock:
+            snapshot = dict(self._stats)
+        total_hits = snapshot["lru_hits"] + snapshot["redis_hits"] + snapshot["disk_hits"]
+        total_requests = total_hits + snapshot["misses"]
+        hit_rate = total_hits / total_requests if total_requests > 0 else 0.0
 
-        return {**self._stats, "total_hits": total_hits, "total_requests": total_requests, "hit_rate": round(hit_rate, 4)}
+        return {
+            **snapshot,
+            "total_hits": total_hits,
+            "total_requests": total_requests,
+            "hit_rate": round(hit_rate, 4),
+        }
+
+    def summary(self) -> dict[str, Any]:
+        """
+        R20.8 BETA 性能优化: 缓存命中率可观测性总览。
+
+        Returns:
+            dict 包含:
+              - hit_rate: 总命中率 (0.0 ~ 1.0)
+              - total_requests: 累计 get 请求数
+              - total_hits: 累计命中数
+              - total_misses: 累计 miss 数
+              - total_sets: 累计 set 数
+              - layer_breakdown: 各层命中率明细
+        """
+        stats = self.get_stats()
+        total_hits = stats["total_hits"]
+        layer_breakdown: dict[str, dict[str, float | int]] = {}
+        for layer in ("lru", "redis", "disk"):
+            hits = int(stats[f"{layer}_hits"])
+            rate = hits / stats["total_requests"] if stats["total_requests"] > 0 else 0.0
+            share = hits / total_hits if total_hits > 0 else 0.0
+            layer_breakdown[layer] = {
+                "hits": hits,
+                "rate": round(rate, 4),
+                "share": round(share, 4),
+            }
+        return {
+            "hit_rate": stats["hit_rate"],
+            "total_requests": stats["total_requests"],
+            "total_hits": total_hits,
+            "total_misses": stats["misses"],
+            "total_sets": stats["sets"],
+            "layer_breakdown": layer_breakdown,
+        }
 
 
 class CacheAdapter:
