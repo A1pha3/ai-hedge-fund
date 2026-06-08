@@ -7,6 +7,24 @@ A股数据接口模块 - 使用 AKShare 获取中国股票数据
 - 财务报表数据（资产负债表、利润表、现金流量表）
 - 内部人交易数据
 - 公司新闻和公告
+
+环境变量 / 配置 (R20.8 BETA 文档化):
+  AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS (float, default 8)
+    AKShare stock_news_em 单次请求超时。新闻接口偶发慢响应, 默认 8s
+    容忍网络抖动又不至于整体卡死。
+  AKSHARE_INTRADAY_TIMEOUT_SECONDS (float, default 2.5)
+    分钟线 / 分笔 (stock_zh_a_hist_min_em / stock_intraday_sina) 超时。
+    分钟数据批量场景下, 单次请求 2.5s 平衡速度与可靠性。
+  AKSHARE_SESSION_POOL_SIZE (int, default 10)
+    requests.Session 连接池大小 (见 akshare_runtime_helpers.create_session)。
+    增大可提升并发吞吐, 减少重复 TCP/TLS 握手。
+  DISK_CACHE_PATH (str, default ~/.cache/ai-hedge-fund/cache.sqlite)
+    持久化缓存 SQLite 文件位置, 跨进程复用。
+
+Tushare 限速配额 (见 tushare_api.py):
+  - 免费用户: ~200 req/min
+  - 付费用户: ~10000 req/min
+  超限会触发 TUSHARE_RATE_LIMIT_MAX_RETRIES (默认 2) 次 30s 退避重试。
 """
 
 import os
