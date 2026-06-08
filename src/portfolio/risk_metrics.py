@@ -74,7 +74,9 @@ def _histogram_cvar(returns: Sequence[float], confidence: float) -> float:
 
 def _max_drawdown_from_equity(equity: Sequence[float]) -> float:
     """Return max drawdown as a non-negative decimal (e.g. 0.12 = 12%)."""
-    peak = 0.0
+    if not equity:
+        return 0.0
+    peak = _safe_float(equity[0])
     max_dd = 0.0
     for value in equity:
         v = _safe_float(value)

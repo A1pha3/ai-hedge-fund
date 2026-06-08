@@ -427,3 +427,64 @@
 | `app/backend/routes/data_sources.py` | GAMMA-R20.13-7: 新发现, 加 try/except |
 | `app/backend/routes/cache.py` | GAMMA-R20.13-8: 新发现, 加 try/except |
 | `tests/backend/test_r20_13_gamma_fixes.py` | 新增 16 个回归测试 |
+
+### v2.2.1 (2026-06-09) — Round 20.14: Gamma backtesting/routes 重构 + 巡逻
+
+**重构选项 A (backtesting engine)**: 评估后跳过。engine.py 前几轮已抽离 7 个 helper 模块 (market_data, pipeline_decisions, pipeline_helpers, pending_helpers, checkpoint_helpers, telemetry_helpers, agent_mode, pending_plan_runner), 剩余 935 行均为薄编排胶水, 进一步拆分收益不足。
+
+**重构选项 B (后端路由去重)**: 完成。创建 `app/backend/routes/_common.py` 共享模块, 提供 `@safe_route` 装饰器, 替代 3 个路由文件 (flows, api_keys, flow_runs) 中 ~30 处重复的 try/except 样板代码。行为完全保留 (HTTPException 穿透 + 其他异常 log 后转 500)。净减少 128 行。
+
+| 文件 | 变更 |
+|---|---|
+| `app/backend/routes/_common.py` | 新增: `@safe_route` 装饰器 (async + sync 双路径) |
+| `app/backend/routes/flows.py` | 7 个 handler 全部改用 `@safe_route` |
+| `app/backend/routes/api_keys.py` | 8 个 handler 全部改用 `@safe_route` |
+| `app/backend/routes/flow_runs.py` | 11 个 handler 全部改用 `@safe_route` |
+
+**Bug 巡逻**: 2 个修复
+
+| Bug | 文件 | 修复 |
+|---|---|---|
+| `_max_drawdown_from_equity` 初始 peak=0.0 在异常数据下可能跳过首个数据点 | `src/portfolio/risk_metrics.py` | 初始 peak 改为 `equity[0]` |
+| `get_industry_remaining_quota` 在负 NAV 下返回负剩余额度 | `src/portfolio/industry_exposure.py` | 返回值加 `max(0.0, ...)` |
+
+**测试**: 639 passed (backtesting 418 + portfolio/backend 221), 0 failed
+
+**修改文件列表**:
+- `app/backend/routes/_common.py` (新增)
+- `app/backend/routes/flows.py` (重构)
+- `app/backend/routes/api_keys.py` (重构)
+- `app/backend/routes/flow_runs.py` (重构)
+- `src/portfolio/risk_metrics.py` (bug fix)
+- `src/portfolio/industry_exposure.py` (bug fix)
+
+### v2.2.1 (2026-06-09) — Round 20.14: Beta daily_pipeline 重构 + 性能 + 巡逻
+
+**重构变更**: daily_pipeline.py 行数 2032 -> 1659 (减少 373 行)
+
+| 抽离组 | 新文件 | 行数 | 内容 |
+|---|---|---|---|
+| P1/P2 Regime Gate | `daily_pipeline_regime_gate_helpers.py` | 181 | `_resolve_btst_regime_gate_mode`, `_build_btst_regime_gate_payload`, `_attach_btst_regime_gate_shadow`, `_enforce_btst_regime_gate_p2`, `get_or_classify_gate` 等 |
+| P3/P5/P6 Enforcement | `daily_pipeline_enforcement_helpers.py` | 349 | `_enforce_btst_prior_quality_p3`, `_enforce_btst_execution_contract_p5`, `_attach_btst_risk_budget_p6` 及所有 MODE_ENV/MODES 常量 |
+
+**重构模式**: daily_pipeline.py 保留同名 wrapper 函数, 一行委托到 helper 模块, 保持全部 552 个测试通过 (纯重构, 零行为变化). 所有公开 API (import paths) 不变.
+
+**性能审查**:
+- `score_batch` 已使用 ThreadPoolExecutor 并行 IO (前轮优化到位)
+- `BatchDataCache` 有 inflight-lock 防缓存击穿 (R20.10)
+- `DiskCache` 有 alive-check TTL 缓存避免频繁 SELECT 1 (R20.10)
+- `cache_benchmark` subprocess 已有 timeout + capture_output (无 PIPE buffer 风险)
+- 未发现可并行的串行瓶颈
+
+**Bug 巡逻**:
+- `src/paper_trading/` 全部文件已审查: 无 subprocess/PIPE/asyncio loop 风险
+- `src/data/` 模块已审查: asyncio 用法正确 (get_running_loop 而非 get_event_loop)
+- 无新 bug 发现
+
+**测试**: 552 passed (execution 184 + regime/enforcement/prior_shrinkage 204 + screening 172 - overlap counted), 0 failed
+
+**修改文件列表**:
+- `src/execution/daily_pipeline_regime_gate_helpers.py` (新增, 181 行)
+- `src/execution/daily_pipeline_enforcement_helpers.py` (新增, 349 行)
+- `src/execution/daily_pipeline.py` (重构, 2032 -> 1659 行)
+- `docs/cn/product/feature-proposals.md` (文档追加)

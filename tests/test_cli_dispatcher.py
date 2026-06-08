@@ -131,11 +131,12 @@ class TestCommandRegistry(unittest.TestCase):
         for flag, handler in COMMAND_REGISTRY:
             self.assertTrue(callable(handler), f"Handler for {flag} is not callable")
 
-    def test_auto_and_explain_not_in_registry(self) -> None:
-        # ``--auto`` 和 ``--explain`` 走主 parser, 不应在这里
+    def test_auto_not_in_registry(self) -> None:
+        # ``--auto`` 走主 parser (它本来 ``require_tickers=False``), 不应在这里
         registered = {flag for flag, _ in COMMAND_REGISTRY}
         self.assertNotIn("--auto", registered)
-        self.assertNotIn("--explain", registered)
+        # ``--explain`` R20.14 改为 dispatcher 早期分发, 以避开 ``--tickers required`` 冲突
+        self.assertIn("--explain", registered)
 
 
 class TestDispatchBehavior(unittest.TestCase):

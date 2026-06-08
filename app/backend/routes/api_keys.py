@@ -15,6 +15,7 @@ from app.backend.models.schemas import (
     ApiKeyBulkUpdateRequest,
     ErrorResponse
 )
+from app.backend.routes._common import safe_route
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 logger = logging.getLogger(__name__)
@@ -64,20 +65,17 @@ def _to_api_key_summary(api_key: ApiKey) -> ApiKeySummaryResponse:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def create_or_update_api_key(request: ApiKeyCreateRequest, db: Session = Depends(get_db)):
     """Create a new API key or update existing one"""
-    try:
-        repo = ApiKeyRepository(db)
-        api_key = repo.create_or_update_api_key(
-            provider=request.provider,
-            key_value=request.key_value,
-            description=request.description,
-            is_active=request.is_active
-        )
-        return _to_api_key_response(api_key)
-    except Exception as e:
-        logger.exception("Failed to create/update API key for provider %s", request.provider)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    repo = ApiKeyRepository(db)
+    api_key = repo.create_or_update_api_key(
+        provider=request.provider,
+        key_value=request.key_value,
+        description=request.description,
+        is_active=request.is_active
+    )
+    return _to_api_key_response(api_key)
 
 
 @router.get(
@@ -87,15 +85,12 @@ async def create_or_update_api_key(request: ApiKeyCreateRequest, db: Session = D
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_api_keys(include_inactive: bool = False, db: Session = Depends(get_db)):
     """Get all API keys (without actual key values for security)"""
-    try:
-        repo = ApiKeyRepository(db)
-        api_keys = repo.get_all_api_keys(include_inactive=include_inactive)
-        return [_to_api_key_summary(key) for key in api_keys]
-    except Exception as e:
-        logger.exception("Failed to retrieve API key summaries")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    repo = ApiKeyRepository(db)
+    api_keys = repo.get_all_api_keys(include_inactive=include_inactive)
+    return [_to_api_key_summary(key) for key in api_keys]
 
 
 @router.get(
@@ -106,19 +101,14 @@ async def get_api_keys(include_inactive: bool = False, db: Session = Depends(get
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_api_key(provider: str, db: Session = Depends(get_db)):
     """Get a specific API key by provider"""
-    try:
-        repo = ApiKeyRepository(db)
-        api_key = repo.get_api_key_by_provider(provider)
-        if not api_key:
-            raise HTTPException(status_code=404, detail="API key not found")
-        return _to_api_key_response(api_key)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to retrieve API key for provider %s", provider)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    repo = ApiKeyRepository(db)
+    api_key = repo.get_api_key_by_provider(provider)
+    if not api_key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return _to_api_key_response(api_key)
 
 
 @router.put(
@@ -129,24 +119,19 @@ async def get_api_key(provider: str, db: Session = Depends(get_db)):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def update_api_key(provider: str, request: ApiKeyUpdateRequest, db: Session = Depends(get_db)):
     """Update an existing API key"""
-    try:
-        repo = ApiKeyRepository(db)
-        api_key = repo.update_api_key(
-            provider=provider,
-            key_value=request.key_value,
-            description=request.description,
-            is_active=request.is_active
-        )
-        if not api_key:
-            raise HTTPException(status_code=404, detail="API key not found")
-        return _to_api_key_response(api_key)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to update API key for provider %s", provider)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    repo = ApiKeyRepository(db)
+    api_key = repo.update_api_key(
+        provider=provider,
+        key_value=request.key_value,
+        description=request.description,
+        is_active=request.is_active
+    )
+    if not api_key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return _to_api_key_response(api_key)
 
 
 @router.delete(
@@ -157,19 +142,14 @@ async def update_api_key(provider: str, request: ApiKeyUpdateRequest, db: Sessio
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def delete_api_key(provider: str, db: Session = Depends(get_db)):
     """Delete an API key"""
-    try:
-        repo = ApiKeyRepository(db)
-        success = repo.delete_api_key(provider)
-        if not success:
-            raise HTTPException(status_code=404, detail="API key not found")
-        return {"message": "API key deleted successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to delete API key for provider %s", provider)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    repo = ApiKeyRepository(db)
+    success = repo.delete_api_key(provider)
+    if not success:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"message": "API key deleted successfully"}
 
 
 @router.patch(
@@ -180,20 +160,15 @@ async def delete_api_key(provider: str, db: Session = Depends(get_db)):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def deactivate_api_key(provider: str, db: Session = Depends(get_db)):
     """Deactivate an API key without deleting it"""
-    try:
-        repo = ApiKeyRepository(db)
-        api_key = repo.deactivate_api_key(provider)
-        if not api_key:
-            raise HTTPException(status_code=404, detail="API key not found")
+    repo = ApiKeyRepository(db)
+    api_key = repo.deactivate_api_key(provider)
+    if not api_key:
+        raise HTTPException(status_code=404, detail="API key not found")
 
-        return _to_api_key_summary(api_key)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to deactivate API key for provider %s", provider)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return _to_api_key_summary(api_key)
 
 
 @router.post(
@@ -204,24 +179,21 @@ async def deactivate_api_key(provider: str, db: Session = Depends(get_db)):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def bulk_update_api_keys(request: ApiKeyBulkUpdateRequest, db: Session = Depends(get_db)):
     """Bulk create or update multiple API keys"""
-    try:
-        repo = ApiKeyRepository(db)
-        api_keys_data = [
-            {
-                'provider': key.provider,
-                'key_value': key.key_value,
-                'description': key.description,
-                'is_active': key.is_active
-            }
-            for key in request.api_keys
-        ]
-        api_keys = repo.bulk_create_or_update(api_keys_data)
-        return [_to_api_key_response(key) for key in api_keys]
-    except Exception as e:
-        logger.exception("Failed to bulk update API keys")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    repo = ApiKeyRepository(db)
+    api_keys_data = [
+        {
+            'provider': key.provider,
+            'key_value': key.key_value,
+            'description': key.description,
+            'is_active': key.is_active
+        }
+        for key in request.api_keys
+    ]
+    api_keys = repo.bulk_create_or_update(api_keys_data)
+    return [_to_api_key_response(key) for key in api_keys]
 
 
 @router.patch(
@@ -232,16 +204,11 @@ async def bulk_update_api_keys(request: ApiKeyBulkUpdateRequest, db: Session = D
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def update_last_used(provider: str, db: Session = Depends(get_db)):
     """Update the last used timestamp for an API key"""
-    try:
-        repo = ApiKeyRepository(db)
-        success = repo.update_last_used(provider)
-        if not success:
-            raise HTTPException(status_code=404, detail="API key not found")
-        return {"message": "Last used timestamp updated"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to update last-used timestamp for provider %s", provider)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    repo = ApiKeyRepository(db)
+    success = repo.update_last_used(provider)
+    if not success:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"message": "Last used timestamp updated"}

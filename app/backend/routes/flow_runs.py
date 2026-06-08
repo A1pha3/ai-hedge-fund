@@ -17,6 +17,7 @@ from app.backend.models.schemas import (
     ErrorResponse,
     HedgeFundRequest,
 )
+from app.backend.routes._common import safe_route
 from app.backend.routes.hedge_fund_streaming import (
     hydrate_api_keys,
     resolve_model_provider,
@@ -38,31 +39,24 @@ logger = logging.getLogger(__name__)
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def create_flow_run(
-    flow_id: int, 
-    request: FlowRunCreateRequest, 
+    flow_id: int,
+    request: FlowRunCreateRequest,
     db: Session = Depends(get_db)
 ):
     """Create a new flow run for the specified flow"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
-        
-        # Create the flow run
-        run_repo = FlowRunRepository(db)
-        flow_run = run_repo.create_flow_run(
-            flow_id=flow_id,
-            request_data=request.request_data
-        )
-        return FlowRunResponse.model_validate(flow_run)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to create flow run")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    run_repo = FlowRunRepository(db)
+    flow_run = run_repo.create_flow_run(
+        flow_id=flow_id,
+        request_data=request.request_data
+    )
+    return FlowRunResponse.model_validate(flow_run)
 
 
 @router.get(
@@ -73,6 +67,7 @@ async def create_flow_run(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_flow_runs(
     flow_id: int,
     limit: int = Query(50, ge=1, le=100, description="Maximum number of runs to return"),
@@ -80,107 +75,78 @@ async def get_flow_runs(
     db: Session = Depends(get_db)
 ):
     """Get all runs for the specified flow"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
-        
-        # Get flow runs
-        run_repo = FlowRunRepository(db)
-        flow_runs = run_repo.get_flow_runs_by_flow_id(flow_id, limit=limit, offset=offset)
-        return [FlowRunSummaryResponse.model_validate(run) for run in flow_runs]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to retrieve flow runs")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    run_repo = FlowRunRepository(db)
+    flow_runs = run_repo.get_flow_runs_by_flow_id(flow_id, limit=limit, offset=offset)
+    return [FlowRunSummaryResponse.model_validate(run) for run in flow_runs]
 
 
 @router.get(
-    "/active",
+    "active",
     response_model=Optional[FlowRunResponse],
     responses={
         404: {"model": ErrorResponse, "description": "Flow not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_active_flow_run(flow_id: int, db: Session = Depends(get_db)):
     """Get the current active (IN_PROGRESS) run for the specified flow"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
-        
-        # Get active flow run
-        run_repo = FlowRunRepository(db)
-        active_run = run_repo.get_active_flow_run(flow_id)
-        return FlowRunResponse.model_validate(active_run) if active_run else None
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to retrieve active flow run")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    run_repo = FlowRunRepository(db)
+    active_run = run_repo.get_active_flow_run(flow_id)
+    return FlowRunResponse.model_validate(active_run) if active_run else None
 
 
 @router.get(
-    "/latest",
+    "latest",
     response_model=Optional[FlowRunResponse],
     responses={
         404: {"model": ErrorResponse, "description": "Flow not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_latest_flow_run(flow_id: int, db: Session = Depends(get_db)):
     """Get the most recent run for the specified flow"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
-        
-        # Get latest flow run
-        run_repo = FlowRunRepository(db)
-        latest_run = run_repo.get_latest_flow_run(flow_id)
-        return FlowRunResponse.model_validate(latest_run) if latest_run else None
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to retrieve latest flow run")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    run_repo = FlowRunRepository(db)
+    latest_run = run_repo.get_latest_flow_run(flow_id)
+    return FlowRunResponse.model_validate(latest_run) if latest_run else None
 
 
 @router.get(
-    "/count",
+    "count",
     responses={
         200: {"description": "Flow run count"},
         404: {"model": ErrorResponse, "description": "Flow not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_flow_run_count(flow_id: int, db: Session = Depends(get_db)):
     """Get the total count of runs for the specified flow"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
 
-        # Get run count
-        run_repo = FlowRunRepository(db)
-        count = run_repo.get_flow_run_count(flow_id)
+    run_repo = FlowRunRepository(db)
+    count = run_repo.get_flow_run_count(flow_id)
 
-        return {"flow_id": flow_id, "total_runs": count}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to get flow run count")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return {"flow_id": flow_id, "total_runs": count}
 
 
 @router.get(
@@ -191,27 +157,20 @@ async def get_flow_run_count(flow_id: int, db: Session = Depends(get_db)):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def get_flow_run(flow_id: int, run_id: int, db: Session = Depends(get_db)):
     """Get a specific flow run by ID"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
-        
-        # Get flow run
-        run_repo = FlowRunRepository(db)
-        flow_run = run_repo.get_flow_run_by_id(run_id)
-        if not flow_run or flow_run.flow_id != flow_id:
-            raise HTTPException(status_code=404, detail="Flow run not found")
-        
-        return FlowRunResponse.model_validate(flow_run)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to retrieve flow run")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    run_repo = FlowRunRepository(db)
+    flow_run = run_repo.get_flow_run_by_id(run_id)
+    if not flow_run or flow_run.flow_id != flow_id:
+        raise HTTPException(status_code=404, detail="Flow run not found")
+
+    return FlowRunResponse.model_validate(flow_run)
 
 
 @router.put(
@@ -222,43 +181,35 @@ async def get_flow_run(flow_id: int, run_id: int, db: Session = Depends(get_db))
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def update_flow_run(
-    flow_id: int, 
-    run_id: int, 
-    request: FlowRunUpdateRequest, 
+    flow_id: int,
+    run_id: int,
+    request: FlowRunUpdateRequest,
     db: Session = Depends(get_db)
 ):
     """Update an existing flow run"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
-        
-        # Update flow run
-        run_repo = FlowRunRepository(db)
-        # First verify the run exists and belongs to this flow
-        existing_run = run_repo.get_flow_run_by_id(run_id)
-        if not existing_run or existing_run.flow_id != flow_id:
-            raise HTTPException(status_code=404, detail="Flow run not found")
-        
-        flow_run = run_repo.update_flow_run(
-            run_id=run_id,
-            status=request.status,
-            results=request.results,
-            error_message=request.error_message
-        )
-        
-        if not flow_run:
-            raise HTTPException(status_code=404, detail="Flow run not found")
-        
-        return FlowRunResponse.model_validate(flow_run)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to update flow run")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    run_repo = FlowRunRepository(db)
+    existing_run = run_repo.get_flow_run_by_id(run_id)
+    if not existing_run or existing_run.flow_id != flow_id:
+        raise HTTPException(status_code=404, detail="Flow run not found")
+
+    flow_run = run_repo.update_flow_run(
+        run_id=run_id,
+        status=request.status,
+        results=request.results,
+        error_message=request.error_message
+    )
+
+    if not flow_run:
+        raise HTTPException(status_code=404, detail="Flow run not found")
+
+    return FlowRunResponse.model_validate(flow_run)
 
 
 @router.delete(
@@ -270,29 +221,22 @@ async def update_flow_run(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def delete_flow_run(flow_id: int, run_id: int, db: Session = Depends(get_db)):
     """Delete a flow run"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
-        
-        # Verify run exists and belongs to this flow
-        run_repo = FlowRunRepository(db)
-        existing_run = run_repo.get_flow_run_by_id(run_id)
-        if not existing_run or existing_run.flow_id != flow_id:
-            raise HTTPException(status_code=404, detail="Flow run not found")
-        
-        success = run_repo.delete_flow_run(run_id)
-        if not success:
-            raise HTTPException(status_code=404, detail="Flow run not found")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to delete flow run")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    run_repo = FlowRunRepository(db)
+    existing_run = run_repo.get_flow_run_by_id(run_id)
+    if not existing_run or existing_run.flow_id != flow_id:
+        raise HTTPException(status_code=404, detail="Flow run not found")
+
+    success = run_repo.delete_flow_run(run_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Flow run not found")
 
 
 @router.delete(
@@ -304,23 +248,16 @@ async def delete_flow_run(flow_id: int, run_id: int, db: Session = Depends(get_d
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def delete_all_flow_runs(flow_id: int, db: Session = Depends(get_db)):
     """Delete all runs for the specified flow"""
-    try:
-        # Verify flow exists
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
-        
-        # Delete all flow runs
-        run_repo = FlowRunRepository(db)
-        run_repo.delete_flow_runs_by_flow_id(flow_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to delete flow runs")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    run_repo = FlowRunRepository(db)
+    run_repo.delete_flow_runs_by_flow_id(flow_id)
 
 
 @router.post(
@@ -332,6 +269,7 @@ async def delete_all_flow_runs(flow_id: int, db: Session = Depends(get_db)):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@safe_route
 async def rerun_flow_run(
     flow_id: int,
     run_id: int,
@@ -348,67 +286,60 @@ async def rerun_flow_run(
     body, so the frontend can both track the new run ID and stream progress
     events in a single response.
     """
-    try:
-        # --- Validate parent flow ---
-        flow_repo = FlowRepository(db)
-        flow = flow_repo.get_flow_by_id(flow_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail="Flow not found")
+    # --- Validate parent flow ---
+    flow_repo = FlowRepository(db)
+    flow = flow_repo.get_flow_by_id(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
 
-        # --- Locate source run ---
-        run_repo = FlowRunRepository(db)
-        source_run = run_repo.get_flow_run_by_id(run_id)
-        if not source_run or source_run.flow_id != flow_id:
-            raise HTTPException(status_code=404, detail="Flow run not found")
+    # --- Locate source run ---
+    run_repo = FlowRunRepository(db)
+    source_run = run_repo.get_flow_run_by_id(run_id)
+    if not source_run or source_run.flow_id != flow_id:
+        raise HTTPException(status_code=404, detail="Flow run not found")
 
-        # --- Extract original parameters ---
-        request_data_raw = source_run.request_data
-        if not request_data_raw:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot rerun: original request_data is not stored for this run",
-            )
-
-        # Build HedgeFundRequest from stored dict (backwards-compatible)
-        rerun_request = HedgeFundRequest(**request_data_raw)
-
-        # --- Hydrate API keys if not already present ---
-        hydrate_api_keys(rerun_request, db)
-
-        # --- Create new flow run record ---
-        new_run = run_repo.create_flow_run(
-            flow_id=flow_id,
-            request_data=request_data_raw,
+    # --- Extract original parameters ---
+    request_data_raw = source_run.request_data
+    if not request_data_raw:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot rerun: original request_data is not stored for this run",
         )
 
-        # --- Compile graph & start execution ---
-        portfolio = create_portfolio(
-            rerun_request.initial_cash,
-            rerun_request.margin_requirement,
-            rerun_request.tickers,
-            rerun_request.portfolio_positions,
-        )
-        graph = create_graph(
-            graph_nodes=rerun_request.graph_nodes,
-            graph_edges=rerun_request.graph_edges,
-        )
-        compiled_graph = graph.compile()
+    # Build HedgeFundRequest from stored dict (backwards-compatible)
+    rerun_request = HedgeFundRequest(**request_data_raw)
 
-        progress.update_status("system", None, "Preparing rerun")
-        model_provider = resolve_model_provider(rerun_request.model_provider)
+    # --- Hydrate API keys if not already present ---
+    hydrate_api_keys(rerun_request, db)
 
-        # Return SSE stream (same as normal /hedge-fund/run)
-        return StreamingResponse(
-            stream_hedge_fund_run(request, rerun_request, compiled_graph, portfolio, model_provider),
-            media_type="text/event-stream",
-            headers={
-                "X-Rerun-Run-Id": str(new_run.id),
-                "X-Rerun-Run-Number": str(new_run.run_number),
-            },
-        )
+    # --- Create new flow run record ---
+    new_run = run_repo.create_flow_run(
+        flow_id=flow_id,
+        request_data=request_data_raw,
+    )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to rerun flow run")
-        raise HTTPException(status_code=500, detail="Internal server error") 
+    # --- Compile graph & start execution ---
+    portfolio = create_portfolio(
+        rerun_request.initial_cash,
+        rerun_request.margin_requirement,
+        rerun_request.tickers,
+        rerun_request.portfolio_positions,
+    )
+    graph = create_graph(
+        graph_nodes=rerun_request.graph_nodes,
+        graph_edges=rerun_request.graph_edges,
+    )
+    compiled_graph = graph.compile()
+
+    progress.update_status("system", None, "Preparing rerun")
+    model_provider = resolve_model_provider(rerun_request.model_provider)
+
+    # Return SSE stream (same as normal /hedge-fund/run)
+    return StreamingResponse(
+        stream_hedge_fund_run(request, rerun_request, compiled_graph, portfolio, model_provider),
+        media_type="text/event-stream",
+        headers={
+            "X-Rerun-Run-Id": str(new_run.id),
+            "X-Rerun-Run-Number": str(new_run.run_number),
+        },
+    )

@@ -47,5 +47,5 @@ def get_industry_remaining_quota(
 ) -> float:
     for exposure in exposures:
         if exposure.industry == industry:
-            return exposure.remaining_quota
-    return industry_limit_ratio * total_nav
+            return max(0.0, exposure.remaining_quota)
+    return max(0.0, industry_limit_ratio * total_nav)

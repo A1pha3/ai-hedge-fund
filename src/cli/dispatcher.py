@@ -394,6 +394,19 @@ def _resolve_why_not(argv: list[str]) -> int | None:
     return run_why_not(ticker)
 
 
+def _resolve_explain(argv: list[str]) -> int | None:
+    """``--explain <ticker>`` — 单票推荐解释 (R20.14 修复, 避免主 parser ``--tickers required`` 冲突)。
+
+    早期分发 — 不走主 parser。
+    """
+    ticker = _get_kv(argv, "--explain") or _next_arg(argv, "--explain")
+    if ticker is None:
+        return None
+    from src.main import run_explain
+
+    return run_explain(ticker)
+
+
 def _resolve_export_conditional_orders(argv: list[str]) -> int | None:
     """``--export-conditional-orders [--broker=huatai|gtja|ths]`` — 导出券商条件单格式 (P1-13)。"""
     if "--export-conditional-orders" not in argv:
@@ -501,7 +514,7 @@ def _resolve_top(argv: list[str]) -> int | None:
 
 
 # 命令注册表: flag -> handler function
-# 顺序敏感 — 越靠前越先匹配。``--auto`` / ``--explain`` 不在此处 (走主 parser)
+# 顺序敏感 — 越靠前越先匹配。``--auto`` 走主 parser (它本来 require_tickers=False)
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -528,6 +541,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--watchlist-status", _resolve_watchlist),
     ("--daily-brief", _resolve_daily_brief),
     ("--why-not", _resolve_why_not),
+    ("--explain", _resolve_explain),
     ("--export-conditional-orders", _resolve_export_conditional_orders),
     ("--weekly-report", _resolve_weekly_report),
     ("--top", _resolve_top),
