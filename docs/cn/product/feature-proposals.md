@@ -791,6 +791,16 @@
 #### 测试覆盖
 - 800+ 测试, 0 失败 (screening/execution/portfolio/backtesting 全通过)
 
+### v2.1.3 (2026-06-08) — Round 20.3: GAMMA-017 数据适配器语义修正
+
+#### Bug 修复 (1)
+- **GAMMA-017: AKShare 适配器 debt_to_equity 语义错误 (HIGH)**: AKShare 适配器把「资产负债率」(debt-to-assets, D/A) 错误映射到 `debt_to_equity` (D/E) 字段。资产负债率 = 总负债/总资产 (0-1)，D/E = 总负债/总权益。两者数学关系：D/E = D/A / (1 - D/A)。之前 D/A=0.45 直接用作 D/E，导致下游 agents (michael_burry 阈值 <0.5/<1.0 判断杠杆) 低估约 45%。修复：D/A 仅映射到 debt_to_assets，D/E 推导自 D/A。边界处理：D/A ≥ 1.0 (资不抵债) → None。
+- **Tushare 适配器 docstring 修正**: 原注释「debt_to_assets → debt_to_equity」错误，实际映射 debt_to_eqt → debt_to_equity。
+
+#### 测试覆盖
+- 新增 3 个回归测试: test_debt_to_equity_edge_cases, test_direct_debt_to_equity_takes_priority, test_debt_to_equity_conversion (更新)
+- 800+ 测试, 0 失败
+
 ---
 
 ## 十六、CLI 命令速查表
@@ -864,6 +874,7 @@
 | O-2 | 优化 | **推荐排序策略透明化** ✅ | `--auto` 表格下方新增评分构成摘要块，显示 Top 5 标的的各策略贡献值(T/MR/F/E)、attention_composite、stability_bonus 和共识加成标记。— 已实现：`src/main.py:_print_score_decomposition()` + `tests/test_score_decomposition.py` (10 tests) | 用户理解为什么 A 排在 B 前面 |
 | O-3 | 修复 | **熊市共识信号强化方向修正** ✅ | GAMMA-016: `compute_score_b` 中 consensus bonus 始终添加 +0.05，导致熊市共识（3+策略方向=-1 且置信度>60）被削弱而非增强。修复：bonus 方向跟随 score 符号（牛市+0.05, 熊市-0.05）。— 已修复：`src/screening/signal_fusion.py:compute_score_b()` + `tests/screening/test_phase2_screening.py:test_bearish_consensus_bonus_direction_via_compute_score_b` | 熊市信号更准确，减少错误推荐 |
 | O-4 | 修复 | **strategy_scorer.py 缺少 Any 类型导入** ✅ | `strategy_scorer.py` 第 624/648 行使用 `Any` 类型标注但未从 `typing` 导入。`from __future__ import annotations` 延迟评估避免运行时报错，但静态分析器会报错。— 已修复：添加 `from typing import Any` | 静态类型检查通过 |
+| O-5 | 修复 | **AKShare 适配器 debt_to_equity 语义错误** ✅ | GAMMA-017: AKShare 适配器把「资产负债率」(debt-to-assets, D/A) 错误映射到 `debt_to_equity` (D/E) 字段，导致下游 agents (michael_burry/warren_buffett 等) 低估杠杆水平约 45%。修复：D/A 仅映射到 `debt_to_assets`，D/E 用 `D/E = D/A / (1 - D/A)` 推导。边界: D/A≥1.0 (资不抵债) → None。— 已修复：`src/data/adapters/akshare_adapter.py` + 3 个回归测试 | 基本面杠杆评估准确 |
 
 ### R20.2 产品调研发现
 

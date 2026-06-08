@@ -16,7 +16,8 @@ class TushareAdapter(DataSourceAdapter):
 
         字段映射关系（Tushare fina_indicator 接口）：
         - roe → return_on_equity
-        - debt_to_assets → debt_to_equity
+        - debt_to_eqt → debt_to_equity (产权比率/负债权益比)
+        - debt_to_assets → debt_to_assets (资产负债率)
         - q_sales_yoy → revenue_growth
         - total_mv → market_cap (万元转元)
         """

@@ -16,9 +16,14 @@ class AKShareAdapter(DataSourceAdapter):
 
         字段映射关系：
         - 净资产收益率 → return_on_equity
-        - 资产负债率 → debt_to_equity
+        - 资产负债率 → debt_to_assets (并推导 debt_to_equity)
         - 营业收入 → revenue (万元转元)
         - 净利润 → net_income (万元转元)
+
+        GAMMA-017 修正: AKShare 的「资产负债率」是 debt-to-**assets** (D/A)
+        比率，不是 debt-to-equity (D/E)。之前错误地把 D/A 当作 D/E 使用，
+        导致下游 agents (michael_burry, warren_buffett 等) 低估杠杆水平约 45%。
+        现在仅映射到 debt_to_assets，并从 D/A 推导 D/E = D/A / (1 - D/A)。
         """
         rules = self.get_unit_conversion_rules()
         adapted: dict[str, Any] = {}
@@ -37,7 +42,9 @@ class AKShareAdapter(DataSourceAdapter):
 
         field_mappings = {
             "return_on_equity": ["净资产收益率", "return_on_equity", "roe"],
-            "debt_to_equity": ["资产负债率", "debt_to_equity", "debt_to_assets"],
+            # GAMMA-017: 资产负债率 (D/A) 只映射到 debt_to_assets。
+            # debt_to_equity 不再从 D/A 直接取值——它在下方后处理中推导。
+            "debt_to_equity": ["debt_to_equity"],
             "debt_to_assets": ["资产负债率", "debt_to_assets"],
             "gross_margin": ["销售毛利率", "gross_margin"],
             "operating_margin": ["营业利润率", "operating_margin"],
@@ -71,4 +78,29 @@ class AKShareAdapter(DataSourceAdapter):
         if market_cap is not None:
             adapted["market_cap"] = self.safe_float(market_cap, 0) * 10000
 
+        # GAMMA-017: 推导 debt_to_equity from debt_to_assets。
+        # D/E = D/A / (1 - D/A) = total_liabilities / total_equity
+        # 仅当 debt_to_equity 未从直接来源获取时才推导。
+        if "debt_to_equity" not in adapted and "debt_to_assets" in adapted:
+            adapted["debt_to_equity"] = _derive_debt_to_equity_from_debt_to_assets(adapted["debt_to_assets"])
+
         return adapted
+
+
+def _derive_debt_to_equity_from_debt_to_assets(debt_to_assets: float | None) -> float | None:
+    """从 debt-to-assets 比率推导 debt-to-equity。
+
+    数学等价: D/E = D/A / (1 - D/A) = total_liabilities / total_equity
+
+    边界处理:
+    - D/A = None or <= 0 → None (无负债或数据缺失)
+    - D/A >= 1.0 → None (资不抵债，D/E 趋于无穷，无意义)
+    - 0 < D/A < 1.0 → D/E = D/A / (1 - D/A)
+    """
+    if debt_to_assets is None or debt_to_assets <= 0:
+        return None
+    equity_ratio = 1.0 - debt_to_assets
+    if equity_ratio <= 0:
+        return None  # 资不抵债
+    return round(debt_to_assets / equity_ratio, 4)
+

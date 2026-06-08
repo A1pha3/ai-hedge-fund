@@ -83,12 +83,49 @@ class TestAKShareAdapter:
         assert result["return_on_equity"] == pytest.approx(0.155, rel=1e-3)
 
     def test_debt_to_equity_conversion(self):
-        """测试资产负债率转换：45% → 0.45"""
+        """GAMMA-017: 资产负债率 (D/A) 正确映射到 debt_to_assets，
+        并推导出 debt_to_equity = D/A / (1 - D/A)。
+
+        资产负债率=45% → debt_to_assets=0.45, debt_to_equity=0.45/0.55≈0.818
+        之前错误地把 D/A 直接用作 D/E (0.45)，低估杠杆约 45%。
+        """
         adapter = AKShareAdapter()
         raw_data = {"资产负债率": 45.0, "ticker": "600519"}
         result = adapter.adapt_financial_metrics(raw_data)
 
-        assert result["debt_to_equity"] == pytest.approx(0.45, rel=1e-3)
+        # debt_to_assets 直接映射（正确）
+        assert result["debt_to_assets"] == pytest.approx(0.45, rel=1e-3)
+        # debt_to_equity 从 D/A 推导（D/A / (1-D/A)）
+        assert result["debt_to_equity"] == pytest.approx(0.8182, rel=1e-3)
+
+    def test_debt_to_equity_edge_cases(self):
+        """GAMMA-017: debt_to_equity 推导的边界条件"""
+        from src.data.adapters.akshare_adapter import _derive_debt_to_equity_from_debt_to_assets
+
+        # D/A = 0 → None (无负债)
+        assert _derive_debt_to_equity_from_debt_to_assets(0.0) is None
+        # D/A < 0 → None (异常数据)
+        assert _derive_debt_to_equity_from_debt_to_assets(-0.1) is None
+        # D/A = 1.0 → None (资不抵债临界点)
+        assert _derive_debt_to_equity_from_debt_to_assets(1.0) is None
+        # D/A > 1.0 → None (负权益)
+        assert _derive_debt_to_equity_from_debt_to_assets(1.2) is None
+        # D/A = 0.5 → D/E = 1.0 (负债 = 权益)
+        assert _derive_debt_to_equity_from_debt_to_assets(0.5) == 1.0
+        # D/E 恒 > D/A (对于 0 < D/A < 1)
+        for da in (0.1, 0.3, 0.5, 0.7, 0.9):
+            de = _derive_debt_to_equity_from_debt_to_assets(da)
+            assert de is not None and de > da
+
+    def test_direct_debt_to_equity_takes_priority(self):
+        """GAMMA-017: 直接来源的 debt_to_equity 优先于推导"""
+        adapter = AKShareAdapter()
+        raw_data = {"debt_to_equity": 50.0, "资产负债率": 45.0, "ticker": "600519"}
+        result = adapter.adapt_financial_metrics(raw_data)
+
+        # 直接 debt_to_equity=50% → 0.5 (乘以 0.01)，不推导
+        assert result["debt_to_equity"] == pytest.approx(0.5, rel=1e-3)
+        assert result["debt_to_assets"] == pytest.approx(0.45, rel=1e-3)
 
     def test_revenue_conversion_wan_to_yuan(self):
         """测试收入单位转换：万元 → 元"""
