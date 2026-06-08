@@ -79,3 +79,48 @@ def your_agent(state: AgentState, agent_id: str = "your_agent"):
 - **Output format** — `{"signal": "bullish"|"bearish"|"neutral", "confidence": 0-100, "reasoning": "..."}`
 - **Prompt pattern** — `ChatPromptTemplate.from_messages([("system", ...), ("human", ...)])`
 - **Naming** — file: `snake_case.py`, function: `xxx_agent`, model: `XxxSignal`
+
+## R20.8 KNOWN DUPLICATION (future consolidation candidates)
+
+The agent return-state pattern is duplicated across many files. The two
+variants are functionally equivalent (LangGraph reducer merges messages):
+
+**Variant A** — `{"messages": [message], "data": state["data"]}` (12 agents):
+- `src/agents/aswath_damodaran.py:162`
+- `src/agents/ben_graham.py:109`
+- `src/agents/bill_ackman.py:130`
+- `src/agents/cathie_wood.py:148`
+- `src/agents/charlie_munger.py:174`
+- `src/agents/michael_burry.py:153`
+- `src/agents/mohnish_pabrai.py:144`
+- `src/agents/peter_lynch.py:173`
+- `src/agents/phil_fisher.py:175`
+- `src/agents/rakesh_jhunjhunwala.py:161`
+- `src/agents/stanley_druckenmiller.py:173`
+- `src/agents/warren_buffett.py:185`
+
+**Variant B** — `{"messages": state["messages"] + [message], "data": data}` (6 agents):
+- `src/agents/fundamentals.py:90`
+- `src/agents/growth_agent.py:159` (uses `data` local)
+- `src/agents/news_sentiment.py:142`
+- `src/agents/portfolio_manager.py:102`
+- `src/agents/risk_manager.py:83`
+- `src/agents/sentiment.py:152`
+- `src/agents/technicals.py:320`
+- `src/agents/valuation.py:176` (uses `data` local)
+
+**Other duplicated patterns** (not yet refactored):
+- `state["data"]["analyst_signals"][agent_id] = results` — present in all 20 agents
+- `if state["metadata"].get("show_reasoning"): show_agent_reasoning(...)` — 20 agents
+- `progress.update_status(agent_id, None, "Done")` at the end of each agent — 20 agents
+- `HumanMessage(content=json.dumps(results), name=agent_id)` — 20 agents
+
+**Consolidation plan (deferred, R20.9+)**:
+- Extract `src/agents/_state.py` with `make_agent_return(message, state, data=None)`
+  helper that unifies Variants A & B (defaults to `state["data"]`).
+- Add `record_agent_signals(state, agent_id, results)` to remove the
+  `analyst_signals` dict-update duplication.
+- Add `agent_done(agent_id, message, results, state, show_reasoning)` to merge
+  the four end-of-agent idioms into a single helper.
+- Do NOT refactor across files in R20.8 — pure refactor risk is high and the
+  duplication is shallow and well-localized.
