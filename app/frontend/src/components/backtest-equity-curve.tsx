@@ -88,8 +88,21 @@ function EquityCurveChart({ points }: { points: { date: string; value: number; d
     { idx: points.length - 1, label: points[points.length - 1].date },
   ];
 
+  // R20.15 GAMMA A-1: aria-label summarizing curve for screen readers
+  const startVal = points[0].value;
+  const endVal = points[points.length - 1].value;
+  const startWan = (startVal / 1e4).toFixed(0);
+  const endWan = (endVal / 1e4).toFixed(0);
+  const totalRetPct = (((endVal - startVal) / startVal) * 100).toFixed(2);
+  const ariaLabel = `回测净值曲线: ${points.length} 个交易日, 从 ¥${startWan}万 到 ¥${endWan}万, 总收益 ${totalRetPct}%`;
+
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-48">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="w-full h-48"
+      role="img"
+      aria-label={ariaLabel}
+    >
       {/* Grid lines */}
       {yLabels.map((l, i) => (
         <g key={i}>
@@ -156,8 +169,16 @@ function DrawdownChart({ points }: { points: { date: string; drawdown: number }[
     return i === 0 ? `${x},${y}` : ` L${x},${y}`;
   }).join('')} L${lastX},${topY} Z`;
 
+  // R20.15 GAMMA A-2: aria-label for drawdown chart
+  const drawdownAriaLabel = `最大回撤图: 最大回撤 ${(maxDD * 100).toFixed(1)}%`;
+
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-24">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="w-full h-24"
+      role="img"
+      aria-label={drawdownAriaLabel}
+    >
       {/* Area fill */}
       <path d={areaPath} fill="currentColor" fillOpacity={0.15} className="text-red-500" />
       {/* Line */}
@@ -251,17 +272,22 @@ export function BacktestEquityCurve({ agentData }: EquityCurveProps) {
   const totalReturn = (currentValue - initialValue) / initialValue;
 
   // Compute equity curve points with drawdown
+  // R20.15 GAMMA E-2: drop individual days with NaN/Infinity portfolio_value
+  // before they propagate into the SVG (which silently renders broken paths).
   let peak = initialValue;
-  const points = dailyResults.map(day => {
-    if (day.portfolio_value > peak) peak = day.portfolio_value;
-    const drawdown = peak > 0 ? (peak - day.portfolio_value) / peak : 0;
-    return {
-      date: day.date,
-      value: day.portfolio_value,
-      drawdown,
-      daily_return: day.portfolio_return || 0,
-    };
-  });
+  const points = dailyResults
+    .filter(day => isFinite(day.portfolio_value))
+    .map(day => {
+      if (day.portfolio_value > peak) peak = day.portfolio_value;
+      const drawdown = peak > 0 ? (peak - day.portfolio_value) / peak : 0;
+      return {
+        date: day.date,
+        value: day.portfolio_value,
+        drawdown,
+        daily_return: day.portfolio_return || 0,
+      };
+    });
+  if (points.length < 2) return null;
 
   const maxDrawdown = Math.max(...points.map(p => p.drawdown));
   const winningDays = points.filter(p => p.daily_return > 0).length;

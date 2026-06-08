@@ -488,3 +488,145 @@
 - `src/execution/daily_pipeline_enforcement_helpers.py` (新增, 349 行)
 - `src/execution/daily_pipeline.py` (重构, 2032 -> 1659 行)
 - `docs/cn/product/feature-proposals.md` (文档追加)
+
+### v2.2.2 (2026-06-09) — Round 20.15: Alpha targets 调查 + UX HIGH 修复 + P0 巡逻
+
+**任务 A — short_trade_target_profile_data.py 重构调查 (1474 行)**:
+- 详细 AST 分析显示该文件**不是可重构对象**: 全部 1474 行由 1 个 dict literal (1094 行, 19 keys) + 1 个 18 元素 grid loop (10 行) 组成, **零函数/零类**.
+- 所有 14 个 profile entry 都是 80-130 行的配置 dict value (`ShortTradeTargetProfile(...)` 或 `replace(...)`).
+- 在 "pure refactor, 行为不变" 约束下, 任何拆分都会改变行为: dict literal vs `dict.update()` 改变求值时序, `replace(...)` 调用是 expression 不可拆分. 强行抽离 `_PROFILES_BASE_DEFAULTS` 之类的函数会引入运行时副作用和堆栈变化, 违反 CLAUDE.md 重构原则.
+- **结论**: **不抽离**, 在本节记录"该文件已经是纯数据形式, 不存在可识别的函数内聚组"作为决策文档. 后续如需分盘, 推荐用 YAML/JSON 加载替换 (那是 feature 变更, 不是 refactor).
+
+**任务 B — Gamma UX HIGH 修复 (R20.9 遗留 8 个 → 修了 4 个真 bug, 4 个 R20.10 已修)**:
+
+R20.9 审计列了 8 个 HIGH 问题, R20.10 已经修复 4 个 (L-1 loading 5 状态机, E-1 实际是 4 状态而非 5 状态未真修, E-2 端点 guard 修了但中间日 NaN 未修, V-1/V-2 12 处 zinc 全部替换为 design token). 本轮 R20.15 修复剩下 4 个:
+
+| 编号 | 文件 | 修复 |
+|---|---|---|
+| E-1 | `app/frontend/src/components/panels/bottom/tabs/backtest-output.tsx:438-462` | BacktestOutput 用项目内现有 `ErrorBoundary` 类包裹, 拆出 `BacktestOutputInner` 子组件, 渲染期异常不再白屏整个回测区 |
+| E-2 (扩展) | `app/frontend/src/components/backtest-equity-curve.tsx:274-289` | 在生成 `points` 前 `filter(day => isFinite(day.portfolio_value))` 丢弃日级 NaN/Infinity, 避免 SVG path 串出 `NaN,xxx` 不可解析 |
+| A-1 | `app/frontend/src/components/backtest-equity-curve.tsx:91-107` | EquityCurveChart 的 `<svg>` 加 `role="img"` + `aria-label` (起止万值 + 总收益%) |
+| A-2 | `app/frontend/src/components/backtest-equity-curve.tsx:159-181` | DrawdownChart 的 `<svg>` 加 `role="img"` + `aria-label` (最大回撤%) |
+| R-1 | `app/frontend/src/components/Layout.tsx:44-58, 108-117, 149-152` | 引入 `manualOverride` 状态: 用户手动 toggle 左右侧栏后, compact shell 强制折叠逻辑不再覆盖, 平板 (768-1024) 首次折叠但保留 TopBar 三个 toggle 入口的实际可用性 |
+
+**任务 C — Alpha bug 巡逻 (1 P0 修复, 1 测试覆盖)**:
+
+| Bug | 文件 | 修复 |
+|---|---|---|
+| `_resolve_runner_escape` 用 `(gap_risk_raw_100 or 999.0) <= max` 模式, 当 `gap_risk_raw_100=0.0` (最低风险, 合法值) 时被 `or` 折叠为 999.0 (missing-data 哨兵), 误判为高风险并 block escape | `src/targets/short_trade_target_committee_helpers.py:290` | 改为显式 `(999.0 if x is None else x)`, 区分 "未传" 与 "传了 0.0". 三处同样模式 (`gap_risk_raw_100`, `projected_theme_exposure`, `amount_share`) 一起修. 同步加 regression test `test_resolve_runner_escape_zero_gap_risk_does_not_block` 覆盖 0.0 路径 |
+
+未发现新 StrEnum 大小写 / 日期解析 / NaN 传播 bug. 1008 行 committee_helpers 与 1407 行 evaluation_helpers 已系统扫描 (`or 999/1000/1e` 哨兵模式, `_optional_float` 调用路径, `clamp_unit_interval` NaN 防护).
+
+**测试**:
+- pytest alpha 域: **539 passed** (targets 248 + screening + research), 0 failed
+- vitest: **107 passed** (18 files), 0 failed
+- TypeScript: 我修改的 4 个文件 0 新增错误 (项目已有 16 个**预存** TS 错误在 gamma 域, 不在 R20.15 范围)
+
+**修改文件列表**:
+- `app/frontend/src/components/panels/bottom/tabs/backtest-output.tsx` (E-1 ErrorBoundary 包裹)
+- `app/frontend/src/components/backtest-equity-curve.tsx` (A-1/A-2 aria-label, E-2 NaN 过滤)
+- `app/frontend/src/components/Layout.tsx` (R-1 manualOverride)
+- `src/targets/short_trade_target_committee_helpers.py` (P0 0.0 风险误判)
+- `tests/targets/test_short_trade_committee.py` (新增 regression test)
+- `docs/cn/product/feature-proposals.md` (本文档)
+
+### v2.2.2 (2026-06-09) — Round 20.15: Gamma targets relief 重构 + 路由去重续 + 巡逻
+
+**任务 A — `short_trade_target_snapshot_relief_helpers.py` 重构**:
+
+1545 行单文件拆为 3 个内聚模块 + 1 个 models 模块 (原文件保留作为 back-compat 入口):
+
+| 文件 | 行数 | 职责 |
+|---|---|---|
+| `short_trade_target_snapshot_relief_models.py` | 147 | 8 个 frozen dataclasses (`SnapshotSignalState`, `PreparedBreakoutReliefs`, `SnapshotThresholdState`, `WatchlistPenaltyState`, `ScorePenaltyState`, `SnapshotReliefResolution`, `SnapshotCoreReliefs`, `SnapshotResolutionCoreState`). 抽离出来打破 criteria ↔ resolution 循环导入 |
+| `short_trade_target_snapshot_relief_criteria_helpers.py` | 450 | 标准级 relief resolvers: 市场状态 threshold 调整, selected close retention adjustment + penalty, breakout trap guard, event catalyst threshold 调整, BREAKOUT_TRAP_* 常量 + 小工具 |
+| `short_trade_target_snapshot_relief_resolution_helpers.py` | 1039 | 解析 orchestration: signal state builder, prepared breakout reliefs, watchlist/score penalty state, snapshot score payload, 解析 finalization + payload serialization |
+| `short_trade_target_snapshot_relief_helpers.py` | 108 | back-compat re-export wrapper (原 API 全部 re-export, `src/targets/short_trade_target.py` + `tests/targets/test_target_models.py` 不动) |
+
+总计 1744 行 vs 原 1545 行 (增加 ~13% 来自文档/分隔/import 仪式, 符合拆模块预期). 所有 248 个 targets 测试通过, 行为完全不变 (pure refactor).
+
+**任务 B — bug 巡逻 (1 P1 修复)**:
+
+| Bug | 文件 | 修复 |
+|---|---|---|
+| `_aggregate_trades` 用 `trade.get("pnl") or trade.get("return_pct")` 模式, 当 `pnl == 0.0` (保本交易) 时被 `or` 折叠到 `return_pct`, 严重误判: 0.0 PnL 实际表示 "保本" (应排除出 wins/losses), 但若 `return_pct` 非零会被错误归入 wins 或 losses | `src/portfolio/performance_report.py:282,320` | 抽离 `_resolve_trade_pnl(trade)`, 显式 `if "pnl" in trade` 检查, 区分 "未传" 与 "传了 0.0". 两处调用同步更新. 同步加 regression test `test_trade_aggregation_break_even_pnl_does_not_fall_back_to_return_pct` |
+| `param_search.py:259,265` `open(path)` 没显式 `encoding="utf-8"`, Windows 上默认 cp1252, 与其他 checkpoint 写入 (`encoding="utf-8"`) 不一致 | `src/backtesting/param_search.py` | 加 `encoding="utf-8"` (读 + 写) |
+
+未发现新的 NaN/inf/日期/concurrency bug (之前 R20.x 已覆盖 metrics.py NaN 防护 + 负 base clamp, datetime.now 主要用于 default, 文件操作多数已 utf-8).
+
+**任务 C — `@safe_route` 装饰器应用续 (R20.14 留下的 18 文件 → 现在剩 16)**:
+
+按 R20.14 同模式 (HTTPException 穿透, 其他 → 500) 应用到 2 个高重复文件:
+
+| 文件 | routes | 减少行 | 说明 |
+|---|---|---|---|
+| `app/backend/routes/ollama.py` | 9 (status, start, stop, models/download, models/download/progress, models/download/progress/{name}, models/downloads/active, models/{name} DELETE, models/recommended, models/download/{name} DELETE) | -48 行 (318 → 270) | 所有 endpoint 9 处 try/except 模板删除; 0/400/404 HTTPException 内部 raise 保留; 装饰器处理未捕获 Exception → 500 |
+| `app/backend/routes/replay_artifacts.py` | 9 | 0 行 (248 → 248) | 装饰器替换了 3 处 list/feedback-activity/workflow-queue 通用 try/except (-30 行), 但追加 6 处 FileNotFoundError→404 + ValueError→400 显式 raise (+30 行), 净持平. 行为不变, 错误处理代码更内聚 |
+
+同步更新 3 个依赖特定 detail 字符串 ("Failed to list replay artifacts" 等) 的 500 测试, 改为校验统一 `"Internal server error"` (与 R20.14 处理 flows/api_keys/flow_runs 一致).
+
+**测试**:
+- pytest gamma 域: **918 passed** (targets 248 + backtesting 418 + portfolio 87 + backend 134 + test_performance_report 31), 0 failed
+- 装饰器应用后 3 个旧 detail 测试已更新 (`test_r20_13_gamma_fixes.py` 三处 "Failed to ..." → "Internal server error")
+
+**修改文件列表**:
+- `src/targets/short_trade_target_snapshot_relief_models.py` (新, 147 行)
+- `src/targets/short_trade_target_snapshot_relief_criteria_helpers.py` (新, 450 行)
+- `src/targets/short_trade_target_snapshot_relief_resolution_helpers.py` (新, 1039 行)
+- `src/targets/short_trade_target_snapshot_relief_helpers.py` (改写为 re-export, 1545 → 108 行)
+- `src/portfolio/performance_report.py` (P1 bug 修复 + 抽离 `_resolve_trade_pnl`)
+- `src/backtesting/param_search.py` (open encoding 显式化)
+- `app/backend/routes/ollama.py` (@safe_route 装饰器, -48 行)
+- `app/backend/routes/replay_artifacts.py` (@safe_route 装饰器)
+- `tests/test_performance_report.py` (新增 regression test)
+- `tests/backend/test_r20_13_gamma_fixes.py` (3 处 detail 字符串更新)
+- `docs/cn/product/feature-proposals.md` (本文档)
+
+### v2.2.2 (2026-06-09) — Round20.15: Beta btst_reporting 重构 +巡逻
+
+**任务 A — `src/paper_trading/btst_reporting.py` 重构 (1600 →1360 行)**:
+
+btst_reporting.py主要是 facade (大量 `_impl` 一行委托), 但仍有 ~10 个真实逻辑函数.抽离到 `_btst_reporting/` 子目录, 与现有 `brief_rendering` / `premarket_card` / `opening_watch` / `priority_board` 等模块保持同一抽离模式:
+
+|抽离组 | 新文件 | 行数 | 内容 |
+|---|---|---|---|
+|死代码删除 | `btst_reporting.py` | -85 | 删除5 个未使用的 `_append_*_recommendation_lines`重复函数 (`btst_recommendation_helpers.py` 中已有等价实现, 这5 个纯 dead code) |
+| Premarket rendering | `_btst_reporting/premarket_rendering.py` |213 |8 个函数: `append_premarket_overview_markdown`, `append_premarket_action_block`, `append_premarket_action_section`, `append_candidate_watch_scoring_fields`, `append_candidate_watch_reason_tags`, `append_premarket_excluded_entries_markdown`, `append_premarket_primary_action_markdown`, `append_premarket_rollout_validation_markdown` |
+| Opening watch rendering | `_btst_reporting/opening_watch_rendering.py` |80 |2 个函数: `append_opening_watch_overview_markdown`, `append_opening_frontier_entries` |
+
+总计: btst_reporting.py 从1600 行 →1360 行 (-240 行, -15%). btst_reporting.py 中相应的 facade 函数用一行 deferred-import委托 (`from ... import ... as _extracted_mod` + `return _extracted_mod(...)`),保留原函数名和签名, **0行为变化** (diff 比对9 个输出函数: original vs refactored 输出字节级完全一致).
+
+**纯重构模式**: 所有外部 API (`from src.paper_trading.btst_reporting import ...`)保持兼容, `_build_btst_recommendation_lines` / `analyze_btst_next_day_trade_brief` / `generate_and_register_btst_followup_artifacts` 等仍可正常导入. `brief_builder` / `brief_resolver` 中 `from src.paper_trading.btst_reporting import _build_btst_recommendation_lines` / `analyze_btst_next_day_trade_brief` 的 lazy imports 也无需修改.
+
+**任务 B — bug巡逻 (无新 bug)**:
+
+扫描 `src/paper_trading/`全部24 个文件 (R20.14 后未动的):
+- `runtime.py` / `runtime_*_helpers.py`:全部是 facade,委托给 helper 模块, 无新逻辑
+- `runtime_io_helpers.py` / `frozen_replay.py` / `btst_trade_calendar.py`: 已审查
+- `btst_operator_summary.py` / `btst_outcome_ledger.py`: atomic write via `tempfile.mkstemp` + `Path(tmp).rename()` +失败清理 (R20.12 同模式, 已规范)
+- `optimized_profile_resolution.py`: 三层 fallback (missing → unreadable → malformed/invalid), 已规范
+- `runtime_observability_helpers.py`: 所有 `summary.get(...) or {}`模式, NaN防护 OK
+
+重点复查:
+- **subprocess timeout** (R20.12模式): paper_trading/ 下无 subprocess 调用, 不适用
+- **NaN/None传播** (R3-R6模式): `_is_missing` / `_to_float` / `_to_int` 三件套在 `btst_decision_enrichment.py` 已规范化
+- **StrEnum 大小写** (R4模式): `SummaryStatus` / `DecisionPhase` / `OutcomeVerdict` 等都用 `class X(str, Enum)`模式 + `.value` 比较, 无问题
+- **时间序列方向** (R4模式): `_parse_frozen_trade_date`严格校验8 位, `_build_recent_generated_buy_blocks`强制 `current_dt - buy_dt >0` 才记录
+
+未发现新 bug.死代码清理 (5 个未引用函数, -85 行) 是本轮唯一清理动作.
+
+**任务 C —性能** (无显著优化空间):
+
+- `brief_builder.py` / `historical_prior.py` 等已是缓存友好设计
+- `premarket_rendering` / `opening_watch_rendering`抽离后单文件更小, 但执行路径不变
+-串行 IO 主要在 `runtime_session_helpers.run_optional_cache_benchmark` 调用 `run_cache_reuse_benchmark` (已 subprocess隔离, 无并发机会)
+
+**测试**:
+- `pytest tests/test_btst_trade_calendar.py tests/test_frozen_replay.py tests/test_btst_report_utils.py tests/scripts/test_generate_btst_premarket_execution_card_script.py tests/scripts/test_generate_btst_next_day_priority_board_script.py tests/scripts/test_backfill_btst_followup_artifacts_script.py -v` → **43 passed**,0 failed
+- (1 pre-existing failure in `test_generate_btst_next_day_trade_brief_prefers_payoff_first_runner_recall_candidates` 与本轮 refactor无关 — 在 git HEAD 上同样失败)
+
+**修改文件列表**:
+- `src/paper_trading/_btst_reporting/premarket_rendering.py` (新,213 行)
+- `src/paper_trading/_btst_reporting/opening_watch_rendering.py` (新,80 行)
+- `src/paper_trading/btst_reporting.py` (重构,1600 →1360 行, -240 行,0行为变化)
+- `docs/cn/product/feature-proposals.md` (本文档)

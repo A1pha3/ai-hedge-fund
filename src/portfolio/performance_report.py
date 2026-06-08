@@ -264,6 +264,21 @@ def _compute_trading_days_in_period(start_date: str, end_date: str) -> int:
     return max(1, int(calendar_days * 5 / 7))
 
 
+def _resolve_trade_pnl(trade: Mapping[str, Any]) -> float:
+    """Resolve a trade's PnL value, preferring ``pnl`` over ``return_pct``.
+
+    The previous ``trade.get("pnl") or trade.get("return_pct")`` pattern
+    silently misclassified break-even trades (``pnl == 0``) because the
+    ``or`` short-circuits on the falsy zero.  Now we check presence
+    explicitly.
+    """
+    if "pnl" in trade and trade["pnl"] is not None:
+        return _safe_float(trade["pnl"], 0.0)
+    if "return_pct" in trade and trade["return_pct"] is not None:
+        return _safe_float(trade["return_pct"], 0.0)
+    return 0.0
+
+
 def _aggregate_trades(trades: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """聚合交易统计。"""
     if not trades:
@@ -279,7 +294,7 @@ def _aggregate_trades(trades: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     wins: list[float] = []
     losses: list[float] = []
     for trade in trades:
-        pnl = _safe_float(trade.get("pnl") or trade.get("return_pct"), 0.0)
+        pnl = _resolve_trade_pnl(trade)
         if pnl > 0:
             wins.append(pnl)
         elif pnl < 0:
@@ -317,7 +332,7 @@ def _aggregate_strategy_attribution(trades: Sequence[Mapping[str, Any]], positio
             strategy = str(trade.get("strategy", "") or "unknown").strip().lower()
             if not strategy or strategy == "unknown":
                 continue
-            pnl = _safe_float(trade.get("pnl") or trade.get("return_pct"), 0.0)
+            pnl = _resolve_trade_pnl(trade)
             strategy_pnl[strategy] = strategy_pnl.get(strategy, 0.0) + pnl
         if strategy_pnl:
             return strategy_pnl

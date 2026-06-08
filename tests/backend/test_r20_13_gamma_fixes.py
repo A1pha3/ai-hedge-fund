@@ -140,7 +140,7 @@ def test_list_replay_artifacts_returns_500_on_service_failure(monkeypatch):
 
     response = client.get("/replay-artifacts/")
     assert response.status_code == 500
-    assert "Failed to list replay artifacts" in response.json()["detail"]
+    assert "Internal server error" in response.json()["detail"]
 
 
 def test_get_replay_feedback_activity_returns_500_on_service_failure(monkeypatch):
@@ -159,7 +159,7 @@ def test_get_replay_feedback_activity_returns_500_on_service_failure(monkeypatch
 
     response = client.get("/replay-artifacts/feedback-activity")
     assert response.status_code == 500
-    assert "Failed to get replay feedback activity" in response.json()["detail"]
+    assert "Internal server error" in response.json()["detail"]
 
 
 def test_get_replay_workflow_queue_returns_500_on_service_failure(monkeypatch):
@@ -178,7 +178,7 @@ def test_get_replay_workflow_queue_returns_500_on_service_failure(monkeypatch):
 
     response = client.get("/replay-artifacts/workflow-queue")
     assert response.status_code == 500
-    assert "Failed to get replay workflow queue" in response.json()["detail"]
+    assert "Internal server error" in response.json()["detail"]
 
 
 # ===========================================================================

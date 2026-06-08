@@ -31,15 +31,31 @@ function LayoutContent() {
   const { user } = useAuth();
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : COMPACT_VIEWPORT_WIDTH));
-  
+
   // Initialize sidebar states from storage service
-  const [isLeftCollapsed, setIsLeftCollapsed] = useState(() => 
+  const [isLeftCollapsed, setIsLeftCollapsed] = useState(() =>
     shouldUseCompactShell() || SidebarStorageService.loadLeftSidebarState(false)
   );
-  
-  const [isRightCollapsed, setIsRightCollapsed] = useState(() => 
+
+  const [isRightCollapsed, setIsRightCollapsed] = useState(() =>
     shouldUseCompactShell() || SidebarStorageService.loadRightSidebarState(false)
   );
+
+  // R20.15 GAMMA R-1: tablet (768-1024) navigation entry — when the viewport
+  // enters compact shell, do NOT force-collapse sidebars that the user has
+  // already manually expanded (manualOverride). On the first transition into
+  // compact shell, default to collapsed as before; once the user opens a
+  // sidebar we honor their choice until the next viewport reset.
+  const [manualOverride, setManualOverride] = useState(false);
+
+  const handleToggleLeft = () => {
+    setIsLeftCollapsed(prev => !prev);
+    setManualOverride(true);
+  };
+  const handleToggleRight = () => {
+    setIsRightCollapsed(prev => !prev);
+    setManualOverride(true);
+  };
 
   // Track actual sidebar widths for dynamic positioning
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(280);
@@ -93,11 +109,11 @@ function LayoutContent() {
   const isCompactShell = viewportWidth < COMPACT_VIEWPORT_WIDTH;
 
   useEffect(() => {
-    if (isCompactShell) {
+    if (isCompactShell && !manualOverride) {
       setIsLeftCollapsed(true);
       setIsRightCollapsed(true);
     }
-  }, [isCompactShell]);
+  }, [isCompactShell, manualOverride]);
 
   // Calculate tab bar and bottom panel positioning based on actual sidebar widths
   const getSidebarBasedStyle = () => {
@@ -132,8 +148,8 @@ function LayoutContent() {
         isLeftCollapsed={isLeftCollapsed}
         isRightCollapsed={isRightCollapsed}
         isBottomCollapsed={isBottomCollapsed}
-        onToggleLeft={() => setIsLeftCollapsed(!isLeftCollapsed)}
-        onToggleRight={() => setIsRightCollapsed(!isRightCollapsed)}
+        onToggleLeft={handleToggleLeft}
+        onToggleRight={handleToggleRight}
         onToggleBottom={toggleBottomPanel}
         onReplayArtifactsClick={handleReplayArtifactsClick}
         onSettingsClick={handleSettingsClick}

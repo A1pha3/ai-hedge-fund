@@ -3,6 +3,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils';
 import { MoreHorizontal } from 'lucide-react';
 import { BacktestEquityCurve } from '@/components/backtest-equity-curve';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { getActionColor } from './output-tab-utils';
 
 // Component for displaying backtest progress
@@ -437,6 +438,23 @@ function BacktestSkeleton({ state }: { state: 'loading' | 'streaming' }) {
 
 // Main component for backtest output
 export function BacktestOutput({
+  agentData,
+  outputData
+}: {
+  agentData: Record<string, any>;
+  outputData: any;
+}) {
+  return (
+    <ErrorBoundary>
+      <BacktestOutputInner agentData={agentData} outputData={outputData} />
+    </ErrorBoundary>
+  );
+}
+
+// R20.15 GAMMA: Inner component wrapped by ErrorBoundary to prevent the
+// whole BacktestOutput region from going white-screen when malformed
+// streaming data (NaN, missing fields) triggers a render-time exception.
+function BacktestOutputInner({
   agentData,
   outputData
 }: {

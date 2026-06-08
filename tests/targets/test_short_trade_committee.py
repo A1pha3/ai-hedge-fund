@@ -1703,6 +1703,40 @@ def test_resolve_runner_escape_not_blocked_when_pool_quality_above_min() -> None
     assert "pool_quality_below_min" not in reasons
 
 
+def test_resolve_runner_escape_zero_gap_risk_does_not_block() -> None:
+    """R20.15: gap_risk_raw_100=0.0 must NOT be coerced to 999.0 by the 'or' fallback.
+
+    The old `(gap_risk_raw_100 or 999.0) <= max` pattern collapsed 0.0 (a
+    legitimate, lowest-risk value) to 999.0 (the missing-data sentinel),
+    blocking escape for the safest candidates.  Verify the explicit
+    None-coalesce path keeps 0.0 pass-through.
+    """
+    from src.targets.short_trade_target_committee_helpers import _resolve_runner_escape
+
+    class ZeroRiskProfile:
+        runner_escape_enabled = True
+        runner_escape_pool_quality_min = 0.0
+        runner_escape_breakout_freshness_min = 0.0
+        runner_escape_trend_acceleration_min = 0.0
+        runner_escape_volume_expansion_quality_min = 0.0
+        runner_escape_composite_score_min = 0.0
+        runner_escape_gap_risk_raw_100_max = 50.0  # would block if coerced to 999.0
+        runner_escape_projected_theme_exposure_max = 0.5
+        runner_escape_candidate_pool_avg_amount_share_of_cutoff_min = 0.5
+
+    snapshot = {"breakout_freshness": 0.9, "trend_acceleration": 0.8, "volume_expansion_quality": 0.7}
+    raw_metrics = {
+        "candidate_pool_avg_amount_share_of_cutoff": 1.5,
+        "projected_theme_exposure": 0.2,
+        "gap_risk_raw_100": 0.0,  # lowest possible — must NOT be misread as missing
+    }
+
+    escaped, reasons = _resolve_runner_escape(profile=ZeroRiskProfile(), snapshot=snapshot, raw_metrics=raw_metrics)
+
+    assert escaped is True
+    assert reasons == ["runner_escape_breakout", "runner_escape_trend", "runner_escape_volume"]
+
+
 def test_runner_escape_pool_quality_min_defaults_to_zero() -> None:
     """runner_escape_pool_quality_min must default to 0.0 on ShortTradeTargetProfile (gate disabled by default)."""
     from src.targets.profiles import build_short_trade_target_profile

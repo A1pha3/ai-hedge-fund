@@ -256,13 +256,13 @@ def check_guardrails(
 def _load_checkpoint(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"completed_trials": []}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
 def _save_checkpoint(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, default=str)
 
 

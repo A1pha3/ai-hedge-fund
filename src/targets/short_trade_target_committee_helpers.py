@@ -287,7 +287,13 @@ def _resolve_runner_escape(*, profile: Any, snapshot: dict[str, Any], raw_metric
         composite_score_pass = composite_score >= composite_score_min
     else:
         composite_score_pass = True
-    escaped = len(reasons) == 3 and composite_score_pass and (gap_risk_raw_100 or 999.0) <= getattr(profile, "runner_escape_gap_risk_raw_100_max", 0.0) and (projected_theme_exposure or 999.0) <= getattr(profile, "runner_escape_projected_theme_exposure_max", 0.0) and (amount_share or 0.0) >= getattr(profile, "runner_escape_candidate_pool_avg_amount_share_of_cutoff_min", 999.0)
+    escaped = (
+        len(reasons) == 3
+        and composite_score_pass
+        and (999.0 if gap_risk_raw_100 is None else gap_risk_raw_100) <= getattr(profile, "runner_escape_gap_risk_raw_100_max", 0.0)
+        and (999.0 if projected_theme_exposure is None else projected_theme_exposure) <= getattr(profile, "runner_escape_projected_theme_exposure_max", 0.0)
+        and (0.0 if amount_share is None else amount_share) >= getattr(profile, "runner_escape_candidate_pool_avg_amount_share_of_cutoff_min", 999.0)
+    )
     return escaped, reasons
 
 

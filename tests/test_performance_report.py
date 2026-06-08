@@ -282,6 +282,24 @@ def test_trade_aggregation_empty():
     assert stats["win_rate"] == 0.0
 
 
+def test_trade_aggregation_break_even_pnl_does_not_fall_back_to_return_pct():
+    """R20.15 Bug: ``pnl == 0`` with a non-zero ``return_pct`` was
+    misclassified because the previous ``pnl or return_pct`` expression
+    short-circuited on the falsy zero.  After the fix, ``pnl`` is
+    preferred when present (even at 0), and the break-even trade is
+    excluded from wins / losses.
+    """
+    trades = [
+        {"pnl": 0.05, "return_pct": 999.0},  # win (return_pct ignored)
+        {"pnl": 0.0, "return_pct": -0.99},   # break-even, NOT a loss
+    ]
+    stats = _aggregate_trades(trades)
+    assert stats["win_count"] == 1
+    assert stats["loss_count"] == 0
+    assert stats["total_trades"] == 1  # break-even excluded
+    assert stats["win_rate"] == 1.0
+
+
 # ---------------------------------------------------------------------------
 # Test 7: 策略归因聚合
 # ---------------------------------------------------------------------------
