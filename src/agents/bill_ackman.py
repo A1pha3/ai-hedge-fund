@@ -1,3 +1,10 @@
+"""Bill Ackman investment-style agent.
+
+Activist high-conviction approach: focuses on a small number of high-quality
+businesses with simple, predictable, free-cash-flow-generative models and
+identifies catalysts (operational, structural, regulatory) for value unlock.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage

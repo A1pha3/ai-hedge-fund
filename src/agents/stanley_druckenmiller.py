@@ -1,3 +1,10 @@
+"""Stanley Druckenmiller investment-style agent.
+
+Macro-driven, asymmetric-bet approach: identifies major economic inflection
+points (rates, FX, commodities) and positions for outsized moves in
+high-conviction, concentrated bets.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage

@@ -1,3 +1,9 @@
+"""Behavioral / market sentiment analysis agent.
+
+Aggregates price/volume-derived sentiment signals (returns distribution, breadth,
+skewness, momentum factor) into a single sentiment score, without LLM reasoning.
+"""
+
 import json
 
 import numpy as np

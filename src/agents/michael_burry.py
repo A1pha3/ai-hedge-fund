@@ -1,3 +1,10 @@
+"""Michael Burry investment-style agent.
+
+Contrarian deep-value approach: identifies over-shorted or hated businesses
+where the market narrative is disconnected from underlying fundamentals, often
+validated through forensic accounting and short-interest analysis.
+"""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,11 @@
+"""Portfolio manager agent.
+
+Aggregates all analyst signals (investor + analyst agents) and produces final
+trading decisions (buy/sell/short/hold) with position sizing, taking risk
+manager limits into account. Sub-scoring helpers live in
+``portfolio_manager_helpers``.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage

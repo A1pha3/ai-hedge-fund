@@ -1,3 +1,10 @@
+"""Warren Buffett investment-style agent.
+
+Value investing with competitive moat, owner earnings, and long-term horizon.
+Emphasises business quality, management integrity, and margin of safety.
+Sub-scoring helpers live in ``warren_buffett_helpers``.
+"""
+
 import json
 import math
 

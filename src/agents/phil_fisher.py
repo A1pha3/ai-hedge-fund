@@ -1,3 +1,10 @@
+"""Phil Fisher investment-style agent.
+
+Scuttlebutt growth-research approach: deep qualitative research on management
+quality, R&D effectiveness, profit margins, and long-term growth drivers.
+Emphasises "buy right and hold" multi-year compounding.
+"""
+
 import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate

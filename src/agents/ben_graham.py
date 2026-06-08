@@ -1,3 +1,9 @@
+"""Ben Graham investment-style agent.
+
+Deep value approach: Graham Number, net-net working capital, and earnings/book
+yield screens to identify statistically cheap securities with margin of safety.
+"""
+
 import json
 import math
 

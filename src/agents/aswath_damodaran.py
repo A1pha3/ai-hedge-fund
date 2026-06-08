@@ -1,3 +1,9 @@
+"""Aswath Damodaran investment-style agent.
+
+Story + numbers valuation approach: combines qualitative business-story assessment
+with quantitative intrinsic-value modelling (DCF, relative valuation, simulation).
+"""
+
 from __future__ import annotations
 
 import json

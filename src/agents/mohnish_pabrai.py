@@ -1,3 +1,10 @@
+"""Mohnish Pabrai investment-style agent.
+
+Dhandho framework (low risk, high reward, few bets, big bets, infrequent bets):
+seeks a few asymmetrical bets with limited downside and significant upside,
+mirroring Pabrai's concentrated value-investing approach.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage

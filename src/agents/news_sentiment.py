@@ -1,3 +1,9 @@
+"""News sentiment analysis agent.
+
+Scores company-related news (earnings, guidance, M&A, regulatory events) to
+produce a sentiment signal. Sub-scoring helpers live in ``news_sentiment_helpers``.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage

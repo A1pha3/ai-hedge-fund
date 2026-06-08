@@ -1,3 +1,11 @@
+"""Technical analysis agent.
+
+Multi-strategy chart-based analysis: trend following, mean reversion, momentum,
+volatility-regime, and statistical-arbitrage signals fused into a single
+direction. Sub-scoring and Chinese-reasoning helpers live in
+``technicals_reasoning_helpers``.
+"""
+
 import json
 import math
 

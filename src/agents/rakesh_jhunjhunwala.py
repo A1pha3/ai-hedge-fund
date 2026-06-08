@@ -1,3 +1,10 @@
+"""Rakesh Jhunjhunwala investment-style agent.
+
+Emerging-markets conviction investor approach: focuses on Indian/emerging
+high-growth consumer, financial-services, and infrastructure businesses with
+strong management, scalability, and reasonable valuations.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage

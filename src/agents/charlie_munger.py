@@ -1,3 +1,10 @@
+"""Charlie Munger investment-style agent.
+
+Quality-at-fair-price approach: focuses on wonderful businesses at sensible
+prices, mental models, owner earnings, and avoidance of stupidity over seeking
+brilliance.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage

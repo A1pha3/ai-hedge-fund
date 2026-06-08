@@ -1,3 +1,10 @@
+"""Peter Lynch investment-style agent.
+
+Ten-bagger growth-at-a-reasonable-price (GARP) approach: categorises companies
+into Six Categories (slow/fast/stalwarts/cyclicals/turnarounds/assets) and
+emphasises PEG ratio, simple-to-understand businesses, and consistent earnings.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage

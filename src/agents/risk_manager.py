@@ -1,3 +1,10 @@
+"""Risk manager agent.
+
+Volatility-adjusted position sizing and risk-budget enforcement. Computes
+realised volatility, value-at-risk, and per-position limits to constrain
+downstream portfolio-manager decisions.
+"""
+
 import json
 
 import numpy as np

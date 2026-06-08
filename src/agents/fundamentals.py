@@ -1,3 +1,10 @@
+"""Fundamental analysis agent.
+
+Financial statement analysis: profitability, balance-sheet health, cash-flow
+quality, and accounting-red-flag detection. Sub-scoring helpers live in
+``fundamentals_helpers``.
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage
