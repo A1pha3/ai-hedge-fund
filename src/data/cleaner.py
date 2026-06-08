@@ -116,7 +116,7 @@ class SmartDataCleaner:
     }
 
     def __init__(self):
-        self.detector = OutlierDetector()
+        pass
 
     def clean_financial_metrics(self, metrics: list[FinancialMetrics], ticker: str = "") -> list[FinancialMetrics]:
         """清洗财务指标数据
@@ -132,7 +132,7 @@ class SmartDataCleaner:
             return []
 
         metrics = self._fix_unit_errors(metrics, ticker)
-        return self._handle_outliers(metrics, ticker)
+        return metrics
 
 
     def _fix_unit_errors(self, metrics: list[FinancialMetrics], ticker: str) -> list[FinancialMetrics]:
@@ -158,20 +158,6 @@ class SmartDataCleaner:
                 fixed_metrics.append(metric)
 
         return fixed_metrics
-
-    def _handle_outliers(self, metrics: list[FinancialMetrics], ticker: str) -> list[FinancialMetrics]:
-        """处理异常值
-
-        使用 IQR 方法检测异常值并记录日志
-        """
-        roe_values = [m.return_on_equity for m in metrics if m.return_on_equity is not None]
-
-        if len(roe_values) >= 4:
-            outlier_indices = self.detector.iqr_method(roe_values)
-            if outlier_indices:
-                logger.warning(f"[{ticker}] 检测到 {len(outlier_indices)} 个 ROE 异常值")
-
-        return metrics
 
     def clean_dict_metrics(self, metrics: list[dict[str, Any]], ticker: str = "") -> list[dict[str, Any]]:
         """清洗字典格式的财务指标

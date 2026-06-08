@@ -456,6 +456,7 @@ def get_mock_financial_metrics(ticker: str, end_date: str, limit: int = 10) -> l
 
 
 def _load_sina_historical_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
+    """WARNING: This function returns MOCK data, not real Sina data. Use get_prices() instead for real data."""
     import random
 
     AShareTicker.from_symbol(ticker)
@@ -465,6 +466,8 @@ def _load_sina_historical_prices(ticker: str, start_date: str, end_date: str) ->
 
 def get_sina_historical_data(ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
     """
+    WARNING: This function returns MOCK data, not real Sina data. Use get_prices() instead for real data.
+
     通过新浪财经获取历史数据（增强版）
 
     Args:
@@ -546,7 +549,7 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str | None =
 
         try:
             from src.tools.tushare_api import get_stock_name
-        except Exception:
+        except ImportError:
             def get_stock_name(_ticker):
                 return ""
 

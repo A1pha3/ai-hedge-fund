@@ -367,41 +367,23 @@ class DataRouter:
         if not providers:
             return DataResponse(data=[], source="router", error="No healthy providers available")
 
-        # 依次尝试每个提供商，同时记录健康状态到全局 HealthMonitor
-        monitor = get_health_monitor()
-        last_error = None
+        response, last_error = await fetch_from_providers(
+            providers,
+            request_label=f"{ticker} news",
+            logger=logger,
+            fetcher=lambda provider: provider.get_company_news(ticker, start_date, end_date),
+        )
+        if response is None:
+            return build_router_failure_response(last_error)
 
-        for provider in providers:
-            start = time.monotonic()
+        # 缓存结果
+        if use_cache:
             try:
-                response = await provider.get_company_news(ticker, start_date, end_date)
-                latency_ms = (time.monotonic() - start) * 1000
-
-                if response.error:
-                    last_error = response.error
-                    monitor.record_failure(provider.name, latency_ms, error=response.error)
-                    continue
-
-                if response.data:
-                    monitor.record_success(provider.name, latency_ms)
-                    # 缓存结果
-                    if use_cache:
-                        self._set_to_cache(cache_key, DataType.NEWS, serialize_cache_records(response.data))
-
-                    return response
-
-                # 空数据但无 error —— 视为成功（provider 正常返回，只是没有数据）
-                monitor.record_success(provider.name, latency_ms)
-                last_error = "empty response"
-                continue
-
+                self._set_to_cache(cache_key, DataType.NEWS, serialize_cache_records(response.data))
             except Exception as e:
-                latency_ms = (time.monotonic() - start) * 1000
-                last_error = str(e)
-                monitor.record_failure(provider.name, latency_ms, error=last_error)
-                continue
+                logger.warning(f"Failed to cache news: {e}")
 
-        return DataResponse(data=[], source="router", error=f"All providers failed. Last error: {last_error}")
+        return response
 
     async def execute_request(self, request: DataRequest) -> DataResponse:
         """

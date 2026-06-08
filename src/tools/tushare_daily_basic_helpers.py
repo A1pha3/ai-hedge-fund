@@ -26,6 +26,11 @@ def load_daily_basic_batch(
     except Exception:
         return None
 
+    # 2-year lookback window is intentional: daily_basic fields (PE, PB, PS, etc.)
+    # change slowly and most are only updated quarterly. A 2-year window ensures
+    # we always have enough history for single-query cache hits without needing
+    # incremental fetches.  The `lookback_days` parameter is NOT used here because
+    # the fixed 730-day window is the deliberate design choice.
     start_fmt = (date_obj - timedelta(days=730)).strftime("%Y%m%d")
     try:
         df_batch = pro.query("daily_basic", ts_code=ts_code, start_date=start_fmt, end_date=actual_end)
