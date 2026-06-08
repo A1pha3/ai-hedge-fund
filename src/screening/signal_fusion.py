@@ -514,3 +514,68 @@ def fuse_batch(
         results.append(fused)
     _apply_cross_sectional_attention_metrics(results)
     return results
+
+
+# ============================================================
+# R20.5: 因子瀑布 (Factor-level Waterfall)
+# ============================================================
+
+
+def compute_score_decomposition(fused: FusedScore, consecutive_info: dict | None = None) -> dict:
+    """Decompose a FusedScore's score_b into its individual adjustment components.
+
+    Returns a dict with the following keys, all floats:
+      - base_contributions: dict[str, float] — per-strategy (T/MR/F/E) weighted
+        contribution: ``weight * direction * (confidence/100) * completeness``
+      - attention_contribution: float — attention_composite cross-sectional boost
+      - stability_bonus: float — consecutive-day bonus (from consecutive_info)
+      - consensus_bonus: float — bullish/bearish consensus bonus indicator
+      - other_adjustments: float — market-state scaled adjustments that the
+        base contributions don't capture (currently a residual approximation)
+      - total: float — sum of all components (should approximate score_b)
+
+    The decomposition is *informative*, not authoritative: the final score_b is
+    the canonical value, and the components explain *roughly* where the value
+    came from. Use it for transparency ("why is A ranked above B"), not for
+    reconstruction.
+    """
+    consecutive_info = consecutive_info or {}
+    weights = fused.weights_used or {}
+    signals = fused.strategy_signals or {}
+
+    base_contributions: dict[str, float] = {}
+    for sname in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+        w = float(weights.get(sname, 0.0) or 0.0)
+        sig = signals.get(sname)
+        if sig is None or w == 0.0:
+            base_contributions[sname] = 0.0
+            continue
+        confidence = float(getattr(sig, "confidence", 0.0) or 0.0)
+        direction = float(getattr(sig, "direction", 0.0) or 0.0)
+        completeness = float(getattr(sig, "completeness", 1.0) or 1.0)
+        base_contributions[sname] = w * direction * (confidence / 100.0) * completeness
+
+    attention = float((fused.metrics or {}).get("attention_composite", 0.0) or 0.0)
+    stability_bonus = float(consecutive_info.get("stability_bonus", 0.0) or 0.0)
+
+    # Consensus bonus: 0.05 if bullish, -0.05 if bearish (matching GAMMA-016 fix).
+    # The actual applied bonus is tracked in arbitrage_applied if present.
+    consensus_bonus = 0.0
+    arb = fused.arbitration_applied or []
+    if "consensus_bonus_bullish" in arb:
+        consensus_bonus = 0.05
+    elif "consensus_bonus_bearish" in arb:
+        consensus_bonus = -0.05
+
+    base_sum = sum(base_contributions.values())
+    components_sum = base_sum + attention + stability_bonus + consensus_bonus
+    other_adjustments = float(fused.score_b) - components_sum
+
+    return {
+        "base_contributions": base_contributions,
+        "attention_contribution": attention,
+        "stability_bonus": stability_bonus,
+        "consensus_bonus": consensus_bonus,
+        "other_adjustments": other_adjustments,
+        "total": float(fused.score_b),
+    }

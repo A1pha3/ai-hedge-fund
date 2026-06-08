@@ -273,7 +273,11 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
     Raises:
         AShareDataError: 当无法获取数据且 use_mock=False 时抛出
     """
-    cache_key = f"akshare::ashare_{ticker}_{start_date}_{end_date}_{period}"
+    # Normalize dates to YYYYMMDD to avoid cache fragmentation
+    # (callers may pass "2026-01-01" or "20260101" for the same data).
+    _norm_start = str(start_date).replace("-", "")
+    _norm_end = str(end_date).replace("-", "")
+    cache_key = f"akshare::ashare_{ticker}_{_norm_start}_{_norm_end}_{period}"
 
     saved_proxies = _disable_system_proxies()
 
@@ -629,10 +633,15 @@ def get_money_flow(ticker: str) -> pd.DataFrame | None:
     返回 DataFrame 列: 日期, 收盘价, 涨跌幅, 主力净流入, 主力净流入占比,
                        超大单净流入, 大单净流入, 中单净流入, 小单净流入
     """
+    # Use detect_ashare_exchange for correct market classification including
+    # Beijing exchange (4/8/92 prefixes).  AKShare fund_flow may not support
+    # "bj" market — fall back to "sz" for BJ-listed tickers.
+    _exchange = detect_ashare_exchange(ticker)
+    _market = "sh" if _exchange == "sh" else "sz"
     return load_optional_market_dataframe(
         is_available=_akshare_available,
         unavailable_message="[AKShare] akshare 未安装",
-        fetch_dataframe_fn=lambda: ak.stock_individual_fund_flow(stock=ticker, market="sh" if ticker.startswith("6") else "sz"),
+        fetch_dataframe_fn=lambda m=_market: ak.stock_individual_fund_flow(stock=ticker, market=m),
         error_message=f"[AKShare] get_money_flow({ticker}) 失败",
     )
 

@@ -33,18 +33,30 @@ def sentiment_analyst_agent(state: AgentState, agent_id: str = "sentiment_analys
 
         progress.update_status(agent_id, ticker, "Analyzing trading patterns")
 
-        # Get the signals from the insider trades
+        # Get the signals from the insider trades. Zero-share trades likely
+        # represent missing/cancelled transactions, NOT bullish conviction —
+        # treat them as neutral noise (R20.5 sentiment fix).
         transaction_shares = pd.Series([t.transaction_shares for t in insider_trades]).dropna()
-        insider_signals = np.where(transaction_shares < 0, "bearish", "bullish").tolist()
+        insider_signals = np.where(
+            transaction_shares < 0,
+            "bearish",
+            np.where(transaction_shares == 0, "neutral", "bullish"),
+        ).tolist()
 
         progress.update_status(agent_id, ticker, "Fetching company news")
 
         # Get the company news
         company_news = get_company_news(ticker, end_date, limit=100, api_key=api_key)
 
-        # Get the sentiment from the company news
+        # Get the sentiment from the company news. Whitelist only known labels
+        # explicitly so unrecognized values (e.g. "mixed", "unclear") don't
+        # silently inflate the neutral count (R20.5 sentiment fix).
         sentiment = pd.Series([n.sentiment for n in company_news]).dropna()
-        news_signals = np.where(sentiment == "negative", "bearish", np.where(sentiment == "positive", "bullish", "neutral")).tolist()
+        news_signals = np.where(
+            sentiment == "positive",
+            "bullish",
+            np.where(sentiment == "negative", "bearish", "neutral"),
+        ).tolist()
 
         progress.update_status(agent_id, ticker, "Combining signals")
         # Combine signals from both sources with weights

@@ -365,8 +365,13 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
     terminal_growth = 0.025
     years = 10
 
-    # Discount rate
-    discount = risk_analysis.get("cost_of_equity") or 0.09
+    # Discount rate — use explicit None check (R20.5 sentiment-or-fallback fix).
+    # Python's `or` would also fall back on a legitimate 0.0, so we check None
+    # explicitly. The MAX_COST_OF_EQUITY cap (0.30) means real values are
+    # never 0, but this is the correct pattern regardless.
+    _cost_of_equity = risk_analysis.get("cost_of_equity")
+    discount = _cost_of_equity if _cost_of_equity is not None else 0.09
+    discount = min(discount, 0.30)  # re-apply the cap from estimate_cost_of_equity
 
     # Project FCFF and discount (compound growth)
     pv_sum = 0.0

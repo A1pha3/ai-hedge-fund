@@ -8,6 +8,7 @@ import functools
 import hashlib
 import json
 import os
+import threading
 from typing import Any
 
 import pandas as pd
@@ -102,18 +103,27 @@ def create_session():
     return session
 
 
+# Module-level lock to serialize proxy env mutations across threads.  Without
+# this, concurrent ``get_financial_metrics`` / ``search_stocks`` calls can
+# corrupt ``os.environ`` — thread A's restore fires while thread B's disable
+# reads, leaking proxy settings across threads.  BETA proxy-race fix (R20.5).
+_PROXY_LOCK = threading.Lock()
+
+
 def disable_system_proxies() -> dict[str, str]:
-    saved: dict[str, str] = {}
-    for var in PROXY_ENV_VARS:
-        if var in os.environ:
-            saved[var] = os.environ[var]
-            del os.environ[var]
-    return saved
+    with _PROXY_LOCK:
+        saved: dict[str, str] = {}
+        for var in PROXY_ENV_VARS:
+            if var in os.environ:
+                saved[var] = os.environ[var]
+                del os.environ[var]
+        return saved
 
 
 def restore_proxies(saved: dict[str, str]) -> None:
-    for var, value in saved.items():
-        os.environ[var] = value
+    with _PROXY_LOCK:
+        for var, value in saved.items():
+            os.environ[var] = value
 
 
 def disable_proxy_temporarily(disable_proxies, restore_saved_proxies):

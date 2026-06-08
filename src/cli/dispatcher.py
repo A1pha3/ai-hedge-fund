@@ -369,7 +369,19 @@ def _resolve_watchlist(argv: list[str]) -> int | None:
 
 
 def _resolve_top(argv: list[str]) -> int | None:
-    """``--top [N]`` — 显示最近一次 ``--auto`` 运行的 Top N 推荐 (无需重跑)。"""
+    """``--top [N] [--filter KEY=VALUE ...]`` — 显示最近一次 ``--auto`` 运行的 Top N 推荐 (无需重跑)。
+
+    支持的过滤参数:
+      --industry=电子        申万行业 (子串匹配)
+      --min-score=0.5        最低 score_b
+      --max-score=0.8        最高 score_b
+      --min-market-cap=100e8 最低市值 (元)
+      --max-market-cap=500e8 最高市值 (元)
+      --exclude-st           排除 ST/*ST
+      --min-consecutive=2    最低连续推荐天数
+      --ticker=000001        精确匹配 ticker
+      --name-contains=银行    名称包含子串
+    """
     if "--top" not in argv:
         return None
     from src.main import run_top
@@ -385,7 +397,40 @@ def _resolve_top(argv: list[str]) -> int | None:
                 val = a.split("=", 1)[1]
                 if val.isdigit():
                     top_n = int(val)
-    return run_top(top_n=top_n)
+
+    # Parse filter parameters
+    filters: dict = {}
+    filter_keys = {
+        "--industry": "industry",
+        "--min-score": "min_score",
+        "--max-score": "max_score",
+        "--min-market-cap": "min_market_cap",
+        "--max-market-cap": "max_market_cap",
+        "--min-consecutive": "min_consecutive",
+        "--ticker": "ticker",
+        "--name-contains": "name_contains",
+    }
+    for flag, key in filter_keys.items():
+        val = _get_kv(argv, flag)
+        if val is not None:
+            # Convert numeric filters
+            if key in ("min_score", "max_score", "min_market_cap", "max_market_cap"):
+                try:
+                    filters[key] = float(val)
+                except ValueError:
+                    pass
+            elif key == "min_consecutive":
+                try:
+                    filters[key] = int(val)
+                except ValueError:
+                    pass
+            else:
+                filters[key] = val
+
+    if "--exclude-st" in argv:
+        filters["exclude_st"] = True
+
+    return run_top(top_n=top_n, filters=filters or None)
 
 
 # 命令注册表: flag -> handler function

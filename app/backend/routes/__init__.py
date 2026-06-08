@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.backend.routes.attribution import router as attribution_router
+from app.backend.routes.backtest_visualization import router as backtest_visualization_router
 from app.backend.routes.data_sources import router as data_sources_router
 from app.backend.routes.hedge_fund import router as hedge_fund_router
 from app.backend.routes.health import router as health_router
@@ -39,6 +40,8 @@ api_router.include_router(attribution_router, tags=["portfolio"])
 api_router.include_router(portfolio_simulator_router, tags=["portfolio"])
 # P1-6: Portfolio risk snapshot (VaR / CVaR / drawdown / concentration)
 api_router.include_router(risk_metrics_router, tags=["portfolio"])
+# P0-4: Backtest visualization data (equity curve, drawdown, monthly returns)
+api_router.include_router(backtest_visualization_router, tags=["backtest"])
 # P1-5: Web 端一键选股 (public analytics endpoint, may take up to 60s)
 api_router.include_router(screening_router, tags=["screening"])
 

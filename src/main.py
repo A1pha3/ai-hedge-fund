@@ -1033,17 +1033,95 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         progress.stop()
 
 
-def run_top(top_n: int = 10) -> int:
-    """``--top [N]`` — 显示最近一次 ``--auto`` 的 Top N 推荐，无需重跑流水线。
+def _apply_top_filters(recs: list[dict], filters: dict) -> tuple[list[dict], str]:
+    """Filter recommendations from a cached report without re-running the pipeline.
+
+    Returns:
+        (filtered_recs, filter_summary_string) — summary is human-readable for CLI display.
+    """
+    parts: list[str] = []
+    before = len(recs)
+
+    # Industry filter (substring match on industry_sw)
+    industry = filters.get("industry")
+    if industry:
+        recs = [r for r in recs if industry in (r.get("industry_sw", "") or "")]
+        parts.append(f"行业={industry}")
+
+    # Score range filters
+    min_score = filters.get("min_score")
+    if min_score is not None:
+        recs = [r for r in recs if float(r.get("score_b", 0) or 0) >= float(min_score)]
+        parts.append(f"score_b≥{min_score}")
+
+    max_score = filters.get("max_score")
+    if max_score is not None:
+        recs = [r for r in recs if float(r.get("score_b", 0) or 0) <= float(max_score)]
+        parts.append(f"score_b≤{max_score}")
+
+    # Market cap range (元)
+    min_mcap = filters.get("min_market_cap")
+    if min_mcap is not None:
+        threshold = float(min_mcap)
+        recs = [r for r in recs if float(r.get("market_cap", 0) or 0) >= threshold]
+        parts.append(f"市值≥{min_mcap}")
+
+    max_mcap = filters.get("max_market_cap")
+    if max_mcap is not None:
+        threshold = float(max_mcap)
+        recs = [r for r in recs if float(r.get("market_cap", 0) or 0) <= threshold]
+        parts.append(f"市值≤{max_mcap}")
+
+    # Exclude ST
+    if filters.get("exclude_st"):
+        recs = [r for r in recs if "ST" not in (r.get("name", "") or "").upper()]
+        parts.append("排除ST")
+
+    # Minimum consecutive recommendation days
+    min_consec = filters.get("min_consecutive")
+    if min_consec is not None:
+        threshold = int(min_consec)
+        recs = [r for r in recs if int(r.get("consecutive_days", 0) or 0) >= threshold]
+        parts.append(f"连续≥{threshold}天")
+
+    # Exact ticker match
+    ticker_filter = filters.get("ticker")
+    if ticker_filter:
+        recs = [r for r in recs if r.get("ticker", "") == ticker_filter]
+        parts.append(f"ticker={ticker_filter}")
+
+    # Name substring match
+    name_contains = filters.get("name_contains")
+    if name_contains:
+        recs = [r for r in recs if name_contains in (r.get("name", "") or "")]
+        parts.append(f"名称含「{name_contains}」")
+
+    after = len(recs)
+    summary = f"{', '.join(parts)} → {before}→{after} 条"
+    return recs, summary
+
+
+def run_top(top_n: int = 10, filters: dict | None = None) -> int:
+    """``--top [N] [--filter ...]`` — 显示最近一次 ``--auto`` 的 Top N 推荐，无需重跑流水线。
 
     从 ``data/reports/auto_screening_*.json`` 加载最新报告，重建 FusedScore 对象
     并打印格式化表格。秒级返回，适合快速查看当前推荐。
 
     Args:
         top_n: 显示前 N 个推荐 (默认 10)
+        filters: 可选过滤参数字典，支持的键：
+            - industry (str): 申万行业名 (例如 "电子", "银行")
+            - min_score (float): 最低 score_b 阈值
+            - max_score (float): 最高 score_b 阈值
+            - min_market_cap (float): 最低市值 (元)
+            - max_market_cap (float): 最高市值 (元)
+            - exclude_st (bool): 排除 ST/*ST 标的
+            - min_consecutive (int): 最低连续推荐天数
+            - ticker (str): 精确匹配 ticker
+            - name_contains (str): 名称包含子串 (中文)
 
     Returns:
-        退出码 (0=成功, 1=无报告)
+        退出码 (0=成功, 1=无报告, 2=过滤后无结果)
     """
     from colorama import Fore, Style
     from tabulate import tabulate
@@ -1067,6 +1145,14 @@ def run_top(top_n: int = 10) -> int:
     if not recs:
         print(f"{Fore.YELLOW}[Top] 最新报告无推荐结果{Style.RESET_ALL}")
         return 0
+
+    # Apply filters
+    if filters:
+        recs, filter_summary = _apply_top_filters(recs, filters)
+        if not recs:
+            print(f"{Fore.YELLOW}[Top] 过滤后无符合条件的结果。{filter_summary}{Style.RESET_ALL}")
+            return 2
+        print(f"{Fore.CYAN}[Top] 过滤生效: {filter_summary}{Style.RESET_ALL}")
 
     # Trim to top_n
     recs = recs[:top_n]
@@ -1138,6 +1224,8 @@ def run_top(top_n: int = 10) -> int:
             continue
     if top_results:
         _print_score_decomposition(top_results, consecutive_lookup)
+        # R20.5 P1-3 扩展: 因子瀑布显示完整调整项
+        _print_score_waterfall(top_results, consecutive_lookup)
 
     # Cache stats if available
     fetcher_stats = payload.get("batch_data_fetcher", {})
@@ -1212,6 +1300,79 @@ def _print_score_decomposition(
 
     print(f"{Fore.WHITE}{'━' * 72}{Style.RESET_ALL}")
     print(f"  {Fore.WHITE}T=趋势 MR=均值回归 F=基本面 E=事件情绪  att=注意力  stab=连续推荐加成  ★=共识加成{Style.RESET_ALL}\n")
+
+
+def _print_score_waterfall(
+    top_results: list,
+    consecutive_lookup: dict[str, dict],
+) -> None:
+    """R20.5 P1-3 扩展: 因子级瀑布 (factor-level waterfall)。
+
+    在 _print_score_decomposition 之上, 显示每个推荐的完整调整项:
+      base (各策略) + attention + stability_bonus + consensus_bonus + other = score_b
+
+    让用户精确理解"为什么 A 排在 B 前面"——不仅看 4 个策略贡献, 还能看
+    市场状态调整 / 连续推荐加成 / 共识加成等所有项。
+    """
+    from colorama import Fore, Style
+
+    from src.screening.signal_fusion import compute_score_decomposition
+
+    if not top_results:
+        return
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 22} 因子瀑布 (Top {len(top_results)}) {'━' * 22}{Style.RESET_ALL}")
+    strategy_labels = {"trend": "T", "mean_reversion": "MR", "fundamental": "F", "event_sentiment": "E"}
+
+    for item in top_results:
+        consecutive_info = consecutive_lookup.get(item.ticker, {})
+        decomp = compute_score_decomposition(item, consecutive_info)
+
+        print(f"  {Fore.CYAN}{item.ticker:<8s}{Style.RESET_ALL} {Fore.WHITE}{item.name}{Style.RESET_ALL}")
+
+        # Base contributions
+        for sname, contrib in decomp["base_contributions"].items():
+            label = strategy_labels.get(sname, sname)
+            if abs(contrib) < 1e-6:
+                continue
+            arrow = "+" if contrib > 0 else ""
+            color = Fore.GREEN if contrib > 0 else Fore.RED
+            print(f"    {Fore.WHITE}{label:<6s}{Style.RESET_ALL} {color}{arrow}{contrib:+.4f}{Style.RESET_ALL}")
+
+        # Attention
+        if abs(decomp["attention_contribution"]) > 1e-6:
+            color = Fore.GREEN if decomp["attention_contribution"] > 0 else Fore.RED
+            print(f"    {Fore.WHITE}att   {Style.RESET_ALL} {color}{decomp['attention_contribution']:+.4f}{Style.RESET_ALL}  (cross-sectional attention)")
+
+        # Stability bonus
+        if abs(decomp["stability_bonus"]) > 1e-6:
+            consec_days = int(consecutive_info.get("consecutive_days", 0) or 0)
+            print(f"    {Fore.WHITE}stab  {Style.RESET_ALL} {Fore.GREEN}+{decomp['stability_bonus']:.4f}{Style.RESET_ALL}  (consecutive={consec_days}d)")
+
+        # Consensus bonus
+        if abs(decomp["consensus_bonus"]) > 1e-6:
+            label = "★bull" if decomp["consensus_bonus"] > 0 else "★bear"
+            color = Fore.GREEN if decomp["consensus_bonus"] > 0 else Fore.RED
+            print(f"    {Fore.WHITE}{label:<6s}{Style.RESET_ALL} {color}{decomp['consensus_bonus']:+.4f}{Style.RESET_ALL}")
+
+        # Other adjustments (residual)
+        if abs(decomp["other_adjustments"]) > 1e-6:
+            color = Fore.YELLOW
+            print(f"    {Fore.WHITE}other {Style.RESET_ALL} {color}{decomp['other_adjustments']:+.4f}{Style.RESET_ALL}  (market-state + residual)")
+
+        # Total
+        total = decomp["total"]
+        if total >= 0.35:
+            total_color = Fore.GREEN + Style.BRIGHT
+        elif total >= 0.0:
+            total_color = Fore.YELLOW
+        else:
+            total_color = Fore.RED
+        print(f"    {Fore.WHITE}{'─' * 30}{Style.RESET_ALL}")
+        print(f"    {Fore.WHITE}score_b{Style.RESET_ALL}  {total_color}{total:+.4f}{Style.RESET_ALL}\n")
+
+    print(f"{Fore.WHITE}{'━' * 64}{Style.RESET_ALL}")
+    print(f"  {Fore.WHITE}所有调整项相加应近似 score_b (差距 = other 残差){Style.RESET_ALL}\n")
 
 
 def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
@@ -1376,6 +1537,8 @@ def _print_auto_screening_table(
 
     # O-2: 推荐排序策略透明化 — 在表格下方打印 Top 5 的评分构成摘要
     _print_score_decomposition(top_results[:5], consecutive_lookup)
+    # R20.5 P1-3 扩展: 因子瀑布 — 完整调整项明细
+    _print_score_waterfall(top_results[:5], consecutive_lookup)
 
     # Sector concentration warnings
     if sector_warnings:

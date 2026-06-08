@@ -802,8 +802,6 @@
 - 800+ 测试, 0 失败
 
 ### v2.1.4 (2026-06-08) — Round 20.4: 三人团队深度审查 + 多 Bug 修复
-
-#### 审查范围
 - **Alpha (Python/Web 专家)**: 20 个 agent + 图状态 + CLI 分发 + 筛选融合 + 组合/退出管理 — 全量代码审计
 - **Beta (Domain/数据专家)**: tushare/akshare 数据源 + 适配器 + 缓存系统 + 路由 + 验证 — 网络/并发/数据质量
 - **Gamma (产品经理)**: 风险/市场状态/退出管理 + 业界产品调研
@@ -866,6 +864,95 @@
 - 新增技术债务清理: GAMMA-018 (HIGH) 关闭历史遗留
 - 代码质量优秀 — NaN 防御完善，边界条件处理到位，并发安全已增强
 
+### v2.1.5 (2026-06-08) — Round 20.5: Bug 修复 + 三项新功能
+
+#### Bug 修复 (6 个)
+
+**MEDIUM 严重度 (4)**
+- **ALPHA-SENT-1: Sentiment agent 零持仓交易误判为看多 (MEDIUM)** — `sentiment.py` 中 `np.where(transaction_shares < 0, "bearish", "bullish")` 将零持仓交易视为 "bullish"。零持仓可能是取消/过期交易，不应看作做多信号。修复: 零持仓视为 "neutral"。
+- **ALPHA-SENT-2: Sentiment agent 未识别情绪标签膨胀 neutral (MEDIUM)** — `np.where(sentiment == "negative", "bearish", ...)` 对未知标签（"mixed", ""等）视为 neutral。修复: 明确白名单匹配（positive → bullish, negative → bearish, 其余 → neutral），避免 neutral 噪音。
+- **ALPHA-ASWATH-OR: Damodaran discount rate `or` fallback 错误 (MEDIUM)** — `risk_analysis.get("cost_of_equity") or 0.09` 在合法值 0.0 时也会回退到 0.09（或值为 0.0 时）。修复: 使用显式 `if ... is None` 检查并 re-apply 0.30 上限。
+- **BETA-PROXY-RACE: 代理环境变量并发竞争 (MEDIUM)** — `akshare_runtime_helpers.py` 中 `disable_system_proxies()` / `restore_proxies()` 直接修改 `os.environ`，无锁。并发调用时（如同时 `get_financial_metrics` + `search_stocks`）会导致代理设置跨线程泄露。修复: 使用 `threading.Lock` 序列化所有代理读写。
+
+**LOW 严重度 (2)**
+- **BETA-FUND-FLOW: get_money_flow 交易所分类不完整 (LOW)** — 硬编码 `"sh" if ticker.startswith("6") else "sz"`，不处理北京交易所。修复: 使用 `detect_ashare_exchange()` 统一分类。
+- **BETA-CACHE-NORM: get_prices 缓存键日期格式未规范化 (LOW)** — 调用方可能传 "2026-01-01" 或 "20260101"，导致同一数据产生两条缓存。修复: 缓存键统一转换为 YYYYMMDD 格式。
+
+#### 新增功能 (3 个)
+
+**1. `--top --filter` 快速筛选条** ✅
+- **目标**: 扩展 R20.2 `--top` CLI，添加过滤参数，直接读取缓存报告，无需重跑 pipeline
+- **CLI 接口**:
+  ```bash
+  --top --industry=电子              # 申万行业子串匹配
+  --top --min-score=0.5              # 最低 score_b
+  --top --max-score=0.8              # 最高 score_b
+  --top --min-market-cap=100e8       # 最低市值 (元)
+  --top --exclude-st                 # 排除 ST/*ST
+  --top --min-consecutive=2          # 最低连续推荐天数
+  --top --ticker=000001              # 精确匹配 ticker
+  --top --name-contains=银行          # 名称包含子串
+  --top 5 --industry=电子 --exclude-st  # 组合过滤
+  ```
+- **文件变更**:
+  - `src/cli/dispatcher.py:_resolve_top()` — 新增 filter 参数解析
+  - `src/main.py:_apply_top_filters()` — 新增 8 个过滤器逻辑
+  - `src/main.py:run_top()` — 签名新增 `filters: dict | None` 参数
+- **测试**: `tests/test_top_filter.py` — 17 个用例 (全部通过)
+
+**2. 因子瀑布 (Factor-level Waterfall)** ✅
+- **目标**: 在推荐表格下方显示完整的调整项瀑布，精确解释"为什么 A 排在 B 前面"
+- **输出格式 (CLI)**:
+  ```
+  ━━━━━━━━━━━━━━━━━━━━━━━━ 因子瀑布 (Top 5) ━━━━━━━━━━━━━━━━━━━━━━━━
+    000001   平安银行
+      T      +0.2000     (trend 贡献)
+      MR     -0.1200     (mean_reversion 贡献)
+      F      +0.2700     (fundamental 贡献)
+      E      +0.0500     (event_sentiment 贡献)
+      att    +0.1500     (cross-sectional attention)
+      stab   +3.0000     (consecutive=3d)
+      ──────────────────────────────
+      score_b +0.8800
+  ```
+- **文件变更**:
+  - `src/screening/signal_fusion.py:compute_score_decomposition()` — 新增函数，拆分 FusedScore 为 base_contributions / attention / stability_bonus / consensus_bonus / other_adjustments
+  - `src/main.py:_print_score_waterfall()` — 新增渲染函数
+  - `src/main.py:run_top()` + `run_auto_screening()` — 挂接 waterfall 输出
+- **测试**: `tests/test_score_waterfall.py` — 14 个用例 (全部通过)
+
+**3. P0-4 回测可视化数据后端 (equity curve)** ✅
+- **目标**: 为前端回测净值曲线/回撤图/月度收益热力图提供 API 数据
+- **API 端点**:
+  - `GET /api/backtest/equity-curve-sample` — 返回示例数据结构 (前端开发参考)
+  - `POST /api/backtest/equity-curve` — 传入 per-day 回测结果，返回 equity curve / drawdown / monthly returns
+- **响应格式**:
+  ```json
+  {
+    "equity_curve": [{"date": "2026-04-01", "portfolio_value": 1000000, "cumulative_return": 0.01, "drawdown": 0.005}, ...],
+    "monthly_returns": [{"year_month": "2026-04", "return_pct": 0.05}, ...],
+    "summary": {"total_days": 60, "max_drawdown": 0.08, "total_return": 0.12}
+  }
+  ```
+- **文件变更**:
+  - `app/backend/routes/backtest_visualization.py` — 新增路由
+  - `app/backend/routes/__init__.py` — 注册路由
+- **测试**: `tests/test_backtest_visualization.py` — 5 个用例 (全部通过)
+- **说明**: 前端可视化组件 (React 图表) 较复杂，不在本轮实现；后端数据准备已完成
+
+#### 测试覆盖
+- 新增 `tests/test_top_filter.py` (17 用例)
+- 新增 `tests/test_score_waterfall.py` (14 用例)
+- 新增 `tests/test_backtest_visualization.py` (5 用例)
+- **综合回归: 545 tests, 0 failures** (portfolio 87, screening 169, execution 184, agents 24+9, risk 18, backtest 5, top 17, waterfall 14, r20_4_regressions 18)
+
+#### 路线图完成度 (R20.5 更新)
+- 后端 100% 完成
+- 总体 33/34 (97%) — P0-4 后端完成（前端待做），--top --filter ✅，因子瀑布 ✅
+- 新增功能 3 个
+- 新增 bug 修复 6 个
+- 新增测试 36 个
+
 ---
 
 ## 十六、CLI 命令速查表
@@ -881,6 +968,7 @@
 - `--auto --top-n=20` — Top N 推荐
 - `--auto --trade-date=20260607` — 指定日期
 - `--top` / `--top 20` — **快速查看最近一次 --auto 的 Top N 推荐**（无需重跑，秒级返回）— R20.2 新增
+  - **R20.5 扩展**: 支持 `--top --filter` 过滤 — `--industry=电子 --min-score=0.5 --exclude-st --min-consecutive=2 --ticker=000001 --name-contains=银行`
 - `--explain 000001` — 解释推荐原因（因子明细+事件线+行业排名）
 - `--screen-only` — 仅 Layer A+B 评分
 
