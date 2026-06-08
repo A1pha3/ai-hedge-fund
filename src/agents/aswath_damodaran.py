@@ -360,11 +360,16 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
         if len(revs) >= 2 and revs[0] > 0:
             n_periods = len(revs) - 1
             n_years = max(n_periods * 0.25, 0.25)  # floor at one quarter, not 1 year
-            base_growth = min((revs[-1] / revs[0]) ** (1 / n_years) - 1, 0.12)
+            # R20.10: cap base_growth at [-0.30, 0.12] — extreme declines (>30%/yr)
+            # produce misleading DCF valuations (terminal value dominates after a few
+            # years of near-zero FCFF). Floor at -0.30 bounds the worst case.
+            raw_growth = (revs[-1] / revs[0]) ** (1 / n_years) - 1
+            base_growth = max(min(raw_growth, 0.12), -0.30)
         else:
             base_growth = 0.04  # fallback
     elif len(revs) >= 2 and revs[0] > 0:
-        base_growth = min((revs[-1] / revs[0]) ** (1 / (len(revs) - 1)) - 1, 0.12)
+        raw_growth = (revs[-1] / revs[0]) ** (1 / (len(revs) - 1)) - 1
+        base_growth = max(min(raw_growth, 0.12), -0.30)  # R20.10: floor at -30%
     else:
         base_growth = 0.04  # fallback
 

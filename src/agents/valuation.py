@@ -209,6 +209,10 @@ def calculate_owner_earnings_value(
         pv += future / (1 + required_return) ** yr
 
     terminal_growth = min(growth_rate, 0.03)
+    # R20.10: Guard against required_return <= terminal_growth to avoid
+    # division by zero or negative terminal value (matches pattern at line 232).
+    if required_return <= terminal_growth:
+        terminal_growth = required_return * 0.5
     term_val = (owner_earnings * (1 + growth_rate) ** num_years * (1 + terminal_growth)) / (required_return - terminal_growth)
     pv_term = term_val / (1 + required_return) ** num_years
 

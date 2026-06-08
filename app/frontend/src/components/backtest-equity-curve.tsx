@@ -45,7 +45,8 @@ function KpiCard({ label, value, color }: { label: string; value: string; color?
 function EquityCurveChart({ points }: { points: { date: string; value: number; drawdown: number }[] }) {
   if (points.length < 2) return null;
 
-  const values = points.map(p => p.value);
+  const values = points.map(p => p.value).filter(v => isFinite(v));
+  if (values.length < 2) return null;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
@@ -57,10 +58,11 @@ function EquityCurveChart({ points }: { points: { date: string; value: number; d
   const chartH = height - padding.top - padding.bottom;
 
   const pointsStr = points
-    .map((p, i) => {
-      const x = padding.left + (i / (points.length - 1)) * chartW;
+    .filter(p => isFinite(p.value))
+    .map((p, i, arr) => {
+      const x = padding.left + (i / (arr.length - 1)) * chartW;
       const y = padding.top + (1 - (p.value - min) / range) * chartH;
-      return `${x},${y}`;
+      return `${x},${isFinite(y) ? y : bottomY}`;
     })
     .join(' ');
 
@@ -128,7 +130,7 @@ function EquityCurveChart({ points }: { points: { date: string; value: number; d
 function DrawdownChart({ points }: { points: { date: string; drawdown: number }[] }) {
   if (points.length < 2) return null;
 
-  const drawdowns = points.map(p => p.drawdown);
+  const drawdowns = points.map(p => p.drawdown).filter(d => isFinite(d));
   const maxDD = Math.max(...drawdowns, 0.01); // at least 1%
 
   const width = 800;
@@ -138,10 +140,11 @@ function DrawdownChart({ points }: { points: { date: string; drawdown: number }[
   const chartH = height - padding.top - padding.bottom;
 
   const pointsStr = points
-    .map((p, i) => {
-      const x = padding.left + (i / (points.length - 1)) * chartW;
+    .filter(p => isFinite(p.drawdown))
+    .map((p, i, arr) => {
+      const x = padding.left + (i / (arr.length - 1)) * chartW;
       const y = padding.top + (p.drawdown / maxDD) * chartH;
-      return `${x},${y}`;
+      return `${x},${isFinite(y) ? y : topY}`;
     })
     .join(' ');
 
@@ -241,6 +244,10 @@ export function BacktestEquityCurve({ agentData }: EquityCurveProps) {
   // Compute derived data
   const initialValue = dailyResults[0].portfolio_value;
   const currentValue = dailyResults[dailyResults.length - 1].portfolio_value;
+
+  // Guard against NaN / Infinity from malformed data
+  if (!isFinite(initialValue) || !isFinite(currentValue) || initialValue === 0) return null;
+
   const totalReturn = (currentValue - initialValue) / initialValue;
 
   // Compute equity curve points with drawdown

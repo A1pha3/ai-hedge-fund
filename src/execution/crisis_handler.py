@@ -62,6 +62,12 @@ def evaluate_crisis_response(
         response["alerts"].append("drawdown_forced_reduce")
 
     # Apply severity ordering: most-severe mode wins, strictest cap wins.
+    # R20.10 invariant: mode and cap are always consistent because each trigger
+    # appends a mode whose severity is monotonically related to its cap strictness:
+    #   shrink(severity=1, cap=0.5) < defense(severity=2, cap=0.3) < recovery(severity=3, cap=0.0)
+    # Therefore picking the highest-severity mode and the minimum cap always agree.
+    # When only a subset triggers (e.g. defense + shrink), severity picks defense
+    # (2 > 1) and min() picks 0.3 (defense's cap) — consistent.
     chosen_mode = response["mode"]
     for mode in triggered_modes:
         chosen_mode = _pick_mode(chosen_mode, mode)

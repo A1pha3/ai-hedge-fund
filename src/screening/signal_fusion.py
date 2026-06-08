@@ -377,7 +377,14 @@ def compute_score_b(signals: dict[str, StrategySignal], weights: dict[str, float
         # always positive.  A bearish consensus (score < 0) should make
         # the score MORE bearish, not less (the old `score + 0.05` was
         # weakening bearish consensus signals).
-        bonus = 0.05 if score >= 0 else -0.05
+        # R20.10 (GAMMA-017b): score == 0 is genuinely neutral — apply no bonus.
+        # Only tilt the score when there is a directional consensus (> 0 or < 0).
+        if score > 0:
+            bonus = 0.05
+        elif score < 0:
+            bonus = -0.05
+        else:
+            bonus = 0.0
         score = score + bonus
     return max(-1.0, min(1.0, score))
 

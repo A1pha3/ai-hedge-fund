@@ -9,6 +9,7 @@ import os
 import pickle
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -265,6 +266,10 @@ class DiskCache:
         """
         self.default_ttl = default_ttl
         self._available = True
+        # R20.10 BETA: _is_alive 结果缓存，避免每次公共方法都 SELECT 1。
+        # 批量 2500+ 次调用时，每次 SELECT 1 浪费 1.25-2.5s。
+        self._last_alive_check: float = 0.0
+        self._alive_cache_ttl: float = 5.0  # 秒
         cache_path = path or os.environ.get("DISK_CACHE_PATH")
         if not cache_path:
             cache_path = os.path.join(os.path.expanduser("~"), ".cache", "ai-hedge-fund", "cache.sqlite")
@@ -308,15 +313,24 @@ class DiskCache:
             self._conn = None
 
     def _is_alive(self) -> bool:
-        """检查长连接是否仍可用（未关闭且底层 fd 有效）。"""
+        """检查长连接是否仍可用（未关闭且底层 fd 有效）。
+
+        R20.10 BETA: 缓存检查结果，TTL 内跳过 SELECT 1。
+        快速路径：_conn 非 None 且在 TTL 内 → 直接返回 True。
+        仅 TTL 过期或连接异常时才执行 SELECT 1。
+        """
         if self._conn is None:
             return False
+        now = time.monotonic()
+        if (now - self._last_alive_check) < self._alive_cache_ttl:
+            return True
         try:
-            # 低成本 ping：单行 SELECT，失败时抛 sqlite3.ProgrammingError
             self._conn.execute("SELECT 1").fetchone()
+            self._last_alive_check = now
             return True
         except Exception as e:
             logger.debug(f"Disk cache connection dead, will recreate: {e}")
+            self._last_alive_check = 0.0  # 强制下次重建后立即重检
             return False
 
     def _ensure_conn(self) -> sqlite3.Connection | None:
@@ -347,6 +361,7 @@ class DiskCache:
             except Exception:
                 pass
             self._conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expires_at INTEGER)")
+            self._last_alive_check = time.monotonic()  # R20.10: 重建后立即标记存活
             return self._conn
         except Exception as e:
             logger.warning(f"Disk cache reconnect failed: {e}")
@@ -378,7 +393,8 @@ class DiskCache:
                     logger.debug(f"Disk cache close error: {e}")
                 finally:
                     self._conn = None
-            self._available = False
+                self._last_alive_check = 0.0  # R20.10: 关闭后强制下次重检
+                self._available = False
 
     @property
     def journal_mode(self) -> str | None:

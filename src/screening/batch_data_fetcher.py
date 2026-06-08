@@ -150,6 +150,10 @@ class BatchDataFetcher:
         self._single_ticker_cache_hits = 0
         self._single_ticker_cache_misses = 0
         self._cache_hits = 0
+        # R20.10 BETA: 防缓存击穿 — 同一 cache_key 的并发调用只触发一次实际 fetch。
+        # 后续调用等待第一个调用完成后直接读缓存。
+        self._inflight_lock = threading.Lock()
+        self._inflight_events: dict[str, threading.Event] = {}
 
     # ---- 公开缓存访问方法 (供 R20+ 集成方使用, 避免直接访问 _cache) ----
 
@@ -198,12 +202,43 @@ class BatchDataFetcher:
         if cached is not None:
             self._cache_hits += 1
             return cached
+
+        # R20.10 BETA: 防缓存击穿 — 同一 key 并发调用去重。
+        # 第一个调用者设 in-flight flag 并执行 fetch；
+        # 后续调用者等待第一个完成后从缓存读取。
+        with self._inflight_lock:
+            event = self._inflight_events.get(cache_key)
+            if event is not None:
+                # 另一个线程正在 fetch 同一个 key，等待它完成
+                is_first = False
+            else:
+                # 我们是第一个
+                event = threading.Event()
+                self._inflight_events[cache_key] = event
+                is_first = True
+
+        if not is_first:
+            event.wait(timeout=120)  # 等待 fetch 完成（最多 2 分钟）
+            # fetch 完成后从缓存读取结果
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                self._cache_hits += 1
+                return cached
+            # fetch 失败（返回 None 或抛异常）
+            return None
+
+        # 我们是第一个调用者，执行实际 fetch
         self._batch_calls += 1
         try:
             df = fetch()
         except Exception:
             self._batch_failures += 1
             return None
+        finally:
+            # 无论成功失败，标记完成并清理 in-flight 标记
+            with self._inflight_lock:
+                self._inflight_events.pop(cache_key, None)
+            event.set()
         if df is None:
             self._batch_failures += 1
             return None

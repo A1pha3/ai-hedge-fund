@@ -125,10 +125,19 @@ def create_session():
         session.trust_env = False
         # 配 HTTPAdapter：pool_connections=连接池数, pool_maxsize=每池最多 keep-alive 连接
         pool_size = int(os.environ.get("AKSHARE_SESSION_POOL_SIZE", "10"))
-        adapter = HTTPAdapter(
+        # R20.10 BETA: pool_block=True + 自定义 Adapter 传入 pool_timeout=30，
+        # 防止池耗尽时无上限新建 transient 连接。
+        class _BoundedHTTPAdapter(HTTPAdapter):
+            def init_poolmanager(self, *args, **kwargs):
+                kwargs.setdefault("maxsize", pool_size)
+                kwargs["block"] = True
+                kwargs.setdefault("pool_timeout", 30)
+                return super().init_poolmanager(*args, **kwargs)
+
+        adapter = _BoundedHTTPAdapter(
             pool_connections=pool_size,
             pool_maxsize=pool_size,
-            pool_block=False,  # 池耗尽时直接新建连接，不阻塞
+            pool_block=True,
         )
         session.mount("http://", adapter)
         session.mount("https://", adapter)
@@ -261,13 +270,16 @@ def execute_wrapped_ashare_request(
         raise error_factory(message) from error
 
 
+# R20.10 BETA: 模块级共享 ThreadPoolExecutor，避免每次 _call_with_timeout 新建 executor。
+# 旧实现每次调用都 ThreadPoolExecutor(max_workers=1)，超时后 shutdown(wait=False)
+# 无法杀死线程，100 次连续超时会泄漏 ~100 个线程 (~800MB)。
+_SHARED_TIMEOUT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+
 def _call_with_timeout(*, func, timeout_seconds: float, timeout_label: str, **kwargs):
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(func, **kwargs)
+    future = _SHARED_TIMEOUT_EXECUTOR.submit(func, **kwargs)
     try:
         return future.result(timeout=timeout_seconds)
     except concurrent.futures.TimeoutError as exc:
         future.cancel()
         raise TimeoutError(timeout_label) from exc
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
