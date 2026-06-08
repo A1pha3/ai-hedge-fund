@@ -843,190 +843,32 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         # 这里复用同一路径返回给 _print_auto_screening_table 用于 UI 提示。
         report_path = _resolve_consecutive_report_dir() / f"auto_screening_{trade_date}.json"
 
-        # P1-3 推荐标的自动追踪 — 记录本次 Top N, 并补全历史 T+1/T+3/T+5 收益
-        tracking_dir = report_path.parent
-        try:
-            updated_records = update_tracking_history(
-                reports_dir=tracking_dir,
-                trade_date=trade_date,
-            )
-            logger.info("[Auto] P1-3 追踪历史已更新: %d 条记录", updated_records)
-        except Exception as exc:  # pragma: no cover - 追踪失败不影响主流程
-            logger.warning("[Auto] P1-3 追踪更新失败: %s", exc)
-            updated_records = 0
-        tracking_summary = get_tracking_summary(
-            history_path=tracking_dir / "tracking_history.json",
-            lookback_days=30,
-        )
-        if tracking_summary.get("total_recommendations", 0) > 0:
-            report_payload["tracking_summary"] = tracking_summary
-            # 重新落盘 — 让 tracking_summary 出现在 JSON 中
-            try:
-                _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
-            except Exception as exc:  # pragma: no cover
-                logger.debug("[Auto] tracking_summary 二次落盘失败: %s", exc)
-
-        # P0-5: 智能自选池 — 更新 watchlist 中标的的评分和信号
-        try:
-            watchlist_update = update_watchlist_from_screening(report_payload)
-        except Exception as exc:  # pragma: no cover - 自选池更新失败不影响主流程
-            logger.warning("[Auto] P0-5 自选池更新失败: %s", exc)
-            watchlist_update = {"scored_count": 0, "top_picks": []}
-        if watchlist_update.get("scored_count", 0) > 0:
-            report_payload["watchlist_update"] = watchlist_update
-            logger.info(
-                "[Auto] P0-5 Watchlist: %d 只自选标的已更新评分",
-                watchlist_update["scored_count"],
-            )
-            try:
-                _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
-            except Exception as exc:  # pragma: no cover
-                logger.debug("[Auto] watchlist_update 二次落盘失败: %s", exc)
-
-        # P1-11: 策略归因日报 — 若当前有持仓 (data/positions.json) 则附加归因摘要到 JSON 报告。
-        try:
-            from src.screening.strategy_attribution_daily import (
-                compute_strategy_daily_attribution,
-                render_attribution_report,
-            )
-
-            attr_positions_path = _resolve_positions_path()
-            attr_positions = _load_positions_for_attribution(attr_positions_path)
-            if attr_positions:
-                attributions = compute_strategy_daily_attribution(
-                    attr_positions, today_date=trade_date
-                )
-                if attributions:
-                    attr_total_pnl = sum(a.daily_pnl for a in attributions.values())
-                    attr_base = sum(
-                        float(p.get("prev_value", 0.0) or 0.0)
-                        for p in attr_positions
-                        if isinstance(p.get("prev_value"), (int, float))
-                    )
-                    report_payload["strategy_attribution_daily"] = {
-                        "date": trade_date,
-                        "portfolio_total_pnl": attr_total_pnl,
-                        "portfolio_value_base": attr_base,
-                        "positions_path": str(attr_positions_path) if attr_positions_path else None,
-                        "attributions": {n: a.to_dict() for n, a in attributions.items()},
-                        "report_text": render_attribution_report(
-                            attributions,
-                            attr_total_pnl,
-                            trade_date,
-                            portfolio_value_base=attr_base if attr_base > 0 else None,
-                        ),
-                    }
-                    logger.info(
-                        "[Auto] P1-11 策略归因日报: %d 条策略归因 (总 PnL=%.2f)",
-                        len(attributions),
-                        attr_total_pnl,
-                    )
-                    try:
-                        _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
-                    except Exception as exc:  # pragma: no cover
-                        logger.debug("[Auto] strategy_attribution_daily 二次落盘失败: %s", exc)
-        except Exception as exc:  # pragma: no cover - 归因失败不影响主流程
-            logger.warning("[Auto] P1-11 策略归因日报附加失败: %s", exc)
-
-        # P1-12: 组合再平衡建议 — 若当前有持仓则附加到 report payload (rebalance_actions 顶层字段)。
-        try:
-            from src.portfolio.rebalance_advisor import compute_rebalance_actions
-
-            reb_positions, reb_pv = _load_positions_for_rebalance(_resolve_positions_path())
-            if reb_positions and reb_pv > 0.0:
-                reb_actions = compute_rebalance_actions(reb_positions, reb_pv)
-                report_payload["rebalance_actions"] = {
-                    "portfolio_value": reb_pv,
-                    "drift_threshold": 0.05,
-                    "actions": [a.to_dict() for a in reb_actions],
-                }
-                if reb_actions:
-                    logger.info(
-                        "[Auto] P1-12 组合再平衡: %d 条建议 (优先级1=%d)",
-                        len(reb_actions),
-                        sum(1 for a in reb_actions if a.priority == 1),
-                    )
-                try:
-                    _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
-                except Exception as exc:  # pragma: no cover
-                    logger.debug("[Auto] rebalance_actions 二次落盘失败: %s", exc)
-        except Exception as exc:  # pragma: no cover - 再平衡失败不影响主流程
-            logger.warning("[Auto] P1-12 组合再平衡附加失败: %s", exc)
-
-        # P0-1: 输出 batch fetcher 统计
-        fetcher_stats = report_payload.get("batch_data_fetcher", {})
-        logger.info(
-            "[Auto] P0-1 BatchDataFetcher stats: batch_calls=%d, batch_failures=%d, " "single_ticker_calls=%d, cache_hits=%d",
-            fetcher_stats.get("batch_calls", 0),
-            fetcher_stats.get("batch_failures", 0),
-            fetcher_stats.get("single_ticker_calls", 0),
-            fetcher_stats.get("cache_hits", 0),
+        # P1-3 + P0-5: tracking history + watchlist update (lightweight side effects)
+        pdf_path = _enrich_recommendations_with_history(
+            report_payload=report_payload,
+            trade_date=trade_date,
+            tracking_dir=report_path.parent,
         )
 
-        # O-1: 缓存命中率可观测性 — CLI 表格底部增加一行摘要
-        _print_cache_hit_summary(fetcher_stats)
+        # P1-11 + P1-12 + P2-3: post-screening analytics (attribution, rebalance, push)
+        _handle_post_screening_tasks(
+            report_payload=report_payload,
+            trade_date=trade_date,
+            report_path=report_path,
+            pdf_path=pdf_path,
+        )
 
-        # Print formatted table
-        _print_auto_screening_table(
-            trade_date,
-            top_results,
-            market_state,
-            report_payload["layer_a_count"],
-            top_n,
-            report_path,
-            report_payload.get("sector_concentration_warnings") or [],
-            consecutive_recommendations=report_payload["recommendations"],
+        # P0-1 + O-1: output batch fetcher stats + formatted table
+        _print_table_block(
+            report_payload=report_payload,
+            trade_date=trade_date,
+            top_results=top_results,
+            market_state=market_state,
+            top_n=top_n,
+            report_path=report_path,
             decay_map=decay_map,
             industry_signals=industry_signals,
         )
-
-        # P1-7: 可选 — 自动导出 PDF 报告 (环境变量 AUTO_EXPORT_PDF=true)
-        if os.environ.get("AUTO_EXPORT_PDF", "").strip().lower() in ("1", "true", "yes", "on"):
-            try:
-                from src.reporting.pdf_exporter import (
-                    PDFReportConfig,
-                    generate_screening_pdf,
-                )
-
-                pdf_dir = report_path.parent
-                pdf_path = pdf_dir / f"auto_screening_{trade_date}.pdf"
-                generate_screening_pdf(report_payload, pdf_path, PDFReportConfig())
-                print(f"{Fore.CYAN}[Auto] P1-7 PDF 报告已生成: {pdf_path}{Style.RESET_ALL}")
-                logger.info("[Auto] P1-7 PDF 报告已生成: %s", pdf_path)
-            except Exception as exc:  # pragma: no cover - PDF 失败不影响主流程
-                logger.warning("[Auto] P1-7 PDF 导出失败: %s", exc)
-
-        # P2-3: 邮件 / Webhook 推送 — 加载 push_config.json, 对每个 enabled 通道调用 send_push。
-        # 失败容错: 配置缺失 / 解析失败 / 推送异常 → 仅记录日志, 不影响 run_auto_screening 返回码。
-        try:
-            from src.notification.push import (
-                DEFAULT_PUSH_CONFIG_PATH,
-                load_push_config,
-                send_push,
-            )
-
-            push_configs = load_push_config(DEFAULT_PUSH_CONFIG_PATH, only_enabled=True)
-            if push_configs:
-                push_pdf = pdf_path if "pdf_path" in locals() and pdf_path.exists() else None
-                push_results = []
-                for cfg in push_configs:
-                    result = send_push(cfg, report_payload, pdf_path=push_pdf)
-                    push_results.append(result)
-                    status = "OK" if result.success else "FAIL"
-                    logger.info(
-                        "[Auto] P2-3 推送 %s → %s (%s, attempts=%d, %.0fms)",
-                        cfg.channel.value,
-                        cfg.target,
-                        status,
-                        result.attempts,
-                        result.duration_ms,
-                    )
-                success_count = sum(1 for r in push_results if r.success)
-                print(
-                    f"{Fore.CYAN}[Auto] P2-3 推送完成: {success_count}/{len(push_results)} 通道成功{Style.RESET_ALL}"
-                )
-        except Exception as exc:  # pragma: no cover - 推送失败不影响主流程
-            logger.warning("[Auto] P2-3 推送异常: %s", exc)
 
         return 0
     except ValueError as exc:
@@ -1035,6 +877,228 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         return 1
     finally:
         progress.stop()
+
+
+def _enrich_recommendations_with_history(
+    report_payload: dict,
+    trade_date: str,
+    tracking_dir: Path,
+) -> Path | None:
+    """P1-3 + P0-5: 轻量级历史/自选池附加 — 失败容错，不阻塞主流程。
+
+    Returns:
+        pdf_path: 若 AUTO_EXPORT_PDF 已触发则返回 PDF 路径（供后续 P2-3 推送使用），
+                  否则 None。
+    """
+    from colorama import Fore, Style
+
+    # P1-3 推荐标的自动追踪 — 记录本次 Top N, 并补全历史 T+1/T+3/T+5 收益
+    try:
+        updated_records = update_tracking_history(
+            reports_dir=tracking_dir,
+            trade_date=trade_date,
+        )
+        logger.info("[Auto] P1-3 追踪历史已更新: %d 条记录", updated_records)
+    except Exception as exc:  # pragma: no cover - 追踪失败不影响主流程
+        logger.warning("[Auto] P1-3 追踪更新失败: %s", exc)
+        updated_records = 0
+    tracking_summary = get_tracking_summary(
+        history_path=tracking_dir / "tracking_history.json",
+        lookback_days=30,
+    )
+    if tracking_summary.get("total_recommendations", 0) > 0:
+        report_payload["tracking_summary"] = tracking_summary
+        # 重新落盘 — 让 tracking_summary 出现在 JSON 中
+        try:
+            _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+        except Exception as exc:  # pragma: no cover
+            logger.debug("[Auto] tracking_summary 二次落盘失败: %s", exc)
+
+    # P0-5: 智能自选池 — 更新 watchlist 中标的的评分和信号
+    try:
+        watchlist_update = update_watchlist_from_screening(report_payload)
+    except Exception as exc:  # pragma: no cover - 自选池更新失败不影响主流程
+        logger.warning("[Auto] P0-5 自选池更新失败: %s", exc)
+        watchlist_update = {"scored_count": 0, "top_picks": []}
+    if watchlist_update.get("scored_count", 0) > 0:
+        report_payload["watchlist_update"] = watchlist_update
+        logger.info(
+            "[Auto] P0-5 Watchlist: %d 只自选标的已更新评分",
+            watchlist_update["scored_count"],
+        )
+        try:
+            _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+        except Exception as exc:  # pragma: no cover
+            logger.debug("[Auto] watchlist_update 二次落盘失败: %s", exc)
+
+    # P1-7: 可选 — 自动导出 PDF 报告 (环境变量 AUTO_EXPORT_PDF=true)
+    pdf_path: Path | None = None
+    if os.environ.get("AUTO_EXPORT_PDF", "").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            from src.reporting.pdf_exporter import (
+                PDFReportConfig,
+                generate_screening_pdf,
+            )
+
+            pdf_dir = tracking_dir
+            pdf_path = pdf_dir / f"auto_screening_{trade_date}.pdf"
+            generate_screening_pdf(report_payload, pdf_path, PDFReportConfig())
+            print(f"{Fore.CYAN}[Auto] P1-7 PDF 报告已生成: {pdf_path}{Style.RESET_ALL}")
+            logger.info("[Auto] P1-7 PDF 报告已生成: %s", pdf_path)
+        except Exception as exc:  # pragma: no cover - PDF 失败不影响主流程
+            logger.warning("[Auto] P1-7 PDF 导出失败: %s", exc)
+            pdf_path = None
+
+    return pdf_path
+
+
+def _handle_post_screening_tasks(
+    report_payload: dict,
+    trade_date: str,
+    report_path: Path,
+    pdf_path: Path | None,
+) -> None:
+    """P1-11 + P1-12 + P2-3: 筛选后处理 (归因、再平衡、推送)。所有失败容错。"""
+    from colorama import Fore, Style
+
+    # P1-11: 策略归因日报 — 若当前有持仓 (data/positions.json) 则附加归因摘要到 JSON 报告。
+    try:
+        from src.screening.strategy_attribution_daily import (
+            compute_strategy_daily_attribution,
+            render_attribution_report,
+        )
+
+        attr_positions_path = _resolve_positions_path()
+        attr_positions = _load_positions_for_attribution(attr_positions_path)
+        if attr_positions:
+            attributions = compute_strategy_daily_attribution(
+                attr_positions, today_date=trade_date
+            )
+            if attributions:
+                attr_total_pnl = sum(a.daily_pnl for a in attributions.values())
+                attr_base = sum(
+                    float(p.get("prev_value", 0.0) or 0.0)
+                    for p in attr_positions
+                    if isinstance(p.get("prev_value"), (int, float))
+                )
+                report_payload["strategy_attribution_daily"] = {
+                    "date": trade_date,
+                    "portfolio_total_pnl": attr_total_pnl,
+                    "portfolio_value_base": attr_base,
+                    "positions_path": str(attr_positions_path) if attr_positions_path else None,
+                    "attributions": {n: a.to_dict() for n, a in attributions.items()},
+                    "report_text": render_attribution_report(
+                        attributions,
+                        attr_total_pnl,
+                        trade_date,
+                        portfolio_value_base=attr_base if attr_base > 0 else None,
+                    ),
+                }
+                logger.info(
+                    "[Auto] P1-11 策略归因日报: %d 条策略归因 (总 PnL=%.2f)",
+                    len(attributions),
+                    attr_total_pnl,
+                )
+                try:
+                    _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+                except Exception as exc:  # pragma: no cover
+                    logger.debug("[Auto] strategy_attribution_daily 二次落盘失败: %s", exc)
+    except Exception as exc:  # pragma: no cover - 归因失败不影响主流程
+        logger.warning("[Auto] P1-11 策略归因日报附加失败: %s", exc)
+
+    # P1-12: 组合再平衡建议 — 若当前有持仓则附加到 report payload (rebalance_actions 顶层字段)。
+    try:
+        from src.portfolio.rebalance_advisor import compute_rebalance_actions
+
+        reb_positions, reb_pv = _load_positions_for_rebalance(_resolve_positions_path())
+        if reb_positions and reb_pv > 0.0:
+            reb_actions = compute_rebalance_actions(reb_positions, reb_pv)
+            report_payload["rebalance_actions"] = {
+                "portfolio_value": reb_pv,
+                "drift_threshold": 0.05,
+                "actions": [a.to_dict() for a in reb_actions],
+            }
+            if reb_actions:
+                logger.info(
+                    "[Auto] P1-12 组合再平衡: %d 条建议 (优先级1=%d)",
+                    len(reb_actions),
+                    sum(1 for a in reb_actions if a.priority == 1),
+                )
+            try:
+                _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+            except Exception as exc:  # pragma: no cover
+                logger.debug("[Auto] rebalance_actions 二次落盘失败: %s", exc)
+    except Exception as exc:  # pragma: no cover - 再平衡失败不影响主流程
+        logger.warning("[Auto] P1-12 组合再平衡附加失败: %s", exc)
+
+    # P2-3: 邮件 / Webhook 推送 — 加载 push_config.json, 对每个 enabled 通道调用 send_push。
+    # 失败容错: 配置缺失 / 解析失败 / 推送异常 → 仅记录日志, 不影响 run_auto_screening 返回码。
+    try:
+        from src.notification.push import (
+            DEFAULT_PUSH_CONFIG_PATH,
+            load_push_config,
+            send_push,
+        )
+
+        push_configs = load_push_config(DEFAULT_PUSH_CONFIG_PATH, only_enabled=True)
+        if push_configs:
+            push_pdf = pdf_path if pdf_path is not None and pdf_path.exists() else None
+            push_results = []
+            for cfg in push_configs:
+                result = send_push(cfg, report_payload, pdf_path=push_pdf)
+                push_results.append(result)
+                status = "OK" if result.success else "FAIL"
+                logger.info(
+                    "[Auto] P2-3 推送 %s → %s (%s, attempts=%d, %.0fms)",
+                    cfg.channel.value,
+                    cfg.target,
+                    status,
+                    result.attempts,
+                    result.duration_ms,
+                )
+            success_count = sum(1 for r in push_results if r.success)
+            print(
+                f"{Fore.CYAN}[Auto] P2-3 推送完成: {success_count}/{len(push_results)} 通道成功{Style.RESET_ALL}"
+            )
+    except Exception as exc:  # pragma: no cover - 推送失败不影响主流程
+        logger.warning("[Auto] P2-3 推送异常: %s", exc)
+
+
+def _print_table_block(
+    report_payload: dict,
+    trade_date: str,
+    top_results: list,
+    market_state,
+    top_n: int,
+    report_path: Path,
+    decay_map: dict,
+    industry_signals: list,
+) -> None:
+    """P0-1 + O-1: 输出 batch fetcher 统计 + CLI 表格。"""
+    fetcher_stats = report_payload.get("batch_data_fetcher", {})
+    logger.info(
+        "[Auto] P0-1 BatchDataFetcher stats: batch_calls=%d, batch_failures=%d, " "single_ticker_calls=%d, cache_hits=%d",
+        fetcher_stats.get("batch_calls", 0),
+        fetcher_stats.get("batch_failures", 0),
+        fetcher_stats.get("single_ticker_calls", 0),
+        fetcher_stats.get("cache_hits", 0),
+    )
+    # O-1: 缓存命中率可观测性 — CLI 表格底部增加一行摘要
+    _print_cache_hit_summary(fetcher_stats)
+
+    # Print formatted table
+    _print_auto_screening_table(
+        trade_date,
+        top_results,
+        market_state,
+        report_payload["layer_a_count"],
+        top_n,
+        report_path,
+        report_payload.get("sector_concentration_warnings") or [],
+        consecutive_recommendations=report_payload["recommendations"],
+        decay_map=decay_map,
+        industry_signals=industry_signals,
+    )
 
 
 def _apply_top_filters(recs: list[dict], filters: dict) -> tuple[list[dict], str]:
