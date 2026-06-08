@@ -167,16 +167,23 @@ class EnhancedDataValidator:
         Returns:
             (有效指标列表, 验证报告)
         """
+        # validate_batch already calls validate_metric for every metric and
+        # records is_valid in the report.  We can reuse that result instead of
+        # re-running N validations (N+1 problem).  Since the report doesn't
+        # store per-metric validity, we pass through once more — but only to
+        # collect the valid ones, not to re-validate.
         report = self.validate_batch(metrics)
 
         if report.pass_rate < min_pass_rate:
             logger.warning(f"数据质量过低: 通过率 {report.pass_rate:.2%}, " f"错误数 {len(report.errors)}, " f"警告数 {len(report.warnings_list)}")
 
-        valid_metrics: list[MetricRow] = []
-        for metric in metrics:
-            is_valid, _ = self.validate_metric(metric)
-            if is_valid:
-                valid_metrics.append(metric)
+        # Use the report's error set to identify invalid metric indices.
+        # Errors are keyed by (index, field) — collect unique failing indices.
+        failing_indices: set[int] = {e.get("index", -1) for e in report.errors}
+        valid_metrics: list[MetricRow] = [
+            metric for i, metric in enumerate(metrics)
+            if i not in failing_indices
+        ]
 
         return valid_metrics, report
 
