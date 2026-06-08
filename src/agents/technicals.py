@@ -316,7 +316,9 @@ def calculate_mean_reversion_signals(prices_df):
     # Calculate z-score of price relative to moving average
     ma_50 = prices_df["close"].rolling(window=50).mean()
     std_50 = prices_df["close"].rolling(window=50).std()
-    z_score = (prices_df["close"] - ma_50) / std_50
+    # Guard against inf when std_50 is 0 (constant price window)
+    z_score_raw = (prices_df["close"] - ma_50) / std_50
+    z_score = z_score_raw.replace([float("inf"), float("-inf")], 0.0).fillna(0.0)
 
     # Calculate Bollinger Bands
     bb_upper, bb_lower = calculate_bollinger_bands(prices_df)
@@ -502,6 +504,13 @@ def weighted_signal_combination(signals, weights):
     # Convert signals to numeric values
     signal_values = {"bullish": 1, "neutral": 0, "bearish": -1}
 
+    # Signal threshold — maps the normalized weighted average to a directional
+    # signal.  Because the weighted sum already accounts for confidence, this
+    # threshold effectively says "the directional confidence-weighted vote must
+    # exceed 20% of the total possible vote to be directional".
+    # Extracted from magic number to constant (R20.6).
+    SIGNAL_THRESHOLD = 0.2
+
     weighted_sum = 0
     total_confidence = 0
     total_weight = 0
@@ -519,9 +528,9 @@ def weighted_signal_combination(signals, weights):
     final_score = weighted_sum / total_confidence if total_confidence > 0 else 0
 
     # Convert back to signal
-    if final_score > 0.2:
+    if final_score > SIGNAL_THRESHOLD:
         signal = "bullish"
-    elif final_score < -0.2:
+    elif final_score < -SIGNAL_THRESHOLD:
         signal = "bearish"
     else:
         signal = "neutral"
@@ -552,11 +561,18 @@ def normalize_pandas(obj):
 
 
 def calculate_rsi(prices_df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Calculate RSI using Wilder's smoothing (EWMA with alpha=1/period).
+
+    The classic RSI uses Wilder's smoothing (an EMA with smoothing factor 1/period),
+    NOT a simple rolling mean. Simple rolling averages give too much weight to
+    recent values and produce different RSI values from the standard definition.
+    """
     delta = prices_df["close"].diff()
     gain = (delta.where(delta > 0, 0)).fillna(0)
     loss = (-delta.where(delta < 0, 0)).fillna(0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
+    # Wilder's smoothing: alpha = 1/period, adjust=False for recursive EMA
+    avg_gain = gain.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
     # Guard against division by zero: when avg_loss is 0, RSI should be 100
     rs = avg_gain / avg_loss.replace(0, float("nan"))
     rsi = 100 - (100 / (1 + rs))
