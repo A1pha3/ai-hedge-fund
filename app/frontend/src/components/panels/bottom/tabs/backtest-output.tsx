@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { MoreHorizontal } from 'lucide-react';
+import { BacktestEquityCurve } from '@/components/backtest-equity-curve';
 import { getActionColor } from './output-tab-utils';
 
 // Component for displaying backtest progress
@@ -391,16 +392,18 @@ function BacktestPerformanceMetrics({ agentData }: { agentData: Record<string, a
 }
 
 // Main component for backtest output
-export function BacktestOutput({ 
-  agentData, 
-  outputData 
-}: { 
-  agentData: Record<string, any>; 
-  outputData: any; 
+export function BacktestOutput({
+  agentData,
+  outputData
+}: {
+  agentData: Record<string, any>;
+  outputData: any;
 }) {
   return (
     <>
       <BacktestProgress agentData={agentData} />
+      {/* P0-4: Equity Curve Visualization — renders above results */}
+      <BacktestEquityCurve agentData={agentData} />
       {outputData && <BacktestResults outputData={outputData} />}
       {agentData && agentData['backtest'] && (
         <BacktestPerformanceMetrics agentData={agentData} />
