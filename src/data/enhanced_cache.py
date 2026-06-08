@@ -27,6 +27,11 @@ class LRUCache:
     内存 LRU 缓存
 
     使用 functools.lru_cache 实现热点数据快速访问
+
+    Thread-safe (R20.9 ALPHA): 所有读写通过 ``self._lock`` 保护。
+    ``EnhancedCache`` 在多线程并发 ``get``/``set`` 时, disk hit 会回填 LRU
+    触发 ``_evict_lru()``, 其 ``min() + delete()`` 的非原子组合可能让
+    ``_cache`` 和 ``_access_time`` 不同步。加锁消除该竞争。
     """
 
     def __init__(self, maxsize: int = 128):
@@ -39,6 +44,7 @@ class LRUCache:
         self.maxsize = maxsize
         self._cache: dict[str, Any] = {}
         self._access_time: dict[str, datetime] = {}
+        self._lock = threading.Lock()
 
     # Sentinel for cache miss — distinguishes "key not present" from "cached None".
     _MISSING = object()
@@ -56,11 +62,12 @@ class LRUCache:
         Returns:
             缓存值, _sentinel on miss, or None on miss (default)
         """
-        if key in self._cache:
-            # 更新访问时间
-            self._access_time[key] = datetime.now()
-            return self._cache[key]
-        return _sentinel
+        with self._lock:
+            if key in self._cache:
+                # 更新访问时间
+                self._access_time[key] = datetime.now()
+                return self._cache[key]
+            return _sentinel
 
     def set(self, key: str, value: Any):
         """
@@ -70,12 +77,13 @@ class LRUCache:
             key: 缓存键
             value: 缓存值
         """
-        # 如果缓存已满，淘汰最久未使用的
-        if len(self._cache) >= self.maxsize and key not in self._cache:
-            self._evict_lru()
+        with self._lock:
+            # 如果缓存已满，淘汰最久未使用的
+            if len(self._cache) >= self.maxsize and key not in self._cache:
+                self._evict_lru()
 
-        self._cache[key] = value
-        self._access_time[key] = datetime.now()
+            self._cache[key] = value
+            self._access_time[key] = datetime.now()
 
     def delete(self, key: str):
         """
@@ -84,26 +92,30 @@ class LRUCache:
         Args:
             key: 缓存键
         """
-        self._cache.pop(key, None)
-        self._access_time.pop(key, None)
+        with self._lock:
+            self._cache.pop(key, None)
+            self._access_time.pop(key, None)
 
     def clear(self):
         """清空缓存"""
-        self._cache.clear()
-        self._access_time.clear()
+        with self._lock:
+            self._cache.clear()
+            self._access_time.clear()
 
     def _evict_lru(self):
-        """淘汰最久未使用的条目"""
+        """淘汰最久未使用的条目（调用方必须持有 self._lock）"""
         if not self._access_time:
             return
 
         # 找到最久未使用的键
         lru_key = min(self._access_time, key=self._access_time.get)
-        self.delete(lru_key)
+        self._cache.pop(lru_key, None)
+        self._access_time.pop(lru_key, None)
 
     def keys(self) -> list[str]:
         """获取所有缓存键"""
-        return list(self._cache.keys())
+        with self._lock:
+            return list(self._cache.keys())
 
 
 class RedisCache:

@@ -397,6 +397,10 @@ def _resolve_top(argv: list[str]) -> int | None:
                 val = a.split("=", 1)[1]
                 if val.isdigit():
                     top_n = int(val)
+    # ALPHA-R20.9: --top 0 silently returns empty; clamp to 1 with a warning.
+    if top_n < 1:
+        print(f"[Top] --top N 必须 >= 1, 收到 {top_n}, 已调整为 1")
+        top_n = 1
 
     # Parse filter parameters
     filters: dict = {}

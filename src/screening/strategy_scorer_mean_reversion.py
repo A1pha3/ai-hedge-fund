@@ -110,7 +110,14 @@ def _build_hurst_regime_snapshot(prices_df: pd.DataFrame) -> HurstRegimeSnapshot
         ma_50 = prices_df["close"].rolling(window=50).mean()
         std_50 = prices_df["close"].rolling(window=50).std()
         latest_z_score = ((prices_df["close"] - ma_50) / std_50).iloc[-1]
-        z_score = float(latest_z_score) if pd.notna(latest_z_score) else 0.0
+        # ALPHA-R20.9: pd.notna(inf) returns True, so an inf z_score (when
+        # std_50 is 0 for a constant-price window) would leak through and
+        # permanently trigger a bearish signal in _resolve_hurst_regime_signal
+        # (since inf > 1.0 is True). Guard with np.isfinite.
+        if pd.notna(latest_z_score) and np.isfinite(latest_z_score):
+            z_score = float(latest_z_score)
+        else:
+            z_score = 0.0
     return HurstRegimeSnapshot(hurst=hurst, z_score=z_score, completeness=1.0 if len(prices_df) >= 80 else 0.0)
 
 

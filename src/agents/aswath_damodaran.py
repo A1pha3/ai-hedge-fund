@@ -392,7 +392,15 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
         g += g_step
 
     # Terminal value (perpetuity with terminal growth, based on last projected FCF)
-    tv = prev_fcff * (1 + terminal_growth) / (discount - terminal_growth) / (1 + discount) ** years
+    # ALPHA-R20.9: guard against denominator approaching zero (or negative).
+    # If discount <= terminal_growth, the perpetuity formula blows up.  Clamp
+    # terminal_growth to discount * 0.5 (matches the guard pattern in
+    # valuation.py:232 and valuation.py:452-453).  With the current defaults
+    # (discount >= 0.09, terminal_growth = 0.025) this branch is unreachable,
+    # but the guard prevents future regressions if estimate_cost_of_equity
+    # parameters change.
+    effective_terminal_growth = min(terminal_growth, discount * 0.5) if discount > 0 else terminal_growth
+    tv = prev_fcff * (1 + effective_terminal_growth) / (discount - effective_terminal_growth) / (1 + discount) ** years
 
     equity_value = pv_sum + tv
     intrinsic_per_share = equity_value / shares
