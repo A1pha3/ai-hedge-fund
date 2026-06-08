@@ -1,0 +1,327 @@
+"""Tests for P0-7 ``run_daily_brief()`` — 盘前 5 分钟决策卡。
+
+测试范围:
+  1. ``test_basic_top3_output`` — 3 只推荐, 输出包含 ticker / 市场状态 / 行业轮动
+  2. ``test_no_tracking_history_graceful`` — 无 tracking_history.json 时不崩溃
+  3. ``test_consecutive_recommendation_bonus`` — 同分时连续天数加权
+  4. ``test_industry_rotation_top1`` — 多票行业计数, Top 1 行业正确
+  5. ``test_missing_auto_screening_returns_1`` — 没有任何报告时函数返回 1
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_strategy_signal(direction: int, confidence: float, sub_factors: dict | None = None) -> dict:
+    return {
+        "direction": direction,
+        "confidence": confidence,
+        "completeness": 0.8,
+        "sub_factors": sub_factors or {},
+    }
+
+
+def _make_recommendation(
+    ticker: str,
+    name: str = "测试股票",
+    industry_sw: str = "银行",
+    score_b: float = 0.5,
+    decision: str = "bullish",
+    consecutive_days: int = 0,
+    strategy_signals: dict | None = None,
+) -> dict:
+    rec: dict = {
+        "ticker": ticker,
+        "name": name,
+        "industry_sw": industry_sw,
+        "score_b": score_b,
+        "decision": decision,
+        "consecutive_days": consecutive_days,
+        "recommendation_history": [],
+        "strategy_signals": strategy_signals or {
+            "trend": _make_strategy_signal(1, 70.0),
+            "mean_reversion": _make_strategy_signal(1, 60.0),
+            "fundamental": _make_strategy_signal(1, 50.0),
+            "event_sentiment": _make_strategy_signal(0, 30.0),
+        },
+    }
+    return rec
+
+
+def _make_report(recommendations: list[dict], date: str = "20260607") -> dict:
+    return {
+        "mode": "auto_screening",
+        "date": date,
+        "market_state": {
+            "state_type": "trend",
+            "position_scale": 0.85,
+            "regime_gate_level": "normal",
+            "adx": 22.5,
+            "atr_price_ratio": 0.015,
+            "breadth_ratio": 0.55,
+        },
+        "layer_a_count": 500,
+        "top_n": 10,
+        "recommendations": recommendations,
+    }
+
+
+def _write_report(tmp_path: Path, payload: dict, filename: str = "auto_screening_20260607.json") -> Path:
+    report_path = tmp_path / filename
+    report_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return report_path
+
+
+def _write_history(tmp_path: Path, records: list[dict]) -> Path:
+    history_path = tmp_path / "tracking_history.json"
+    history_path.write_text(
+        json.dumps({"records": records, "updated_at": "20260609000000"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return history_path
+
+
+def _make_history_record(ticker: str, date: str, score_b: float = 0.5) -> dict:
+    return {
+        "ticker": ticker,
+        "name": ticker,
+        "recommended_date": date,
+        "recommended_price": 10.0,
+        "recommendation_score": score_b,
+        "tracking_status": "pending",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestDailyBriefBasic:
+    def test_basic_top3_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """3 只推荐 → 输出包含 3 个 ticker + 市场状态 + 行业轮动。"""
+        recs = [
+            _make_recommendation("000001", "平安银行", "银行", score_b=0.62, consecutive_days=3),
+            _make_recommendation("000002", "万科A", "地产", score_b=0.55, consecutive_days=0),
+            _make_recommendation("000003", "国农科技", "电子", score_b=0.45, consecutive_days=0),
+        ]
+        _write_report(tmp_path, _make_report(recs))
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "000001" in out
+        assert "000002" in out
+        assert "000003" in out
+        assert "盘前决策卡" in out
+        assert "trend" in out
+        assert "regime" in out
+        assert "行业轮动" in out
+
+    def test_no_tracking_history_graceful(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """无 tracking_history.json 时不崩溃, 跳过连续推荐字段。"""
+        recs = [
+            _make_recommendation("000001", "平安银行", "银行", score_b=0.62),
+            _make_recommendation("000002", "万科A", "地产", score_b=0.55),
+            _make_recommendation("000003", "国农科技", "电子", score_b=0.45),
+        ]
+        _write_report(tmp_path, _make_report(recs))
+        # 故意不写 tracking_history.json
+        assert not (tmp_path / "tracking_history.json").exists()
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "000001" in out
+        assert "盘前决策卡" in out
+
+
+class TestDailyBriefSorting:
+    def test_consecutive_recommendation_bonus(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """同 score_b 时, 连续 3 日的票排在连续 1 日的票前面。"""
+        recs = [
+            _make_recommendation("000001", "票A", "银行", score_b=0.50, consecutive_days=1),
+            _make_recommendation("000002", "票B", "地产", score_b=0.50, consecutive_days=3),
+        ]
+        # 加入更多票填充到 Top 3
+        recs.append(_make_recommendation("000003", "票C", "电子", score_b=0.40, consecutive_days=0))
+        _write_report(tmp_path, _make_report(recs))
+
+        # 写入 tracking_history 强化 consecutive_days
+        history = [
+            _make_history_record("000002", "20260607"),
+            _make_history_record("000002", "20260606"),
+            _make_history_record("000002", "20260605"),
+            _make_history_record("000001", "20260607"),
+        ]
+        _write_history(tmp_path, history)
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        # 000002 应该出现在 #1 (同分时连续 3 日胜出)
+        # 通过查看哪个 ticker 第一次出现在 #1 行附近来验证
+        # 取第一行 ticker 引用: 000002 应在 #1, 000001 在 #2 (因为 score 调整后 000002 + 0.15 > 000001 + 0.05)
+        first_pos_000002 = out.find("000002")
+        first_pos_000001 = out.find("000001")
+        assert first_pos_000002 != -1
+        assert first_pos_000001 != -1
+        assert first_pos_000002 < first_pos_000001, "000002 (consec=3) 应排在 000001 (consec=1) 之前"
+
+    def test_top3_must_include_consecutive_ge2(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Top 3 必须包含至少 1 只连续推荐 ≥2 日的票 — 替换最末位规则。"""
+        # 3 只高 score_b 票 (但都只有 consec=0 或 1), 加上 1 只低分但 consec=3 的票
+        recs = [
+            _make_recommendation("000001", "A", "银行", score_b=0.80, consecutive_days=0),
+            _make_recommendation("000002", "B", "电子", score_b=0.70, consecutive_days=1),
+            _make_recommendation("000003", "C", "机械", score_b=0.60, consecutive_days=0),
+            _make_recommendation("000004", "D", "医药", score_b=0.10, consecutive_days=3),
+        ]
+        _write_report(tmp_path, _make_report(recs))
+
+        history = [
+            _make_history_record("000004", "20260607"),
+            _make_history_record("000004", "20260606"),
+            _make_history_record("000004", "20260605"),
+            _make_history_record("000002", "20260607"),
+        ]
+        _write_history(tmp_path, history)
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        # 000004 (consec=3) 必须出现在 Top 3 中 — 替换了 #3
+        assert "000004" in out
+
+
+class TestDailyBriefIndustryRotation:
+    def test_industry_rotation_top1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """5 只票, 3 只银行 2 只科技 → 行业 Top 1 = 银行业。"""
+        recs = [
+            _make_recommendation("000001", "银行A", "银行", score_b=0.62),
+            _make_recommendation("000002", "银行B", "银行", score_b=0.55),
+            _make_recommendation("000003", "银行C", "银行", score_b=0.45),
+            _make_recommendation("000004", "科技A", "科技", score_b=0.50),
+            _make_recommendation("000005", "科技B", "科技", score_b=0.40),
+        ]
+        _write_report(tmp_path, _make_report(recs))
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        # 行业轮动 Top 1 行应包含 "银行业"
+        assert "银行业" in out or "银行" in out
+        # 验证输出结构有 "行业轮动 Top 1"
+        assert "行业轮动 Top 1" in out
+
+
+class TestDailyBriefErrors:
+    def test_missing_auto_screening_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """没有任何 auto_screening_*.json 时, 函数返回 1。"""
+        # 不写任何报告文件
+        assert list(tmp_path.glob("auto_screening_*.json")) == []
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        # 应有 "请先运行 --auto" 之类的提示
+        assert "--auto" in out or "请先运行" in out
+
+    def test_corrupt_report_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """报告文件损坏时函数返回 1。"""
+        bad_path = tmp_path / "auto_screening_20260607.json"
+        bad_path.write_text("{not valid json", encoding="utf-8")
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "失败" in out or "无法" in out or "读取" in out
+
+
+class TestDailyBriefHelpers:
+    """单元测试 — 内部 helper 函数。"""
+
+    def test_compute_consecutive_days_from_history(self) -> None:
+        """tracking_history 推算连续天数。"""
+        from src.cli.daily_brief import _compute_consecutive_days_from_history
+
+        records = [
+            _make_history_record("000001", "20260607"),
+            _make_history_record("000001", "20260606"),
+            _make_history_record("000001", "20260605"),
+            _make_history_record("000002", "20260607"),
+            _make_history_record("000002", "20260605"),  # gap day → streak=1
+        ]
+        result = _compute_consecutive_days_from_history(records)
+
+        assert result["000001"] == 3
+        assert result["000002"] == 1
+
+    def test_summarize_one_liner_bullish_convergence(self) -> None:
+        """2 个策略都 bullish → 包含 "共振"。"""
+        from src.cli.daily_brief import _summarize_one_liner
+
+        rec = _make_recommendation(
+            "000001",
+            strategy_signals={
+                "trend": _make_strategy_signal(1, 80.0),
+                "mean_reversion": _make_strategy_signal(1, 70.0),
+                "fundamental": _make_strategy_signal(-1, 30.0),
+                "event_sentiment": _make_strategy_signal(0, 20.0),
+            },
+        )
+        summary = _summarize_one_liner(rec, "银行")
+        assert "共振" in summary
+        assert "银行" in summary
+
+    def test_summarize_one_liner_conflict(self) -> None:
+        """1 个策略 bullish, 1 个 bearish → 包含 "但" 和 "谨慎"。"""
+        from src.cli.daily_brief import _summarize_one_liner
+
+        rec = _make_recommendation(
+            "000001",
+            strategy_signals={
+                "trend": _make_strategy_signal(1, 80.0),
+                "mean_reversion": _make_strategy_signal(-1, 70.0),
+            },
+        )
+        summary = _summarize_one_liner(rec, "电子")
+        assert "但" in summary
+        assert "谨慎" in summary
+
+    def test_summarize_one_liner_no_signals(self) -> None:
+        """无 signals → 策略数据缺失。"""
+        from src.cli.daily_brief import _summarize_one_liner
+
+        rec = {"ticker": "000001", "industry_sw": "银行", "strategy_signals": {}}
+        summary = _summarize_one_liner(rec, "银行")
+        assert "策略数据缺失" in summary

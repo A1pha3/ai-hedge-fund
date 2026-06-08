@@ -2831,6 +2831,12 @@ if __name__ == "__main__":
     if inputs.explain:
         raise SystemExit(run_explain(inputs.explain))
 
+    # --why-not mode (P0-8): 反事实解释, 为什么某只票**不在** Top 推荐中
+    if inputs.why_not:
+        from src.cli.why_not import run_why_not as _run_why_not
+
+        raise SystemExit(_run_why_not(inputs.why_not))
+
     tickers = inputs.tickers
     selected_analysts = inputs.selected_analysts
 

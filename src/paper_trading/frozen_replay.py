@@ -180,21 +180,37 @@ def load_frozen_post_market_plans(daily_events_path: str | Path) -> dict[str, Ex
     return plans_by_date
 
 
+def _parse_frozen_trade_date(value: object) -> datetime | None:
+    """Strict parser for YYYYMMDD strings used inside the frozen replay source.
+
+    Returns None for malformed values so callers can skip the offending row
+    instead of crashing the entire replay.
+    """
+    text = _normalize_frozen_trade_date_key(value)
+    if len(text) != 8 or not text.isdigit():
+        return None
+    try:
+        return datetime.strptime(text, "%Y%m%d")
+    except ValueError:
+        return None
+
+
 def _build_recent_generated_buy_blocks(*, latest_buy_trade_by_ticker: dict[str, str], current_trade_date: str, cooldown_calendar_days: int = 2) -> dict[str, dict]:
-    current_dt = datetime.strptime(_normalize_frozen_trade_date_key(current_trade_date), "%Y%m%d")
+    current_dt = _parse_frozen_trade_date(current_trade_date)
+    if current_dt is None:
+        return {}
     blocked_until = (current_dt + timedelta(days=1)).strftime("%Y%m%d")
     blocked: dict[str, dict] = {}
     for ticker, buy_trade_date in dict(latest_buy_trade_by_ticker or {}).items():
-        normalized_buy_trade_date = _normalize_frozen_trade_date_key(buy_trade_date)
-        if len(normalized_buy_trade_date) != 8:
+        buy_dt = _parse_frozen_trade_date(buy_trade_date)
+        if buy_dt is None:
             continue
-        buy_dt = datetime.strptime(normalized_buy_trade_date, "%Y%m%d")
         calendar_day_gap = (current_dt - buy_dt).days
         if calendar_day_gap <= 0 or calendar_day_gap > cooldown_calendar_days:
             continue
         blocked[str(ticker)] = {
             "trigger_reason": "recent_formal_buy_cooldown",
-            "exit_trade_date": normalized_buy_trade_date,
+            "exit_trade_date": buy_dt.strftime("%Y%m%d"),
             "blocked_until": blocked_until,
         }
     return blocked

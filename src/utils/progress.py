@@ -1,5 +1,6 @@
 from datetime import datetime, UTC
 from collections.abc import Callable
+from threading import Lock
 
 from rich.console import Console
 from rich.live import Live
@@ -18,17 +19,20 @@ class AgentProgress:
         self.table = Table(show_header=False, box=None, padding=(0, 1))
         self.live = Live(self.table, console=console, refresh_per_second=4)
         self.started = False
+        self._handlers_lock = Lock()
         self.update_handlers: list[Callable[..., None]] = []
 
     def register_handler(self, handler: Callable[..., None]):
         """Register a handler to be called when agent status updates."""
-        self.update_handlers.append(handler)
+        with self._handlers_lock:
+            self.update_handlers.append(handler)
         return handler  # Return handler to support use as decorator
 
     def unregister_handler(self, handler: Callable[..., None]):
         """Unregister a previously registered handler."""
-        if handler in self.update_handlers:
-            self.update_handlers.remove(handler)
+        with self._handlers_lock:
+            if handler in self.update_handlers:
+                self.update_handlers.remove(handler)
 
     def start(self):
         """Start the progress display."""
@@ -58,8 +62,11 @@ class AgentProgress:
         timestamp = datetime.now(UTC).isoformat()
         self.agent_status[agent_name]["timestamp"] = timestamp
 
-        # Notify all registered handlers
-        for handler in self.update_handlers:
+        # Snapshot the handler list under the lock so concurrent
+        # unregister/append calls don't mutate it mid-iteration.
+        with self._handlers_lock:
+            handler_snapshot = list(self.update_handlers)
+        for handler in handler_snapshot:
             handler(agent_name, ticker, status, analysis, timestamp)
 
         self._refresh_display()

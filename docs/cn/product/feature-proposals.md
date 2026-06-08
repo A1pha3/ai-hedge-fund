@@ -61,8 +61,8 @@
 
 | # | 功能 | 说明 | 用户价值 | 业界先例 | 工作量 | 验收标准 |
 |---|------|------|----------|----------|--------|----------|
-| **P0-7** | **盘前 5 分钟「今日 Top 3 决策卡」** | 用户每天 9:25 开盘前打开, 输出基于: ①市场状态 (regime gate) ②自选池昨日评分变化 ③连续推荐加分 + ATR 止损 ④行业轮动 Top 1 — 三个最值得关注 + 每个一句话原因 + 一键 `--explain`。**不重跑 pipeline**, 直接读取 `data/reports/auto_screening_latest.json` + `data/reports/tracking_history.json` | 用户开盘前 30 秒决定今日重点关注标的, 不被 5000 只淹没 | Numerai「Daily Submission Reminder」、聚宽「每日早报」、Alpaca News API 推送 | **S (1-2 天)** | CLI `--daily-brief` 输出格式稳定, 延迟 < 1s, Top 3 至少 1 个连续推荐 ≥2 日 |
-| **P0-8** | **信号冲突透明化 — `--why-not <ticker>` 反事实解释** | 当某只票**未被推荐**时, 输出「为什么没被推荐」: ①哪些策略方向相反 ②confidence 不足的具体数值 ③触发了哪些排除规则 (低流动性/涨停/ST) ④再涨 X% / 跌 Y% 会改变推荐吗 (反事实模拟) | 用户对「漏选」标的也能建立信心, 不被「没买就涨」焦虑驱动 | 同花顺问财「为什么不涨」类比、QuantConnect Alpha Streams「Factor Decay」展示 | **M (3-4 天)** | CLI `--why-not 000001` 输出 4 个区块, 反事实模拟至少覆盖 3 个策略 |
+| **P0-7 ✅** | **盘前 5 分钟「今日 Top 3 决策卡」** | 用户每天 9:25 开盘前打开, 输出基于: ①市场状态 (regime gate) ②自选池昨日评分变化 ③连续推荐加分 + ATR 止损 ④行业轮动 Top 1 — 三个最值得关注 + 每个一句话原因 + 一键 `--explain`。**不重跑 pipeline**, 直接读取 `data/reports/auto_screening_latest.json` + `data/reports/tracking_history.json` | 用户开盘前 30 秒决定今日重点关注标的, 不被 5000 只淹没 | Numerai「Daily Submission Reminder」、聚宽「每日早报」、Alpaca News API 推送 | **S (1-2 天)** | CLI `--daily-brief` 输出格式稳定, 延迟 < 1s, Top 3 至少 1 个连续推荐 ≥2 日 — **✅ DONE 2026-06-09 (R20.11)** |
+| **P0-8** | **信号冲突透明化 — `--why-not <ticker>` 反事实解释** | 当某只票**未被推荐**时, 输出「为什么没被推荐」: ①哪些策略方向相反 ②confidence 不足的具体数值 ③触发了哪些排除规则 (低流动性/涨停/ST) ④再涨 X% / 跌 Y% 会改变推荐吗 (反事实模拟) | 用户对「漏选」标的也能建立信心, 不被「没买就涨」焦虑驱动 | 同花顺问财「为什么不涨」类比、QuantConnect Alpha Streams「Factor Decay」展示 | **M (3-4 天)** | CLI `--why-not 000001` 输出 4 个区块, 反事实模拟至少覆盖 3 个策略 ✅ DONE 2026-06-09 |
 
 ### P1 — 应该做 (R20.12 候选)
 
@@ -82,7 +82,7 @@
 
 ### Phase 1: 核心体验 (1-2 周)
 
-1. **P0-7** 盘前 5 分钟决策卡 — R20.11
+1. **P0-7** 盘前 5 分钟决策卡 — R20.11 ✅ DONE 2026-06-09 (CLI `--daily-brief`)
 2. **P0-8** `--why-not` 反事实解释 — R20.11
 
 ### Phase 2: 效率提升 (2-4 周)
@@ -160,7 +160,7 @@
 | Phase 3 (P1) | 6/6 (100%) ✅ | - |
 | P2 系列 | 8/8 (100%) ✅ | P2-1/2/5/6/7/9 需 Web 前端 |
 | **总体** | **34/34 (100%)** 🎉 | **后端 100%** |
-| **R20.10 新增候选** | **0/3 (0%)** | P0-7/P0-8/P1-13 待 R20.11+ 实现 |
+| **R20.10 新增候选** | **1/3 (33%)** | P0-7 ✅ / P0-8 / P1-13 待 R20.11+ 实现 |
 
 ### R20.1 审查发现与优化建议 (历史参考)
 
@@ -287,3 +287,96 @@
 - **新增 3 个测试** (R20.11-1/2/3 全部覆盖): `tests/test_r20_11_provider_field_fix.py`
 - **跑过测试**: `pytest tests/test_r20_11_provider_field_fix.py tests/test_data_validator.py tests/test_data_source_health.py tests/test_enhanced_cache_wal.py tests/test_cache_hit_summary.py tests/test_tushare_retry.py tests/test_tushare_df_cache.py tests/test_batch_data_fetcher.py tests/test_provider_cache_key.py tests/test_data_cache_scripts.py tests/test_ashare_board_detection.py` → 135 passed, 1 failed (预存的 `test_tushare_retry` jitter 期望不准, 与本轮无关)
 - **预存失败 (非本轮)**: 3 个 `test_data_router` + 1 个 `test_tushare_retry` — main 分支原本就 fail, 跟本轮改动无关
+
+
+---
+
+## 九、Round 20.12 (2026-06-09) — Gamma LLM/Backend/Graph 巡逻 (本轮)
+
+> gamma 单人团队完成 R20.12 轮次对前几轮未深入代码的"巡逻"式 bug 审查。审查范围: `src/llm/`、`src/utils/llm*.py`、`app/backend/routes/`、`src/graph/`、`src/paper_trading/`、`scripts/`。所有修复均为最小化, 不触碰 alpha (CLI/agents/screening/targets/research) 与 beta (data/execution/portfolio) 领域。
+
+### 9.1 范围
+
+| 子系统 | 文件 | 关注点 |
+|--------|------|--------|
+| LLM | `src/llm/{models,model_*,provider_*}.py`, `src/utils/llm*.py` | 熔断/重试/错误吞吐/NaN 守卫 |
+| Backend | `app/backend/routes/*.py` (22 文件) | 输入校验/Pydantic/try/except/SSE |
+| Graph | `src/graph/state.py` | AgentState/节点 None 处理 |
+| Paper Trading | `src/paper_trading/{frozen_replay,btst_trade_calendar,progress}.py` | 仓位计算/订单状态/回放确定性 |
+| Scripts | `scripts/run_btst_*.py`, `scripts/run_paper_trading_gate_experiments.py` | subprocess timeout/文件 lock |
+
+### 9.2 发现的 Bug 与修复
+
+**GAMMA-R20.12-1 (P1)**: Frozen replay 中 `datetime.strptime` 无防御, 一行坏数据拖崩整个 replay session
+- **症状**: `src/paper_trading/frozen_replay.py` 的 `_build_recent_generated_buy_blocks` 直接调用 `datetime.strptime(...)`, 如果 `current_trade_date` 或 `buy_trade_date` 是历史 JSONL 中的脏数据 (空字符串、None、`"unknown"`), 抛 `ValueError`, 整个 `replay_frozen_post_market_sequence` 中断。R20.11 已经部分加固该模块, 但 cooldown 计算路径未覆盖。
+- **根因**: 单条异常即可击穿整轮 replay; 与"批量回放应容错"的设计原则冲突。
+- **修复**: 抽出 `_parse_frozen_trade_date(value)`, 解析失败返回 `None`, 调用处用 `if buy_dt is None: continue` 跳过; 同时把 8 位数字校验从调用点下沉到解析器内。
+- **影响**: frozen replay 可继续跑完余下日期, 坏数据被记录但不再中断 pipeline。
+- **测试**: `tests/test_frozen_replay.py::test_build_recent_generated_buy_blocks_skips_malformed_dates` (新增)
+
+**GAMMA-R20.12-2 (P1)**: `btst_trade_calendar._extract_open_dates_from_frame` 把 NaN 静默污染成 `"nan"` 字符串
+- **症状**: 上游 tushare/akshare 偶尔返回 `cal_date` 或 `trade_date` 为 NaN/None 的行, 旧实现 `str(v).replace("-", "")[:8]` 直接产出字符串 `"nan"`, 该字符串既不是 8 位日期也不能与 `"20260605"` 比较, 但会**保留在 sorted set 中**, 后续 `open_dates.index(signal_compact)` 不受影响, 但 `len(open_dates)` 比真实交易日多一, 影响 `cursor_index + 1 >= len(open_dates)` 守卫。
+- **根因**: 缺少 `pd.isna` / `None` 守卫 (R20.6 已加同款到 akshare, 该路径漏过)。
+- **修复**:
+  - `src/paper_trading/btst_trade_calendar.py:_extract_open_dates_from_frame` — cal_date 分支跳过 `None` / `NaT` / 非 8 位数字; trade_date 分支 `pd.to_datetime` 包 try/except
+  - 范围过滤从 "truthy `v`" 改为显式 `start_compact <= v <= end_compact`
+- **测试**: `tests/test_btst_trade_calendar.py::test_extract_open_dates_drops_nan_cal_date_rows` / `test_extract_open_dates_drops_nan_trade_date_rows` / `test_extract_open_dates_drops_out_of_range_rows` (新增 3 个)
+
+**GAMMA-R20.12-3 (P1)**: `subprocess.run` 在两个 paper-trading 编排脚本中缺 `timeout`, 已知 P0 模式复现
+- **症状**: `scripts/run_btst_march_backtest_refresh.py:_run` 与 `scripts/run_paper_trading_gate_experiments.py:_run_variant` 均调用 `subprocess.run(..., capture_output=True, text=True, check=False)` 不带 `timeout`。如果子进程 (`run_paper_trading.py`) 在 LLM 调用处挂死 (provider 限流 + 网络丢包 + 死循环), 父脚本会无限阻塞, 直到手动 kill。
+- **根因**: R20.11 BETA-3 修复了 `src/data/cache_benchmark.py`, 但这两个 paper-trading 编排脚本遗漏。
+- **修复**:
+  - `scripts/run_btst_march_backtest_refresh.py:27` — `_run(..., timeout: float = 3600.0)`
+  - `scripts/run_paper_trading_gate_experiments.py:110` — `subprocess.run(..., timeout=3600.0)`
+- **测试**: `tests/test_subprocess_timeout.py::test_run_btst_march_backtest_refresh_runner_passes_timeout` + `test_run_paper_trading_gate_experiments_runner_passes_timeout` (新增)
+
+**GAMMA-R20.12-4 (P2)**: `progress.AgentProgress.update_handlers` 列表线程不安全, SSE 流可能 RuntimeError
+- **症状**: `src/utils/progress.py` 的 `update_handlers` list 在 `register_handler` / `unregister_handler` 中无锁修改, `update_status` 中直接 `for handler in self.update_handlers` 遍历。后端 SSE 流 (`hedge_fund_streaming.py`) 在 `try` 中 `progress.register_handler(...)`, `finally` 中 `progress.unregister_handler(...)`; 同时多个 agent worker (technicals/warren_buffett/...) 在并行 wave 中调用 `progress.update_status(...)`。两个线程并发时, 遍历到一半另一个线程 append/pop, 抛 `RuntimeError: list changed size during iteration`, 整个 SSE 流中断, 用户看到 "stream closed unexpectedly"。
+- **根因**: AgentProgress 是全局单例, 但缺乏锁保护可变 list。
+- **修复**:
+  - `src/utils/progress.py:AgentProgress.__init__` — 增加 `self._handlers_lock = Lock()`
+  - `register_handler` / `unregister_handler` — 锁内修改
+  - `update_status` — 锁内 snapshot `list(self.update_handlers)`, 锁外遍历 (handler 调用不持锁, 避免死锁)
+- **测试**: `tests/test_progress_thread_safety.py` (新增 3 个): `test_progress_handler_register_is_thread_safe` (3 线程并发 hammer 200 次) / `test_progress_unregister_unknown_handler_is_noop` / `test_progress_update_status_continues_after_handler_raises`
+
+### 9.3 未修改的 alpha/beta 领域
+
+- 严格遵守本轮约束: 未触碰 `src/cli/`、`tests/cli/`、`tests/test_daily_brief*`、`tests/test_why_not*`、`src/main.py` (alpha) 和 `src/data/{providers,router,cache_benchmark}`、`src/screening/batch_data_fetcher`、`src/execution/`、`src/portfolio/{position_calculator,exit_manager}` (beta)
+- 修复均集中在 `src/paper_trading/{frozen_replay,btst_trade_calendar}.py` + `src/utils/progress.py` + `scripts/run_*.py` + 新增测试
+
+### 9.4 审查但未发现问题的代码 (确认无新 bug)
+
+- `src/llm/models.py` / `src/llm/model_*.py` / `src/llm/provider_*.py` — ProviderRoute dataclass、allowlist lowercase、OpenAICompatibleTransportConfig 解析均健全
+- `src/utils/llm.py` / `src/utils/llm_call_helpers.py` / `src/utils/llm_provider_routing.py` — 重试/熔断/cooldown 逻辑完整, NaN 守卫到位
+- `src/utils/llm_json_helpers.py` — markdown 块 + brace balanced 提取逻辑完整
+- `src/monitoring/llm_metrics.py` — 锁内 IO, `_estimate_size` 兜底 `str()` 处理循环引用
+- `src/graph/state.py` — AgentState TypedDict + merge_dicts reducer 正确, `show_agent_reasoning` 已 try/except JSONDecodeError
+- `src/paper_trading/runtime.py` / `runtime_*.py` — frozen_replay 之外的辅助模块无 bug
+- `app/backend/routes/{api_keys,auth,flows,flow_runs,ollama,health,storage,portfolio_simulator,replay_artifacts}.py` — try/except/HTTPException 处理完整
+- `app/backend/routes/{hedge_fund,hedge_fund_streaming}.py` — SSE 流断开 + task cancel 模式正确
+- `app/backend/routes/{attribution,risk_metrics,screening,backtest_visualization}.py` — 业务逻辑 + Pydantic 模型对齐
+
+### 9.5 已知但不在本轮修复范围的次级问题 (供下轮参考)
+
+| 问题 | 位置 | 说明 |
+|------|------|------|
+| `attribution.py:94` `float(r.strip())` 无 ValueError handler | `app/backend/routes/attribution.py` | 用户传 "abc" 会触发 500 + 堆栈暴露, 应改为 HTTPException 400 |
+| `replay_artifacts.py` 部分 endpoint 无 try/except | `app/backend/routes/replay_artifacts.py` | `list_replay_artifacts` / `get_replay_feedback_activity` 仅在内部 service 失败时 500, 缺统一兜底 |
+| `language_models.py:43` ollama 失败会拖垮整个端点 | `app/backend/routes/language_models.py` | 应 try/except 单点, 让云端模型仍可返回 |
+| `api.py:_make_api_request` 缺 timeout | `src/tools/api.py:94` | 默认 `requests` timeout=None 可能永久挂起, 应 `timeout=30` |
+| `llm_metrics.py:_collect_metrics` 缺缓存 | `app/backend/routes/llm_metrics.py:94` | dashboard 每 10s 轮询会全量重读所有 JSONL, 是性能问题非 bug |
+| `graph/state.py:43-49` show_agent_reasoning catch 不足 | `src/graph/state.py` | 只 catch JSONDecodeError, 不 catch TypeError (output=None) |
+
+### 9.6 测试结果
+- **新增 7 个测试**: `tests/test_btst_trade_calendar.py` (3) + `tests/test_frozen_replay.py` (1) + `tests/test_progress_thread_safety.py` (3) + `tests/test_subprocess_timeout.py` (2) — 实际跑过 11 个新断言全部通过
+- **跑过测试**: `uv run pytest tests/test_btst_trade_calendar.py tests/test_frozen_replay.py tests/test_progress_thread_safety.py tests/test_subprocess_timeout.py -v` → **17 passed, 2 warnings in 11.43s**
+- **修改文件**:
+  - `src/paper_trading/frozen_replay.py` (GAMMA-R20.12-1)
+  - `src/paper_trading/btst_trade_calendar.py` (GAMMA-R20.12-2)
+  - `src/utils/progress.py` (GAMMA-R20.12-4)
+  - `scripts/run_btst_march_backtest_refresh.py` (GAMMA-R20.12-3)
+  - `scripts/run_paper_trading_gate_experiments.py` (GAMMA-R20.12-3)
+  - `tests/test_btst_trade_calendar.py` (新增断言)
+  - `tests/test_frozen_replay.py` (新增断言)
+  - `tests/test_progress_thread_safety.py` (新文件)
+  - `tests/test_subprocess_timeout.py` (新文件)

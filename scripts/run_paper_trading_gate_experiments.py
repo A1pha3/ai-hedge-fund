@@ -107,7 +107,7 @@ def _run_variant(repo_root: Path, output_dir: Path, args: argparse.Namespace, va
     env = os.environ.copy()
     env.update(env_updates)
 
-    completed = subprocess.run(command, cwd=repo_root, env=env, capture_output=True, text=True, check=False)
+    completed = subprocess.run(command, cwd=repo_root, env=env, capture_output=True, text=True, check=False, timeout=3600.0)
     return {
         "variant": variant_name,
         "command": command,

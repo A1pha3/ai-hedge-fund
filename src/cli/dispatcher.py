@@ -368,6 +368,32 @@ def _resolve_watchlist(argv: list[str]) -> int | None:
     return None
 
 
+def _resolve_daily_brief(argv: list[str]) -> int | None:
+    """``--daily-brief`` — 盘前 5 分钟「今日 Top 3 决策卡」(P0-7)。
+
+    早期分发 — 不走主 parser, 避免 ``--tickers required`` 冲突。
+    """
+    if "--daily-brief" not in argv:
+        return None
+    from src.cli.daily_brief import run_daily_brief
+
+    return run_daily_brief()
+
+
+def _resolve_why_not(argv: list[str]) -> int | None:
+    """``--why-not <ticker>`` — 反事实解释 (P0-8)。
+
+    早期分发 — 不走主 parser, 避免 ``--tickers required`` 冲突。
+    支持 ``--why-not=000001`` 和 ``--why-not 000001`` 两种形式。
+    """
+    ticker = _get_kv(argv, "--why-not") or _next_arg(argv, "--why-not")
+    if ticker is None:
+        return None
+    from src.cli.why_not import run_why_not
+
+    return run_why_not(ticker)
+
+
 def _resolve_top(argv: list[str]) -> int | None:
     """``--top [N] [--filter KEY=VALUE ...]`` — 显示最近一次 ``--auto`` 运行的 Top N 推荐 (无需重跑)。
 
@@ -463,6 +489,8 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--watchlist-remove", _resolve_watchlist),
     ("--watchlist-list", _resolve_watchlist),
     ("--watchlist-status", _resolve_watchlist),
+    ("--daily-brief", _resolve_daily_brief),
+    ("--why-not", _resolve_why_not),
     ("--top", _resolve_top),
 ]
 

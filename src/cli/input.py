@@ -71,6 +71,21 @@ def add_common_args(
         metavar="TICKER",
         help="Explain why TICKER was recommended (reads latest auto-screening report)",
     )
+    parser.add_argument(
+        "--why-not",
+        type=str,
+        default=None,
+        metavar="TICKER",
+        help=(
+            "反事实解释: 为什么 TICKER 没被推荐, 需要变什么才能进 Top 推荐"
+            " (reads latest auto-screening report, P0-8)"
+        ),
+    )
+    parser.add_argument(
+        "--daily-brief",
+        action="store_true",
+        help="盘前 5 分钟决策卡: Top 3 一句话 + 市场状态 + 行业轮动 (P0-7)",
+    )
     return parser
 
 
@@ -227,6 +242,7 @@ class CLIInputs:
     auto: bool = False
     top_n: int = 10
     explain: str = ""
+    why_not: str = ""
     raw_args: argparse.Namespace | None = None
 
 
@@ -309,5 +325,6 @@ def parse_cli_inputs(
         auto=is_auto,
         top_n=getattr(args, "top_n", 10),
         explain=getattr(args, "explain", None) or "",
+        why_not=getattr(args, "why_not", None) or "",
         raw_args=args,
     )

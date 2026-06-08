@@ -34,13 +34,26 @@ def _extract_open_dates_from_frame(df: pd.DataFrame | None, start_compact: str, 
         return []
 
     if "cal_date" in df.columns:
-        values = [str(v).replace("-", "")[:8] for v in df["cal_date"].tolist()]
+        values: list[str] = []
+        for v in df["cal_date"].tolist():
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                continue
+            text = str(v).replace("-", "")
+            if len(text) >= 8 and text[:8].isdigit():
+                values.append(text[:8])
     elif "trade_date" in df.columns:
-        values = [pd.to_datetime(v).strftime("%Y%m%d") for v in df["trade_date"].tolist()]
+        values = []
+        for v in df["trade_date"].tolist():
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                continue
+            try:
+                values.append(pd.to_datetime(v).strftime("%Y%m%d"))
+            except (ValueError, TypeError):
+                continue
     else:
         return []
 
-    return sorted({v for v in values if v and start_compact <= v <= end_compact})
+    return sorted({v for v in values if start_compact <= v <= end_compact})
 
 
 def _load_open_trade_dates_cn_sse(start_compact: str, end_compact: str) -> tuple[list[str], CalendarSource]:

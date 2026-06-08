@@ -24,8 +24,8 @@ DEFAULT_SUMMARY_JSON = REPORTS_DIR / "btst_march_backtest_refresh_summary.json"
 DEFAULT_SUMMARY_MD = REPORTS_DIR / "btst_march_backtest_refresh_summary.md"
 
 
-def _run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
+def _run(command: list[str], *, cwd: Path, timeout: float = 3600.0) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False, timeout=timeout)
 
 
 def _load_json(path: Path) -> dict[str, Any]:

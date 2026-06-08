@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.paper_trading.frozen_replay import load_frozen_post_market_plans, replay_frozen_post_market_sequence
+from src.paper_trading.frozen_replay import (
+    _build_recent_generated_buy_blocks,
+    load_frozen_post_market_plans,
+    replay_frozen_post_market_sequence,
+)
 
 
 def test_load_frozen_post_market_plans_backfills_missing_plan_date_from_trade_date(tmp_path) -> None:
@@ -292,3 +296,32 @@ def test_replay_frozen_post_market_sequence_preserves_execution_eligibility_for_
         assert "selected_rank_cap_exceeded" in (ev.short_trade.blockers or []), (
             f"{ticker}: rejection reason must be the documented rank_cap blocker"
         )
+
+
+def test_build_recent_generated_buy_blocks_skips_malformed_dates() -> None:
+    """Malformed current_trade_date or buy_trade_date entries must not
+    crash the replay — they should be silently skipped so a single bad
+    row can't take down the entire frozen replay session.
+    """
+    # Malformed current_trade_date -> empty dict (no crash).
+    assert _build_recent_generated_buy_blocks(
+        latest_buy_trade_by_ticker={"300724": "20260420"},
+        current_trade_date="not-a-date",
+    ) == {}
+
+    # Malformed buy_trade_date rows are skipped while well-formed rows
+    # in the cooldown window still produce blocks.
+    blocks = _build_recent_generated_buy_blocks(
+        latest_buy_trade_by_ticker={
+            "300724": "20260420",          # valid, within cooldown
+            "600519": "garbage",            # invalid -> skipped
+            "000001": "",                   # invalid -> skipped
+            "999999": "20260301",           # out of cooldown -> skipped
+        },
+        current_trade_date="20260421",
+        cooldown_calendar_days=2,
+    )
+
+    assert list(blocks.keys()) == ["300724"]
+    assert blocks["300724"]["trigger_reason"] == "recent_formal_buy_cooldown"
+    assert blocks["300724"]["exit_trade_date"] == "20260420"
