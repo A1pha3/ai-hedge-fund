@@ -870,3 +870,42 @@ changelog `r20-audit-history.md`:
 **验证**: pytest **1432 passed** (0 regressions)
 
 **修改文件**: 5 个 (净减少 ~120 行死代码)
+
+---
+
+### v2.2.10 (2026-06-09) — Round 20.22: 测试覆盖盲点 — R20.17 bug regression tests
+
+> R20.20-21 清完死代码。本轮补 R20.17 修复无 regression test 保护的盲点。
+
+**R20.17 修复回顾 (4 大类 60+ 处 bug)**:
+- Bug A: `quality_score or 0.5` (5 处)
+- Bug B: committee weights `or W` (37 处)
+- Bug C: `risk_budget_ratio or 1.0` (3 处)
+- Bug D: `completeness or 1.0`, `position_scale or 1.0` (13 处)
+
+**本轮发现的 regression 盲点 (3 类)**:
+
+| Bug | 修复点 | 风险 |
+|-----|--------|------|
+| Bug A | `input_helpers.build_target_input_from_entry` | 0.0 静默被覆盖为 0.5 — 修复无回归测试保护 |
+| Bug C | `signal_decay.py` warn-branch | `risk_budget_ratio=0.0` 修复无回归测试 (只有默认 1.0 测试) |
+| Bug D | `weekly_report.py` 下周关注区块 | `position_scale=0.0` 修复无回归测试 |
+
+**新增 regression 测试 (3 个)**:
+
+1. `test_build_target_input_preserves_explicit_quality_score_zero_r20_17_regression` (tests/targets/test_target_models.py)
+   - 显式 `quality_score=0.0` → 应保留 0.0
+   - missing `quality_score` → 应走默认 0.5
+   - `quality_score=None` → 应走默认 0.5 (区分"未传"与"传了 0.0")
+
+2. `test_apply_signal_decay_p7_warn_branch_preserves_zero_risk_budget_r20_17_regression` (tests/execution/test_signal_decay_p7_gap_overlay.py)
+   - 显式 `risk_budget_ratio=0.0` → warn 折扣后保持 0.0
+   - 对照组: 默认 1.0 → 折扣后 = 0.5 (默认 warn discount)
+
+3. `test_weekly_report_preserves_explicit_position_scale_zero_r20_17_regression` (tests/test_weekly_report.py)
+   - `position_scale=0.0` → 报告应显示 "仓位系数 0%"
+   - 对照组: missing → 报告应显示 "仓位系数 100%"
+
+**附带改进**: `_make_plan` 工厂函数加 `risk_budget_ratio` 参数化, 现有测试更易扩展。
+
+**验证**: pytest **677 passed** (targets + execution + screening 全部, 0 regressions)

@@ -258,3 +258,64 @@ class TestCLIDispatcher:
 
         rc = _resolve_weekly_report(["--other-flag"])
         assert rc is None
+
+
+# ---------------------------------------------------------------------------
+# R20.17 (Bug D) regression: position_scale=0.0 必须保留 (0% 仓位 = 全风控),
+# 不能被 `or 1.0` 静默覆盖为 100% 满仓。
+# ---------------------------------------------------------------------------
+
+
+def test_weekly_report_preserves_explicit_position_scale_zero_r20_17_regression(tmp_path: Path) -> None:
+    """R20.17 Bug D regression: `position_scale=0.0` 不能被 `or 1.0` 覆盖为 1.0。
+
+    0.0 是合法"0% 仓位"语义 (全风控, 不应买入任何新标的); 1.0 仅在 missing 时默认。
+    下周关注区块应显示 0% 仓位系数, 而非 100%。
+    """
+    from src.notification.weekly_report import generate_weekly_report
+
+    # 写入 position_scale=0.0 的报告
+    payload = {
+        "date": "20260606",
+        "market_state": {"state_type": "bearish", "position_scale": 0.0},
+        "recommendations": [
+            {"ticker": "300750", "score_b": 0.45, "decision": "bullish"},
+        ],
+    }
+    report_path = tmp_path / "auto_screening_20260606.json"
+    report_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    report = generate_weekly_report(
+        start_date="20260601",
+        end_date="20260606",
+        report_dir=tmp_path,
+    )
+
+    # 0% 仓位应保留 (而非被 or 1.0 覆盖为 100%)
+    assert "仓位系数 0%" in report, (
+        f"position_scale=0.0 应保留显示 0%, 实际报告不含此字符串 (R20.17 Bug D 回归)。报告片段: {report[:500]}"
+    )
+    assert "仓位系数 100%" not in report, (
+        "position_scale=0.0 不应被覆盖为 100%"
+    )
+
+
+def test_weekly_report_default_position_scale_1_0_when_missing(tmp_path: Path) -> None:
+    """对照组: missing position_scale 应走默认 1.0 (满仓)。"""
+    from src.notification.weekly_report import generate_weekly_report
+
+    payload = {
+        "date": "20260606",
+        "market_state": {"state_type": "trending_up"},  # 无 position_scale
+        "recommendations": [{"ticker": "300750", "score_b": 0.45}],
+    }
+    report_path = tmp_path / "auto_screening_20260606.json"
+    report_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    report = generate_weekly_report(
+        start_date="20260601",
+        end_date="20260606",
+        report_dir=tmp_path,
+    )
+
+    assert "仓位系数 100%" in report

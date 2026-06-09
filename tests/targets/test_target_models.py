@@ -534,6 +534,56 @@ def test_build_target_input_from_entry_preserves_shadow_focus_release_metadata_i
     assert result.replay_context["source_layer_release_reason"] == "shadow_focus_selected"
 
 
+def test_build_target_input_preserves_explicit_quality_score_zero_r20_17_regression() -> None:
+    """R20.17 (Bug A) regression: `quality_score=0.0` 不能被 `or 0.5` 静默提升为 0.5。
+
+    0.0 是合法"最低质量"语义, 必须保留; 0.5 是默认值只在 missing 时用。
+    """
+    from src.targets.short_trade_target_input_helpers import build_target_input_from_entry
+
+    # 显式传 0.0 (合法"最低质量")
+    result = build_target_input_from_entry(
+        trade_date="20260410",
+        entry={
+            "ticker": "000001",
+            "score_final": 0.5,
+            "quality_score": 0.0,
+            "strategy_signals": {"trend": {"signal": "neutral", "confidence": 0.5}},
+        },
+        normalized_reason_codes_fn=lambda raw: [str(item) for item in raw] if isinstance(raw, list) else [],
+    )
+    assert result.quality_score == 0.0, (
+        f"quality_score=0.0 应保留, 实际 {result.quality_score} (R20.17 Bug A 回归: or 0.5)"
+    )
+
+    # 不传 quality_score → 应走默认值 0.5
+    result_missing = build_target_input_from_entry(
+        trade_date="20260410",
+        entry={
+            "ticker": "000002",
+            "score_final": 0.5,
+            "strategy_signals": {"trend": {"signal": "neutral", "confidence": 0.5}},
+        },
+        normalized_reason_codes_fn=lambda raw: [str(item) for item in raw] if isinstance(raw, list) else [],
+    )
+    assert result_missing.quality_score == 0.5, (
+        f"missing quality_score 应默认 0.5, 实际 {result_missing.quality_score}"
+    )
+
+    # quality_score=None → 应走默认值 0.5 (区分"未传"与"传了 0.0")
+    result_none = build_target_input_from_entry(
+        trade_date="20260410",
+        entry={
+            "ticker": "000003",
+            "score_final": 0.5,
+            "quality_score": None,
+            "strategy_signals": {"trend": {"signal": "neutral", "confidence": 0.5}},
+        },
+        normalized_reason_codes_fn=lambda raw: [str(item) for item in raw] if isinstance(raw, list) else [],
+    )
+    assert result_none.quality_score == 0.5
+
+
 def test_strict_release_focus_shadow_still_fails_when_trend_is_not_constructive() -> None:
     entry = {
         "ticker": "300683",
