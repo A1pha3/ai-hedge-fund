@@ -251,7 +251,7 @@ def test_opportunity_pool_prior_downgrades_high_win_rate_negative_payoff(monkeyp
         for day, close_return in zip(range(1, 6), [0.005, 0.005, 0.005, 0.005, -0.04])
     }
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_opportunity,
         "_extract_next_day_outcome",
         lambda ticker, trade_date, price_cache: outcomes[(ticker, trade_date)],
     )
@@ -561,12 +561,12 @@ def test_enrich_upstream_shadow_entries_with_history_threads_helpers(monkeypatch
     report_dir.mkdir()
 
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_brief_enrichment,
         "_collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {"rows": [{"ticker": "hist"}]},
     )
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_brief_enrichment,
         "_apply_historical_prior_to_entries",
         lambda entries, historical_rows, price_cache, family: [
             {**entry, "family": family, "hist_rows": len(historical_rows)}
@@ -2629,7 +2629,7 @@ def test_generate_btst_next_day_trade_brief_rebuckets_intraday_selected_and_reor
             "next_open_to_close_return": -0.01,
         }
 
-    monkeypatch.setattr("src.paper_trading._btst_reporting.historical_prior._extract_next_day_outcome", _outcome)
+    monkeypatch.setattr("src.paper_trading._btst_reporting.historical_prior_opportunity._extract_next_day_outcome", _outcome)
 
     analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-04-06", next_trade_date="2026-04-07")
 
