@@ -112,7 +112,7 @@ def test_build_watch_candidate_historical_prior_prefers_family_source_score_scop
     ]
 
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_collection,
         "_decorate_watch_candidate_history_entry",
         lambda raw_entry, family: {**raw_entry, "ticker": "002001", "candidate_source": "catalyst_theme", "score_bucket": "high", "catalyst_bucket": "fresh"},
     )
@@ -147,7 +147,7 @@ def test_build_watch_candidate_historical_prior_falls_back_to_same_ticker_when_n
     ]
 
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_collection,
         "_decorate_watch_candidate_history_entry",
         lambda raw_entry, family: {**raw_entry, "ticker": "002001", "candidate_source": "catalyst_theme", "score_bucket": "high", "catalyst_bucket": "fresh"},
     )
