@@ -2598,7 +2598,7 @@ def test_generate_btst_next_day_trade_brief_rebuckets_intraday_selected_and_reor
         )
 
     monkeypatch.setattr(
-        "src.paper_trading._btst_reporting.historical_prior._collect_historical_watch_candidate_rows",
+        "src.paper_trading._btst_reporting.historical_prior_brief_enrichment._collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {
             "rows": historical_rows,
             "historical_report_dirs": [],
