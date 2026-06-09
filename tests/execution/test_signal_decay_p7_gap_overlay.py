@@ -167,3 +167,29 @@ def test_apply_signal_decay_p7_warn_branch_default_risk_budget_1_0(monkeypatch):
     assert plan.buy_orders[0].risk_budget_ratio == pytest.approx(0.5), (
         f"默认 risk_budget_ratio=1.0 折扣后应 = 0.5, 实际 {plan.buy_orders[0].risk_budget_ratio}"
     )
+
+
+def test_apply_signal_decay_zero_atr_does_not_cancel_normal_gap_up(monkeypatch):
+    """R20.26-B BETA-007: gap-up cancellation threshold ``gap > 1.5 * atr``
+    must require a *positive, finite* ATR. With ``atr=0.0`` (missing ATR
+    data — e.g. a fresh IPO, or a corrupted feed) the previous code computed
+    ``1.5 * 0.0 = 0.0`` and ANY positive open gap (even a normal 0.1% gap)
+    cancelled the buy order. That gate is meant to detect abnormal gap-ups
+    relative to volatility, so a zero / unknown ATR must NOT turn the gate
+    into a "cancel everything that gaps up" tripwire."""
+    monkeypatch.setenv("BTST_0422_P7_GAP_OVERLAY_MODE", "off")  # disable P7 overlay
+
+    plan = _make_plan(shares=100, amount=20_000.0)
+    apply_signal_decay(
+        plan,
+        "20240304",
+        open_gap_pct={"000001": 0.001},  # tiny normal gap up (0.1%)
+        atr_values={"000001": 0.0},      # invalid / unknown ATR
+    )
+
+    # Order must survive — a tiny gap with unknown ATR is not an abnormal gap.
+    assert len(plan.buy_orders) == 1, (
+        f"ATR=0 + 0.1% gap should NOT cancel the buy order, got alerts: {plan.risk_alerts}"
+    )
+    assert not any("cancel_buy_gap_open" in alert for alert in plan.risk_alerts)
+

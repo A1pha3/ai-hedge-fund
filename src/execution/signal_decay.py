@@ -77,7 +77,14 @@ def apply_signal_decay(
         gap_pct = float(gap_value) if isinstance(gap_value, (int, float)) else None
 
         # Existing gap-up cancellation (requires open_gap_pct to be supplied by the runtime/backtester).
-        if open_gap_pct.get(ticker, 0.0) > (1.5 * atr_values.get(ticker, float("inf"))):
+        # R20.26-B BETA-007: require a *positive, finite* ATR. With atr=0.0
+        # (missing ATR data — e.g. a fresh IPO, or a corrupted feed) the
+        # threshold ``1.5 * 0.0 = 0.0`` and ANY positive open gap cancelled
+        # the buy order, turning a volatility-relative safety gate into a
+        # "cancel everything that gaps up" tripwire. Skip the check when ATR
+        # is unknown / non-positive so the order survives normal opens.
+        atr_value = atr_values.get(ticker)
+        if isinstance(atr_value, (int, float)) and atr_value > 0 and open_gap_pct.get(ticker, 0.0) > (1.5 * float(atr_value)):
             risk_alerts.append(f"cancel_buy_gap_open:{ticker}")
             continue
 
