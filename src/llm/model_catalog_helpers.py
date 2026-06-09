@@ -5,7 +5,8 @@ from typing import Any
 
 
 def load_model_records_from_json(json_path: str) -> list[dict[str, Any]]:
-    with open(json_path) as file_obj:
+    # 显式 encoding="utf-8": Windows 默认 cp1252 会破坏中文 display_name
+    with open(json_path, encoding="utf-8") as file_obj:
         return json.load(file_obj)
 
 

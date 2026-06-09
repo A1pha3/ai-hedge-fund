@@ -472,6 +472,20 @@ def _resolve_confidence_calibration(argv: list[str]) -> int | None:
     return run_confidence_calibration(top_n=top_n, lookback_days=lookback)
 
 
+def _resolve_conviction_ranking(argv: list[str]) -> int | None:
+    """``--conviction-ranking`` — P0-11 综合信心排名 (Score + 连续 + 质量 + 校准)。
+
+    支持 ``--top-n`` (缺省 10) 和 ``--lookback`` (缺省 60)。
+    """
+    if "--conviction-ranking" not in argv:
+        return None
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 10)
+    lookback = _parse_int(_get_kv(argv, "--lookback"), 60)
+    from src.screening.conviction_ranking import run_conviction_ranking
+
+    return run_conviction_ranking(top_n=top_n, lookback_days=lookback)
+
+
 def _resolve_top(argv: list[str]) -> int | None:
     """``--top [N] [--filter KEY=VALUE ...]`` — 显示最近一次 ``--auto`` 运行的 Top N 推荐 (无需重跑)。
 
@@ -574,6 +588,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--weekly-report", _resolve_weekly_report),
     ("--data-quality-audit", _resolve_data_quality_audit),
     ("--confidence-calibration", _resolve_confidence_calibration),
+    ("--conviction-ranking", _resolve_conviction_ranking),
     ("--top", _resolve_top),
 ]
 

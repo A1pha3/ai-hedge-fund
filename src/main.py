@@ -2383,7 +2383,7 @@ def run_explain(ticker: str) -> int:
 
     latest = report_files[0]
     try:
-        with open(latest) as f:
+        with open(latest, encoding="utf-8") as f:
             data = _json.load(f)
     except Exception as exc:  # pragma: no cover
         print(f"{Fore.RED}读取报告失败: {exc}{Style.RESET_ALL}")
