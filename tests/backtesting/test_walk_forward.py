@@ -1676,3 +1676,71 @@ def test_summarize_walk_forward_with_baseline_computes_real_verdict():
     # Verify deltas were computed from baseline
     assert detail["next_close_positive_rate_delta"] == pytest.approx(0.06, abs=0.01)
     assert detail["next_high_hit_rate_delta"] == pytest.approx(0.07, abs=0.01)
+
+
+def test_classify_win_rate_first_rollout_verdict_rejects_when_all_deltas_none_r26g_regression():
+    """R20.26-G regression: when window_count=0 (no replay data with complete metrics),
+    all win-rate deltas are None → verdict MUST reject with win_rate_uplift_missing,
+    never accept (false-pass). Reproduces r.json rollout_blocked safety behavior.
+
+    Scenario: candidate & baseline both have all-None metrics (e.g. replay evaluator
+    returned window_count=0 because no input had complete t+2/t+3 horizons).
+    _delta returns None for every metric → close_positive_delta is None →
+    rejection_reasons gets 'win_rate_uplift_missing'. Verdict must be 'rejected'.
+    """
+    candidate = {
+        "rollout_blockers": [],
+        "next_close_positive_rate": None,
+        "next_high_hit_rate": None,
+        "realized_payoff_ratio": None,
+        "next_close_expectancy": None,
+        "window_coverage": 0.0,
+        # r.json-style: comparison_summary entry with null {metric}_delta values
+        "next_close_positive_rate_delta": None,
+        "next_high_hit_rate_delta": None,
+    }
+    baseline = {
+        "rollout_blockers": [],
+        "next_close_positive_rate": None,
+        "next_high_hit_rate": None,
+        "realized_payoff_ratio": None,
+        "next_close_expectancy": None,
+        "window_coverage": 0.0,
+    }
+
+    verdict, detail = classify_win_rate_first_rollout_verdict(candidate, baseline)
+
+    # Safety invariant: null deltas must never produce a false "accepted" verdict.
+    assert verdict == "rejected", "All-None deltas (window_count=0) must reject, not accept"
+    assert "win_rate_uplift_missing" in detail["rejection_reasons"]
+    assert detail["next_close_positive_rate_delta"] is None
+    assert detail["next_high_hit_rate_delta"] is None
+    # With no blockers and only win_rate_uplift_missing, verdict_reason is that code.
+    assert detail["verdict_reason"] == "win_rate_uplift_missing"
+
+
+def test_classify_win_rate_first_rollout_verdict_no_baseline_no_deltas_returns_neutral_or_blocked():
+    """R20.26-G: no baseline + all-None deltas is NOT false-accepted. Without rollout_blockers
+    it returns 'neutral' (cannot evaluate); with blockers it returns 'rejected'.
+    Both paths avoid a false 'accepted' verdict — this is the safety invariant.
+    """
+    # Case 1: no blockers, no baseline, all-None deltas → neutral (not accepted)
+    candidate_neutral = {
+        "rollout_blockers": [],
+        "next_close_positive_rate_delta": None,
+        "next_high_hit_rate_delta": None,
+        "realized_payoff_ratio_delta": None,
+        "next_close_expectancy_delta": None,
+        "window_coverage_delta": 0.0,
+    }
+    verdict, detail = classify_win_rate_first_rollout_verdict(candidate_neutral, baseline_summary=None)
+    assert verdict != "accepted", "All-None deltas with no baseline must never be accepted"
+    assert verdict == "neutral"
+    assert detail["verdict_reason"] == "not_evaluable"
+
+    # Case 2: with blockers → rejected (blockers always force rejection)
+    candidate_blocked = {**candidate_neutral, "rollout_blockers": ["worst_max_drawdown_floor"]}
+    verdict, detail = classify_win_rate_first_rollout_verdict(candidate_blocked, baseline_summary=None)
+    assert verdict == "rejected"
+    assert detail["verdict_reason"] == "rollout_blocked"
+    assert "rollout_blocked" in detail["rejection_reasons"]
