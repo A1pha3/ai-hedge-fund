@@ -400,7 +400,6 @@ def format_search_report(report: SearchReport) -> str:
             lines.append(f"- `{k}`: {v}")
         lines.append("")
 
-    passing = [r for r in report.results if not r.failed_guardrails]
     failing = [r for r in report.results if r.failed_guardrails]
     if failing:
         lines.append(f"Guardrail violations: **{len(failing)}** trial(s) ranked last due to failed guardrails")

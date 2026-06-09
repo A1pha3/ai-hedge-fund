@@ -814,3 +814,27 @@ changelog `r20-audit-history.md`:
 **修改文件**:
 - `docs/cn/product/feature-proposals.md` (933 → 157 行)
 - `docs/cn/product/changelog/r20-audit-history.md` (新建, 779 行)
+
+---
+
+### v2.2.8 (2026-06-09) — Round 20.20: 死代码清理 + undefined name 修复
+
+> 系统已稳定收敛 (R20.17-19)。本轮做有价值的维护: pyflakes 全量扫描清理。
+
+**Phase 1 — 真实 bug 修复 (2 处 undefined name)**:
+
+| Bug | 文件 | 修复 |
+|-----|------|------|
+| `Any` 类型注解未导入 (5 处使用) | `src/backtesting/walk_forward.py` | 加 `from typing import Any` (有 `from __future__ import annotations` 所以运行时安全, 但 `get_type_hints()` 会失败) |
+| `_REPORT_DIR` 死分支 | `src/main.py:2374` | `hasattr(__import__(__name__), "_REPORT_DIR")` 永远 False (该名从未定义), 直接用 `Path("data/reports")` |
+
+**Phase 2 — 死代码清理 (autoflake)**:
+
+- **~40 处未使用 import** 移除 (12 个文件): main.py, digest.py, factor_ic_analysis.py, lookback_audit.py, pdf_exporter.py, engine.py, engine_agent_mode.py, engine_pipeline_decisions.py, evaluation_helpers.py, explainability_helpers.py, snapshot_relief_criteria_helpers.py, weekly_report.py
+- **4 处 f-string 无占位符** → 普通字符串 (main.py, digest.py ×2, review_renderer_selected_helpers.py)
+- **1 处未使用变量** `passing` 移除 (param_search.py:403)
+- 保留: `# noqa: F401` 标记的 re-export (evaluation_helpers/explainability_helpers 给 short_trade_target.py 复用, 确认被使用)
+
+**验证**: pytest **1432 passed** (与 R20.18/19 一致, 0 regressions)
+
+**修改文件**: 13 个 (主要是 import 清理, 净减少 ~60 行)

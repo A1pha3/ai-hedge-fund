@@ -58,7 +58,7 @@ from .engine_agent_mode import (
     resolve_agent_mode_day_window,
     run_agent_mode_agent,
 )
-from .engine_pending_plan_runner import PendingPlanRunner, PendingPlanRunResult
+from .engine_pending_plan_runner import PendingPlanRunner
 from .engine_pipeline_decisions import PipelineDecisionExecutor
 from .engine_telemetry_helpers import (
     build_pipeline_day_record_payloads as build_pipeline_day_record_payloads_helper,

@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import sys
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
@@ -236,7 +235,7 @@ def _discover_artifact_roots(start_date: str, end_date: str) -> list[Path]:
     matching dates) comes first.
     """
     repo_root = Path(__file__).resolve().parents[2]
-    formatted_start = _format_date(start_date)
+    _format_date(start_date)
 
     roots: list[tuple[int, Path]] = []
 
@@ -434,8 +433,8 @@ def format_digest_markdown(result: DigestResult) -> str:
 
     lines.append("## Summary")
     lines.append("")
-    lines.append(f"| Metric | Value |")
-    lines.append(f"|--------|-------|")
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
     lines.append(f"| Days in range | {s.get('total_days', 'N/A')} |")
     lines.append(f"| Days with data | {s.get('days_with_data', 'N/A')} |")
     lines.append(f"| Avg candidates/day | {s.get('avg_candidates', 'N/A')} |")

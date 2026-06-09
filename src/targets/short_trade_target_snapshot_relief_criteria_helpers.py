@@ -30,9 +30,6 @@ from src.targets.short_trade_target_prior_helpers import (
     resolve_btst_prior_shrinkage_p4_mode,
     resolve_effective_prior_metrics,
 )
-from src.targets.short_trade_target_watchlist_helpers import (
-    resolve_short_trade_boundary_selected_only_shrink_impl,
-)
 
 BREAKOUT_TRAP_PENALTY_WEIGHT = 0.10
 BREAKOUT_TRAP_EXECUTION_BLOCK_THRESHOLD = 0.60

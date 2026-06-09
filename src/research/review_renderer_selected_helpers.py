@@ -79,4 +79,4 @@ def _render_execution_eligibility_section(candidate: SelectedCandidate) -> list[
     if formal_execution_block_flags:
         details.append(f"formal_block={'+'.join(formal_execution_block_flags)}")
     status = "是" if target_context.get("execution_eligible") else "否"
-    return [f"- 是否可执行:", f"  - {status}" + (f" ({', '.join(details)})" if details else "")]
+    return ["- 是否可执行:", f"  - {status}" + (f" ({', '.join(details)})" if details else "")]

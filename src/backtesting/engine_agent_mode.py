@@ -14,7 +14,6 @@ are therefore public standalone functions rather than class methods.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
 
 import pandas as pd
 from dateutil.relativedelta import relativedelta

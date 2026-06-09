@@ -17,7 +17,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from src.notification.push import (
     MAX_WECOM_CONTENT,
@@ -485,7 +485,6 @@ def _send_chunk(config: PushConfig, payload: PushPayload) -> PushResult:
     from src.notification.push import (
         MAX_RETRIES,
         RETRY_BACKOFF_BASE,
-        PushChannel,
         _default_http_post,
         _send_wecom,
     )

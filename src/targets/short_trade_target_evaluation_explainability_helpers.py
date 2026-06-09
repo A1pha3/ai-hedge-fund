@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.targets.explainability import clamp_unit_interval
 from src.targets.models import TargetEvaluationInput
 from src.targets.short_trade_metrics_payload_builders import (  # noqa: F401
     _build_breakout_trap_guard_metrics_payload,

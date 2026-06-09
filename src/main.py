@@ -27,10 +27,8 @@ from src.screening.consecutive_recommendation import (
 from src.screening.market_state import detect_market_state
 from src.screening.industry_rotation import (
     IndustrySignal,
-    bottom_weak_industries,
     calculate_industry_rotation,
     format_rotation_block,
-    top_strong_industries,
 )
 from src.screening.recommendation_tracker import (
     get_tracking_summary,
@@ -53,21 +51,13 @@ from src.utils.numeric import safe_float as _safe_float, safe_int as _safe_int, 
 
 # Round 20.14: 从 main.py 抽取到独立模块的 UI 辅助函数 (纯重构, 行为不变)
 from src.cli.explain_helpers import (
-    _build_factor_bar,
-    _extract_articles_from_event_subfactors,
     _print_factor_detail_block,
     _print_industry_ranking_block,
     _print_recent_events_block,
 )
 from src.cli.market_status_helpers import (
-    _adx_level,
-    _atr_level,
-    _breadth_level,
     _extract_market_status,
     _format_market_status_table,
-    _northbound_label,
-    _regime_gate_color,
-    _state_type_cn,
 )
 
 # Load environment variables from .env file and override stale inherited values.
@@ -383,7 +373,6 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10) -> dict:
         get_global_batch_data_fetcher,
     )
     from src.screening.signal_decay_detector import (
-        DecayLevel,
         build_decay_summary,
         detect_signal_decay,
     )
@@ -573,7 +562,6 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         退出码（0 = 成功）
     """
     from colorama import Fore, Style
-    from tabulate import tabulate
 
     progress.start()
     try:
@@ -1288,7 +1276,7 @@ def _print_auto_screening_table(
     from colorama import Fore, Style
     from tabulate import tabulate
 
-    from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+    from src.screening.signal_decay_detector import DecayLevel
 
     state_type = getattr(market_state, "state_type", "mixed")
     position_scale = getattr(market_state, "position_scale", 1.0)
@@ -1805,7 +1793,7 @@ def run_push_test(
         ],
     }
     # 预先打印一次 (供 CLI 输出)
-    print(f"\n[PushTest] 测试 payload Markdown 预览 (前 10 行):")
+    print("\n[PushTest] 测试 payload Markdown 预览 (前 10 行):")
     preview = format_report_markdown(test_payload).splitlines()[:10]
     for line in preview:
         print(f"  {line}")
@@ -2371,7 +2359,7 @@ def run_explain(ticker: str) -> int:
     from colorama import Fore, Style
 
     # Find the most recent auto_screening report
-    reports_dir = _REPORT_DIR if hasattr(__import__(__name__), "_REPORT_DIR") else Path("data/reports")
+    reports_dir = Path("data/reports")
     if not reports_dir.exists():
         print(f"{Fore.RED}未找到 reports 目录: {reports_dir}{Style.RESET_ALL}")
         return 1

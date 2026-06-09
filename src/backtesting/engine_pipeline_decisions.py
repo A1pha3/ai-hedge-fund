@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from src.execution.models import ExecutionPlan, PendingOrder
 

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
