@@ -177,7 +177,10 @@ def compute_conviction_row(
     weights = weights or DEFAULT_WEIGHTS
     audit = audit_recommendation(rec, threshold=threshold)
     score = float(rec.get("score_b") or 0.0)
-    consecutive_days = int(rec.get("consecutive_days") or 1)
+    # NOTE: consecutive_days=0 是合法值 (首次推荐/非连续, 来自 consecutive_recommendation.py:338),
+    # 不能用 `or 1` 静默覆盖为 1 — 会污染 row.consecutive_days 元数据 (R20.26-A)。
+    raw_consecutive = rec.get("consecutive_days")
+    consecutive_days = int(raw_consecutive) if raw_consecutive is not None else 1
 
     # 各分量 (0-1)
     score_comp = _normalize_score(score)

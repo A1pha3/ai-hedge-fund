@@ -125,6 +125,17 @@ def test_compute_conviction_row_consecutive_one_is_zero():
     assert row.consecutive_component == 0.0
 
 
+def test_compute_conviction_row_consecutive_zero_preserved_not_silently_replaced():
+    """streak=0 (R20.26-A regression): `int(rec.get("consecutive_days") or 1)` 把合法的 0
+    静默替换为 1, 导致 row.consecutive_days 元数据错误。consecutive_component 仍是 0
+    (因为 _normalize_consecutive 把 <=1 都归零), 但 row.consecutive_days 必须保留输入值 0。
+    """
+    rec = _make_rec("000001", 0.8, consecutive_days=0)
+    row = compute_conviction_row(rec, original_rank=1, calibration=_empty_calibration())
+    assert row.consecutive_component == 0.0
+    assert row.consecutive_days == 0  # 必须保留 0, 不能被 `or 1` 替换为 1
+
+
 def test_compute_conviction_row_score_in_conviction_range():
     """conviction_score 应在 0-100 范围。"""
     rec = _make_rec("000001", 0.7)
