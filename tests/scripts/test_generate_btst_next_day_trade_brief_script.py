@@ -9,6 +9,8 @@ import src.paper_trading.btst_reporting as btst_reporting
 import src.paper_trading._btst_reporting.entry_builders as entry_builders
 import src.paper_trading._btst_reporting.pool_classifiers as pool_classifiers
 import src.paper_trading._btst_reporting.historical_prior as historical_prior
+import src.paper_trading._btst_reporting.historical_prior_brief_enrichment as historical_prior_brief_enrichment
+import src.paper_trading._btst_reporting.historical_prior_collection as historical_prior_collection
 from src.paper_trading.btst_reporting import infer_next_trade_date
 from src.targets import use_short_trade_target_profile
 from src.targets.router import build_selection_targets
@@ -502,35 +504,35 @@ def test_enrich_btst_brief_entries_with_history_threads_helpers_and_context(monk
     report_dir.mkdir()
 
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_brief_enrichment,
         "_collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {"rows": [{"ticker": "hist"}], "family_counts": {"selected": 1}, "report_count": 2, "candidate_count": 3},
     )
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_brief_enrichment,
         "_apply_historical_prior_to_entries",
         lambda entries, historical_rows, price_cache, family: [{**entry, "family": family, "hist_rows": len(historical_rows)} for entry in entries],
     )
-    monkeypatch.setattr(historical_prior, "_apply_execution_quality_entry_mode", lambda entry: {**entry, "mode_applied": True})
+    monkeypatch.setattr(historical_prior_brief_enrichment, "_apply_execution_quality_entry_mode", lambda entry: {**entry, "mode_applied": True})
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_brief_enrichment,
         "_reclassify_selected_execution_quality_entries",
         lambda selected, near_miss, opportunity: (selected, near_miss, opportunity),
     )
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_brief_enrichment,
         "_demote_weak_near_miss_entries",
         lambda near_miss, opportunity: (near_miss, opportunity),
     )
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_brief_enrichment,
         "_partition_opportunity_pool_entries",
         lambda opportunity: (opportunity, [{"ticker": "NH"}], [{"ticker": "RK"}], [{"ticker": "PR"}]),
     )
-    monkeypatch.setattr(historical_prior, "_historical_execution_entry_sort_key", lambda entry: entry.get("ticker", ""))
-    monkeypatch.setattr(historical_prior, "_opportunity_pool_execution_sort_key", lambda entry: entry.get("ticker", ""))
-    monkeypatch.setattr(historical_prior, "_research_historical_entry_sort_key", lambda entry: entry.get("ticker", ""))
-    monkeypatch.setattr(historical_prior, "_build_btst_candidate_historical_context", lambda payload: {"report_count": payload["report_count"]})
+    monkeypatch.setattr(historical_prior_brief_enrichment, "_historical_execution_entry_sort_key", lambda entry: entry.get("ticker", ""))
+    monkeypatch.setattr(historical_prior_brief_enrichment, "_opportunity_pool_execution_sort_key", lambda entry: entry.get("ticker", ""))
+    monkeypatch.setattr(historical_prior_brief_enrichment, "_research_historical_entry_sort_key", lambda entry: entry.get("ticker", ""))
+    monkeypatch.setattr(historical_prior_brief_enrichment, "_build_btst_candidate_historical_context", lambda payload: {"report_count": payload["report_count"]})
 
     result = btst_reporting._enrich_btst_brief_entries_with_history(
         report_dir=report_dir,
@@ -1123,7 +1125,7 @@ def test_apply_historical_prior_to_entries_merges_prior_into_each_entry(monkeypa
         lambda entry, historical_rows, price_cache, family: {"summary": f"{family}:{entry['ticker']}", "sample_count": len(historical_rows)},
     )
     monkeypatch.setattr(
-        historical_prior,
+        historical_prior_collection,
         "_merge_entry_historical_prior",
         lambda entry, prior: {"historical_prior": prior, "merged_ticker": entry["ticker"]},
     )
