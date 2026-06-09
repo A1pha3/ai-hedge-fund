@@ -248,7 +248,8 @@ def test_get_financial_metrics_uses_analysis_indicator_and_caches(monkeypatch):
     assert metrics[0].report_period == "2026Q1"
     assert metrics[0].price_to_earnings_ratio == 15.2
     assert metrics[0].return_on_equity == pytest.approx(0.125)
-    assert metrics[0].debt_to_equity == pytest.approx(0.34)
+    # 资产负债率 (debt-to-assets) = 34% → debt-to-equity = D/A / (1 - D/A), rounded to 4 dp
+    assert metrics[0].debt_to_equity == pytest.approx(round(0.34 / (1 - 0.34), 4))
     assert cache.saved == [metric.model_dump() for metric in metrics]
 
 

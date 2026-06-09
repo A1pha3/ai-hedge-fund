@@ -873,9 +873,14 @@ def get_cache() -> CacheAdapter:
     global _cache_adapter
     if _cache_adapter is not None:
         return _cache_adapter
+    # Build the enhanced cache *before* acquiring the singleton lock.
+    # get_enhanced_cache() is independently thread-safe (its own lock); calling
+    # it while holding _singleton_lock would self-deadlock, since both singletons
+    # share _singleton_lock (a non-reentrant Lock). R20.25.
+    enhanced = get_enhanced_cache()
     with _singleton_lock:
         if _cache_adapter is None:
-            _cache_adapter = CacheAdapter(get_enhanced_cache())
+            _cache_adapter = CacheAdapter(enhanced)
         return _cache_adapter
 
 

@@ -352,38 +352,38 @@ class TestExplainTickerNotFound:
 class TestHelperFunctions:
 
     def test_build_factor_bar_full(self):
-        from src.main import _build_factor_bar
+        from src.cli.explain_helpers import _build_factor_bar
         assert _build_factor_bar(100.0) == "██████████"
 
     def test_build_factor_bar_zero(self):
-        from src.main import _build_factor_bar
+        from src.cli.explain_helpers import _build_factor_bar
         assert _build_factor_bar(0.0) == "░░░░░░░░░░"
 
     def test_build_factor_bar_mid(self):
-        from src.main import _build_factor_bar
+        from src.cli.explain_helpers import _build_factor_bar
         assert _build_factor_bar(50.0) == "█████░░░░░"
 
     def test_build_factor_bar_clamps(self):
-        from src.main import _build_factor_bar
+        from src.cli.explain_helpers import _build_factor_bar
         assert _build_factor_bar(150.0) == "██████████"
         assert _build_factor_bar(-10.0) == "░░░░░░░░░░"
 
     def test_extract_articles_empty(self):
-        from src.main import _extract_articles_from_event_subfactors
+        from src.cli.explain_helpers import _extract_articles_from_event_subfactors
         assert _extract_articles_from_event_subfactors({}) == []
         assert _extract_articles_from_event_subfactors({"news_sentiment": "bad"}) == []
         assert _extract_articles_from_event_subfactors({"news_sentiment": {"metrics": "bad"}}) == []
         assert _extract_articles_from_event_subfactors({"news_sentiment": {"metrics": {"articles": "notalist"}}}) == []
 
     def test_extract_articles_valid(self):
-        from src.main import _extract_articles_from_event_subfactors
+        from src.cli.explain_helpers import _extract_articles_from_event_subfactors
         arts = [{"title": "a"}, {"title": "b"}]
         result = _extract_articles_from_event_subfactors({"news_sentiment": {"metrics": {"articles": arts}}})
         assert len(result) == 2
 
     def test_build_factor_bar_nan_returns_empty(self):
         """GAMMA-008: NaN confidence should not crash and should produce empty bar."""
-        from src.main import _build_factor_bar
+        from src.cli.explain_helpers import _build_factor_bar
         import math
         result = _build_factor_bar(float("nan"))
         assert result == "░░░░░░░░░░"

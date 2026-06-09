@@ -14,28 +14,28 @@ class _CacheStub:
         self.saved_prices: list[tuple[str, list[dict]]] = []
         self.saved_metrics: list[tuple[str, list[dict]]] = []
 
-    def get_prices(self, key):
+    def get_prices(self, key, provider=""):
         return self._prices
 
-    def get_financial_metrics(self, key):
+    def get_financial_metrics(self, key, provider=""):
         return self._metrics
 
-    def get_company_news(self, key):
+    def get_company_news(self, key, provider=""):
         return None
 
-    def get_insider_trades(self, key):
+    def get_insider_trades(self, key, provider=""):
         return None
 
-    def set_prices(self, key, data):
+    def set_prices(self, key, data, provider=""):
         self.saved_prices.append((key, data))
 
-    def set_financial_metrics(self, key, data):
+    def set_financial_metrics(self, key, data, provider=""):
         self.saved_metrics.append((key, data))
 
-    def set_company_news(self, key, data):
+    def set_company_news(self, key, data, provider=""):
         pass
 
-    def set_insider_trades(self, key, data):
+    def set_insider_trades(self, key, data, provider=""):
         pass
 
 

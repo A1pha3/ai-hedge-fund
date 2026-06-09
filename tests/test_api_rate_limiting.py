@@ -35,7 +35,7 @@ class TestRateLimiting:
 
         # Verify requests.get was called twice
         assert mock_get.call_count == 2
-        mock_get.assert_has_calls([call(url, headers=headers), call(url, headers=headers)])
+        mock_get.assert_has_calls([call(url, headers=headers, timeout=30.0), call(url, headers=headers, timeout=30.0)])
 
         # Verify sleep was called once with 60 seconds (first retry)
         mock_sleep.assert_called_once_with(60)
@@ -99,7 +99,7 @@ class TestRateLimiting:
 
         # Verify requests.post was called twice
         assert mock_post.call_count == 2
-        mock_post.assert_has_calls([call(url, headers=headers, json=json_data), call(url, headers=headers, json=json_data)])
+        mock_post.assert_has_calls([call(url, headers=headers, json=json_data, timeout=30.0), call(url, headers=headers, json=json_data, timeout=30.0)])
 
         # Verify sleep was called once with 60 seconds (first retry)
         mock_sleep.assert_called_once_with(60)

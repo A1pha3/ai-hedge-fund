@@ -947,19 +947,25 @@ def get_sw_industry_classification() -> dict[str, str] | None:
     if pro is None:
         return None
 
-    # Double-checked locking: fast path under lock
+    # Fast path: return cached copy under the lock.
     with _sw_industry_cache_lock:
         if _sw_industry_cache is not None:
             return dict(_sw_industry_cache)
 
-        try:
-            result = _resolve_tushare_sw_industry_mapping(pro, None)
-            if result is None:
-                print("[Tushare] 无法获取申万行业分类")
-            return result
-        except Exception as e:
-            print(f"[Tushare] get_sw_industry_classification 失败: {e}")
-            return None
+    # Slow path: build WITHOUT holding _sw_industry_cache_lock.
+    # _resolve_tushare_sw_industry_mapping → resolve_cached_sw_industry_mapping
+    # invokes the cache_mapping callback (_cache_sw_industry_mapping), which
+    # re-acquires _sw_industry_cache_lock — holding it here would self-deadlock
+    # (the lock is a non-reentrant threading.Lock). R20.25.
+    # Building is idempotent; a concurrent builder at worst sets the cache twice.
+    try:
+        result = _resolve_tushare_sw_industry_mapping(pro, None)
+        if result is None:
+            print("[Tushare] 无法获取申万行业分类")
+        return result
+    except Exception as e:
+        print(f"[Tushare] get_sw_industry_classification 失败: {e}")
+        return None
 
 
 def _cache_sw_industry_mapping(mapping: dict[str, str]) -> None:

@@ -129,7 +129,10 @@ def create_session():
         # 防止池耗尽时无上限新建 transient 连接。
         class _BoundedHTTPAdapter(HTTPAdapter):
             def init_poolmanager(self, *args, **kwargs):
-                kwargs.setdefault("maxsize", pool_size)
+                # maxsize & block are already supplied positionally/keyword by
+                # HTTPAdapter.__init__ (via pool_maxsize/pool_block ctor args);
+                # re-adding maxsize to kwargs collides with the positional value
+                # on requests>=2.32 ("got multiple values for 'maxsize'"). R20.25.
                 kwargs["block"] = True
                 kwargs.setdefault("pool_timeout", 30)
                 return super().init_poolmanager(*args, **kwargs)

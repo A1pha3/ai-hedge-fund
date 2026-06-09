@@ -18,18 +18,17 @@ from unittest.mock import patch
 
 import pytest
 
-from src.main import (
+from src.cli.market_status_helpers import (
     _adx_level,
     _atr_level,
     _breadth_level,
     _extract_market_status,
     _format_market_status_table,
-    _is_finite_number,
     _northbound_label,
     _regime_gate_color,
     _state_type_cn,
-    run_market_status,
 )
+from src.main import _is_finite_number, run_market_status
 from src.screening.models import MarketState
 
 

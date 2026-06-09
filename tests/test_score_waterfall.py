@@ -62,12 +62,14 @@ class TestComputeScoreDecomposition:
         assert decomp["stability_bonus"] == pytest.approx(10.0)
 
     def test_consensus_bonus_bullish(self):
-        fused = _make_fused(arbitration=["consensus_bonus_bullish"])
+        # ArbitrationAction.CONSENSUS_BONUS.value == "consensus_bonus";
+        # direction (bullish/bearish) is inferred from score_b sign (GAMMA-016).
+        fused = _make_fused(arbitration=["consensus_bonus"], score_b=0.5)
         decomp = compute_score_decomposition(fused)
         assert decomp["consensus_bonus"] == pytest.approx(0.05)
 
     def test_consensus_bonus_bearish(self):
-        fused = _make_fused(arbitration=["consensus_bonus_bearish"])
+        fused = _make_fused(arbitration=["consensus_bonus"], score_b=-0.5)
         decomp = compute_score_decomposition(fused)
         assert decomp["consensus_bonus"] == pytest.approx(-0.05)
 

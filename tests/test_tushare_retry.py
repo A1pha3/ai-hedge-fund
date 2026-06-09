@@ -39,17 +39,20 @@ class TestTushareRetryBackoff:
         mock_sleep.assert_called_once()
 
     def test_exponential_backoff_delay(self) -> None:
-        """重试间隔按指数递增 (base_delay * 2^attempt)。"""
+        """重试间隔按指数递增 (base_delay * 2^attempt)，加 ±30% jitter。"""
         pro = MagicMock()
         pro.daily.side_effect = [ConnectionError("err1"), ConnectionError("err2"), pd.DataFrame({"close": [10.0]})]
 
         with patch.dict("os.environ", {"TUSHARE_MAX_RETRIES": "2", "TUSHARE_RETRY_BASE_DELAY": "1.0"}):
             with patch("src.tools.tushare_api.time.sleep") as mock_sleep:
-                result = _call_tushare_dataframe_api(pro, "daily", ts_code="000001.SZ")
+                # Pin jitter (random.random()) to 0 so factor = 1 + 0*0.3 = 1.0,
+                # yielding the exact exponential base without the ±30% spread.
+                with patch("random.random", return_value=0.0):
+                    result = _call_tushare_dataframe_api(pro, "daily", ts_code="000001.SZ")
 
         assert result is not None
         assert pro.daily.call_count == 3
-        # Sleep calls: 1.0 * 2^0 = 1.0s, 1.0 * 2^1 = 2.0s
+        # Sleep calls: 1.0 * 2^0 = 1.0s, 1.0 * 2^1 = 2.0s (jitter pinned to 0)
         calls = mock_sleep.call_args_list
         assert len(calls) == 2
         assert calls[0][0][0] == pytest.approx(1.0)
