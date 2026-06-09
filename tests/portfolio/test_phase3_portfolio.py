@@ -121,6 +121,32 @@ def test_lowest_liquidity_tier_high_price_name_cannot_bypass_eight_percent_with_
     assert plan.amount == 0.0
 
 
+def test_nan_avg_volume_20d_does_not_bypass_liquidity_constraint():
+    """R20.26-B BETA-006: ``avg_volume_20d`` may arrive as NaN (a ticker
+    with no 20-day history, or a Tushare amount field that occasionally
+    returns null). The previous code computed ``liq_limit =
+    avg_volume_20d * unit * 0.02`` directly — NaN propagates through and
+    ``min()`` over a dict containing NaN is non-deterministic (returns
+    the first key, "single_name"), so the engine bought the position with
+    NO liquidity information at all. NaN must be sanitized before any
+    constraint is computed so a liquidity-unknown name is treated as
+    illiquid (liq_limit = 0, no position)."""
+    plan = calculate_position(
+        ticker="300724",
+        current_price=20.0,
+        score_final=0.60,
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=float("nan"),
+        industry_remaining_quota=25_000,
+    )
+    # NaN-as-liquidity-unknown must surface as a "liquidity" binding at zero
+    # (no position), NOT as a silent full-size single_name purchase.
+    assert plan.shares == 0
+    assert plan.amount == 0.0
+    assert plan.constraint_binding == "liquidity"
+
+
 def test_existing_position_ratio_blocks_additional_single_name_pyramiding():
     plan = calculate_position(
         ticker="300724",

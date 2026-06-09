@@ -107,10 +107,19 @@ def calculate_position(
     if current_price <= 0 or portfolio_nav <= 0 or score_final < watchlist_min_score:
         return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="score", score_final=score_final, execution_ratio=0.0, quality_score=quality_score)
 
+    # GAMMA-009 / R20.26-B BETA-006: sanitize ``avg_volume_20d`` ONCE at the
+    # top. ``float(NaN or 0.0)`` yields NaN (NaN is truthy in Python), so the
+    # previous code passed NaN to ``_resolve_single_name_limit`` and again to
+    # ``liq_limit``. Sanitize once and reuse for both the single-name cap and
+    # the liquidity cap so the two paths agree.
+    safe_avg_volume_20d = float(avg_volume_20d or 0.0)
+    if not math.isfinite(safe_avg_volume_20d):
+        safe_avg_volume_20d = 0.0
+
     min_lot_amount = current_price * A_SHARE_MIN_LOT
     single_name_limit = _resolve_single_name_limit(
         allow_extended_limit=allow_extended_limit,
-        avg_volume_20d=float(avg_volume_20d or 0.0),
+        avg_volume_20d=safe_avg_volume_20d,
     )
     min_lot_override_ratio = MIN_LOT_OVERRIDE_MAX_RATIO
     if single_name_limit <= LOWEST_LIQUIDITY_TIER_SINGLE_NAME_LIMIT:
@@ -124,12 +133,6 @@ def calculate_position(
         vol_limit = max(vol_limit, min_lot_amount)
     cash_limit = available_cash
     # CandidatePool stores avg_volume_20d in wan-CNY from Tushare amount fields.
-    # GAMMA-009: NaN is truthy in Python, so float(NaN or 0.0) yields NaN
-    # rather than 0.0, allowing NaN to propagate through liq_limit and silently
-    # bypass the liquidity constraint (min() never selects NaN as binding).
-    safe_avg_volume_20d = float(avg_volume_20d or 0.0)
-    if not math.isfinite(safe_avg_volume_20d):
-        safe_avg_volume_20d = 0.0
     liq_limit = safe_avg_volume_20d * AVG_VOLUME_20D_AMOUNT_UNIT * 0.02
     industry_limit = industry_remaining_quota
 
