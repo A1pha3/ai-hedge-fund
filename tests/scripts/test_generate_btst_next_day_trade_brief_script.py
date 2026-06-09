@@ -12,6 +12,7 @@ import src.paper_trading._btst_reporting.historical_prior as historical_prior
 import src.paper_trading._btst_reporting.historical_prior_brief_enrichment as historical_prior_brief_enrichment
 import src.paper_trading._btst_reporting.historical_prior_collection as historical_prior_collection
 import src.paper_trading._btst_reporting.historical_prior_opportunity as historical_prior_opportunity
+import src.paper_trading._btst_reporting.historical_prior_price as historical_prior_price
 from src.paper_trading.btst_reporting import infer_next_trade_date
 from src.targets import use_short_trade_target_profile
 from src.targets.router import build_selection_targets
@@ -3436,8 +3437,8 @@ def test_extract_next_day_outcome_prefers_robust_prices_before_tushare(monkeypat
         frame["time"] = pd.to_datetime(frame["time"])
         return frame.set_index("time")
 
-    monkeypatch.setattr(historical_prior, "get_prices_robust", _robust)
-    monkeypatch.setattr(historical_prior, "prices_to_df", _prices_to_df)
+    monkeypatch.setattr(historical_prior_price, "get_prices_robust", _robust)
+    monkeypatch.setattr(historical_prior_price, "prices_to_df", _prices_to_df)
     monkeypatch.setattr(
         btst_reporting,
         "get_price_data",
