@@ -487,7 +487,8 @@ def test_analyze_btst_profile_frontier_surfaces_selected_only_shrink_deltas(tmp_
     with _register_short_trade_target_profile_proxy(
         profile_name="selected_only_shrink_baseline_test",
         base_profile_name="trend_continuation_strength_v2",
-        select_threshold=0.35,
+        select_threshold=0.65,
+        near_miss_threshold=0.55,
     ):
         with _register_short_trade_target_profile_proxy(
             profile_name="selected_only_shrink_variant_test",

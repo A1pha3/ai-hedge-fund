@@ -842,8 +842,8 @@ def test_replay_selection_target_calibration_recovers_missing_rejected_entry_sou
     analysis = analyze_selection_target_replay_inputs(
         replay_input_path,
         profile_name="trend_continuation_strength_v3",
-        select_threshold=0.35,
-        near_miss_threshold=0.24,
+        select_threshold=0.65,
+        near_miss_threshold=0.55,
         focus_tickers=["601869"],
     )
 
