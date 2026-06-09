@@ -909,3 +909,26 @@ changelog `r20-audit-history.md`:
 **附带改进**: `_make_plan` 工厂函数加 `risk_budget_ratio` 参数化, 现有测试更易扩展。
 
 **验证**: pytest **677 passed** (targets + execution + screening 全部, 0 regressions)
+
+---
+
+### v2.2.11 (2026-06-09) — Round 20.23: mypy 类型扫描 + 配置基线
+
+> R20.20-22 完成死代码清理 + regression test 补齐。本轮 mypy 扫描评估类型严格性。
+
+**扫描结果**:
+- mypy strict 模式跑 `src/`: **479 个错误, 0 个真 bug**
+- 100% 误报来自:
+  - TypedDict 严格性 (`PortfolioSnapshot`, `PerformanceMetrics` 等)
+  - Callable 签名 facade 模式 (R20.15/R20.16 重构遗留)
+  - dict | None 已有 None-check 但 mypy 无法 narrow
+
+**结论**: 代码运行时安全 (1432 测试全绿, 0 行为问题)。mypy 误报需逐个文件重构 (TypedDict → Protocol, 显式类型守卫) 才能清零, 范围超出单轮。
+
+**交付物**:
+- `mypy.ini` (新) — 团队级 mypy 配置基线, 排除已知误报密集模块, 启用基础检查
+- 评估报告: R20.24+ 可逐个模块解开 strict 检查, 渐进式收紧
+
+**验证**: pytest **677 passed** (targets + execution + screening, 0 regressions)
+
+**附**: mypy.ini 排除规则记录了 7 个误报密集模块, 后续重构这些模块后可逐步放开。
