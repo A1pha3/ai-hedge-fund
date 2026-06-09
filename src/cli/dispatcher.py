@@ -476,14 +476,37 @@ def _resolve_conviction_ranking(argv: list[str]) -> int | None:
     """``--conviction-ranking`` — P0-11 综合信心排名 (Score + 连续 + 质量 + 校准)。
 
     支持 ``--top-n`` (缺省 10) 和 ``--lookback`` (缺省 60)。
+    可调权重: ``--score-weight`` / ``--consecutive-weight`` / ``--quality-weight`` / ``--calibration-weight``
+    (缺省 0.40 / 0.20 / 0.20 / 0.20, 和须为 1.0 ± 0.01)。
     """
     if "--conviction-ranking" not in argv:
         return None
     top_n = _parse_int(_get_kv(argv, "--top-n"), 10)
     lookback = _parse_int(_get_kv(argv, "--lookback"), 60)
+    score_w = _parse_float(_get_kv(argv, "--score-weight"), 0.40)
+    consec_w = _parse_float(_get_kv(argv, "--consecutive-weight"), 0.20)
+    quality_w = _parse_float(_get_kv(argv, "--quality-weight"), 0.20)
+    calib_w = _parse_float(_get_kv(argv, "--calibration-weight"), 0.20)
+
+    weights = {
+        "score": score_w,
+        "consecutive": consec_w,
+        "quality": quality_w,
+        "calibration": calib_w,
+    }
+    total = sum(weights.values())
+    if not (0.99 <= total <= 1.01):
+        print(
+            f"Error: weights must sum to 1.0 (got {total:.3f} = "
+            f"{score_w} + {consec_w} + {quality_w} + {calib_w}). "
+            f"Adjust --score-weight / --consecutive-weight / --quality-weight / --calibration-weight.",
+            file=sys.stderr,
+        )
+        return 2  # CLI 错误退出码
+
     from src.screening.conviction_ranking import run_conviction_ranking
 
-    return run_conviction_ranking(top_n=top_n, lookback_days=lookback)
+    return run_conviction_ranking(top_n=top_n, lookback_days=lookback, weights=weights)
 
 
 def _resolve_top(argv: list[str]) -> int | None:

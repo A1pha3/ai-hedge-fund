@@ -932,3 +932,32 @@ changelog `r20-audit-history.md`:
 **验证**: pytest **677 passed** (targets + execution + screening, 0 regressions)
 
 **附**: mypy.ini 排除规则记录了 7 个误报密集模块, 后续重构这些模块后可逐步放开。
+
+---
+
+### v2.2.12 (2026-06-09) — Round 20.24: P0-11 CLI 权重参数化
+
+> R20.18 实现 P0-11 `--conviction-ranking` 时, 内部支持 `weights` 参数, 但 CLI 未暴露。本轮解锁。
+
+**背景**: R20.18 设计 `run_conviction_ranking(weights=...)` 接受 4 个分量权重 (默认 0.40/0.20/0.20/0.20), 但 CLI dispatcher 硬编码默认值, 高级用户无法调整。
+
+**修改**: `src/cli/dispatcher.py` `_resolve_conviction_ranking` 增加 4 个 CLI 参数:
+- `--score-weight` (缺省 0.40)
+- `--consecutive-weight` (缺省 0.20)
+- `--quality-weight` (缺省 0.20)
+- `--calibration-weight` (缺省 0.20)
+
+**校验**: 4 个权重和必须在 [0.99, 1.01] 范围内 (允许 1% 浮点误差), 否则返回退出码 2 + stderr 错误信息。
+
+**用户场景**:
+```
+# 保守用户更看重历史命中率
+--score-weight=0.30 --consecutive-weight=0.10 --quality-weight=0.10 --calibration-weight=0.50
+
+# 激进用户纯信号驱动
+--score-weight=1.0  # 其他 0
+```
+
+**测试**: 5 个新测试 (默认权重, 自定义, 错误和拒绝, 浮点和接受, 权重生效验证)。
+
+**验证**: pytest **682 passed** (新增 5 + 既有 677, 0 regressions)

@@ -263,3 +263,78 @@ def test_render_conviction_ranking_weights_displayed():
     out = render_conviction_ranking(summary)
     assert "Score 40%" in out
     assert "连续 20%" in out
+
+
+# ---------------------------------------------------------------------------
+# Custom weights via dispatcher (R20.24 — CLI 参数化)
+# ---------------------------------------------------------------------------
+
+
+def test_dispatcher_conviction_ranking_default_weights():
+    """未传 --*-weight 时使用默认 (40/20/20/20)。"""
+    from src.cli.dispatcher import _resolve_conviction_ranking
+
+    argv = ["--conviction-ranking", "--top-n=3"]
+    rc = _resolve_conviction_ranking(argv)
+    # 0 = 正常退出; None = 命令未匹配
+    assert rc == 0
+
+
+def test_dispatcher_conviction_ranking_custom_weights_via_kv():
+    """--key=value 形式传自定义权重应生效。"""
+    from src.cli.dispatcher import _resolve_conviction_ranking
+
+    argv = [
+        "--conviction-ranking",
+        "--top-n=3",
+        "--score-weight=0.30",
+        "--consecutive-weight=0.10",
+        "--quality-weight=0.10",
+        "--calibration-weight=0.50",
+    ]
+    rc = _resolve_conviction_ranking(argv)
+    assert rc == 0
+
+
+def test_dispatcher_conviction_ranking_rejects_invalid_sum():
+    """权重和 != 1.0 应返回错误退出码 2, 不渲染报告。"""
+    from src.cli.dispatcher import _resolve_conviction_ranking
+
+    argv = [
+        "--conviction-ranking",
+        "--score-weight=0.50",
+        "--consecutive-weight=0.50",  # sum = 1.0 + default 0.40 calib = 1.40
+    ]
+    rc = _resolve_conviction_ranking(argv)
+    assert rc == 2  # 错误退出码
+
+
+def test_dispatcher_conviction_ranking_accepts_floating_point_sum():
+    """权重和允许 0.99-1.01 浮点误差。"""
+    from src.cli.dispatcher import _resolve_conviction_ranking
+
+    argv = [
+        "--conviction-ranking",
+        "--score-weight=0.25",
+        "--consecutive-weight=0.25",
+        "--quality-weight=0.25",
+        "--calibration-weight=0.25",  # sum = 1.00, 应被接受
+    ]
+    rc = _resolve_conviction_ranking(argv)
+    assert rc == 0
+
+
+def test_run_conviction_ranking_uses_custom_weights():
+    """run_conviction_ranking 接收 weights 参数, 反映在 ConvictionSummary 中。"""
+    from src.screening.conviction_ranking import (
+        compute_conviction_ranking as _compute_cr,
+    )
+    from src.screening.confidence_calibration import compute_calibration as _cc
+
+    recs = [_make_rec("000001", 0.8, completeness=0.9, consecutive_days=3)]
+    # 自定义: 100% 给 score (其他都 0)
+    custom = {"score": 1.0, "consecutive": 0.0, "quality": 0.0, "calibration": 0.0}
+    calib = _cc([])
+    rows = _compute_cr(recs, calibration=calib, weights=custom)
+    # 100% score → conviction_score 应等于 score_b (0.8) × 100 = 80
+    assert rows[0].conviction_score == pytest.approx(80.0, abs=0.1)
