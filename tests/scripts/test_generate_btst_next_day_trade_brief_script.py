@@ -11,6 +11,7 @@ import src.paper_trading._btst_reporting.pool_classifiers as pool_classifiers
 import src.paper_trading._btst_reporting.historical_prior as historical_prior
 import src.paper_trading._btst_reporting.historical_prior_brief_enrichment as historical_prior_brief_enrichment
 import src.paper_trading._btst_reporting.historical_prior_collection as historical_prior_collection
+import src.paper_trading._btst_reporting.historical_prior_opportunity as historical_prior_opportunity
 from src.paper_trading.btst_reporting import infer_next_trade_date
 from src.targets import use_short_trade_target_profile
 from src.targets.router import build_selection_targets
@@ -184,7 +185,7 @@ def test_summarize_historical_opportunity_rows_skips_missing_and_aggregates_mean
             "next_open_to_close_return": -0.01,
         },
     }
-    monkeypatch.setattr(historical_prior, "_extract_next_day_outcome", lambda ticker, trade_date, price_cache: outcomes[(ticker, trade_date)])
+    monkeypatch.setattr(historical_prior_opportunity, "_extract_next_day_outcome", lambda ticker, trade_date, price_cache: outcomes[(ticker, trade_date)])
 
     summary = btst_reporting._summarize_historical_opportunity_rows(
         [
@@ -213,7 +214,7 @@ def test_summarize_historical_opportunity_rows_skips_missing_and_aggregates_mean
 
 
 def test_summarize_historical_opportunity_rows_returns_empty_summary_without_valid_rows(monkeypatch):
-    monkeypatch.setattr(historical_prior, "_extract_next_day_outcome", lambda ticker, trade_date, price_cache: {"data_status": "missing_next_day"})
+    monkeypatch.setattr(historical_prior_opportunity, "_extract_next_day_outcome", lambda ticker, trade_date, price_cache: {"data_status": "missing_next_day"})
 
     summary = btst_reporting._summarize_historical_opportunity_rows(
         [

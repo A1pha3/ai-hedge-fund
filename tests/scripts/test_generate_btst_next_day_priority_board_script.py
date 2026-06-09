@@ -354,7 +354,7 @@ def test_generate_btst_next_day_priority_board_orders_trade_watch_opportunity_an
     )
 
     monkeypatch.setattr(
-        "src.paper_trading._btst_reporting.historical_prior._extract_next_day_outcome",
+        "src.paper_trading._btst_reporting.historical_prior_opportunity._extract_next_day_outcome",
         lambda ticker, trade_date, price_cache: {
             "data_status": "ok",
             "next_trade_date": "2026-03-27",
