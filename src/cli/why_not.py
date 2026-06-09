@@ -53,17 +53,6 @@ def _is_bj_ticker(ticker: str) -> bool:
     return bool(_BJ_PREFIX_RE.match(ticker))
 
 
-def _is_likely_st(name: str) -> bool:
-    """根据股票名称判断是否为 ST/*ST。
-
-    A 股 ST/*ST 名称通常包含 "ST" 字样 (e.g. "ST 康美", "*ST 信通")。
-    """
-    if not name:
-        return False
-    upper = name.upper()
-    return any(kw.upper() in upper for kw in _ST_NAME_KEYWORDS)
-
-
 def _load_latest_report(reports_dir: Path) -> tuple[Path, dict[str, Any]] | None:
     """读取 reports_dir 下最新的 auto_screening_*.json; 不存在返回 None。"""
     if not reports_dir.exists():

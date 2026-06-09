@@ -230,29 +230,6 @@ def _extract_strategy(factor_name: str) -> str:
     return mapping.get(prefix, "unknown")
 
 
-def _clean_series(series: Sequence[float]) -> list[float]:
-    """过滤 NaN/Inf/None — 返回有限 float 列表。"""
-    out: list[float] = []
-    for v in series:
-        if _is_finite(v):
-            out.append(float(v))
-    return out
-
-
-def _aligned_pair(
-    x_series: Sequence[float],
-    y_series: Sequence[float],
-) -> tuple[list[float], list[float]]:
-    """逐位配对, 任意一边非有限则丢弃该位置。"""
-    xs: list[float] = []
-    ys: list[float] = []
-    for xv, yv in zip(x_series, y_series, strict=False):
-        if _is_finite(xv) and _is_finite(yv):
-            xs.append(float(xv))
-            ys.append(float(yv))
-    return xs, ys
-
-
 def compute_factor_ic(
     factor_history: dict[str, Sequence[float]],
     return_history: Sequence[float],
@@ -434,35 +411,6 @@ def _parse_date(date_str: str) -> datetime | None:
         return datetime.strptime(cleaned, "%Y%m%d")
     except ValueError:
         return None
-
-
-def _extract_factor_value(rec: dict[str, Any], factor_name: str) -> float | None:
-    """从单条 recommendation 中抽取子因子 confidence 值。
-
-    路径约定: ``strategy_signals.<strategy>.sub_factors.<factor_name>.confidence``
-    若子因子不存在或 confidence 非有限数, 返回 None。
-    """
-    if not isinstance(rec, dict):
-        return None
-    strategy_signals = rec.get("strategy_signals") or {}
-    if not isinstance(strategy_signals, dict):
-        return None
-    for signal in strategy_signals.values():
-        if not isinstance(signal, dict):
-            continue
-        sub_factors = signal.get("sub_factors") or {}
-        if not isinstance(sub_factors, dict):
-            continue
-        payload = sub_factors.get(factor_name)
-        if not isinstance(payload, dict):
-            continue
-        confidence = payload.get("confidence")
-        if _is_finite(confidence):
-            try:
-                return float(confidence)
-            except (TypeError, ValueError):
-                continue
-    return None
 
 
 def _load_report_panel(

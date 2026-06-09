@@ -87,12 +87,6 @@ def _strategy_completeness(strategy_signals: dict[str, Any], strategy: str) -> f
     return float(value) if value is not None else 0.0
 
 
-def _strategy_confidence(strategy_signals: dict[str, Any], strategy: str) -> float:
-    block = strategy_signals.get(strategy) or {}
-    value = block.get("confidence")
-    return float(value) if value is not None else 0.0
-
-
 def compute_composite_completeness(strategy_signals: dict[str, Any], weights: dict[str, float] | None = None) -> float:
     """按权重加权四策略 completeness 得到综合分 (0.0-1.0)。
 

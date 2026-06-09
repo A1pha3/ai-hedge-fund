@@ -29,11 +29,7 @@ from src.paper_trading.runtime_context_helpers import (
 from src.paper_trading.runtime_finalization_helpers import (
     build_runtime_artifacts as build_runtime_artifacts_helper,
     build_runtime_finalization_inputs as build_runtime_finalization_inputs_helper,
-    build_runtime_session_artifact_inputs as build_runtime_session_artifact_inputs_helper,
-    build_runtime_session_monitoring_inputs as build_runtime_session_monitoring_inputs_helper,
-    build_runtime_session_recorder_inputs as build_runtime_session_recorder_inputs_helper,
     build_runtime_session_summary_inputs as build_runtime_session_summary_inputs_helper,
-    build_runtime_session_summary_metadata as build_runtime_session_summary_metadata_helper,
 )
 from src.paper_trading.runtime_observability_helpers import (
     build_dual_target_session_summary as build_dual_target_session_summary_helper,
@@ -484,58 +480,6 @@ def _build_runtime_session_summary_inputs(
         cache_benchmark_status=cache_benchmark_status,
         optimization_profile_resolution=optimization_profile_resolution,
         serialize_portfolio_values_fn=_serialize_portfolio_values,
-    )
-
-
-def _build_runtime_session_summary_metadata(
-    *,
-    context: SessionRuntimeContext,
-    start_date: str,
-    end_date: str,
-    tickers: list[str] | None,
-    initial_capital: float,
-    selected_analysts: list[str] | None,
-    fast_selected_analysts: list[str] | None,
-    short_trade_target_profile_name: str,
-    short_trade_target_profile_overrides: dict[str, object] | None,
-    optimization_profile_resolution: dict[str, Any] | None,
-    selection_target: str,
-) -> dict:
-    return build_runtime_session_summary_metadata_helper(
-        context=context,
-        start_date=start_date,
-        end_date=end_date,
-        tickers=tickers,
-        initial_capital=initial_capital,
-        selected_analysts=selected_analysts,
-        fast_selected_analysts=fast_selected_analysts,
-        short_trade_target_profile_name=short_trade_target_profile_name,
-        short_trade_target_profile_overrides=short_trade_target_profile_overrides,
-        optimization_profile_resolution=optimization_profile_resolution,
-        selection_target=selection_target,
-    )
-
-
-def _build_runtime_session_monitoring_inputs(monitoring_summary: dict) -> dict:
-    return build_runtime_session_monitoring_inputs_helper(monitoring_summary)
-
-
-def _build_runtime_session_recorder_inputs(context: SessionRuntimeContext) -> dict:
-    return build_runtime_session_recorder_inputs_helper(context)
-
-
-def _build_runtime_session_artifact_inputs(
-    *,
-    context: SessionRuntimeContext,
-    feedback_summary_path: Path,
-    cache_benchmark_artifacts: dict,
-    llm_metrics_artifacts: dict,
-) -> dict:
-    return build_runtime_session_artifact_inputs_helper(
-        context=context,
-        feedback_summary_path=feedback_summary_path,
-        cache_benchmark_artifacts=cache_benchmark_artifacts,
-        llm_metrics_artifacts=llm_metrics_artifacts,
     )
 
 

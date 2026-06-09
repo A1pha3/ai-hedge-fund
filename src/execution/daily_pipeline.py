@@ -423,10 +423,6 @@ def resolve_default_fast_selected_analysts(
     return ["technical_analyst", "sentiment_analyst"]
 
 
-def _resolve_btst_regime_gate_mode() -> str:
-    return resolve_btst_regime_gate_mode()
-
-
 def _build_btst_regime_gate_payload(market_state: Any | None) -> dict[str, Any]:
     return _build_btst_regime_gate_payload_impl(market_state)
 
@@ -447,10 +443,6 @@ def _attach_btst_regime_gate_shadow(plan: ExecutionPlan) -> ExecutionPlan:
     return _attach_btst_regime_gate_shadow_impl(plan)
 
 
-def _resolve_btst_regime_gate_p2_mode() -> str:
-    return resolve_btst_regime_gate_p2_mode()
-
-
 def _get_or_classify_gate(plan: ExecutionPlan) -> str | None:
     return get_or_classify_gate(plan)
 
@@ -459,24 +451,12 @@ def _enforce_btst_regime_gate_p2(plan: ExecutionPlan) -> ExecutionPlan:
     return _enforce_btst_regime_gate_p2_impl(plan)
 
 
-def _resolve_btst_prior_quality_p3_mode() -> str:
-    return resolve_btst_prior_quality_p3_mode()
-
-
 def _extract_frozen_prior_by_ticker(plan: ExecutionPlan) -> dict[str, dict[str, Any]]:
     return _extract_frozen_prior_by_ticker_impl(plan)
 
 
 def _enforce_btst_prior_quality_p3(plan: ExecutionPlan, *, prior_by_ticker: dict[str, dict[str, Any]]) -> ExecutionPlan:
     return _enforce_btst_prior_quality_p3_impl(plan, prior_by_ticker=prior_by_ticker)
-
-
-def _resolve_btst_execution_contract_p5_mode() -> str:
-    return resolve_btst_execution_contract_p5_mode()
-
-
-def _resolve_btst_win_rate_first_precision_mode() -> bool:
-    return resolve_btst_win_rate_first_precision_mode()
 
 
 def _enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:

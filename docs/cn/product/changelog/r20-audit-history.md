@@ -838,3 +838,35 @@ changelog `r20-audit-history.md`:
 **验证**: pytest **1432 passed** (与 R20.18/19 一致, 0 regressions)
 
 **修改文件**: 13 个 (主要是 import 清理, 净减少 ~60 行)
+
+---
+
+### v2.2.9 (2026-06-09) — Round 20.21: 死函数清理 (AST 全局引用扫描)
+
+> R20.20 清完 unused imports。本轮用 AST + 全局词频扫描找 pyflakes 检测不到的**死函数** (定义但从未被调用)。
+
+**扫描方法**:
+1. AST 收集所有 `_xxx` 私有函数定义 (2298 个)
+2. 全局词频统计: 函数名在 src/ + tests/ 所有 .py 文件中出现次数
+3. 出现次数 ≤ 1 (仅 def 行) = 真死代码
+4. 结果: **30 个候选**, 逐个验证后删除 **12 个确认死函数**
+
+**删除的死函数** (12 个):
+
+| 文件 | 函数 | 来源 |
+|------|------|------|
+| `src/execution/daily_pipeline.py` | `_resolve_btst_regime_gate_mode` / `_regime_gate_p2_mode` / `_prior_quality_p3_mode` / `_execution_contract_p5_mode` / `_win_rate_first_precision_mode` (5 个) | R20.14 抽离到 helpers 后遗留的死壳 (impl 直接被 helpers 调用) |
+| `src/paper_trading/runtime.py` | `_build_runtime_session_summary_metadata` / `_monitoring_inputs` / `_recorder_inputs` / `_artifact_inputs` (4 个) | facade 委托到 `*_helper`, 但 facade 本身无人调用 |
+| `src/research/factor_ic_analysis.py` | `_aligned_pair` / `_clean_series` / `_extract_factor_value` (3 个) | 早期 IC 分析遗留, 现用 pandas 向量化 |
+| `src/screening/data_quality_audit.py` | `_strategy_confidence` | P0-10 实现时写了但最终用 `_strategy_completeness` |
+| `src/cli/why_not.py` | `_is_likely_st` | P0-8 实现时写了但最终用现成 ST 过滤 |
+
+**保留 (验证后非死代码)**:
+- `# noqa: F401` re-export (evaluation_helpers/explainability_helpers 给 short_trade_target.py 复用)
+- daily_pipeline.py catalyst imports (tests/ 通过 `daily_pipeline_module._xxx` 引用, pyflakes 看不到 tests)
+
+**附带清理**: runtime.py 4 个 `build_runtime_session_*_helper` import 删除 (死函数删除后变 unused)
+
+**验证**: pytest **1432 passed** (0 regressions)
+
+**修改文件**: 5 个 (净减少 ~120 行死代码)
