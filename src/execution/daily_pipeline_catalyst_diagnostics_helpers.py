@@ -690,9 +690,11 @@ def _build_catalyst_theme_shadow_entry(*, item: Any, filter_reason: str, metrics
 def _qualifies_catalyst_theme_candidate(*, trade_date: str, entry: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
     snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
     if "quality_score" not in snapshot:
+        # NOTE: 0.0 是合法 quality_score (最低质量), 不能用 `or 0.5` 静默覆盖。
+        _quality_raw = entry.get("quality_score")
         snapshot = {
             **snapshot,
-            "quality_score": float(entry.get("quality_score", 0.5) or 0.5),
+            "quality_score": float(_quality_raw) if _quality_raw is not None else 0.5,
         }
     return qualify_catalyst_theme_candidate_from_snapshot(
         snapshot=snapshot,

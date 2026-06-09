@@ -288,7 +288,9 @@ def _block_next_week_watch(report_dir: Path | None = None) -> str:
         recs = payload.get("recommendations") or []
         market_state = payload.get("market_state") or {}
         state_type = str(market_state.get("state_type", "") or "").strip() or "未知"
-        pos_scale = float(market_state.get("position_scale", 1.0) or 1.0)
+        # NOTE: 0.0 是合法 position_scale (0% 仓位, 全风控), 不能用 `or 1.0` 静默覆盖为满仓。
+        _ps_raw = market_state.get("position_scale", 1.0)
+        pos_scale = float(_ps_raw) if _ps_raw is not None else 1.0
 
         lines = ["### 下周关注\n"]
 

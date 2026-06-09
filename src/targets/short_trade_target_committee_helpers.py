@@ -47,9 +47,22 @@ def _append_unique(values: list[str], value: str) -> None:
 
 def _as_float(payload: dict[str, Any], key: str, default: float = 0.0) -> float:
     try:
-        return float(payload.get(key, default) or default)
+        # NOTE: 不能用 `payload.get(key, default) or default` — 0.0 是合法值, 会被静默覆盖。
+        _raw = payload.get(key, default)
+        return float(_raw) if _raw is not None else default
     except Exception:
         return default
+
+
+def _attr_float(profile: Any, key: str, default: float) -> float:
+    """读取 profile 属性的 float 安全版本。
+
+    与 `getattr(profile, key, default) or default` 的区别:
+    - 当属性显式设为 0.0 (合法"禁用"或"零值")时, 不被静默覆盖为 default
+    - 仅当属性不存在或为 None 时才用 default
+    """
+    _raw = getattr(profile, key, default)
+    return float(_raw) if _raw is not None else default
 
 
 def _optional_float(payload: dict[str, Any], key: str) -> float | None:
@@ -206,10 +219,10 @@ def _resolve_committee_thresholds(*, profile: Any, gate: str) -> dict[str, Any]:
             "beta_min": float(getattr(profile, "committee_beta_min_aggressive_trade", 0.0) or 0.0),
             "gamma_min": float(getattr(profile, "committee_gamma_min_aggressive_trade", 0.0) or 0.0),
             "committee_min": float(getattr(profile, "committee_score_min_aggressive_trade", 0.0) or 0.0),
-            "sector_group_score_min": float(getattr(profile, "committee_sector_group_score_min_aggressive_trade", 0.05) or 0.05),
-            "flow_group_score_min": float(getattr(profile, "committee_flow_group_score_min_aggressive_trade", 0.08) or 0.08),
+            "sector_group_score_min": _attr_float(profile, "committee_sector_group_score_min_aggressive_trade", 0.05),
+            "flow_group_score_min": _attr_float(profile, "committee_flow_group_score_min_aggressive_trade", 0.08),
             "retention_group_score_min": float(getattr(profile, "committee_retention_group_score_min_aggressive_trade", 0.0) or 0.0),
-            "penalty_total_max": float(getattr(profile, "committee_penalty_total_max", 0.12) or 0.12),
+            "penalty_total_max": _attr_float(profile, "committee_penalty_total_max", 0.12),
             "selected_enforced": bool(getattr(profile, "committee_enabled", False)),
             "formal_selected_allowed": True,
         }
@@ -219,10 +232,10 @@ def _resolve_committee_thresholds(*, profile: Any, gate: str) -> dict[str, Any]:
             "beta_min": float(getattr(profile, "committee_beta_min_normal_trade", 0.0) or 0.0),
             "gamma_min": float(getattr(profile, "committee_gamma_min_normal_trade", 0.0) or 0.0),
             "committee_min": float(getattr(profile, "committee_score_min_normal_trade", 0.0) or 0.0),
-            "sector_group_score_min": float(getattr(profile, "committee_sector_group_score_min_normal_trade", 0.05) or 0.05),
-            "flow_group_score_min": float(getattr(profile, "committee_flow_group_score_min_normal_trade", 0.05) or 0.05),
-            "retention_group_score_min": float(getattr(profile, "committee_retention_group_score_min_normal_trade", 0.05) or 0.05),
-            "penalty_total_max": float(getattr(profile, "committee_penalty_total_max", 0.12) or 0.12),
+            "sector_group_score_min": _attr_float(profile, "committee_sector_group_score_min_normal_trade", 0.05),
+            "flow_group_score_min": _attr_float(profile, "committee_flow_group_score_min_normal_trade", 0.05),
+            "retention_group_score_min": _attr_float(profile, "committee_retention_group_score_min_normal_trade", 0.05),
+            "penalty_total_max": _attr_float(profile, "committee_penalty_total_max", 0.12),
             "selected_enforced": bool(getattr(profile, "committee_enabled", False)),
             "formal_selected_allowed": True,
         }
@@ -234,7 +247,7 @@ def _resolve_committee_thresholds(*, profile: Any, gate: str) -> dict[str, Any]:
         "sector_group_score_min": 0.0,
         "flow_group_score_min": 0.0,
         "retention_group_score_min": 0.0,
-        "penalty_total_max": float(getattr(profile, "committee_penalty_total_max", 0.12) or 0.12),
+        "penalty_total_max": _attr_float(profile, "committee_penalty_total_max", 0.12),
         "selected_enforced": False,
         "formal_selected_allowed": not bool(getattr(profile, "committee_shadow_only_blocks_selected", True)),
     }
@@ -581,12 +594,12 @@ def _fragile_breakout_fragility_raw_score(
 
 
 def _fragile_breakout_risk_scores(profile: Any, *, activation_raw_100: float, fragility_raw_100: float) -> tuple[float, float, dict[str, float]]:
-    activation_excess_ratio = _committee_excess_ratio(activation_raw_100, float(getattr(profile, "committee_fragile_breakout_activation_floor", 60.0) or 60.0))
-    fragility_excess_ratio = _committee_excess_ratio(fragility_raw_100, float(getattr(profile, "committee_fragile_breakout_fragility_floor", 55.0) or 55.0))
+    activation_excess_ratio = _committee_excess_ratio(activation_raw_100, _attr_float(profile, "committee_fragile_breakout_activation_floor", 60.0))
+    fragility_excess_ratio = _committee_excess_ratio(fragility_raw_100, _attr_float(profile, "committee_fragile_breakout_fragility_floor", 55.0))
     neutral_band = 0.03
     interaction_ratio = activation_excess_ratio * fragility_excess_ratio
     effective_interaction_ratio = clamp_unit_interval((interaction_ratio - neutral_band) / max(0.01, 0.18 - neutral_band))
-    fragile_breakout_risk_raw_100 = round(float(getattr(profile, "committee_fragile_breakout_risk_cap", 85.0) or 85.0) * effective_interaction_ratio, 4)
+    fragile_breakout_risk_raw_100 = round(_attr_float(profile, "committee_fragile_breakout_risk_cap", 85.0) * effective_interaction_ratio, 4)
     fragile_breakout_quality_raw_100 = round(100.0 - fragile_breakout_risk_raw_100, 4)
     return (
         fragile_breakout_risk_raw_100,
@@ -720,7 +733,7 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
 
     fragile_breakout_enabled = bool(getattr(profile, "committee_fragile_breakout_risk_enabled", False))
     if fragile_breakout_enabled:
-        fragile_breakout_alpha_weight = float(getattr(profile, "committee_fragile_breakout_alpha_weight", 0.10) or 0.10)
+        fragile_breakout_alpha_weight = _attr_float(profile, "committee_fragile_breakout_alpha_weight", 0.10)
         alpha_components = [
             (sector_raw_100, 0.30),
             (flow_raw_100, 0.30),
@@ -756,26 +769,26 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
 
     committee_score = _weighted_average(
         [
-            (alpha_edge_score, float(getattr(profile, "committee_alpha_weight", 0.55) or 0.55)),
-            (beta_execution_score, float(getattr(profile, "committee_beta_weight", 0.25) or 0.25)),
-            (gamma_risk_score, float(getattr(profile, "committee_gamma_weight", 0.20) or 0.20)),
+            (alpha_edge_score, _attr_float(profile, "committee_alpha_weight", 0.55)),
+            (beta_execution_score, _attr_float(profile, "committee_beta_weight", 0.25)),
+            (gamma_risk_score, _attr_float(profile, "committee_gamma_weight", 0.20)),
         ]
     )
 
     vetoes: list[str] = []
-    if bool(getattr(profile, "committee_isolated_attention_veto_enabled", True)) and attention_raw_100 >= float(getattr(profile, "committee_isolated_attention_min", 80.0) or 80.0) and sector_raw_100 <= float(getattr(profile, "committee_isolated_attention_sector_max", 60.0) or 60.0) and flow_60_raw_100 is not None and flow_60_raw_100 <= float(getattr(profile, "committee_isolated_attention_flow_max", 60.0) or 60.0):
+    if bool(getattr(profile, "committee_isolated_attention_veto_enabled", True)) and attention_raw_100 >= _attr_float(profile, "committee_isolated_attention_min", 80.0) and sector_raw_100 <= _attr_float(profile, "committee_isolated_attention_sector_max", 60.0) and flow_60_raw_100 is not None and flow_60_raw_100 <= _attr_float(profile, "committee_isolated_attention_flow_max", 60.0):
         vetoes.append("committee_isolated_attention_veto")
-    if bool(getattr(profile, "committee_weak_close_veto_enabled", True)) and flow_60_raw_100 is not None and flow_60_raw_100 >= float(getattr(profile, "committee_weak_close_flow_min", 75.0) or 75.0) and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0) and close_support_raw_100 <= float(getattr(profile, "committee_weak_close_close_support_max", 60.0) or 60.0):
+    if bool(getattr(profile, "committee_weak_close_veto_enabled", True)) and flow_60_raw_100 is not None and flow_60_raw_100 >= _attr_float(profile, "committee_weak_close_flow_min", 75.0) and close_structure_raw_100 <= _attr_float(profile, "committee_weak_close_structure_max", 45.0) and close_support_raw_100 <= _attr_float(profile, "committee_weak_close_close_support_max", 60.0):
         vetoes.append("committee_weak_close_execution_veto")
     gap_to_limit = raw_metrics.get("gap_to_limit")
-    if bool(getattr(profile, "committee_gap_to_limit_veto_enabled", True)) and gap_to_limit is not None and float(gap_to_limit or 0.0) <= float(getattr(profile, "committee_gap_to_limit_max", 0.01) or 0.01):
+    if bool(getattr(profile, "committee_gap_to_limit_veto_enabled", True)) and gap_to_limit is not None and float(gap_to_limit or 0.0) <= _attr_float(profile, "committee_gap_to_limit_max", 0.01):
         vetoes.append("committee_gap_to_limit_veto")
     breakout_trap_guard = dict(snapshot.get("breakout_trap_guard") or {})
     historical_gap_chase_risk = float(breakout_trap_guard.get("historical_gap_chase_risk", 0.0) or 0.0)
-    if bool(getattr(profile, "committee_failed_breakout_history_veto_enabled", True)) and historical_gap_chase_risk >= float(getattr(profile, "committee_failed_breakout_history_min", 1.0) or 1.0) and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0):
+    if bool(getattr(profile, "committee_failed_breakout_history_veto_enabled", True)) and historical_gap_chase_risk >= _attr_float(profile, "committee_failed_breakout_history_min", 1.0) and close_structure_raw_100 <= _attr_float(profile, "committee_weak_close_structure_max", 45.0):
         vetoes.append("committee_failed_breakout_history_veto")
     failed_breakout_10 = raw_metrics.get("failed_breakout_10")
-    if bool(getattr(profile, "committee_failed_breakout_metric_veto_enabled", True)) and failed_breakout_10 is not None and float(failed_breakout_10 or 0.0) >= float(getattr(profile, "committee_failed_breakout_metric_min", 3.0) or 3.0) and close_structure_raw_100 <= float(getattr(profile, "committee_weak_close_structure_max", 45.0) or 45.0):
+    if bool(getattr(profile, "committee_failed_breakout_metric_veto_enabled", True)) and failed_breakout_10 is not None and float(failed_breakout_10 or 0.0) >= _attr_float(profile, "committee_failed_breakout_metric_min", 3.0) and close_structure_raw_100 <= _attr_float(profile, "committee_weak_close_structure_max", 45.0):
         vetoes.append("committee_failed_breakout_metric_veto")
 
     fail_reasons: list[str] = []
@@ -809,13 +822,13 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             fail_reasons.append("committee_negative_sector_or_flow_block")
         if penalty_total > float(thresholds["penalty_total_max"]):
             fail_reasons.append("committee_penalty_total_exceeded")
-        if projected_theme_exposure > float(getattr(profile, "committee_theme_exposure_cap", 0.25) or 0.25):
+        if projected_theme_exposure > _attr_float(profile, "committee_theme_exposure_cap", 0.25):
             fail_reasons.append("committee_theme_exposure_cap_exceeded")
-        if incremental_theme_exposure > float(getattr(profile, "committee_incremental_theme_exposure_cap", 0.18) or 0.18):
+        if incremental_theme_exposure > _attr_float(profile, "committee_incremental_theme_exposure_cap", 0.18):
             fail_reasons.append("committee_incremental_theme_exposure_cap_exceeded")
-        if bool(getattr(profile, "committee_isolated_theme_direction_enabled", True)) and theme_direction_peer_count > 0.0 and theme_direction_peer_count < float(getattr(profile, "committee_isolated_theme_peer_count_min", 2.0) or 2.0):
+        if bool(getattr(profile, "committee_isolated_theme_direction_enabled", True)) and theme_direction_peer_count > 0.0 and theme_direction_peer_count < _attr_float(profile, "committee_isolated_theme_peer_count_min", 2.0):
             fail_reasons.append("committee_isolated_theme_direction_block")
-        if bool(getattr(profile, "committee_theme_direction_rank_enabled", True)) and theme_direction_rank > float(getattr(profile, "committee_theme_direction_rank_max", 5.0) or 5.0):
+        if bool(getattr(profile, "committee_theme_direction_rank_enabled", True)) and theme_direction_rank > _attr_float(profile, "committee_theme_direction_rank_max", 5.0):
             fail_reasons.append("committee_theme_direction_rank_exceeded")
 
     if bool(kill_switch["active"]) and effective_gate in SHADOW_ONLY_GATES:
@@ -858,11 +871,11 @@ def build_short_trade_committee_snapshot(*, input_data: Any, snapshot: dict[str,
             "penalty_total_max": round(float(thresholds["penalty_total_max"]), 4),
             "selected_enforced": bool(thresholds["selected_enforced"]),
             "formal_selected_allowed": formal_selected_allowed,
-            "theme_exposure_cap": round(float(getattr(profile, "committee_theme_exposure_cap", 0.25) or 0.25), 4),
-            "incremental_theme_exposure_cap": round(float(getattr(profile, "committee_incremental_theme_exposure_cap", 0.18) or 0.18), 4),
+            "theme_exposure_cap": round(_attr_float(profile, "committee_theme_exposure_cap", 0.25), 4),
+            "incremental_theme_exposure_cap": round(_attr_float(profile, "committee_incremental_theme_exposure_cap", 0.18), 4),
             "gap_risk_cap_raw_100": round(float(gap_risk_cap_raw_100), 4) if gap_risk_cap_raw_100 is not None else None,
-            "isolated_theme_peer_count_min": round(float(getattr(profile, "committee_isolated_theme_peer_count_min", 2.0) or 2.0), 4),
-            "theme_direction_rank_max": round(float(getattr(profile, "committee_theme_direction_rank_max", 5.0) or 5.0), 4),
+            "isolated_theme_peer_count_min": round(_attr_float(profile, "committee_isolated_theme_peer_count_min", 2.0), 4),
+            "theme_direction_rank_max": round(_attr_float(profile, "committee_theme_direction_rank_max", 5.0), 4),
         },
         "committee_components": {
             "sector_raw_100": round(sector_raw_100, 4),

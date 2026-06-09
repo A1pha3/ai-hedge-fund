@@ -305,8 +305,11 @@ def _parse_upstream_shadow_catalyst_relief_config(
         },
         "min_historical_evaluable_count": int(relief_config.get("min_historical_evaluable_count", 0) or 0),
         "min_historical_next_close_positive_rate": float(relief_config.get("min_historical_next_close_positive_rate", 0.0) or 0.0),
+        # NOTE: 0.0 是合法 next_open_to_close_return_mean (平开平收), 不能用 `or -1.0` 静默覆盖为 -100%。
         "min_historical_next_open_to_close_return_mean": float(
-            relief_config.get("min_historical_next_open_to_close_return_mean", -1.0) or -1.0
+            relief_config.get("min_historical_next_open_to_close_return_mean")
+            if relief_config.get("min_historical_next_open_to_close_return_mean") is not None
+            else -1.0
         ),
         "carryover_min_historical_evaluable_count": int(
             relief_config.get("min_historical_evaluable_count", strong_carryover_history_min_evaluable_count)

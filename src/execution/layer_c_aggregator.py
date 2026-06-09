@@ -171,7 +171,7 @@ def _derive_quality_score(fused: FusedScore) -> float:
         if direction not in {-1, 0, 1}:
             continue
         confidence = max(0.0, min(100.0, float(snapshot.get("confidence", 0.0) or 0.0)))
-        completeness = max(0.0, min(1.0, float(snapshot.get("completeness", 1.0) or 1.0)))
+        completeness = max(0.0, min(1.0, float(snapshot.get("completeness", 1.0) if snapshot.get("completeness", 1.0) is not None else 1.0)))
         effective_weight = weight * completeness
         if effective_weight <= 0:
             continue

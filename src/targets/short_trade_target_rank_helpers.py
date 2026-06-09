@@ -333,7 +333,7 @@ def _resolve_rank_decision_cap(
     selected_rank_cap_relief_sector_resonance_min = max(0.0, float(getattr(profile, "selected_rank_cap_relief_sector_resonance_min", 0.0) or 0.0))
     selected_rank_cap_relief_close_strength_max = min(
         1.0,
-        max(0.0, float(getattr(profile, "selected_rank_cap_relief_close_strength_max", 1.0) or 1.0)),
+        max(0.0, float(getattr(profile, "selected_rank_cap_relief_close_strength_max", 1.0) if getattr(profile, "selected_rank_cap_relief_close_strength_max", 1.0) is not None else 1.0)),
     )
     selected_rank_cap_relief_require_confirmed_breakout = bool(getattr(profile, "selected_rank_cap_relief_require_confirmed_breakout", False))
     selected_rank_cap_relief_require_t_plus_2_candidate = bool(getattr(profile, "selected_rank_cap_relief_require_t_plus_2_candidate", False))
@@ -435,7 +435,7 @@ def _resolve_rank_decision_cap(
     )
     selected_rank_cap_relief_catalyst_theme_research_close_strength_max = min(
         1.0,
-        max(0.0, float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_close_strength_max", 1.0) or 1.0)),
+        max(0.0, float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_close_strength_max", 1.0) if getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_close_strength_max", 1.0) is not None else 1.0)),
     )
     selected_rank_cap_relief_catalyst_theme_research_candidate = (
         normalized_candidate_source == "catalyst_theme"
@@ -694,11 +694,12 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     raw_sector = float(snapshot.get("sector_resonance") or 0.0)
     # Task T (Round 9): use phase-amplified score instead of raw linear mapping.
     sector_resonance_score = compute_sector_resonance_phase_score(raw_sector) if raw_sector > 0.0 else 0.5
-    w_b = float(getattr(profile, "runner_composite_score_breakout_weight", 0.40) or 0.40)
-    w_t = float(getattr(profile, "runner_composite_score_trend_weight", 0.30) or 0.30)
-    w_v = float(getattr(profile, "runner_composite_score_volume_weight", 0.20) or 0.20)
-    w_c = float(getattr(profile, "runner_composite_score_catalyst_weight", 0.10) or 0.10)
-    w_cs = float(getattr(profile, "runner_composite_score_close_strength_weight", 0.10) or 0.10)
+    # NOTE: 0.0 是合法权重 (禁用某因子), 不能用 `or W` 静默覆盖。
+    w_b = float(getattr(profile, "runner_composite_score_breakout_weight", 0.40) if getattr(profile, "runner_composite_score_breakout_weight", 0.40) is not None else 0.40)
+    w_t = float(getattr(profile, "runner_composite_score_trend_weight", 0.30) if getattr(profile, "runner_composite_score_trend_weight", 0.30) is not None else 0.30)
+    w_v = float(getattr(profile, "runner_composite_score_volume_weight", 0.20) if getattr(profile, "runner_composite_score_volume_weight", 0.20) is not None else 0.20)
+    w_c = float(getattr(profile, "runner_composite_score_catalyst_weight", 0.10) if getattr(profile, "runner_composite_score_catalyst_weight", 0.10) is not None else 0.10)
+    w_cs = float(getattr(profile, "runner_composite_score_close_strength_weight", 0.10) if getattr(profile, "runner_composite_score_close_strength_weight", 0.10) is not None else 0.10)
     w_vr = float(getattr(profile, "runner_composite_score_volatility_regime_weight", 0.0) or 0.0)
     w_sr = float(getattr(profile, "runner_composite_score_sector_resonance_weight", 0.0) or 0.0)
     w_qb = float(getattr(profile, "runner_composite_score_quiet_breakout_weight", 0.0) or 0.0)

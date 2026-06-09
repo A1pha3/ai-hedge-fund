@@ -57,7 +57,7 @@ def _signal_snapshot(signal: StrategySignal | None, subfactor_name: str | None =
     return {
         "direction": int(snapshot.get("direction", 0) or 0),
         "confidence": _clamp_confidence(snapshot.get("confidence", 0.0) or 0.0),
-        "completeness": float(snapshot.get("completeness", 1.0) or 1.0),
+        "completeness": float(snapshot.get("completeness", 1.0) if snapshot.get("completeness", 1.0) is not None else 1.0),
     }
 
 

@@ -82,8 +82,11 @@ def build_confirmation_inputs(
                 prev_close = float(previous_row.get("close", 0.0) or 0.0) if previous_row is not None else 0.0
                 day_low = float(current_row.get("low", price) or price)
                 day_high = float(current_row.get("high", price) or price)
-                current_volume = float(current_row.get("volume", 1.0) or 1.0)
-                previous_volume = float(previous_row.get("volume", current_volume) or current_volume) if previous_row is not None else current_volume
+                # NOTE: 0.0 是合法 volume (停牌/无成交), 不能用 `or 1.0` 静默覆盖。
+                _vol_raw = current_row.get("volume", 1.0)
+                current_volume = float(_vol_raw) if _vol_raw is not None else 1.0
+                _pvol_raw = previous_row.get("volume", current_volume) if previous_row is not None else current_volume
+                previous_volume = float(_pvol_raw) if _pvol_raw is not None else current_volume
                 payload.update(
                     {
                         "day_low": day_low if day_low > 0 else price,

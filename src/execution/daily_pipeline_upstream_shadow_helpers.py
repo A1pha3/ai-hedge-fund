@@ -232,7 +232,8 @@ def _build_upstream_shadow_watchlist_entry(entry: dict[str, Any]) -> LayerCResul
         score_c=float(entry.get("score_c", 0.0) or 0.0),
         score_final=float(entry.get("score_final", entry.get("score_b", 0.0)) or 0.0),
         score_b=float(entry.get("score_b", 0.0) or 0.0),
-        quality_score=float(entry.get("quality_score", 0.5) or 0.5),
+        # NOTE: 0.0 是合法 quality_score (最低质量), 不能用 `or 0.5` 静默覆盖。
+        quality_score=float(entry.get("quality_score")) if entry.get("quality_score") is not None else 0.5,
         market_state=dict(entry.get("market_state") or {}),
         metrics=dict(entry.get("metrics") or {}),
         candidate_source=str(entry.get("candidate_source") or "upstream_shadow_release_watchlist"),

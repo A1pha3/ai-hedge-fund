@@ -559,7 +559,7 @@ def compute_score_decomposition(fused: FusedScore, consecutive_info: dict | None
             continue
         confidence = float(getattr(sig, "confidence", 0.0) or 0.0)
         direction = float(getattr(sig, "direction", 0.0) or 0.0)
-        completeness = float(getattr(sig, "completeness", 1.0) or 1.0)
+        completeness = float(getattr(sig, "completeness", 1.0) if getattr(sig, "completeness", 1.0) is not None else 1.0)
         base_contributions[sname] = w * direction * (confidence / 100.0) * completeness
 
     attention = float((fused.metrics or {}).get("attention_composite", 0.0) or 0.0)

@@ -1,0 +1,240 @@
+"""测试 src.screening.confidence_calibration (P0-9)。"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from src.screening.confidence_calibration import (
+    DEFAULT_LOOKBACK_DAYS,
+    SCORE_BUCKETS,
+    CalibrationSummary,
+    ScoreBucketStats,
+    _find_bucket,
+    compute_calibration,
+    render_calibration_table,
+    render_top_n_calibration,
+)
+
+
+# ---------------------------------------------------------------------------
+# _find_bucket
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "score,expected_label_contains",
+    [
+        (0.95, "高"),
+        (0.80, "高"),  # 边界 0.8 落入"高"桶 (左闭)
+        (0.79, "中高"),
+        (0.75, "中高"),
+        (0.70, "中高"),  # 边界 0.7 落入"中高" (左闭)
+        (0.65, "中"),
+        (0.55, "中低"),
+        (0.50, "中低"),  # 边界 0.5 落入"中低" (左闭)
+        (0.45, "低"),
+        (0.10, "低"),
+    ],
+)
+def test_find_bucket(score, expected_label_contains):
+    result = _find_bucket(score)
+    assert result is not None
+    assert expected_label_contains in result[0]
+
+
+def test_find_bucket_extreme_low():
+    """score=-1.0 应落入"低"桶 (低边界 -1.01)。"""
+    result = _find_bucket(-1.0)
+    assert result is not None
+    assert "低" in result[0]
+
+
+def test_find_bucket_invalid_returns_none():
+    """桶定义范围之外的极端值 — 理论上不会出现, 但应安全处理。"""
+    # 我们的桶覆盖 -1.01 到 1.01, 所以 1.5 应找不到
+    # 但实际 score_b 范围 -1 到 +1, 所以这是防御性测试
+    result = _find_bucket(1.5)
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# compute_calibration
+# ---------------------------------------------------------------------------
+
+
+def _make_record(ticker: str, score: float, t1: float | None = None, t3: float | None = None, t5: float | None = None, date: str = "20260601") -> dict:
+    return {
+        "ticker": ticker,
+        "recommended_date": date,
+        "recommendation_score": score,
+        "next_day_return": t1,
+        "next_3day_return": t3,
+        "next_5day_return": t5,
+    }
+
+
+def test_compute_calibration_empty_records():
+    summary = compute_calibration([])
+    assert summary.total_samples == 0
+    assert summary.overall_t1_win_rate is None
+    assert all(b.sample_count == 0 for b in summary.buckets)
+
+
+def test_compute_calibration_single_bucket_all_winners():
+    """4 只票都在 0.7-0.8 桶, 全部 T+5 正收益 → 100% 胜率。"""
+    records = [
+        _make_record("000001", 0.75, t1=1.0, t3=2.0, t5=3.0),
+        _make_record("000002", 0.72, t1=0.5, t3=1.5, t5=2.5),
+        _make_record("000003", 0.78, t1=-0.5, t3=1.0, t5=1.8),
+        _make_record("000004", 0.71, t1=2.0, t3=3.0, t5=4.0),
+    ]
+    summary = compute_calibration(records)
+    bucket = next(b for b in summary.buckets if "中高" in b.label)
+    assert bucket.sample_count == 4
+    assert bucket.t5_win_rate == 1.0  # 全部 T+5 正收益
+    assert bucket.t1_win_rate == pytest.approx(0.75, abs=1e-3)  # 3/4 T+1 正
+    assert bucket.t5_avg_return == pytest.approx(2.825, abs=1e-3)
+
+
+def test_compute_calibration_multiple_buckets():
+    """跨桶验证分桶正确性。"""
+    records = [
+        _make_record("000001", 0.85, t5=2.0),  # 高桶
+        _make_record("000002", 0.65, t5=-1.0),  # 中桶
+        _make_record("000003", 0.45, t5=0.5),  # 低桶
+    ]
+    summary = compute_calibration(records)
+    high = next(b for b in summary.buckets if "高" in b.label)
+    mid = next(b for b in summary.buckets if b.label.startswith("中 ("))
+    low = next(b for b in summary.buckets if b.label.startswith("低"))
+    assert high.sample_count == 1
+    assert mid.sample_count == 1
+    assert low.sample_count == 1
+    assert summary.total_samples == 3
+
+
+def test_compute_calibration_lookback_filter():
+    """lookback_days 应限制样本到最近 N 个不同日期。"""
+    records = [
+        _make_record("000001", 0.75, t5=1.0, date="20260601"),
+        _make_record("000002", 0.75, t5=1.0, date="20260602"),
+        _make_record("000003", 0.75, t5=1.0, date="20260603"),
+        _make_record("000004", 0.75, t5=1.0, date="20260604"),
+    ]
+    # lookback=2 只保留最近 2 天 (20260603, 20260604)
+    summary = compute_calibration(records, lookback_days=2)
+    assert summary.total_samples == 2
+
+
+def test_compute_calibration_lookback_zero_means_all():
+    """lookback_days=0 表示不限制 (取全部日期)。"""
+    records = [
+        _make_record("000001", 0.75, t5=1.0, date="20260601"),
+        _make_record("000002", 0.75, t5=1.0, date="20260610"),
+    ]
+    summary = compute_calibration(records, lookback_days=0)
+    assert summary.total_samples == 2
+
+
+def test_compute_calibration_none_returns_excluded():
+    """None T+5 收益应排除出统计 (不计入 sample_count 的 win_rate 分母)。"""
+    records = [
+        _make_record("000001", 0.75, t5=2.0),
+        _make_record("000002", 0.75, t5=None),  # 无 T+5 数据
+        _make_record("000003", 0.75, t5=-1.0),
+    ]
+    summary = compute_calibration(records)
+    bucket = next(b for b in summary.buckets if "中高" in b.label)
+    assert bucket.sample_count == 3  # 总记录数包含无 T+5 的
+    assert bucket.t5_win_rate == pytest.approx(0.5, abs=1e-3)  # 1/2 有 T+5 数据的中 1 个赢
+
+
+def test_compute_calibration_score_missing_record_excluded():
+    """缺 recommendation_score 的记录应被排除。"""
+    records = [
+        {"ticker": "000001", "recommended_date": "20260601", "next_5day_return": 1.0},  # 无 score
+        _make_record("000002", 0.75, t5=1.0),
+    ]
+    summary = compute_calibration(records)
+    assert summary.total_samples == 1  # 只计有 score 的
+
+
+def test_compute_calibration_overall_stats():
+    """整体统计应跨桶聚合。"""
+    records = [
+        _make_record("000001", 0.85, t5=2.0),  # 高桶 +赢
+        _make_record("000002", 0.45, t5=-1.0),  # 低桶 -输
+    ]
+    summary = compute_calibration(records)
+    assert summary.overall_t5_win_rate == pytest.approx(0.5, abs=1e-3)
+    assert summary.overall_t5_avg_return == pytest.approx(0.5, abs=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# render_calibration_table
+# ---------------------------------------------------------------------------
+
+
+def test_render_calibration_table_empty():
+    summary = compute_calibration([])
+    out = render_calibration_table(summary)
+    assert "置信度校准" in out
+    assert "无历史推荐追踪数据" in out
+
+
+def test_render_calibration_table_with_data():
+    records = [
+        _make_record("000001", 0.85, t1=1.0, t5=2.0),
+        _make_record("000002", 0.65, t1=-0.5, t5=-1.0),
+    ]
+    summary = compute_calibration(records)
+    out = render_calibration_table(summary)
+    assert "Score 桶" in out
+    assert "T+5 胜率" in out
+    assert "整体" in out
+
+
+# ---------------------------------------------------------------------------
+# render_top_n_calibration
+# ---------------------------------------------------------------------------
+
+
+def test_render_top_n_calibration_empty_recs():
+    summary = compute_calibration([])
+    out = render_top_n_calibration([], summary, top_n=5)
+    assert out == ""  # 无推荐返回空
+
+
+def test_render_top_n_calibration_with_bucket_match():
+    records = [_make_record("000099", 0.85, t5=2.0)]
+    summary = compute_calibration(records)
+    top_recs = [
+        {"ticker": "000001", "name": "测试票A", "score_b": 0.85},
+    ]
+    out = render_top_n_calibration(top_recs, summary, top_n=5)
+    assert "Top 1 推荐校准" in out
+    assert "000001" in out
+    assert "高" in out  # 0.85 落入高桶
+
+
+def test_render_top_n_calibration_no_sample_bucket():
+    """推荐落入一个无历史样本的桶, 应显示"无样本, 不可校准"。"""
+    summary = compute_calibration([])  # 无任何历史
+    top_recs = [
+        {"ticker": "000001", "name": "测试票", "score_b": 0.75},
+    ]
+    out = render_top_n_calibration(top_recs, summary, top_n=5)
+    assert "无样本, 不可校准" in out
+
+
+def test_render_top_n_calibration_respects_top_n_limit():
+    records = [_make_record("000099", 0.85, t5=2.0)]
+    summary = compute_calibration(records)
+    top_recs = [
+        {"ticker": f"{i:06d}", "name": f"票{i}", "score_b": 0.85} for i in range(5)
+    ]
+    out = render_top_n_calibration(top_recs, summary, top_n=2)
+    assert "Top 2 推荐校准" in out

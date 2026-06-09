@@ -249,7 +249,7 @@ def _resolve_selected_close_retention_adjustment(
     clamp_unit_interval,
 ) -> dict[str, Any]:
     close_retention_floor = max(0.0, float(getattr(profile, "selected_close_retention_min", 0.0) or 0.0))
-    breakout_close_gap_max = min(1.0, max(0.0, float(getattr(profile, "selected_breakout_close_gap_max", 1.0) or 1.0)))
+    breakout_close_gap_max = min(1.0, max(0.0, float(getattr(profile, "selected_breakout_close_gap_max", 1.0) if getattr(profile, "selected_breakout_close_gap_max", 1.0) is not None else 1.0)))
     close_retention_lift = max(0.0, float(getattr(profile, "selected_close_retention_threshold_lift", 0.0) or 0.0))
     breakout_close_gap_lift = max(0.0, float(getattr(profile, "selected_breakout_close_gap_threshold_lift", 0.0) or 0.0))
     enabled = close_retention_lift > 0.0 or breakout_close_gap_lift > 0.0
@@ -293,9 +293,14 @@ def _resolve_selected_close_retention_penalty(*, profile: Any, selected_close_re
         0.0,
         float(selected_close_retention_adjustment.get("close_retention_floor", 0.0) or 0.0) - float(selected_close_retention_adjustment.get("close_retention_score", 0.0) or 0.0),
     )
+    # NOTE: breakout_close_gap_max = 0 是合法值 (零容忍 gap), 不能用 `or 1.0` 静默覆盖。
+    _bcg_raw = selected_close_retention_adjustment.get("breakout_close_gap", 0.0)
+    _bcgm_raw = selected_close_retention_adjustment.get("breakout_close_gap_max", 1.0)
+    _bcg = float(_bcg_raw) if _bcg_raw is not None else 0.0
+    _bcgm = float(_bcgm_raw) if _bcgm_raw is not None else 1.0
     breakout_close_gap_excess = max(
         0.0,
-        float(selected_close_retention_adjustment.get("breakout_close_gap", 0.0) or 0.0) - float(selected_close_retention_adjustment.get("breakout_close_gap_max", 1.0) or 1.0),
+        _bcg - _bcgm,
     )
     severity = min(1.0, (close_shortfall / 0.12) + (breakout_close_gap_excess / 0.10))
     penalty = min(weight, weight * severity)

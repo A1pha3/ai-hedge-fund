@@ -288,10 +288,11 @@ def _resolve_short_trade_snapshot_candidate_reason_codes(
     payoff_first_runner_recall_candidate = (
         bool(getattr(profile, "payoff_first_runner_recall_enabled", False))
         and str(input_data.replay_context.get("source") or "") == "watchlist_filter_diagnostics"
-        and score_target <= float(getattr(profile, "payoff_first_runner_recall_score_target_max", 1.0) or 1.0)
-        and close_strength >= float(getattr(profile, "payoff_first_runner_recall_close_strength_min", 1.0) or 1.0)
-        and catalyst_freshness >= float(getattr(profile, "payoff_first_runner_recall_catalyst_freshness_min", 1.0) or 1.0)
-        and trend_acceleration <= float(getattr(profile, "payoff_first_runner_recall_trend_acceleration_max", 1.0) or 1.0)
+        # NOTE: 0.0 是合法阈值 (禁用 recall), 不能用 `or 1.0` 静默覆盖。
+        and score_target <= float(getattr(profile, "payoff_first_runner_recall_score_target_max", 1.0) if getattr(profile, "payoff_first_runner_recall_score_target_max", 1.0) is not None else 1.0)
+        and close_strength >= float(getattr(profile, "payoff_first_runner_recall_close_strength_min", 1.0) if getattr(profile, "payoff_first_runner_recall_close_strength_min", 1.0) is not None else 1.0)
+        and catalyst_freshness >= float(getattr(profile, "payoff_first_runner_recall_catalyst_freshness_min", 1.0) if getattr(profile, "payoff_first_runner_recall_catalyst_freshness_min", 1.0) is not None else 1.0)
+        and trend_acceleration <= float(getattr(profile, "payoff_first_runner_recall_trend_acceleration_max", 1.0) if getattr(profile, "payoff_first_runner_recall_trend_acceleration_max", 1.0) is not None else 1.0)
     )
     if payoff_first_runner_recall_candidate and "payoff_first_runner_recall_candidate" not in candidate_reason_codes:
         candidate_reason_codes.append("payoff_first_runner_recall_candidate")

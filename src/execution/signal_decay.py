@@ -108,7 +108,8 @@ def apply_signal_decay(
                                 "shares": new_shares,
                                 "amount": new_amount,
                                 "execution_ratio": float(order.execution_ratio or 0.0) * p7_warn_size_discount,
-                                "risk_budget_ratio": float(order.risk_budget_ratio or 1.0) * p7_warn_size_discount,
+                                # NOTE: 0.0 是合法 risk_budget_ratio (无风险预算), 不能用 `or 1.0` 静默覆盖为满仓。
+                                "risk_budget_ratio": float(order.risk_budget_ratio if order.risk_budget_ratio is not None else 1.0) * p7_warn_size_discount,
                             }
                         )
                     )

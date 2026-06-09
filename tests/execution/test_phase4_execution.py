@@ -5998,8 +5998,13 @@ def test_build_buy_orders_blocks_theme_exposure_from_legacy_top_level_committee_
     assert diagnostics["tickers"][0]["theme_exposure_cap"] == 0.22
 
 
-def test_build_buy_orders_treats_zero_theme_cap_as_default_total_cap():
-    """Test that a zero-valued theme cap falls back to the 25% default like committee logic does."""
+def test_build_buy_orders_zero_theme_cap_blocks_any_positive_exposure():
+    """Test that a zero-valued theme cap (strict/no-theme-allowed) blocks any positive exposure.
+
+    Pre-R20.17 (BUG): theme_exposure_cap=0.0 was treated as "missing" via `or 0.25`,
+    falling back to default 25% cap, masking the strict intent.
+    R20.17 fix: 0.0 is now treated as legitimate "no theme exposure allowed".
+    """
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.65, score_b=0.75, quality_score=0.75, decision="strong_buy")]
     selection_targets = {
@@ -6011,7 +6016,7 @@ def test_build_buy_orders_treats_zero_theme_cap_as_default_total_cap():
                 decision="selected",
                 gate_status={"execution": "pass"},
                 blockers=[],
-                top_reasons=["theme_cap_zero_fallback"],
+                top_reasons=["theme_cap_zero_means_strict"],
                 metrics_payload={
                     "thresholds": {
                         "market_state_threshold_adjustment": {
@@ -6047,9 +6052,9 @@ def test_build_buy_orders_treats_zero_theme_cap_as_default_total_cap():
         price_map={"300724": 142.71},
     )
 
-    assert len(buy_orders) == 1
-    assert buy_orders[0].ticker == "300724"
-    assert diagnostics["reason_counts"] == {}
+    # 严格风控: theme_exposure_cap=0.0 + projected=0.2 → 应被阻断
+    assert len(buy_orders) == 0
+    assert diagnostics["reason_counts"].get("blocked_by_theme_exposure_cap", 0) >= 1
 
 
 def test_build_buy_orders_blocks_incremental_theme_exposure_cap_exceeded():

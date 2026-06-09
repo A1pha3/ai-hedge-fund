@@ -540,9 +540,12 @@ def build_short_trade_execution_gate_filter_payload(
     )
 
     projected_theme_exposure = float(committee_components.get("projected_theme_exposure", 0.0) or 0.0)
-    theme_exposure_cap = float(committee_thresholds.get("theme_exposure_cap") or 0.25)
+    # NOTE: 0.0 是合法 theme_exposure_cap (零容忍), 不能用 `or 0.25` 静默覆盖。
+    _tec_raw = committee_thresholds.get("theme_exposure_cap")
+    theme_exposure_cap = float(_tec_raw) if _tec_raw is not None else 0.25
     incremental_theme_exposure = float(committee_components.get("incremental_theme_exposure", 0.0) or 0.0)
-    incremental_theme_exposure_cap = float(committee_thresholds.get("incremental_theme_exposure_cap") or 0.18)
+    _itec_raw = committee_thresholds.get("incremental_theme_exposure_cap")
+    incremental_theme_exposure_cap = float(_itec_raw) if _itec_raw is not None else 0.18
 
     if incremental_theme_exposure > 0.0 and incremental_theme_exposure > incremental_theme_exposure_cap:
         reason = "blocked_by_incremental_theme_exposure_cap"

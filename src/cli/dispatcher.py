@@ -444,6 +444,34 @@ def _resolve_weekly_report(argv: list[str]) -> int | None:
     )
 
 
+def _resolve_data_quality_audit(argv: list[str]) -> int | None:
+    """``--data-quality-audit`` — P0-10 推荐标的的数据完整性审计。
+
+    支持 ``--top-n`` (缺省 10) 和 ``--threshold`` (缺省 0.6)。
+    """
+    if "--data-quality-audit" not in argv:
+        return None
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 10)
+    threshold = _parse_float(_get_kv(argv, "--threshold"), 0.6)
+    from src.screening.data_quality_audit import run_data_quality_audit
+
+    return run_data_quality_audit(top_n=top_n, threshold=threshold)
+
+
+def _resolve_confidence_calibration(argv: list[str]) -> int | None:
+    """``--confidence-calibration`` — P0-9 score 校准为历史命中率/预期收益。
+
+    支持 ``--top-n`` (缺省 10) 和 ``--lookback`` (缺省 60)。
+    """
+    if "--confidence-calibration" not in argv:
+        return None
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 10)
+    lookback = _parse_int(_get_kv(argv, "--lookback"), 60)
+    from src.screening.confidence_calibration import run_confidence_calibration
+
+    return run_confidence_calibration(top_n=top_n, lookback_days=lookback)
+
+
 def _resolve_top(argv: list[str]) -> int | None:
     """``--top [N] [--filter KEY=VALUE ...]`` — 显示最近一次 ``--auto`` 运行的 Top N 推荐 (无需重跑)。
 
@@ -544,6 +572,8 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--explain", _resolve_explain),
     ("--export-conditional-orders", _resolve_export_conditional_orders),
     ("--weekly-report", _resolve_weekly_report),
+    ("--data-quality-audit", _resolve_data_quality_audit),
+    ("--confidence-calibration", _resolve_confidence_calibration),
     ("--top", _resolve_top),
 ]
 

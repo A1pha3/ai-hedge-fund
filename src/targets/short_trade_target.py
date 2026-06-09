@@ -135,7 +135,7 @@ def _subfactor_signed_strength(signal: StrategySignal | None, name: str) -> floa
         return 0.0
     direction = float(snapshot.get("direction", 0.0) or 0.0)
     confidence = float(snapshot.get("confidence", 0.0) or 0.0)
-    completeness = float(snapshot.get("completeness", 1.0) or 1.0)
+    completeness = float(snapshot.get("completeness", 1.0) if snapshot.get("completeness", 1.0) is not None else 1.0)
     return max(-1.0, min(1.0, direction * (confidence / 100.0) * completeness))
 
 
@@ -316,7 +316,9 @@ def _is_eligible_for_carryover_tolerance(
 
 
 def _extract_prior_metrics(historical_prior: dict[str, Any], evaluable_count: int) -> dict[str, float]:
-    prior_strength = float(historical_prior.get("prior_shrinkage_strength", 3.0) or 3.0)
+    # NOTE: 0.0 是合法 prior_shrinkage_strength (无收缩), 不能用 `or 3.0` 静默覆盖。
+    _shrinkage_raw = historical_prior.get("prior_shrinkage_strength", 3.0)
+    prior_strength = float(_shrinkage_raw) if _shrinkage_raw is not None else 3.0
     if resolve_btst_prior_shrinkage_p4_mode() == "enforce":
         effective_metrics = resolve_effective_prior_metrics(historical_prior)
         evidence_weight = clamp_unit_interval(float(effective_metrics.get("reliability", 0.0) or 0.0))

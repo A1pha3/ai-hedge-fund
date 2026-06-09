@@ -99,7 +99,8 @@ def build_target_input_from_entry(
         score_b=float(entry.get("score_b", 0.0) or 0.0),
         score_c=float(entry.get("score_c", 0.0) or 0.0),
         score_final=float(entry.get("score_final", 0.0) or 0.0),
-        quality_score=float(entry.get("quality_score", 0.5) or 0.5),
+        # NOTE: 0.0 是合法 quality_score (最低质量), 不能用 `or 0.5` 静默覆盖。
+        quality_score=float(entry.get("quality_score")) if entry.get("quality_score") is not None else 0.5,
         layer_c_decision=str(entry.get("decision") or ""),
         bc_conflict=entry.get("bc_conflict"),
         strategy_signals=_extract_strategy_signals(entry.get("strategy_signals"), entry.get("ticker", "unknown"), source="entry_dict"),

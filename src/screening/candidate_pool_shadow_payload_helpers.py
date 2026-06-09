@@ -210,7 +210,8 @@ def _reserve_default_deep_corridor_probe(
     deepest_row = min(
         deep_rows,
         key=lambda row: (
-            float(row[2].candidate_pool_avg_amount_share_of_cutoff or 1.0),
+            # NOTE: 0.0 是合法 share_of_cutoff (无分摊), 不能用 `or 1.0` 静默覆盖。
+            float(row[2].candidate_pool_avg_amount_share_of_cutoff if row[2].candidate_pool_avg_amount_share_of_cutoff is not None else 1.0),
             -float(row[0]),
             int(row[1]),
             str(row[2].ticker),

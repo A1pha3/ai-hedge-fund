@@ -513,7 +513,9 @@ def _build_btst_post_p5_watchlist_shell(
     execution_eligible = bool(getattr(selection_target, "execution_eligible", False))
     shell_score_b = float(entry.get("score_b", entry.get("score_final", 0.0)) or 0.0)
     shell_score_final = float(entry.get("score_final", entry.get("score_b", 0.0)) or 0.0)
-    shell_quality_score = float(entry.get("quality_score", 0.5) or 0.5)
+    # NOTE: 0.0 是合法 quality_score (最低质量), 不能用 `or 0.5` 静默覆盖。
+    _quality_raw = entry.get("quality_score")
+    shell_quality_score = float(_quality_raw) if _quality_raw is not None else 0.5
     target_score = float(getattr(short_trade_result, "score_target", 0.0) or 0.0)
     target_confidence = float(getattr(short_trade_result, "confidence", 0.0) or 0.0)
     resolved_score_final = max(shell_score_final, target_score) if execution_eligible else shell_score_final

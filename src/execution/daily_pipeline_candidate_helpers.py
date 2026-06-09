@@ -244,7 +244,9 @@ def qualify_catalyst_theme_candidate_from_snapshot(
     breakout_freshness = round(float(snapshot.get("breakout_freshness", 0.0) or 0.0), 4)
     trend_acceleration = round(float(snapshot.get("trend_acceleration", 0.0) or 0.0), 4)
     close_strength = round(float(snapshot.get("close_strength", 0.0) or 0.0), 4)
-    quality_score = round(float(snapshot.get("quality_score", 0.5) or 0.5), 4)
+    # NOTE: 0.0 是合法 quality_score (最低质量), 不能用 `or 0.5` 静默覆盖。
+    _quality_raw = snapshot.get("quality_score")
+    quality_score = round(float(_quality_raw) if _quality_raw is not None else 0.5, 4)
     sector_resonance = round(float(snapshot.get("sector_resonance", 0.0) or 0.0), 4)
     catalyst_freshness = round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4)
     close_momentum_catalyst_relief = resolve_close_momentum_relief_fn(
