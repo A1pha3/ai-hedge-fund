@@ -378,6 +378,7 @@ def test_analyze_pre_layer_short_trade_outcomes_breaks_down_results_by_regime_ga
                 {"date": "2026-03-25", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "volume": 1000},
                 {"date": "2026-03-26", "open": 10.1, "high": 10.6, "low": 10.0, "close": 10.3, "volume": 1200},
                 {"date": "2026-03-27", "open": 10.2, "high": 10.8, "low": 10.1, "close": 10.4, "volume": 1300},
+                {"date": "2026-03-28", "open": 10.3, "high": 10.7, "low": 10.2, "close": 10.35, "volume": 1400},
             ]
             return pd.DataFrame(rows).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
         if ticker == "300111":
@@ -385,6 +386,7 @@ def test_analyze_pre_layer_short_trade_outcomes_breaks_down_results_by_regime_ga
                 {"date": "2026-03-25", "open": 8.0, "high": 8.1, "low": 7.9, "close": 8.0, "volume": 900},
                 {"date": "2026-03-26", "open": 7.9, "high": 8.0, "low": 7.6, "close": 7.7, "volume": 950},
                 {"date": "2026-03-27", "open": 7.8, "high": 7.9, "low": 7.5, "close": 7.6, "volume": 980},
+                {"date": "2026-03-28", "open": 7.7, "high": 7.8, "low": 7.4, "close": 7.5, "volume": 1000},
             ]
             return pd.DataFrame(rows).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
         raise AssertionError(f"Unexpected ticker: {ticker}")
