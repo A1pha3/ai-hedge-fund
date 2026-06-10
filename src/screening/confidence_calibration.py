@@ -174,7 +174,6 @@ def compute_calibration(
 
     # 初始化桶
     bucket_records: dict[str, list[dict[str, Any]]] = {label: [] for label, _, _ in SCORE_BUCKETS}
-    label_map = {label: (low, high) for label, low, high in SCORE_BUCKETS}
 
     for rec in filtered:
         score = _optional_float(rec.get("recommendation_score"))
