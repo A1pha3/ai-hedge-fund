@@ -57,7 +57,7 @@
 | P2-1 | Agent 推理过程可视化 | ✅ DONE R20.16 |
 | P2-2 | 回测参数对比面板 (前端) | 后端 `param_grid.py` 就绪 |
 | P2-5 | 自定义策略权重 (前端滑块) | 后端 `POST /api/screening/custom-weights` + 前端 service layer (`custom-weights-api.ts`, R20.30) 就绪; 待 UI 滑块面板 |
-| P2-6 | 标的分析详情页 (前端) | 后端 `/api/stock-detail` 就绪 |
+| P2-6 | 标的分析详情页 (前端) | 后端 `/api/stock-detail` + 前端 service layer (`stock-detail-api.ts`, R20.30) 就绪; 待 UI 详情页 |
 | P2-7 | 回测场景回放 (前端) | 后端 frozen_replay API 就绪 |
 | P2-9 | 宏观数据集成 (前端) | 后端 macro 数据源就绪 |
 | P2-10 | 「组合体检」周报推送 | ✅ DONE R20.13 (`--weekly-report`) |
@@ -154,4 +154,4 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ---
 
-> **最后更新**: 2026-06-10 (R20.30: 入口点测试 sys.executable 修复 + P2-5 前端 service layer + P1/P2 标题订正)
+> **最后更新**: 2026-06-10 (R20.30: 入口点测试 sys.executable 修复 + P2-5/P2-6 前端 service layer + P1/P2 标题订正)
