@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import scripts.btst_trend_continuation_rollout_helpers as rollout_helpers
@@ -418,8 +418,7 @@ def test_trend_continuation_rollout_assessment_script_runs_as_python_entrypoint(
     calibration_json.write_text(json.dumps(_build_calibration_payload(), ensure_ascii=False), encoding="utf-8")
 
     script_path = Path("scripts/btst_trend_continuation_rollout_assessment.py").resolve()
-    python_executable = shutil.which("python")
-    assert python_executable is not None
+    python_executable = sys.executable
 
     result = subprocess.run(
         [

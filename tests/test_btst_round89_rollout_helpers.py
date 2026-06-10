@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -197,8 +196,7 @@ def test_round89_rollout_assessment_script_runs_as_python_entrypoint(tmp_path: P
     )
 
     script_path = Path("scripts/btst_round89_rollout_assessment.py").resolve()
-    python_executable = shutil.which("python")
-    assert python_executable is not None
+    python_executable = sys.executable
 
     result = subprocess.run(
         [
