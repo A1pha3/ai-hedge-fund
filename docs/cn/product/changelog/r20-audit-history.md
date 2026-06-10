@@ -1028,3 +1028,33 @@ changelog `r20-audit-history.md`:
 
 **教训**: loop 多轮 deferred 前端工作 citing 「角色错配」, 实则 vitest 可验证前端、
 后端 API 就绪, 应及早实现而非反复 defer。后续 loop 不再因「角色」自我设限。
+
+---
+
+### v2.2.16 (2026-06-10) — Round 20.29: P0-4 回测可视化补测 + TDZ 修复 + 标记 DONE
+
+> 发现 P0-4 (回测净值/回撤/月度热力图) 早已实现并集成于 `backtest-equity-curve.tsx`
+> (被 backtest-output.tsx 使用), 但**零测试覆盖**且文档仍标记 pending。
+
+**补测** (`backtest-equity-curve.test.tsx`, 15 用例, 此前 0 覆盖):
+- 边界: 无数据 / <2 日 / 初始值 0 / NaN → null
+- KPI: 总收益 / 最大回撤 / 胜率 / 交易天数 / 初始·最终资金
+- 图表: equity SVG area+line, drawdown aria-label (含 maxDD%), 水下图标题
+- 月度热力图: 跨月复合收益 + 涨绿跌红配色
+- drawdown 计算: 峰值跟踪 (新高后回撤重置) + NaN 日过滤
+
+**修复 TDZ 潜在 bug** (commit 5bd8e4c7, 靠短路侥幸工作):
+- `EquityCurveChart`: `bottomY` 在 `.map` 回调引用但声明在后 → 前置声明
+- `DrawdownChart`: `topY` 同样 → 前置声明
+- 此前 `isFinite(y)` 恒真使三元短路未读 fallback; 若 y 非 finite 会触发
+  `ReferenceError: Cannot access before initialization`。声明前置消除 landmine。
+
+**锁定 shipped 行为**: 胜率分母含 day0 (初始日 return=0, <1 天偏差, 长回测可忽略),
+不改 shipped 指标 (遵循「不引入不必要变更」)。
+
+**文档**: optimizations.md §10 P0-4 → ✅ DONE。
+
+**验证**: vitest 全量 **150 passed** (含新增 15); 我的文件 tsc --noEmit 零错误。
+
+**方法论**: 调研优先于重建 —— 发现 feature 已存在时, 补测 + 验证 + 标记 DONE
+优于重复实现 (避免臃肿)。本轮若盲建会与既有 backtest-equity-curve 重复。
