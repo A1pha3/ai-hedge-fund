@@ -961,3 +961,41 @@ changelog `r20-audit-history.md`:
 **测试**: 5 个新测试 (默认权重, 自定义, 错误和拒绝, 浮点和接受, 权重生效验证)。
 
 **验证**: pytest **682 passed** (新增 5 + 既有 677, 0 regressions)
+
+---
+
+### v2.2.13 (2026-06-10) — Round 20.25: 全量 suite 首跑揭穿 2 生产死锁 + HTTPAdapter 兼容 bug
+
+> R20.25 首次运行**全量**测试套件 (7250 测试), 发现前序 R20.x 轮次只跑小子集 (677/682), 隐藏了 3 个生产 bug。
+
+**关键修复 (commit 8f5c72fe)**:
+1. **`get_cache()` 非重入自死锁** — 持 `_singleton_lock` 调 `get_enhanced_cache()` (同锁); 被 `get_cache_stats` 先初始化 `_enhanced_cache` 掩盖, 全量 suite 才暴露
+2. **`get_sw_industry_classification()` 非重入自死锁** — 持 `_sw_industry_cache_lock` 经回调调 `_cache_sw_industry_mapping()` (同锁)
+3. **`_BoundedHTTPAdapter.init_poolmanager` 兼容 bug** — `kwargs.setdefault("maxsize")` 与位置参数冲突 (requests>=2.32), 每次新浪实时行情都崩
+
+**方法论教训**: 量化项目重构后必须跑**全量** suite (含 scripts/), 子集跑会掩盖死锁和 refactor-dangling-reference。死锁扫描: `with X_lock:` 调用同文件内另一 `with X_lock:` 函数 = 自死锁候选。
+
+**验证**: 顶层 136 文件 2095 全绿 + 9/10 子目录全绿; 遗留 tests/scripts/ 15 个 (R20.25-G, 见 v2.2.14)
+
+---
+
+### v2.2.14 (2026-06-10) — Round 20.26: 3 生产 bug + 5 测试债清零 + 2 防御层 invariant
+
+> 串行 dispatch alpha/beta/gamma 子代理 (并行触发网关 429/503 熔断, 改串行), 各自完成审查 + 测试债修复。
+
+**生产 bug 修复 (3 个)**:
+1. **`conviction_ranking` `consecutive_days=0` 被 `or 1` 静默替换** (commit 227648e2) — 连续推荐天数 0 经 `x or default` 变成 1, 污染综合信心排名。延续 R20.17 系统性巡逻遗漏项
+2. **`signal_decay` ATR=0 误杀正常高开** (commit 1960201e) — `gap_open` gate 要求正 ATR, ATR=0 时除零/比较退化, 正常高开被当作衰减信号剔除。补 `gap_open` 要求正 ATR 前置条件
+3. **`position_calculator` NaN `avg_volume_20d` 未 sanitize** (commit 3f039110, BETA-006) — NaN 流入 `single_name_limit` 计算产生 NaN 仓位。sanitize 上移至调用点
+
+**测试债清零 (R20.25-G 全部 6 个)**: brief:1743/2274/2445 (Alpha, 含 ineffective-mock 修正 + R6 score 公式变更后条件断言) / pre_layer_short:398 (Beta, 补 forward days 3→4) / frontier:515 + replay:854 (Gamma, 评分公式变更后 stale 阈值)
+
+**防御层 invariant 测试 (2 套)**:
+- **微结构 invariant** (commit 8b96421a, Beta) — 退出信号域/仓位非负/危机上限/三跌停升级 等不变量
+- **rollout_blocked 安全 invariant** (commit 32ea4cc7, Gamma) — null deltas 不应 false-pass rollout; 锁定 r.json 现象为 expected (`non_btst_objective`), 非 bug
+
+**死代码清理** (commit 092ec8a8): winrate_dashboard 删未用 `import math`/`border` 变量/`safe_float` import + 修无占位 f-string (延续 R20.20)
+
+**验证**: 9 个 R20.26-touched 测试文件 271 passed + 跨 screening/portfolio/execution/research/scripts 五目录 **4126 passed, 0 failed** (208s)
+
+**调度教训**: 并行 dispatch 3+ 子代理触发本地 inference 网关 429/503 熔断 (父调用超时但子代理后台仍跑完); 后续多角色迭代改串行。详见 memory `feedback_subagent_serial_dispatch`。
