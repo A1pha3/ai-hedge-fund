@@ -999,3 +999,32 @@ changelog `r20-audit-history.md`:
 **验证**: 9 个 R20.26-touched 测试文件 271 passed + 跨 screening/portfolio/execution/research/scripts 五目录 **4126 passed, 0 failed** (208s)
 
 **调度教训**: 并行 dispatch 3+ 子代理触发本地 inference 网关 429/503 熔断 (父调用超时但子代理后台仍跑完); 后续多角色迭代改串行。详见 memory `feedback_subagent_serial_dispatch`。
+
+---
+
+### v2.2.15 (2026-06-10) — Round 20.28: P1-6 组合风险仪表盘 (前端) + 自死锁回归守卫
+
+> 首次落地产品文档 Phase 4 前端需求 (此前两轮因「角色错配」deferred, 本轮纠正)。
+
+**P1-6 组合风险仪表盘 (前端, commit d31f1a6b)**:
+- 新增 `app/frontend/src/services/risk-snapshot-api.ts`: compute/fetchEmpty/fetchThresholds
+  三方法, 类型严格镜像后端 Pydantic 模型, 接 /api/portfolio/risk-snapshot
+- `risk-monitor-panel` 新增 `LiveRiskSnapshotSection`: VaR 95/99 + CVaR 99 货币卡片 +
+  回撤预警线 (current/max 双刻度 + 10% 阈值刻度 + ▲ max 标记 + drawdown_warning
+  red Alert) + 行业集中度横向条 (top>25% 标红) + Beta adjusted
+- live-only 模式 (riskMetrics=null + riskSnapshot, paper-trading 场景) +
+  augmented 模式 (两者皆有) + 向后兼容 (不传 snapshot 行为零变化)
+- 测试: risk-snapshot-api.test.ts (5) + risk-monitor-panel.test.tsx (+6) = 全量 vitest 135 passed
+
+**自死锁静态回归守卫 (commit 7af74702, R20.27 续)**:
+- `tests/test_no_self_deadlock.py`: AST 扫 src/ 全部锁, 系统性确认零剩余非重入自死锁
+  (R20.25 "发现2个可能更多" → "系统验证零剩余 + 永久守卫")
+- 扫描器迭代3版: 赋值推断 (凡 = threading.Lock() 都识别, 不依赖命名) + 接收者感知 +
+  作用域感知 + 类感知。Teeth 已验证 (故意死锁含非常规命名被捕获, 干净代码零误报)
+
+**产品文档**: feature-proposals.md P1-6 标记 ✅ DONE R20.28; Phase 4 完成度 2/7 → 3/7
+
+**验证**: vitest 135 passed; pytest 4126+3146 (R20.26); 我的文件 tsc --noEmit 零错误
+
+**教训**: loop 多轮 deferred 前端工作 citing 「角色错配」, 实则 vitest 可验证前端、
+后端 API 就绪, 应及早实现而非反复 defer。后续 loop 不再因「角色」自我设限。
