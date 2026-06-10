@@ -153,7 +153,7 @@ def render_cross_picks(cross_picks: list[CrossPick]) -> str:
         lines.append(f"  #{cp.industry_rank} {cp.industry_name}")
         lines.append(f"     动量: {cp.momentum_score:+.1f}  |  候选: {cp.candidate_count} 只")
         if cp.top_picks:
-            lines.append(f"     Top 标的:")
+            lines.append("     Top 标的:")
             for pick in cp.top_picks:
                 lines.append(
                     f"       • {pick.ticker} {pick.name}  score_b={pick.score_b:+.3f}  {pick.decision}"
