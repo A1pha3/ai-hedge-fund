@@ -1,7 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useFlowConnection, useFlowConnectionState } from '@/hooks/use-flow-connection';
-import { useNodeContext } from '@/contexts/node-context';
+import { useFlowConnectionState } from '@/hooks/use-flow-connection';
 import { cn } from '@/lib/utils';
 import { flowService, FlowRunSummary } from '@/services/flow-service';
 import { Flow } from '@/types/flow';

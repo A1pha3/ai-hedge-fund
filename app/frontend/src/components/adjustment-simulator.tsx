@@ -111,9 +111,9 @@ function fmtUSD(value: number): string {
   return `$${value.toFixed(0)}`;
 }
 
-function actionBadgeVariant(action: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+function actionBadgeVariant(action: string): 'secondary' | 'destructive' | 'outline' | 'success' {
   switch (action) {
-    case 'buy': return 'default';
+    case 'buy': return 'success';
     case 'sell': return 'destructive';
     case 'short': return 'destructive';
     case 'cover': return 'secondary';
@@ -121,22 +121,10 @@ function actionBadgeVariant(action: string): 'default' | 'secondary' | 'destruct
   }
 }
 
-function deltaColor(value: number): string {
-  if (value > 0.0005) return 'text-red-500';
-  if (value < -0.0005) return 'text-green-500';
-  return 'text-muted-foreground';
-}
-
 function deltaIcon(value: number) {
   if (value > 0.0005) return <ArrowUp className="h-3 w-3 inline" />;
   if (value < -0.0005) return <ArrowDown className="h-3 w-3 inline" />;
   return <MinusIcon className="h-3 w-3 inline" />;
-}
-
-function fmtDelta(value: number): string {
-  const sign = value >= 0 ? '+' : '';
-  if (Math.abs(value) >= 1) return `${sign}${value.toFixed(0)}`;
-  return `${sign}${(value * 100).toFixed(1)}%`;
 }
 
 // ---------------------------------------------------------------------------
@@ -479,7 +467,7 @@ interface MetricCardProps {
   invertDelta?: boolean;
 }
 
-function MetricCard({ label, before, after, delta, format, invertDelta = false }: MetricCardProps) {
+function MetricCard({ label, after, delta, format, invertDelta = false }: MetricCardProps) {
   const isGood = invertDelta ? delta > 0.0005 : delta < -0.0005;
   const isBad = invertDelta ? delta < -0.0005 : delta > 0.0005;
 

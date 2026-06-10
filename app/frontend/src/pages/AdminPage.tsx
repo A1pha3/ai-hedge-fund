@@ -24,9 +24,9 @@ import {
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'error';
 
-function roleBadgeVariant(role: string): 'default' | 'destructive' | 'outline' | 'secondary' {
+function roleBadgeVariant(role: string): 'destructive' | 'outline' | 'secondary' {
   if (role === 'admin') return 'destructive';
-  if (role === 'member') return 'default';
+  if (role === 'member') return 'secondary';
   if (role === 'viewer') return 'secondary';
   return 'outline';
 }

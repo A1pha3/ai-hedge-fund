@@ -135,13 +135,13 @@ export function CacheStatusIndicator() {
               </div>
               <div className="flex justify-between items-center">
                 <span>Redis</span>
-                <Badge variant={info.redis_available ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0">
+                <Badge variant={info.redis_available ? 'success' : 'secondary'} className="text-[10px] px-1.5 py-0">
                   {info.redis_available ? 'ON' : 'OFF'}
                 </Badge>
               </div>
               <div className="flex justify-between items-center">
                 <span>Disk</span>
-                <Badge variant={info.disk_available ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0">
+                <Badge variant={info.disk_available ? 'success' : 'secondary'} className="text-[10px] px-1.5 py-0">
                   {info.disk_available ? 'ON' : 'OFF'}
                 </Badge>
               </div>
