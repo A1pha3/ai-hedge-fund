@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 import math
 import logging
 
+import pandas as pd
+
 from src.agents.growth_agent import (
     analyze_insider_conviction,
 )
@@ -28,6 +30,8 @@ from src.screening.strategy_scorer_utils import (
 from src.tools.api import (
     get_company_news,
     get_insider_trades,
+    get_prices,
+    prices_to_df,
 )
 
 logger = logging.getLogger(__name__)

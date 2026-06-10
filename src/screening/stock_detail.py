@@ -491,7 +491,7 @@ def render_stock_detail(detail: StockDetail) -> str:
         header += f" {detail.name}"
     if detail.industry_sw:
         header += f" ({detail.industry_sw})"
-    lines.append(f"━" * 3 + f" {header} " + "━" * 3)
+    lines.append("━" * 3 + f" {header} " + "━" * 3)
 
     # 基本面
     lines.append("")

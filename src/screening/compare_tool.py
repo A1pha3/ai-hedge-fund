@@ -351,7 +351,6 @@ def render_compare_table(report: CompareReport) -> str:
         matrix[m.ticker][m.metric_name] = m
 
     # 表头
-    header_cells = ["指标"] + list(report.tickers)
     col_width = max(12, max(len(t) for t in report.tickers) + 2, 12)
     metric_col_width = max(8, max(len(METRIC_LABELS_CN.get(m, m)) for m in metric_keys_in_order) + 2)
 
