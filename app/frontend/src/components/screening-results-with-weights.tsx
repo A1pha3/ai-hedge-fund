@@ -1,9 +1,10 @@
 /**
- * P2-5/P2-6: 选股结果 + 自定义权重 + 标的详情 容器 (screening-results 展示面)。
+ * P2-5/P2-6/P2-9: 选股结果 + 自定义权重 + 标的详情 + 宏观环境 容器 (screening-results 展示面)。
  *
  * 自包含: 挂载时用默认等权调用 /api/screening/custom-weights 拉取推荐;
  * 用户调整权重 → onApply → 重新拉取 → 重渲染结果。
  * 点击推荐行 → 拉取 /api/screening/stock-detail/{ticker} → 展示详情卡。
+ * 宏观仪表盘: 展示当前宏观经济环境 (通胀/货币/动能)。
  *
  * 数据源: data/reports/auto_screening_<date>.json (经 /custom-weights 重排)。
  * 若无报告 (后端 404) → 显示错误提示 "请先运行 --auto"。
@@ -11,9 +12,11 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { CustomWeightsPanel } from '@/components/custom-weights-panel';
+import { MacroDashboard } from '@/components/macro-dashboard';
 import { ScreeningResultsPanel } from '@/components/screening-results-panel';
 import { StockDetailCard } from '@/components/stock-detail-card';
 import { customWeightsApi, type CustomWeightsRequest, type ScreeningRecommendation } from '@/services/custom-weights-api';
+import { macroApi, type MacroSnapshot } from '@/services/macro-snapshot-api';
 import { stockDetailApi, type StockDetail } from '@/services/stock-detail-api';
 
 const DEFAULT_WEIGHTS: CustomWeightsRequest = {
@@ -30,12 +33,15 @@ export interface ScreeningResultsWithWeightsProps {
   api?: typeof customWeightsApi;
   /** 注入式 stock detail API (测试可覆盖)。 */
   detailApi?: typeof stockDetailApi;
+  /** 注入式 macro API (测试可覆盖)。 */
+  macroApiOverride?: typeof macroApi;
 }
 
 export function ScreeningResultsWithWeights({
   initialWeights = DEFAULT_WEIGHTS,
   api = customWeightsApi,
   detailApi = stockDetailApi,
+  macroApiOverride = macroApi,
 }: ScreeningResultsWithWeightsProps) {
   const [recommendations, setRecommendations] = useState<ScreeningRecommendation[]>([]);
   const [tradeDate, setTradeDate] = useState<string | null>(null);
@@ -46,6 +52,10 @@ export function ScreeningResultsWithWeights({
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [stockDetail, setStockDetail] = useState<StockDetail | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+
+  // P2-9: 宏观环境状态
+  const [macroSnapshot, setMacroSnapshot] = useState<MacroSnapshot | null>(null);
+  const [isMacroLoading, setIsMacroLoading] = useState(true);
 
   const fetchWithWeights = async (weights: CustomWeightsRequest) => {
     setIsLoading(true);
@@ -63,10 +73,15 @@ export function ScreeningResultsWithWeights({
     }
   };
 
-  // 挂载时拉取初始 (等权) 推荐
+  // 挂载时拉取初始 (等权) 推荐 + 宏观快照
   useEffect(() => {
     fetchWithWeights(initialWeights);
-    // 仅挂载时执行一次 (initialWeights 由父组件控制, 不在运行时变)
+    // P2-9: 非阻塞拉取宏观快照 (失败不阻塞主流程)
+    macroApiOverride.fetch()
+      .then(setMacroSnapshot)
+      .catch(() => setMacroSnapshot(null))
+      .finally(() => setIsMacroLoading(false));
+    // 仅挂载时执行一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -103,28 +118,32 @@ export function ScreeningResultsWithWeights({
 
   return (
     <div className="space-y-4" data-testid="screening-results-with-weights">
-      <CustomWeightsPanel
-        initialWeights={initialWeights}
-        onApply={handleApply}
-        isApplying={isLoading}
-        errorMessage={error}
-      />
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ScreeningResultsPanel
-          recommendations={recommendations}
-          tradeDate={tradeDate}
-          isLoading={isLoading}
-          onSelectTicker={handleSelectTicker}
-          selectedTicker={selectedTicker}
-        />
-        {/* P2-6: 详情卡 — 仅选中时显示 */}
-        {selectedTicker && (
-          <StockDetailCard
-            detail={stockDetail}
-            isLoading={isDetailLoading}
-            onClose={handleCloseDetail}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-4">
+          <CustomWeightsPanel
+            initialWeights={initialWeights}
+            onApply={handleApply}
+            isApplying={isLoading}
+            errorMessage={error}
           />
-        )}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <ScreeningResultsPanel
+              recommendations={recommendations}
+              tradeDate={tradeDate}
+              isLoading={isLoading}
+              onSelectTicker={handleSelectTicker}
+              selectedTicker={selectedTicker}
+            />
+            {selectedTicker && (
+              <StockDetailCard
+                detail={stockDetail}
+                isLoading={isDetailLoading}
+                onClose={handleCloseDetail}
+              />
+            )}
+          </div>
+        </div>
+        <MacroDashboard snapshot={macroSnapshot} isLoading={isMacroLoading} />
       </div>
     </div>
   );

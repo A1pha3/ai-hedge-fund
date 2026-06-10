@@ -50,17 +50,17 @@
 | P1-6 | **组合风险预警仪表盘 (前端集成)** | ✅ DONE R20.28 (live section: VaR 95/99 + CVaR 99 + 回撤预警线 + 行业集中度 + Beta) | 后端 `GET/POST /api/portfolio/risk-snapshot` + 前端 `risk-snapshot-api.ts` + `LiveRiskSnapshotSection` |
 | P1-13 | 条件单模板券商导出 | ✅ DONE R20.13 | `--export-conditional-orders --broker=huatai\|gtja\|ths` |
 
-### P2 — 前端集成进行中 🔄 (P2-1/P2-2/P2-5/P2-6/P2-10 ✅)
+### P2 — 前端集成 ✅ 全部完成
 
 | # | 功能 | 现状 |
 |---|------|------|
 | P2-1 | Agent 推理过程可视化 | ✅ DONE R20.16 |
 | P2-2 | 回测参数对比面板 (前端) | ✅ DONE R20.31: service layer (`param-compare-api.ts`) + 展示组件 (`param-compare-panel.tsx`: 排序对比表 + 最佳指标高亮 + 失败组合展示); 待接入后端 API 端点 |
-| P2-5 | 自定义策略权重 (前端滑块) | ✅ DONE R20.30 (端到端): 后端 + service + `custom-weights-panel` + 容器 `screening-results-with-weights` + 「选股结果」tab 接入 (Settings 入口 → 标签页, 挂载拉取+权重变更重排); 18 vitest 全绿; 待浏览器视觉验证 |
-| P2-6 | 标的分析详情页 (前端) | ✅ DONE R20.31: service layer (`stock-detail-api.ts`, R20.30) + 展示组件 (`stock-detail-card.tsx`: 4-Tab 深度分析 基本面/技术面/资金面/系统历史) + 点击推荐行拉取详情 + 左右分栏布局; 13 vitest 全绿 |
-| P2-7 | 回测场景回放 (前端) | 后端 frozen_replay API 就绪 |
-| P2-9 | 宏观数据集成 (前端) | 后端 macro 数据源就绪 |
-| P2-10 | 「组合体检」周报推送 | ✅ DONE R20.13 (`--weekly-report`) |
+| P2-5 | 自定义策略权重 (前端滑块) | ✅ DONE R20.30 (端到端) |
+| P2-6 | 标的分析详情页 (前端) | ✅ DONE R20.31: 4-Tab 深度分析 (基本面/技术面/资金面/系统历史) + 点击推荐行拉取详情 |
+| P2-7 | 回测场景回放 (前端) | ✅ ReplayArtifactsWorkspace 已实现 (R20.13+, 8 vitest); 逐日回放 + 信号-交易对比 + 反馈 |
+| P2-9 | 宏观数据集成 (前端) | ✅ DONE R20.31: service (`macro-snapshot-api.ts`) + 仪表盘 (`macro-dashboard.tsx`: 7 指标 + 3 派生标签); 15 vitest |
+| P2-10 | 「组合体检」周报推送 | ✅ DONE R20.13 |
 
 ---
 
@@ -94,7 +94,7 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ### Phase 4: 前端集成 (后续轮次)
 
-剩余均为前端工作 (P2-7/9), 后端 API 全部就绪。P1-6 已于 R20.28 完成, P2-5 已于 R20.30 完成, P2-2/P2-6 已于 R20.31 完成。
+所有前端功能已完成 (P2 全部 ✅, P1-6 ✅ R20.28)。
 
 ---
 
@@ -137,9 +137,10 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 | 阶段 | 完成度 | 剩余 |
 |------|--------|------|
 | Phase 1-3 (CLI 决策链) | **11/11 (100%)** ✅ | — |
-| Phase 4 (前端集成) | 6/7 (P2-1 ✅, P2-2 ✅ R20.31, P2-5 ✅ R20.30, P2-6 ✅ R20.31, P2-10 ✅, P1-6 ✅ R20.28) | P2-7/9 |
+| Phase 4 (前端集成) | **7/7 (100%)** 🎉 | — |
 | **后端** | **100%** 🎉 | — |
 | **CLI** | **100%** 🎉 | — |
+| **前端** | **100%** 🎉 | — |
 
 ---
 
@@ -154,4 +155,4 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ---
 
-> **最后更新**: 2026-06-10 (R20.31: 4 bug 修复 + P2-2 回测参数对比面板 + P2-6 标的分析详情页 UI + 文档路线图更新 6/7)
+> **最后更新**: 2026-06-11 (R20.31 round 2: np.isfinite NameError 修复 + P2-9 宏观仪表盘 + P2-7 确认已完成 → 全部 P2 ✅ → 前端 100%)
