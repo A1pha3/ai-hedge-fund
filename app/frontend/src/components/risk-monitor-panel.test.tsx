@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { RiskMonitorPanel } from './risk-monitor-panel';
 import type { RiskMetrics } from '@/contexts/node-context';
+import type { RiskSnapshot } from '@/services/risk-snapshot-api';
 
 // ---------- Fixtures ----------
 
@@ -99,5 +100,85 @@ describe('RiskMonitorPanel — P1 1.5', () => {
 
     // Max position weight
     expect(screen.getByTestId('max-position-weight').textContent).toBe('25.0%');
+  });
+});
+
+// ---------- P1-6: Live Risk Snapshot fixtures & tests ----------
+
+const BASE_RISK_SNAPSHOT: RiskSnapshot = {
+  timestamp: '2026-06-10T10:00:00',
+  portfolio_value: 100000,
+  var_95: 3200,
+  var_99: 5800,
+  cvar_95: 4100,
+  cvar_99: 7200,
+  max_drawdown: 0.14,
+  current_drawdown: 0.03,
+  drawdown_warning: false,
+  industry_concentration: { '信息技术': 0.28, '金融': 0.22, '消费': 0.20 },
+  concentration_warning: false,
+  single_position_max: 0.18,
+  position_count: 5,
+  beta_adjusted: 1.12,
+};
+
+describe('RiskMonitorPanel — P1-6 Live Risk Snapshot', () => {
+  it('renders live-only mode when riskMetrics is null but riskSnapshot is present', () => {
+    render(<RiskMonitorPanel riskMetrics={null} riskSnapshot={BASE_RISK_SNAPSHOT} />);
+
+    expect(screen.getByTestId('risk-monitor-panel-live')).toBeDefined();
+    expect(screen.getByTestId('live-risk-snapshot')).toBeDefined();
+    // VaR cards
+    expect(screen.getByTestId('var95-value').textContent).toBe('$3.2K');
+    expect(screen.getByTestId('var99-value').textContent).toBe('$5.8K');
+    expect(screen.getByTestId('cvar99-value').textContent).toBe('$7.2K');
+    // Beta
+    expect(screen.getByTestId('beta-value').textContent).toBe('1.12');
+  });
+
+  it('renders VaR / drawdown / industry concentration in augmented mode', () => {
+    render(<RiskMonitorPanel riskMetrics={BASE_RISK_METRICS} riskSnapshot={BASE_RISK_SNAPSHOT} />);
+
+    // analysis-time section still present
+    expect(screen.getByTestId('risk-monitor-panel')).toBeDefined();
+    expect(screen.getByTestId('hhi-value').textContent).toBe('0.180');
+    // live section also present
+    expect(screen.getByTestId('live-risk-snapshot')).toBeDefined();
+    expect(screen.getByTestId('current-drawdown-value').textContent).toBe('3.0%');
+    expect(screen.getByTestId('max-drawdown-value').textContent).toBe('14.0%');
+    // industry concentration bars (top-weighted first)
+    expect(screen.getByTestId('industry-fill-信息技术')).toBeDefined();
+    expect(screen.queryByTestId('concentration-warning-badge')).toBeNull();
+  });
+
+  it('shows drawdown alert badge and red fill when drawdown_warning is true', () => {
+    const warning: RiskSnapshot = { ...BASE_RISK_SNAPSHOT, current_drawdown: 0.12, drawdown_warning: true };
+    render(<RiskMonitorPanel riskMetrics={null} riskSnapshot={warning} />);
+
+    expect(screen.getByTestId('drawdown-warning-badge')).toBeDefined();
+    expect(screen.getByTestId('drawdown-badge').textContent).toMatch(/Warning/i);
+  });
+
+  it('shows concentration alert when top industry weight exceeds threshold', () => {
+    const concentrated: RiskSnapshot = {
+      ...BASE_RISK_SNAPSHOT,
+      industry_concentration: { '信息技术': 0.45, '金融': 0.30 },
+      concentration_warning: true,
+    };
+    render(<RiskMonitorPanel riskMetrics={null} riskSnapshot={concentrated} />);
+
+    expect(screen.getByTestId('concentration-warning-badge')).toBeDefined();
+    expect(screen.getByTestId('concentration-top-weight').textContent).toMatch(/45\.0%/);
+  });
+
+  it('does not render live section when riskSnapshot is absent (backward compat)', () => {
+    render(<RiskMonitorPanel riskMetrics={BASE_RISK_METRICS} />);
+    expect(screen.queryByTestId('live-risk-snapshot')).toBeNull();
+    expect(screen.queryByTestId('risk-monitor-panel-live')).toBeNull();
+  });
+
+  it('renders empty state when both riskMetrics and riskSnapshot are null', () => {
+    render(<RiskMonitorPanel riskMetrics={null} riskSnapshot={null} />);
+    expect(screen.getByTestId('risk-monitor-panel-empty')).toBeDefined();
   });
 });

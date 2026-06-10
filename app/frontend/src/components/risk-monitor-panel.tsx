@@ -7,6 +7,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import type { RiskMetrics } from '@/contexts/node-context';
+import type { RiskSnapshot } from '@/services/risk-snapshot-api';
 import { AlertTriangle, BarChart3, Shield, TrendingDown } from 'lucide-react';
 
 /**
@@ -23,6 +24,12 @@ import { AlertTriangle, BarChart3, Shield, TrendingDown } from 'lucide-react';
 
 interface RiskMonitorPanelProps {
   riskMetrics: RiskMetrics | undefined | null;
+  /**
+   * P1-6: 实时组合风险快照 (来自 /api/portfolio/risk-snapshot)。
+   * 提供时额外渲染 VaR(95%/99%) 卡片 + 回撤预警线 + 行业集中度;
+   * 不提供时仅展示分析时刻的 HHI/CVaR/Short (向后兼容)。
+   */
+  riskSnapshot?: RiskSnapshot | null;
 }
 
 // ---------- Helpers ----------
@@ -62,8 +69,8 @@ function shortRatioSeverity(ratio: number): { label: string; badge: 'success' | 
 
 // ---------- Component ----------
 
-export function RiskMonitorPanel({ riskMetrics }: RiskMonitorPanelProps) {
-  if (!riskMetrics) {
+export function RiskMonitorPanel({ riskMetrics, riskSnapshot }: RiskMonitorPanelProps) {
+  if (!riskMetrics && !riskSnapshot) {
     return (
       <Card className="overflow-hidden" data-testid="risk-monitor-panel-empty">
         <CardHeader className="bg-muted/50 pb-3">
@@ -77,6 +84,34 @@ export function RiskMonitorPanel({ riskMetrics }: RiskMonitorPanelProps) {
         </CardHeader>
       </Card>
     );
+  }
+
+  // P1-6 live-only mode: no analysis-time metrics, but a live risk snapshot is present
+  // (e.g. paper-trading dashboard). Render just the live section.
+  if (!riskMetrics && riskSnapshot) {
+    return (
+      <Card className="overflow-hidden" data-testid="risk-monitor-panel-live">
+        <CardHeader className="bg-muted/50 pb-3">
+          <div className="flex items-center gap-2">
+            <Shield className="h-5 w-5 text-primary" />
+            <CardTitle className="text-base">Risk Monitor · Live</CardTitle>
+          </div>
+          <CardDescription>
+            Real-time VaR / drawdown / concentration from portfolio risk-snapshot.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-4">
+          <LiveRiskSnapshotSection snapshot={riskSnapshot} />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // 上面两个 early-return 已穷尽 riskMetrics 为 null 的所有情况 (both-null → empty;
+  // null-metrics+snapshot → live-only), 因此到这里 riskMetrics 必非空。此守卫同时满足
+  // TypeScript 窄化 (多分支 && 条件 TS 无法自动合并窄化)。
+  if (!riskMetrics) {
+    return null;
   }
 
   const { hhi, short_ratio, industry_exposures, cvar_95, position_count, max_single_position_weight, total_nav, total_long, total_short } = riskMetrics;
@@ -258,7 +293,157 @@ export function RiskMonitorPanel({ riskMetrics }: RiskMonitorPanelProps) {
             </div>
           </div>
         )}
+
+        {/* P1-6: Live risk snapshot section (VaR + Drawdown + concentration) */}
+        {riskSnapshot && <LiveRiskSnapshotSection snapshot={riskSnapshot} />}
       </CardContent>
     </Card>
+  );
+}
+
+// ---------- P1-6 Live Risk Snapshot ----------
+
+/** 回撤严重度: < 0.05 健康, 0.05-0.10 关注, >= 0.10 预警 (镜像后端 DRAWDOWN_WARNING_THRESHOLD=0.10). */
+function drawdownSeverity(dd: number): { color: string; badge: 'success' | 'warning' | 'destructive'; label: string } {
+  if (dd < 0.05) return { color: 'text-green-500', badge: 'success', label: 'Healthy' };
+  if (dd < 0.10) return { color: 'text-yellow-500', badge: 'warning', label: 'Watch' };
+  return { color: 'text-red-500', badge: 'destructive', label: 'Warning' };
+}
+
+function LiveRiskSnapshotSection({ snapshot }: { snapshot: RiskSnapshot }) {
+  const {
+    var_95, var_99, cvar_99,
+    max_drawdown, current_drawdown, drawdown_warning,
+    industry_concentration, concentration_warning,
+    single_position_max, position_count, beta_adjusted, portfolio_value,
+  } = snapshot;
+
+  const ddInfo = drawdownSeverity(current_drawdown);
+  const industryEntries = Object.entries(industry_concentration || {}).sort((a, b) => b[1] - a[1]);
+  const topIndustryWeight = industryEntries[0]?.[1] ?? 0;
+
+  return (
+    <div className="space-y-4 border-t border-border/60 pt-4" data-testid="live-risk-snapshot">
+      <div className="flex items-center gap-2">
+        <Shield className="h-4 w-4 text-primary" />
+        <p className="text-sm font-semibold">Live Risk Snapshot</p>
+        {drawdown_warning && (
+          <Badge variant="destructive" data-testid="drawdown-warning-badge">
+            <AlertTriangle className="h-3 w-3 mr-1" />
+            Drawdown Alert
+          </Badge>
+        )}
+        {concentration_warning && (
+          <Badge variant="destructive" data-testid="concentration-warning-badge">
+            <AlertTriangle className="h-3 w-3 mr-1" />
+            Concentration Alert
+          </Badge>
+        )}
+      </div>
+
+      {/* VaR / CVaR cards (货币金额, 单位与 portfolio_value 一致) */}
+      <div className="grid grid-cols-4 gap-3">
+        <div className="space-y-1" data-testid="var95-card">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">VaR 95%</p>
+          <p className="text-lg font-bold text-orange-500" data-testid="var95-value">{fmtUSD(var_95)}</p>
+        </div>
+        <div className="space-y-1" data-testid="var99-card">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">VaR 99%</p>
+          <p className="text-lg font-bold text-red-500" data-testid="var99-value">{fmtUSD(var_99)}</p>
+        </div>
+        <div className="space-y-1" data-testid="cvar99-card">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">CVaR 99%</p>
+          <p className="text-lg font-bold text-red-600" data-testid="cvar99-value">{fmtUSD(cvar_99)}</p>
+        </div>
+        <div className="space-y-1" data-testid="beta-card">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Beta (adj)</p>
+          <p className="text-lg font-bold" data-testid="beta-value">{beta_adjusted.toFixed(2)}</p>
+        </div>
+      </div>
+
+      {/* 回撤预警线: current vs max, 带阈值刻度 */}
+      <div className="space-y-2" data-testid="drawdown-section">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">Drawdown (current / max)</span>
+          <span className="font-mono">
+            <span className={ddInfo.color} data-testid="current-drawdown-value">{fmtPct(current_drawdown)}</span>
+            <span className="text-muted-foreground"> / </span>
+            <span data-testid="max-drawdown-value">{fmtPct(max_drawdown)}</span>
+          </span>
+        </div>
+        {/* 双刻度进度条: current (实色) + max (虚线标记) + 10% 预警线 */}
+        <div className="relative h-3 w-full rounded-full bg-muted overflow-visible" data-testid="drawdown-bar">
+          {/* 预警阈值刻度 (10%) */}
+          <div
+            className="absolute top-0 h-full w-px bg-red-500/60"
+            style={{ left: '10%' }}
+            title="10% drawdown warning threshold"
+            data-testid="drawdown-threshold-mark"
+          />
+          {/* 当前回撤填充 */}
+          <div
+            className={`h-full rounded-full ${drawdown_warning ? 'bg-red-500' : current_drawdown < 0.05 ? 'bg-green-500' : 'bg-yellow-500'}`}
+            style={{ width: `${Math.min(100, current_drawdown * 100)}%` }}
+            data-testid="drawdown-current-fill"
+          />
+          {/* 最大回撤标记 (三角形) */}
+          {max_drawdown > 0 && (
+            <div
+              className="absolute -top-0.5 text-muted-foreground"
+              style={{ left: `calc(${Math.min(100, max_drawdown * 100)}% - 6px)` }}
+              data-testid="drawdown-max-mark"
+            >
+              ▲
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant={ddInfo.badge as any} data-testid="drawdown-badge">{ddInfo.label}</Badge>
+          <span className="text-xs text-muted-foreground">
+            {position_count} live position{position_count !== 1 ? 's' : ''} · portfolio {fmtUSD(portfolio_value)}
+          </span>
+        </div>
+      </div>
+
+      {/* 行业集中度 (live snapshot dict) */}
+      {industryEntries.length > 0 && (
+        <div className="space-y-2" data-testid="live-industry-concentration">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground flex items-center gap-1">
+              <BarChart3 className="h-3 w-3" />
+              Industry Concentration
+            </span>
+            {concentration_warning && (
+              <span className="text-red-500" data-testid="concentration-top-weight">
+                top {fmtPct(topIndustryWeight)} &gt; 25% threshold
+              </span>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            {industryEntries.map(([industry, weight]) => {
+              const over = weight > 0.25;
+              return (
+                <div key={industry} className="flex items-center gap-2" data-testid={`industry-bar-${industry}`}>
+                  <span className="w-24 text-xs truncate" title={industry}>{industry}</span>
+                  <div className="flex-1 h-4 bg-muted/30 rounded-sm overflow-hidden">
+                    <div
+                      className={`h-full rounded-sm ${over ? 'bg-red-500/70' : 'bg-blue-500/70'}`}
+                      style={{ width: `${Math.min(100, weight * 100)}%` }}
+                      data-testid={`industry-fill-${industry}`}
+                    />
+                  </div>
+                  <span className={`w-14 text-xs font-semibold text-right ${over ? 'text-red-500' : ''}`}>
+                    {fmtPct(weight)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Single position max: <span data-testid="single-position-max">{fmtPct(single_position_max)}</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
