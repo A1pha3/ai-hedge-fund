@@ -56,6 +56,7 @@ function EquityCurveChart({ points }: { points: { date: string; value: number; d
   const padding = { top: 10, right: 10, bottom: 30, left: 60 };
   const chartW = width - padding.left - padding.right;
   const chartH = height - padding.top - padding.bottom;
+  const bottomY = padding.top + chartH; // R20.29: 前置声明, 避免 .map 回调引用 TDZ 变量
 
   const pointsStr = points
     .filter(p => isFinite(p.value))
@@ -69,7 +70,6 @@ function EquityCurveChart({ points }: { points: { date: string; value: number; d
   // Area path (filled)
   const firstX = padding.left;
   const lastX = padding.left + chartW;
-  const bottomY = padding.top + chartH;
   const areaPath = `M${firstX},${bottomY} L${pointsStr.split(' ').map((p, i) => {
     const [x, y] = p.split(',');
     return i === 0 ? `${x},${y}` : ` L${x},${y}`;
@@ -151,6 +151,7 @@ function DrawdownChart({ points }: { points: { date: string; drawdown: number }[
   const padding = { top: 5, right: 10, bottom: 20, left: 60 };
   const chartW = width - padding.left - padding.right;
   const chartH = height - padding.top - padding.bottom;
+  const topY = padding.top; // R20.29: 前置声明, 避免 .map 回调引用 TDZ 变量
 
   const pointsStr = points
     .filter(p => isFinite(p.drawdown))
@@ -163,7 +164,6 @@ function DrawdownChart({ points }: { points: { date: string; drawdown: number }[
 
   const firstX = padding.left;
   const lastX = padding.left + chartW;
-  const topY = padding.top;
   const areaPath = `M${firstX},${topY} L${pointsStr.split(' ').map((p, i) => {
     const [x, y] = p.split(',');
     return i === 0 ? `${x},${y}` : ` L${x},${y}`;
