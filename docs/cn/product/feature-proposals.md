@@ -43,20 +43,20 @@
 | P0-10 | 数据质量审计 (completeness) | ✅ DONE R20.17 | `--data-quality-audit` |
 | P0-11 | 综合信心排名 (4 信号融合) | ✅ DONE R20.18 | `--conviction-ranking` |
 
-### P1 — 优化中 🔄
+### P1 — 已全部完成 ✅
 
 | # | 功能 | 现状 | 改进方案 |
 |---|------|------|----------|
 | P1-6 | **组合风险预警仪表盘 (前端集成)** | ✅ DONE R20.28 (live section: VaR 95/99 + CVaR 99 + 回撤预警线 + 行业集中度 + Beta) | 后端 `GET/POST /api/portfolio/risk-snapshot` + 前端 `risk-snapshot-api.ts` + `LiveRiskSnapshotSection` |
 | P1-13 | 条件单模板券商导出 | ✅ DONE R20.13 | `--export-conditional-orders --broker=huatai\|gtja\|ths` |
 
-### P2 — 待实现 (均为前端) 🔄
+### P2 — 前端集成进行中 🔄 (P2-1/P2-10 ✅)
 
 | # | 功能 | 现状 |
 |---|------|------|
 | P2-1 | Agent 推理过程可视化 | ✅ DONE R20.16 |
 | P2-2 | 回测参数对比面板 (前端) | 后端 `param_grid.py` 就绪 |
-| P2-5 | 自定义策略权重 (前端滑块) | 后端 `POST /api/screening/custom-weights` 就绪 |
+| P2-5 | 自定义策略权重 (前端滑块) | 后端 `POST /api/screening/custom-weights` + 前端 service layer (`custom-weights-api.ts`, R20.30) 就绪; 待 UI 滑块面板 |
 | P2-6 | 标的分析详情页 (前端) | 后端 `/api/stock-detail` 就绪 |
 | P2-7 | 回测场景回放 (前端) | 后端 frozen_replay API 就绪 |
 | P2-9 | 宏观数据集成 (前端) | 后端 macro 数据源就绪 |
@@ -154,4 +154,4 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ---
 
-> **最后更新**: 2026-06-09 (R20.19: 文档精简 — 主文档 933 行 → < 200 行, 零功能变更)
+> **最后更新**: 2026-06-10 (R20.30: 入口点测试 sys.executable 修复 + P2-5 前端 service layer + P1/P2 标题订正)
