@@ -2297,6 +2297,200 @@ def run_verify_recommendations(lookback_days: int = 30, include_detail: bool = F
     return 0
 
 
+def run_industry_cross_picks(trade_date: str | None = None, top_industries: int = 5, picks_per_industry: int = 3) -> int:
+    """P3-3 行业 + 个股交叉选择 — CLI 入口。
+
+    Args:
+        trade_date: 报告日期 YYYYMMDD (None=最新)
+        top_industries: 输出前 N 个强势行业
+        picks_per_industry: 每个行业输出 Top N 个股
+
+    Returns:
+        退出码 (0=成功, 1=错误)
+    """
+    from colorama import Fore, Style
+    import json
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.screening.industry_cross_picks import (
+        compute_cross_picks,
+        render_cross_picks,
+    )
+
+    report_dir = resolve_report_dir()
+    if not report_dir.exists():
+        print(f"{Fore.RED}未找到 reports 目录: {report_dir}{Style.RESET_ALL}")
+        return 1
+
+    # 加载最新或指定日期的报告
+    if trade_date:
+        date_str = trade_date.replace("-", "")
+        report_path = report_dir / f"auto_screening_{date_str}.json"
+    else:
+        report_files = sorted(report_dir.glob("auto_screening_*.json"), reverse=True)
+        if not report_files:
+            print(f"{Fore.RED}没有 auto_screening_*.json 报告, 请先运行 --auto{Style.RESET_ALL}")
+            return 1
+        report_path = report_files[0]
+        date_str = report_path.stem.replace("auto_screening_", "")
+
+    if not report_path.exists():
+        print(f"{Fore.RED}未找到报告: {report_path}{Style.RESET_ALL}")
+        return 1
+
+    try:
+        with open(report_path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as exc:
+        print(f"{Fore.YELLOW}读取 {report_path.name} 失败: {exc}{Style.RESET_ALL}")
+        return 1
+
+    recommendations = payload.get("recommendations", [])
+    if not recommendations:
+        print(f"{Fore.YELLOW}报告 {date_str} 无推荐数据{Style.RESET_ALL}")
+        return 0
+
+    cross_picks = compute_cross_picks(
+        recommendations,
+        trade_date=date_str,
+        top_industries=top_industries,
+        picks_per_industry=picks_per_industry,
+    )
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Cross Picks] 行业+个股交叉选择 (P3-3){Style.RESET_ALL}")
+    print(f"  报告日期: {date_str}  |  推荐数: {len(recommendations)}")
+    print(f"  行业数: {len(cross_picks)}  |  每行业 Top: {picks_per_industry}")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+    print(render_cross_picks(cross_picks), end="")
+    return 0
+
+
+def run_portfolio_builder(trade_date: str | None = None, top_n: int = 10, position_cap: float = 0.20, industry_cap: float = 0.30) -> int:
+    """P3-4 推荐组合构建器 — CLI 入口。
+
+    Args:
+        trade_date: 报告日期 YYYYMMDD (None=最新)
+        top_n: 选 top N 个股进入组合
+        position_cap: 单股权重上限
+        industry_cap: 行业集中度上限
+
+    Returns:
+        退出码 (0=成功, 1=错误)
+    """
+    from colorama import Fore, Style
+    import json
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.portfolio.builder import (
+        compute_portfolio,
+        render_portfolio,
+    )
+
+    report_dir = resolve_report_dir()
+    if not report_dir.exists():
+        print(f"{Fore.RED}未找到 reports 目录: {report_dir}{Style.RESET_ALL}")
+        return 1
+
+    if trade_date:
+        date_str = trade_date.replace("-", "")
+        report_path = report_dir / f"auto_screening_{date_str}.json"
+    else:
+        report_files = sorted(report_dir.glob("auto_screening_*.json"), reverse=True)
+        if not report_files:
+            print(f"{Fore.RED}没有 auto_screening_*.json 报告, 请先运行 --auto{Style.RESET_ALL}")
+            return 1
+        report_path = report_files[0]
+        date_str = report_path.stem.replace("auto_screening_", "")
+
+    if not report_path.exists():
+        print(f"{Fore.RED}未找到报告: {report_path}{Style.RESET_ALL}")
+        return 1
+
+    try:
+        with open(report_path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as exc:
+        print(f"{Fore.YELLOW}读取 {report_path.name} 失败: {exc}{Style.RESET_ALL}")
+        return 1
+
+    recommendations = payload.get("recommendations", [])
+    if not recommendations:
+        print(f"{Fore.YELLOW}报告 {date_str} 无推荐数据{Style.RESET_ALL}")
+        return 0
+
+    summary = compute_portfolio(
+        recommendations,
+        top_n=top_n,
+        position_cap=position_cap,
+        industry_cap=industry_cap,
+    )
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Portfolio] 推荐组合构建器 (P3-4){Style.RESET_ALL}")
+    print(f"  报告日期: {date_str}  |  Top N: {top_n}")
+    print(f"  约束: 单股 ≤ {position_cap:.0%}  |  行业 ≤ {industry_cap:.0%}")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+    print(render_portfolio(summary), end="")
+    return 0
+
+
+def run_weight_calibration(lookback_days: int = 30) -> int:
+    """P3-2 策略动态权重校准 — CLI 入口。
+
+    Args:
+        lookback_days: 回溯天数 (默认 30, 实际观测期 = 报告数)
+
+    Returns:
+        退出码 (0=成功, 1=无数据)
+    """
+    from colorama import Fore, Style
+    import json
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.research.weight_calibration import (
+        compute_weight_calibration,
+        render_weight_calibration,
+    )
+    from src.research.factor_ic_analysis import extract_factor_panel_from_history
+
+    report_dir = resolve_report_dir()
+    if not report_dir.exists():
+        print(f"{Fore.RED}未找到 reports 目录: {report_dir}{Style.RESET_ALL}")
+        return 1
+
+    # 尝试从历史报告中提取因子面板
+    try:
+        from datetime import datetime
+        end_date = datetime.now().strftime("%Y%m%d")
+        factor_panel, return_history = extract_factor_panel_from_history(
+            reports_dir=report_dir,
+            lookback_days=lookback_days,
+            end_date=end_date,
+        )
+    except Exception as exc:
+        print(f"{Fore.YELLOW}无法提取因子面板: {exc}{Style.RESET_ALL}")
+        return 1
+
+    if not factor_panel:
+        print(f"{Fore.YELLOW}近 {lookback_days} 天内无因子数据 — 需要 ≥3 期的 auto_screening 报告{Style.RESET_ALL}")
+        return 1
+
+    result = compute_weight_calibration(
+        factor_history=factor_panel,
+        return_history=return_history,
+        lookback_days=lookback_days,
+    )
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Weight Calibration] 策略权重校准 (P3-2){Style.RESET_ALL}")
+    print(f"  报告目录: {Fore.WHITE}{report_dir}{Style.RESET_ALL}")
+    print(f"  回溯天数: {lookback_days} 天")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+    print(render_weight_calibration(result), end="")
+    return 0
+
+
 def run_performance_report_cli(period: str = "weekly", end_date: str | None = None) -> int:
     """P2-8 组合绩效周报/月报独立 CLI 入口。
 

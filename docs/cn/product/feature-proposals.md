@@ -83,7 +83,19 @@ R20.11-R20.18 构建的端到端选股决策工作流:
 --daily-brief              盘前 (9:25 前 Top 3 决策卡)
 ```
 
-业界对标: Numerai / QuantConnect / 聚宽 / 米筐 / 同花顺。我们的差异化: 20-agent persona 架构 + 完整可解释性链。
+### R20.31 闭环验证与策略进化 (Phase 5 CLI)
+
+```
+--verify-recommendations   闭环 (过去 N 天推荐实际收益 + 策略归因)
+   ↓
+--cross-picks              行业+个股交叉选择 (强势行业 Top N + 行业最优个股)
+   ↓
+--build-portfolio          组合构建 (Top N → 优化权重 + 行业/单股约束)
+   ↓
+--calibrate-weights        策略权重校准 (基于因子 IC 自动调权)
+```
+
+业界对标: Numerai / QuantConnect / 聚宽 / 米筐 / 同花顺。我们的差异化: 20-agent persona 架构 + 完整可解释性链 + 端到端闭环验证。
 
 ---
 
@@ -167,4 +179,4 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ---
 
-> **最后更新**: 2026-06-11 (R20.31 round 5: P3-2 权重自动校准 + P3-4 组合构建器 → Phase 5 完成 4/4 🎉)
+> **最后更新**: 2026-06-11 (R20.31 round 7: P3-2/P3-3/P3-4 CLI 接入 + 文档 CLI 链更新)

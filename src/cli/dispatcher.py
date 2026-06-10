@@ -283,6 +283,50 @@ def _resolve_verify_recommendations(argv: list[str]) -> int | None:
     return run_verify_recommendations(lookback_days=lookback, include_detail=detail)
 
 
+def _resolve_industry_cross_picks(argv: list[str]) -> int | None:
+    """P3-3 行业 + 个股交叉选择 — 强势行业 Top N + 行业最优个股。"""
+    from src.main import run_industry_cross_picks
+
+    if "--cross-picks" not in argv:
+        return None
+    trade_date = _get_kv(argv, "--cp-date")
+    top_ind = _parse_int(_get_kv(argv, "--cp-top-industries"), 5)
+    picks = _parse_int(_get_kv(argv, "--cp-picks-per-industry"), 3)
+    return run_industry_cross_picks(
+        trade_date=trade_date,
+        top_industries=top_ind,
+        picks_per_industry=picks,
+    )
+
+
+def _resolve_portfolio_builder(argv: list[str]) -> int | None:
+    """P3-4 推荐组合构建器 — Top N 推荐 → 优化权重组合。"""
+    from src.main import run_portfolio_builder
+
+    if "--build-portfolio" not in argv:
+        return None
+    trade_date = _get_kv(argv, "--pf-date")
+    top_n = _parse_int(_get_kv(argv, "--pf-top-n"), 10)
+    pos_cap = _parse_float(_get_kv(argv, "--pf-position-cap"), 0.20)
+    ind_cap = _parse_float(_get_kv(argv, "--pf-industry-cap"), 0.30)
+    return run_portfolio_builder(
+        trade_date=trade_date,
+        top_n=top_n,
+        position_cap=pos_cap,
+        industry_cap=ind_cap,
+    )
+
+
+def _resolve_weight_calibration(argv: list[str]) -> int | None:
+    """P3-2 策略动态权重校准 — 基于因子 IC 自动调权。"""
+    from src.main import run_weight_calibration
+
+    if "--calibrate-weights" not in argv:
+        return None
+    lookback = _parse_int(_get_kv(argv, "--calibrate-lookback"), 30)
+    return run_weight_calibration(lookback_days=lookback)
+
+
 def _resolve_stock_detail(argv: list[str]) -> int | None:
     if not _has_flag(argv, "--stock-detail"):
         return None
@@ -614,6 +658,9 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--push-test", _resolve_push_test),
     ("--winrate-dashboard", _resolve_winrate_dashboard),
     ("--verify-recommendations", _resolve_verify_recommendations),
+    ("--cross-picks", _resolve_industry_cross_picks),
+    ("--build-portfolio", _resolve_portfolio_builder),
+    ("--calibrate-weights", _resolve_weight_calibration),
     ("--stock-detail", _resolve_stock_detail),
     ("--custom-weights", _resolve_custom_weights),
     ("--compare", _resolve_compare),
