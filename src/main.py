@@ -2258,6 +2258,45 @@ def run_winrate_dashboard(lookback_days: int = 30) -> int:
     return 0
 
 
+def run_verify_recommendations(lookback_days: int = 30, include_detail: bool = False) -> int:
+    """P3-1 推荐闭环验证 — CLI 入口。
+
+    Args:
+        lookback_days: 回溯天数 (默认 30)
+        include_detail: 是否输出日度明细
+
+    Returns:
+        退出码 (0 = 成功, 1 = 无数据)
+    """
+    from colorama import Fore, Style
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.screening.verify_recommendations import (
+        compute_verify_recommendations,
+        render_verify_recommendations,
+    )
+
+    report_dir = resolve_report_dir()
+
+    summary = compute_verify_recommendations(
+        reports_dir=report_dir,
+        lookback_days=lookback_days,
+        include_detail=include_detail,
+    )
+
+    if summary.total_days == 0:
+        print(f"{Fore.YELLOW}近 {lookback_days} 天内无推荐数据 — 请先运行 --auto{Style.RESET_ALL}")
+        return 1
+
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[Verify] 推荐闭环验证 (P3-1){Style.RESET_ALL}")
+    print(f"  报告目录: {Fore.WHITE}{report_dir}{Style.RESET_ALL}")
+    print(f"  回溯天数: {lookback_days} 天")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+    print(render_verify_recommendations(summary), end="")
+    return 0
+
+
 def run_performance_report_cli(period: str = "weekly", end_date: str | None = None) -> int:
     """P2-8 组合绩效周报/月报独立 CLI 入口。
 

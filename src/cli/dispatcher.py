@@ -267,6 +267,22 @@ def _resolve_winrate_dashboard(argv: list[str]) -> int | None:
     return run_winrate_dashboard(lookback_days=lookback)
 
 
+def _resolve_verify_recommendations(argv: list[str]) -> int | None:
+    """P3-1 推荐闭环验证 — 自动回测每日推荐实际收益。
+
+    Args:
+        argv: 完整 CLI 参数列表
+        支持: --verify-recommendations, --verify-lookback=<N>, --verify-detail
+    """
+    from src.main import run_verify_recommendations
+
+    if "--verify-recommendations" not in argv:
+        return None
+    lookback = _parse_int(_get_kv(argv, "--verify-lookback"), 30)
+    detail = "--verify-detail" in argv
+    return run_verify_recommendations(lookback_days=lookback, include_detail=detail)
+
+
 def _resolve_stock_detail(argv: list[str]) -> int | None:
     if not _has_flag(argv, "--stock-detail"):
         return None
@@ -597,6 +613,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--conditional-orders", _resolve_conditional_orders),
     ("--push-test", _resolve_push_test),
     ("--winrate-dashboard", _resolve_winrate_dashboard),
+    ("--verify-recommendations", _resolve_verify_recommendations),
     ("--stock-detail", _resolve_stock_detail),
     ("--custom-weights", _resolve_custom_weights),
     ("--compare", _resolve_compare),

@@ -25,6 +25,7 @@
 | **changelog v2.1.8 之后** | [changelog/v2.1.8-onwards.md](./changelog/v2.1.8-onwards.md) | R20.8 文档拆分 + 后续轮次 |
 | **R20.6 调研 + 差距分析** | [research/r20.6-roadmap-gap-analysis.md](./research/r20.6-roadmap-gap-analysis.md) | §19 业界动态 + Gap + 优先级建议 |
 | **业界 2025-2026 调研** | [research/industry-2025-2026.md](./research/industry-2025-2026.md) | 聚宽/米筐/同花顺/FinGPT 等对标 |
+| **R20.31 Phase 5 调研** | [research/r20-31-next-phase-analysis.md](./research/r20-31-next-phase-analysis.md) | 全功能完成后的差距分析 + P3-1~P3-4 提案 |
 | **UX 最佳实践 + R20.9 审计** | [research/ux-best-practices-2025-2026.md](./research/ux-best-practices-2025-2026.md) | 前端 UX 问题清单 + 行业趋势 |
 
 ---
@@ -92,9 +93,20 @@ R20.11-R20.18 构建的端到端选股决策工作流:
 
 P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
-### Phase 4: 前端集成 (后续轮次)
+### Phase 4: 前端集成 — ✅ 100% 完成
 
 所有前端功能已完成 (P2 全部 ✅, P1-6 ✅ R20.28)。
+
+### Phase 5: 闭环验证与策略进化 (R20.31 提案)
+
+详见 [research/r20-31-next-phase-analysis.md](./research/r20-31-next-phase-analysis.md)。
+
+| # | 功能 | 优先级 | 状态 |
+|---|------|--------|------|
+| P3-1 | 推荐闭环验证 (`--verify-recommendations`) | P0 | ✅ DONE R20.31: `src/screening/verify_recommendations.py` (VerifySummary + 策略归因) + CLI dispatcher; 16 pytest |
+| P3-2 | 策略动态权重校准 | P1 | ❌ 未实现 |
+| P3-3 | 行业 + 个股交叉选择 | P1 | ✅ DONE R20.31: `src/screening/industry_cross_picks.py` (CrossPick: 强势行业 Top N + 行业最优个股); 12 pytest |
+| P3-4 | 推荐组合构建器 | P2 | ❌ 未实现 |
 
 ---
 
@@ -155,4 +167,4 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ---
 
-> **最后更新**: 2026-06-11 (R20.31 round 2: np.isfinite NameError 修复 + P2-9 宏观仪表盘 + P2-7 确认已完成 → 全部 P2 ✅ → 前端 100%)
+> **最后更新**: 2026-06-11 (R20.31 round 4: P3-1 推荐闭环验证 + P3-3 行业+个股交叉选择 实现 → Phase 5 进展 2/4)
