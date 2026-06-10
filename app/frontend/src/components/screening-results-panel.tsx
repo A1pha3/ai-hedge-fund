@@ -20,6 +20,10 @@ export interface ScreeningResultsPanelProps {
   isLoading?: boolean;
   /** 空状态提示文案 (默认 "暂无推荐")。 */
   emptyHint?: string;
+  /** 点击某行推荐时回调 (P2-6: 打开详情)。 */
+  onSelectTicker?: (ticker: string) => void;
+  /** 当前选中的 ticker (高亮该行)。 */
+  selectedTicker?: string | null;
 }
 
 function _num(rec: ScreeningRecommendation, key: string): number | null {
@@ -44,6 +48,8 @@ export function ScreeningResultsPanel({
   tradeDate,
   isLoading = false,
   emptyHint = '暂无推荐 — 请先运行 --auto 生成报告',
+  onSelectTicker,
+  selectedTicker = null,
 }: ScreeningResultsPanelProps) {
   const count = recommendations.length;
 
@@ -71,11 +77,16 @@ export function ScreeningResultsPanel({
               const name = _str(rec, 'name');
               const score = _num(rec, 'score_b');
               const decision = _str(rec, 'decision');
+              const isSelected = ticker === selectedTicker;
               return (
                 <div
                   key={`${ticker}-${idx}`}
-                  className="flex items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-muted/40"
+                  className={`flex items-center justify-between rounded px-2 py-1.5 text-sm cursor-pointer hover:bg-muted/40 ${isSelected ? 'bg-muted/60 ring-1 ring-primary/30' : ''}`}
                   data-testid={`screening-result-row-${ticker}`}
+                  onClick={() => onSelectTicker?.(ticker)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelectTicker?.(ticker); }}
                 >
                   <div className="flex items-center gap-3">
                     <span className="w-5 text-right font-mono text-muted-foreground">{idx + 1}</span>

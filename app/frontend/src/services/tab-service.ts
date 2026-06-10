@@ -1,11 +1,12 @@
 import { Settings } from '@/components/settings/settings';
+import { ScreeningResultsWithWeights } from '@/components/screening-results-with-weights';
 import { FlowTabContent } from '@/components/tabs/flow-tab-content';
 import { ReplayArtifactsWorkspace } from '@/components/workspaces/replay-artifacts-workspace';
 import { Flow } from '@/types/flow';
 import { ReactNode, createElement } from 'react';
 
 export interface TabData {
-  type: 'flow' | 'settings' | 'replay-artifacts';
+  type: 'flow' | 'settings' | 'replay-artifacts' | 'screening';
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
@@ -25,7 +26,10 @@ export class TabService {
 
       case 'replay-artifacts':
         return createElement(ReplayArtifactsWorkspace);
-      
+
+      case 'screening':
+        return createElement(ScreeningResultsWithWeights);
+
       default:
         throw new Error(`Unsupported tab type: ${tabData.type}`);
     }
@@ -56,6 +60,14 @@ export class TabService {
     };
   }
 
+  static createScreeningTab(): TabData & { content: ReactNode } {
+    return {
+      type: 'screening',
+      title: '选股结果',
+      content: TabService.createTabContent({ type: 'screening', title: '选股结果' }),
+    };
+  }
+
   // Restore tab content for persisted tabs (used when loading from localStorage)
   static restoreTabContent(tabData: TabData): ReactNode {
     return TabService.createTabContent(tabData);
@@ -75,7 +87,10 @@ export class TabService {
 
       case 'replay-artifacts':
         return TabService.createReplayArtifactsTab();
-      
+
+      case 'screening':
+        return TabService.createScreeningTab();
+
       default:
         throw new Error(`Cannot restore unsupported tab type: ${savedTab.type}`);
     }

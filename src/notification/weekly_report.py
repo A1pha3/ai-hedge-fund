@@ -241,21 +241,21 @@ def _block_risk_metrics_delta(start: str, end: str, positions_path: Path | None 
         if not daily_rets:
             return "### 风险变化\n\n> 本周无足够历史数据\n"
 
-        sharpe = _compute_sharpe(daily_rets)
-        vol = _compute_volatility(daily_rets)
         max_dd = _compute_max_drawdown(positions_history)
 
-        # 上周数据 (简单用前半段近似)
+        # 本周/上周 (简单用后半段/前半段近似)
         mid = len(daily_rets) // 2
         prev_rets = daily_rets[:mid] if mid >= 2 else []
         curr_rets = daily_rets[mid:]
 
+        curr_sharpe = _compute_sharpe(curr_rets) if curr_rets else _compute_sharpe(daily_rets)
+        curr_vol = _compute_volatility(curr_rets) if curr_rets else _compute_volatility(daily_rets)
         prev_sharpe = _compute_sharpe(prev_rets) if prev_rets else 0.0
         prev_vol = _compute_volatility(prev_rets) if prev_rets else 0.0
 
         lines = ["### 风险变化\n"]
-        lines.append(f"- Sharpe: {sharpe:.2f} (上周 {prev_sharpe:.2f}, Δ {sharpe - prev_sharpe:+.2f})")
-        lines.append(f"- 波动率: {vol:.2%} (上周 {prev_vol:.2%})")
+        lines.append(f"- Sharpe: {curr_sharpe:.2f} (上周 {prev_sharpe:.2f}, Δ {curr_sharpe - prev_sharpe:+.2f})")
+        lines.append(f"- 波动率: {curr_vol:.2%} (上周 {prev_vol:.2%})")
         lines.append(f"- 最大回撤: {max_dd:.2%}")
         lines.append("")
         return "\n".join(lines)

@@ -1,8 +1,9 @@
+import { Button } from '@/components/ui/button';
 import { ReplayArtifactsEntryCard } from '@/components/replay-artifacts/replay-artifacts-entry-card';
 import { useTabsContext } from '@/contexts/tabs-context';
 import { cn } from '@/lib/utils';
 import { CubeIcon } from '@radix-ui/react-icons';
-import { Activity, Database, Key, Palette } from 'lucide-react';
+import { Activity, Database, Key, LineChart, Palette } from 'lucide-react';
 import { useState } from 'react';
 import { TabService } from '@/services/tab-service';
 import { ApiKeysSettings, LLMMetricsPanel, Models } from './';
@@ -49,6 +50,12 @@ export function Settings({ className }: SettingsProps) {
       description: 'Replay summaries and execution digests',
     },
     {
+      id: 'screening',
+      label: '选股结果',
+      icon: LineChart,
+      description: '自定义策略权重重排推荐',
+    },
+    {
       id: 'llm-metrics',
       label: 'LLM Metrics',
       icon: Activity,
@@ -68,6 +75,18 @@ export function Settings({ className }: SettingsProps) {
         return <ApiKeysSettings />;
       case 'llm-metrics':
         return <LLMMetricsPanel />;
+      case 'screening':
+        return (
+          <div className="max-w-md mx-auto mt-8 space-y-4">
+            <div>
+              <h3 className="text-lg font-medium">选股结果</h3>
+              <p className="text-sm text-muted-foreground">
+                查看最新 auto_screening 报告推荐, 用自定义策略权重重新排序 (需先运行 --auto 生成报告)
+              </p>
+            </div>
+            <Button onClick={() => openTab(TabService.createScreeningTab())}>打开选股结果</Button>
+          </div>
+        );
       default:
         return <Models />;
     }

@@ -299,7 +299,7 @@ def format_preheat_report(stats: PreheatStats, trade_date: str, task_label: str)
     lines: list[str] = []
     lines.append(f"\n{Fore.CYAN}{Style.BRIGHT}━━━ 缓存预热 · {trade_date} ━━━{Style.RESET_ALL}")
     lines.append(f"预热任务: {stats.tasks_total} 个 ({task_label})")
-    lines.append(f"并发度: 4")
+    lines.append("并发度: 4")
     lines.append("")
 
     for idx, detail in enumerate(stats.details, 1):

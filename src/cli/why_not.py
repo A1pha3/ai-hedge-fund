@@ -261,10 +261,10 @@ def _print_already_recommended(ticker: str, match: dict[str, Any]) -> None:
 
 def _print_not_in_market(ticker: str, report_path: Path) -> None:
     print(f"{Fore.YELLOW}该票 {ticker} 不在扫描范围{Style.RESET_ALL}")
-    print(f"  可能原因:")
-    print(f"    • 港股 / 美股 (本系统仅扫描 A 股)")
-    print(f"    • 已退市 / 停牌")
-    print(f"    • ticker 拼写错误")
+    print("  可能原因:")
+    print("    • 港股 / 美股 (本系统仅扫描 A 股)")
+    print("    • 已退市 / 停牌")
+    print("    • ticker 拼写错误")
     print(f"  报告: {report_path.name}")
 
 
@@ -358,6 +358,6 @@ def run_why_not(
     print(f"{Fore.CYAN}小结:{Style.RESET_ALL} {ticker} 未进 Top {top_n} 的最可能原因:")
     print(f"  1. Score B < { _compute_top_score_stats(recs)['min']:+.4f} (末位门槛)")
     print(f"  2. 至少 1 个策略方向与 Top {top_n} 主流方向冲突")
-    print(f"  3. 详细反事实: 对该票单独跑 score_batch (src/screening/strategy_scorer_*.py)")
+    print("  3. 详细反事实: 对该票单独跑 score_batch (src/screening/strategy_scorer_*.py)")
     print()
     return 0

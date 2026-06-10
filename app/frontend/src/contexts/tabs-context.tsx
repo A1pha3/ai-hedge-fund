@@ -2,7 +2,7 @@ import { Flow } from '@/types/flow';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
 // Define tab types
-export type TabType = 'flow' | 'settings' | 'replay-artifacts';
+export type TabType = 'flow' | 'settings' | 'replay-artifacts' | 'screening';
 
 export interface Tab {
   id: string;
