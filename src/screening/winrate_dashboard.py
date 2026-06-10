@@ -35,13 +35,12 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from src.utils.numeric import optional_float as _optional_float, safe_float as _safe_float
+from src.utils.numeric import optional_float as _optional_float
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +325,6 @@ def render_winrate_dashboard(summary: WinRateSummary) -> str:
         return f"暂无推荐历史数据 (近 {summary.period_days} 天无追踪记录)\n"
 
     lines: list[str] = []
-    border = "━" * 56
     lines.append(f"{'━' * 3} 历史推荐胜率看板 · 近 {summary.period_days} 天 {'━' * 3}")
     lines.append("")
     lines.append(f"总推荐: {summary.total_recommendations} 只 ({summary.total_days} 天)")
@@ -355,7 +353,7 @@ def render_winrate_dashboard(summary: WinRateSummary) -> str:
 
     # 日度趋势图 (T+1 胜率)
     if summary.daily:
-        lines.append(f"日度趋势 (T+1 胜率):")
+        lines.append("日度趋势 (T+1 胜率):")
         bar_width = 20
         for day in summary.daily:
             date_label = _format_date_short(day.date)
