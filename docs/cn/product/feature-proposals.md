@@ -103,10 +103,10 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 | # | 功能 | 优先级 | 状态 |
 |---|------|--------|------|
-| P3-1 | 推荐闭环验证 (`--verify-recommendations`) | P0 | ✅ DONE R20.31: `src/screening/verify_recommendations.py` (VerifySummary + 策略归因) + CLI dispatcher; 16 pytest |
-| P3-2 | 策略动态权重校准 | P1 | ❌ 未实现 |
-| P3-3 | 行业 + 个股交叉选择 | P1 | ✅ DONE R20.31: `src/screening/industry_cross_picks.py` (CrossPick: 强势行业 Top N + 行业最优个股); 12 pytest |
-| P3-4 | 推荐组合构建器 | P2 | ❌ 未实现 |
+| P3-1 | 推荐闭环验证 (`--verify-recommendations`) | P0 | ✅ DONE R20.31: `src/screening/verify_recommendations.py` + CLI; 16 pytest |
+| P3-2 | 策略动态权重校准 | P1 | ✅ DONE R20.31: `src/research/weight_calibration.py` (基于 IR 自动调权 + 权重下限 + 校准前后对比); 15 pytest |
+| P3-3 | 行业 + 个股交叉选择 | P1 | ✅ DONE R20.31: `src/screening/industry_cross_picks.py`; 12 pytest |
+| P3-4 | 推荐组合构建器 | P2 | ✅ DONE R20.31: `src/portfolio/builder.py` (贪心算法 + 行业/单股双约束 + 预期 Sharpe vs 等权对比); 14 pytest |
 
 ---
 
@@ -167,4 +167,4 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ---
 
-> **最后更新**: 2026-06-11 (R20.31 round 4: P3-1 推荐闭环验证 + P3-3 行业+个股交叉选择 实现 → Phase 5 进展 2/4)
+> **最后更新**: 2026-06-11 (R20.31 round 5: P3-2 权重自动校准 + P3-4 组合构建器 → Phase 5 完成 4/4 🎉)
