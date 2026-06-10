@@ -56,7 +56,7 @@
 |---|------|------|
 | P2-1 | Agent 推理过程可视化 | ✅ DONE R20.16 |
 | P2-2 | 回测参数对比面板 (前端) | 后端 `param_grid.py` 就绪 |
-| P2-5 | 自定义策略权重 (前端滑块) | 后端 + service layer + 展示组件 `custom-weights-panel.tsx` (4 滑块+实时和校验+onApply, R20.30, 7 vitest) 就绪; 待父组件接入 (fetch + 渲染结果) |
+| P2-5 | 自定义策略权重 (前端滑块) | ✅ 功能闭环 R20.30: 后端 + service layer + `custom-weights-panel` + 容器 `screening-results-with-weights`(挂载拉取+权重变更重排, 16 vitest 全绿); 待在路由/页面渲染 `<ScreeningResultsWithWeights/>` 一行接入 |
 | P2-6 | 标的分析详情页 (前端) | 后端 `/api/stock-detail` + 前端 service layer (`stock-detail-api.ts`, R20.30) 就绪; 待 UI 详情页 |
 | P2-7 | 回测场景回放 (前端) | 后端 frozen_replay API 就绪 |
 | P2-9 | 宏观数据集成 (前端) | 后端 macro 数据源就绪 |
