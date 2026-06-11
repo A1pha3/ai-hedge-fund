@@ -14,6 +14,7 @@ from src.screening.candidate_pool import (
     _enforce_tushare_daily_rate_limit,
     _get_avg_amount_20d_map,
     _is_disclosure_window,
+    _resolve_avg_amount_20d_from_daily_df,
     add_cooldown,
     build_candidate_pool,
     build_candidate_pool_with_shadow,
@@ -79,6 +80,18 @@ class TestHelpers:
 
     def test_default_candidate_pool_size_is_300(self):
         assert candidate_pool_module.MAX_CANDIDATE_POOL_SIZE == 300
+
+    def test_resolve_avg_amount_20d_uses_latest_20_rows_when_daily_is_newest_first(self):
+        df = pd.DataFrame(
+            {
+                "trade_date": [f"202603{day:02d}" for day in range(30, 0, -1)],
+                "amount": list(range(30, 0, -1)),
+            }
+        )
+
+        result = _resolve_avg_amount_20d_from_daily_df(df)
+
+        assert result == pytest.approx(2.05)
 
     def test_btst_liquidity_sort_prefers_smaller_market_cap_within_same_liquidity_band(self):
         large_cap = CandidateStock(

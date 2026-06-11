@@ -428,6 +428,7 @@ class BacktestEngine:
         current_prices: dict[str, float],
         total_value: float,
     ) -> list[list]:
+        benchmark_start_date = self._resolve_benchmark_anchor_date()
         return self._results.build_day_rows(
             date_str=date_str,
             tickers=tickers,
@@ -437,11 +438,23 @@ class BacktestEngine:
             portfolio=self._portfolio,
             performance_metrics=self._performance_metrics,
             total_value=total_value,
-            benchmark_return_pct=self._benchmark.get_return_pct(resolve_benchmark_ticker(self._tickers), self._start_date, date_str),
+            benchmark_return_pct=self._benchmark.get_return_pct(resolve_benchmark_ticker(self._tickers), benchmark_start_date, date_str),
         )
 
+    def _resolve_benchmark_anchor_date(self) -> str:
+        if not self._portfolio_values:
+            return self._start_date
+        first_date = self._portfolio_values[0].get("Date")
+        if isinstance(first_date, pd.Timestamp):
+            return first_date.strftime("%Y-%m-%d")
+        if isinstance(first_date, datetime):
+            return first_date.strftime("%Y-%m-%d")
+        if first_date is not None:
+            return str(first_date)
+        return self._start_date
+
     def _update_daily_performance_metrics(self) -> None:
-        if len(self._portfolio_values) <= 3:
+        if len(self._portfolio_values) < 3:
             return
         computed = self._perf.compute_metrics(self._portfolio_values)
         if computed:

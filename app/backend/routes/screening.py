@@ -25,6 +25,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.backend.routes._common import safe_route
 from src.main import compute_auto_screening_results
 
 router = APIRouter(prefix="/api/screening", tags=["screening"])
@@ -221,6 +222,58 @@ def _validate_strategies(strategies: list[str] | None) -> list[str] | None:
     return strategies
 
 
+def _load_latest_auto_screening_payload(trade_date: str | None = None) -> dict[str, Any]:
+    reports_dir = Path(__file__).resolve().parents[3] / "data" / "reports"
+    if trade_date:
+        candidates = [reports_dir / f"auto_screening_{trade_date}.json"]
+    else:
+        candidates = sorted(reports_dir.glob("auto_screening_*.json"), reverse=True)
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=500, detail=f"读取选股报告失败: {path.name} ({exc})")
+    raise HTTPException(status_code=404, detail=f"未找到 auto_screening 报告 (trade_date={trade_date or 'latest'})")
+
+
+def _build_screening_response(
+    payload: dict[str, Any],
+    *,
+    trade_date: str,
+    score_threshold: float,
+    use_explain: bool,
+    strategies: list[str] | None,
+    execution_time_seconds: float,
+) -> ScreeningResponse:
+    raw_recs = payload.get("recommendations", []) or []
+    recs = _apply_score_threshold(raw_recs, score_threshold)
+    recs = _attach_explain(recs, use_explain)
+    return ScreeningResponse(
+        trade_date=trade_date,
+        recommendations=_sanitize_nan(recs),
+        market_state=_sanitize_nan(payload.get("market_state")),
+        tracking_summary=_sanitize_nan(payload.get("tracking_summary")),
+        consecutive_recommendation=_sanitize_nan(payload.get("consecutive_recommendation")),
+        industry_rotation=_sanitize_nan(payload.get("industry_rotation")),
+        execution_time_seconds=round(execution_time_seconds, 3),
+        batch_data_fetcher=_sanitize_nan(payload.get("batch_data_fetcher")),
+        signal_decay_summary=_sanitize_nan(payload.get("signal_decay_summary")),
+        sector_concentration_warnings=payload.get("sector_concentration_warnings") or [],
+        layer_a_count=int(payload.get("layer_a_count", 0) or 0),
+        total_scored=int(payload.get("total_scored", 0) or 0),
+        high_pool_count=int(payload.get("high_pool_count", 0) or 0),
+        top_n=int(payload.get("top_n", len(recs)) or len(recs)),
+        meta={
+            "score_threshold": score_threshold,
+            "use_explain": use_explain,
+            "strategies": strategies or ["trend", "mean_reversion", "fundamental", "event_sentiment"],
+            "data_dir": str(Path(__file__).resolve().parents[3] / "data" / "reports"),
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -265,7 +318,12 @@ async def run_auto_screening(req: ScreeningRequest) -> ScreeningResponse:
     start = time.monotonic()
     try:
         payload = await asyncio.wait_for(
-            asyncio.to_thread(compute_auto_screening_results, trade_date, req.top_n),
+            asyncio.to_thread(
+                compute_auto_screening_results,
+                trade_date,
+                req.top_n,
+                selected_strategies=strategies,
+            ),
             timeout=DEFAULT_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -277,34 +335,39 @@ async def run_auto_screening(req: ScreeningRequest) -> ScreeningResponse:
         # 其他内部错误
         raise HTTPException(status_code=500, detail=f"一键选股失败: {exc}")
 
-    elapsed = time.monotonic() - start
-
-    # 后处理: NaN 清洗 + 阈值过滤 + 因子明细开关
-    raw_recs = payload.get("recommendations", []) or []
-    recs = _apply_score_threshold(raw_recs, req.score_threshold)
-    recs = _attach_explain(recs, req.use_explain)
-
-    return ScreeningResponse(
+    return _build_screening_response(
+        payload,
         trade_date=trade_date,
-        recommendations=_sanitize_nan(recs),
-        market_state=_sanitize_nan(payload.get("market_state")),
-        tracking_summary=_sanitize_nan(payload.get("tracking_summary")),
-        consecutive_recommendation=_sanitize_nan(payload.get("consecutive_recommendation")),
-        industry_rotation=_sanitize_nan(payload.get("industry_rotation")),
-        execution_time_seconds=round(elapsed, 3),
-        batch_data_fetcher=_sanitize_nan(payload.get("batch_data_fetcher")),
-        signal_decay_summary=_sanitize_nan(payload.get("signal_decay_summary")),
-        sector_concentration_warnings=payload.get("sector_concentration_warnings") or [],
-        layer_a_count=int(payload.get("layer_a_count", 0) or 0),
-        total_scored=int(payload.get("total_scored", 0) or 0),
-        high_pool_count=int(payload.get("high_pool_count", 0) or 0),
-        top_n=int(payload.get("top_n", req.top_n) or req.top_n),
-        meta={
-            "score_threshold": req.score_threshold,
-            "use_explain": req.use_explain,
-            "strategies": strategies or ["trend", "mean_reversion", "fundamental", "event_sentiment"],
-            "data_dir": str(Path(__file__).resolve().parents[3] / "data" / "reports"),
-        },
+        score_threshold=req.score_threshold,
+        use_explain=req.use_explain,
+        strategies=strategies,
+        execution_time_seconds=time.monotonic() - start,
+    )
+
+
+@router.get(
+    path="/latest",
+    response_model=ScreeningResponse,
+    responses={
+        200: {"description": "成功 — 返回最近一次 auto_screening payload"},
+        404: {"description": "未找到 auto_screening 报告"},
+        500: {"description": "报告读取失败"},
+    },
+)
+@safe_route
+async def get_latest_screening_result(
+    trade_date: str | None = Query(None, description="指定报告日期 YYYYMMDD；缺省返回最新"),
+) -> ScreeningResponse:
+    cleaned_date = _normalize_trade_date(trade_date) if trade_date else None
+    payload = _load_latest_auto_screening_payload(trade_date=cleaned_date)
+    resolved_trade_date = str(payload.get("date") or cleaned_date or _resolve_default_trade_date())
+    return _build_screening_response(
+        payload,
+        trade_date=resolved_trade_date,
+        score_threshold=0.0,
+        use_explain=True,
+        strategies=None,
+        execution_time_seconds=0.0,
     )
 
 

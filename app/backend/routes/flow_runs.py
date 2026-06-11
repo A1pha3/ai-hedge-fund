@@ -86,7 +86,7 @@ async def get_flow_runs(
 
 
 @router.get(
-    "active",
+    "/active",
     response_model=Optional[FlowRunResponse],
     responses={
         404: {"model": ErrorResponse, "description": "Flow not found"},
@@ -107,7 +107,7 @@ async def get_active_flow_run(flow_id: int, db: Session = Depends(get_db)):
 
 
 @router.get(
-    "latest",
+    "/latest",
     response_model=Optional[FlowRunResponse],
     responses={
         404: {"model": ErrorResponse, "description": "Flow not found"},
@@ -128,7 +128,7 @@ async def get_latest_flow_run(flow_id: int, db: Session = Depends(get_db)):
 
 
 @router.get(
-    "count",
+    "/count",
     responses={
         200: {"description": "Flow run count"},
         404: {"model": ErrorResponse, "description": "Flow not found"},

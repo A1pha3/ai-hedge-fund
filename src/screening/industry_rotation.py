@@ -61,6 +61,9 @@ class IndustrySignal:
         candidate_count: 该行业在候选池中的标的数
         north_money_flow: 北向资金净流入 (亿元, 可选 — 当前未实现)
         rank: 排名 (1=最强)
+        history_presence_ratio: 历史出现率 (0.0 ~ 1.0, P5-2)
+        history_avg_score_b: 历史平均 score_b (P5-2)
+        history_bonus: 历史加分 (P5-2)
     """
 
     industry_name: str
@@ -71,6 +74,9 @@ class IndustrySignal:
     north_money_flow: float = 0.0
     rank: int = 0
     tickers: list[str] = field(default_factory=list)
+    history_presence_ratio: float = 0.0
+    history_avg_score_b: float = 0.0
+    history_bonus: float = 0.0
 
     def to_dict(self) -> dict:
         """序列化为 dict (用于 JSON payload)。"""
@@ -83,6 +89,9 @@ class IndustrySignal:
             "north_money_flow": round(self.north_money_flow, 4),
             "rank": self.rank,
             "tickers": list(self.tickers),
+            "history_presence_ratio": round(self.history_presence_ratio, 4),
+            "history_avg_score_b": round(self.history_avg_score_b, 4),
+            "history_bonus": round(self.history_bonus, 4),
         }
 
 
@@ -166,6 +175,98 @@ def _resolve_industry_name(recommendation: dict) -> str:
     return str(industry).strip()
 
 
+def _load_historical_reports(reports_dir: str, trade_date: str, lookback_days: int) -> list[dict]:
+    """加载历史自动筛选报告 (P5-2)。
+    
+    Args:
+        reports_dir: 报告目录路径
+        trade_date: 当前交易日 (YYYYMMDD)
+        lookback_days: 回看天数, lookback_days=1 时返回空列表
+    
+    Returns:
+        历史报告列表, 按日期升序排列, 不包含当前日期。
+        每个报告为 dict, 至少包含 "date" 和 "recommendations" 字段。
+    """
+    import json
+    import os
+    from datetime import datetime, timedelta
+    
+    if lookback_days <= 1:
+        return []
+    
+    if not reports_dir or not os.path.exists(reports_dir):
+        return []
+    
+    # 将 trade_date 转换为 datetime
+    try:
+        current_date = datetime.strptime(trade_date, "%Y%m%d")
+    except (ValueError, TypeError):
+        return []
+    
+    # 收集历史报告
+    historical_reports = []
+    for i in range(1, lookback_days):  # 排除当前日期
+        past_date = current_date - timedelta(days=i)
+        past_date_str = past_date.strftime("%Y%m%d")
+        report_path = os.path.join(reports_dir, f"auto_screening_{past_date_str}.json")
+        
+        if os.path.exists(report_path):
+            try:
+                with open(report_path, encoding="utf-8") as f:
+                    report = json.load(f)
+                    if isinstance(report, dict) and "recommendations" in report:
+                        report["date"] = past_date_str
+                        historical_reports.append(report)
+            except (json.JSONDecodeError, IOError):
+                continue
+    
+    # 按日期升序排列
+    historical_reports.sort(key=lambda r: r.get("date", ""))
+    return historical_reports
+
+
+def _compute_industry_history(historical_reports: list[dict]) -> dict[str, dict]:
+    """从历史报告计算各行业的历史统计 (P5-2)。
+    
+    Args:
+        historical_reports: 历史报告列表
+    
+    Returns:
+        dict[industry_name, {"presence_count": int, "score_b_sum": float, "score_b_count": int}]
+    """
+    industry_history: dict[str, dict] = {}
+    
+    for report in historical_reports:
+        recommendations = report.get("recommendations", [])
+        # 按行业分组
+        industries_in_report = set()
+        industry_scores: dict[str, list[float]] = {}
+        
+        for rec in recommendations:
+            if not isinstance(rec, dict):
+                continue
+            industry = _resolve_industry_name(rec)
+            if not industry or industry == UNKNOWN_INDUSTRY:
+                continue
+            
+            industries_in_report.add(industry)
+            score_b = _safe_score_b(rec.get("score_b"))
+            industry_scores.setdefault(industry, []).append(score_b)
+        
+        # 更新统计
+        for industry in industries_in_report:
+            if industry not in industry_history:
+                industry_history[industry] = {"presence_count": 0, "score_b_sum": 0.0, "score_b_count": 0}
+            industry_history[industry]["presence_count"] += 1
+            
+            scores = industry_scores.get(industry, [])
+            if scores:
+                industry_history[industry]["score_b_sum"] += sum(scores) / len(scores)
+                industry_history[industry]["score_b_count"] += 1
+    
+    return industry_history
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -173,9 +274,10 @@ def _resolve_industry_name(recommendation: dict) -> str:
 
 def calculate_industry_rotation(
     recommendations: list[dict],
-    trade_date: str,  # noqa: ARG001 — reserved for future lookback-based API
-    lookback_days: int = 5,  # noqa: ARG001 — reserved for future time-series API
+    trade_date: str,
+    lookback_days: int = 5,
     min_candidates: int = MIN_CANDIDATES_PER_INDUSTRY,
+    reports_dir: str = "",
 ) -> list[IndustrySignal]:
     """从推荐结果列表计算行业轮动信号。
 
@@ -185,9 +287,11 @@ def calculate_industry_rotation(
             - ``score_b``: 融合得分 (float, 范围 [-1, +1])
             - ``strategy_signals``: dict, 每个 strategy 含 direction / confidence
             - ``ticker`` (可选, 用于展示和 to_dict 序列化)
-        trade_date: 交易日期 (YYYYMMDD), 当前未使用 — 保留供未来接入时序数据
-        lookback_days: 回看天数, 当前未使用 — 保留供未来接入时序数据
+        trade_date: 交易日期 (YYYYMMDD)
+        lookback_days: 回看天数, lookback_days=1 时不使用历史数据 (P5-2)。
+            当前按历史报告的日历日文件名回看, 非交易日会自然跳过。
         min_candidates: 最低候选数门槛, 候选数 < 此值不出现在排名中
+        reports_dir: 报告目录路径 (P5-2), 为空时使用默认路径
 
     Returns:
         按 ``momentum_score`` 降序排列的 ``IndustrySignal`` 列表。
@@ -201,6 +305,16 @@ def calculate_industry_rotation(
     """
     if not recommendations:
         return []
+
+    # Step 0: 加载历史报告 (P5-2)
+    import os
+    if not reports_dir:
+        reports_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data", "reports")
+        reports_dir = os.path.abspath(reports_dir)
+    
+    historical_reports = _load_historical_reports(reports_dir, trade_date, lookback_days)
+    industry_history = _compute_industry_history(historical_reports)
+    history_days_considered = len(historical_reports)
 
     # Step 1: 按行业分组
     industry_groups: dict[str, list[dict]] = {}
@@ -241,13 +355,31 @@ def calculate_industry_rotation(
         avg_momentum = sum(momentum_values) / max(1, len(momentum_values))
         avg_score_b = sum(score_b_values) / max(1, len(score_b_values))
 
+        # P5-2: 计算历史信号
+        history_presence_ratio = 0.0
+        history_avg_score_b = 0.0
+        history_bonus = 0.0
+        
+        if industry_name in industry_history and history_days_considered > 0:
+            hist = industry_history[industry_name]
+            history_presence_ratio = hist["presence_count"] / history_days_considered
+            if hist["score_b_count"] > 0:
+                history_avg_score_b = hist["score_b_sum"] / hist["score_b_count"]
+            history_bonus = history_presence_ratio * 10.0 + history_avg_score_b * 10.0
+
+        # 最终 momentum_score 包含历史加分
+        final_momentum_score = avg_momentum + history_bonus
+
         signals.append(
             IndustrySignal(
                 industry_name=industry_name,
-                momentum_score=avg_momentum,
+                momentum_score=final_momentum_score,
                 avg_score_b=avg_score_b,
                 candidate_count=candidate_count,
                 tickers=tickers,
+                history_presence_ratio=history_presence_ratio,
+                history_avg_score_b=history_avg_score_b,
+                history_bonus=history_bonus,
             )
         )
 
@@ -296,8 +428,15 @@ def format_rotation_block(
     signals: list[IndustrySignal],
     top_n: int = 5,
     bottom_n: int = 3,
+    show_history: bool = True,
 ) -> str:
     """生成适合 CLI 输出的行业轮动文字块。
+
+    Args:
+        signals: 行业信号列表
+        top_n: 显示前 N 个强势行业
+        bottom_n: 显示后 N 个弱势行业
+        show_history: 是否显示历史信号 (P5-2)
 
     Returns:
         多行字符串, 包含"强势行业"和"弱势行业"两个小节。
@@ -309,12 +448,20 @@ def format_rotation_block(
     lines: list[str] = []
     strong = top_strong_industries(signals, n=top_n)
     weak = bottom_weak_industries(signals, n=bottom_n)
+    
+    # 检查是否有任何历史数据
+    has_history = any(sig.history_bonus > 0 for sig in signals)
 
     if strong:
         lines.append("强势行业:")
         for sig in strong:
             arrow = "↑"
-            lines.append(f"  {sig.rank:>2}. {sig.industry_name:<8s} {arrow} {sig.momentum_score:+6.1f}  " f"({sig.candidate_count}只候选, avg score_b: {sig.avg_score_b:+.2f})")
+            base_info = f"  {sig.rank:>2}. {sig.industry_name:<8s} {arrow} {sig.momentum_score:+6.1f}  ({sig.candidate_count}只候选, avg score_b: {sig.avg_score_b:+.2f})"
+            if show_history and has_history and sig.history_bonus > 0:
+                history_info = f" [历史: 出现率{sig.history_presence_ratio:.0%}, 加分{sig.history_bonus:+.1f}]"
+                lines.append(base_info + history_info)
+            else:
+                lines.append(base_info)
 
     if weak:
         if lines:
@@ -322,6 +469,11 @@ def format_rotation_block(
         lines.append("弱势行业:")
         for idx, sig in enumerate(weak, 1):
             arrow = "↓"
-            lines.append(f"  {idx:>2}. {sig.industry_name:<8s} {arrow} {sig.momentum_score:+6.1f} " f"({sig.candidate_count}只候选, avg score_b: {sig.avg_score_b:+.2f})")
+            base_info = f"  {idx:>2}. {sig.industry_name:<8s} {arrow} {sig.momentum_score:+6.1f} ({sig.candidate_count}只候选, avg score_b: {sig.avg_score_b:+.2f})"
+            if show_history and has_history and sig.history_bonus > 0:
+                history_info = f" [历史: 出现率{sig.history_presence_ratio:.0%}, 加分{sig.history_bonus:+.1f}]"
+                lines.append(base_info + history_info)
+            else:
+                lines.append(base_info)
 
     return "\n".join(lines) + "\n"

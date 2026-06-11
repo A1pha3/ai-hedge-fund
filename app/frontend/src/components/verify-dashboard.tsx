@@ -9,8 +9,6 @@
  *
  * 共享展示面 — 数据由父组件 fetch 传入, 与 macro-dashboard / risk-monitor 一致。
  */
-import { useCallback, useEffect, useState } from 'react';
-
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';

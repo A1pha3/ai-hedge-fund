@@ -49,8 +49,8 @@ REPORT_PATTERN = re.compile(r"^auto_screening_(\d{8})\.json$")
 #: 默认回溯天数
 DEFAULT_LOOKBACK_DAYS: int = 30
 
-#: T+N 默认阈值 (单位: 交易日数)
-DEFAULT_HORIZONS: tuple[int, ...] = (1, 3, 5)
+#: T+N 默认阈值 (单位: 交易日数) — P5-1: 扩展到 30 天
+DEFAULT_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 20, 30)
 
 #: 当日报告 Top N 推荐提取数量
 DEFAULT_TOP_N: int = 10
@@ -75,6 +75,9 @@ class TrackingRecord:
         next_day_return: T+1 收益率 (%, 可正可负); 缺失时为 ``None``
         next_3day_return: T+3 收益率 (%, 可正可负); 缺失时为 ``None``
         next_5day_return: T+5 收益率 (%, 可正可负); 缺失时为 ``None``
+        next_10day_return: T+10 收益率 (%, 可正可负); 缺失时为 ``None``
+        next_20day_return: T+20 收益率 (%, 可正可负); 缺失时为 ``None``
+        next_30day_return: T+30 收益率 (%, 可正可负); 缺失时为 ``None``
         tracking_status: 状态: ``"pending"`` / ``"partial"`` / ``"complete"``
     """
 
@@ -87,6 +90,9 @@ class TrackingRecord:
     next_day_return: float | None = None
     next_3day_return: float | None = None
     next_5day_return: float | None = None
+    next_10day_return: float | None = None
+    next_20day_return: float | None = None
+    next_30day_return: float | None = None
     tracking_status: str = "pending"
 
     def to_dict(self) -> dict[str, Any]:
@@ -105,6 +111,9 @@ class TrackingRecord:
             next_day_return=_optional_float(payload.get("next_day_return")),
             next_3day_return=_optional_float(payload.get("next_3day_return")),
             next_5day_return=_optional_float(payload.get("next_5day_return")),
+            next_10day_return=_optional_float(payload.get("next_10day_return")),
+            next_20day_return=_optional_float(payload.get("next_20day_return")),
+            next_30day_return=_optional_float(payload.get("next_30day_return")),
             tracking_status=str(payload.get("tracking_status", "pending") or "pending"),
         )
 
@@ -244,12 +253,12 @@ def fetch_actual_returns(
     cleaned_from = str(from_date).replace("-", "").strip()
     cleaned_to = str(to_date).replace("-", "").strip()
 
-    # 拉取区间需要至少 +5 个交易日; 折算为 10 个日历日以容错
+    # 拉取区间需要至少 +30 个交易日; 折算为 45 个日历日以容错
     from_dt = _parse_date(cleaned_from)
     to_dt = _parse_date(cleaned_to)
     if from_dt is None or to_dt is None:
         return {}
-    to_dt_extended = to_dt + timedelta(days=10)
+    to_dt_extended = to_dt + timedelta(days=45)
     extended_to = _format_date(to_dt_extended)
 
     result: dict[str, dict[str, float]] = {}
@@ -414,8 +423,8 @@ def update_tracking_history(
             # 至少 6 天后 (容错: 5 个自然日 + 1) 才尝试拉取
             if (today_dt - rec_dt).days < 6:
                 continue
-            # 已有的 T+5 收益非空 → 标记 complete
-            if rec.get("next_5day_return") is not None and status != "complete":
+            # 已有的 T+30 收益非空 → 标记 complete, 跳过查询
+            if rec.get("next_30day_return") is not None and status != "complete":
                 rec["tracking_status"] = "complete"
                 continue
             to_query.append(rec)
@@ -441,11 +450,14 @@ def update_tracking_history(
                     target["next_day_return"] = returns.get("day_1")
                     target["next_3day_return"] = returns.get("day_3")
                     target["next_5day_return"] = returns.get("day_5")
+                    target["next_10day_return"] = returns.get("day_10")
+                    target["next_20day_return"] = returns.get("day_20")
+                    target["next_30day_return"] = returns.get("day_30")
                     # 同步未来价字段 — 来自 fetcher 的隐含信息 (非 T+1)
                     # 保持 next_day_price 为 None (我们只关心收益率), 简化存储
                     has_t1 = target.get("next_day_return") is not None
-                    has_t5 = target.get("next_5day_return") is not None
-                    if has_t5:
+                    has_t30 = target.get("next_30day_return") is not None
+                    if has_t30:
                         target["tracking_status"] = "complete"
                     elif has_t1:
                         target["tracking_status"] = "partial"
@@ -530,27 +542,27 @@ def _summarize_history(
         avg_ret = (sum_ret / tracked) if tracked > 0 else None
         return wins, tracked, win_rate, avg_ret
 
-    win1, track1, wr1, ar1 = _bucket("next_day_return")
-    win3, track3, wr3, ar3 = _bucket("next_3day_return")
-    win5, track5, wr5, ar5 = _bucket("next_5day_return")
+    bucket_fields = {
+        1: "next_day_return",
+        3: "next_3day_return",
+        5: "next_5day_return",
+        10: "next_10day_return",
+        20: "next_20day_return",
+        30: "next_30day_return",
+    }
+    bucket_stats = {day: _bucket(field) for day, field in bucket_fields.items()}
 
-    return {
+    summary = {
         "lookback_days": lookback_days,
         "total_recommendations": total,
-        "tracked_count": track1,
-        "win_count_day1": win1,
-        "win_count_day3": win3,
-        "win_count_day5": win5,
-        "tracked_count_day1": track1,
-        "tracked_count_day3": track3,
-        "tracked_count_day5": track5,
-        "win_rate_day1": wr1,
-        "win_rate_day3": wr3,
-        "win_rate_day5": wr5,
-        "avg_return_day1": ar1,
-        "avg_return_day3": ar3,
-        "avg_return_day5": ar5,
+        "tracked_count": bucket_stats[1][1],
     }
+    for day, (wins, tracked, win_rate, avg_ret) in bucket_stats.items():
+        summary[f"win_count_day{day}"] = wins
+        summary[f"tracked_count_day{day}"] = tracked
+        summary[f"win_rate_day{day}"] = win_rate
+        summary[f"avg_return_day{day}"] = avg_ret
+    return summary
 
 
 def render_tracking_summary(
@@ -591,34 +603,17 @@ def render_tracking_summary(
         return f"{sign}{value:.2f}%"
 
     lines.append(f"  总推荐: {total} 只")
-    # 跟踪覆盖率
-    track1 = summary["tracked_count_day1"]
-    track3 = summary["tracked_count_day3"]
-    track5 = summary["tracked_count_day5"]
-    if track1 > 0:
-        lines.append(
-            f"  T+1 胜率: {_fmt_pct(summary['win_rate_day1'])} "
-            f"({summary['win_count_day1']}/{track1})"
-        )
-    else:
-        lines.append("  T+1 胜率: 数据尚未到期")
-    if track3 > 0:
-        lines.append(
-            f"  T+3 胜率: {_fmt_pct(summary['win_rate_day3'])} "
-            f"({summary['win_count_day3']}/{track3})"
-        )
-    else:
-        lines.append("  T+3 胜率: 数据尚未到期")
-    if track5 > 0:
-        lines.append(
-            f"  T+5 胜率: {_fmt_pct(summary['win_rate_day5'])} "
-            f"({summary['win_count_day5']}/{track5})"
-        )
-    else:
-        lines.append("  T+5 胜率: 数据尚未到期")
-    lines.append(f"  T+1 平均收益: {_fmt_ret(summary['avg_return_day1'])}")
-    lines.append(f"  T+3 平均收益: {_fmt_ret(summary['avg_return_day3'])}")
-    lines.append(f"  T+5 平均收益: {_fmt_ret(summary['avg_return_day5'])}")
+    for day in DEFAULT_HORIZONS:
+        tracked = summary[f"tracked_count_day{day}"]
+        if tracked > 0:
+            lines.append(
+                f"  T+{day} 胜率: {_fmt_pct(summary[f'win_rate_day{day}'])} "
+                f"({summary[f'win_count_day{day}']}/{tracked})"
+            )
+        else:
+            lines.append(f"  T+{day} 胜率: 数据尚未到期")
+    for day in DEFAULT_HORIZONS:
+        lines.append(f"  T+{day} 平均收益: {_fmt_ret(summary[f'avg_return_day{day}'])}")
     return "\n".join(lines) + "\n"
 
 

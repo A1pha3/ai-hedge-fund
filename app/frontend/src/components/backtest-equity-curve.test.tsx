@@ -17,8 +17,14 @@ interface Day {
   portfolio_return?: number;
 }
 
+interface BacktestAgentData {
+  backtest: {
+    backtestResults: Day[];
+  };
+}
+
 /** 构造 agentData['backtest'].backtestResults 从 [date, value, return?] 元组数组。 */
-function makeAgentData(days: Array<[string, number, number?]>): Record<string, any> {
+function makeAgentData(days: Array<[string, number, number?]>): BacktestAgentData {
   const backtestResults: Day[] = days.map(([date, portfolio_value, portfolio_return]) => ({
     date,
     portfolio_value,
@@ -72,7 +78,7 @@ describe('BacktestEquityCurve — empty / edge cases', () => {
   it('renders null when initial value is NaN', () => {
     const { container } = render(
       <BacktestEquityCurve
-        agentData={makeAgentData([['2026-01-02', NaN], ['2026-01-03', 100]] as any)}
+        agentData={makeAgentData([['2026-01-02', NaN], ['2026-01-03', 100]])}
       />,
     );
     expect(container).toBeEmptyDOMElement();
@@ -185,7 +191,7 @@ describe('BacktestEquityCurve — drawdown computation correctness', () => {
   it('filters out NaN portfolio_value days before computing drawdown', () => {
     const withNaN = makeAgentData([
       ['2026-01-02', 100],
-      ['2026-01-03', NaN, 0] as any,
+      ['2026-01-03', NaN, 0],
       ['2026-01-04', 120, 0.20],
     ]);
     // NaN day filtered; 2 valid points remain → renders, 总收益 +20%

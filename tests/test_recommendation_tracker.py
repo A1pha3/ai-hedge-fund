@@ -254,7 +254,7 @@ def test_update_tracking_history_fills_pending_returns(tmp_path: Path):
 
 
 def test_update_tracking_history_queries_returns_when_due(tmp_path: Path):
-    """6+ 天前的 pending 记录会被查询, 完成后标记 complete。"""
+    """6+ 天前的 pending 记录会被查询, 有 T+5 后标记 partial (非 complete)。"""
     # Phase 1: 注册 6+ 天前的推荐
     _make_report(tmp_path, "20260601", [
         {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
@@ -276,7 +276,7 @@ def test_update_tracking_history_queries_returns_when_due(tmp_path: Path):
     assert n >= 1
     history = _load_history(tmp_path / HISTORY_FILENAME)
     rec = history[0]
-    assert rec["tracking_status"] == "complete"
+    assert rec["tracking_status"] == "partial"  # 有 T+5, 但没有 T+30
     assert rec["next_day_return"] == pytest.approx(5.0, rel=1e-4)
     assert rec["next_3day_return"] == pytest.approx(10.0, rel=1e-4)
     assert rec["next_5day_return"] == pytest.approx(20.0, rel=1e-4)
@@ -391,11 +391,59 @@ def test_render_tracking_summary_format(tmp_path: Path):
     assert "T+1 胜率:" in output
     assert "T+3 胜率:" in output
     assert "T+5 胜率:" in output
+    assert "T+10 胜率:" in output
+    assert "T+20 胜率:" in output
+    assert "T+30 胜率:" in output
     assert "T+1 平均收益:" in output
     assert "T+3 平均收益:" in output
     assert "T+5 平均收益:" in output
+    assert "T+10 平均收益:" in output
+    assert "T+20 平均收益:" in output
+    assert "T+30 平均收益:" in output
     # T+1 胜率: 2/3 (A: +2.0%, C: +0.5%, B: -1.0%) = 66.7%
     assert "66.7%" in output
+
+
+def test_get_tracking_summary_includes_extended_horizons(tmp_path: Path):
+    history = [
+        {
+            "ticker": "A",
+            "recommended_date": "20260607",
+            "next_day_return": 2.0,
+            "next_3day_return": 4.0,
+            "next_5day_return": 5.0,
+            "next_10day_return": 6.0,
+            "next_20day_return": 8.0,
+            "next_30day_return": 9.0,
+        },
+        {
+            "ticker": "B",
+            "recommended_date": "20260607",
+            "next_day_return": -1.0,
+            "next_3day_return": -2.0,
+            "next_5day_return": -3.0,
+            "next_10day_return": -4.0,
+            "next_20day_return": -5.0,
+            "next_30day_return": -6.0,
+        },
+    ]
+    history_path = tmp_path / HISTORY_FILENAME
+    _save_history(history_path, history)
+
+    summary = get_tracking_summary(history_path, lookback_days=30)
+
+    assert summary["win_count_day10"] == 1
+    assert summary["win_count_day20"] == 1
+    assert summary["win_count_day30"] == 1
+    assert summary["tracked_count_day10"] == 2
+    assert summary["tracked_count_day20"] == 2
+    assert summary["tracked_count_day30"] == 2
+    assert summary["win_rate_day10"] == pytest.approx(0.5, abs=1e-3)
+    assert summary["win_rate_day20"] == pytest.approx(0.5, abs=1e-3)
+    assert summary["win_rate_day30"] == pytest.approx(0.5, abs=1e-3)
+    assert summary["avg_return_day10"] == pytest.approx(1.0, abs=1e-3)
+    assert summary["avg_return_day20"] == pytest.approx(1.5, abs=1e-3)
+    assert summary["avg_return_day30"] == pytest.approx(1.5, abs=1e-3)
 
 
 def test_render_tracking_summary_no_data_in_lookback(tmp_path: Path):
@@ -511,8 +559,8 @@ def test_update_tracking_history_empty_recommendations(tmp_path: Path):
 
 
 def test_default_horizons_constant():
-    """DEFAULT_HORIZONS 必须是 (1, 3, 5)。"""
-    assert DEFAULT_HORIZONS == (1, 3, 5)
+    """DEFAULT_HORIZONS 必须包含扩展周期 (1, 3, 5, 10, 20, 30)。"""
+    assert DEFAULT_HORIZONS == (1, 3, 5, 10, 20, 30)
 
 
 def test_uses_injected_fetcher_for_actual_returns(tmp_path: Path):
@@ -531,5 +579,6 @@ def test_uses_injected_fetcher_for_actual_returns(tmp_path: Path):
         side_effect=AssertionError("默认 fetcher 不应被调用"),
     ):
         result = fetch_actual_returns(["000010"], "20260607", "20260613", use_data_fetcher=fake_fetcher)
-    assert call_log == [("000010", "20260607", "20260623")]
+    # 窗口扩展从 +10 天改为 +45 天 (为 T+30 容错)
+    assert call_log == [("000010", "20260607", "20260728")]
     assert result["000010"]["day_1"] == pytest.approx(10.0, rel=1e-4)

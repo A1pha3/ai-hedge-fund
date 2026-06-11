@@ -1,7 +1,9 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useNodeContext } from '@/contexts/node-context';
 import { useFlowConnectionState } from '@/hooks/use-flow-connection';
 import { cn } from '@/lib/utils';
+import { api } from '@/services/api';
 import { flowService, FlowRunSummary } from '@/services/flow-service';
 import { Flow } from '@/types/flow';
 import {
@@ -14,6 +16,7 @@ import {
 import { useState, useEffect } from 'react';
 import { FlowContextMenu } from './flow-context-menu';
 import { FlowEditDialog } from './flow-edit-dialog';
+import { flowConnectionManager } from '@/hooks/use-flow-connection';
 
 interface FlowItemProps {
   flow: Flow;
@@ -23,7 +26,25 @@ interface FlowItemProps {
   isActive?: boolean;
 }
 
+function isRerunGraphNode(node: unknown): node is { id: string } {
+  return typeof node === 'object' && node !== null && 'id' in node && typeof node.id === 'string';
+}
+
+function resolveRerunGraphNodes(
+  requestData: Record<string, unknown> | null | undefined,
+  fallbackNodes: Array<{ id: string }>,
+): Array<{ id: string }> {
+  const graphNodes = requestData?.graph_nodes;
+  if (!Array.isArray(graphNodes)) {
+    return fallbackNodes.map(({ id }) => ({ id }));
+  }
+
+  const historicalNodes = graphNodes.filter(isRerunGraphNode).map(({ id }) => ({ id }));
+  return historicalNodes.length > 0 ? historicalNodes : fallbackNodes.map(({ id }) => ({ id }));
+}
+
 export default function FlowItem({ flow, onLoadFlow, onDeleteFlow, onRefresh, isActive = false }: FlowItemProps) {
+  const nodeContext = useNodeContext();
   const [contextMenu, setContextMenu] = useState<{ isOpen: boolean; position: { x: number; y: number } }>({
     isOpen: false,
     position: { x: 0, y: 0 }
@@ -40,14 +61,36 @@ export default function FlowItem({ flow, onLoadFlow, onDeleteFlow, onRefresh, is
   // Check for completed runs on mount / when flow changes
   useEffect(() => {
     let cancelled = false;
-    flowService.getFlowRuns(flow.id, 5).then((runs: FlowRunSummary[]) => {
-      if (cancelled) return;
-      const completed = runs.find(r => r.status === 'COMPLETE');
-      setHasCompletedRuns(!!completed);
-      setLatestRunId(completed?.id ?? runs[0]?.id ?? null);
-    }).catch(() => {
-      setHasCompletedRuns(false);
-      setLatestRunId(null);
+
+    const loadLatestCompletedRun = async () => {
+      const batchSize = 50;
+      let offset = 0;
+      let latestSeenRunId: number | null = null;
+
+      while (!cancelled) {
+        const runs = await flowService.getFlowRuns(flow.id, batchSize, offset);
+        if (latestSeenRunId === null) {
+          latestSeenRunId = runs[0]?.id ?? null;
+        }
+
+        const completed = runs.find((run: FlowRunSummary) => run.status === 'COMPLETE');
+        if (completed || runs.length < batchSize) {
+          if (!cancelled) {
+            setHasCompletedRuns(!!completed);
+            setLatestRunId(completed?.id ?? latestSeenRunId);
+          }
+          return;
+        }
+
+        offset += batchSize;
+      }
+    };
+
+    loadLatestCompletedRun().catch(() => {
+      if (!cancelled) {
+        setHasCompletedRuns(false);
+        setLatestRunId(null);
+      }
     });
     return () => { cancelled = true; };
   }, [flow.id]);
@@ -111,18 +154,30 @@ export default function FlowItem({ flow, onLoadFlow, onDeleteFlow, onRefresh, is
     try {
       // Load the flow first so the canvas shows the correct nodes/edges
       await onLoadFlow(flow);
-      // The SSE stream is consumed by the browser but progress events
-      // are handled through the normal runHedgeFund path. For the rerun
-      // case we delegate to the same SSE processing used by api.ts, but
-      // the backend handles it entirely -- the frontend just needs to
-      // open the SSE connection and let the existing handlers work.
-      const sseResponse = await flowService.rerunFlowRun(flow.id, latestRunId);
+      const sourceRun = await flowService.getFlowRun(flow.id, latestRunId);
+      const rerunGraphNodes = resolveRerunGraphNodes(sourceRun.request_data, flow.nodes);
+      const flowId = flow.id.toString();
+      flowConnectionManager.setConnection(flowId, {
+        state: 'connecting',
+        startTime: Date.now(),
+      });
 
-      // Extract the new run ID from response headers
-      const newRunId = sseResponse.headers.get('X-Rerun-Run-Id');
-      console.log(`Rerun started: new run ID=${newRunId}, original run ID=${latestRunId}`);
+      const abortController = await api.rerunFlowRun(flow.id, latestRunId, rerunGraphNodes, nodeContext, flowId);
+
+      const currentConnection = flowConnectionManager.getConnection(flowId);
+      if (currentConnection.state !== 'completed' && currentConnection.state !== 'error') {
+        flowConnectionManager.setConnection(flowId, {
+          state: 'connected',
+          abortController,
+        });
+      }
     } catch (error) {
       console.error('Failed to rerun flow:', error);
+      flowConnectionManager.setConnection(flow.id.toString(), {
+        state: 'error',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        abortController: null,
+      });
       alert(`Rerun failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };

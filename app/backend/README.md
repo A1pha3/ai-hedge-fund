@@ -1,5 +1,4 @@
-# AI Hedge Fund - Backend [WIP] 🚧
-This project is currently a work in progress.  To track progress, please get updates [here](https://x.com/virattt).
+# AI Hedge Fund - Backend
 
 This is the backend server for the AI Hedge Fund project. It provides a simple REST API to interact with the AI Hedge Fund system, allowing you to run the hedge fund through a web interface.
 
@@ -7,7 +6,7 @@ This is the backend server for the AI Hedge Fund project. It provides a simple R
 
 This backend project is a FastAPI application that serves as the server-side component of the AI Hedge Fund system. It exposes endpoints for running the hedge fund trading system and backtester.
 
-This backend is designed to work with a future frontend application that will allow users to interact with the AI Hedge Fund system through their browser.
+This backend serves the current React frontend under `app/frontend/` and exposes both public analytics routes and JWT-protected workflow/state routes.
 
 ## Installation
 
@@ -68,8 +67,10 @@ The API will be available at:
 
 ## API Endpoints
 
-- `POST /hedge-fund/run`: Run the AI Hedge Fund with specified parameters
+- `POST /hedge-fund/run`: Run the AI Hedge Fund with specified parameters (JWT required)
 - `GET /ping`: Simple endpoint to test server connectivity
+- `POST /api/screening/auto`, `GET /api/screening/latest`: public screening endpoints
+- `GET/POST /backtest/param-compare`: parameter comparison report endpoints
 
 ## Project Structure
 

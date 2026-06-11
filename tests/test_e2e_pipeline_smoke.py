@@ -269,6 +269,81 @@ def test_e2e_report_payload_contains_all_new_fields(tmp_path, monkeypatch) -> No
     assert "stability_bonus" in rec
 
 
+def test_e2e_compute_pipeline_respects_selected_strategies_before_top_n_slice(tmp_path, monkeypatch) -> None:
+    """selected_strategies 应在 Top N 截断前重排推荐。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USE_BATCH_FETCHER", "true")
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token")
+    report_dir = tmp_path / "data" / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("src.main._save_json_report", lambda *_a, **_kw: report_dir / "stub.json")
+
+    candidates = _make_candidates(3)
+    market_state = _make_market_state()
+    fused = [
+        FusedScore(
+            ticker="600000",
+            name="趋势优先",
+            industry_sw="电子",
+            score_b=0.95,
+            strategy_signals={
+                "trend": StrategySignal(direction=1, confidence=95.0, completeness=1.0),
+                "mean_reversion": StrategySignal(direction=0, confidence=50.0, completeness=1.0),
+                "fundamental": StrategySignal(direction=1, confidence=20.0, completeness=1.0),
+                "event_sentiment": StrategySignal(direction=0, confidence=50.0, completeness=1.0),
+            },
+            metrics={"close": 10.0},
+            arbitration_applied=[],
+            market_state=market_state,
+            weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+            decision="buy",
+        ),
+        FusedScore(
+            ticker="600001",
+            name="基本面优先",
+            industry_sw="电子",
+            score_b=0.70,
+            strategy_signals={
+                "trend": StrategySignal(direction=1, confidence=25.0, completeness=1.0),
+                "mean_reversion": StrategySignal(direction=0, confidence=50.0, completeness=1.0),
+                "fundamental": StrategySignal(direction=1, confidence=98.0, completeness=1.0),
+                "event_sentiment": StrategySignal(direction=0, confidence=50.0, completeness=1.0),
+            },
+            metrics={"close": 11.0},
+            arbitration_applied=[],
+            market_state=market_state,
+            weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+            decision="buy",
+        ),
+        FusedScore(
+            ticker="600002",
+            name="均衡票",
+            industry_sw="医药",
+            score_b=0.60,
+            strategy_signals={
+                "trend": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
+                "mean_reversion": StrategySignal(direction=0, confidence=50.0, completeness=1.0),
+                "fundamental": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
+                "event_sentiment": StrategySignal(direction=0, confidence=50.0, completeness=1.0),
+            },
+            metrics={"close": 12.0},
+            arbitration_applied=[],
+            market_state=market_state,
+            weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+            decision="buy",
+        ),
+    ]
+    patches = _patch_pipeline_layers(candidates, fused=fused)
+
+    from src.main import compute_auto_screening_results
+
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+        payload = compute_auto_screening_results("20260607", top_n=1, selected_strategies=["fundamental"])
+
+    assert payload["top_n"] == 1
+    assert payload["recommendations"][0]["ticker"] == "600001"
+
+
 # ---------------------------------------------------------------------------
 # 3. 报告 JSON 中无 NaN/Inf 泄漏
 # ---------------------------------------------------------------------------

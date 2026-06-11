@@ -126,10 +126,13 @@ def rank_scored_entries(
     *,
     limit: int,
 ) -> list[dict[str, Any]]:
-    rows.sort(key=lambda row: (*row[:-1], str(row[-1].get("ticker") or "")), reverse=True)
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: (*(-value for value in row[:-1]), str(row[-1].get("ticker") or "")),
+    )
     ranked_entries: list[dict[str, Any]] = []
-    for rank, row in enumerate(rows[:limit], start=1):
-        entry = row[-1]
+    for rank, row in enumerate(sorted_rows[:limit], start=1):
+        entry = dict(row[-1])
         entry["rank"] = rank
         ranked_entries.append(entry)
     return ranked_entries

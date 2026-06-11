@@ -23,8 +23,14 @@ interface BacktestDayResult {
   cash?: number;
 }
 
+interface BacktestAgentPayload {
+  backtest?: {
+    backtestResults?: BacktestDayResult[];
+  };
+}
+
 interface EquityCurveProps {
-  agentData: Record<string, any>;
+  agentData: BacktestAgentPayload;
 }
 
 // --- KPI Cards ---

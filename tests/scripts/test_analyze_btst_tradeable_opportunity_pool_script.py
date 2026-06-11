@@ -858,8 +858,8 @@ def test_row_level_cost_fields_populated_correctly(tmp_path: Path, monkeypatch) 
             {"ts_code": "000001.SZ", "symbol": "000001", "name": "Base Liquidity", "industry": "AI", "market": "SZ", "list_date": "20200101"},
         ]
     )
-    # Base liquidity: slippage = 0.0015, commission = 0.00025, stamp_duty = 0.001
-    # Round-trip cost = 2*slippage + 2*commission + stamp_duty = 2*0.0015 + 2*0.00025 + 0.001 = 0.0045
+    # Base liquidity: slippage = 0.0015, commission = 0.00025, stamp_duty = 0.0005
+    # Round-trip cost = 2*slippage + 2*commission + stamp_duty = 2*0.0015 + 2*0.00025 + 0.0005 = 0.004
     daily_basic = pd.DataFrame(
         [
             {"ts_code": "000001.SZ", "turnover_rate": 10.0, "circ_mv": 100000.0},  # 10000 万元 - base liquidity
@@ -888,15 +888,15 @@ def test_row_level_cost_fields_populated_correctly(tmp_path: Path, monkeypatch) 
     # Check cost fields
     assert row["cost_regime"] == "base_liquidity"
     assert row["estimated_slippage_rate"] == 0.0015
-    assert row["round_trip_cost_rate"] == 0.0045
+    assert row["round_trip_cost_rate"] == 0.004
     
     # Check net return fields
     assert row["next_high_return"] == 0.10
-    assert row["next_high_return_after_cost"] == round(0.10 - 0.0045, 4)
+    assert row["next_high_return_after_cost"] == round(0.10 - 0.004, 4)
     assert row["next_close_return"] == 0.05
-    assert row["next_close_return_after_cost"] == round(0.05 - 0.0045, 4)
+    assert row["next_close_return_after_cost"] == round(0.05 - 0.004, 4)
     assert row["t_plus_2_close_return"] == 0.08
-    assert row["t_plus_2_close_return_after_cost"] == round(0.08 - 0.0045, 4)
+    assert row["t_plus_2_close_return_after_cost"] == round(0.08 - 0.004, 4)
 
 
 def test_cost_thresholds_exposed_in_analysis(tmp_path: Path, monkeypatch) -> None:
@@ -927,7 +927,7 @@ def test_cost_thresholds_exposed_in_analysis(tmp_path: Path, monkeypatch) -> Non
     assert "commission_rate" in thresholds
     assert thresholds["commission_rate"] == 0.00025
     assert "stamp_duty_rate" in thresholds
-    assert thresholds["stamp_duty_rate"] == 0.001
+    assert thresholds["stamp_duty_rate"] == 0.0005
     assert "base_slippage_rate" in thresholds
     assert thresholds["base_slippage_rate"] == 0.0015
     assert "low_liquidity_slippage_rate" in thresholds

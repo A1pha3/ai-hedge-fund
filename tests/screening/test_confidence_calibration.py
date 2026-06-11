@@ -187,13 +187,19 @@ def test_render_calibration_table_empty():
 
 def test_render_calibration_table_with_data():
     records = [
-        _make_record("000001", 0.85, t1=1.0, t5=2.0),
-        _make_record("000002", 0.65, t1=-0.5, t5=-1.0),
+        _make_extended_record("000001", 0.85, t1=1.0, t5=2.0, t10=3.0, t20=4.0, t30=5.0),
+        _make_extended_record("000002", 0.65, t1=-0.5, t5=-1.0, t10=-2.0, t20=-3.0, t30=-4.0),
     ]
     summary = compute_calibration(records)
     out = render_calibration_table(summary)
     assert "Score 桶" in out
     assert "T+5 胜率" in out
+    assert "T+10 胜率" in out
+    assert "T+20 胜率" in out
+    assert "T+30 胜率" in out
+    assert "T+10 均收" in out
+    assert "T+20 均收" in out
+    assert "T+30 均收" in out
     assert "整体" in out
 
 
@@ -209,7 +215,7 @@ def test_render_top_n_calibration_empty_recs():
 
 
 def test_render_top_n_calibration_with_bucket_match():
-    records = [_make_record("000099", 0.85, t5=2.0)]
+    records = [_make_extended_record("000099", 0.85, t5=2.0, t10=3.0, t20=4.0, t30=5.0)]
     summary = compute_calibration(records)
     top_recs = [
         {"ticker": "000001", "name": "测试票A", "score_b": 0.85},
@@ -218,6 +224,9 @@ def test_render_top_n_calibration_with_bucket_match():
     assert "Top 1 推荐校准" in out
     assert "000001" in out
     assert "高" in out  # 0.85 落入高桶
+    assert "T+10 胜率" in out
+    assert "T+20 胜率" in out
+    assert "T+30 胜率" in out
 
 
 def test_render_top_n_calibration_no_sample_bucket():
@@ -238,3 +247,76 @@ def test_render_top_n_calibration_respects_top_n_limit():
     ]
     out = render_top_n_calibration(top_recs, summary, top_n=2)
     assert "Top 2 推荐校准" in out
+
+
+# ---------------------------------------------------------------------------
+# Extended horizons (T+10/T+20/T+30) - P5-1
+# ---------------------------------------------------------------------------
+
+
+def _make_extended_record(
+    ticker: str, score: float, 
+    t1: float | None = None, t3: float | None = None, t5: float | None = None,
+    t10: float | None = None, t20: float | None = None, t30: float | None = None,
+    date: str = "20260601"
+) -> dict:
+    """Create tracking record with extended horizons."""
+    return {
+        "ticker": ticker,
+        "recommended_date": date,
+        "recommendation_score": score,
+        "next_day_return": t1,
+        "next_3day_return": t3,
+        "next_5day_return": t5,
+        "next_10day_return": t10,
+        "next_20day_return": t20,
+        "next_30day_return": t30,
+    }
+
+
+def test_compute_calibration_with_extended_horizons():
+    """Calibration should compute T+10/T+20/T+30 stats alongside existing T+1/T+3/T+5."""
+    records = [
+        _make_extended_record("000001", 0.75, t1=1.0, t5=3.0, t10=5.0, t20=8.0, t30=10.0),
+        _make_extended_record("000002", 0.72, t1=0.5, t5=2.5, t10=4.0, t20=-2.0, t30=1.0),
+        _make_extended_record("000003", 0.78, t1=-0.5, t5=1.8, t10=-1.0, t20=3.0, t30=-2.0),
+    ]
+    summary = compute_calibration(records)
+    bucket = next(b for b in summary.buckets if "中高" in b.label)
+    
+    # Should have extended horizon stats
+    assert bucket.sample_count == 3
+    assert hasattr(bucket, 't10_win_rate')
+    assert hasattr(bucket, 't20_win_rate')
+    assert hasattr(bucket, 't30_win_rate')
+    assert hasattr(bucket, 't10_avg_return')
+    assert hasattr(bucket, 't20_avg_return')
+    assert hasattr(bucket, 't30_avg_return')
+    
+    # T+10: 2/3 positive
+    assert bucket.t10_win_rate == pytest.approx(2/3, abs=1e-3)
+    # T+20: 2/3 positive
+    assert bucket.t20_win_rate == pytest.approx(2/3, abs=1e-3)
+    # T+30: 2/3 positive
+    assert bucket.t30_win_rate == pytest.approx(2/3, abs=1e-3)
+
+
+def test_calibration_summary_has_extended_overall_stats():
+    """Overall summary should include T+10/T+20/T+30 aggregate stats."""
+    records = [
+        _make_extended_record("000001", 0.85, t10=5.0, t20=8.0, t30=10.0),
+        _make_extended_record("000002", 0.45, t10=-2.0, t20=-3.0, t30=-1.0),
+    ]
+    summary = compute_calibration(records)
+    
+    assert hasattr(summary, 'overall_t10_win_rate')
+    assert hasattr(summary, 'overall_t20_win_rate')
+    assert hasattr(summary, 'overall_t30_win_rate')
+    assert hasattr(summary, 'overall_t10_avg_return')
+    assert hasattr(summary, 'overall_t20_avg_return')
+    assert hasattr(summary, 'overall_t30_avg_return')
+    
+    # 1 win / 1 loss = 50%
+    assert summary.overall_t10_win_rate == pytest.approx(0.5, abs=1e-3)
+    assert summary.overall_t20_win_rate == pytest.approx(0.5, abs=1e-3)
+    assert summary.overall_t30_win_rate == pytest.approx(0.5, abs=1e-3)

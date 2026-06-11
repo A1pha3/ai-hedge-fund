@@ -58,8 +58,8 @@ def _auto_init_admin():
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
     # --- Startup ---
-    _auto_init_admin()
     Base.metadata.create_all(bind=engine)
+    _auto_init_admin()
 
     try:
         logger.info("Checking Ollama availability...")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.execution.daily_pipeline_candidate_helpers import build_short_trade_boundary_metrics_payload
+from src.execution.daily_pipeline_candidate_helpers import build_short_trade_boundary_metrics_payload, rank_scored_entries
 
 
 def test_build_short_trade_boundary_metrics_payload_includes_continuation_and_reversal_from_snapshot() -> None:
@@ -118,3 +118,33 @@ def test_build_short_trade_boundary_metrics_payload_keeps_explicit_snapshot_valu
 
     assert payload["trend_continuation"] == 0.61
     assert payload["short_term_reversal"] == 0.19
+
+
+def test_rank_scored_entries_does_not_mutate_input_rows() -> None:
+    entry_a = {"ticker": "000001"}
+    entry_b = {"ticker": "000002"}
+    rows = [
+        (0.8, entry_a),
+        (0.9, entry_b),
+    ]
+
+    ranked = rank_scored_entries(rows, limit=2)
+
+    assert rows == [
+        (0.8, {"ticker": "000001"}),
+        (0.9, {"ticker": "000002"}),
+    ]
+    assert ranked[0]["rank"] == 1
+    assert ranked[1]["rank"] == 2
+
+
+def test_rank_scored_entries_uses_ascending_ticker_as_tie_breaker() -> None:
+    rows = [
+        (0.8, {"ticker": "000002"}),
+        (0.8, {"ticker": "000001"}),
+    ]
+
+    ranked = rank_scored_entries(rows, limit=2)
+
+    assert [entry["ticker"] for entry in ranked] == ["000001", "000002"]
+    assert [entry["rank"] for entry in ranked] == [1, 2]

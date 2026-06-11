@@ -316,3 +316,77 @@ def test_append_daily_state_uses_hs300_benchmark_for_ashare_universe(monkeypatch
     )
 
     assert benchmark_tickers == ["000300.SH"]
+
+
+def test_build_daily_state_rows_uses_first_portfolio_date_for_benchmark_anchor(monkeypatch):
+    engine = BacktestEngine(
+        agent=dummy_agent,
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="m",
+        model_provider="p",
+        selected_analysts=["x"],
+        initial_margin_requirement=0.0,
+        backtest_mode="agent",
+    )
+    engine._portfolio_values = [
+        {"Date": pd.Timestamp("2024-03-04"), "Portfolio Value": 100000.0},
+    ]
+    benchmark_calls: list[tuple[str, str, str]] = []
+
+    monkeypatch.setattr(
+        engine._benchmark,
+        "get_return_pct",
+        lambda ticker, start_date, end_date: benchmark_calls.append((ticker, start_date, end_date)) or 0.0,
+    )
+    monkeypatch.setattr(
+        engine._results,
+        "build_day_rows",
+        lambda **kwargs: [[kwargs["date_str"], kwargs["benchmark_return_pct"]]],
+    )
+
+    rows = engine._build_daily_state_rows(
+        date_str="2024-03-05",
+        tickers=["AAPL"],
+        agent_output={"decisions": {"AAPL": {"action": "hold", "quantity": 0}}, "analyst_signals": {}},
+        executed_trades={"AAPL": 0},
+        current_prices={"AAPL": 100.0},
+        total_value=100000.0,
+    )
+
+    assert rows == [["2024-03-05", 0.0]]
+    assert benchmark_calls == [("SPY", "2024-03-04", "2024-03-05")]
+
+
+def test_update_daily_performance_metrics_updates_with_three_points(monkeypatch):
+    engine = BacktestEngine(
+        agent=dummy_agent,
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="m",
+        model_provider="p",
+        selected_analysts=["x"],
+        initial_margin_requirement=0.0,
+        backtest_mode="agent",
+    )
+    engine._portfolio_values = [
+        {"Date": pd.Timestamp("2024-03-01"), "Portfolio Value": 100000.0},
+        {"Date": pd.Timestamp("2024-03-04"), "Portfolio Value": 101000.0},
+        {"Date": pd.Timestamp("2024-03-05"), "Portfolio Value": 99000.0},
+    ]
+    compute_calls: list[list[dict]] = []
+
+    monkeypatch.setattr(
+        engine._perf,
+        "compute_metrics",
+        lambda values: compute_calls.append(list(values)) or {"sharpe_ratio": 1.23},
+    )
+
+    engine._update_daily_performance_metrics()
+
+    assert len(compute_calls) == 1
+    assert engine._performance_metrics["sharpe_ratio"] == 1.23

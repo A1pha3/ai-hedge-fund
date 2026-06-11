@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from app.backend.auth.dependencies import require_write_access
 
 
 def _load_endpoint_module():
@@ -68,12 +71,91 @@ def test_compute_equity_curve_max_drawdown_tracks_peak():
     assert summary["max_drawdown"] == pytest.approx(0.182, rel=1e-2)
 
 
+def test_compute_equity_curve_derives_daily_returns_from_portfolio_value_when_payload_uses_cumulative_percent_points():
+    mod = _load_endpoint_module()
+    daily = [
+        {"date": "2026-01-01", "portfolio_value": 100.0, "portfolio_return": 0.0},
+        {"date": "2026-01-02", "portfolio_value": 110.0, "portfolio_return": 10.0},
+        {"date": "2026-01-03", "portfolio_value": 121.0, "portfolio_return": 21.0},
+    ]
+
+    points, monthly, summary = mod._compute_equity_curve(daily, 100.0)
+
+    assert points[1].daily_return == pytest.approx(0.10, rel=1e-6)
+    assert points[2].daily_return == pytest.approx(0.10, rel=1e-6)
+    assert monthly[0].return_pct == pytest.approx(0.21, rel=1e-6)
+    assert summary["total_return"] == pytest.approx(0.21, rel=1e-6)
+
+
 def test_compute_equity_curve_zero_initial_capital_safe():
     mod = _load_endpoint_module()
     daily = [{"date": "2026-01-01", "portfolio_value": 0.0, "portfolio_return": 0.0}]
     points, _, _ = mod._compute_equity_curve(daily, 0.0)
     assert points[0].cumulative_return == 0.0
     assert points[0].drawdown == 0.0
+
+
+def test_param_compare_get_normalizes_latest_cli_report(monkeypatch):
+    mod = _load_endpoint_module()
+    app = FastAPI()
+    app.include_router(mod.router)
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        mod,
+        "_load_latest_param_compare_payload",
+        lambda: {
+            "summary": {"total_combinations": 3, "max_workers": 2},
+            "trials": [
+                {
+                    "trial_index": 0,
+                    "params": {"top_n": 10},
+                    "metrics": {"sharpe_ratio": 1.2},
+                    "duration_seconds": 0.4,
+                    "error": None,
+                }
+            ],
+        },
+    )
+
+    response = client.get("/backtest/param-compare")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_combinations"] == 3
+    assert body["max_workers"] == 2
+    assert body["trials"][0]["params"]["top_n"] == 10
+
+
+def test_param_compare_post_round_trips_report(monkeypatch):
+    mod = _load_endpoint_module()
+    app = FastAPI()
+    app.include_router(mod.router)
+    client = TestClient(app)
+    saved_payloads: list[dict] = []
+
+    monkeypatch.setattr(mod, "_save_param_compare_payload", lambda payload: saved_payloads.append(payload))
+    app.dependency_overrides[require_write_access] = lambda: object()
+
+    report = {
+        "trials": [
+            {
+                "trial_index": 0,
+                "params": {"top_n": 10},
+                "metrics": {"sharpe_ratio": 1.1},
+                "duration_seconds": 0.5,
+                "error": None,
+            }
+        ],
+        "total_combinations": 1,
+        "max_workers": 2,
+    }
+
+    response = client.post("/backtest/param-compare", json=report)
+
+    assert response.status_code == 200
+    assert response.json() == report
+    assert saved_payloads == [report]
 
 
 import pytest

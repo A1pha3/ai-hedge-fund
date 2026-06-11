@@ -49,7 +49,7 @@ backend/
 
 ## CONVENTIONS
 
-- **JWT authentication** — all endpoints require a valid JWT bearer token (except `/auth/login`, `/auth/register`). Roles: `admin`, `writer`, `viewer`. API-key gating available on selected routes. Set `AUTH_DISABLED=true` (dev only) to bypass auth. See `app/backend/auth/` for implementation and `docs/zh-cn/product/auth_design.md` for design rationale.
+- **JWT authentication** — protected endpoints require a valid JWT bearer token. Current roles are `admin`, `member`, `viewer` (legacy `user` maps to `member`). Public routes are registered in `app/backend/routes/__init__.py`; API-key gating is available on selected routes. Set `AUTH_DISABLED=true` (dev only) to bypass auth. See `app/backend/auth/` for implementation and `docs/old-zh-cn/product/auth_design.md` for design rationale.
 - **SSE for execution** — hedge fund run + backtest stream events, not request-response
 - **Repository pattern** — `__init__(self, db: Session)`, CRUD methods return ORM models
 - **Error handling** — `HTTPException` with status codes; generic catch-all wraps to 500

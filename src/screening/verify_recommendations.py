@@ -48,6 +48,9 @@ class VerifyDay:
         avg_t1_return: 当日推荐平均 T+1 收益率 (None=无数据)
         avg_t3_return: 当日推荐平均 T+3 收益率
         avg_t5_return: 当日推荐平均 T+5 收益率
+        avg_t10_return: 当日推荐平均 T+10 收益率
+        avg_t20_return: 当日推荐平均 T+20 收益率
+        avg_t30_return: 当日推荐平均 T+30 收益率
         benchmark_return: 沪深 300 同期 T+1 收益 (None=无数据)
         excess_return: 超额收益 (avg_t1 - benchmark)
     """
@@ -58,6 +61,9 @@ class VerifyDay:
     avg_t1_return: float | None = None
     avg_t3_return: float | None = None
     avg_t5_return: float | None = None
+    avg_t10_return: float | None = None
+    avg_t20_return: float | None = None
+    avg_t30_return: float | None = None
     benchmark_return: float | None = None
     excess_return: float | None = None
 
@@ -91,9 +97,15 @@ class VerifySummary:
         overall_t1_win_rate: 整体 T+1 胜率
         overall_t3_win_rate: 整体 T+3 胜率
         overall_t5_win_rate: 整体 T+5 胜率
+        overall_t10_win_rate: 整体 T+10 胜率
+        overall_t20_win_rate: 整体 T+20 胜率
+        overall_t30_win_rate: 整体 T+30 胜率
         avg_t1_return: 平均 T+1 收益率
         avg_t3_return: 平均 T+3 收益率
         avg_t5_return: 平均 T+5 收益率
+        avg_t10_return: 平均 T+10 收益率
+        avg_t20_return: 平均 T+20 收益率
+        avg_t30_return: 平均 T+30 收益率
         benchmark_avg_t1: 沪深 300 同期平均 T+1 收益
         excess_return: 超额收益 (avg_t1 - benchmark)
         strategy_attribution: 策略归因列表
@@ -107,9 +119,15 @@ class VerifySummary:
     overall_t1_win_rate: float | None = None
     overall_t3_win_rate: float | None = None
     overall_t5_win_rate: float | None = None
+    overall_t10_win_rate: float | None = None
+    overall_t20_win_rate: float | None = None
+    overall_t30_win_rate: float | None = None
     avg_t1_return: float | None = None
     avg_t3_return: float | None = None
     avg_t5_return: float | None = None
+    avg_t10_return: float | None = None
+    avg_t20_return: float | None = None
+    avg_t30_return: float | None = None
     benchmark_avg_t1: float | None = None
     excess_return: float | None = None
     strategy_attribution: list[StrategyAttribution] = field(default_factory=list)
@@ -129,8 +147,9 @@ def _load_tracking_history(reports_dir: Path) -> list[dict[str, Any]]:
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        if isinstance(data, list):
-            return data
+        records = data.get("records") if isinstance(data, dict) else data
+        if isinstance(records, list):
+            return records
         return []
     except (json.JSONDecodeError, OSError) as exc:
         logger.debug("verify: tracking_history load failed: %s", exc)
@@ -161,8 +180,8 @@ def _load_auto_screening_reports(reports_dir: Path, lookback_days: int) -> list[
     return reports[:lookback_days]
 
 
-def _extract_tracking_returns(tracking: list[dict[str, Any]], ticker: str, rec_date: str) -> tuple[float | None, float | None, float | None]:
-    """Extract T+1/T+3/T+5 returns for a ticker from tracking history."""
+def _extract_tracking_returns(tracking: list[dict[str, Any]], ticker: str, rec_date: str) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
+    """Extract T+1/T+3/T+5/T+10/T+20/T+30 returns for a ticker from tracking history."""
     for entry in tracking:
         if str(entry.get("ticker", "")) != ticker:
             continue
@@ -171,8 +190,11 @@ def _extract_tracking_returns(tracking: list[dict[str, Any]], ticker: str, rec_d
         t1 = _optional_float(entry.get("next_day_return"))
         t3 = _optional_float(entry.get("next_3day_return"))
         t5 = _optional_float(entry.get("next_5day_return"))
-        return t1, t3, t5
-    return None, None, None
+        t10 = _optional_float(entry.get("next_10day_return"))
+        t20 = _optional_float(entry.get("next_20day_return"))
+        t30 = _optional_float(entry.get("next_30day_return"))
+        return t1, t3, t5, t10, t20, t30
+    return None, None, None, None, None, None
 
 
 def _compute_benchmark_returns(tracking: list[dict[str, Any]], rec_date: str) -> float | None:
@@ -225,13 +247,22 @@ def compute_verify_recommendations(
     all_t1: list[float] = []
     all_t3: list[float] = []
     all_t5: list[float] = []
+    all_t10: list[float] = []
+    all_t20: list[float] = []
+    all_t30: list[float] = []
     all_tickers: set[str] = set()
     t1_wins = 0
     t3_wins = 0
     t5_wins = 0
+    t10_wins = 0
+    t20_wins = 0
+    t30_wins = 0
     t1_total = 0
     t3_total = 0
     t5_total = 0
+    t10_total = 0
+    t20_total = 0
+    t30_total = 0
 
     # Strategy attribution accumulators
     strat_returns: dict[str, list[float]] = {}
@@ -246,6 +277,9 @@ def compute_verify_recommendations(
         day_t1: list[float] = []
         day_t3: list[float] = []
         day_t5: list[float] = []
+        day_t10: list[float] = []
+        day_t20: list[float] = []
+        day_t30: list[float] = []
         top_score = 0.0
 
         for rec in recommendations:
@@ -262,7 +296,7 @@ def compute_verify_recommendations(
                 top_score = score
 
             # Get actual returns from tracking
-            t1, t3, t5 = _extract_tracking_returns(tracking, ticker, rec_date)
+            t1, t3, t5, t10, t20, t30 = _extract_tracking_returns(tracking, ticker, rec_date)
 
             if t1 is not None and -50.0 <= t1 <= 50.0:
                 day_t1.append(t1)
@@ -284,6 +318,27 @@ def compute_verify_recommendations(
                 t5_total += 1
                 if t5 > 0:
                     t5_wins += 1
+
+            if t10 is not None and -50.0 <= t10 <= 50.0:
+                day_t10.append(t10)
+                all_t10.append(t10)
+                t10_total += 1
+                if t10 > 0:
+                    t10_wins += 1
+
+            if t20 is not None and -50.0 <= t20 <= 50.0:
+                day_t20.append(t20)
+                all_t20.append(t20)
+                t20_total += 1
+                if t20 > 0:
+                    t20_wins += 1
+
+            if t30 is not None and -50.0 <= t30 <= 50.0:
+                day_t30.append(t30)
+                all_t30.append(t30)
+                t30_total += 1
+                if t30 > 0:
+                    t30_wins += 1
 
             # Strategy attribution: use dominant strategy direction
             signals = rec.get("strategy_signals", {})
@@ -313,6 +368,9 @@ def compute_verify_recommendations(
                 avg_t1_return=avg_day_t1,
                 avg_t3_return=sum(day_t3) / len(day_t3) if day_t3 else None,
                 avg_t5_return=sum(day_t5) / len(day_t5) if day_t5 else None,
+                avg_t10_return=sum(day_t10) / len(day_t10) if day_t10 else None,
+                avg_t20_return=sum(day_t20) / len(day_t20) if day_t20 else None,
+                avg_t30_return=sum(day_t30) / len(day_t30) if day_t30 else None,
                 benchmark_return=benchmark_t1,
                 excess_return=(avg_day_t1 - benchmark_t1) if avg_day_t1 is not None and benchmark_t1 is not None else None,
             )
@@ -323,9 +381,15 @@ def compute_verify_recommendations(
     summary.overall_t1_win_rate = t1_wins / t1_total if t1_total > 0 else None
     summary.overall_t3_win_rate = t3_wins / t3_total if t3_total > 0 else None
     summary.overall_t5_win_rate = t5_wins / t5_total if t5_total > 0 else None
+    summary.overall_t10_win_rate = t10_wins / t10_total if t10_total > 0 else None
+    summary.overall_t20_win_rate = t20_wins / t20_total if t20_total > 0 else None
+    summary.overall_t30_win_rate = t30_wins / t30_total if t30_total > 0 else None
     summary.avg_t1_return = sum(all_t1) / len(all_t1) if all_t1 else None
     summary.avg_t3_return = sum(all_t3) / len(all_t3) if all_t3 else None
     summary.avg_t5_return = sum(all_t5) / len(all_t5) if all_t5 else None
+    summary.avg_t10_return = sum(all_t10) / len(all_t10) if all_t10 else None
+    summary.avg_t20_return = sum(all_t20) / len(all_t20) if all_t20 else None
+    summary.avg_t30_return = sum(all_t30) / len(all_t30) if all_t30 else None
 
     # Strategy attribution
     for strat_name, returns in strat_returns.items():
@@ -392,6 +456,21 @@ def render_verify_recommendations(summary: VerifySummary) -> str:
             lines.append(
                 f"  {s.strategy_name:<20} {s.recommendation_count:>4} {_ret(s.avg_t1_return):>8} {_pct(s.win_rate):>6}"
             )
+        lines.append("")
+
+    # Extended horizons display
+    if any([
+        summary.avg_t10_return is not None,
+        summary.avg_t20_return is not None,
+        summary.avg_t30_return is not None
+    ]):
+        lines.append("  扩展周期 (T+10/T+20/T+30):")
+        lines.append("  ┌──────────┬──────────┬──────────┬──────────┐")
+        lines.append("  │  指标     │  T+10    │  T+20    │  T+30    │")
+        lines.append("  ├──────────┼──────────┼──────────┼──────────┤")
+        lines.append(f"  │  胜率     │ {_pct(summary.overall_t10_win_rate):>6}  │ {_pct(summary.overall_t20_win_rate):>6}  │ {_pct(summary.overall_t30_win_rate):>6}  │")
+        lines.append(f"  │  平均收益 │ {_ret(summary.avg_t10_return):>7} │ {_ret(summary.avg_t20_return):>7} │ {_ret(summary.avg_t30_return):>7} │")
+        lines.append("  └──────────┴──────────┴──────────┴──────────┘")
         lines.append("")
 
     if summary.total_days == 0:

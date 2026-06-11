@@ -64,6 +64,15 @@ def _seed_flow_and_run(db, flow_id=1, run_id=1, request_data=None, status="COMPL
     db.commit()
 
 
+def test_helper_routes_are_registered_with_nested_paths():
+    """active/latest/count 辅助路由必须挂在 /runs/ 子路径下。"""
+    paths = {route.path for route in router.routes if hasattr(route, "path")}
+
+    assert "/flows/{flow_id}/runs/active" in paths
+    assert "/flows/{flow_id}/runs/latest" in paths
+    assert "/flows/{flow_id}/runs/count" in paths
+
+
 def test_rerun_returns_stream_with_new_run_id():
     """A completed run with valid request_data should produce an SSE response."""
     client, test_session, engine = _create_test_client()

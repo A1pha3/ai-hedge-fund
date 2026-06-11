@@ -64,7 +64,7 @@ from src.screening.candidate_pool_persistence_helpers import (
     write_candidate_pool_snapshot as write_candidate_pool_snapshot_helper,
 )
 from src.screening.models import CandidateStock
-from src.tools.ashare_board_utils import build_beijing_exchange_mask
+from src.tools.ashare_board_utils import build_beijing_exchange_mask, is_beijing_exchange_stock
 from src.tools.tushare_api import (
     _get_pro,
     _cached_tushare_dataframe_call,
@@ -607,7 +607,8 @@ def _build_avg_amount_20d_daily_kwargs(trade_date: str) -> dict[str, str]:
 
 
 def _resolve_avg_amount_20d_from_daily_df(df: pd.DataFrame) -> float:
-    amounts = df["amount"].dropna().tail(20)
+    ordered_df = df.sort_values("trade_date") if "trade_date" in df.columns else df
+    amounts = ordered_df["amount"].dropna().tail(20)
     if amounts.empty:
         return 0.0
     return float(amounts.mean() / 10.0)

@@ -346,7 +346,31 @@ def run_screen_only_mode(trade_date: str) -> int:
     return 0
 
 
-def compute_auto_screening_results(trade_date: str, top_n: int = 10) -> dict:
+def _build_selected_strategy_weights(selected_strategies: list[str] | None) -> "StrategyWeights | None":
+    """Convert a strategy subset into equal custom weights for reranking."""
+    if not selected_strategies:
+        return None
+
+    from src.screening.custom_weights import STRATEGY_KEYS, StrategyWeights
+
+    invalid = [strategy for strategy in selected_strategies if strategy not in STRATEGY_KEYS]
+    if invalid:
+        raise ValueError(f"未知策略: {invalid} (合法: {list(STRATEGY_KEYS)})")
+
+    unique_selected = [strategy for strategy in STRATEGY_KEYS if strategy in set(selected_strategies)]
+    if not unique_selected:
+        return None
+
+    weight_per_strategy = 1.0 / len(unique_selected)
+    return StrategyWeights(
+        trend=weight_per_strategy if "trend" in unique_selected else 0.0,
+        mean_reversion=weight_per_strategy if "mean_reversion" in unique_selected else 0.0,
+        fundamental=weight_per_strategy if "fundamental" in unique_selected else 0.0,
+        event_sentiment=weight_per_strategy if "event_sentiment" in unique_selected else 0.0,
+    )
+
+
+def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_strategies: list[str] | None = None) -> dict:
     """Run the full --auto pipeline and return a JSON-serializable payload (no IO side effects).
 
     这是 ``run_auto_screening`` 的纯函数版本 — 不打印表格, 不保存文件,
@@ -360,6 +384,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10) -> dict:
     Args:
         trade_date: 交易日期, 格式 YYYYMMDD
         top_n: 返回 Top N 推荐 (默认 10)
+        selected_strategies: 可选策略子集; 若提供, 在 Top N 截断前按该子集等权重重排
 
     Returns:
         dict 包含所有 auto_screening 输出字段, 可直接 ``json.dumps`` 序列化。
@@ -406,15 +431,28 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10) -> dict:
 
     # Step 4: 排序输出 Top N
     progress.update_status("auto_screening", None, f"Step 4/4: 输出 Top {top_n} 推荐")
-    sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
-    top_results = sorted_results[:top_n]
+    if selected_strategies:
+        from src.screening.custom_weights import reweight_recommendations
+
+        selected_weights = _build_selected_strategy_weights(selected_strategies)
+        reweighted_results = reweight_recommendations(
+            [item.model_dump(mode="json") for item in fused],
+            selected_weights,
+        )
+        top_results_serializable = reweighted_results[:top_n]
+        fused_by_ticker = {str(item.ticker): item for item in fused}
+        top_results_for_sector = [fused_by_ticker.get(str(rec.get("ticker", "")), rec) for rec in top_results_serializable]
+    else:
+        sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
+        top_results = sorted_results[:top_n]
+        top_results_for_sector = top_results
+        top_results_serializable = [item.model_dump(mode="json") for item in top_results]
 
     # Sector concentration guard
-    sector_warnings = _check_sector_concentration(top_results)
+    sector_warnings = _check_sector_concentration(top_results_for_sector)
 
     # P0-6 多日推荐聚合 — 附加连续推荐标记
     consecutive_report_dir = _resolve_consecutive_report_dir()
-    top_results_serializable = [item.model_dump() for item in top_results]
     top_results_serializable = enrich_recommendations_with_history(
         recommendations=top_results_serializable,
         lookback_days=DEFAULT_LOOKBACK_DAYS,

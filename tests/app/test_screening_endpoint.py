@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 import os
@@ -126,6 +125,7 @@ def test_endpoint_registered() -> None:
     """端点必须出现在 screening router 的路由表中。"""
     paths = {r.path for r in screening_router.routes if hasattr(r, "path")}
     assert "/api/screening/auto" in paths
+    assert "/api/screening/latest" in paths
 
 
 def test_endpoint_post_returns_json() -> None:
@@ -141,6 +141,21 @@ def test_endpoint_post_returns_json() -> None:
         response = client.post("/api/screening/auto", json={})
     # 即使 mock 也可能因 TUSHARE_TOKEN 缺失失败, 但至少不是 404
     assert response.status_code != 404
+
+
+def test_latest_endpoint_returns_latest_saved_payload() -> None:
+    """GET /api/screening/latest 应返回最近一次 auto_screening 的完整 payload。"""
+    client = _build_client()
+    with patch(
+        "app.backend.routes.screening._load_latest_auto_screening_payload",
+        return_value=_make_payload(),
+    ) as mock_loader:
+        response = client.get("/api/screening/latest")
+
+    assert response.status_code == 200
+    assert response.json()["trade_date"] == "20260607"
+    assert response.json()["top_n"] == 20
+    mock_loader.assert_called_once_with(trade_date=None)
 
 
 # ---------------------------------------------------------------------------
@@ -339,20 +354,20 @@ def test_missing_tushare_token_returns_503() -> None:
 def test_timeout_returns_504(monkeypatch) -> None:
     """compute_auto_screening_results 阻塞超过 60s → 504。"""
     client = _build_client()
+    monkeypatch.setattr("app.backend.routes.screening.DEFAULT_TIMEOUT_SECONDS", 0.001)
 
     def _slow(*_args, **_kwargs):
-        # 模拟一个长跑 — 用 patch 让 asyncio.wait_for 触发 TimeoutError
+        # 模拟真实阻塞, 让真实 wait_for 对 to_thread 超时。
         import time as _t
 
-        _t.sleep(5)
+        _t.sleep(0.05)
         return _make_payload()
 
-    # 直接 mock asyncio.wait_for 在 screening 模块中触发 TimeoutError
     with (
         patch.dict(os.environ, {"TUSHARE_TOKEN": "test_token"}, clear=False),
         patch(
-            "app.backend.routes.screening.asyncio.wait_for",
-            side_effect=asyncio.TimeoutError(),
+            "app.backend.routes.screening.compute_auto_screening_results",
+            side_effect=_slow,
         ),
     ):
         response = client.post("/api/screening/auto", json={})
@@ -384,6 +399,7 @@ def test_response_field_alignment_with_cli() -> None:
     call_args = mock_fn.call_args
     assert call_args[0][0] == "20260607"  # trade_date
     assert call_args[0][1] == 20  # top_n default
+    assert call_args.kwargs.get("selected_strategies") is None
 
     # 字段对齐: 响应字段必须从 payload 中正确取出
     assert body["trade_date"] == "20260607"
@@ -496,6 +512,24 @@ def test_strategies_invalid_value_rejected() -> None:
         response = client.post("/api/screening/auto", json={"strategies": ["unknown_strategy"]})
     assert response.status_code == 422
     assert "未知策略" in response.json()["detail"]
+
+
+def test_selected_strategies_forwarded_to_compute_function() -> None:
+    """合法 strategies 应透传到 compute_auto_screening_results。"""
+    client = _build_client()
+    with (
+        patch.dict(os.environ, {"TUSHARE_TOKEN": "test_token"}, clear=False),
+        patch(
+            "app.backend.routes.screening.compute_auto_screening_results",
+            return_value=_make_payload(),
+        ) as mock_fn,
+    ):
+        response = client.post(
+            "/api/screening/auto",
+            json={"trade_date": "20260607", "strategies": ["fundamental"]},
+        )
+    assert response.status_code == 200
+    assert mock_fn.call_args.kwargs["selected_strategies"] == ["fundamental"]
 
 
 def test_strategies_all_valid_passes() -> None:

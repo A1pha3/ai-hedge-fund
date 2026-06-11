@@ -57,8 +57,14 @@ class ScoreBucketStats:
     t1_win_rate: float | None = None
     t3_win_rate: float | None = None
     t5_win_rate: float | None = None
+    t10_win_rate: float | None = None
+    t20_win_rate: float | None = None
+    t30_win_rate: float | None = None
     t1_avg_return: float | None = None
     t5_avg_return: float | None = None
+    t10_avg_return: float | None = None
+    t20_avg_return: float | None = None
+    t30_avg_return: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,8 +75,14 @@ class ScoreBucketStats:
             "t1_win_rate": self.t1_win_rate,
             "t3_win_rate": self.t3_win_rate,
             "t5_win_rate": self.t5_win_rate,
+            "t10_win_rate": self.t10_win_rate,
+            "t20_win_rate": self.t20_win_rate,
+            "t30_win_rate": self.t30_win_rate,
             "t1_avg_return": self.t1_avg_return,
             "t5_avg_return": self.t5_avg_return,
+            "t10_avg_return": self.t10_avg_return,
+            "t20_avg_return": self.t20_avg_return,
+            "t30_avg_return": self.t30_avg_return,
         }
 
 
@@ -83,7 +95,13 @@ class CalibrationSummary:
     buckets: list[ScoreBucketStats] = field(default_factory=list)
     overall_t1_win_rate: float | None = None
     overall_t5_win_rate: float | None = None
+    overall_t10_win_rate: float | None = None
+    overall_t20_win_rate: float | None = None
+    overall_t30_win_rate: float | None = None
     overall_t5_avg_return: float | None = None
+    overall_t10_avg_return: float | None = None
+    overall_t20_avg_return: float | None = None
+    overall_t30_avg_return: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -92,7 +110,13 @@ class CalibrationSummary:
             "buckets": [b.to_dict() for b in self.buckets],
             "overall_t1_win_rate": self.overall_t1_win_rate,
             "overall_t5_win_rate": self.overall_t5_win_rate,
+            "overall_t10_win_rate": self.overall_t10_win_rate,
+            "overall_t20_win_rate": self.overall_t20_win_rate,
+            "overall_t30_win_rate": self.overall_t30_win_rate,
             "overall_t5_avg_return": self.overall_t5_avg_return,
+            "overall_t10_avg_return": self.overall_t10_avg_return,
+            "overall_t20_avg_return": self.overall_t20_avg_return,
+            "overall_t30_avg_return": self.overall_t30_avg_return,
         }
 
 
@@ -188,15 +212,27 @@ def compute_calibration(
     bucket_stats: list[ScoreBucketStats] = []
     all_t1: list[float] = []
     all_t5: list[float] = []
+    all_t10: list[float] = []
+    all_t20: list[float] = []
+    all_t30: list[float] = []
     all_t5_returns: list[float] = []
+    all_t10_returns: list[float] = []
+    all_t20_returns: list[float] = []
+    all_t30_returns: list[float] = []
     for label, low, high in SCORE_BUCKETS:
         recs = bucket_records[label]
         t1_returns = [_optional_float(r.get("next_day_return")) for r in recs]
         t3_returns = [_optional_float(r.get("next_3day_return")) for r in recs]
         t5_returns = [_optional_float(r.get("next_5day_return")) for r in recs]
+        t10_returns = [_optional_float(r.get("next_10day_return")) for r in recs]
+        t20_returns = [_optional_float(r.get("next_20day_return")) for r in recs]
+        t30_returns = [_optional_float(r.get("next_30day_return")) for r in recs]
         t1_valid = [x for x in t1_returns if x is not None]
         t3_valid = [x for x in t3_returns if x is not None]
         t5_valid = [x for x in t5_returns if x is not None]
+        t10_valid = [x for x in t10_returns if x is not None]
+        t20_valid = [x for x in t20_returns if x is not None]
+        t30_valid = [x for x in t30_returns if x is not None]
         stats = ScoreBucketStats(
             label=label,
             score_low=low,
@@ -205,13 +241,25 @@ def compute_calibration(
             t1_win_rate=(sum(1 for x in t1_valid if x > 0) / len(t1_valid)) if t1_valid else None,
             t3_win_rate=(sum(1 for x in t3_valid if x > 0) / len(t3_valid)) if t3_valid else None,
             t5_win_rate=(sum(1 for x in t5_valid if x > 0) / len(t5_valid)) if t5_valid else None,
+            t10_win_rate=(sum(1 for x in t10_valid if x > 0) / len(t10_valid)) if t10_valid else None,
+            t20_win_rate=(sum(1 for x in t20_valid if x > 0) / len(t20_valid)) if t20_valid else None,
+            t30_win_rate=(sum(1 for x in t30_valid if x > 0) / len(t30_valid)) if t30_valid else None,
             t1_avg_return=(sum(t1_valid) / len(t1_valid)) if t1_valid else None,
             t5_avg_return=(sum(t5_valid) / len(t5_valid)) if t5_valid else None,
+            t10_avg_return=(sum(t10_valid) / len(t10_valid)) if t10_valid else None,
+            t20_avg_return=(sum(t20_valid) / len(t20_valid)) if t20_valid else None,
+            t30_avg_return=(sum(t30_valid) / len(t30_valid)) if t30_valid else None,
         )
         bucket_stats.append(stats)
         all_t1.extend(t1_valid)
         all_t5.extend(t5_valid)
+        all_t10.extend(t10_valid)
+        all_t20.extend(t20_valid)
+        all_t30.extend(t30_valid)
         all_t5_returns.extend(t5_valid)
+        all_t10_returns.extend(t10_valid)
+        all_t20_returns.extend(t20_valid)
+        all_t30_returns.extend(t30_valid)
 
     return CalibrationSummary(
         lookback_days=lookback_days,
@@ -219,7 +267,13 @@ def compute_calibration(
         buckets=bucket_stats,
         overall_t1_win_rate=(sum(1 for x in all_t1 if x > 0) / len(all_t1)) if all_t1 else None,
         overall_t5_win_rate=(sum(1 for x in all_t5 if x > 0) / len(all_t5)) if all_t5 else None,
+        overall_t10_win_rate=(sum(1 for x in all_t10 if x > 0) / len(all_t10)) if all_t10 else None,
+        overall_t20_win_rate=(sum(1 for x in all_t20 if x > 0) / len(all_t20)) if all_t20 else None,
+        overall_t30_win_rate=(sum(1 for x in all_t30 if x > 0) / len(all_t30)) if all_t30 else None,
         overall_t5_avg_return=(sum(all_t5_returns) / len(all_t5_returns)) if all_t5_returns else None,
+        overall_t10_avg_return=(sum(all_t10_returns) / len(all_t10_returns)) if all_t10_returns else None,
+        overall_t20_avg_return=(sum(all_t20_returns) / len(all_t20_returns)) if all_t20_returns else None,
+        overall_t30_avg_return=(sum(all_t30_returns) / len(all_t30_returns)) if all_t30_returns else None,
     )
 
 
@@ -258,33 +312,33 @@ def render_calibration_table(summary: CalibrationSummary) -> str:
     if summary.total_samples == 0:
         lines.append(
             f"{Fore.YELLOW}无历史推荐追踪数据 — 请先多次运行 `--auto` 并 `update_tracking_history` "
-            f"积累 T+1/T+3/T+5 实际收益样本。{Style.RESET_ALL}"
+            f"积累 T+1/T+3/T+5/T+10/T+20/T+30 实际收益样本。{Style.RESET_ALL}"
         )
         lines.append("")
         return "\n".join(lines)
 
     header = (
         f"{Fore.CYAN}{'Score 桶':<18} {'样本':>5} "
-        f"{'T+1 胜率':>10} {'T+3 胜率':>10} {'T+5 胜率':>10} "
-        f"{'T+1 均收':>10} {'T+5 均收':>10}{Style.RESET_ALL}"
+        f"{'T+1 胜率':>10} {'T+3 胜率':>10} {'T+5 胜率':>10} {'T+10 胜率':>11} {'T+20 胜率':>11} {'T+30 胜率':>11} "
+        f"{'T+1 均收':>10} {'T+5 均收':>10} {'T+10 均收':>11} {'T+20 均收':>11} {'T+30 均收':>11}{Style.RESET_ALL}"
     )
     lines.append(header)
-    lines.append("─" * 95)
+    lines.append("─" * 180)
 
     for b in summary.buckets:
         lines.append(
             f"{b.label:<18} {b.sample_count:>5} "
             f"{_win_rate_str(b.t1_win_rate):>10} {_win_rate_str(b.t3_win_rate):>10} "
-            f"{_win_rate_str(b.t5_win_rate):>10} {_return_str(b.t1_avg_return):>10} "
-            f"{_return_str(b.t5_avg_return):>10}"
+            f"{_win_rate_str(b.t5_win_rate):>10} {_win_rate_str(b.t10_win_rate):>11} {_win_rate_str(b.t20_win_rate):>11} {_win_rate_str(b.t30_win_rate):>11} "
+            f"{_return_str(b.t1_avg_return):>10} {_return_str(b.t5_avg_return):>10} {_return_str(b.t10_avg_return):>11} {_return_str(b.t20_avg_return):>11} {_return_str(b.t30_avg_return):>11}"
         )
 
-    lines.append("─" * 95)
+    lines.append("─" * 180)
     overall_line = (
         f"{'整体':<18} {summary.total_samples:>5} "
         f"{_win_rate_str(summary.overall_t1_win_rate):>10} {'':>10} "
-        f"{_win_rate_str(summary.overall_t5_win_rate):>10} {'':>10} "
-        f"{_return_str(summary.overall_t5_avg_return):>10}"
+        f"{_win_rate_str(summary.overall_t5_win_rate):>10} {_win_rate_str(summary.overall_t10_win_rate):>11} {_win_rate_str(summary.overall_t20_win_rate):>11} {_win_rate_str(summary.overall_t30_win_rate):>11} "
+        f"{'':>10} {_return_str(summary.overall_t5_avg_return):>10} {_return_str(summary.overall_t10_avg_return):>11} {_return_str(summary.overall_t20_avg_return):>11} {_return_str(summary.overall_t30_avg_return):>11}"
     )
     lines.append(overall_line)
     lines.append("")
@@ -305,10 +359,11 @@ def render_top_n_calibration(
     lines.append(f"{Fore.CYAN}{Style.BRIGHT}═══ Top {min(top_n, len(top_recs))} 推荐校准 ═══{Style.RESET_ALL}")
     header = (
         f"{Fore.CYAN}{'Ticker':<8} {'名称':<14} {'Score':>7} "
-        f"{'所在桶':<18} {'桶样本':>6} {'T+5 胜率':>10} {'T+5 均收':>10}{Style.RESET_ALL}"
+        f"{'所在桶':<18} {'桶样本':>6} {'T+5 胜率':>10} {'T+10 胜率':>11} {'T+20 胜率':>11} {'T+30 胜率':>11} "
+        f"{'T+5 均收':>10} {'T+10 均收':>11} {'T+20 均收':>11} {'T+30 均收':>11}{Style.RESET_ALL}"
     )
     lines.append(header)
-    lines.append("─" * 85)
+    lines.append("─" * 150)
 
     for rec in top_recs[:top_n]:
         ticker = str(rec.get("ticker") or "")
@@ -327,8 +382,8 @@ def render_top_n_calibration(
             continue
         lines.append(
             f"{ticker:<8} {name:<14} {score:>7.2f}  {bucket[0]:<18} "
-            f"{stats.sample_count:>6} {_win_rate_str(stats.t5_win_rate):>10} "
-            f"{_return_str(stats.t5_avg_return):>10}"
+            f"{stats.sample_count:>6} {_win_rate_str(stats.t5_win_rate):>10} {_win_rate_str(stats.t10_win_rate):>11} {_win_rate_str(stats.t20_win_rate):>11} {_win_rate_str(stats.t30_win_rate):>11} "
+            f"{_return_str(stats.t5_avg_return):>10} {_return_str(stats.t10_avg_return):>11} {_return_str(stats.t20_avg_return):>11} {_return_str(stats.t30_avg_return):>11}"
         )
 
     lines.append("")

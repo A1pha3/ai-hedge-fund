@@ -8,6 +8,29 @@ from pathlib import Path
 import scripts.analyze_btst_5d_15pct_trend_top20_gate_diagnostics as gate_script
 
 
+_TICKER_OUTCOMES = {
+    # ticker: (hit_15pct, max_future_high_return, next_open_return)
+    "TOP_STRONG": (True, 0.20, 0.01),
+    "TOP_SELECTED": (False, 0.07, 0.02),
+    "LOW_TREND": (False, 0.04, 0.01),
+    "VOLUME_ONLY": (True, 0.18, 0.01),
+}
+
+
+def _build_price_bars(trade_close: float, next_open_return: float, max_future_high_return: float) -> list[dict[str, float | str]]:
+    """Build 5-day price bars that produce the desired outcome metrics."""
+    next_open = round(trade_close * (1.0 + next_open_return), 2)
+    max_high = round(trade_close * (1.0 + max_future_high_return), 2)
+    bars = [
+        {"date": "2026-03-24", "open": round(trade_close * 0.99, 2), "high": round(trade_close * 1.01, 2), "low": round(trade_close * 0.98, 2), "close": trade_close},
+        {"date": "2026-03-25", "open": next_open, "high": round(trade_close * 1.05, 2), "low": trade_close, "close": round(trade_close * 1.03, 2)},
+        {"date": "2026-03-26", "open": round(trade_close * 1.03, 2), "high": round(trade_close * 1.06, 2), "low": round(trade_close * 1.02, 2), "close": round(trade_close * 1.04, 2)},
+        {"date": "2026-03-27", "open": round(trade_close * 1.04, 2), "high": max_high, "low": round(trade_close * 1.03, 2), "close": round(max_high * 0.96, 2)},
+        {"date": "2026-03-28", "open": round(max_high * 0.96, 2), "high": round(max_high * 0.98, 2), "low": round(trade_close * 1.05, 2), "close": round(trade_close * 1.06, 2)},
+    ]
+    return bars
+
+
 def _write_snapshot(snapshot_dir: Path) -> None:
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     snapshot_dir.joinpath("selection_snapshot.json").write_text(
@@ -72,6 +95,18 @@ def _write_snapshot(snapshot_dir: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _write_local_prices(report_dir: Path) -> None:
+    """Write local price data snapshots so subprocess tests get closed_cycle outcomes."""
+    for ticker, (hit, max_return, next_open_return) in _TICKER_OUTCOMES.items():
+        prices_dir = report_dir / "data_snapshots" / ticker / "2026-03-24"
+        prices_dir.mkdir(parents=True, exist_ok=True)
+        bars = _build_price_bars(100.0, next_open_return, max_return)
+        prices_dir.joinpath("prices.json").write_text(
+            json.dumps(bars, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
 
 def test_trend_top20_gate_diagnostics_builds_pre_registered_gates(tmp_path: Path, monkeypatch) -> None:
@@ -168,6 +203,7 @@ def test_trend_top20_gate_diagnostics_script_writes_outputs(tmp_path: Path) -> N
     reports_root = tmp_path / "data" / "reports"
     report_dir = reports_root / "paper_trading_window_20260323_20260326_gate_diag"
     _write_snapshot(report_dir / "selection_artifacts" / "2026-03-24")
+    _write_local_prices(report_dir)
     output_json = tmp_path / "gate.json"
     output_md = tmp_path / "gate.md"
 
@@ -185,6 +221,7 @@ def test_trend_top20_gate_diagnostics_script_writes_outputs(tmp_path: Path) -> N
             "1",
             "--top-fraction",
             "0.50",
+            "--local-price-only",
         ],
         check=False,
         capture_output=True,

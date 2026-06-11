@@ -1,11 +1,10 @@
-# AI Hedge Fund - Frontend [WIP] 🚧
-This project is currently a work in progress.  To track progress, please get updates [here](https://x.com/virattt).
+# AI Hedge Fund - Frontend
 
 This is the frontend application for the AI Hedge Fund project. It provides a web interface to interact with the AI Hedge Fund system, allowing you to visualize and control the hedge fund operations.
 
 ## Overview
 
-This frontend project is built with React and Vite, serving as the client-side component of the AI Hedge Fund system. It connects to the backend API to provide a user-friendly interface for managing the hedge fund trading system and backtester.
+This frontend project is built with React and Vite and is the active web client for the AI Hedge Fund system. It connects to the FastAPI backend to manage flows, reruns, screening surfaces, replay artifacts, and backtests.
 
 ## Installation
 

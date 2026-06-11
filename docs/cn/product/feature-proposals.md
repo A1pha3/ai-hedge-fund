@@ -1,6 +1,6 @@
 # 产品功能提案清单 (R20.19 精简索引版)
 
-> **目标**: 让用户更高效地找到未来 30 天内最有投资价值的 A 股标的。
+> **目标**: 让用户更高效地找到未来 30 天最有投资价值的 A 股标的。
 >
 > **本版本变更 (R20.19)**: 主文档从 933 行精简到 < 200 行。R20.1-R20.18 详细审查档案移至 [`changelog/r20-audit-history.md`](./changelog/r20-audit-history.md)。
 >
@@ -56,7 +56,7 @@
 | # | 功能 | 现状 |
 |---|------|------|
 | P2-1 | Agent 推理过程可视化 | ✅ DONE R20.16 |
-| P2-2 | 回测参数对比面板 (前端) | ✅ DONE R20.31: service layer (`param-compare-api.ts`) + 展示组件 (`param-compare-panel.tsx`: 排序对比表 + 最佳指标高亮 + 失败组合展示); 待接入后端 API 端点 |
+| P2-2 | 回测参数对比面板 (前端) | ✅ DONE R20.33: service layer (`param-compare-api.ts`) + 展示组件 (`param-compare-panel.tsx`) + 后端 `GET/POST /api/backtest/param-compare` |
 | P2-5 | 自定义策略权重 (前端滑块) | ✅ DONE R20.30 (端到端) |
 | P2-6 | 标的分析详情页 (前端) | ✅ DONE R20.31: 4-Tab 深度分析 (基本面/技术面/资金面/系统历史) + 点击推荐行拉取详情 |
 | P2-7 | 回测场景回放 (前端) | ✅ ReplayArtifactsWorkspace 已实现 (R20.13+, 8 vitest); 逐日回放 + 信号-交易对比 + 反馈 |
@@ -136,6 +136,22 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 | P4-5 | **停牌股票检测** — `volume=0` 的标的 (停牌) 不再被回测引擎按 carry-forward 价格虚拟成交 | P0 | ✅ DONE R20.32: `engine_market_data.load_current_prices` 跳过零成交量; 6 pytest |
 | P4-6 | **executor atexit 清理** — `_SHARED_TIMEOUT_EXECUTOR` 注册 atexit 清理, 非守护线程不再延迟进程退出 | P2 | ✅ DONE R20.32: `atexit.register(executor.shutdown, wait=False)` |
 
+### Phase 8: 30 天目标对齐 (R20.33 审计提案)
+
+| # | 功能 | 优先级 | 状态 |
+|---|------|--------|------|
+| P5-1 | **30 天闭环验证扩展** — 把 `--verify-recommendations` / `--confidence-calibration` 的验证口径从 T+1/T+3/T+5 扩到 T+10/T+20/T+30 | P0 | ✅ DONE R20.34: 修复 `tracking_history.json` 读取契约, 并补齐 `--tracking-summary` / `--confidence-calibration` 的 T+10/T+20/T+30 输出 |
+| P5-2 | **时序行业轮动增强** — 让 `industry_rotation.py` 基于真实 lookback 窗口而不是单日快照，优先服务未来 30 天胜率/赔率 | P1 | ✅ DONE |
+
+### Phase 9: 数据质量与推荐体验增强 (R20.35 提案)
+
+> **目标**: 确保推荐基于新鲜完整的数据，并让用户快速掌握推荐变化。
+
+| # | 功能 | 优先级 | 状态 |
+|---|------|--------|------|
+| P6-1 | **数据新鲜度守门员** — `--auto` 运行时自动检测数据时效性 (行情/财务/行业), 过期数据触发警告并降低推荐置信度 | P1 | ✅ DONE R20.35: `src/screening/data_freshness_guard.py` + `--check-freshness` CLI; 12 pytest |
+| P6-2 | **推荐日间变动摘要** — 每日 `--auto` 后自动生成与上一交易日的推荐对比 (新增/移除/分数变动), `--daily-delta` CLI | P1 | ✅ DONE R20.35: `src/screening/daily_delta.py` + `--daily-delta` CLI; 19 pytest |
+
 ---
 
 ## 四、技术债务与优化
@@ -150,7 +166,7 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 | 模块拆分 | R20.14-R20.16 累计 -3264 行重构 | ✅ 完成 |
 | 类型标注 | PEP 484 + Pydantic v2 | ✅ 完成 |
 | `x or default` 模式 | R20.15-R20.17 累计 36+ 处修复 | ✅ 完成 |
-| `open()` encoding | R20.15/R20.18 累计 3 处修复 | ✅ 完成 |
+| `open()` encoding | R20.15/R20.18/R20.35 累计 4 处修复 | ✅ 完成 |
 
 ---
 
@@ -172,7 +188,7 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ---
 
-## 六、路线图完成度 (R20.19)
+## 六、路线图完成度 (R20.35)
 
 | 阶段 | 完成度 | 剩余 |
 |------|--------|------|
@@ -181,6 +197,8 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 | Phase 5 (闭环验证) | **4/4 (100%)** ✅ | — |
 | Phase 6 (选股精度) | **2/2 (100%)** ✅ | — |
 | Phase 7 (回测精度) | **4/4 (100%)** ✅ | — |
+| Phase 8 (30 天目标对齐) | **2/2 (100%)** ✅ | P5-1 ✅ R20.34 / P5-2 ✅ |
+| Phase 9 (数据质量增强) | **0/2 (0%)** | P6-1 ❌ / P6-2 ❌ |
 | **后端** | **100%** 🎉 | — |
 | **CLI** | **100%** 🎉 | — |
 | **前端** | **100%** 🎉 | — |
@@ -198,4 +216,4 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ---
 
-> **最后更新**: 2026-06-11 (R20.32: P4-1 行业相对强度 + P4-2 智能再入场 + P4-3 最低佣金 5 元 + P4-4 印花税 0.05% + P4-5 停牌检测 + P4-6 executor 清理)
+> **最后更新**: 2026-06-11 (R20.35: Phase 9 提案 P6-1 数据新鲜度守门员 + P6-2 推荐日间变动摘要; 修复 2 test assertion bug + 1 encoding bug)

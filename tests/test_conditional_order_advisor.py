@@ -737,13 +737,14 @@ def test_compute_auto_screening_payload_contains_conditional_orders_field() -> N
     """``compute_auto_screening_results`` 返回的 payload 应含 ``conditional_orders`` 字段。"""
     from src.main import compute_auto_screening_results
 
-    # 不实际跑全流水线, 直接 mock 一下 — 但签名只接受 trade_date/top_n
+    # 不实际跑全流水线, 直接 smoke 一下导入路径与公开签名。
     # 这里改成 unit test 验证 payload 字段, 仅 smoke 一下导入路径
     import inspect
     sig = inspect.signature(compute_auto_screening_results)
-    # 签名包含 trade_date / top_n — 这是已经实现的 contract
+    # 签名包含 trade_date / top_n / selected_strategies — 这是当前 contract
     assert "trade_date" in sig.parameters
     assert "top_n" in sig.parameters
+    assert "selected_strategies" in sig.parameters
 
 
 def test_run_conditional_orders_cli_with_mock_provider() -> None:
@@ -756,4 +757,3 @@ def test_run_conditional_orders_cli_with_mock_provider() -> None:
     rc = run_conditional_orders_cli(top_n=5, price_provider=_provider)
     assert rc in (0, 1, 2)
     # 关键: 函数接受 price_provider kwarg 不抛 TypeError
-

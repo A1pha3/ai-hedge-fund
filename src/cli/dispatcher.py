@@ -640,6 +640,39 @@ def _resolve_top(argv: list[str]) -> int | None:
 
 # 命令注册表: flag -> handler function
 # 顺序敏感 — 越靠前越先匹配。``--auto`` 走主 parser (它本来 require_tickers=False)
+
+def _resolve_check_freshness(argv: list[str]) -> int | None:
+    """P6-1 data freshness check. Supports --trade-date."""
+    if "--check-freshness" not in argv:
+        return None
+    trade_date = _get_kv(argv, "--trade-date") or ""
+    if not trade_date:
+        from datetime import date
+        trade_date = date.today().strftime("%Y%m%d")
+    from src.screening.data_freshness_guard import check_data_freshness, _render_freshness_summary
+    reports_dir = None
+    try:
+        from src.screening.consecutive_recommendation import resolve_report_dir
+        reports_dir = resolve_report_dir()
+    except Exception:
+        pass
+    report = check_data_freshness(trade_date=trade_date, reports_dir=reports_dir)
+    print(_render_freshness_summary(report["fresh"], report["warnings"]))
+    status = "PASS" if report["fresh"] else "WARNING"
+    return 0
+
+
+def _resolve_daily_delta(argv: list[str]) -> int | None:
+    """P6-2 daily recommendation delta. Supports --top-n, --delta-lookback."""
+    if "--daily-delta" not in argv:
+        return None
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
+    lookback = _parse_int(_get_kv(argv, "--delta-lookback"), 5)
+    from src.screening.daily_delta import compute_daily_delta, render_daily_delta
+    delta = compute_daily_delta(top_n=top_n, lookback_days=lookback)
+    print(render_daily_delta(delta))
+    return 0
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -677,6 +710,8 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--confidence-calibration", _resolve_confidence_calibration),
     ("--conviction-ranking", _resolve_conviction_ranking),
     ("--top", _resolve_top),
+    ("--check-freshness", _resolve_check_freshness),
+    ("--daily-delta", _resolve_daily_delta),
 ]
 
 

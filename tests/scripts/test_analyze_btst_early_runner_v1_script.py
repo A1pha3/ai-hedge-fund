@@ -275,7 +275,7 @@ def test_analyze_btst_early_runner_v1_builds_ledgers_profiles_and_daily_boards(t
     assert analysis["feature_time_map"]["trend_acceleration"]["allowed_in_pre_score"] is True
     assert analysis["feature_time_map"]["next_open_return"]["allowed_in_pre_score"] is False
     assert analysis["cost_profile"]["commission_rate"] == 0.00025
-    assert analysis["cost_profile"]["stamp_duty_rate"] == 0.001
+    assert analysis["cost_profile"]["stamp_duty_rate"] == 0.0005
     assert analysis["validation"]["ledgers_separated"] is True
     assert analysis["validation"]["universe_filter_applied"] is True
     assert analysis["validation"]["max_single_theme_exposure"] == 0.24

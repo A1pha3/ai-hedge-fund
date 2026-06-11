@@ -553,3 +553,222 @@ def test_final_tie_break_by_industry_name():
     # A < Z (按字符串升序)
     assert signals[0].industry_name == "A行业"
     assert signals[1].industry_name == "Z行业"
+
+
+# ============================================================================
+# Test 21: P5-2 时序特性 — lookback_days=1 时不使用历史 (backward compatible)
+# ============================================================================
+
+
+def test_lookback_days_1_ignores_history(tmp_path):
+    """lookback_days=1 时, 不使用历史, 结果与旧版本一致。"""
+    # 创建历史报告 (但 lookback_days=1 应当忽略)
+    reports_dir = tmp_path / "data" / "reports"
+    reports_dir.mkdir(parents=True)
+    
+    # 历史报告: 20260605 电子行业强势
+    import json
+    history_report = {
+        "mode": "auto_screening",
+        "date": "20260605",
+        "recommendations": [
+            _make_rec("300001", "电子", 0.8, trend_dir=1, trend_conf=90, fund_dir=1, fund_conf=90),
+            _make_rec("300002", "电子", 0.75, trend_dir=1, trend_conf=85, fund_dir=1, fund_conf=85),
+        ]
+    }
+    (reports_dir / "auto_screening_20260605.json").write_text(json.dumps(history_report, ensure_ascii=False))
+    
+    # 当前推荐: 电子仅有微弱信号
+    recs = [
+        _make_rec("300001", "电子", 0.2, trend_dir=1, trend_conf=30, fund_dir=1, fund_conf=30),
+        _make_rec("300002", "电子", 0.25, trend_dir=1, trend_conf=35, fund_dir=1, fund_conf=35),
+    ]
+    
+    signals = calculate_industry_rotation(
+        recs, 
+        trade_date="20260607", 
+        lookback_days=1,
+        reports_dir=str(reports_dir)
+    )
+    
+    # lookback_days=1 时不应使用历史, 所以 momentum_score 仅来自当前数据
+    # rec1: trend=(1*30), fund=(1*30), mr=0, event=0 → momentum=15.0
+    # rec2: trend=(1*35), fund=(1*35), mr=0, event=0 → momentum=17.5
+    # avg_momentum = (15.0 + 17.5) / 2 = 16.25
+    assert len(signals) == 1
+    assert math.isclose(signals[0].momentum_score, 16.25, abs_tol=0.1)
+    # 不应有历史加分
+    assert signals[0].history_bonus == 0.0
+    assert signals[0].history_presence_ratio == 0.0
+
+
+# ============================================================================
+# Test 22: P5-2 时序特性 — lookback_days > 1 使用历史加强信号
+# ============================================================================
+
+
+def test_lookback_days_gt_1_uses_history_boost(tmp_path):
+    """lookback_days > 1 时, 持续出现的行业因历史强度获得加分。"""
+    reports_dir = tmp_path / "data" / "reports"
+    reports_dir.mkdir(parents=True)
+    
+    import json
+    
+    # 历史报告 1: 20260605 电子强, 计算机弱
+    history1 = {
+        "mode": "auto_screening",
+        "date": "20260605",
+        "recommendations": [
+            _make_rec("300001", "电子", 0.75, trend_dir=1, trend_conf=80, fund_dir=1, fund_conf=85),
+            _make_rec("300002", "电子", 0.70, trend_dir=1, trend_conf=75, fund_dir=1, fund_conf=80),
+            _make_rec("600001", "计算机", 0.1, trend_dir=1, trend_conf=20, fund_dir=1, fund_conf=25),
+            _make_rec("600002", "计算机", 0.15, trend_dir=1, trend_conf=25, fund_dir=1, fund_conf=30),
+        ]
+    }
+    (reports_dir / "auto_screening_20260605.json").write_text(json.dumps(history1, ensure_ascii=False))
+    
+    # 历史报告 2: 20260606 电子继续强, 计算机继续弱
+    history2 = {
+        "mode": "auto_screening",
+        "date": "20260606",
+        "recommendations": [
+            _make_rec("300003", "电子", 0.78, trend_dir=1, trend_conf=82, fund_dir=1, fund_conf=88),
+            _make_rec("300004", "电子", 0.72, trend_dir=1, trend_conf=77, fund_dir=1, fund_conf=82),
+            _make_rec("600003", "计算机", 0.12, trend_dir=1, trend_conf=22, fund_dir=1, fund_conf=27),
+            _make_rec("600004", "计算机", 0.18, trend_dir=1, trend_conf=28, fund_dir=1, fund_conf=32),
+        ]
+    }
+    (reports_dir / "auto_screening_20260606.json").write_text(json.dumps(history2, ensure_ascii=False))
+    
+    # 当前推荐 20260607: 电子和计算机动量相同 (都是中性)
+    recs = [
+        _make_rec("300005", "电子", 0.4, trend_dir=1, trend_conf=50, fund_dir=1, fund_conf=50),
+        _make_rec("300006", "电子", 0.45, trend_dir=1, trend_conf=52, fund_dir=1, fund_conf=52),
+        _make_rec("600005", "计算机", 0.38, trend_dir=1, trend_conf=50, fund_dir=1, fund_conf=50),
+        _make_rec("600006", "计算机", 0.42, trend_dir=1, trend_conf=52, fund_dir=1, fund_conf=52),
+    ]
+    
+    signals = calculate_industry_rotation(
+        recs,
+        trade_date="20260607",
+        lookback_days=3,  # 使用 2 天历史 + 当前
+        reports_dir=str(reports_dir)
+    )
+    
+    # 电子应当排名第一 (因为历史强势)
+    # 计算机应当排名第二 (历史弱势但当前也有)
+    assert len(signals) == 2
+    assert signals[0].industry_name == "电子", f"Expected 电子 first, got {signals[0].industry_name}"
+    assert signals[1].industry_name == "计算机"
+    
+    # 电子的 history_presence_ratio 应为 1.0 (两天都出现)
+    # 计算机的 history_presence_ratio 也应为 1.0
+    # 但电子的 history_avg_score_b 应显著高于计算机
+    assert signals[0].history_presence_ratio == 1.0
+    assert signals[1].history_presence_ratio == 1.0
+    assert signals[0].history_avg_score_b > signals[1].history_avg_score_b
+
+
+# ============================================================================
+# Test 23: P5-2 时序特性 — 历史不存在某行业时 presence_ratio < 1.0
+# ============================================================================
+
+
+def test_partial_history_presence(tmp_path):
+    """某行业只在部分历史日期出现, presence_ratio 应反映此情况。"""
+    reports_dir = tmp_path / "data" / "reports"
+    reports_dir.mkdir(parents=True)
+    
+    import json
+    
+    # 历史报告 1: 20260605 只有电子
+    history1 = {
+        "mode": "auto_screening",
+        "date": "20260605",
+        "recommendations": [
+            _make_rec("300001", "电子", 0.7, trend_dir=1, trend_conf=70, fund_dir=1, fund_conf=70),
+            _make_rec("300002", "电子", 0.65, trend_dir=1, trend_conf=65, fund_dir=1, fund_conf=65),
+        ]
+    }
+    (reports_dir / "auto_screening_20260605.json").write_text(json.dumps(history1, ensure_ascii=False))
+    
+    # 历史报告 2: 20260606 电子 + 计算机
+    history2 = {
+        "mode": "auto_screening",
+        "date": "20260606",
+        "recommendations": [
+            _make_rec("300003", "电子", 0.72, trend_dir=1, trend_conf=72, fund_dir=1, fund_conf=72),
+            _make_rec("300004", "电子", 0.68, trend_dir=1, trend_conf=68, fund_dir=1, fund_conf=68),
+            _make_rec("600001", "计算机", 0.5, trend_dir=1, trend_conf=50, fund_dir=1, fund_conf=50),
+            _make_rec("600002", "计算机", 0.55, trend_dir=1, trend_conf=55, fund_dir=1, fund_conf=55),
+        ]
+    }
+    (reports_dir / "auto_screening_20260606.json").write_text(json.dumps(history2, ensure_ascii=False))
+    
+    # 当前推荐 20260607: 电子和计算机当前动量相同
+    recs = [
+        _make_rec("300005", "电子", 0.5, trend_dir=1, trend_conf=60, fund_dir=1, fund_conf=60),
+        _make_rec("300006", "电子", 0.52, trend_dir=1, trend_conf=62, fund_dir=1, fund_conf=62),
+        _make_rec("600003", "计算机", 0.5, trend_dir=1, trend_conf=60, fund_dir=1, fund_conf=60),
+        _make_rec("600004", "计算机", 0.52, trend_dir=1, trend_conf=62, fund_dir=1, fund_conf=62),
+    ]
+    
+    signals = calculate_industry_rotation(
+        recs,
+        trade_date="20260607",
+        lookback_days=3,
+        reports_dir=str(reports_dir)
+    )
+    
+    # 电子应当排名第一 (history_presence_ratio=1.0, 两天都出现)
+    # 计算机排名第二 (history_presence_ratio=0.5, 只在 20260606 出现)
+    assert len(signals) == 2
+    assert signals[0].industry_name == "电子"
+    assert signals[1].industry_name == "计算机"
+    assert signals[0].history_presence_ratio == 1.0
+    assert math.isclose(signals[1].history_presence_ratio, 0.5, abs_tol=0.01)
+
+
+# ============================================================================
+# Test 24: P5-2 时序特性 — 序列化输出包含历史字段
+# ============================================================================
+
+
+def test_to_dict_includes_history_fields(tmp_path):
+    """to_dict() 序列化应包含 history_presence_ratio 和 history_avg_score_b。"""
+    reports_dir = tmp_path / "data" / "reports"
+    reports_dir.mkdir(parents=True)
+    
+    import json
+    
+    history1 = {
+        "mode": "auto_screening",
+        "date": "20260606",
+        "recommendations": [
+            _make_rec("300001", "电子", 0.8, trend_dir=1, trend_conf=80, fund_dir=1, fund_conf=80),
+            _make_rec("300002", "电子", 0.75, trend_dir=1, trend_conf=75, fund_dir=1, fund_conf=75),
+        ]
+    }
+    (reports_dir / "auto_screening_20260606.json").write_text(json.dumps(history1, ensure_ascii=False))
+    
+    recs = [
+        _make_rec("300003", "电子", 0.6, trend_dir=1, trend_conf=60, fund_dir=1, fund_conf=60),
+        _make_rec("300004", "电子", 0.65, trend_dir=1, trend_conf=65, fund_dir=1, fund_conf=65),
+    ]
+    
+    signals = calculate_industry_rotation(
+        recs,
+        trade_date="20260607",
+        lookback_days=2,
+        reports_dir=str(reports_dir)
+    )
+    
+    assert len(signals) == 1
+    d = signals[0].to_dict()
+    
+    # 应包含 history 相关字段
+    assert "history_presence_ratio" in d
+    assert "history_avg_score_b" in d
+    assert "history_bonus" in d
+    assert d["history_presence_ratio"] == 1.0
+    assert d["history_avg_score_b"] > 0.7  # 历史平均 score_b 应该很高

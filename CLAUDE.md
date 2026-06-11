@@ -86,7 +86,7 @@ uv run black src/ && uv run isort src/ && uv run flake8 src/
 - **A-share tickers** use 6-digit format (e.g., 000001, 300118)
 - **Free US data** limited to AAPL, GOOGL, MSFT, NVDA, TSLA; others need `FINANCIAL_DATASETS_API_KEY`
 - **No CI/CD** — manual/local execution only
-- **No auth** — all backend endpoints are public
+- **Web auth is enabled** — `auth` / `health` plus selected analytics endpoints are public; flows, runs, storage, models, replay artifacts, and research routes require JWT
 
 ## Anti-Patterns
 
