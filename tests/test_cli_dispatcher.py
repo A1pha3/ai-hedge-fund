@@ -121,6 +121,7 @@ class TestCommandRegistry(unittest.TestCase):
         "--watchlist-remove",
         "--watchlist-list",
         "--watchlist-status",
+        "--expected-returns",
     ]
 
     def test_registry_is_non_empty(self) -> None:

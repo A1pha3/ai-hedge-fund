@@ -1,11 +1,9 @@
 """缓存预热器 — 在盘后自动预拉取常用数据，减少 --auto 冷启动延迟。"""
 
 import logging
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Callable
 
 import pandas as pd
 

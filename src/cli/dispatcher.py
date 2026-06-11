@@ -708,6 +708,30 @@ def _resolve_outlier_detect(argv: list[str]) -> int | None:
     from src.screening.outlier_detect import run_outlier_detect
     return run_outlier_detect(argv)
 
+
+def _resolve_expected_returns(argv: list[str]) -> int | None:
+    """P9-1 expected return estimation. Uses historical calibration."""
+    if "--expected-returns" not in argv:
+        return None
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
+    lookback = _parse_int(_get_kv(argv, "--lookback"), 60)
+    from src.screening.data_quality_audit import _find_latest_report, load_latest_recommendations
+    from src.screening.expected_return import compute_expected_returns, render_expected_returns
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.utils.display import Fore, Style
+    reports_dir = resolve_report_dir()
+    report_path = _find_latest_report(reports_dir)
+    if report_path is None:
+        print(f"{Fore.RED}No auto_screening report found. Run --auto first.{Style.RESET_ALL}")
+        return 1
+    recs = load_latest_recommendations(reports_dir, top_n=top_n)
+    if not recs:
+        print(f"{Fore.RED}No recommendations found.{Style.RESET_ALL}")
+        return 1
+    report = compute_expected_returns(recommendations=recs, lookback_days=lookback, reports_dir=reports_dir)
+    print(render_expected_returns(report))
+    return 0
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -751,6 +775,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--dynamic-threshold", _resolve_dynamic_threshold),
     ("--decision-flow", _resolve_decision_flow),
     ("--outlier-detect", _resolve_outlier_detect),
+    ("--expected-returns", _resolve_expected_returns),
 ]
 
 
