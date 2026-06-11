@@ -190,3 +190,23 @@ class TestRenderDailyDelta:
         output = render_daily_delta(delta)
         assert "StockA" in output
         assert "↑" in output
+
+
+class TestEdgeCases:
+    def test_none_score_b_no_delta(self) -> None:
+        """When yesterday's score_b is None, no delta should be computed."""
+        from src.screening.daily_delta import _compute_field_deltas
+        result = _compute_field_deltas(
+            {"ticker": "000001", "name": "A", "score_b": 0.5},
+            {"ticker": "000001", "name": "A", "score_b": None},
+        )
+        assert result == {}
+
+    def test_both_none_score_b_no_delta(self) -> None:
+        """When both score_b are None, no delta should be computed."""
+        from src.screening.daily_delta import _compute_field_deltas
+        result = _compute_field_deltas(
+            {"ticker": "000001", "name": "A", "score_b": None},
+            {"ticker": "000001", "name": "A", "score_b": None},
+        )
+        assert result == {}

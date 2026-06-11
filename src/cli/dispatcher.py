@@ -673,6 +673,23 @@ def _resolve_daily_delta(argv: list[str]) -> int | None:
     print(render_daily_delta(delta))
     return 0
 
+
+def _resolve_signal_consistency(argv: list[str]) -> int | None:
+    """P7-1 signal consistency cross-check. Supports --top-n."""
+    if "--signal-consistency" not in argv:
+        return None
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
+    from src.screening.signal_consistency import run_consistency_check
+    return run_consistency_check(top_n=top_n)
+
+
+def _resolve_dynamic_threshold(argv: list[str]) -> int | None:
+    """P7-2 dynamic recommendation threshold. Supports --lookback, --target-hit-rate."""
+    if "--dynamic-threshold" not in argv:
+        return None
+    from src.screening.dynamic_threshold import run_dynamic_threshold
+    return run_dynamic_threshold(argv)
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -712,6 +729,8 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--top", _resolve_top),
     ("--check-freshness", _resolve_check_freshness),
     ("--daily-delta", _resolve_daily_delta),
+    ("--signal-consistency", _resolve_signal_consistency),
+    ("--dynamic-threshold", _resolve_dynamic_threshold),
 ]
 
 

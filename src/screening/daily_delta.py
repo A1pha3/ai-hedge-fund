@@ -231,8 +231,13 @@ def _compute_field_deltas(
     yesterday_rec: dict[str, Any],
 ) -> dict[str, Any]:
     """Compute field-level deltas between two recommendation entries."""
-    today_score = float(today_rec.get("score_b", 0) or 0)
-    yesterday_score = float(yesterday_rec.get("score_b", 0) or 0)
+    today_raw = today_rec.get("score_b")
+    yesterday_raw = yesterday_rec.get("score_b")
+    # Skip delta if either score is missing/None — avoid misleading 0→N deltas
+    if today_raw is None or yesterday_raw is None:
+        return {}
+    today_score = float(today_raw or 0)
+    yesterday_score = float(yesterday_raw or 0)
     score_delta = round(today_score - yesterday_score, 4)
 
     if abs(score_delta) < 0.0001:
