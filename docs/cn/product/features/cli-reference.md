@@ -31,6 +31,28 @@
 - `--stock-detail 300750` — 标的深度分析
 - `--custom-weights --trend=0.4 --mean-reversion=0.1 --fundamental=0.3 --event-sentiment=0.2` — 自定义权重
 
+## 数据质量与验证
+- `--check-freshness` — 数据新鲜度检查 (P6-1)
+- `--signal-consistency` — 信号一致性交叉校验 (P7-1)
+- `--dynamic-threshold` — 动态推荐阈值 (P7-2)
+- `--data-quality-audit` — 数据质量审计 (P0-10)
+- `--confidence-calibration` — 置信度校准 (P0-9)
+
+## 决策链
+- `--decision-flow` — 一键决策流水线: 选股→新鲜度→一致性→阈值→异常→预期收益→变动 (P8-1+P9-2)
+- `--daily-brief` — 盘前 Top 3 决策卡 (P0-7)
+- `--why-not 000001` — 信号冲突透明化 (P0-8)
+- `--conviction-ranking` — 综合信心排名 (P0-11)
+- `--expected-returns` — 预期收益估算 (P9-1)
+- `--daily-delta` — 推荐日间变动 (P6-2)
+- `--outlier-detect` — 异常值检测 (P8-2)
+
+## 闭环验证
+- `--verify-recommendations` — 推荐闭环验证 (P3-1)
+- `--cross-picks` — 行业+个股交叉选择 (P3-3)
+- `--build-portfolio` — 组合构建 (P3-4)
+- `--calibrate-weights` — 策略权重校准 (P3-2)
+
 ## 组合管理
 - `--rebalance` — 组合再平衡建议
 - `--performance-report` — 组合绩效周报/月报
