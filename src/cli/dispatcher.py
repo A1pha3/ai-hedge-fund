@@ -690,6 +690,27 @@ def _resolve_dynamic_threshold(argv: list[str]) -> int | None:
     from src.screening.dynamic_threshold import run_dynamic_threshold
     return run_dynamic_threshold(argv)
 
+
+def _resolve_decision_flow(argv: list[str]) -> int | None:
+    """P8-1 one-command decision flow. Supports --top-n, --lookback."""
+    if "--decision-flow" not in argv:
+        return None
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 10)
+    lookback = _parse_int(_get_kv(argv, "--lookback"), 30)
+    from src.screening.decision_flow import run_decision_flow
+    run_decision_flow(top_n=top_n, lookback_days=lookback)
+    return 0
+
+
+def _resolve_outlier_detect(argv: list[str]) -> int | None:
+    """P8-2 outlier detection. Supports --top-n, --threshold."""
+    if "--outlier-detect" not in argv:
+        return None
+    top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
+    threshold = _parse_float(_get_kv(argv, "--threshold"), 0.30)
+    from src.screening.outlier_detect import run_outlier_detect
+    return run_outlier_detect(argv)
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -731,6 +752,8 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--daily-delta", _resolve_daily_delta),
     ("--signal-consistency", _resolve_signal_consistency),
     ("--dynamic-threshold", _resolve_dynamic_threshold),
+    ("--decision-flow", _resolve_decision_flow),
+    ("--outlier-detect", _resolve_outlier_detect),
 ]
 
 

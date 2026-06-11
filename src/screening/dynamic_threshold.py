@@ -128,7 +128,7 @@ def render_dynamic_threshold(result: dict[str, Any]) -> str:
         elif adjustment < 0:
             adj_str = f"{Fore.GREEN}↓ {adjustment:.4f} (relaxed){Style.RESET_ALL}"
         else:
-            adj_str = f"→ no change"
+            adj_str = "→ no change"
 
         lines.append(f"  Base threshold: {base:.2f}")
         lines.append(f"  Dynamic threshold: {threshold:.4f}  {adj_str}")
@@ -193,7 +193,6 @@ def _load_recent_hit_rate(
 
 def run_dynamic_threshold(argv: list[str] | None = None) -> int:
     """CLI entry point for --dynamic-threshold."""
-    from src.screening.data_quality_audit import _find_latest_report
 
     lookback = _DEFAULT_LOOKBACK
     target = _DEFAULT_TARGET_HIT_RATE
