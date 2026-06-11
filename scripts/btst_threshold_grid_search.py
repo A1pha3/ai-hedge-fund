@@ -4,10 +4,8 @@ Grid search over btst_precision_v2 profile thresholds.
 Tests select_threshold, near_miss_threshold, and selected_rank_cap_ratio combinations.
 """
 
-import math
 import os
 from datetime import datetime, timedelta
-from itertools import product
 
 import numpy as np
 import pandas as pd
@@ -27,7 +25,6 @@ from btst_20day_backtest import (
     compute_score,
     _apply_rank_caps_to_scored_results,
     summarize_return_stats,
-    spearman_ic,
 )
 
 

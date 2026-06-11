@@ -5,7 +5,6 @@ import itertools
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
-from statistics import mean
 from typing import Any
 
 from scripts.short_trade_boundary_analysis_utils import (

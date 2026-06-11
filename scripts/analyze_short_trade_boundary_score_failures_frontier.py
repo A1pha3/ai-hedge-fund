@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_score_replay_utils import DEFAULT_AVOID_WEIGHT, DEFAULT_EXTENSION_WEIGHT, DEFAULT_NEAR_MISS_THRESHOLD, DEFAULT_OVERHEAD_WEIGHT, DEFAULT_STALE_WEIGHT, compute_replayed_score as _compute_replayed_score, resolve_default_thresholds as _resolve_default_thresholds
+from scripts.btst_score_replay_utils import DEFAULT_EXTENSION_WEIGHT, DEFAULT_STALE_WEIGHT, compute_replayed_score as _compute_replayed_score, resolve_default_thresholds as _resolve_default_thresholds
 from scripts.analyze_short_trade_boundary_score_failures import analyze_short_trade_boundary_score_failures
 
 

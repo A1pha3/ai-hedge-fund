@@ -4,8 +4,6 @@ Quick validation: Compare ic_v3 vs btst_precision_v2 scores on a specific date
 by running the full scoring pipeline and comparing selections.
 """
 
-import os
-from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv

@@ -100,7 +100,7 @@ def main():
 
         df = df[~build_beijing_exchange_mask(df["ts_code"])]
         df = df[df["amount"] >= 100000]
-        n_stocks = len(df)
+        len(df)
 
         try:
             dfn = pro.daily(trade_date=next_date)[["ts_code", "pct_chg"]].rename(columns={"pct_chg": "next_ret"})

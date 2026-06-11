@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """验证momentum_strength因子的IC，以及ic_optimized profile的改进效果。"""
-import os, json, sys
+import os
+import json
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -137,7 +138,7 @@ def main():
         for code, g in hist.groupby('ts_code'):
             if len(g) < 22:
                 continue
-            c = g.set_index('trade_date')['close'].sort_index()
+            g.set_index('trade_date')['close'].sort_index()
             ms = compute_momentum_strength(g.sort_values('trade_date'))
             if np.isnan(ms):
                 continue

@@ -134,7 +134,7 @@ def _classify_artifact_freshness(
     # Heuristic: if the artifact was generated more than 24h after decision_as_of,
     # treat as stale. (Future tune: replace with a configurable horizon if needed.)
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
         gen = datetime.fromisoformat(analysis_generated_at.replace("Z", "+00:00"))
         dec = datetime.fromisoformat(decision_as_of.replace("Z", "+00:00"))
         delta_hours = abs((gen - dec).total_seconds()) / 3600.0

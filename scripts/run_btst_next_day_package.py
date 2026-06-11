@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -182,12 +181,10 @@ def run_btst_next_day_package(
     Always writes ``operator_summary.json`` (even on failure).
     """
     from src.paper_trading.btst_operator_summary import (
-        OperatorSummary,
         build_operator_summary,
-        write_operator_summary,
     )
 
-    start_wall = time.time()
+    time.time()
     steps: list[dict[str, Any]] = []
     summary_status = "complete"
     manual_intervention: dict[str, Any] = {"required": False, "reasons": []}

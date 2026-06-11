@@ -3,7 +3,6 @@
 import os
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import tushare as ts
 from dotenv import load_dotenv

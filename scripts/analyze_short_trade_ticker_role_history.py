@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +82,6 @@ def _classify_record(record: dict[str, Any]) -> tuple[int, str, dict[str, Any]]:
 
 def _extract_best_record(snapshot: dict[str, Any], ticker: str) -> dict[str, Any] | None:
     best_priority = -1
-    best_role = ""
     best_payload: dict[str, Any] | None = None
     for record in _iter_dicts(snapshot):
         if str(record.get("ticker") or "") != ticker:
@@ -90,7 +89,6 @@ def _extract_best_record(snapshot: dict[str, Any], ticker: str) -> dict[str, Any
         priority, role, payload = _classify_record(record)
         if priority > best_priority:
             best_priority = priority
-            best_role = role
             best_payload = {"role": role, **payload}
     return best_payload
 

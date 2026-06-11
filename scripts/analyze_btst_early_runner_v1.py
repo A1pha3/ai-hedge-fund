@@ -775,7 +775,7 @@ def _row_from_snapshot(
     metrics = _extract_metrics(evaluation)
     stock_row = dict(stock_lookup.get(ticker) or {})
     daily_basic_row = dict(daily_basic_lookup.get(ticker) or {})
-    short_trade = dict((evaluation or {}).get("short_trade") or {})
+    dict((evaluation or {}).get("short_trade") or {})
     industry = str(stock_row.get("industry") or "unknown")
     name = str(stock_row.get("name") or ticker)
     listed_days = _estimate_listed_days(stock_row.get("list_date"), trade_date)

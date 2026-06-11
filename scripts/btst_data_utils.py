@@ -6,9 +6,9 @@ from typing import Any
 
 import pandas as pd
 from src.tools.ashare_board_utils import (
-    BEIJING_EXCHANGE_SYMBOL_PREFIXES,
+    BEIJING_EXCHANGE_SYMBOL_PREFIXES,  # noqa: F401 — re-export for tests
     build_beijing_exchange_mask_from_series,
-    is_beijing_exchange_ts_code,
+    is_beijing_exchange_ts_code,  # noqa: F401 — re-export for tests
 )
 
 

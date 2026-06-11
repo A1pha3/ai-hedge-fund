@@ -4,7 +4,10 @@ Round 89 Task 2: trend_continuation 权重网格搜索
 直接用 btst_20day_backtest 多profile 模式运行，快速对比
 """
 from __future__ import annotations
-import os, sys, json, itertools, subprocess, numpy as np
+import os
+import sys
+import json
+import itertools
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -175,7 +178,7 @@ def run_all_days(pro, all_dates, test_dates):
     return profile_stats
 
 def compute_summary(daily_stats: list[dict]) -> dict:
-    import pandas as pd, numpy as np
+    import numpy as np
     if not daily_stats:
         return {}
     all_rets = [d["avg_ret"] for d in daily_stats]
@@ -192,7 +195,7 @@ def compute_summary(daily_stats: list[dict]) -> dict:
     }
 
 def main():
-    import tushare as ts, pandas as pd
+    import tushare as ts
     from datetime import datetime, timedelta
     ts.set_token(os.getenv("TUSHARE_TOKEN"))
     pro = ts.pro_api()

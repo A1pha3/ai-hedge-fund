@@ -12,22 +12,17 @@ the routing.
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.paper_trading.btst_operator_summary import build_decision_id
 from src.paper_trading.btst_outcome_ledger import (
-    OutcomeLedgerHeader,
     OutcomeVerdict,
     read_outcome_ledger,
 )
 from src.paper_trading.btst_profile_routing import (
     DEFAULT_PROFILE_ROUTING_CONTRACT,
-    ProfileName,
     ProfileRoutingContract,
-    resolve_profile_routing_contract,
 )
 
 

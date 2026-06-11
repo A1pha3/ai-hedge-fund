@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
 from src.project_env import load_project_dotenv
 from src.data.enhanced_cache import diff_cache_stats, get_cache_runtime_info, snapshot_cache_stats

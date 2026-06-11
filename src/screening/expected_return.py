@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.confidence_calibration import (
-    SCORE_BUCKETS,
     CalibrationSummary,
     _find_bucket,
     _load_tracking_records,

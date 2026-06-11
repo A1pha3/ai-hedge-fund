@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """分析候选池过滤器：各层过滤对次日大涨股票的影响。"""
 import os
-import numpy as np
 import pandas as pd
 from pathlib import Path
 from dotenv import load_dotenv

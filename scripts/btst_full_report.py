@@ -4,13 +4,13 @@ BTST完整分析报告：2026-04-13信号日 → 04-14目标日
 包含：候选池构建、因子评分、行业分析、历史回测验证、Top候选深度分析
 """
 import argparse
-import os, json, sys
+import os
+import json
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from collections import defaultdict
 from typing import Any, Callable
 
 try:
@@ -358,7 +358,6 @@ def main():
 
     # ====== 获取最近5日数据用于历史回测验证 ======
     lookback_dates = [d for d in all_dates if d <= trade_date][-5:]
-    prev_5d = lookback_dates[0] if lookback_dates else trade_date
 
     R = []  # report lines
     def p(s=''):
@@ -597,7 +596,7 @@ def main():
 
         # 用当日涨幅+量比简单筛选top候选
         top_by_ret = hd.nlargest(20, 'pct_chg')
-        top_by_vol = hd.nlargest(20, 'amount')
+        hd.nlargest(20, 'amount')
 
         wr_ret = (top_by_ret['next_ret'] > 0).mean() if len(top_by_ret) > 0 else 0
         avg_ret = top_by_ret['next_ret'].mean() if len(top_by_ret) > 0 else 0

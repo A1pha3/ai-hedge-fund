@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections import Counter, defaultdict
 from datetime import datetime as _datetime
 from pathlib import Path
@@ -1279,7 +1278,7 @@ def compute_t0_tail_strength_stratification(rows: list[dict[str, Any]]) -> dict[
         }
 
     sorted_pairs = sorted(paired, key=lambda x: x[0])
-    n = len(sorted_pairs)
+    len(sorted_pairs)
     # Compute p33 and p67 thresholds from sorted t0_tail_strength values.
     tail_strengths = [p[0] for p in sorted_pairs]
 
@@ -1682,7 +1681,6 @@ def compute_score_position_tiers(rows: list[dict[str, Any]]) -> dict[str, Any]:
         return {"score_p33": None, "score_p67": None, "tier_high_win_rate": None, "tier_high_avg_payoff": None, "tier_mid_win_rate": None, "tier_mid_avg_payoff": None, "tier_low_win_rate": None, "tier_low_avg_payoff": None, "tier_monotone_win_rate": False, "tier_win_rate_spread": None, "tier_payoff_spread": None}
 
     scores_sorted: list[float] = sorted(s for s, _ in scored_pairs)
-    n: int = len(scores_sorted)
 
     def _percentile(sorted_vals: list[float], p: float) -> float:
         """Linear-interpolated percentile (p in [0,100])."""
@@ -7593,7 +7591,7 @@ def compute_score_bucket_win_rates(rows: list[dict]) -> dict:
         return _null
 
     scores_only = sorted(v[0] for v in valid)
-    n = len(scores_only)
+    len(scores_only)
 
     def _pct(lst: list[float], p: float) -> float:
         idx = p / 100.0 * (len(lst) - 1)
@@ -11024,17 +11022,15 @@ def compute_max_drawdown_analysis(rows: list[dict]) -> dict:
     for r in rets:
         nav.append(nav[-1] * (1.0 + r))
     peak = nav[0]
-    trough_nav = nav[0]
+    nav[0]
     max_dd = 0.0
     max_dd_trough_nav = nav[0]
-    peak_idx = 0
     max_dd_start_idx = 0
     max_dd_duration = 0
     current_dd_start = 0
     for i in range(1, len(nav)):
         if nav[i] > peak:
             peak = nav[i]
-            peak_idx = i
             current_dd_start = i
         dd = (peak - nav[i]) / peak if peak > 0 else 0.0
         if dd > max_dd:
@@ -14997,11 +14993,6 @@ def compute_volume_price_divergence_score(rows: list[dict]) -> dict:
     # Compute Pearson correlation between z_return and z_volume
     ret_vals: list[float] = [r["ret"] for r in valid_rows]
     vol_vals: list[float] = [r["vol"] for r in valid_rows]
-    mean_ret: float = sum(ret_vals) / n
-    mean_vol: float = sum(vol_vals) / n
-    std_ret: float = (sum((v - mean_ret) ** 2 for v in ret_vals) / n) ** 0.5
-    std_vol: float = (sum((v - mean_vol) ** 2 for v in vol_vals) / n) ** 0.5
-    # Pearson via sums (handles zero-std gracefully)
     sum_x: float = sum(ret_vals)
     sum_y: float = sum(vol_vals)
     sum_xy: float = sum(ret_vals[i] * vol_vals[i] for i in range(n))

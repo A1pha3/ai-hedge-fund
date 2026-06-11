@@ -2913,7 +2913,7 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
         ),
     )
     rank_gaps = [int(row.get("pre_truncation_rank_gap_to_cutoff") or 0) for row in ordered_rows if row.get("pre_truncation_rank_gap_to_cutoff") is not None]
-    distinct_ticker_cases = _collect_distinct_truncation_ticker_cases(ordered_rows)
+    _collect_distinct_truncation_ticker_cases(ordered_rows)
 
     min_rank_gap = min(rank_gaps) if rank_gaps else None
     avg_amount_shares = [_safe_float(row.get("pre_truncation_avg_amount_share_of_cutoff")) for row in ordered_rows]

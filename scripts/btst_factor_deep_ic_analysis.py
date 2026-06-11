@@ -4,8 +4,6 @@ BTST Factor Deep IC Analysis: Test each factor's standalone IC and their interac
 Focus on short_term_reversal which has 35% weight in the winning profile.
 """
 
-import argparse
-import math
 import os
 from datetime import datetime, timedelta
 
@@ -124,7 +122,6 @@ def compute_factors(g):
         reversal_10d = 0.0
 
     # Intraday reversal (close vs open)
-    intraday_reversal = 0.0
     if open_price > 0:
         intraday_change = (last_close - open_price) / open_price
         # This measures late-day strength - not really reversal
@@ -184,8 +181,6 @@ def main():
 
     # Collect all factor ICs across all days
     all_factor_ics = {f: [] for f in ALL_FACTORS}
-    all_factor_ics_t2 = {f: [] for f in ALL_FACTORS}
-    all_factor_ics_t3 = {f: [] for f in ALL_FACTORS}
 
     # Also track quantile returns for each factor
     quantile_results = {f: {q: [] for q in range(5)} for f in ALL_FACTORS}

@@ -8,7 +8,7 @@ from src.paper_trading.btst_reporting import (
     generate_and_register_btst_followup_artifacts,
     generate_btst_next_day_trade_brief_artifacts,
     infer_next_trade_date,
-    render_btst_next_day_trade_brief_markdown,
+    render_btst_next_day_trade_brief_markdown,  # noqa: F401 — re-export for tests
 )
 
 

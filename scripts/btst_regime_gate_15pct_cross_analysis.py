@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -154,7 +153,7 @@ def _compute_regime_stats(day_records: list[dict[str, Any]]) -> dict[str, Any]:
     total_selected = sum(r.get("n_selected", 0) for r in day_records)
     total_evaluable = sum(r.get("n_evaluable", 0) for r in day_records)
     hit_count = sum(r.get("hit_15pct_count", 0) for r in day_records)
-    hit_rates = [r.get("hit_15pct_rate") for r in day_records if r.get("hit_15pct_rate") is not None]
+    [r.get("hit_15pct_rate") for r in day_records if r.get("hit_15pct_rate") is not None]
     max_returns = [r.get("mean_max_high_return") for r in day_records if r.get("mean_max_high_return") is not None]
     win_rates = [r.get("win_rate") for r in day_records if r.get("win_rate") is not None]
     avg_rets = [r.get("avg_ret") for r in day_records if r.get("avg_ret") is not None]

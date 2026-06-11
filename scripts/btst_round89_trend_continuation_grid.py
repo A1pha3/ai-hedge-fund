@@ -22,8 +22,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.btst_20day_backtest import (
-    compute_factors, compute_score, _apply_rank_caps_to_scored_results,
-    summarize_return_stats, spearman_ic, _load_open_trade_dates, PROFILE_WEIGHT_FIELDS
+    compute_factors, _load_open_trade_dates, PROFILE_WEIGHT_FIELDS
 )
 from scripts.btst_data_utils import build_beijing_exchange_mask
 from src.targets.short_trade_target_profile_data import SHORT_TRADE_TARGET_PROFILES
@@ -56,7 +55,6 @@ def run_grid_search(data_cache: list[dict], param_grid: list[tuple[float, float]
         
         # 基准：base profile select_threshold
         select_threshold = 0.46
-        near_miss_threshold = 0.34
         
         for day_data in data_cache:
             results_df = day_data["df"].copy()

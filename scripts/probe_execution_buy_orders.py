@@ -9,7 +9,7 @@ from typing import Any, Iterator
 
 from src.project_env import load_project_dotenv
 from src.execution.daily_pipeline import build_buy_orders_with_diagnostics, build_watchlist_price_map
-from src.execution.models import ExecutionPlan, LayerCResult
+from src.execution.models import ExecutionPlan
 from src.screening.candidate_pool import build_candidate_pool
 
 
