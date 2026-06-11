@@ -1121,6 +1121,23 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
         # R20.5 P1-3 扩展: 因子瀑布显示完整调整项
         _print_score_waterfall(top_results, consecutive_lookup)
 
+        # R20.36 P9-1: Show expected returns if tracking history exists
+        try:
+            from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
+            from pathlib import Path as _Path
+            _reports_dir = _Path(report_path).parent if report_path else None
+            if _reports_dir:
+                er_report = compute_expected_returns(
+                    recommendations=recs[:top_n],
+                    lookback_days=60,
+                    reports_dir=_reports_dir,
+                )
+                if er_report.total_samples > 0:
+                    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 22} 预期收益 (P9-1) {'━' * 22}{Style.RESET_ALL}")
+                    print(render_expected_returns_compact(er_report))
+        except Exception:
+            pass  # Non-critical enhancement — never crash auto output
+
     # Cache stats if available
     fetcher_stats = payload.get("batch_data_fetcher", {})
     if fetcher_stats:
