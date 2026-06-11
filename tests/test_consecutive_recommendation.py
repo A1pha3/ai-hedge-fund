@@ -157,11 +157,12 @@ def test_broken_streak_with_gap(tmp_path: Path) -> None:
         end_date="20260607",
     )
 
-    # 000001: 06-05 出现 -> 06-06 断 -> 06-07 出现；streak 仅为当前 1
+    # 000001: 06-05 出现 (score_b=0.5>=0.3) -> 06-06 断 -> 06-07 出现 (score_b=0.5>=0.3)
+    # P4-2: 历史 score_b >= 0.3, 重返 → REENTRY_SIGNAL (bonus=5.0)
     stats_001 = result["000001"]
     assert stats_001.consecutive_days == 1
-    assert stats_001.status == RecommendationStatus.BROKEN_STREAK
-    assert stats_001.stability_bonus == 0.0
+    assert stats_001.status == RecommendationStatus.REENTRY_SIGNAL
+    assert stats_001.stability_bonus == 5.0
     # 000002 连续 3 天
     stats_002 = result["000002"]
     assert stats_002.consecutive_days == 3
@@ -364,8 +365,8 @@ def test_consecutive_stats_dataclass_fields() -> None:
 
 
 def test_status_enum_values() -> None:
-    """RecommendationStatus 应有 4 个枚举值。"""
-    expected = {"first_appearance", "consecutive_2days", "consecutive_3plus", "broken_streak"}
+    """RecommendationStatus 应有 5 个枚举值 (含 P4-2 reentry_signal)。"""
+    expected = {"first_appearance", "consecutive_2days", "consecutive_3plus", "broken_streak", "reentry_signal"}
     actual = {s.value for s in RecommendationStatus}
     assert actual == expected
 
@@ -439,6 +440,83 @@ def test_score_b_nan_is_coerced_to_zero(tmp_path: Path) -> None:
     )
     history = result["000001"].recommendation_history
     assert history == [{"date": "20260607", "score_b": 0.0}]
+
+
+# ============================================================================
+# P4-2: Re-entry signal tests
+# ============================================================================
+
+
+class TestReentrySignal:
+    """P4-2: 智能再入场信号 — 曾被推荐后消失又重返的标的。"""
+
+    def test_reentry_detected_with_high_historical_score(self, tmp_path: Path) -> None:
+        """标的 D1 出现 (score_b=0.5), D2 消失, D3 再出现 (score_b=0.4) → REENTRY_SIGNAL。"""
+        _write_auto_report(tmp_path, "20260605", ["000001"], score_b=0.5)
+        # D2: 000001 不在推荐中
+        _write_auto_report(tmp_path, "20260606", ["000002"], score_b=0.3)
+        _write_auto_report(tmp_path, "20260607", ["000001"], score_b=0.4)
+
+        result = compute_consecutive_recommendations(
+            lookback_days=3,
+            report_dir=tmp_path,
+            end_date="20260607",
+        )
+        assert result["000001"].status == RecommendationStatus.REENTRY_SIGNAL
+        assert result["000001"].stability_bonus == 5.0
+
+    def test_broken_streak_low_historical_score_not_reentry(self, tmp_path: Path) -> None:
+        """D1 score_b=0.2 (低于 0.3 阈值), D2 消失, D3 返回 (score_b=0.2) → 仍为 BROKEN_STREAK。"""
+        _write_auto_report(tmp_path, "20260605", ["000001"], score_b=0.2)
+        _write_auto_report(tmp_path, "20260606", ["000002"], score_b=0.3)
+        _write_auto_report(tmp_path, "20260607", ["000001"], score_b=0.2)
+
+        result = compute_consecutive_recommendations(
+            lookback_days=3,
+            report_dir=tmp_path,
+            end_date="20260607",
+        )
+        assert result["000001"].status == RecommendationStatus.BROKEN_STREAK
+        assert result["000001"].stability_bonus == 0.0
+
+    def test_consecutive_not_reentry(self, tmp_path: Path) -> None:
+        """连续推荐 (D1+D2+D3) → CONSECUTIVE_3PLUS, 不是 reentry。"""
+        _write_auto_report(tmp_path, "20260605", ["000001"], score_b=0.5)
+        _write_auto_report(tmp_path, "20260606", ["000001"], score_b=0.5)
+        _write_auto_report(tmp_path, "20260607", ["000001"], score_b=0.5)
+
+        result = compute_consecutive_recommendations(
+            lookback_days=3,
+            report_dir=tmp_path,
+            end_date="20260607",
+        )
+        assert result["000001"].status == RecommendationStatus.CONSECUTIVE_3PLUS
+        assert result["000001"].stability_bonus == 10.0
+
+    def test_reentry_only_one_appearance_no_history(self, tmp_path: Path) -> None:
+        """仅 1 天出现 → FIRST_APPEARANCE, 不会触发 reentry。"""
+        _write_auto_report(tmp_path, "20260607", ["000001"], score_b=0.5)
+
+        result = compute_consecutive_recommendations(
+            lookback_days=3,
+            report_dir=tmp_path,
+            end_date="20260607",
+        )
+        assert result["000001"].status == RecommendationStatus.FIRST_APPEARANCE
+
+    def test_reentry_bonus_between_first_and_consecutive(self, tmp_path: Path) -> None:
+        """Reentry bonus (5.0) 应介于首次出现 (0.0) 和连续3天 (10.0) 之间。"""
+        _write_auto_report(tmp_path, "20260605", ["000001"], score_b=0.5)
+        _write_auto_report(tmp_path, "20260606", ["000002"], score_b=0.3)
+        _write_auto_report(tmp_path, "20260607", ["000001"], score_b=0.4)
+
+        result = compute_consecutive_recommendations(
+            lookback_days=3,
+            report_dir=tmp_path,
+            end_date="20260607",
+        )
+        bonus = result["000001"].stability_bonus
+        assert 0.0 < bonus < 10.0  # 介于首次和连续之间
 
 
 if __name__ == "__main__":

@@ -492,6 +492,42 @@ def fuse_signals_for_ticker(
     )
 
 
+def _compute_relative_strength(results: list[FusedScore]) -> None:
+    """P4-1: 计算行业内相对强度 — 标的 score_b 相对其行业同行的百分位排名。
+
+    一个 score_b=0.4 的标的, 如果所在行业平均 score_b=0.1, 相对强度远高于
+    一个同 score_b=0.4 但行业平均 score_b=0.5 的标的。
+
+    结果写入 ``result.metrics["industry_relative_strength"]`` (0.0~1.0):
+      - 1.0 = 行业内最强
+      - 0.5 = 行业中位数
+      - 0.0 = 行业内最弱
+
+    至少需要同行业 >= 2 只标的才计算, 否则设为 0.5 (中性)。
+    """
+    # Group by industry
+    by_industry: dict[str, list[FusedScore]] = {}
+    for r in results:
+        industry = str(r.industry_sw or "").strip() or "未知"
+        by_industry.setdefault(industry, []).append(r)
+
+    for industry, group in by_industry.items():
+        if len(group) < 2:
+            # Only one stock in industry — neutral
+            for r in group:
+                r.metrics["industry_relative_strength"] = 0.5
+            continue
+
+        # Sort by score_b desc to compute percentile
+        sorted_group = sorted(group, key=lambda r: r.score_b)
+        n = len(sorted_group)
+        for rank_idx, r in enumerate(sorted_group):
+            # Percentile rank: 0.0 (worst) to 1.0 (best)
+            # Use (rank) / (n-1) to map to 0-1 range
+            percentile = rank_idx / (n - 1) if n > 1 else 0.5
+            r.metrics["industry_relative_strength"] = round(percentile, 4)
+
+
 def fuse_batch(
     scored_signals: dict[str, dict[str, StrategySignal]],
     market_state: MarketState,
@@ -520,6 +556,7 @@ def fuse_batch(
             fused.industry_sw = cand_lookup[ticker]["industry_sw"]
         results.append(fused)
     _apply_cross_sectional_attention_metrics(results)
+    _compute_relative_strength(results)
     return results
 
 
