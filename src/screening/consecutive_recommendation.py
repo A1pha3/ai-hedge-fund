@@ -351,9 +351,11 @@ def enrich_recommendations_with_history(
             rec["consecutive_days"] = 0
             rec["recommendation_history"] = []
             rec["stability_bonus"] = 0.0
+            rec["consecutive_status"] = ""
         else:
             rec["consecutive_days"] = stats.consecutive_days
             rec["recommendation_history"] = list(stats.recommendation_history)
             rec["stability_bonus"] = stats.stability_bonus
+            rec["consecutive_status"] = stats.status.value
 
     return recommendations

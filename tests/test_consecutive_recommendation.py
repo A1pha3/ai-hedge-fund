@@ -319,8 +319,10 @@ def test_enrich_adds_fields_in_place(tmp_path: Path) -> None:
         assert "consecutive_days" in rec
         assert "recommendation_history" in rec
         assert "stability_bonus" in rec
+        assert "consecutive_status" in rec  # P4-2: status field for reentry detection
         assert rec["consecutive_days"] == 3
         assert rec["stability_bonus"] == 10.0
+        assert rec["consecutive_status"] == "consecutive_3plus"
 
 
 def test_enrich_unknown_ticker_gets_zero_bonus(tmp_path: Path) -> None:
@@ -340,6 +342,7 @@ def test_enrich_unknown_ticker_gets_zero_bonus(tmp_path: Path) -> None:
     rec = enriched[0]
     assert rec["consecutive_days"] == 0
     assert rec["stability_bonus"] == 0.0
+    assert rec["consecutive_status"] == ""  # unknown ticker → empty status
     assert rec["recommendation_history"] == []
 
 

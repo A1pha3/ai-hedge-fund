@@ -1038,9 +1038,14 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
         industry = rec.get("industry_sw", "—")
         ticker_label = f"{ticker} {name}" if name else ticker
 
-        # Consecutive days
+        # Consecutive days / re-entry signal (P4-2)
         consecutive_days = int(rec.get("consecutive_days", 0) or 0)
-        if consecutive_days >= 3:
+        # P4-2: REENTRY_SIGNAL — 曾被推荐后消失又重返, 标记为 "↻" 提示用户
+        rec_status = str(rec.get("consecutive_status", "") or "")
+        is_reentry = rec_status == "reentry_signal"
+        if is_reentry:
+            cons_str = f"{Fore.MAGENTA}{Style.BRIGHT}↻{consecutive_days}d{Style.RESET_ALL}"
+        elif consecutive_days >= 3:
             cons_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}d{Style.RESET_ALL}"
         elif consecutive_days == 2:
             cons_str = f"{Fore.YELLOW}{consecutive_days}d{Style.RESET_ALL}"
