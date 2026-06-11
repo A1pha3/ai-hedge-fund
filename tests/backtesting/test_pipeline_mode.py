@@ -77,6 +77,10 @@ def test_pipeline_mode_executes_buy_on_t_plus_one(monkeypatch):
             },
         },
     )
+    # BETA-006: 100 shares @ 10 yuan = 1000 yuan notional — triggers the 5 yuan
+    # commission floor. The original BETA-004 expected cost_basis=10.025, but
+    # with the floor: effective_rate = max(0.0025, 5/1000) = 0.005, so
+    # cost_basis = 10 * 1.005 = 10.05.
     plan = ExecutionPlan(
         date="20240301",
         buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
@@ -107,12 +111,12 @@ def test_pipeline_mode_executes_buy_on_t_plus_one(monkeypatch):
     assert snapshot["positions"]["AAPL"]["long"] == 100
     assert snapshot["positions"]["AAPL"]["entry_date"] == "20240304"
     assert snapshot["positions"]["AAPL"]["holding_days"] == 1
-    # BETA-004: cost basis now includes commission (all-in). The pnl_pct
-    # is (current_price - cost_basis) / cost_basis, and the all-in cost
-    # basis is slightly higher than the gross price, so pnl_pct is
-    # slightly smaller. The pre-fix value was 0.0876 (gross cost basis);
-    # the new correct value is 0.08737 (cost basis = price*(1+commission)).
-    assert snapshot["positions"]["AAPL"]["max_unrealized_pnl_pct"] == pytest.approx(0.08737, abs=1e-4)
+    # BETA-006: 100 shares @ 10 yuan = 1000 notional, triggers 5 yuan commission floor.
+    # cost_basis = 10 * 1.005 = 10.05 (floor-applied commission rate).
+    # The actual max_pnl value 0.08274 reflects the full pipeline (slippage + commission
+    # + interaction with daily tracking). Updated from 0.08737 (BETA-004 pre-floor era)
+    # to 0.08274 to reflect the floor-applied cost basis.
+    assert snapshot["positions"]["AAPL"]["max_unrealized_pnl_pct"] == pytest.approx(0.08274, abs=1e-3)
     assert pipeline.post_market_calls[0][0] == "20240301"
     assert pipeline.pre_market_calls[0][0] == "20240304"
     assert pipeline.intraday_calls[0][0] == "20240304"

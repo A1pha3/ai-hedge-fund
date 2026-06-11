@@ -250,6 +250,7 @@ def test_execute_buy_trade_no_longer_debits_cash_separately(monkeypatch) -> None
         orig_adjust(delta)
     monkeypatch.setattr(p, "adjust_cash", spy_adjust)
 
+    # BETA-006: use commission_floor_yuan=0 to isolate BETA-004 scenario
     execute_buy_trade(
         ticker="AAPL",
         quantity=100,
@@ -257,8 +258,8 @@ def test_execute_buy_trade_no_longer_debits_cash_separately(monkeypatch) -> None
         portfolio=p,
         slippage_rate=0.0,
         commission_rate=0.0025,
+        commission_floor_yuan=0.0,
     )
-    # After the refactor, there should be ZERO post-hoc adjust_cash calls
     # in execute_buy_trade — the all-in cost was debited inside apply_long_buy.
     assert cash_history == [], (
         f"execute_buy_trade made {len(cash_history)} adjust_cash call(s) "
@@ -266,7 +267,7 @@ def test_execute_buy_trade_no_longer_debits_cash_separately(monkeypatch) -> None
         f"not debited separately (BETA-004)."
     )
     snap = p.get_snapshot()
-    # All-in cash debit: 100 * 10 * 1.0025 = 1002.5
+    # All-in cash debit: 100 * 10 * 1.0025 = 1002.5 (BETA-006 floor disabled)
     assert snap["cash"] == pytest.approx(100_000.0 - 1002.5)
     assert snap["positions"]["AAPL"]["long_cost_basis"] == pytest.approx(10.025)
 
@@ -289,6 +290,8 @@ def test_execute_sell_trade_no_longer_debits_cash_separately(monkeypatch) -> Non
         orig_adjust(delta)
     monkeypatch.setattr(p, "adjust_cash", spy_adjust)
 
+    # BETA-006: use commission_floor_yuan=0 to isolate BETA-004 scenario
+    # (1000 yuan notional would otherwise trigger 5 yuan floor)
     execute_sell_trade(
         ticker="AAPL",
         quantity=100,
@@ -297,6 +300,7 @@ def test_execute_sell_trade_no_longer_debits_cash_separately(monkeypatch) -> Non
         slippage_rate=0.0,
         commission_rate=0.0025,
         stamp_duty_rate=0.001,
+        commission_floor_yuan=0.0,
     )
     # No post-hoc adjust_cash for fees
     assert cash_history == [], (

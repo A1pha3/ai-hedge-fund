@@ -6,10 +6,13 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class TradingConstraints:
     commission_rate: float = 0.00025
-    stamp_duty_rate: float = 0.001
+    # 中国自 2023-08-28 起印花税 (卖方单边) 从 0.1% 降至 0.05%
+    stamp_duty_rate: float = 0.0005
     base_slippage_rate: float = 0.0015
     low_liquidity_slippage_rate: float = 0.003
     low_liquidity_turnover_threshold: float = 50_000_000.0
+    # A 股最低佣金 5 元 (单笔), 不满 5 元按 5 元收
+    commission_floor_yuan: float = 5.0
 
 
 @dataclass(frozen=True)

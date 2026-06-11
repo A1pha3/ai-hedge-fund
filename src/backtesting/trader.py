@@ -61,6 +61,7 @@ class TradeExecutor:
                 slippage_rate,
                 self._constraints.commission_rate,
                 resolved_inputs.daily_turnover,
+                self._constraints.commission_floor_yuan,
             )
             self._last_trade_diagnostics = diagnostics if executed > 0 else {}
             return executed
@@ -78,6 +79,7 @@ class TradeExecutor:
                 self._constraints.stamp_duty_rate,
                 trade_date,
                 resolved_inputs.daily_turnover,
+                self._constraints.commission_floor_yuan,
             )
             self._last_trade_diagnostics = diagnostics if executed > 0 else {}
             return executed

@@ -99,6 +99,7 @@ def test_trade_executor_keeps_flat_slippage_when_turnover_is_missing():
             stamp_duty_rate=0.0,
             base_slippage_rate=0.01,
             low_liquidity_slippage_rate=0.01,
+            commission_floor_yuan=0.0,  # BETA-006: disable floor to isolate test scenario
         )
     )
 

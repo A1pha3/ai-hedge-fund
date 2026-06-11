@@ -34,6 +34,26 @@ def _resolve_execution_slippage_rate(
     return round(float(slippage_rate) * (1.0 + participation_ratio), 6)
 
 
+def _apply_commission_floor(
+    commission_rate: float,
+    quantity: float,
+    price: float,
+    floor_yuan: float = 5.0,
+) -> float:
+    """A-share 最低佣金 5 元/笔 — 当名义金额 * commission_rate < 5 时,
+    等效提升 commission_rate 使其至少收取 5 元。
+
+    等效佣金率 = max(rate, floor / notional)
+    notional = abs(quantity) * price
+    """
+    # 用绝对值计算 notional, 避免卖出/负数量造成下限失效
+    notional = abs(float(quantity)) * float(price)
+    if notional <= 0 or floor_yuan <= 0:
+        return float(commission_rate)
+    floor_rate = float(floor_yuan) / notional
+    return max(float(commission_rate), floor_rate)
+
+
 def _resolve_buy_execution(quantity: float, current_price: float, portfolio: Portfolio, slippage_rate: float, commission_rate: float, daily_turnover: float | None = None) -> tuple[int, float]:
     requested_quantity = max(int(quantity), 0)
     base_price = float(current_price)
@@ -83,11 +103,15 @@ def execute_buy_trade(
     slippage_rate: float,
     commission_rate: float,
     daily_turnover: float | None = None,
+    commission_floor_yuan: float = 5.0,
 ) -> int:
     requested_quantity, executed_price = _resolve_buy_execution(quantity, current_price, portfolio, slippage_rate, commission_rate, daily_turnover)
     # BETA-004: commission is now internalized in apply_long_buy (cost basis
     # is all-in, cash debit is all-in). No post-hoc adjust_cash for fees.
-    return portfolio.apply_long_buy(ticker, requested_quantity, executed_price, commission_rate=commission_rate)
+    # BETA-006: Apply 5 yuan commission floor — small trades would otherwise
+    # pay sub-floor commission, underestimating real cost.
+    effective_rate = _apply_commission_floor(commission_rate, requested_quantity, executed_price, commission_floor_yuan)
+    return portfolio.apply_long_buy(ticker, requested_quantity, executed_price, commission_rate=effective_rate)
 
 
 def execute_sell_trade(
@@ -100,6 +124,7 @@ def execute_sell_trade(
     stamp_duty_rate: float,
     trade_date: str | None = None,
     daily_turnover: float | None = None,
+    commission_floor_yuan: float = 5.0,
 ) -> int:
     positions = portfolio.get_positions()
     # T+1 enforcement: block same-day sell if trade_date and entry_date are both provided and equal
@@ -115,11 +140,13 @@ def execute_sell_trade(
     # BETA-004: commission + stamp duty are internalized in apply_long_sell
     # (net proceeds price, realized gain computed on net). No post-hoc
     # adjust_cash for fees.
+    # BETA-006: Apply 5 yuan commission floor to sell side too.
+    effective_rate = _apply_commission_floor(commission_rate, executable_quantity, executed_price, commission_floor_yuan)
     return portfolio.apply_long_sell(
         ticker,
         executable_quantity,
         executed_price,
-        commission_rate=commission_rate,
+        commission_rate=effective_rate,
         stamp_duty_rate=stamp_duty_rate,
     )
 
