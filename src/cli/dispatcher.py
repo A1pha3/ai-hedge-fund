@@ -658,7 +658,6 @@ def _resolve_check_freshness(argv: list[str]) -> int | None:
         pass
     report = check_data_freshness(trade_date=trade_date, reports_dir=reports_dir)
     print(_render_freshness_summary(report["fresh"], report["warnings"]))
-    status = "PASS" if report["fresh"] else "WARNING"
     return 0
 
 
@@ -706,8 +705,6 @@ def _resolve_outlier_detect(argv: list[str]) -> int | None:
     """P8-2 outlier detection. Supports --top-n, --threshold."""
     if "--outlier-detect" not in argv:
         return None
-    top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
-    threshold = _parse_float(_get_kv(argv, "--threshold"), 0.30)
     from src.screening.outlier_detect import run_outlier_detect
     return run_outlier_detect(argv)
 
