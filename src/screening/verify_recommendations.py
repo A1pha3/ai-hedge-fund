@@ -22,12 +22,12 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src.utils.numeric import optional_float as _optional_float, safe_float as _safe_float
+from src.utils.numeric import optional_float as _optional_float
 
 logger = logging.getLogger(__name__)
 

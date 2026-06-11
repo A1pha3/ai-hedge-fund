@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 import concurrent.futures
-from dataclasses import dataclass
 import logging
 import math
 import os
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from statistics import median
 from time import perf_counter
 
@@ -17,16 +16,9 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-from src.agents.growth_agent import (
-    analyze_insider_conviction,
-)
 from src.screening.strategy_scorer_utils import (
-    EVENT_SUBFACTOR_WEIGHTS,
-    POSITIVE_NEWS_KEYWORDS,
-    NEGATIVE_NEWS_KEYWORDS,
     aggregate_sub_factors,
     derive_completeness,
-    _make_sub_factor,
 )
 from src.screening.strategy_scorer_trend import (
     score_trend_strategy,
@@ -37,15 +29,8 @@ from src.screening.strategy_scorer_mean_reversion import (
 from src.screening.strategy_scorer_fundamental import (
     score_fundamental_strategy,
 )
-from src.data.models import CompanyNews, InsiderTrade
-from src.screening.models import CandidateStock, StrategySignal, SubFactor
+from src.screening.models import CandidateStock, StrategySignal
 from src.tools.akshare_api import get_intraday_bars, get_intraday_ticks, get_lhb_detail, get_lhb_institutional_stats, get_money_flow
-from src.tools.api import (
-    get_company_news,
-    get_insider_trades,
-    get_prices,
-    prices_to_df,
-)
 from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_sw_industry_classification
 
 # Re-export for backward compatibility
@@ -94,19 +79,9 @@ SCORE_BATCH_CONCURRENCY = int(os.getenv("SCORE_BATCH_CONCURRENCY", "4"))
 
 # R20.2: Event sentiment helpers extracted for readability
 from src.screening.strategy_scorer_event_sentiment_helpers import (  # noqa: E402
-    EventFreshnessSnapshot,
-    compute_event_decay,
     score_event_sentiment_strategy,
     _empty_signal,
     _load_price_frame,
-    _score_news_sentiment,
-    _score_insider_conviction,
-    _score_event_freshness,
-    _score_news_article,
-    _build_event_freshness_snapshot,
-    _build_event_freshness_factor,
-    _count_event_keyword_hits,
-    _resolve_news_article_days_old,
 )
 
 

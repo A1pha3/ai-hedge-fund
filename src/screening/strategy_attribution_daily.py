@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from src.utils.numeric import safe_float as _safe_float

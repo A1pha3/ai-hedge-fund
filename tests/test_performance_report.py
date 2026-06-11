@@ -366,6 +366,28 @@ def test_top_winners_losers_empty():
     assert _find_top_winners_losers([]) == ([], [])
 
 
+def test_top_winners_losers_pnl_zero_does_not_fall_through():
+    """GAMMA regression: pnl=0 must not fall through to return_pct via `or` trap.
+
+    A trade with pnl=0 and return_pct=0.05 should report return_pct=0 (from pnl),
+    not 0.05 (from the fallback). The pnl field is the authoritative source.
+    """
+    trades = [
+        {"ticker": "A", "name": "Flat", "pnl": 0.0, "return_pct": 0.05, "strategy": "trend"},
+        {"ticker": "B", "name": "Win", "pnl": 0.10, "return_pct": 0.01, "strategy": "trend"},
+        {"ticker": "C", "name": "Loss", "pnl": -0.05, "return_pct": 0.02, "strategy": "trend"},
+    ]
+    winners, losers = _find_top_winners_losers(trades, top_n=3)
+    # pnl=0 trade should NOT appear in winners (it's flat, not positive)
+    assert all(w["ticker"] != "A" for w in winners), "Flat trade (pnl=0) should not be a winner"
+    # pnl=0 trade should NOT appear in losers (it's flat, not negative)
+    assert all(l["ticker"] != "A" for l in losers), "Flat trade (pnl=0) should not be a loser"
+    # Winner should be B with pnl=0.10 (not A with return_pct=0.05)
+    assert len(winners) == 1
+    assert winners[0]["ticker"] == "B"
+    assert math.isclose(winners[0]["return_pct"], 0.10, abs_tol=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # Test 9: 推荐命中率
 # ---------------------------------------------------------------------------

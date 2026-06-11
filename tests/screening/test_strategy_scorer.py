@@ -8,7 +8,8 @@ import pytest
 
 from src.data.models import CompanyNews, FinancialMetrics, InsiderTrade
 from src.screening.models import CandidateStock, StrategySignal, SubFactor
-from src.screening.strategy_scorer import _score_event_freshness, _score_news_sentiment, aggregate_sub_factors, score_batch, score_event_sentiment_strategy, score_fundamental_strategy, score_mean_reversion_strategy, score_trend_strategy
+from src.screening.strategy_scorer import aggregate_sub_factors, score_batch, score_event_sentiment_strategy, score_fundamental_strategy, score_mean_reversion_strategy, score_trend_strategy
+from src.screening.strategy_scorer_event_sentiment_helpers import _score_event_freshness, _score_news_sentiment
 from src.screening.strategy_scorer_trend import _score_adx_strength, _score_ema_alignment, _score_long_trend_alignment
 from src.screening.strategy_scorer_fundamental import _apply_fundamental_quality_cap, _score_profitability
 import src.screening.strategy_scorer as strategy_scorer_module
@@ -1046,15 +1047,12 @@ def test_score_event_sentiment_strategy_builds_sub_factors_from_loaded_data(monk
         captured["trade_loader"] = {"ticker": ticker, "start_date": start_date, "end_date": end_date, "limit": limit}
         return trades
 
-    monkeypatch.setattr(strategy_scorer_module, "get_company_news", fake_news_loader)
-    monkeypatch.setattr(strategy_scorer_module, "get_insider_trades", fake_trades_loader)
-    # R20.2: also patch helpers module since score_event_sentiment_strategy now lives there
     import src.screening.strategy_scorer_event_sentiment_helpers as _esh
     monkeypatch.setattr(_esh, "get_company_news", fake_news_loader)
     monkeypatch.setattr(_esh, "get_insider_trades", fake_trades_loader)
-    monkeypatch.setattr(strategy_scorer_module, "_score_news_sentiment", lambda items, trade_date: SubFactor(name="news_sentiment", direction=1, confidence=80.0, weight=0.55, metrics={"news_count": len(items), "trade_date": trade_date}))
-    monkeypatch.setattr(strategy_scorer_module, "_score_insider_conviction", lambda items: SubFactor(name="insider_conviction", direction=1, confidence=40.0, weight=0.25, metrics={"trade_count": len(items)}))
-    monkeypatch.setattr(strategy_scorer_module, "_score_event_freshness", lambda items, trade_date: SubFactor(name="event_freshness", direction=0, confidence=25.0, weight=0.20, metrics={"fresh_news_count": len(items), "trade_date": trade_date}))
+    monkeypatch.setattr(_esh, "_score_news_sentiment", lambda items, trade_date: SubFactor(name="news_sentiment", direction=1, confidence=80.0, weight=0.55, metrics={"news_count": len(items), "trade_date": trade_date}))
+    monkeypatch.setattr(_esh, "_score_insider_conviction", lambda items: SubFactor(name="insider_conviction", direction=1, confidence=40.0, weight=0.25, metrics={"trade_count": len(items)}))
+    monkeypatch.setattr(_esh, "_score_event_freshness", lambda items, trade_date: SubFactor(name="event_freshness", direction=0, confidence=25.0, weight=0.20, metrics={"fresh_news_count": len(items), "trade_date": trade_date}))
 
     def fake_aggregate(factors):
         captured["factors"] = factors
@@ -1096,7 +1094,8 @@ def test_score_news_sentiment_returns_incomplete_when_no_news():
 
 
 def test_score_news_article_builds_positive_fresh_article_metrics():
-    metrics = strategy_scorer_module._score_news_article(
+    import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+    metrics = _esh._score_news_article(
         _news_item("profit growth beat", "2026-03-05", "record upgrade and contract"),
         datetime(2026, 3, 5),
     )
@@ -1108,7 +1107,8 @@ def test_score_news_article_builds_positive_fresh_article_metrics():
 
 
 def test_score_news_article_downweights_stale_negative_article():
-    metrics = strategy_scorer_module._score_news_article(
+    import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+    metrics = _esh._score_news_article(
         _news_item("downgrade warning", "2026-03-01", "fraud risk and weak demand"),
         datetime(2026, 3, 5),
     )

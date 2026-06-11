@@ -64,7 +64,7 @@ from src.screening.candidate_pool_persistence_helpers import (
     write_candidate_pool_snapshot as write_candidate_pool_snapshot_helper,
 )
 from src.screening.models import CandidateStock
-from src.tools.ashare_board_utils import BEIJING_EXCHANGE_SYMBOL_PREFIXES, build_beijing_exchange_mask, is_beijing_exchange_stock
+from src.tools.ashare_board_utils import build_beijing_exchange_mask
 from src.tools.tushare_api import (
     _get_pro,
     _cached_tushare_dataframe_call,

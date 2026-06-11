@@ -61,14 +61,19 @@ def _histogram_var(returns: Sequence[float], confidence: float) -> float:
 
 
 def _histogram_cvar(returns: Sequence[float], confidence: float) -> float:
-    """Historical-simulation CVaR / Expected Shortfall (positive loss number)."""
+    """Historical-simulation CVaR / Expected Shortfall (positive loss number).
+
+    CVaR averages the losses strictly *beyond* the VaR quantile — i.e. the
+    ``tail_index`` worst observations (not including the VaR boundary itself).
+    This matches the standard definition of Expected Shortfall (Acerbi 2002).
+    """
     cleaned = sorted(_safe_float(r) for r in returns)
     if not cleaned:
         return 0.0
     tail_index = max(0, min(len(cleaned) - 1, int(math.floor((1.0 - confidence) * len(cleaned)))))
     if tail_index == 0:
         return max(0.0, -cleaned[0])
-    tail = cleaned[: tail_index + 1]
+    tail = cleaned[:tail_index]
     return max(0.0, -sum(tail) / len(tail))
 
 

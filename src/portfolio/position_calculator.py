@@ -104,6 +104,17 @@ def calculate_position(
     if watchlist_edge_execution_ratio_override is not None:
         watchlist_edge_execution_ratio = float(watchlist_edge_execution_ratio_override)
 
+    # BETA (R20.32): reject NaN / Inf score_final up-front. NaN comparisons
+    # always return False in Python, so a NaN score would pass the
+    # ``score_final < watchlist_min_score`` gate and then fall through to
+    # the ``elif score_final >= standard_execution_score`` / watchlist_edge
+    # branch (also False), ultimately defaulting to ``execution_ratio = 0.0``
+    # at line 156. The bigger problem: NaN poisons every downstream numeric
+    # computation (base_shares, final_shares, amount) silently, producing
+    # garbage PositionPlan objects. Reject non-finite scores before any math.
+    if not math.isfinite(float(score_final)):
+        return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="score", score_final=float(score_final), execution_ratio=0.0, quality_score=quality_score)
+
     if current_price <= 0 or portfolio_nav <= 0 or score_final < watchlist_min_score:
         return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="score", score_final=score_final, execution_ratio=0.0, quality_score=quality_score)
 

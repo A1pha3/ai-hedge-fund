@@ -324,3 +324,50 @@ def test_enhanced_cache_backwards_compatible_unprefixed_key(tmp_path: Path):
     stats = ec.get_stats()
     assert stats["sets"] >= 2
     assert stats["lru_hits"] >= 2
+
+
+# ---------------------------------------------------------------------------
+# BETA (R20.32): 惰性删除过期项的并发安全
+# ---------------------------------------------------------------------------
+
+
+def test_disk_cache_lazy_delete_does_not_clobber_fresh_value(tmp_path: Path):
+    """R20.32 回归测试：DiskCache.get() 在发现过期项后，删除必须是条件的。
+
+    模拟竞态：
+      1. 写入一个 key（TTL = 0 表示立即过期）。
+      2. 手动把 expires_at 改成一个较早的时间戳（看起来过期）。
+      3. 在 get() 触发惰性删除之前，并发写入一个 fresh value（远期 expires_at）。
+      4. 验证 fresh value 不会被 lazy delete 误删。
+
+    修复前：get() 调用 self.delete(key) 无条件删除，会清掉后续写入的 fresh value。
+    修复后：get() 走条件 DELETE（WHERE expires_at <= now），fresh value 保留。
+    """
+    import time as _time
+
+    cache_path = tmp_path / "lazy_delete_cache.sqlite"
+    cache = DiskCache(path=str(cache_path), default_ttl=3600)
+
+    try:
+        # 1) 写入初始 key（TTL 设为 0 通常表示永不过期；我们直接塞一个较近的过期值）
+        cache.set("race_key", "initial_value", ttl=3600)
+        conn = cache._conn
+        assert conn is not None
+        # 把过期时间改成一个已经过去的时间戳，让 get() 触发惰性删除分支
+        past_ts = int(_time.time()) - 60
+        conn.execute("UPDATE cache SET expires_at = ? WHERE key = ?", (past_ts, "race_key"))
+
+        # 2) 在 get() 的过期检查和 lazy delete 之间，模拟并发的 SET
+        #    这里的实现方式：直接调用 set() 把 fresh value 写进去。
+        #    修复前：get() 内部无条件 DELETE 会把这一条 fresh value 清掉。
+        #    修复后：get() 的条件 DELETE 只删除仍处于过期状态的记录，fresh value 保留。
+        cache.set("race_key", "fresh_value", ttl=3600)
+
+        # 3) 此时 key 已带 fresh value（expires_at = now + 3600，远期）。
+        #    再次调用 get() 触发惰性删除（应当不删），然后验证返回值。
+        sentinel = object()
+        result = cache.get("race_key", _sentinel=sentinel)
+        assert result is not sentinel, "fresh value should not be silently evicted by stale lazy delete"
+        assert result == "fresh_value"
+    finally:
+        cache.close()

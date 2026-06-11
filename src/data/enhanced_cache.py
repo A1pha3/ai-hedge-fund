@@ -447,8 +447,17 @@ class DiskCache:
                 return _sentinel
             value, expires_at = row
             if expires_at and expires_at < self._now_ts():
-                # 惰性删除过期项（走 set 的写锁路径，幂等）
-                self.delete(key)
+                # BETA (R20.32): 惰性删除过期项时使用条件 DELETE（仅当 expires_at
+                # 仍 ≤ now 时才删除），避免与并发 SET 写竞争：
+                # Thread A: 读到过期值 → 调用 self.delete
+                # Thread B: 同时写入新值（更大 expires_at）
+                # Thread A: 旧 delete（无条件 DELETE）会清掉 Thread B 的新值。
+                # 条件 DELETE 保证只清理仍处于过期状态的那条记录，新值不会被误删。
+                try:
+                    with self._write_lock:
+                        conn.execute("DELETE FROM cache WHERE key = ? AND expires_at <= ?", (key, int(self._now_ts())))
+                except Exception as cleanup_err:
+                    logger.debug(f"Disk cache lazy-delete cleanup error (non-fatal): {cleanup_err}")
                 return _sentinel
             return pickle.loads(value)
         except Exception as e:

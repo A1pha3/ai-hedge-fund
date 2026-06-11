@@ -11,11 +11,11 @@
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
-from src.screening.industry_rotation import IndustrySignal, calculate_industry_rotation
-from src.utils.numeric import coerce_score_b as _safe_score_b, safe_float as _safe_float
+from src.screening.industry_rotation import calculate_industry_rotation
+from src.utils.numeric import safe_float as _safe_float
 
 
 @dataclass

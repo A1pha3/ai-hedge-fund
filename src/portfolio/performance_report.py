@@ -359,7 +359,8 @@ def _find_top_winners_losers(trades: Sequence[Mapping[str, Any]], top_n: int = 3
     for trade in trades:
         ticker = str(trade.get("ticker", "") or "")
         name = str(trade.get("name", "") or "")
-        pnl = _safe_float(trade.get("pnl") or trade.get("return_pct"), 0.0)
+        # Use _resolve_trade_pnl to correctly handle pnl=0 (avoid `or` falsy trap).
+        pnl = _resolve_trade_pnl(trade)
         scored.append({"ticker": ticker, "name": name, "return_pct": pnl})
     scored.sort(key=lambda x: x["return_pct"], reverse=True)
     winners = [{"ticker": s["ticker"], "name": s["name"], "return_pct": s["return_pct"]} for s in scored[:top_n] if s["return_pct"] > 0]

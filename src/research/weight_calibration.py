@@ -16,9 +16,7 @@ P3-2 在此基础上增加"权重校准"功能:
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
-from typing import Any
-
+from dataclasses import dataclass, field
 from src.research.factor_ic_analysis import (
     FactorICResult,
     compute_factor_ic,

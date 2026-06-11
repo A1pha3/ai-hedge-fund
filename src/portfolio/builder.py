@@ -15,11 +15,10 @@ P3-4 在此基础上提供"组合层"建议:
 from __future__ import annotations
 
 import logging
-import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
-from src.utils.numeric import coerce_score_b as _safe_score_b, safe_float as _safe_float
+from src.utils.numeric import safe_float as _safe_float
 
 logger = logging.getLogger(__name__)
 

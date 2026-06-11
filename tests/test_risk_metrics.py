@@ -399,3 +399,37 @@ def test_request_model_validation() -> None:
     # var_horizon_days out of range
     with pytest.raises(Exception):
         RiskSnapshotRequest(var_horizon_days=99)
+
+
+# ---------------------------------------------------------------------------
+# GAMMA regression: CVaR off-by-one tail
+# ---------------------------------------------------------------------------
+
+
+def test_cvar_tail_excludes_var_boundary_observation() -> None:
+    """CVaR must average the tail strictly *beyond* VaR, not including the VaR boundary.
+
+    With 20 sorted returns at 95% confidence:
+      tail_index = floor(0.05 * 20) = 1
+      VaR  = -cleaned[1]  (2nd worst loss)
+      CVaR should average cleaned[0:1] (the single worst loss), NOT cleaned[0:2].
+    """
+    from src.portfolio.risk_metrics import _histogram_cvar, _histogram_var
+
+    # 20 returns sorted ascending: -0.10, -0.09, -0.08, ... , 0.08, 0.09
+    returns = [i * 0.01 for i in range(-10, 10)]  # 20 values
+
+    var_95 = _histogram_var(returns, 0.95)
+    cvar_95 = _histogram_cvar(returns, 0.95)
+
+    # VaR at 95%: tail_index = floor(0.05*20) = 1, so VaR = -cleaned[1] = 0.09
+    assert math.isclose(var_95, 0.09, abs_tol=1e-6)
+
+    # CVaR should average only the single worst observation: -cleaned[0] = 0.10
+    # (NOT the average of cleaned[0] and cleaned[1] = 0.095)
+    assert math.isclose(cvar_95, 0.10, abs_tol=1e-6), (
+        f"CVaR={cvar_95} should be 0.10 (single worst), not 0.095 (average of 2)"
+    )
+
+    # CVaR must be >= VaR (tail risk is always at least as bad as VaR)
+    assert cvar_95 >= var_95

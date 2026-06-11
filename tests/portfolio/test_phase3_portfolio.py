@@ -1,5 +1,7 @@
 """Phase 3 组合风控核心测试。"""
 
+import math
+
 import pytest
 
 import src.portfolio.exit_manager as exit_manager_module
@@ -145,6 +147,52 @@ def test_nan_avg_volume_20d_does_not_bypass_liquidity_constraint():
     assert plan.shares == 0
     assert plan.amount == 0.0
     assert plan.constraint_binding == "liquidity"
+
+
+def test_nan_score_final_returns_zero_position_plan():
+    """BETA (R20.32) 回归测试: NaN score_final 必须被拒绝为 0 股 plan.
+
+    修复前: ``score_final < watchlist_min_score`` 对 NaN 返回 False,
+    通过了 score gate。后续 ``elif score_final >= standard_execution_score``
+    也返回 False, 落到 ``else: execution_ratio = 0.0``, 但中间的所有数值
+    计算 (base_shares = allowed_amount / current_price, final_shares = ...)
+    都被 NaN 污染。最终 plan 的 shares / amount 是 NaN 而非 0, 会被
+    下游误当成合法仓位。
+
+    修复后: 非有限 score_final 在函数入口就被拒绝, 直接返回 shares=0
+    且 amount=0.0 的 plan, 与低于 watchlist_min_score 的情况行为一致。
+    """
+    plan = calculate_position(
+        ticker="300724",
+        current_price=20.0,
+        score_final=float("nan"),
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=1_000.0,
+        industry_remaining_quota=25_000,
+    )
+    assert plan.shares == 0
+    assert plan.amount == 0.0
+    assert math.isfinite(plan.amount) or plan.amount == 0.0
+    assert plan.execution_ratio == 0.0
+    assert plan.constraint_binding == "score"
+
+
+def test_inf_score_final_returns_zero_position_plan():
+    """BETA (R20.32): +Inf / -Inf score_final 也必须被拒绝."""
+    for bad_score in (float("inf"), float("-inf")):
+        plan = calculate_position(
+            ticker="300724",
+            current_price=20.0,
+            score_final=bad_score,
+            portfolio_nav=100_000,
+            available_cash=50_000,
+            avg_volume_20d=1_000.0,
+            industry_remaining_quota=25_000,
+        )
+        assert plan.shares == 0, f"+/-Inf score_final should yield 0 shares, got {plan.shares} for {bad_score}"
+        assert plan.amount == 0.0
+        assert plan.execution_ratio == 0.0
 
 
 def test_existing_position_ratio_blocks_additional_single_name_pyramiding():
