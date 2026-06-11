@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import concurrent.futures
 import datetime
 import functools
@@ -277,6 +278,10 @@ def execute_wrapped_ashare_request(
 # 旧实现每次调用都 ThreadPoolExecutor(max_workers=1)，超时后 shutdown(wait=False)
 # 无法杀死线程，100 次连续超时会泄漏 ~100 个线程 (~800MB)。
 _SHARED_TIMEOUT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+# BETA-008: 注册 atexit 清理 — 非守护线程会延迟进程退出。Python 默认不会
+# 在解释器关闭时调用 ThreadPoolExecutor.shutdown()。wait=False 让清理不阻塞。
+atexit.register(_SHARED_TIMEOUT_EXECUTOR.shutdown, wait=False)
 
 
 def _call_with_timeout(*, func, timeout_seconds: float, timeout_label: str, **kwargs):

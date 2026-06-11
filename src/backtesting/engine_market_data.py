@@ -185,7 +185,18 @@ class MarketDataLoader:
                 if price_data.empty:
                     logger.warning("load_current_prices: no price data for ticker=%s (%s ~ %s)", ticker, previous_date_str, current_date_str)
                     continue
-                current_prices[ticker] = float(price_data.iloc[-1]["close"])
+                row = price_data.iloc[-1]
+                # BETA-007: 停牌检测 — volume=0 表示当日未成交 (停牌), 不可交易。
+                # 若包含则回测会在停牌日按 carry-forward 价格"虚拟成交"导致结果失真。
+                # 仅当 active trade_date 有 volume 列且为 0 时跳过, 兼容数据源缺列场景。
+                volume = row.get("volume")
+                if volume is not None and float(volume) <= 0:
+                    logger.debug(
+                        "load_current_prices: ticker=%s 停牌或零成交 (%s), 跳过",
+                        ticker, current_date_str,
+                    )
+                    continue
+                current_prices[ticker] = float(row["close"])
             except Exception:
                 logger.warning("load_current_prices: exception loading price for ticker=%s (%s ~ %s)", ticker, previous_date_str, current_date_str, exc_info=True)
                 continue
