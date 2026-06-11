@@ -1,4 +1,4 @@
-"""Tests for decision_flow.py -- P8-1."""
+"""Tests for decision_flow.py -- P8-1 + P9-2."""
 
 from __future__ import annotations
 
@@ -38,10 +38,36 @@ class TestDecisionFlow:
         result = run_decision_flow(top_n=10, reports_dir=reports_dir)
         assert "error" not in result
         assert result["recommendation_count"] == 1
+        # Original steps
         assert "freshness" in result
         assert "consistency" in result
         assert "dynamic_threshold" in result
         assert "daily_delta" in result
+        # P9-2 additions
+        assert "outliers" in result
+        assert "outlier_count" in result
+        assert "expected_returns" in result
+
+    def test_outlier_count_is_int(self, tmp_path: Path) -> None:
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        today = _make_report("20260611", [_make_rec("000001", "A", 0.8)])
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
+
+        result = run_decision_flow(top_n=10, reports_dir=reports_dir)
+        assert isinstance(result.get("outlier_count"), int)
+
+    def test_expected_returns_in_result(self, tmp_path: Path) -> None:
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        today = _make_report("20260611", [_make_rec("000001", "A", 0.8)])
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
+
+        result = run_decision_flow(top_n=10, reports_dir=reports_dir)
+        er = result.get("expected_returns", {})
+        assert "items" in er
+        assert "total_samples" in er
+        assert "lookback_days" in er
 
     def test_render_summary(self) -> None:
         flow = {
@@ -49,8 +75,22 @@ class TestDecisionFlow:
             "recommendation_count": 5,
             "freshness": {"fresh": True},
             "high_consistency_count": 4,
+            "outlier_count": 0,
         }
         output = render_decision_flow_summary(flow)
         assert "20260611" in output
         assert "5" in output
         assert "PASS" in output
+        assert "Outliers: 0" in output
+
+    def test_render_summary_with_outliers(self) -> None:
+        flow = {
+            "trade_date": "20260611",
+            "recommendation_count": 3,
+            "freshness": {"fresh": False},
+            "high_consistency_count": 1,
+            "outlier_count": 2,
+        }
+        output = render_decision_flow_summary(flow)
+        assert "WARNING" in output
+        assert "Outliers: 2" in output

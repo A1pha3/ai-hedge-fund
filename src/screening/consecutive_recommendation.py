@@ -297,12 +297,10 @@ def compute_consecutive_recommendations(
         # P4-2: Re-entry detection — 标的曾在窗口内以 score_b >= 0.3 被推荐,
         # 之后消失 (不在中间某天的推荐中), 现在又出现。
         # 这种 "去而复返" 模式在 A 股中是高置信信号 (回调到位后重启)。
-        is_reentry = False
         if status == RecommendationStatus.BROKEN_STREAK and len(days) >= 2:
             # 检查历史中是否有高 score_b 推荐且中间有间断
             max_historical_score = max((d.get("score_b", 0.0) or 0.0) for d in days)
             if max_historical_score >= 0.30:
-                is_reentry = True
                 status = RecommendationStatus.REENTRY_SIGNAL
                 bonus = 5.0  # 中等偏高 — 不如连续 3 天 (10.0), 但强于首次出现 (0.0)
 

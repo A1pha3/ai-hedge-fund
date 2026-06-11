@@ -2488,7 +2488,6 @@ def run_weight_calibration(lookback_days: int = 30) -> int:
         退出码 (0=成功, 1=无数据)
     """
     from colorama import Fore, Style
-    import json
 
     from src.screening.consecutive_recommendation import resolve_report_dir
     from src.research.weight_calibration import (
