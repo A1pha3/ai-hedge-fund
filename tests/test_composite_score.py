@@ -20,7 +20,7 @@ def _write_reports(tmp_dir: Path, reports: dict[str, list[dict]]) -> None:
     for date_str, recs in reports.items():
         path = tmp_dir / f"auto_screening_{date_str}.json"
         path.write_text(
-            json.dumps({"trade_date": date_str, "recommendations": recs}),
+            json.dumps({"date": date_str, "recommendations": recs}),
             encoding="utf-8",
         )
 

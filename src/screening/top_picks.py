@@ -291,7 +291,7 @@ def run_top_picks(
 
     report_data = json.loads(report_path.read_text(encoding="utf-8"))
     recs = (report_data.get("recommendations") or [])[:count * 3]  # Load more for filtering
-    trade_date = report_data.get("trade_date", "")
+    trade_date = report_data.get("date", "")
     market_regime = _render_market_gate(trade_date)
 
     if not recs:

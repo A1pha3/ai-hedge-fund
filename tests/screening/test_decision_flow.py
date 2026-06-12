@@ -10,7 +10,7 @@ from src.screening.decision_flow import run_decision_flow, render_decision_flow_
 
 
 def _make_report(date_str: str, recs: list[dict]) -> dict:
-    return {"trade_date": date_str, "recommendations": recs}
+    return {"date": date_str, "recommendations": recs}
 
 
 def _make_rec(ticker: str, name: str, score_b: float, signals: dict | None = None) -> dict:

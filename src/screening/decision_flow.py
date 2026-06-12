@@ -76,7 +76,7 @@ def run_decision_flow(
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     recs = (report.get("recommendations") or [])[:top_n]
-    trade_date = report.get("trade_date", date.today().strftime("%Y%m%d"))
+    trade_date = report.get("date", date.today().strftime("%Y%m%d"))
     print(f"  {Fore.GREEN}✓{Style.RESET_ALL} Loaded {len(recs)} recommendations (date: {trade_date})")
     flow_result["trade_date"] = trade_date
     flow_result["recommendation_count"] = len(recs)

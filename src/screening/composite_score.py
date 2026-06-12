@@ -141,7 +141,7 @@ def compute_composite_scores(
 
     report_data = json.loads(report_path.read_text(encoding="utf-8"))
     recs = (report_data.get("recommendations") or [])[:top_n]
-    trade_date = report_data.get("trade_date", "")
+    trade_date = report_data.get("date", "")
 
     return compute_composite_scores_for_recommendations(
         recommendations=recs,

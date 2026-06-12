@@ -37,7 +37,7 @@ def _make_rec(ticker: str, name: str, score_b: float, industry: str = "电子") 
 def _write_report(tmp_dir: Path, recs: list[dict], date: str = "20260610") -> None:
     path = tmp_dir / f"auto_screening_{date}.json"
     path.write_text(
-        json.dumps({"trade_date": date, "recommendations": recs}),
+        json.dumps({"date": date, "recommendations": recs}),
         encoding="utf-8",
     )
 
