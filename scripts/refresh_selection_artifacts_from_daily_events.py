@@ -14,10 +14,10 @@ from src.execution.daily_pipeline_catalyst_diagnostics_helpers import _build_cat
 from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_config, _build_upstream_shadow_observation_entry, _qualifies_short_trade_boundary_candidate
 from src.execution.models import ExecutionPlan
 from src.paper_trading.btst_reporting import (
-    _build_watch_candidate_historical_prior,
-    _collect_historical_watch_candidate_rows,
     generate_and_register_btst_followup_artifacts,
 )
+from src.paper_trading._btst_reporting.historical_prior import _build_watch_candidate_historical_prior
+from src.paper_trading._btst_reporting.historical_prior_collection import _collect_historical_watch_candidate_rows
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 from src.research.artifacts import FileSelectionArtifactWriter, _merge_supplemental_short_trade_entries
 from src.screening.candidate_pool_frontier_helpers import build_candidate_pool_frontier_entries

@@ -7,7 +7,7 @@ from typing import Any
 
 from scripts.btst_analysis_utils import build_surface_summary, extract_btst_price_outcome
 from scripts.btst_latest_followup_utils import load_btst_followup_by_ticker_for_report
-from src.paper_trading.btst_reporting import _collect_historical_watch_candidate_rows
+from src.paper_trading._btst_reporting.historical_prior_collection import _collect_historical_watch_candidate_rows
 
 
 REPORTS_DIR = Path("data/reports")

@@ -237,7 +237,6 @@ def _render_market_opportunity_index(
 
     verdicts = [build_front_door_verdict(p, market_regime=market_regime) for p in picks]
     buy_count = sum(1 for v in verdicts if v.get("action") == "BUY")
-    hold_count = sum(1 for v in verdicts if v.get("action") == "HOLD")
     total = len(picks)
 
     # High-quality: composite >= 0.5

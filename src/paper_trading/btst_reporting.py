@@ -101,17 +101,27 @@ from src.paper_trading._btst_reporting.entry_builders import (
 from src.paper_trading._btst_reporting.brief_resolver import (
     _resolve_brief_analysis as _resolve_brief_analysis_impl,
 )
+# Re-exported for test/script attribute access (module._name pattern)
 from src.paper_trading._btst_reporting.historical_prior import (  # noqa: F401
-    _collect_historical_watch_candidate_rows,
-    _extract_next_day_outcome,
-    _summarize_historical_opportunity_rows,
     _build_watch_candidate_historical_prior,
+)
+from src.paper_trading._btst_reporting.historical_prior_collection import (  # noqa: F401
+    _collect_historical_watch_candidate_rows,
     _apply_historical_prior_to_entries,
+)
+from src.paper_trading._btst_reporting.historical_prior_opportunity import (  # noqa: F401
+    _summarize_historical_opportunity_rows,
+)
+from src.paper_trading._btst_reporting.historical_prior_brief_enrichment import (  # noqa: F401
     _enrich_btst_brief_entries_with_history,
+)
+from src.paper_trading._btst_reporting.historical_prior_price import (  # noqa: F401
+    _extract_next_day_outcome,
 )
 from src.paper_trading._btst_reporting.pool_classifiers import (  # noqa: F401
     _partition_opportunity_pool_entries,
 )
+# API re-exports for test monkeypatching (test sets btst_reporting.get_price_data etc.)
 from src.tools.akshare_api import get_prices_robust  # noqa: F401
 from src.tools.api import get_price_data  # noqa: F401
 from src.paper_trading._btst_reporting.brief_rendering import (
