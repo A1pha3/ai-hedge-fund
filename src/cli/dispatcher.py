@@ -778,6 +778,24 @@ def _resolve_trend_resonance(argv: list[str]) -> int | None:
     return run_trend_resonance(argv)
 
 
+def _resolve_position_check(argv: list[str]) -> int | None:
+    """P15-1 position health check. Monitors held stocks for sell signals."""
+    if "--position-check" not in argv:
+        return None
+    from src.screening.position_health import run_position_check
+
+    return run_position_check(argv)
+
+
+def _resolve_strategy_report(argv: list[str]) -> int | None:
+    """P15-2 strategy performance report. Shows which strategies are working."""
+    if "--strategy-report" not in argv:
+        return None
+    from src.screening.strategy_report import run_strategy_report
+
+    return run_strategy_report(argv)
+
+
 def _resolve_top_picks(argv: list[str]) -> int | None:
     """P12-2 one-command top picks. Shows today's best buys."""
     if "--top-picks" not in argv:
@@ -838,6 +856,8 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--composite-score", _resolve_composite_score),
     ("--volume-confirm", _resolve_volume_confirm),
     ("--trend-resonance", _resolve_trend_resonance),
+    ("--position-check", _resolve_position_check),
+    ("--strategy-report", _resolve_strategy_report),
     ("--top-picks", _resolve_top_picks),
 ]
 
