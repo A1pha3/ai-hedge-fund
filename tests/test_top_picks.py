@@ -722,3 +722,50 @@ class TestVerdictDistribution:
         result = _render_verdict_distribution(picks, market_regime="crisis")
         assert "BUY" not in result
         assert "HOLD=1" in result
+
+
+# ---------------------------------------------------------------------------
+# Market opportunity index tests
+# ---------------------------------------------------------------------------
+
+
+class TestMarketOpportunityIndex:
+    """Tests for market opportunity traffic light."""
+
+    def _make_pick(self, score: float, t30: float = 10.0, t30_wr: float = 0.66, sample: int = 40, decision: str = "bullish") -> dict:
+        return {
+            "composite_score": score,
+            "score_b": score,
+            "decision": decision,
+            "expected_returns": {"t30": t30},
+            "win_rates": {"t30": t30_wr},
+            "bucket_sample_count": sample,
+        }
+
+    def test_go_signal_with_high_quality_buys(self) -> None:
+        from src.screening.top_picks import _render_market_opportunity_index
+        picks = [
+            self._make_pick(0.7, t30=8.0, t30_wr=0.62, sample=25),
+            self._make_pick(0.6, t30=6.0, t30_wr=0.58, sample=30),
+        ]
+        result = _render_market_opportunity_index(picks, market_regime="trend")
+        assert "GO" in result
+        assert "BUY 2/2" in result
+
+    def test_wait_signal_in_crisis(self) -> None:
+        from src.screening.top_picks import _render_market_opportunity_index
+        picks = [self._make_pick(0.3)]
+        result = _render_market_opportunity_index(picks, market_regime="crisis")
+        assert "WAIT" in result
+
+    def test_caution_signal_with_no_buys(self) -> None:
+        from src.screening.top_picks import _render_market_opportunity_index
+        picks = [self._make_pick(0.2, t30=-1.0, t30_wr=0.40, sample=5)]
+        result = _render_market_opportunity_index(picks, market_regime="range_bound")
+        assert "WAIT" in result or "CAUTION" in result
+
+    def test_empty_picks(self) -> None:
+        from src.screening.top_picks import _render_market_opportunity_index
+        result = _render_market_opportunity_index([], market_regime="trend")
+        assert "无候选" in result or "CAUTION" in result
+

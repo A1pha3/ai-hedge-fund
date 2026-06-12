@@ -203,6 +203,63 @@ def _render_verdict_distribution(picks: list[dict], market_regime: str) -> str:
     return "  分布: " + " | ".join(parts) if parts else ""
 
 
+
+
+# ---------------------------------------------------------------------------
+# Market opportunity index
+# ---------------------------------------------------------------------------
+
+
+def _render_market_opportunity_index(
+    picks: list[dict],
+    market_regime: str,
+) -> str:
+    """Compute and render a one-line market opportunity traffic light.
+
+    Combines market regime, pick quality, and verdict distribution into
+    a single GO / CAUTION / WAIT signal that tells the user whether today
+    is a good day to invest.
+
+    Logic:
+      - Crisis/risk_off regime → WAIT (unless all picks are high-quality)
+      - <50% picks are BUY and no high-quality picks → WAIT
+      - >=50% picks are BUY or >=1 high-quality pick in normal regime → GO
+      - Everything else → CAUTION
+    """
+    if not picks:
+        return f"  {Fore.YELLOW}⚡ 机会指数: 无候选 — CAUTION{Style.RESET_ALL}"
+
+    verdicts = [build_front_door_verdict(p, market_regime=market_regime) for p in picks]
+    buy_count = sum(1 for v in verdicts if v.get("action") == "BUY")
+    hold_count = sum(1 for v in verdicts if v.get("action") == "HOLD")
+    total = len(picks)
+
+    # High-quality: composite >= 0.5
+    high_quality = sum(1 for p in picks if float(p.get("composite_score", 0.0) or 0.0) >= 0.5)
+
+    # Scoring
+    score = 0.0
+    if buy_count > 0:
+        score += buy_count / total  # BUY ratio
+    if high_quality > 0:
+        score += 0.3  # bonus for having high-quality picks
+    if "crisis" in market_regime or "risk_off" in market_regime:
+        score -= 0.5  # market risk penalty
+    elif "cautious" in market_regime or "range" in market_regime:
+        score -= 0.15  # mild penalty for choppy markets
+
+    if score >= 0.5:
+        label = f"{Fore.GREEN}{Style.BRIGHT}🟢 GO{Style.RESET_ALL}"
+        hint = "市场条件有利，推荐标的质量较高"
+    elif score >= 0.2:
+        label = f"{Fore.YELLOW}{Style.BRIGHT}🟡 CAUTION{Style.RESET_ALL}"
+        hint = "信号参差，建议轻仓或等待更明确信号"
+    else:
+        label = f"{Fore.RED}{Style.BRIGHT}🔴 WAIT{Style.RESET_ALL}"
+        hint = "市场风险偏高或标的质量不足，建议观望"
+
+    return f"  机会指数: {label}  BUY {buy_count}/{total}  HQ {high_quality}  | {hint}"
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -290,6 +347,9 @@ def run_top_picks(
     # Step 3: Render compact output
     print(f"\n{Fore.CYAN}{Style.BRIGHT}🎯 Today's Top Picks{Style.RESET_ALL}")
     print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+30 posterior edge + 代表票去重 + 连续推荐加权")
+    # Market opportunity traffic light
+    opp = _render_market_opportunity_index(representative_picks, market_regime)
+    print(opp)
     print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
 
     for idx, item in enumerate(representative_picks, 1):
