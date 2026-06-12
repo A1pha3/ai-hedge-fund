@@ -144,7 +144,6 @@ def _classify_resonance(directions: tuple[str, str, str]) -> tuple[str, float]:
     """
     ups = sum(1 for d in directions if d == "up")
     downs = sum(1 for d in directions if d == "down")
-    flats = sum(1 for d in directions if d == "flat")
 
     # Full resonance: all three aligned
     if ups == 3:
@@ -306,7 +305,7 @@ def render_trend_resonance(report: TrendResonanceReport) -> str:
 
     lines = [
         f"\n{Fore.CYAN}🔮 Trend Resonance (多时间框架趋势共振){Style.RESET_ALL}",
-        f"  5d / 20d / 60d score_b 趋势方向一致性",
+        "  5d / 20d / 60d score_b 趋势方向一致性",
         "",
         f"  {'标的':<8} {'名称':<10} {'5d':>4} {'20d':>4} {'60d':>4}  {'共振':>8}  {'因子':>6}",
         f"  {'─' * 8} {'─' * 10} {'─' * 4} {'─' * 4} {'─' * 4}  {'─' * 8}  {'─' * 6}",
