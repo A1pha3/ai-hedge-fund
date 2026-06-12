@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from src.data.enhanced_cache import get_cache_runtime_info, get_cache_stats
+from src.data.enhanced_cache import get_cache_runtime_info
 
 logger = logging.getLogger(__name__)
 

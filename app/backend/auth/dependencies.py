@@ -12,7 +12,6 @@ from app.backend.auth.constants import (
     ADMIN_USERNAME,
     ADMIN_ROLES,
     WRITE_ROLES,
-    ROLE_VIEWER,
 )
 from app.backend.auth.utils import decode_token, is_production_environment
 from app.backend.database.connection import get_db

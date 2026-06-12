@@ -22,7 +22,7 @@ import logging
 import threading
 import uuid
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query

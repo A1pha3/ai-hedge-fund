@@ -50,5 +50,5 @@ async def save_json_file(request: SaveJsonRequest):
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as _e:
         raise HTTPException(status_code=500, detail="Failed to save file")

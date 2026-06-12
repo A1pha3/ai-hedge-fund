@@ -127,11 +127,11 @@ def _cmd_gen_invite(db, expires_in: str, count: int):
         db.add(invite)
         db.commit()
 
-        print(f"✓ 邀请码已生成")
+        print("✓ 邀请码已生成")
         print(f"  邀请码: {code}")
         if expires_at:
             print(f"  有效期: {expires_at.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"  状态: 未使用")
+        print("  状态: 未使用")
         if i < count - 1:
             print()
 

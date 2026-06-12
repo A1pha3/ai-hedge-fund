@@ -6,14 +6,11 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.backend.database.connection import get_db
-from app.backend.auth.dependencies import get_current_user, require_admin
+from app.backend.auth.dependencies import require_admin
 from app.backend.auth.service import AuthService
 from app.backend.auth.constants import (
-    AuthError,
     ForbiddenError,
     ROLE_MEMBER,
-    ROLE_VIEWER,
-    VALID_ROLES,
 )
 from app.backend.models.user import User
 

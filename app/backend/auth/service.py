@@ -2,7 +2,6 @@
 
 import calendar
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.backend.models.user import User, InvitationCode
@@ -24,7 +23,6 @@ from app.backend.auth.constants import (
     InvalidTokenError,
     WeakPasswordError,
     ROLE_MEMBER,
-    ROLE_VIEWER,
     VALID_ROLES,
     WRITE_ROLES,
     ADMIN_ROLES,
