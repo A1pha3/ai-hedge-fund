@@ -109,6 +109,10 @@ def run_top_picks(
             parts.append(f"{Fore.GREEN}放量{Style.RESET_ALL}")
         elif float(item.get("volume_factor", 0.0) or 0.0) < 0:
             parts.append(f"{Fore.RED}缩量{Style.RESET_ALL}")
+        if float(item.get("trend_resonance_factor", 0.0) or 0.0) > 0.02:
+            parts.append(f"{Fore.GREEN}共振↑{Style.RESET_ALL}")
+        elif float(item.get("trend_resonance_factor", 0.0) or 0.0) < -0.02:
+            parts.append(f"{Fore.RED}冲突{Style.RESET_ALL}")
 
         signal_str = " ".join(parts) if parts else f"{Fore.WHITE}中性{Style.RESET_ALL}"
         t30 = (item.get("expected_returns") or {}).get("t30")
@@ -146,6 +150,18 @@ def run_top_picks(
         print(f"  💡 High confidence picks: {tickers}")
     else:
         print("  ⚠ No high-confidence picks today. Consider waiting for better signals.")
+
+    # P14-2: Industry concentration warning
+    industry_counts: dict[str, list[str]] = {}
+    for item in ranked[:count]:
+        industry = str(item.get("industry_sw", item.get("industry", "未知")) or "未知")
+        ticker = str(item.get("ticker", ""))
+        industry_counts.setdefault(industry, []).append(ticker)
+    concentrated = {ind: tickers for ind, tickers in industry_counts.items() if len(tickers) >= 3}
+    if concentrated:
+        for ind, tickers in concentrated.items():
+            ticker_str = ", ".join(tickers)
+            print(f"  {Fore.YELLOW}⚠ 行业集中度警告: {ind} 有 {len(tickers)} 只标的 ({ticker_str}), 建议分散{Style.RESET_ALL}")
 
     print()
     return 0
