@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from src.screening.composite_score import (
     compute_composite_scores,
@@ -146,7 +145,7 @@ def run_top_picks(
         tickers = ", ".join(f"{Fore.CYAN}{str(p.get('ticker', ''))}{Style.RESET_ALL}" for p in strong_picks[:3])
         print(f"  💡 High confidence picks: {tickers}")
     else:
-        print(f"  ⚠ No high-confidence picks today. Consider waiting for better signals.")
+        print("  ⚠ No high-confidence picks today. Consider waiting for better signals.")
 
     print()
     return 0

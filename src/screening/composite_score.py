@@ -278,7 +278,7 @@ def render_composite_scores(report: CompositeReport) -> str:
 
     lines = [
         f"\n{Fore.CYAN}🎯 Composite Confidence Score (综合信心评分){Style.RESET_ALL}",
-        f"  = base_score + momentum + sector + consistency + volume",
+        "  = base_score + momentum + sector + consistency + volume",
         "",
         f"  {'标的':<8} {'名称':<10} {'Base':>6} {'动量':>6} {'行业':>6} {'一致':>6} {'量价':>6} {'综合':>7} {'等级':>4}",
         f"  {'─' * 8} {'─' * 10} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 7} {'─' * 4}",

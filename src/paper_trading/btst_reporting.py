@@ -10,8 +10,6 @@ from src.paper_trading.btst_reporting_utils import (
     OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
     _compact_trade_date,
     _format_float,
-    _format_historical_payoff_note,
-    _format_rollout_value,
     _load_json,
     _normalize_trade_date,
     _resolve_followup_trade_dates,

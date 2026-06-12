@@ -24,7 +24,6 @@ from src.paper_trading.btst_reporting_utils import (
     OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
     OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES,
     _format_float,
-    _round_or_none,
 )
 from src.paper_trading._btst_reporting.classifiers import (
     _classify_historical_prior,

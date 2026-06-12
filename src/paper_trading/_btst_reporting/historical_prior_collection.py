@@ -19,7 +19,6 @@ from src.paper_trading.btst_reporting_utils import (
     _catalyst_bucket_label,
     _load_json,
     _normalize_trade_date,
-    _round_or_none,
     _score_bucket_label,
 )
 from src.paper_trading._btst_reporting.entry_builders import (
