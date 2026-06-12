@@ -94,6 +94,7 @@ class TestComputeCompositeScores:
         d = report.to_dict()
         assert "items" in d
         assert "volume_factor" in d["items"][0]
+        assert "trend_resonance_factor" in d["items"][0]
 
     def test_score_b_none_safe(self, tmp_path: Path) -> None:
         rec = {"ticker": "000001", "name": "T", "score_b": None, "strategy_signals": {}}

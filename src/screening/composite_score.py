@@ -33,6 +33,7 @@ from src.screening.data_quality_audit import _find_latest_report
 from src.screening.sector_strength import compute_sector_strength
 from src.screening.signal_momentum import compute_signal_momentum
 from src.screening.signal_consistency import check_signal_consistency
+from src.screening.trend_resonance import compute_trend_resonance
 from src.screening.volume_confirmation import compute_volume_confirmation
 from src.utils.display import Fore, Style
 
@@ -69,6 +70,7 @@ class CompositeEntry:
     sector_bonus: float = 0.0
     consistency_adj: float = 0.0
     volume_factor: float = 0.0
+    trend_resonance_factor: float = 0.0
     composite_score: float = 0.0
     details: dict[str, Any] = field(default_factory=dict)
 
@@ -92,6 +94,7 @@ class CompositeReport:
                     "sector_bonus": round(item.sector_bonus, 4),
                     "consistency_adj": round(item.consistency_adj, 4),
                     "volume_factor": round(item.volume_factor, 4),
+                    "trend_resonance_factor": round(item.trend_resonance_factor, 4),
                     "composite_score": round(item.composite_score, 4),
                 }
                 for item in self.items
@@ -205,6 +208,16 @@ def compute_composite_scores_for_recommendations(
     except Exception:
         volume_map = {}
 
+    # Compute trend resonance (P14-1)
+    try:
+        trend_report = compute_trend_resonance(
+            top_n=top_n,
+            reports_dir=search_dir,
+        )
+        trend_map = {item.ticker: item.resonance_factor for item in trend_report.items}
+    except Exception:
+        trend_map = {}
+
     # Build composite entries
     items: list[CompositeEntry] = []
     for rec in recs:
@@ -216,8 +229,9 @@ def compute_composite_scores_for_recommendations(
         sec = sector_map.get(ticker, 0.0)
         con = consistency_map.get(ticker, 0.0)
         vol = volume_map.get(ticker, 0.0)
+        trf = trend_map.get(ticker, 0.0)
 
-        composite = max(-1.0, min(1.0, base_score + mom + sec + con + vol))
+        composite = max(-1.0, min(1.0, base_score + mom + sec + con + vol + trf))
 
         items.append(
             CompositeEntry(
@@ -228,12 +242,14 @@ def compute_composite_scores_for_recommendations(
                 sector_bonus=sec,
                 consistency_adj=con,
                 volume_factor=vol,
+                trend_resonance_factor=trf,
                 composite_score=composite,
                 details={
                     "momentum_label": "bonus" if mom > 0 else "penalty" if mom < 0 else "neutral",
                     "sector_label": "strong" if sec > 0 else "weak" if sec < 0 else "neutral",
                     "consistency_level": "high" if con > 0 else "low" if con < 0 else "medium",
                     "volume_confirmation": "confirmed" if vol > 0 else "divergence" if vol < 0 else "neutral",
+                    "trend_resonance": "resonance" if trf > 0.02 else "conflict" if trf < -0.02 else "neutral",
                 },
             )
         )
@@ -278,10 +294,10 @@ def render_composite_scores(report: CompositeReport) -> str:
 
     lines = [
         f"\n{Fore.CYAN}🎯 Composite Confidence Score (综合信心评分){Style.RESET_ALL}",
-        "  = base_score + momentum + sector + consistency + volume",
+        "  = base + momentum + sector + consistency + volume + trend",
         "",
-        f"  {'标的':<8} {'名称':<10} {'Base':>6} {'动量':>6} {'行业':>6} {'一致':>6} {'量价':>6} {'综合':>7} {'等级':>4}",
-        f"  {'─' * 8} {'─' * 10} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 7} {'─' * 4}",
+        f"  {'标的':<8} {'名称':<10} {'Base':>6} {'动量':>6} {'行业':>6} {'一致':>6} {'量价':>6} {'趋势':>6} {'综合':>7} {'等级':>4}",
+        f"  {'─' * 8} {'─' * 10} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 6} {'─' * 7} {'─' * 4}",
     ]
 
     for item in report.items:
@@ -290,7 +306,7 @@ def render_composite_scores(report: CompositeReport) -> str:
             f"  {item.ticker:<8} {item.name[:10]:<10} "
             f"{item.base_score:>6.3f} {_fmt_adj(item.momentum_bonus):>14} "
             f"{_fmt_adj(item.sector_bonus):>14} {_fmt_adj(item.consistency_adj):>14} "
-            f"{_fmt_adj(item.volume_factor):>14} "
+            f"{_fmt_adj(item.volume_factor):>14} {_fmt_adj(item.trend_resonance_factor):>14} "
             f"{item.composite_score:>+7.3f} {grade:>6}"
         )
 

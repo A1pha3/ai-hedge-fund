@@ -769,6 +769,15 @@ def _resolve_volume_confirm(argv: list[str]) -> int | None:
     return run_volume_confirm(argv)
 
 
+def _resolve_trend_resonance(argv: list[str]) -> int | None:
+    """P14-1 multi-timeframe trend resonance. Checks 5d/20d/60d alignment."""
+    if "--trend-resonance" not in argv:
+        return None
+    from src.screening.trend_resonance import run_trend_resonance
+
+    return run_trend_resonance(argv)
+
+
 def _resolve_top_picks(argv: list[str]) -> int | None:
     """P12-2 one-command top picks. Shows today's best buys."""
     if "--top-picks" not in argv:
@@ -828,6 +837,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--sector-strength", _resolve_sector_strength),
     ("--composite-score", _resolve_composite_score),
     ("--volume-confirm", _resolve_volume_confirm),
+    ("--trend-resonance", _resolve_trend_resonance),
     ("--top-picks", _resolve_top_picks),
 ]
 

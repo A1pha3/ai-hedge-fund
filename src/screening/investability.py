@@ -64,6 +64,7 @@ def rank_recommendations_by_investability(
             merged["sector_bonus"] = composite.sector_bonus
             merged["consistency_adj"] = composite.consistency_adj
             merged["volume_factor"] = composite.volume_factor
+            merged["trend_resonance_factor"] = composite.trend_resonance_factor
             merged["composite_score"] = round(composite.composite_score, 4)
             merged["composite_grade"] = _grade_code(composite.composite_score)
         else:
@@ -73,6 +74,7 @@ def rank_recommendations_by_investability(
             merged["sector_bonus"] = 0.0
             merged["consistency_adj"] = 0.0
             merged["volume_factor"] = 0.0
+            merged["trend_resonance_factor"] = 0.0
             merged["composite_score"] = round(fallback_score, 4)
             merged["composite_grade"] = _grade_code(fallback_score)
 
