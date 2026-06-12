@@ -343,7 +343,7 @@ def analyze_structural_conflict_rescue(
     )
     if minimal_near_miss_row:
         recommendation += (
-            f" 在去掉 conflict hard block 与 surcharge 后，最小 near_miss frontier 为 "
+            " 在去掉 conflict hard block 与 surcharge 后，最小 near_miss frontier 为 "
             f"stale_weight={minimal_near_miss_row['stale_score_penalty_weight']}、extension_weight={minimal_near_miss_row['extension_score_penalty_weight']}、"
             f"select_threshold={minimal_near_miss_row['select_threshold']}、near_miss_threshold={minimal_near_miss_row['near_miss_threshold']}，"
             f"adjustment_cost={minimal_near_miss_row['adjustment_cost']}。"

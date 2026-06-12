@@ -420,7 +420,7 @@ def render_btst_multi_window_profile_validation_markdown(analysis: dict[str, Any
                     f"watchlist_shrink_selected_above_lift={runtime_activation_attribution.get('watchlist_shrink_selected_above_lift_count')}"
                 )
         if baseline_source_coverage or variant_source_coverage:
-            lines.append(f"  - source_coverage:")
+            lines.append("  - source_coverage:")
             flow_sources = sorted(
                 {
                     *dict(baseline_source_coverage.get("flow_60_source_counts") or {}).keys(),

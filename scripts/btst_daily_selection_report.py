@@ -186,12 +186,12 @@ def main():
         return
 
     next_date = next_map.get(trade_date, 'N/A')
-    print(f"=" * 80)
-    print(f"  BTST选股分析报告")
+    print("=" * 80)
+    print("  BTST选股分析报告")
     print(f"  信号日: {trade_date}  |  目标日: {next_date}")
     print(f"  Profile: {PROFILE['name']}  |  选入阈值: {PROFILE['select_threshold']}  |  近_miss阈值: {PROFILE['near_miss_threshold']}")
     print(f"  生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"=" * 80)
+    print("=" * 80)
 
     # 获取基础数据
     sb = pro.stock_basic(exchange='', list_status='L', fields='ts_code,name,industry,list_date')
@@ -278,7 +278,7 @@ def main():
 
     # 选股结果
     print(f"\n{'=' * 80}")
-    print(f"  ★ 选股结果 ★")
+    print("  ★ 选股结果 ★")
     print(f"{'=' * 80}")
 
     selected = results[results['score'] >= PROFILE['select_threshold']].sort_values('score', ascending=False)
@@ -286,7 +286,7 @@ def main():
                         (results['score'] < PROFILE['select_threshold'])].sort_values('score', ascending=False)
 
     print(f"\n  ┌─ SELECTED (score >= {PROFILE['select_threshold']}) ─ {len(selected)}只")
-    print(f"  │")
+    print("  │")
     if len(selected) > 0:
         print(f"  │ {'代码':12} {'名称':10} {'行业':8} {'得分':>6} {'日涨%':>6} {'动量':>5} {'量扩':>5} {'收强':>5} {'催化':>5} {'反转':>5} {'涨停':>4}")
         print(f"  │ {'─' * 80}")
@@ -299,13 +299,13 @@ def main():
                   f"{f.get('close_strength', 0):>5.2f} {f.get('catalyst_freshness', 0):>5.2f} "
                   f"{f.get('short_term_reversal', 0):>5.2f} {is_limit:>4}")
     else:
-        print(f"  │ (无)")
+        print("  │ (无)")
 
-    print(f"  │")
+    print("  │")
     print(f"  └─ 共{len(selected)}只 ─────────────────────────────────────────────────────────")
 
     print(f"\n  ┌─ NEAR MISS ({PROFILE['near_miss_threshold']} <= score < {PROFILE['select_threshold']}) ─ {len(near_miss)}只")
-    print(f"  │")
+    print("  │")
     if len(near_miss) > 0:
         print(f"  │ {'代码':12} {'名称':10} {'行业':8} {'得分':>6} {'日涨%':>6} {'动量':>5} {'量扩':>5} {'收强':>5} {'催化':>5} {'反转':>5} {'涨停':>4}")
         print(f"  │ {'─' * 80}")
@@ -318,8 +318,8 @@ def main():
                   f"{f.get('close_strength', 0):>5.2f} {f.get('catalyst_freshness', 0):>5.2f} "
                   f"{f.get('short_term_reversal', 0):>5.2f} {is_limit:>4}")
     else:
-        print(f"  │ (无)")
-    print(f"  │")
+        print("  │ (无)")
+    print("  │")
     print(f"  └─ 共{len(near_miss)}只 ─────────────────────────────────────────────────────────")
 
     # 涨停股专项
@@ -361,7 +361,7 @@ def main():
 
     # 行业分布
     print(f"\n{'─' * 80}")
-    print(f"  行业分布 (SELECTED + NEAR_MISS)")
+    print("  行业分布 (SELECTED + NEAR_MISS)")
     print(f"{'─' * 80}")
     combined = pd.concat([selected, near_miss])
     if len(combined) > 0 and 'industry' in combined.columns:
@@ -371,13 +371,13 @@ def main():
 
     # 风险提示
     print(f"\n{'=' * 80}")
-    print(f"  风险提示")
+    print("  风险提示")
     print(f"{'=' * 80}")
-    print(f"  1. 本报告基于因子近似评分，未包含LLM agent分析(score_c)")
-    print(f"  2. 因子回测胜率约42%，需配合实际pipeline的LLM层提升至60%+")
-    print(f"  3. 涨停股次日高开但可能冲高回落，注意止盈纪律")
+    print("  1. 本报告基于因子近似评分，未包含LLM agent分析(score_c)")
+    print("  2. 因子回测胜率约42%，需配合实际pipeline的LLM层提升至60%+")
+    print("  3. 涨停股次日高开但可能冲高回落，注意止盈纪律")
     print(f"  4. 市场状态: {trade_date} 均涨幅{avg_ret:+.2f}%, {'偏强' if avg_ret > 0.5 else '偏弱' if avg_ret < -0.5 else '中性'}")
-    print(f"  5. 建议: SELECTED中优先选择close_strength>0.7且catalyst_freshness>0.5的标的")
+    print("  5. 建议: SELECTED中优先选择close_strength>0.7且catalyst_freshness>0.5的标的")
 
     # 保存JSON报告
     report = {

@@ -152,7 +152,7 @@ def analyze_targeted_short_trade_boundary_release(
             first = promoted_rows[0]
             recommendation = (
                 f"当前定向 release 只改变目标样本。{first['trade_date']} / {first['ticker']} 从 rejected -> {first['after_decision']}，"
-                f"可作为低污染的 case-based short_trade_boundary rescue 实验。"
+                "可作为低污染的 case-based short_trade_boundary rescue 实验。"
             )
         else:
             recommendation = "目标样本分数变化了，但还没有进入 near_miss/selected，当前 release 参数不够强。"

@@ -365,7 +365,7 @@ def main():
         print(s)
 
     p(f'{"="*90}')
-    p(f'  BTST完整分析报告')
+    p('  BTST完整分析报告')
     p(f'  信号日: {trade_date}  →  目标日: {next_date}')
     p(f'  Profile: ic_optimized (9因子)  选入≥{SELECT_THRESHOLD}  近_miss≥{NEAR_MISS_THRESHOLD}')
     p(f'  生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
@@ -385,7 +385,7 @@ def main():
     df = df[~build_beijing_exchange_mask(df['ts_code'])]
 
     p(f'\n{"─"*90}')
-    p(f'  第1部分: 候选池构建')
+    p('  第1部分: 候选池构建')
     p(f'{"─"*90}')
     p(f'  全市场:        {total:>5}只')
     p(f'  排除ST/退:     {len(df_st):>5}只 (剩{total-len(df_st)})')
@@ -414,7 +414,7 @@ def main():
 
     # ====== 第2部分: 因子评分 ======
     p(f'\n{"─"*90}')
-    p(f'  第2部分: 因子评分')
+    p('  第2部分: 因子评分')
     p(f'{"─"*90}')
 
     codes = df['ts_code'].tolist()
@@ -462,7 +462,7 @@ def main():
 
     # ====== 第3部分: 选股结果 ======
     p(f'\n{"="*90}')
-    p(f'  第3部分: 选股结果')
+    p('  第3部分: 选股结果')
     p(f'{"="*90}')
 
     selected = results[results['score'] >= SELECT_THRESHOLD].sort_values('score', ascending=False)
@@ -474,7 +474,7 @@ def main():
     p(f'  WATCH:     {len(rejected):>4}只 ({len(rejected)/len(results):.0%})  score < {NEAR_MISS_THRESHOLD}')
 
     # Selected详情
-    p(f'\n  ┌─ SELECTED Top 40 ─────────────────────────────────────────────────────────')
+    p('\n  ┌─ SELECTED Top 40 ─────────────────────────────────────────────────────────')
     p(f'  │ {"排名":>4} {"代码":8} {"名称":8} {"行业":6} {"得分":>6} {"日涨%":>6} {"5日%":>7} {"量比":>5} {"涨停":>3}')
     p(f'  │ {"─"*70}')
     for rank, (_, row) in enumerate(selected.head(40).iterrows(), 1):
@@ -486,7 +486,7 @@ def main():
     p(f'  └─ 共{len(selected)}只')
 
     # Near Miss详情
-    p(f'\n  ┌─ NEAR MISS Top 20 ────────────────────────────────────────────────────────')
+    p('\n  ┌─ NEAR MISS Top 20 ────────────────────────────────────────────────────────')
     p(f'  │ {"代码":8} {"名称":8} {"得分":>6} {"日涨%":>6} {"5日%":>7} {"缺口":>6}')
     p(f'  │ {"─"*55}')
     for _, row in near_miss.head(20).iterrows():
@@ -498,7 +498,7 @@ def main():
 
     # ====== 第4部分: 行业分析 ======
     p(f'\n{"─"*90}')
-    p(f'  第4部分: 行业分析')
+    p('  第4部分: 行业分析')
     p(f'{"─"*90}')
 
     combined = pd.concat([selected, near_miss])
@@ -523,7 +523,7 @@ def main():
 
     # ====== 第5部分: 涨停股+反转股专项 ======
     p(f'\n{"─"*90}')
-    p(f'  第5部分: 涨停股 & 反转股专项')
+    p('  第5部分: 涨停股 & 反转股专项')
     p(f'{"─"*90}')
 
     # 涨停股
@@ -540,7 +540,7 @@ def main():
         lim_sel = len(limit_pool[limit_pool['score'] >= SELECT_THRESHOLD])
         p(f'  → {lim_sel}只入选SELECTED, 历史涨停股次日胜率53%、大涨率33%')
     else:
-        p(f'\n  涨停股: 今日无涨停 (市场偏弱或中性)')
+        p('\n  涨停股: 今日无涨停 (市场偏弱或中性)')
 
     # 反转股
     rev_pool = results.copy()
@@ -557,7 +557,7 @@ def main():
 
     # ====== 第6部分: Top候选深度分析 ======
     p(f'\n{"─"*90}')
-    p(f'  第6部分: Top 10候选深度分析')
+    p('  第6部分: Top 10候选深度分析')
     p(f'{"─"*90}')
 
     for rank, (_, row) in enumerate(selected.head(10).iterrows(), 1):
@@ -565,7 +565,7 @@ def main():
         c = score_contributions(f, PROFILE_WEIGHTS)
         p(f'\n  #{rank} {row["ts_code"][:6]} {row.get("name","")} ({row.get("industry","")})')
         p(f'  得分: {row["score"]:.4f}  日涨幅: {row["pct_chg"]:+.2f}%  涨停: {"是" if row["ts_code"] in limit_codes else "否"}')
-        p(f'  因子贡献:')
+        p('  因子贡献:')
         sorted_contribs = sorted(c.items(), key=lambda x: -x[1])
         for k, v in sorted_contribs[:5]:
             p(f'    {k:28}: {v:.4f} (因子值={f.get(k,0):.3f})')
@@ -575,7 +575,7 @@ def main():
 
     # ====== 第7部分: 历史验证 ======
     p(f'\n{"─"*90}')
-    p(f'  第7部分: 近5日历史验证')
+    p('  第7部分: 近5日历史验证')
     p(f'{"─"*90}')
 
     for hist_date in lookback_dates[:-1]:  # 排除当天
@@ -606,7 +606,7 @@ def main():
 
     # ====== 第8部分: 综合建议 ======
     p(f'\n{"="*90}')
-    p(f'  第8部分: 综合建议')
+    p('  第8部分: 综合建议')
     p(f'{"="*90}')
 
     # 高确信标的: score高 + close_strength高 + catalyst_freshness高
@@ -624,13 +624,13 @@ def main():
           f'{row["pct_chg"]:>+5.1f}% {f.get("close_strength",0):>5.2f} {f.get("catalyst_freshness",0):>5.2f} '
           f'{f.get("volume_expansion_quality",0):>5.2f}')
 
-    p(f'\n  交易建议:')
-    p(f'  1. 优先从高确信标的中选择, score≥0.60的标的更有把握')
-    p(f'  2. 反转信号标的(5日跌>8%)适合博反弹, 但需控制仓位')
-    p(f'  3. 涨停股次日高开概率大, 但需注意冲高回落风险')
+    p('\n  交易建议:')
+    p('  1. 优先从高确信标的中选择, score≥0.60的标的更有把握')
+    p('  2. 反转信号标的(5日跌>8%)适合博反弹, 但需控制仓位')
+    p('  3. 涨停股次日高开概率大, 但需注意冲高回落风险')
     p(f'  4. 市场状态: {trade_date}均涨{results["pct_chg"].mean():+.2f}%, '
       f'{"偏强→可适当进攻" if results["pct_chg"].mean() > 0.5 else "中性→精选为主" if results["pct_chg"].mean() > -0.5 else "偏弱→控制仓位"}')
-    p(f'  5. 因子评分仅为第一层筛选, 最终决策需结合LLM agent分析(score_c)')
+    p('  5. 因子评分仅为第一层筛选, 最终决策需结合LLM agent分析(score_c)')
 
     # 保存完整报告
     report_text = '\n'.join(R)

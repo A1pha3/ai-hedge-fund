@@ -82,7 +82,7 @@ def compare_profiles():
     print(f"\nv2 wins: {v2_wins}, ic_v3 wins: {ic_v3_wins}")
 
     # Show what ic_v3 values more
-    print(f"\n--- What ic_v3 values more than v2 ---")
+    print("\n--- What ic_v3 values more than v2 ---")
     for factor in sorted(set(list(v2_w.keys()) + list(ic_v3_w.keys()))):
         diff = ic_v3_w.get(factor, 0) - v2_w.get(factor, 0)
         if abs(diff) > 0.01:

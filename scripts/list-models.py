@@ -119,7 +119,7 @@ def main():
     for model in OLLAMA_MODELS:
         print(f"模型: {model.display_name}")
         print(f"型号: {model.model_name}")
-        print(f"API Key状态: 不需要API key")
+        print("API Key状态: 不需要API key")
         print("-" * 60)
         
         # Ollama模型不需要API key，也算作可用

@@ -273,7 +273,7 @@ def _build_near_miss_release_recommendation(
         target_descriptions = ", ".join(f"{row['trade_date']} / {row['ticker']}" for row in promoted_target_rows)
         return (
             f"当前定向 release 只改变目标 near-miss 样本。{target_descriptions} 从 near_miss -> selected，"
-            f"可作为低污染的 case-based near-miss promotion 实验。"
+            "可作为低污染的 case-based near-miss promotion 实验。"
         )
     if changed_non_target_case_count > 0:
         return "出现了非目标 near-miss 样本变化，当前实验不再是严格的 case-based promotion。"

@@ -100,7 +100,7 @@ def analyze_short_trade_boundary_recurring_frontier_cases(report_dir: str | Path
     if priority_queue:
         lead = priority_queue[0]
         recommendation = (
-            f"当前重复出现的 score frontier 样本应按 recurring ticker 处理，而不是逐天零散讨论。"
+            "当前重复出现的 score frontier 样本应按 recurring ticker 处理，而不是逐天零散讨论。"
             f" 优先从 {lead['ticker']} 开始，因为它在 {lead['occurrence_count']} 个 trade_date 上重复出现，"
             f"且最小 rescue cost 只有 {lead['minimal_adjustment_cost']}。"
         )

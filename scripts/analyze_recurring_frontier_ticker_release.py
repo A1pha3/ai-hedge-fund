@@ -155,7 +155,7 @@ def analyze_recurring_frontier_ticker_release(
     if promoted_target_case_count == len(changed_cases) and changed_cases:
         recommendation = (
             f"{normalized_ticker} 的 recurring frontier release 已在 {promoted_target_case_count} 个样本上全部进入 "
-            f"near_miss/selected，可作为该 ticker 的局部 frontier 实验基线。"
+            "near_miss/selected，可作为该 ticker 的局部 frontier 实验基线。"
         )
     elif changed_cases:
         recommendation = f"{normalized_ticker} 的 recurring frontier release 只在部分样本上生效，当前更适合保留为条件性实验。"

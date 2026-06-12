@@ -33,7 +33,7 @@ def completed_count(tickers: list[str]) -> tuple[int, int]:
 
 
 def running_pids() -> list[str]:
-    proc = subprocess.run(['pgrep', '-f', PATTERN], capture_output=True, text=True)
+    proc = subprocess.run(['pgrep', '-', PATTERN], capture_output=True, text=True)
     if proc.returncode != 0:
         return []
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]

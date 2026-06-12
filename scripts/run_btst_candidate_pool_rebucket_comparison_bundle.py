@@ -149,7 +149,7 @@ def _build_rebucket_bundle_guidance(
     if bundle_status == "ready_for_parallel_comparison":
         recommendation = (
             "rebucket lane 已具备进入 parallel comparison bundle 的条件。"
-            f" 结构上它仍是第一优先 lane，但相对 corridor 的后验证据差值为 "
+            " 结构上它仍是第一优先 lane，但相对 corridor 的后验证据差值为 "
             f"mean_t_plus_2_return_gap={comparison.get('mean_t_plus_2_return_gap_vs_corridor')}、"
             f"objective_fit_gap={comparison.get('objective_fit_gap_vs_corridor')}；"
             "因此下一步不是改默认阈值，而是把 rebucket shadow replay 与 corridor parallel validation 放到同一张收益对照板上。"

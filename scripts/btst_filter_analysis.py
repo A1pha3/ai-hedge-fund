@@ -103,7 +103,7 @@ def main():
             print(f"  最终候选池: {len(filtered)}只 胜率={f_win:.0%} 大涨={f_big:.0%} 均收={f_avg:+.2f}%")
 
         # 分析：amount阈值对大涨股的影响
-        print(f"\n  === amount阈值敏感性分析 ===")
+        print("\n  === amount阈值敏感性分析 ===")
         for threshold_k in [0, 50000, 30000, 10000, 5000]:
             # 千元单位
             pool = df[df['amount'] >= threshold_k]

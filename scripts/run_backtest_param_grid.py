@@ -40,7 +40,6 @@ from src.backtesting.param_grid import (  # noqa: E402
     GRID_ENV_VAR,
     ParamGridError,
     ParamGridReport,
-    ParamGridTrial,
     grid_combinations,
     parse_param_grid,
     render_console_table,

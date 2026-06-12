@@ -335,8 +335,8 @@ def render_markdown(data: dict[str, Any]) -> str:
 
         lines.append("### Regime Gate Impact Summary")
         lines.append("")
-        lines.append(f"| Metric | Overall | Tradeable Days Only | Improvement |")
-        lines.append(f"|--------|---------|-------------------|-------------|")
+        lines.append("| Metric | Overall | Tradeable Days Only | Improvement |")
+        lines.append("|--------|---------|-------------------|-------------|")
         lines.append(f"| 15% Hit Rate | {overall.get('hit_15pct_rate', 'N/A')} | {tradeable.get('hit_15pct_rate', 'N/A')} | {impact.get('hit_rate_improvement', 'N/A')} |")
         lines.append(f"| Mean Max High Return | {overall.get('mean_max_high_return', 'N/A')} | {tradeable.get('mean_max_high_return', 'N/A')} | - |")
         lines.append(f"| Day Count | {overall.get('day_count', 0)} | {tradeable.get('day_count', 0)} | {impact.get('days_filtered', 0)} filtered |")

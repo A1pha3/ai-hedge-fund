@@ -3259,7 +3259,7 @@ def _build_branch_split_recommendation(
 ) -> str:
     mechanism_suffix = _build_branch_recommendation_suffix(branch_mechanisms, branch_experiment_queue)
     return (
-        f"当前 Layer A candidate_pool recall backlog 的主矛盾虽然都落在 top300 截断，但已拆成分支车道："
+        "当前 Layer A candidate_pool recall backlog 的主矛盾虽然都落在 top300 截断，但已拆成分支车道："
         f"{[(row.get('priority_handoff'), row.get('tickers')) for row in branch_diagnoses[:3]]}。"
         f" {branch_diagnoses[0].get('diagnosis_summary')}{mechanism_suffix}"
     )
@@ -3392,7 +3392,7 @@ def _build_non_truncation_stage_recommendation(dominant_stage: str | None, *, to
 
 def _build_legacy_shadow_recommendation(top_stage_tickers: dict[str, list[str]]) -> str:
     return (
-        f"当前 Layer A candidate_pool recall backlog 里至少有一部分样本仍停留在 legacy 空 shadow 快照状态："
+        "当前 Layer A candidate_pool recall backlog 里至少有一部分样本仍停留在 legacy 空 shadow 快照状态："
         f"{top_stage_tickers.get('shadow_snapshot_legacy_unknown', [])} 还不能被直接解释成真实 upstream absence。"
         "下一步应先补齐 shadow 证据，再决定是否调整 recall 规则。"
     )

@@ -40,7 +40,7 @@ def quick_score_comparison(trade_date: str = "20260410"):
     print(f"  ic_v3: ST={ic_v3.select_threshold}, NMT={ic_v3.near_miss_threshold}, RCR={ic_v3.selected_rank_cap_ratio}")
 
     # Show key differences
-    print(f"\nKey differences:")
+    print("\nKey differences:")
     for attr in ["trend_acceleration_weight", "short_term_reversal_weight", "intraday_strength_weight", "reversal_2d_weight",
                  "breakout_freshness_weight", "close_strength_weight", "catalyst_freshness_weight"]:
         v2_val = getattr(v2, attr, 0.0)

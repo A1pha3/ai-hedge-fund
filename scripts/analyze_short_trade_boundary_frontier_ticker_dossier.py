@@ -64,22 +64,22 @@ def analyze_short_trade_boundary_frontier_ticker_dossier(
     if dossier.get("pattern_label") == "recurring frontier with intraday upside" and next_close_positive_rate >= 0.6:
         recommendation = (
             f"{normalized_ticker} 应优先作为 close continuation 对照样本观察。"
-            f"它仍属于 intraday frontier，但收盘延续稳定性高于同簇样本。"
+            "它仍属于 intraday frontier，但收盘延续稳定性高于同簇样本。"
         )
     elif dossier.get("pattern_label") == "recurring frontier with intraday upside" and next_high_return_mean >= 0.04:
         recommendation = (
             f"{normalized_ticker} 应继续作为 intraday frontier 主样本观察，"
-            f"不要直接当成默认 close continuation release 候选。"
+            "不要直接当成默认 close continuation release 候选。"
         )
     elif dossier.get("pattern_label") == "recurring frontier with intraday upside":
         recommendation = (
             f"{normalized_ticker} 应继续作为 intraday frontier dossier 观察，"
-            f"同时保留为较弱上冲样本的对照。"
+            "同时保留为较弱上冲样本的对照。"
         )
     elif dossier.get("pattern_label") == "recurring frontier with close continuation":
         recommendation = (
             f"{normalized_ticker} 具备更稳定的 close continuation 特征，"
-            f"可作为 recurring frontier 中更偏收盘延续的一类样本继续审查。"
+            "可作为 recurring frontier 中更偏收盘延续的一类样本继续审查。"
         )
     else:
         recommendation = f"{normalized_ticker} 当前更适合作为观察样本，而不是优先 release 候选。"

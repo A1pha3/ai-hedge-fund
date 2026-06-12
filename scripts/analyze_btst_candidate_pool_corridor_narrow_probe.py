@@ -78,7 +78,7 @@ def _analyze_deepest_corridor_split(candidate_pool_recall_dossier: dict[str, Any
     standard_corridor_rows = [row for row in ranked_rows if not row.get("is_low_gate_focus")]
     verdict = "deepest_corridor_split_ready" if retained_rows else "no_retainable_deepest_corridor_focus"
     recommendation = (
-        f"Keep only the deepest low-gate corridor names whose avg_amount/cutoff stays at or below "
+        "Keep only the deepest low-gate corridor names whose avg_amount/cutoff stays at or below "
         f"{SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE}; route thicker low-gate tails back to "
         "upstream base-liquidity uplift instead of keeping them in the same shadow probe."
     )

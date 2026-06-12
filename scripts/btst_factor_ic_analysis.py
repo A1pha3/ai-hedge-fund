@@ -490,7 +490,7 @@ def run_analysis(start_date: str = "20260101", end_date: str = "20260413", sampl
             # 分5组看收益
             valid["score_group"] = pd.qcut(valid["composite_score"], 5, labels=False, duplicates="drop") + 1
 
-            print(f"\n  综合因子分位收益:")
+            print("\n  综合因子分位收益:")
             print(f"  {'分位':>6} {'平均T+1%':>10} {'平均T+1高%':>12} {'T+1胜率':>8} {'T+2胜率':>8} {'样本数':>8}")
             for g in sorted(valid["score_group"].unique()):
                 group = valid[valid["score_group"] == g]

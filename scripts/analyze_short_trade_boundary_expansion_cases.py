@@ -89,7 +89,7 @@ def analyze_short_trade_boundary_expansion_cases(
         catalyst_only_count = sum(1 for row in added_cases if row["release_trigger"] == "catalyst_floor_only")
         recommendation = (
             f"当前推荐变体新增 {len(added_cases)} 个样本，其中 {catalyst_only_count} 个属于纯 catalyst floor 放行；"
-            f"这说明该变体主要释放的是本来结构已够强、只差事件新鲜度门槛的样本。"
+            "这说明该变体主要释放的是本来结构已够强、只差事件新鲜度门槛的样本。"
         )
     else:
         recommendation = "当前选定变体没有新增样本。"

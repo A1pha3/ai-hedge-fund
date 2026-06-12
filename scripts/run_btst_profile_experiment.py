@@ -132,7 +132,7 @@ def render_profile_experiment_report(
         "",
         f"- 生成时间: `{now_iso}`",
         f"- 路由契约: `{contract.name}`",
-        f"- 比较 scope: 真实上游候选筛选与执行规则差异",
+        "- 比较 scope: 真实上游候选筛选与执行规则差异",
         "",
         "## Profile Routing Rules",
         "",

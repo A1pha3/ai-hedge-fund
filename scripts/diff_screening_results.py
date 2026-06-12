@@ -188,7 +188,7 @@ def main() -> int:
 
     date2 = args.date2 or _latest_date(reports_dir)
     if not date2:
-        print(f"[diff] 未找到任何 auto_screening_*.json 报告", file=sys.stderr)
+        print("[diff] 未找到任何 auto_screening_*.json 报告", file=sys.stderr)
         return 1
     if date2 == args.date1:
         print(f"[diff] date1 和 date2 相同 ({args.date1}), 没有可比信息", file=sys.stderr)

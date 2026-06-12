@@ -206,7 +206,7 @@ def main():
     all_dates = sorted(cal[cal["is_open"]==1]["cal_date"].tolist())
     test_dates = [d for d in all_dates if d <= cal_end][-25:]  # 25天覆盖更多
     
-    print(f"=== Round 89 Task 2: tc权重网格搜索 ===")
+    print("=== Round 89 Task 2: tc权重网格搜索 ===")
     print(f"回测窗口: {test_dates[0]} ~ {test_dates[-1]} ({len(test_dates)}天)")
     
     profile_stats = run_all_days(pro, all_dates, test_dates)
@@ -234,7 +234,7 @@ def main():
     
     rows.sort(key=lambda x: x.get("avg_ret", 0), reverse=True)
     
-    print(f"\n=== 结果 Top 15（按日均收益排序）===")
+    print("\n=== 结果 Top 15（按日均收益排序）===")
     print(f"{'tc_w':>5} {'tc2d_w':>6} {'avg_wr':>7} {'avg_ret':>8} {'sharpe':>7} {'open_wr':>8} {'high2':>6} {'days':>5}")
     print("-"*65)
     for r in rows[:15]:
@@ -243,7 +243,7 @@ def main():
         print(f"  {r['tc_w']:>3.2f}   {r['tc2d_w']:>4.2f}   {r['avg_wr']:>5.1%}   {r['avg_ret']:>+6.3f}%   {r['sharpe']:>5.2f}   {open_wr:>7}  {high2:>5}   {r['n_days']:>4}")
     
     best = rows[0]
-    print(f"\n🏆 最优参数:")
+    print("\n🏆 最优参数:")
     print(f"  trend_continuation_weight = {best['tc_w']}")
     print(f"  trend_continuation_2d_weight = {best['tc2d_w']}")
     print(f"  日均收益 = {best['avg_ret']:+.3f}%")

@@ -214,7 +214,7 @@ def main():
     
     search_results = run_grid_search(data_cache, param_grid)
     
-    print(f"\n=== 搜索结果 Top 10（按期望收益排序）===")
+    print("\n=== 搜索结果 Top 10（按期望收益排序）===")
     print(f"{'tc_w':>6} {'tc2d_w':>7} {'avg_wr':>7} {'avg_ret':>8} {'payoff':>7} {'expectancy':>11} {'open_wr':>8} {'high2':>6}")
     print("-" * 80)
     for r in search_results[:15]:
@@ -224,7 +224,7 @@ def main():
         print(f"  {r['tc_w']:>4.2f}   {r['tc2d_w']:>5.2f}   {r['avg_wr']:>6.1%}   {r['total_ret']:>+7.3f}%   {payoff_str:>6}   {r['expectancy']:>+10.3f}%   {open_wr_str:>7}  {high2_str:>5}")
     
     best = search_results[0]
-    print(f"\n🏆 最优参数:")
+    print("\n🏆 最优参数:")
     print(f"  trend_continuation_weight = {best['tc_w']}")
     print(f"  trend_continuation_2d_weight = {best['tc2d_w']}")
     print(f"  期望收益 = {best['expectancy']:+.3f}%")

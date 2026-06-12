@@ -127,7 +127,7 @@ def process_patterns(args: argparse.Namespace) -> list[str]:
 def running_pids(patterns: list[str]) -> list[str]:
     matches: set[str] = set()
     for pattern in patterns:
-        proc = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True)
+        proc = subprocess.run(["pgrep", "-", pattern], capture_output=True, text=True)
         if proc.returncode != 0:
             continue
         matches.update(line.strip() for line in proc.stdout.splitlines() if line.strip())
