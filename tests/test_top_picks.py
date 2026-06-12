@@ -1037,3 +1037,175 @@ class TestSectorFocus:
         assert rc == 0
         output = capsys.readouterr().out
         assert "行业聚焦" in output
+
+
+# ---------------------------------------------------------------------------
+# R12: Data freshness guard
+# ---------------------------------------------------------------------------
+
+
+class TestDataFreshness:
+    """Tests for _check_report_freshness (R12)."""
+
+    def test_fresh_report_no_warning(self) -> None:
+        from src.screening.top_picks import _check_report_freshness
+        from datetime import datetime
+
+        today = datetime.now().strftime("%Y%m%d")
+        result = _check_report_freshness(today)
+        assert result == ""
+
+    def test_yesterday_report_no_warning(self) -> None:
+        from src.screening.top_picks import _check_report_freshness
+        from datetime import datetime, timedelta
+
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        result = _check_report_freshness(yesterday)
+        assert result == ""
+
+    def test_stale_report_shows_warning(self) -> None:
+        from src.screening.top_picks import _check_report_freshness
+        from datetime import datetime, timedelta
+
+        old = (datetime.now() - timedelta(days=3)).strftime("%Y%m%d")
+        result = _check_report_freshness(old)
+        assert "非最新" in result
+        assert "⚠" in result
+
+    def test_very_old_report_shows_warning(self) -> None:
+        from src.screening.top_picks import _check_report_freshness
+
+        result = _check_report_freshness("20260101")
+        assert "非最新" in result
+
+    def test_invalid_date_no_warning(self) -> None:
+        from src.screening.top_picks import _check_report_freshness
+
+        assert _check_report_freshness("") == ""
+        assert _check_report_freshness("invalid") == ""
+        assert _check_report_freshness("20261301") == ""
+
+
+# ---------------------------------------------------------------------------
+# R13: New / dropped pick detection
+# ---------------------------------------------------------------------------
+
+
+class TestPickChanges:
+    """Tests for _find_previous_report, _compute_pick_changes, _render_pick_changes (R13)."""
+
+    def test_find_previous_report_single_file(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _find_previous_report
+
+        p = tmp_path / "auto_screening_20260610.json"
+        p.write_text("{}", encoding="utf-8")
+        assert _find_previous_report(p) is None
+
+    def test_find_previous_report_two_files(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _find_previous_report
+
+        p1 = tmp_path / "auto_screening_20260609.json"
+        p2 = tmp_path / "auto_screening_20260610.json"
+        p1.write_text("{}", encoding="utf-8")
+        p2.write_text("{}", encoding="utf-8")
+        assert _find_previous_report(p2) == p1
+
+    def test_find_previous_report_first_file(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _find_previous_report
+
+        p1 = tmp_path / "auto_screening_20260609.json"
+        p2 = tmp_path / "auto_screening_20260610.json"
+        p1.write_text("{}", encoding="utf-8")
+        p2.write_text("{}", encoding="utf-8")
+        assert _find_previous_report(p1) is None
+
+    def test_compute_pick_changes_new_and_dropped(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _compute_pick_changes
+
+        prev = tmp_path / "auto_screening_20260609.json"
+        prev.write_text(
+            json.dumps({"recommendations": [{"ticker": "000001"}, {"ticker": "000002"}]}),
+            encoding="utf-8",
+        )
+        current = {"300750", "000001"}  # 000002 dropped, 300750 new
+        new, dropped = _compute_pick_changes(current, prev)
+        assert new == {"300750"}
+        assert dropped == {"000002"}
+
+    def test_compute_pick_changes_no_changes(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _compute_pick_changes
+
+        prev = tmp_path / "auto_screening_20260609.json"
+        prev.write_text(
+            json.dumps({"recommendations": [{"ticker": "000001"}, {"ticker": "000002"}]}),
+            encoding="utf-8",
+        )
+        current = {"000001", "000002"}
+        new, dropped = _compute_pick_changes(current, prev)
+        assert new == set()
+        assert dropped == set()
+
+    def test_compute_pick_changes_bad_file(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _compute_pick_changes
+
+        bad = tmp_path / "auto_screening_20260609.json"
+        bad.write_text("not json", encoding="utf-8")
+        new, dropped = _compute_pick_changes({"000001"}, bad)
+        assert new == set()
+        assert dropped == set()
+
+    def test_render_pick_changes_new_only(self) -> None:
+        from src.screening.top_picks import _render_pick_changes
+
+        result = _render_pick_changes({"300750"}, set(), [{"ticker": "300750", "name": "宁德时代"}])
+        assert "新入选" in result
+        assert "🆕" in result
+        assert "宁德时代" in result
+
+    def test_render_pick_changes_dropped_only(self) -> None:
+        from src.screening.top_picks import _render_pick_changes
+
+        result = _render_pick_changes(set(), {"000001"}, [])
+        assert "退出" in result
+        assert "❌" in result
+        assert "000001" in result
+
+    def test_render_pick_changes_both(self) -> None:
+        from src.screening.top_picks import _render_pick_changes
+
+        result = _render_pick_changes(
+            {"300750"},
+            {"000001"},
+            [{"ticker": "300750", "name": "宁德时代"}],
+        )
+        assert "新入选" in result
+        assert "退出" in result
+
+    def test_render_pick_changes_empty(self) -> None:
+        from src.screening.top_picks import _render_pick_changes
+
+        result = _render_pick_changes(set(), set(), [])
+        assert result == ""
+
+    def test_new_badge_appears_in_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        # Write previous report with different tickers
+        prev = tmp_path / "auto_screening_20260609.json"
+        prev.write_text(
+            json.dumps({"date": "20260609", "recommendations": [{"ticker": "999999", "name": "Old", "score_b": 0.5}]}),
+            encoding="utf-8",
+        )
+        # Write current report
+        recs = [_make_rec("300750", "宁德时代", 0.6)]
+        _write_report(tmp_path, recs, date="20260610")
+        rc = run_top_picks(count=5, reports_dir=tmp_path)
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "🆕" in output
+
+    def test_stale_report_warning_in_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        recs = [_make_rec("300750", "宁德时代", 0.6)]
+        _write_report(tmp_path, recs, date="20260101")  # Very old date
+        rc = run_top_picks(count=5, reports_dir=tmp_path)
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "非最新" in output

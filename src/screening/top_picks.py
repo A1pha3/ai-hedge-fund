@@ -18,6 +18,7 @@ Design principle:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.screening.composite_score import (
@@ -451,6 +452,94 @@ def _render_sector_focus(picks: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# R12: Data freshness guard
+# ---------------------------------------------------------------------------
+
+
+def _check_report_freshness(report_date: str) -> str:
+    """Return a warning string if the report is stale (>1 trading day old).
+
+    Simple heuristic: if the report date is >= 2 calendar days before today,
+    it is considered stale. This covers weekends (Fri report read on Mon = 3
+    calendar days, which is fine) and holidays.
+    """
+    if not report_date or len(report_date) != 8 or not report_date.isdigit():
+        return ""
+    try:
+        report_dt = datetime.strptime(report_date, "%Y%m%d")
+    except ValueError:
+        return ""
+    today = datetime.now()
+    age_days = (today - report_dt).days
+    # A report from today or yesterday is always fresh (covers evenings).
+    # >= 2 days means the report is at least one full trading day old.
+    if age_days >= 2:
+        formatted = report_dt.strftime("%Y-%m-%d")
+        return (
+            f"  {Fore.YELLOW}{Style.BRIGHT}⚠ 报告日期: {formatted}（非最新，请先运行 --auto 更新）{Style.RESET_ALL}"
+        )
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# R13: New / dropped pick detection
+# ---------------------------------------------------------------------------
+
+
+def _find_previous_report(current_path: Path) -> Path | None:
+    """Find the report file immediately before *current_path* in the same dir.
+
+    Files are named ``auto_screening_YYYYMMDD.json``. We sort by name
+    (lexicographic = chronological) and return the entry just before the
+    one matching *current_path*.
+    """
+    candidates = sorted(current_path.parent.glob("auto_screening_*.json"))
+    if len(candidates) < 2:
+        return None
+    try:
+        idx = candidates.index(current_path)
+    except ValueError:
+        return None
+    if idx == 0:
+        return None
+    return candidates[idx - 1]
+
+
+def _compute_pick_changes(
+    current_tickers: set[str],
+    prev_path: Path,
+) -> tuple[set[str], set[str]]:
+    """Return (new_tickers, dropped_tickers) compared to previous report."""
+    try:
+        prev_data = json.loads(prev_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set(), set()
+    prev_recs = prev_data.get("recommendations") or []
+    prev_tickers = {str(r.get("ticker", "")) for r in prev_recs if str(r.get("ticker", ""))}
+    new = current_tickers - prev_tickers
+    dropped = prev_tickers - current_tickers
+    return new, dropped
+
+
+def _render_pick_changes(new: set[str], dropped: set[str], current_items: list[dict]) -> str:
+    """Render a one-line summary of new/dropped picks."""
+    parts = []
+    if new:
+        # Get names for new tickers
+        name_map = {str(it.get("ticker", "")): str(it.get("name", "") or it.get("ticker", "")) for it in current_items}
+        new_labels = [f"{Fore.GREEN}🆕 {name_map.get(t, t)}{Style.RESET_ALL}" for t in sorted(new)[:3]]
+        extra = f" +{len(new) - 3}个" if len(new) > 3 else ""
+        parts.append("新入选: " + ", ".join(new_labels) + extra)
+    if dropped:
+        drop_labels = [f"{Fore.RED}❌ {t}{Style.RESET_ALL}" for t in sorted(dropped)[:3]]
+        extra = f" +{len(dropped) - 3}个" if len(dropped) > 3 else ""
+        parts.append("退出: " + ", ".join(drop_labels) + extra)
+    if not parts:
+        return ""
+    return "  📊 " + " | ".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -483,6 +572,9 @@ def run_top_picks(
     recs = (report_data.get("recommendations") or [])[:count * 3]  # Load more for filtering
     trade_date = report_data.get("date", "")
     market_regime = _render_market_gate(trade_date)
+
+    # R12: Data freshness guard
+    freshness_warning = _check_report_freshness(trade_date)
 
     if not recs:
         print(f"{Fore.YELLOW}No recommendations in latest report.{Style.RESET_ALL}")
@@ -534,9 +626,20 @@ def run_top_picks(
 
     representative_picks = select_representative_candidates(ranked, count=count)
 
+    # R13: Detect new/dropped picks vs previous report
+    all_current_tickers = {str(r.get("ticker", "")) for r in ranked if str(r.get("ticker", ""))}
+    prev_report = _find_previous_report(report_path)
+    new_tickers: set[str] = set()
+    dropped_tickers: set[str] = set()
+    if prev_report is not None:
+        new_tickers, dropped_tickers = _compute_pick_changes(all_current_tickers, prev_report)
+
     # Step 3: Render compact output
     print(f"\n{Fore.CYAN}{Style.BRIGHT}🎯 Today's Top Picks{Style.RESET_ALL}")
     print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+30 posterior edge + 代表票去重 + 连续推荐加权")
+    # R12: Data freshness warning
+    if freshness_warning:
+        print(freshness_warning)
     # Market opportunity traffic light
     opp = _render_market_opportunity_index(representative_picks, market_regime)
     print(opp)
@@ -547,6 +650,10 @@ def run_top_picks(
         grade = _composite_grade(composite_score)
         name = str(item.get("name", "") or item.get("ticker", ""))[:14]
         verdict = build_front_door_verdict(item, market_regime=market_regime)
+
+        # R13: New pick badge
+        is_new = str(item.get("ticker", "")) in new_tickers
+        new_badge = f" {Fore.GREEN}🆕{Style.RESET_ALL}" if is_new else ""
 
         # R4: Consecutive recommendation display
         consec_days = int(item.get("consecutive_days", 0) or 0)
@@ -608,7 +715,7 @@ def run_top_picks(
         print(
             f"  {Fore.WHITE}{idx}.{Style.RESET_ALL} "
             f"{Fore.CYAN}{str(item.get('ticker', '')):<8}{Style.RESET_ALL} "
-            f"{name:<14} "
+            f"{name:<14}{new_badge} "
             f"{score_color}{composite_score:>+.3f}{Style.RESET_ALL} "
             f"{grade}{consec_str} {confluence_str}  "
             f"(base={base_score:.3f} {signal_str})"
@@ -649,6 +756,12 @@ def run_top_picks(
     sector_focus = _render_sector_focus(representative_picks)
     if sector_focus:
         print(sector_focus)
+
+    # R13: New/dropped pick summary
+    if new_tickers or dropped_tickers:
+        changes = _render_pick_changes(new_tickers, dropped_tickers, ranked)
+        if changes:
+            print(changes)
 
     # Quick tips
     strong_picks = [i for i in representative_picks if float(i.get("composite_score", 0.0) or 0.0) >= 0.5]
