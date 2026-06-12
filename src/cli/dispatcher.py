@@ -769,6 +769,17 @@ def _resolve_volume_confirm(argv: list[str]) -> int | None:
     return run_volume_confirm(argv)
 
 
+def _resolve_top_picks(argv: list[str]) -> int | None:
+    """P12-2 one-command top picks. Shows today's best buys."""
+    if "--top-picks" not in argv:
+        return None
+    count = _parse_int(_get_kv(argv, "--count"), 5)
+    lookback = _parse_int(_get_kv(argv, "--lookback"), 5)
+    from src.screening.top_picks import run_top_picks
+
+    return run_top_picks(count=count, lookback_days=lookback)
+
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -817,6 +828,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--sector-strength", _resolve_sector_strength),
     ("--composite-score", _resolve_composite_score),
     ("--volume-confirm", _resolve_volume_confirm),
+    ("--top-picks", _resolve_top_picks),
 ]
 
 

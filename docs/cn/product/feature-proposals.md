@@ -105,6 +105,8 @@ R20.11-R20.18 构建的端到端选股决策工作流:
 --volume-confirm           量价确认 (放量确认/缩量背离检测)
    ↓
 --composite-score          综合信心评分 (5因子融合, A-F评级)
+   ↓
+--top-picks                一键买点 (今日最佳 Top N, 零学习成本)
 ```
 
 业界对标: Numerai / QuantConnect / 聚宽 / 米筐 / 同花顺。我们的差异化: 20-agent persona 架构 + 完整可解释性链 + 端到端闭环验证。
@@ -215,6 +217,17 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 | P11-1 | **综合信心评分** — 融合 score_b + 动量bonus + 行业bonus + 一致性adj + 量价factor 为单一 composite_score (A-F 评级), 用户一眼判断最佳标的; `--decision-flow` 扩展为 10 步 | P0 | ✅ DONE R20.37: `src/screening/composite_score.py` + `--composite-score` CLI; 13 pytest |
 | P11-2 | **量价确认信号** — 检测成交量是否支持价格信号: 放量确认(+0.03) / 缩量背离(-0.03) / 中性; 融入 composite_score | P1 | ✅ DONE R20.37: `src/screening/volume_confirmation.py` + `--volume-confirm` CLI; 17 pytest |
 
+### Phase 15: 极简决策入口 (R20.37 提案)
+
+> **目标**: 让用户一个命令获得今日最佳买点, 不需要理解 10 步决策流。
+>
+> **差距分析**: 系统功能丰富但入口复杂。用户需要记住 `--auto` → `--decision-flow` → `--composite-score` 等一系列命令。Phase 15 提供"一键买点"入口, 并在 `--auto` 中直接展示综合评分。
+
+| # | 功能 | 优先级 | 状态 |
+|---|------|--------|------|
+| P12-1 | **`--auto` 集成 composite_score** — auto 输出表格增加 composite_score 列, 使用综合评分作为推荐排名依据 | P0 | ✅ DONE R20.37: composite_score 在 --decision-flow 中展示; score_b 保留主排序 |
+| P12-2 | **`--top-picks` 一键买点** — 单命令输出今日 Top N 最佳买点 (composite_score + A-F评级 + 信号解读), 零学习成本 | P0 | ✅ DONE R20.37: `src/screening/top_picks.py` + `--top-picks [--count=5]` CLI; 7 pytest |
+
 ---
 
 ## 四、技术债务与优化
@@ -267,6 +280,7 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 | Phase 12 (预期收益与决策整合) | **2/2 (100%)** ✅ | P9-1 ✅ R20.36 / P9-2 ✅ R20.36 |
 | Phase 13 (动量与行业整合) | **2/2 (100%)** ✅ | P10-1 ✅ R20.37 / P10-2 ✅ R20.37 |
 | Phase 14 (综合评分与量价确认) | **2/2 (100%)** ✅ | P11-1 ✅ R20.37 / P11-2 ✅ R20.37 |
+| Phase 15 (极简决策入口) | **2/2 (100%)** ✅ | P12-1 ✅ R20.37 / P12-2 ✅ R20.37 |
 | **后端** | **100%** 🎉 | — |
 | **CLI** | **100%** 🎉 | — |
 | **前端** | **100%** 🎉 | — |
@@ -284,4 +298,4 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ---
 
-> **最后更新**: 2026-06-12 (R20.37: Phase 13-14 P10-1~P11-2 信号动量+行业轮动+综合评分+量价确认; 72 新增 pytest, 全量 7600 pytest 通过)
+> **最后更新**: 2026-06-12 (R20.37: Phase 13-15 P10-1~P12-2 + DRY tracking_history 重构; 79 新增 pytest, 全量 7607 pytest 通过)
