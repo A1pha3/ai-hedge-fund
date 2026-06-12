@@ -180,6 +180,30 @@ def _render_hit_rate_summary(verify_summary: object) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Verdict distribution summary
+# ---------------------------------------------------------------------------
+
+
+def _render_verdict_distribution(picks: list[dict], market_regime: str) -> str:
+    """Render BUY/HOLD/AVOID distribution for the representative picks."""
+    counts = {"BUY": 0, "HOLD": 0, "AVOID": 0}
+    for item in picks:
+        verdict = build_front_door_verdict(item, market_regime=market_regime)
+        action = verdict.get("action", "AVOID")
+        counts[action] = counts.get(action, 0) + 1
+
+    parts = []
+    if counts["BUY"]:
+        parts.append(f"{Fore.GREEN}BUY={counts['BUY']}{Style.RESET_ALL}")
+    if counts["HOLD"]:
+        parts.append(f"{Fore.YELLOW}HOLD={counts['HOLD']}{Style.RESET_ALL}")
+    if counts["AVOID"]:
+        parts.append(f"{Fore.RED}AVOID={counts['AVOID']}{Style.RESET_ALL}")
+
+    return "  分布: " + " | ".join(parts) if parts else ""
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -340,6 +364,11 @@ def run_top_picks(
             print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
 
     print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
+
+    # Verdict distribution summary
+    dist = _render_verdict_distribution(representative_picks, market_regime)
+    if dist:
+        print(dist)
 
     # Quick tips
     strong_picks = [i for i in representative_picks if float(i.get("composite_score", 0.0) or 0.0) >= 0.5]

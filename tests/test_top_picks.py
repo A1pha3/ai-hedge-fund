@@ -666,3 +666,59 @@ class TestHitRateSummary:
         assert rc == 0
         output = capsys.readouterr().out
         assert "300750" in output
+
+
+# ---------------------------------------------------------------------------
+# Verdict distribution summary tests
+# ---------------------------------------------------------------------------
+
+
+class TestVerdictDistribution:
+    """Tests for BUY/HOLD/AVOID distribution summary."""
+
+    def _make_pick(self, score: float, t30: float = 0.0, t30_wr: float = 0.0, sample: int = 0, decision: str = "bullish") -> dict:
+        """Build a recommendation dict with enough fields for verdict."""
+        return {
+            "composite_score": score,
+            "score_b": score,
+            "decision": decision,
+            "expected_returns": {"t30": t30},
+            "win_rates": {"t30": t30_wr},
+            "bucket_sample_count": sample,
+        }
+
+    def test_all_buy(self) -> None:
+        from src.screening.top_picks import _render_verdict_distribution
+        picks = [
+            self._make_pick(0.8, t30=10.0, t30_wr=0.66, sample=40),
+            self._make_pick(0.6, t30=5.0, t30_wr=0.60, sample=30),
+        ]
+        result = _render_verdict_distribution(picks, market_regime="trend")
+        assert "BUY=2" in result
+        assert "AVOID" not in result
+
+    def test_mixed_verdicts(self) -> None:
+        from src.screening.top_picks import _render_verdict_distribution
+        picks = [
+            self._make_pick(0.7, t30=8.0, t30_wr=0.62, sample=25),   # BUY
+            self._make_pick(0.35, t30=1.0, t30_wr=0.52, sample=15),  # HOLD
+            self._make_pick(0.1, t30=-2.0, t30_wr=0.40, sample=10),   # AVOID
+        ]
+        result = _render_verdict_distribution(picks, market_regime="trend")
+        assert "BUY=1" in result
+        assert "HOLD=1" in result
+        assert "AVOID=1" in result
+
+    def test_empty_picks(self) -> None:
+        from src.screening.top_picks import _render_verdict_distribution
+        result = _render_verdict_distribution([], market_regime="trend")
+        assert result == ""
+
+    def test_crisis_mode_downgrades(self) -> None:
+        from src.screening.top_picks import _render_verdict_distribution
+        picks = [
+            self._make_pick(0.8, t30=10.0, t30_wr=0.66, sample=40),
+        ]
+        result = _render_verdict_distribution(picks, market_regime="crisis")
+        assert "BUY" not in result
+        assert "HOLD=1" in result
