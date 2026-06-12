@@ -5598,7 +5598,6 @@ def _build_replay_evaluator(
         # Task 1 (Round 37, Alpha): mode of optimal_holding_days across replay windows.
         _ohd_vals = [int(s["optimal_holding_days"]) for s in all_primary_surfaces if s.get("optimal_holding_days") is not None]
         if _ohd_vals:
-            from collections import Counter as _Counter
             _ohd_mode = _Counter(_ohd_vals).most_common(1)[0][0]
             avg_optimal_holding_days: int | None = _ohd_mode
         else:
