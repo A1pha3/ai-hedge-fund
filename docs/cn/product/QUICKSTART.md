@@ -25,7 +25,36 @@ AUTO_EXPORT_PDF=true uv run python src/main.py --auto
 # 0 17 * * 1-5 cd /path/to/project && uv run python src/main.py --auto
 ```
 
-## 二、进阶用法
+## 二、每日工作流 (推荐)
+
+```bash
+# 1. 盘前: 市场状态 + Top 3 决策卡 + 关注池健康速览
+uv run python src/main.py --daily-brief
+
+# 2. 买入: 一键获得今日最佳买点 (含市场门控 + 行业分散检查)
+uv run python src/main.py --top-picks --count=5
+
+# 3. 监控: 持仓健康检查 (HOLD / WATCH / SELL)
+uv run python src/main.py --position-check --tickers=000001,300750
+
+# 4. 学习: 策略表现周报 (哪些策略在赚钱)
+uv run python src/main.py --strategy-report --lookback=7
+```
+
+## 三、完整决策链
+
+```bash
+# 10 步完整决策流 (选股→新鲜度→一致性→动量→综合评分)
+uv run python src/main.py --decision-flow --top-n=10
+
+# 综合信心评分 (6因子融合: base+动量+行业+一致性+量价+趋势共振)
+uv run python src/main.py --composite-score --top-n=20
+
+# 趋势共振检测 (5d/20d/60d 三时间框架一致性)
+uv run python src/main.py --trend-resonance --top-n=20
+```
+
+## 四、进阶用法
 
 ```bash
 # 自定义权重
@@ -41,7 +70,7 @@ uv run python src/main.py --watchlist-list
 uv run python src/main.py --preheat && uv run python src/main.py --auto --export-pdf
 ```
 
-## 三、Web 端访问
+## 五、Web 端访问
 
 ```bash
 # 启动后端 + 前端
@@ -51,7 +80,7 @@ uv run python src/main.py --preheat && uv run python src/main.py --auto --export
 open http://localhost:5173
 ```
 
-## 四、常用 API 端点
+## 六、常用 API 端点
 
 - `POST /api/screening/auto` — 一键选股
 - `GET /api/screening/compare?tickers=300750,600519` — 标的对比
