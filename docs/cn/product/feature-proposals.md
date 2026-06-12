@@ -264,6 +264,19 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 | P15-1 | **持仓健康检查** — `--position-check 000001,300750` 对用户已持仓标的输出综合健康评估 (composite_score 变化趋势 + 信号衰减 + 趋势共振状态 + 卖出建议), 复用全部既有信号基础设施 | P0 | ✅ DONE R20.39: `src/screening/position_health.py` + `--position-check` CLI; 18 pytest |
 | P15-2 | **策略表现周报** — `--strategy-report` 输出近 7 天各策略 (趋势/均值回归/基本面/事件情绪) 的独立胜率与贡献度, 帮助用户理解当前市场风格并调整权重 | P1 | ✅ DONE R20.39: `src/screening/strategy_report.py` + `--strategy-report` CLI; 11 pytest |
 
+### Phase 19: 每日工作流整合 (R20.39 提案)
+
+> **目标**: 让用户每天只运行一个命令就能获得完整决策信息, 而不需要记住多个 CLI 标志。
+>
+> **差距分析**: 当前每日工作流需要运行 3 个独立命令: `--daily-brief` (盘前) → `--top-picks` (买点) → `--position-check` (监控)。用户体验碎片化。同时, `--top-picks` 不检查市场状态, 在风险厌恶行情下仍会推荐买入。
+>
+> **重叠清理**: Signal Analysis 的 6 个独立命令 (`--signal-momentum`, `--sector-strength`, `--volume-confirm`, `--trend-resonance`, `--signal-consistency`, `--composite-score`) 已全部被 `--decision-flow` 和 `--top-picks` 整合, 标记为 power-user 工具, 不列入推荐工作流。
+
+| # | 功能 | 优先级 | 状态 |
+|---|------|--------|------|
+| P16-1 | **`--top-picks` 市场门控** — 当市场处于 risk-off/crisis 状态时, `--top-picks` 输出增加醒目警告 "当前市场环境不适合买入", 并降低推荐置信度 | P0 | ✅ DONE R20.39: `top_picks.py` `_market_gate_warning()` |
+| P16-2 | **`--daily-brief` 整合持仓检查** — 增强 `--daily-brief` 输出, 在 Top 3 决策卡之前增加市场状态摘要 + 持仓健康预警 (如果用户配置了 `--watchlist`) | P1 | ✅ DONE R20.39: `daily_brief.py` `_print_watchlist_health()` |
+
 ---
 
 ## 四、技术债务与优化
@@ -320,6 +333,7 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 | Phase 16 (30 天 investability 收敛) | **2/2 (100%)** ✅ | P13-1 ✅ R20.38 / P13-2 ✅ R20.38 |
 | Phase 17 (信号精度最终打磨) | **2/2 (100%)** ✅ | P14-1 ✅ R20.39 / P14-2 ✅ R20.39 |
 | Phase 18 (持仓监控与策略学习) | **2/2 (100%)** ✅ | P15-1 ✅ R20.39 / P15-2 ✅ R20.39 |
+| Phase 19 (每日工作流整合) | **2/2 (100%)** ✅ | P16-1 ✅ R20.39 / P16-2 ✅ R20.39 |
 | **后端** | **100%** 🎉 | — |
 | **CLI** | **100%** 🎉 | — |
 | **前端** | **100%** 🎉 | — |

@@ -372,6 +372,56 @@ _load_history_lookup_cached: dict[str, Any] = {}
 
 
 # ---------------------------------------------------------------------------
+# P16-2: Watchlist health summary in daily brief
+# ---------------------------------------------------------------------------
+
+
+def _print_watchlist_health(report_dir: Path, all_recs: list[dict[str, Any]]) -> None:
+    """Append a compact health summary for watchlist tickers to the daily brief.
+
+    Uses score_b from the latest report as a quick health indicator.
+    """
+    try:
+        from src.screening.watchlist import load_watchlist
+
+        watchlist = load_watchlist()
+    except Exception:
+        return
+
+    tickers = watchlist.get("tickers", [])
+    if not tickers or not isinstance(tickers, list):
+        return
+
+    # Build a quick lookup from latest recommendations
+    rec_map: dict[str, dict[str, Any]] = {}
+    for rec in all_recs:
+        t = str(rec.get("ticker", ""))
+        if t:
+            rec_map[t] = rec
+
+    print(f"\n{Fore.CYAN}📋 关注池健康速览{Style.RESET_ALL}")
+    print(f"  {Fore.WHITE}{'─' * 50}{Style.RESET_ALL}")
+
+    for ticker in tickers:
+        rec = rec_map.get(ticker)
+        if rec is None:
+            print(f"  {Fore.YELLOW}{ticker:<8} — 不在最新推荐列表{Style.RESET_ALL}")
+            continue
+        score_b = float(rec.get("score_b", 0.0) or 0.0)
+        name = str(rec.get("name", "") or ticker)[:10]
+        if score_b >= 0.4:
+            color = Fore.GREEN
+            status = "健康"
+        elif score_b >= 0.2:
+            color = Fore.YELLOW
+            status = "关注"
+        else:
+            color = Fore.RED
+            status = "走弱"
+        print(f"  {ticker:<8} {name:<10} score_b={color}{score_b:.3f}{Style.RESET_ALL}  {color}{status}{Style.RESET_ALL}")
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -422,6 +472,9 @@ def run_daily_brief(report_dir: Path | None = None) -> int:
         report_path=latest,
         has_tracking_history=has_tracking_history,
     )
+
+    # P16-2: Show watchlist health summary if available
+    _print_watchlist_health(actual_dir, recs)
 
     return 0
 

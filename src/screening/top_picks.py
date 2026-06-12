@@ -31,6 +31,46 @@ from src.screening.investability import rank_recommendations_by_investability
 from src.utils.display import Fore, Style
 
 
+# ---------------------------------------------------------------------------
+# P16-1: Market gate warning
+# ---------------------------------------------------------------------------
+
+
+def _market_gate_warning(search_dir: Path) -> None:
+    """Check market state and warn if conditions are unfavorable for buying.
+
+    Uses the market_state module to detect risk-off/crisis conditions.
+    """
+    try:
+        from src.screening.market_state import detect_market_state
+
+        state = detect_market_state(trade_date="", reports_dir=search_dir)
+        regime = getattr(state, "regime", "") or ""
+        # Map to lowercase for comparison
+        regime_lower = regime.lower()
+
+        if "crisis" in regime_lower or "risk_off" in regime_lower:
+            print(
+                f"\n{Fore.RED}{Style.BRIGHT}⚠ MARKET GATE: {regime}{Style.RESET_ALL}"
+            )
+            print(
+                f"  {Fore.RED}当前市场处于高风险状态, 不建议追高买入。{Style.RESET_ALL}"
+            )
+            print(
+                f"  {Fore.YELLOW}建议: 降低仓位或等待市场企稳后再操作。{Style.RESET_ALL}\n"
+            )
+        elif "cautious" in regime_lower or "range" in regime_lower:
+            print(
+                f"\n{Fore.YELLOW}⚡ MARKET GATE: {regime}{Style.RESET_ALL}"
+            )
+            print(
+                f"  {Fore.YELLOW}市场处于震荡/谨慎状态, 建议轻仓参与, 严格止损。{Style.RESET_ALL}\n"
+            )
+    except Exception:
+        # Market gate is best-effort; never block top-picks if it fails
+        pass
+
+
 def run_top_picks(
     *,
     count: int = 5,
@@ -48,6 +88,9 @@ def run_top_picks(
         Exit code
     """
     search_dir = reports_dir or resolve_report_dir()
+
+    # Step 0: Market gate — warn if market conditions are unfavorable (P16-1)
+    _market_gate_warning(search_dir)
 
     # Step 1: Load latest report
     report_path = _find_latest_report(search_dir)
