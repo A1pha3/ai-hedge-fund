@@ -1,6 +1,7 @@
-import { NodeStatus, useNodeContext } from '@/contexts/node-context';
+import { NodeStatus, type OutputNodeData, useNodeContext } from '@/contexts/node-context';
 import { extractBaseAgentKey } from '@/data/node-mappings';
 import { flowConnectionManager } from '@/hooks/use-flow-connection';
+import { asSseRecord, extractCompleteSseEvents, parseSseEvent } from '@/services/sse';
 import {
   BacktestDayResult,
   BacktestPerformanceMetrics,
@@ -72,20 +73,20 @@ export const backtestApi = {
             buffer += chunk;
             
             // Process any complete events in the buffer (separated by double newlines)
-            const events = buffer.split('\n\n');
-            buffer = events.pop() || '';
+            const extracted = extractCompleteSseEvents(buffer);
+            buffer = extracted.remainder;
             
-            for (const eventText of events) {
+            for (const eventText of extracted.events) {
               if (!eventText.trim()) continue;
-                            
+                             
               try {
-                // Parse the event type and data from the SSE format
-                const eventTypeMatch = eventText.match(/^event: (.+)$/m);
-                const dataMatch = eventText.match(/^data: (.+)$/m);
-                
-                if (eventTypeMatch && dataMatch) {
-                  const eventType = eventTypeMatch[1];
-                  const eventData = JSON.parse(dataMatch[1]);
+                const parsedEvent = parseSseEvent(eventText);
+                if (parsedEvent) {
+                  const eventType = parsedEvent.event;
+                  const eventData = asSseRecord(parsedEvent.data);
+                  if (!eventData) {
+                    continue;
+                  }
                   
                   console.log(`Parsed backtest ${eventType} event:`, eventData);
                   
@@ -106,10 +107,14 @@ export const backtestApi = {
                     
                     case 'progress':
                       // Handle individual agent updates (from actual agents during backtest)
-                      if (eventData.agent && eventData.agent !== 'backtest') {
+                      if (typeof eventData.agent === 'string' && eventData.agent !== 'backtest') {
                         // Map the progress to a node status
                         let nodeStatus: NodeStatus = 'IN_PROGRESS';
-                        if (eventData.status === 'Done') {
+                        const statusMessage = typeof eventData.status === 'string' ? eventData.status : '';
+                        const ticker = typeof eventData.ticker === 'string' ? eventData.ticker : null;
+                        const analysis = typeof eventData.analysis === 'string' ? eventData.analysis : null;
+                        const timestamp = typeof eventData.timestamp === 'string' ? eventData.timestamp : undefined;
+                        if (statusMessage === 'Done') {
                           nodeStatus = 'COMPLETE';
                         }
                         // Map the backend agent name to the unique node ID
@@ -125,16 +130,16 @@ export const backtestApi = {
                         // Use the enhanced API to update both status and additional data
                         nodeContext.updateAgentNode(flowId, uniqueNodeId, {
                           status: nodeStatus,
-                          ticker: eventData.ticker,
-                          message: eventData.status,
-                          analysis: eventData.analysis,
-                          timestamp: eventData.timestamp
+                          ticker,
+                          message: statusMessage,
+                          analysis,
+                          timestamp,
                         });
                       }
                       // Handle backtest-specific progress updates
                       else if (eventData.agent === 'backtest') {
                         // If this progress update contains backtest result data, add it to local array
-                        if (eventData.analysis) {
+                        if (typeof eventData.analysis === 'string') {
                           try {
                             const backtestResultData = JSON.parse(eventData.analysis);
                             // Add to local array and keep only the last 50 results to avoid memory issues
@@ -147,7 +152,7 @@ export const backtestApi = {
                         // Update the node with the local backtest results
                         nodeContext.updateAgentNode(flowId, 'backtest', {
                           status: 'IN_PROGRESS',
-                          message: eventData.status,
+                          message: typeof eventData.status === 'string' ? eventData.status : '',
                           backtestResults: backtestResults,
                         });
                       }
@@ -156,15 +161,18 @@ export const backtestApi = {
                     case 'complete':
                       // Store the complete backtest results
                       if (eventData.data) {
-                        const backtestResults = {
-                          decisions: { backtest: { type: 'backtest_complete' } },
-                          analyst_signals: {},
-                          performance_metrics: eventData.data.performance_metrics,
-                          final_portfolio: eventData.data.final_portfolio,
-                          total_days: eventData.data.total_days,
-                        };
-                        
-                        nodeContext.setOutputNodeData(flowId, backtestResults);
+                        const completeData = asSseRecord(eventData.data);
+                        if (completeData) {
+                          const backtestResults = {
+                            decisions: { backtest: { type: 'backtest_complete' } },
+                            analyst_signals: {},
+                            performance_metrics: completeData.performance_metrics as BacktestPerformanceMetrics | undefined,
+                            final_portfolio: completeData.final_portfolio as OutputNodeData['final_portfolio'],
+                            total_days: typeof completeData.total_days === 'number' ? completeData.total_days : undefined,
+                          };
+                          
+                          nodeContext.setOutputNodeData(flowId, backtestResults);
+                        }
                       }
                       
                       // Mark the backtest agent as complete
@@ -198,22 +206,24 @@ export const backtestApi = {
                       }
                       break;
                     
-                    case 'error':
+                    case 'error': {
                       // Mark nodes as error when there's an error
+                      const errorMessage = typeof eventData.message === 'string' ? eventData.message : 'Backtest failed';
                       nodeContext.updateAgentNode(flowId, 'portfolio-start', {
                         status: 'ERROR',
-                        message: eventData.message || 'Backtest failed',
+                        message: errorMessage,
                       });
                       
                       // Update flow connection state to error
                       if (flowId) {
                         flowConnectionManager.setConnection(flowId, {
                           state: 'error',
-                          error: eventData.message || 'Unknown error occurred',
+                          error: typeof eventData.message === 'string' ? eventData.message : 'Unknown error occurred',
                           abortController: null,
                         });
                       }
                       break;
+                    }
                     
                     default:
                       console.warn('Unknown backtest event type:', eventType);

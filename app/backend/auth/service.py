@@ -186,7 +186,7 @@ class AuthService:
         if user.username == ADMIN_USERNAME:
             return None
 
-        return create_reset_token(user.username)
+        return create_reset_token(user.username, token_version=user.token_version or 0)
 
     def reset_password(self, token: str, new_password: str) -> None:
         """Reset password using a reset token."""
@@ -204,6 +204,10 @@ class AuthService:
 
         if user.username == ADMIN_USERNAME:
             raise ForbiddenError("管理员密码只能通过 CLI 修改")
+
+        token_version = payload.get("tv")
+        if token_version is not None and token_version != (user.token_version or 0):
+            raise InvalidTokenError("重置令牌已使用或已过期")
 
         # Single-use check
         token_iat = payload.get("iat", 0)

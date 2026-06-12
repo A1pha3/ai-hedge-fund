@@ -77,6 +77,7 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
   };
 
   const isAdmin = user?.role === 'admin';
+  const roleBadge = user?.role === 'admin' ? 'ADMIN' : user?.role === 'viewer' ? 'VIEWER' : 'MEMBER';
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -86,7 +87,7 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
           <div>
             <h2 className="settings-title">用户设置</h2>
             <p className="settings-user">
-              <span className="settings-badge">{user?.role === 'admin' ? 'ADMIN' : 'USER'}</span>
+              <span className="settings-badge">{roleBadge}</span>
               {user?.username}
             </p>
           </div>

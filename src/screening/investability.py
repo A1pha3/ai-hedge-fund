@@ -34,6 +34,172 @@ def _safe_metric(value: Any, default: float) -> float:
         return default
 
 
+def _safe_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _resolve_cluster_label(recommendation: dict[str, Any]) -> tuple[str, str]:
+    industry = _safe_text(recommendation.get("industry_sw") or recommendation.get("industry"))
+    if industry:
+        return ("industry", industry)
+
+    concept_value = recommendation.get("concepts") or recommendation.get("concept")
+    if isinstance(concept_value, str):
+        concept = concept_value.strip()
+        if concept:
+            return ("concept", concept)
+    elif isinstance(concept_value, (list, tuple)):
+        concepts = sorted(_safe_text(item) for item in concept_value if _safe_text(item))
+        if concepts:
+            return ("concept", concepts[0])
+
+    ticker = _safe_text(recommendation.get("ticker")) or "unknown"
+    return ("ticker", ticker)
+
+
+def _decorate_cluster_candidate(
+    recommendation: dict[str, Any],
+    *,
+    cluster_kind: str,
+    cluster_label: str,
+    cluster_members: list[dict[str, Any]],
+) -> dict[str, Any]:
+    ticker = _safe_text(recommendation.get("ticker"))
+    member_tickers = [_safe_text(item.get("ticker")) for item in cluster_members if _safe_text(item.get("ticker"))]
+    decorated = dict(recommendation)
+    decorated["cluster_kind"] = cluster_kind
+    decorated["cluster_label"] = cluster_label
+    decorated["cluster_size"] = len(member_tickers)
+    decorated["cluster_members"] = member_tickers
+    decorated["cluster_alternatives"] = [member for member in member_tickers if member != ticker]
+    decorated["is_cluster_representative"] = bool(member_tickers and member_tickers[0] == ticker)
+    return decorated
+
+
+def select_representative_candidates(
+    recommendations: list[dict[str, Any]],
+    *,
+    count: int,
+) -> list[dict[str, Any]]:
+    """Keep one representative per cluster before backfilling duplicates.
+
+    The input recommendations must already be sorted by desirability.
+    Clusters currently prefer Shenwan industry labels and fall back to concept or ticker.
+    """
+
+    if count <= 0 or not recommendations:
+        return []
+
+    cluster_groups: dict[str, list[dict[str, Any]]] = {}
+    cluster_labels: dict[str, tuple[str, str]] = {}
+
+    for recommendation in recommendations:
+        cluster_kind, cluster_label = _resolve_cluster_label(recommendation)
+        cluster_key = f"{cluster_kind}:{cluster_label}"
+        cluster_groups.setdefault(cluster_key, []).append(recommendation)
+        cluster_labels[cluster_key] = (cluster_kind, cluster_label)
+
+    selected: list[dict[str, Any]] = []
+    selected_tickers: set[str] = set()
+    selected_clusters: set[str] = set()
+
+    for recommendation in recommendations:
+        cluster_kind, cluster_label = _resolve_cluster_label(recommendation)
+        cluster_key = f"{cluster_kind}:{cluster_label}"
+        ticker = _safe_text(recommendation.get("ticker"))
+        if cluster_key in selected_clusters or ticker in selected_tickers:
+            continue
+        selected.append(
+            _decorate_cluster_candidate(
+                recommendation,
+                cluster_kind=cluster_kind,
+                cluster_label=cluster_label,
+                cluster_members=cluster_groups[cluster_key],
+            )
+        )
+        selected_clusters.add(cluster_key)
+        selected_tickers.add(ticker)
+        if len(selected) >= count:
+            return selected
+
+    for recommendation in recommendations:
+        ticker = _safe_text(recommendation.get("ticker"))
+        if ticker in selected_tickers:
+            continue
+        cluster_kind, cluster_label = _resolve_cluster_label(recommendation)
+        cluster_key = f"{cluster_kind}:{cluster_label}"
+        selected.append(
+            _decorate_cluster_candidate(
+                recommendation,
+                cluster_kind=cluster_kind,
+                cluster_label=cluster_label,
+                cluster_members=cluster_groups[cluster_key],
+            )
+        )
+        selected_tickers.add(ticker)
+        if len(selected) >= count:
+            break
+
+    return selected
+
+
+def build_front_door_verdict(
+    recommendation: dict[str, Any],
+    *,
+    market_regime: str,
+) -> dict[str, str]:
+    """Derive a compact Buy/Hold/Avoid verdict for default front-door outputs."""
+
+    regime_lower = _safe_text(market_regime).lower()
+    decision = _safe_text(recommendation.get("decision")).lower()
+    composite_score = _safe_metric(recommendation.get("composite_score"), _safe_metric(recommendation.get("score_b", 0.0), 0.0))
+    expected_returns = recommendation.get("expected_returns") or {}
+    win_rates = recommendation.get("win_rates") or {}
+    t30_edge = _safe_metric(expected_returns.get("t30"), 0.0)
+    t30_win_rate = _safe_metric(win_rates.get("t30"), 0.0)
+    sample_count = int(_safe_metric(recommendation.get("bucket_sample_count"), 0.0))
+
+    supports_long = decision != "bearish"
+    is_high_quality = supports_long and composite_score >= 0.5 and t30_edge > 0 and t30_win_rate >= 0.55 and sample_count >= 20
+    is_watchable = supports_long and composite_score >= 0.25 and t30_edge >= 0 and t30_win_rate >= 0.5
+
+    if "crisis" in regime_lower or "risk_off" in regime_lower:
+        action = "HOLD" if is_high_quality else "AVOID"
+    elif is_high_quality:
+        action = "BUY"
+    elif is_watchable:
+        action = "HOLD"
+    else:
+        action = "AVOID"
+
+    invalidation_reasons = ["T+30 edge 转负"]
+    if "crisis" in regime_lower or "risk_off" in regime_lower:
+        invalidation_reasons.append("市场门控维持 risk-off")
+    else:
+        invalidation_reasons.append("市场门控转弱")
+    if _safe_metric(recommendation.get("momentum_bonus"), 0.0) < 0:
+        invalidation_reasons.append("动量转负")
+    if _safe_metric(recommendation.get("sector_bonus"), 0.0) < 0:
+        invalidation_reasons.append("行业转弱")
+    if _safe_metric(recommendation.get("consistency_adj"), 0.0) < 0:
+        invalidation_reasons.append("信号分歧扩大")
+    if _safe_metric(recommendation.get("volume_factor"), 0.0) < 0:
+        invalidation_reasons.append("量价背离")
+    if _safe_metric(recommendation.get("trend_resonance_factor"), 0.0) < 0:
+        invalidation_reasons.append("趋势共振失效")
+    if t30_win_rate and t30_win_rate < 0.5:
+        invalidation_reasons.append("同分组胜率跌破 50%")
+    if 0 < sample_count < 20:
+        invalidation_reasons.append("样本量不足 20")
+
+    deduped_reasons = list(dict.fromkeys(invalidation_reasons))
+    return {
+        "action": action,
+        "market_regime": regime_lower or "unknown",
+        "invalidation_reason": " / ".join(deduped_reasons[:4]),
+    }
+
+
 def rank_recommendations_by_investability(
     recommendations: list[dict[str, Any]],
     composite_report: CompositeReport,

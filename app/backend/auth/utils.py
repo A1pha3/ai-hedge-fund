@@ -122,10 +122,13 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return jwt.encode(to_encode, get_secret_key(), algorithm=ALGORITHM)
 
 
-def create_reset_token(username: str) -> str:
+def create_reset_token(username: str, token_version: int | None = None) -> str:
     """Create a one-time password reset token (short-lived)."""
+    payload = {"sub": username, "type": "reset"}
+    if token_version is not None:
+        payload["tv"] = token_version
     return create_access_token(
-        data={"sub": username, "type": "reset"},
+        data=payload,
         expires_delta=timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES),
     )
 

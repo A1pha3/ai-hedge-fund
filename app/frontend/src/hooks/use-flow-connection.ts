@@ -54,8 +54,9 @@ class FlowConnectionManager {
   }
 
   // Add listener for connection changes
-  addListener(listener: () => void): void {
+  addListener(listener: () => void): () => void {
     this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   // Remove listener
@@ -80,17 +81,17 @@ export const flowConnectionManager = new FlowConnectionManager();
 export function useFlowConnection(flowId: string | null) {
   const nodeContext = useNodeContext();
   const [, forceUpdate] = useState({});
-  const listenerRef = useRef<() => void>();
+  const listenerRef = useRef<(() => void) | null>(null);
 
   // Force re-render when connections change
   useEffect(() => {
     const listener = () => forceUpdate({});
-    listenerRef.current = listener;
-    flowConnectionManager.addListener(listener);
+    listenerRef.current = flowConnectionManager.addListener(listener);
     
     return () => {
       if (listenerRef.current) {
-        flowConnectionManager.removeListener(listenerRef.current);
+        listenerRef.current();
+        listenerRef.current = null;
       }
     };
   }, []);

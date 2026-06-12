@@ -2,7 +2,7 @@
 import { getMultiNodeDefinition, isMultiNodeComponent } from '@/data/multi-node-mappings';
 import { getNodeTypeDefinition } from '@/data/node-mappings';
 import { flowConnectionManager } from '@/hooks/use-flow-connection';
-import { clearAllNodeStates, getAllNodeStates, setNodeInternalState, setCurrentFlowId as setNodeStateFlowId } from '@/hooks/use-node-state';
+import { clearNodeStatesForFlow, getAllNodeStates, getCurrentFlowId as getNodeStateFlowId, getDraftNodeStates, setNodeInternalState, setCurrentFlowId as setNodeStateFlowId } from '@/hooks/use-node-state';
 import { flowService } from '@/services/flow-service';
 import { Flow } from '@/types/flow';
 import { MarkerType, ReactFlowInstance, useReactFlow, XYPosition } from '@xyflow/react';
@@ -80,7 +80,7 @@ export function FlowProvider({ children }: FlowProviderProps) {
       const viewport = reactFlowInstance.getViewport();
       
       // Collect all node internal states (from use-node-state)
-      const nodeStates = getAllNodeStates();
+      const nodeStates = currentFlowId ? getAllNodeStates() : getDraftNodeStates();
       const nodeInternalStates = Object.fromEntries(nodeStates);
 
       // Create structured data - nodeContextData will be added by enhanced save functions
@@ -191,13 +191,12 @@ export function FlowProvider({ children }: FlowProviderProps) {
   // Create a new flow
   const createNewFlow = useCallback(async () => {
     try {
-      // CRITICAL: Reset flow ID FIRST, before clearing nodes
+      // Clear only the active flow's node state before switching into a new unsaved draft.
+      clearNodeStatesForFlow(getNodeStateFlowId());
+
       setNodeStateFlowId(null);
       setCurrentFlowId(null);
       setCurrentFlowName('Untitled Flow');
-      
-      // Clear all node states for the current flow
-      clearAllNodeStates();
       
       // Clear the React Flow canvas
       reactFlowInstance.setNodes([]);

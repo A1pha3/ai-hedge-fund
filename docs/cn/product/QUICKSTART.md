@@ -28,11 +28,11 @@ AUTO_EXPORT_PDF=true uv run python src/main.py --auto
 ## 二、每日工作流 (推荐)
 
 ```bash
-# 1. 盘前: 市场状态 + Top 3 决策卡 + 关注池健康速览
-uv run python src/main.py --daily-brief
-
-# 2. 买入: 一键获得今日最佳买点 (含市场门控 + 行业分散检查)
+# 1. 默认前门: 直接拿到代表票 + Buy/Hold/Avoid + T+30 证据
 uv run python src/main.py --top-picks --count=5
+
+# 2. 盘前补充: 市场状态 + Top 3 决策卡 + 关注池健康速览
+uv run python src/main.py --daily-brief
 
 # 3. 监控: 持仓健康检查 (HOLD / WATCH / SELL)
 uv run python src/main.py --position-check --tickers=000001,300750
@@ -89,7 +89,7 @@ open http://localhost:5173
 
 ---
 
-## 五、CLI 命令速查表
+## 七、CLI 命令速查表
 
 ### 数据获取与缓存
 - `--preheat` — 缓存预热（5 任务并发）
@@ -120,6 +120,16 @@ open http://localhost:5173
 - `--stock-detail 300750` — 标的深度分析
 - `--custom-weights --trend=0.4 --mean-reversion=0.1 --fundamental=0.3 --event-sentiment=0.2` — 自定义权重
 
+### 决策链
+- `--top-picks --count=5` — **默认前门**: 代表票去重 + Buy/Hold/Avoid + T+30 edge + 样本量
+- `--decision-flow` — power-user 决策流水线: 选股→新鲜度→一致性→阈值→异常→预期收益→变动 (P8-1+P9-2)
+- `--daily-brief` — 盘前 Top 3 决策卡（补充摘要） (P0-7)
+- `--why-not 000001` — 信号冲突透明化 (P0-8)
+- `--conviction-ranking` — 综合信心排名 (P0-11)
+- `--expected-returns` — 预期收益估算 (P9-1)
+- `--daily-delta` — 推荐日间变动 (P6-2)
+- `--outlier-detect` — 异常值检测 (P8-2)
+
 ### 组合管理
 - `--rebalance` — 组合再平衡建议
 - `--performance-report` — 组合绩效周报/月报
@@ -143,4 +153,4 @@ open http://localhost:5173
 
 **相关章节**: [主文档](../feature-proposals.md) | [cli-reference.md](./cli-reference.md) | [cli-tools.md](./cli-tools.md) | [changelog/](../changelog/v2.1.0-v2.1.7.md)
 
-**最后更新**: 2026-06-09 (R20.10 文档拆分)
+**最后更新**: 2026-06-12 (R20.40：`--top-picks` 升级为默认前门，`--daily-brief` / `--position-check` 降为补充工作面)

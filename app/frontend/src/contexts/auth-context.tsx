@@ -26,6 +26,40 @@ import {
 
 type AuthPage = 'login' | 'register' | 'forgot-password' | 'reset-password';
 
+function getInitialAuthPage(): AuthPage {
+  const params = new URLSearchParams(window.location.search);
+  const requestedPage = params.get('auth');
+
+  if (requestedPage === 'register' || requestedPage === 'forgot-password' || requestedPage === 'reset-password') {
+    return requestedPage;
+  }
+
+  if (params.get('token') || params.get('reset_token')) {
+    return 'reset-password';
+  }
+
+  return 'login';
+}
+
+function syncAuthPageUrl(page: AuthPage): void {
+  const url = new URL(window.location.href);
+
+  if (page === 'login') {
+    url.searchParams.delete('auth');
+    url.searchParams.delete('token');
+    url.searchParams.delete('reset_token');
+  } else {
+    url.searchParams.set('auth', page);
+    if (page !== 'reset-password') {
+      url.searchParams.delete('token');
+      url.searchParams.delete('reset_token');
+    }
+  }
+
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, '', nextUrl);
+}
+
 interface AuthState {
   user: AuthUser | null;
   token: string | null;
@@ -67,7 +101,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: false,
     isLoading: true,
   });
-  const [authPage, setAuthPage] = useState<AuthPage>('login');
+  const [authPage, setAuthPageState] = useState<AuthPage>(getInitialAuthPage);
+
+  const setAuthPage = useCallback((page: AuthPage) => {
+    setAuthPageState(page);
+    syncAuthPageUrl(page);
+  }, []);
 
   // Validate stored token on mount
   useEffect(() => {
@@ -76,12 +115,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authApi
         .getMe()
         .then((user) =>
-          setState({
-            user,
-            token,
-            isAuthenticated: true,
-            isLoading: false,
-          })
+          {
+            syncAuthPageUrl('login');
+            setState({
+              user,
+              token,
+              isAuthenticated: true,
+              isLoading: false,
+            });
+          }
         )
         .catch(() => {
           clearStoredToken();
@@ -110,12 +152,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener('auth:unauthorized', handleUnauthorized);
     return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
-  }, []);
+  }, [setAuthPage]);
 
   const login = useCallback(
     async (username: string, password: string) => {
       const data = await authApi.login(username, password);
       setStoredToken(data.access_token);
+      syncAuthPageUrl('login');
       setState({
         user: data.user,
         token: data.access_token,
@@ -147,7 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading: false,
     });
     setAuthPage('login');
-  }, []);
+  }, [setAuthPage]);
 
   const updateUser = useCallback((user: AuthUser) => {
     setState((s) => ({ ...s, user }));

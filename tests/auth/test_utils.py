@@ -117,6 +117,14 @@ class TestJWTTokens:
         assert payload["sub"] == "testuser"
         assert payload["type"] == "reset"
 
+    def test_create_reset_token_preserves_token_version_when_provided(self):
+        token = create_reset_token("testuser", token_version=7)
+        payload = decode_token(token)
+        assert payload is not None
+        assert payload["sub"] == "testuser"
+        assert payload["type"] == "reset"
+        assert payload["tv"] == 7
+
     def test_reset_token_has_shorter_expiry(self):
         """Reset tokens should expire in ~60 minutes."""
         token = create_reset_token("testuser")

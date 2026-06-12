@@ -8,8 +8,13 @@ import { useAuth } from '@/contexts/auth-context';
 import { authApi } from '@/services/auth-api';
 import { SuccessIcon, ResetIcon, ErrorIcon } from '@/components/auth-icons';
 
+function getInitialResetToken(): string {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('token') ?? params.get('reset_token') ?? '';
+}
+
 export function ResetPasswordPage() {
-  const [token, setToken] = useState('');
+  const [token, setToken] = useState(getInitialResetToken);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);

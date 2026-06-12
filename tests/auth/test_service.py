@@ -335,6 +335,22 @@ class TestResetPassword:
         with pytest.raises(InvalidTokenError, match="用户不存在"):
             service.reset_password(token, "ResetPass1")
 
+    def test_reset_password_rejects_reused_token_issued_in_same_second(self, db_session, regular_user):
+        service = AuthService(db_session)
+        token = service.forgot_password("testuser", "test@example.com")
+        assert token is not None
+        payload = decode_token(token)
+        assert payload is not None
+
+        service.reset_password(token, "ResetPass1")
+
+        regular_user.updated_at = datetime.fromtimestamp(payload["iat"], timezone.utc).replace(tzinfo=None)
+        db_session.commit()
+        db_session.refresh(regular_user)
+
+        with pytest.raises(InvalidTokenError, match="已使用|已过期"):
+            service.reset_password(token, "ResetPass2")
+
 
 # ---- Get User Info ----
 

@@ -27,7 +27,11 @@ from src.screening.composite_score import (
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.screening.data_quality_audit import _find_latest_report
 from src.screening.expected_return import compute_expected_returns
-from src.screening.investability import rank_recommendations_by_investability
+from src.screening.investability import (
+    build_front_door_verdict,
+    rank_recommendations_by_investability,
+    select_representative_candidates,
+)
 from src.utils.display import Fore, Style
 
 
@@ -36,39 +40,54 @@ from src.utils.display import Fore, Style
 # ---------------------------------------------------------------------------
 
 
-def _market_gate_warning(search_dir: Path) -> None:
-    """Check market state and warn if conditions are unfavorable for buying.
+def _render_market_gate(trade_date: str) -> str:
+    """Render market-gate guidance and return the normalized regime label."""
 
-    Uses the market_state module to detect risk-off/crisis conditions.
-    """
+    if not trade_date or len(trade_date) != 8 or not trade_date.isdigit():
+        return "unknown"
+
+    from src.screening.market_state import detect_market_state
+
     try:
-        from src.screening.market_state import detect_market_state
+        state = detect_market_state(trade_date)
+    except Exception as exc:
+        print(
+            f"\n{Fore.YELLOW}⚠ MARKET GATE unavailable: {exc}{Style.RESET_ALL}"
+        )
+        print(
+            f"  {Fore.YELLOW}已跳过市场门控增强，继续输出默认前门结果。{Style.RESET_ALL}\n"
+        )
+        return "unknown"
 
-        state = detect_market_state(trade_date="", reports_dir=search_dir)
-        regime = getattr(state, "regime", "") or ""
-        # Map to lowercase for comparison
-        regime_lower = regime.lower()
+    regime = str(getattr(state, "regime", "") or "")
+    regime_lower = regime.lower()
 
-        if "crisis" in regime_lower or "risk_off" in regime_lower:
-            print(
-                f"\n{Fore.RED}{Style.BRIGHT}⚠ MARKET GATE: {regime}{Style.RESET_ALL}"
-            )
-            print(
-                f"  {Fore.RED}当前市场处于高风险状态, 不建议追高买入。{Style.RESET_ALL}"
-            )
-            print(
-                f"  {Fore.YELLOW}建议: 降低仓位或等待市场企稳后再操作。{Style.RESET_ALL}\n"
-            )
-        elif "cautious" in regime_lower or "range" in regime_lower:
-            print(
-                f"\n{Fore.YELLOW}⚡ MARKET GATE: {regime}{Style.RESET_ALL}"
-            )
-            print(
-                f"  {Fore.YELLOW}市场处于震荡/谨慎状态, 建议轻仓参与, 严格止损。{Style.RESET_ALL}\n"
-            )
-    except Exception:
-        # Market gate is best-effort; never block top-picks if it fails
-        pass
+    if "crisis" in regime_lower or "risk_off" in regime_lower:
+        print(
+            f"\n{Fore.RED}{Style.BRIGHT}⚠ MARKET GATE: {regime}{Style.RESET_ALL}"
+        )
+        print(
+            f"  {Fore.RED}当前市场处于高风险状态, 默认前门只给 HOLD / AVOID 级别建议。{Style.RESET_ALL}"
+        )
+        print(
+            f"  {Fore.YELLOW}建议: 降低仓位或等待市场企稳后再操作。{Style.RESET_ALL}\n"
+        )
+    elif "cautious" in regime_lower or "range" in regime_lower:
+        print(
+            f"\n{Fore.YELLOW}⚡ MARKET GATE: {regime}{Style.RESET_ALL}"
+        )
+        print(
+            f"  {Fore.YELLOW}市场处于震荡/谨慎状态, 建议轻仓参与, 严格止损。{Style.RESET_ALL}\n"
+        )
+    else:
+        print(
+            f"\n{Fore.GREEN}✓ MARKET GATE: {regime or 'normal'}{Style.RESET_ALL}"
+        )
+        print(
+            f"  {Fore.GREEN}市场门控允许正常筛选, 重点关注 BUY / HOLD 级别代表票。{Style.RESET_ALL}\n"
+        )
+
+    return regime_lower or "unknown"
 
 
 def run_top_picks(
@@ -89,9 +108,6 @@ def run_top_picks(
     """
     search_dir = reports_dir or resolve_report_dir()
 
-    # Step 0: Market gate — warn if market conditions are unfavorable (P16-1)
-    _market_gate_warning(search_dir)
-
     # Step 1: Load latest report
     report_path = _find_latest_report(search_dir)
     if report_path is None:
@@ -101,6 +117,7 @@ def run_top_picks(
     report_data = json.loads(report_path.read_text(encoding="utf-8"))
     recs = (report_data.get("recommendations") or [])[:count * 3]  # Load more for filtering
     trade_date = report_data.get("trade_date", "")
+    market_regime = _render_market_gate(trade_date)
 
     if not recs:
         print(f"{Fore.YELLOW}No recommendations in latest report.{Style.RESET_ALL}")
@@ -123,16 +140,18 @@ def run_top_picks(
         return 0
 
     ranked = rank_recommendations_by_investability(recs, composite, expected)
+    representative_picks = select_representative_candidates(ranked, count=count)
 
     # Step 3: Render compact output
     print(f"\n{Fore.CYAN}{Style.BRIGHT}🎯 Today's Top Picks{Style.RESET_ALL}")
-    print(f"  Date: {trade_date}  |  Based on composite confidence + T+30 posterior edge")
+    print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+30 posterior edge + 代表票去重")
     print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
 
-    for idx, item in enumerate(ranked[:count], 1):
+    for idx, item in enumerate(representative_picks, 1):
         composite_score = float(item.get("composite_score", item.get("score_b", 0.0)) or 0.0)
         grade = _composite_grade(composite_score)
         name = str(item.get("name", "") or item.get("ticker", ""))[:14]
+        verdict = build_front_door_verdict(item, market_regime=market_regime)
 
         # Signal breakdown
         parts = []
@@ -161,6 +180,9 @@ def run_top_picks(
         t30 = (item.get("expected_returns") or {}).get("t30")
         t30_wr = (item.get("win_rates") or {}).get("t30")
         sample_count = int(item.get("bucket_sample_count", 0) or 0)
+        cluster_label = str(item.get("cluster_label", "") or "")
+        cluster_size = int(item.get("cluster_size", 1) or 1)
+        alternatives = [str(ticker) for ticker in (item.get("cluster_alternatives") or []) if str(ticker)]
 
         # Color by composite score
         if composite_score >= 0.5:
@@ -182,29 +204,20 @@ def run_top_picks(
             f"{grade}  "
             f"(base={base_score:.3f} {signal_str})"
         )
-        print(f"     T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}")
+        print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}  市场门控={verdict['market_regime']}")
+        print(f"     失效条件: {verdict['invalidation_reason']}")
+        if cluster_size > 1 and alternatives and bool(item.get("is_cluster_representative")):
+            print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
 
     print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
 
     # Quick tips
-    strong_picks = [i for i in ranked[:count] if float(i.get("composite_score", 0.0) or 0.0) >= 0.5]
+    strong_picks = [i for i in representative_picks if float(i.get("composite_score", 0.0) or 0.0) >= 0.5]
     if strong_picks:
         tickers = ", ".join(f"{Fore.CYAN}{str(p.get('ticker', ''))}{Style.RESET_ALL}" for p in strong_picks[:3])
         print(f"  💡 High confidence picks: {tickers}")
     else:
         print("  ⚠ No high-confidence picks today. Consider waiting for better signals.")
-
-    # P14-2: Industry concentration warning
-    industry_counts: dict[str, list[str]] = {}
-    for item in ranked[:count]:
-        industry = str(item.get("industry_sw", item.get("industry", "未知")) or "未知")
-        ticker = str(item.get("ticker", ""))
-        industry_counts.setdefault(industry, []).append(ticker)
-    concentrated = {ind: tickers for ind, tickers in industry_counts.items() if len(tickers) >= 3}
-    if concentrated:
-        for ind, tickers in concentrated.items():
-            ticker_str = ", ".join(tickers)
-            print(f"  {Fore.YELLOW}⚠ 行业集中度警告: {ind} 有 {len(tickers)} 只标的 ({ticker_str}), 建议分散{Style.RESET_ALL}")
 
     print()
     return 0

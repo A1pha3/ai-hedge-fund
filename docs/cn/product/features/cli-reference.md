@@ -1,6 +1,6 @@
-# 16. CLI 命令速查表
+# CLI 命令速查表
 
-> 本节对应主文档 §16,提供完整的 CLI 命令索引。
+> 面向 power-user 的完整 CLI 命令索引。默认前门请优先看 [`../QUICKSTART.md`](../QUICKSTART.md)。
 
 ## 数据获取与缓存
 - `--preheat` — 缓存预热(5 任务并发)
@@ -39,8 +39,9 @@
 - `--confidence-calibration` — 置信度校准 (P0-9)
 
 ## 决策链
+- `--top-picks --count=5` — **默认前门**: 代表票去重 + Buy/Hold/Avoid + T+30 edge + 样本量
 - `--decision-flow` — 一键决策流水线: 选股→新鲜度→一致性→阈值→异常→预期收益→变动 (P8-1+P9-2)
-- `--daily-brief` — 盘前 Top 3 决策卡 (P0-7)
+- `--daily-brief` — 盘前 Top 3 决策卡（补充摘要） (P0-7)
 - `--why-not 000001` — 信号冲突透明化 (P0-8)
 - `--conviction-ranking` — 综合信心排名 (P0-11)
 - `--expected-returns` — 预期收益估算 (P9-1)

@@ -4,6 +4,7 @@ import { LanguageModel } from '@/data/models';
 import { extractBaseAgentKey } from '@/data/node-mappings';
 import { flowConnectionManager } from '@/hooks/use-flow-connection';
 import { parseTickers } from '@/lib/utils';
+import { asSseRecord, extractCompleteSseEvents, parseSseEvent } from '@/services/sse';
 import {
   HedgeFundRequest
 } from '@/services/types';
@@ -50,19 +51,20 @@ function consumeHedgeFundStream(
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
 
-        const events = buffer.split('\n\n');
-        buffer = events.pop() || '';
+        const extracted = extractCompleteSseEvents(buffer);
+        buffer = extracted.remainder;
 
-        for (const eventText of events) {
+        for (const eventText of extracted.events) {
           if (!eventText.trim()) continue;
 
           try {
-            const eventTypeMatch = eventText.match(/^event: (.+)$/m);
-            const dataMatch = eventText.match(/^data: (.+)$/m);
-
-            if (eventTypeMatch && dataMatch) {
-              const eventType = eventTypeMatch[1];
-              const eventData = JSON.parse(dataMatch[1]);
+            const parsedEvent = parseSseEvent(eventText);
+            if (parsedEvent) {
+              const eventType = parsedEvent.event;
+              const eventData = asSseRecord(parsedEvent.data);
+              if (!eventData) {
+                continue;
+              }
 
               console.log(`Parsed ${eventType} event:`, eventData);
 
@@ -71,9 +73,13 @@ function consumeHedgeFundStream(
                   nodeContext.resetAllNodes(flowId);
                   break;
                 case 'progress':
-                  if (eventData.agent) {
+                  if (typeof eventData.agent === 'string') {
                     let nodeStatus: NodeStatus = 'IN_PROGRESS';
-                    if (eventData.status === 'Done') {
+                    const statusMessage = typeof eventData.status === 'string' ? eventData.status : '';
+                    const ticker = typeof eventData.ticker === 'string' ? eventData.ticker : null;
+                    const analysis = typeof eventData.analysis === 'string' ? eventData.analysis : null;
+                    const timestamp = typeof eventData.timestamp === 'string' ? eventData.timestamp : undefined;
+                    if (statusMessage === 'Done') {
                       nodeStatus = 'COMPLETE';
                     }
                     const baseAgentKey = eventData.agent.replace('_agent', '');
@@ -83,10 +89,10 @@ function consumeHedgeFundStream(
 
                     nodeContext.updateAgentNode(flowId, uniqueNodeId, {
                       status: nodeStatus,
-                      ticker: eventData.ticker,
-                      message: eventData.status,
-                      analysis: eventData.analysis,
-                      timestamp: eventData.timestamp
+                      ticker,
+                      message: statusMessage,
+                      analysis,
+                      timestamp,
                     });
                   }
                   break;
@@ -122,7 +128,7 @@ function consumeHedgeFundStream(
                   if (flowId) {
                     flowConnectionManager.setConnection(flowId, {
                       state: 'error',
-                      error: eventData.message || 'Unknown error occurred',
+                      error: typeof eventData.message === 'string' ? eventData.message : 'Unknown error occurred',
                       abortController: null,
                     });
                   }

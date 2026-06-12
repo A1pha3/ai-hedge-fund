@@ -4,10 +4,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+from src.screening.composite_score import CompositeEntry, CompositeReport
 from src.screening.expected_return import ExpectedReturn, ExpectedReturnReport
 from src.screening.top_picks import run_top_picks
 
@@ -120,3 +122,185 @@ class TestTopPicks:
         output = capsys.readouterr().out
         assert "T+30" in output
         assert "样本" in output
+
+    @patch(
+        "src.screening.top_picks.compute_expected_returns",
+        return_value=ExpectedReturnReport(
+            trade_date="20260610",
+            lookback_days=60,
+            total_samples=120,
+            items=[
+                ExpectedReturn(
+                    ticker="300750",
+                    score_b=0.8,
+                    bucket_label="高 (>0.8)",
+                    bucket_sample_count=40,
+                    expected_returns={"t30": 11.4},
+                    win_rates={"t30": 0.66},
+                ),
+            ],
+        ),
+    )
+    @patch(
+        "src.screening.top_picks.compute_composite_scores",
+        return_value=CompositeReport(
+            trade_date="20260610",
+            items=[
+                CompositeEntry(
+                    ticker="300750",
+                    name="宁德时代",
+                    base_score=0.8,
+                    composite_score=0.72,
+                    momentum_bonus=0.05,
+                    sector_bonus=0.03,
+                    consistency_adj=0.02,
+                    volume_factor=0.01,
+                    trend_resonance_factor=0.04,
+                )
+            ],
+        ),
+    )
+    def test_top_picks_uses_market_gate_trade_date_and_renders_actionable_verdict(
+        self,
+        _mock_composite: object,
+        _mock_expected: object,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        recs = [_make_rec("300750", "宁德时代", 0.8)]
+        _write_report(tmp_path, recs)
+
+        def fake_detect_market_state(trade_date: str) -> SimpleNamespace:
+            assert trade_date == "20260610"
+            return SimpleNamespace(regime="risk_off")
+
+        with patch("src.screening.market_state.detect_market_state", side_effect=fake_detect_market_state):
+            rc = run_top_picks(count=3, reports_dir=tmp_path)
+
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "MARKET GATE" in output
+        assert "操作=HOLD" in output
+        assert "失效条件" in output
+
+    @patch(
+        "src.screening.market_state.detect_market_state",
+        return_value=SimpleNamespace(regime="trend"),
+    )
+    @patch(
+        "src.screening.top_picks.compute_expected_returns",
+        return_value=ExpectedReturnReport(
+            trade_date="20260610",
+            lookback_days=60,
+            total_samples=200,
+            items=[
+                ExpectedReturn(
+                    ticker="000001",
+                    score_b=0.81,
+                    bucket_label="高",
+                    bucket_sample_count=52,
+                    expected_returns={"t30": 10.0},
+                    win_rates={"t30": 0.64},
+                ),
+                ExpectedReturn(
+                    ticker="000002",
+                    score_b=0.80,
+                    bucket_label="高",
+                    bucket_sample_count=50,
+                    expected_returns={"t30": 9.5},
+                    win_rates={"t30": 0.62},
+                ),
+                ExpectedReturn(
+                    ticker="000003",
+                    score_b=0.79,
+                    bucket_label="高",
+                    bucket_sample_count=48,
+                    expected_returns={"t30": 8.0},
+                    win_rates={"t30": 0.60},
+                ),
+            ],
+        ),
+    )
+    @patch(
+        "src.screening.top_picks.compute_composite_scores",
+        return_value=CompositeReport(
+            trade_date="20260610",
+            items=[
+                CompositeEntry(ticker="000001", name="电子龙头A", base_score=0.81, composite_score=0.81),
+                CompositeEntry(ticker="000002", name="电子龙头B", base_score=0.80, composite_score=0.80),
+                CompositeEntry(ticker="000003", name="银行核心", base_score=0.79, composite_score=0.79),
+            ],
+        ),
+    )
+    def test_top_picks_keeps_one_representative_per_cluster_and_lists_backups(
+        self,
+        _mock_composite: object,
+        _mock_expected: object,
+        _mock_market_state: object,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        recs = [
+            _make_rec("000001", "电子龙头A", 0.81, "电子"),
+            _make_rec("000002", "电子龙头B", 0.80, "电子"),
+            _make_rec("000003", "银行核心", 0.79, "银行"),
+        ]
+        _write_report(tmp_path, recs)
+
+        rc = run_top_picks(count=2, reports_dir=tmp_path)
+
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "000001" in output
+        assert "000003" in output
+        assert "同簇备选: 000002" in output
+
+    @patch(
+        "src.screening.top_picks.compute_expected_returns",
+        return_value=ExpectedReturnReport(
+            trade_date="20260610",
+            lookback_days=60,
+            total_samples=120,
+            items=[
+                ExpectedReturn(
+                    ticker="300750",
+                    score_b=0.8,
+                    bucket_label="高 (>0.8)",
+                    bucket_sample_count=40,
+                    expected_returns={"t30": 11.4},
+                    win_rates={"t30": 0.66},
+                ),
+            ],
+        ),
+    )
+    @patch(
+        "src.screening.top_picks.compute_composite_scores",
+        return_value=CompositeReport(
+            trade_date="20260610",
+            items=[
+                CompositeEntry(
+                    ticker="300750",
+                    name="宁德时代",
+                    base_score=0.8,
+                    composite_score=0.72,
+                )
+            ],
+        ),
+    )
+    def test_top_picks_falls_back_when_market_gate_lookup_fails(
+        self,
+        _mock_composite: object,
+        _mock_expected: object,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        recs = [_make_rec("300750", "宁德时代", 0.8)]
+        _write_report(tmp_path, recs)
+
+        with patch("src.screening.market_state.detect_market_state", side_effect=RuntimeError("boom")):
+            rc = run_top_picks(count=3, reports_dir=tmp_path)
+
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "MARKET GATE unavailable" in output
+        assert "300750" in output

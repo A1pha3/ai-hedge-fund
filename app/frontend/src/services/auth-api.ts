@@ -12,7 +12,7 @@ export interface AuthUser {
   id: number;
   username: string;
   email: string | null;
-  role: 'admin' | 'user';
+  role: 'admin' | 'member' | 'viewer' | 'user';
   created_at: string | null;
   updated_at: string | null;
 }

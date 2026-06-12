@@ -111,6 +111,17 @@ class FlowStateManager {
     this.notifyStateChange();
   }
 
+  clearNodeStatesForFlow(flowId: string | null): void {
+    if (flowId === null) {
+      const keysToDelete = Array.from(this.nodeStatesMap.keys()).filter(key => !key.includes(':'));
+      keysToDelete.forEach(key => this.nodeStatesMap.delete(key));
+      this.notifyStateChange();
+      return;
+    }
+
+    this.clearFlowNodeStates(flowId);
+  }
+
   // Listener Management
   addStateChangeListener(listener: () => void): () => void {
     this.stateChangeListeners.add(listener);
@@ -148,6 +159,10 @@ export function setCurrentFlowId(flowId: string | null): void {
   flowStateManager.setCurrentFlowId(flowId);
 }
 
+export function getCurrentFlowId(): string | null {
+  return flowStateManager.getCurrentFlowId();
+}
+
 // Node State Management
 export function getNodeInternalState(nodeId: string): Record<string, unknown> | undefined {
   return flowStateManager.getNodeInternalState(nodeId);
@@ -166,12 +181,22 @@ export function getAllNodeStates(): Map<string, Record<string, unknown>> {
   return flowStateManager.getAllNodeStates();
 }
 
+export function getDraftNodeStates(): Map<string, Record<string, unknown>> {
+  return new Map(
+    Array.from(flowStateManager.getAllNodeStates().entries()).filter(([key]) => !key.includes(':'))
+  );
+}
+
 export function clearAllNodeStates(): void {
   flowStateManager.clearAllNodeStates();
 }
 
 export function clearFlowNodeStates(flowId: string): void {
   flowStateManager.clearFlowNodeStates(flowId);
+}
+
+export function clearNodeStatesForFlow(flowId: string | null): void {
+  flowStateManager.clearNodeStatesForFlow(flowId);
 }
 
 export function addStateChangeListener(listener: () => void): () => void {
