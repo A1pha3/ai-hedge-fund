@@ -896,3 +896,144 @@ class TestScoreTrend:
                 assert result == ""
 
 
+# ---------------------------------------------------------------------------
+# R10: Multi-strategy confluence
+# ---------------------------------------------------------------------------
+
+
+class TestConfluence:
+    """Tests for _compute_confluence and _render_confluence (R10)."""
+
+    def test_compute_confluence_all_bullish(self) -> None:
+        from src.screening.top_picks import _compute_confluence
+
+        item = _make_rec("300750", "宁德时代", 0.8)
+        bullish, total = _compute_confluence(item)
+        # _make_rec has 3 bullish (trend=1, fundamental=1, event_sentiment=1) + 1 neutral
+        assert bullish == 3
+        assert total == 4
+
+    def test_compute_confluence_all_bearish(self) -> None:
+        from src.screening.top_picks import _compute_confluence
+
+        item = {
+            "ticker": "000001",
+            "strategy_signals": {
+                "trend": {"direction": -1},
+                "mean_reversion": {"direction": -1},
+                "fundamental": {"direction": 0},
+                "event_sentiment": {"direction": -1},
+            },
+        }
+        bullish, total = _compute_confluence(item)
+        assert bullish == 0
+        assert total == 4
+
+    def test_compute_confluence_no_signals(self) -> None:
+        from src.screening.top_picks import _compute_confluence
+
+        item: dict[str, Any] = {"ticker": "000001"}
+        bullish, total = _compute_confluence(item)
+        assert bullish == 0
+        assert total == 0
+
+    def test_render_confluence_4_of_4(self) -> None:
+        from src.screening.top_picks import _render_confluence
+
+        result = _render_confluence(4, 4)
+        assert "共振 4/4" in result
+        assert "\033[32m" in result  # Green color
+
+    def test_render_confluence_0_of_4(self) -> None:
+        from src.screening.top_picks import _render_confluence
+
+        result = _render_confluence(0, 4)
+        assert "共振 0/4" in result
+
+    def test_render_confluence_empty(self) -> None:
+        from src.screening.top_picks import _render_confluence
+
+        result = _render_confluence(0, 0)
+        assert result == ""
+
+    def test_confluence_appears_in_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        recs = [_make_rec("300750", "宁德时代", 0.6)]
+        _write_report(tmp_path, recs)
+        rc = run_top_picks(count=5, reports_dir=tmp_path)
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "共振" in output
+
+
+# ---------------------------------------------------------------------------
+# R11: Sector focus summary
+# ---------------------------------------------------------------------------
+
+
+class TestSectorFocus:
+    """Tests for _render_sector_focus (R11)."""
+
+    def test_sector_focus_single_industry(self) -> None:
+        from src.screening.top_picks import _render_sector_focus
+
+        picks = [
+            {"industry_sw": "电子"},
+            {"industry_sw": "电子"},
+            {"industry_sw": "电子"},
+        ]
+        result = _render_sector_focus(picks)
+        assert "电子" in result
+        assert "(3)" in result
+        assert "行业聚焦" in result
+
+    def test_sector_focus_multiple_industries(self) -> None:
+        from src.screening.top_picks import _render_sector_focus
+
+        picks = [
+            {"industry_sw": "电子"},
+            {"industry_sw": "电子"},
+            {"industry_sw": "医药"},
+            {"industry_sw": "机械"},
+        ]
+        result = _render_sector_focus(picks)
+        assert "电子" in result
+        assert "(2)" in result
+        assert "行业聚焦" in result
+
+    def test_sector_focus_all_single(self) -> None:
+        from src.screening.top_picks import _render_sector_focus
+
+        picks = [
+            {"industry_sw": "电子"},
+            {"industry_sw": "医药"},
+            {"industry_sw": "机械"},
+        ]
+        result = _render_sector_focus(picks)
+        assert "行业聚焦" in result
+        # All are count=1, should show industry names
+        assert "电子" in result
+
+    def test_sector_focus_empty_picks(self) -> None:
+        from src.screening.top_picks import _render_sector_focus
+
+        result = _render_sector_focus([])
+        assert result == ""
+
+    def test_sector_focus_no_industry(self) -> None:
+        from src.screening.top_picks import _render_sector_focus
+
+        picks = [{"ticker": "000001"}, {"ticker": "000002"}]
+        result = _render_sector_focus(picks)
+        assert result == ""
+
+    def test_sector_focus_appears_in_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        recs = [
+            _make_rec("300750", "宁德时代", 0.6, "电气设备"),
+            _make_rec("600519", "贵州茅台", 0.5, "食品饮料"),
+            _make_rec("000001", "平安银行", 0.3, "银行"),
+        ]
+        _write_report(tmp_path, recs)
+        rc = run_top_picks(count=5, reports_dir=tmp_path)
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "行业聚焦" in output

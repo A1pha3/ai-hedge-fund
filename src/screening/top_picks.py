@@ -381,6 +381,76 @@ def _render_score_trend(
 
 
 # ---------------------------------------------------------------------------
+# R10: Multi-strategy confluence indicator
+# ---------------------------------------------------------------------------
+
+
+def _compute_confluence(item: dict) -> tuple[int, int]:
+    """Count how many of the 4 strategies have direction=1 (bullish).
+
+    Returns (bullish_count, total_strategies).
+    """
+    signals = item.get("strategy_signals") or {}
+    if not signals:
+        return 0, 0
+    bullish = sum(1 for s in signals.values() if isinstance(s, dict) and s.get("direction") == 1)
+    return bullish, len(signals)
+
+
+def _render_confluence(bullish: int, total: int) -> str:
+    """Render a compact confluence badge like '共振 4/4'."""
+    if total == 0:
+        return ""
+    ratio = bullish / total
+    if ratio >= 1.0:
+        color = Fore.GREEN + Style.BRIGHT
+    elif ratio >= 0.75:
+        color = Fore.GREEN
+    elif ratio >= 0.5:
+        color = Fore.YELLOW
+    else:
+        color = Fore.WHITE
+    return f"{color}共振 {bullish}/{total}{Style.RESET_ALL}"
+
+
+# ---------------------------------------------------------------------------
+# R11: Sector focus summary
+# ---------------------------------------------------------------------------
+
+
+def _render_sector_focus(picks: list[dict]) -> str:
+    """Render a one-line sector distribution summary for the picks.
+
+    Shows industries with count >= 2 first, then remaining as '其他'.
+    """
+    from collections import Counter
+
+    industries = [str(p.get("industry_sw", "") or "未知").strip() for p in picks]
+    industries = [i for i in industries if i and i != "未知"]
+    if not industries:
+        return ""
+
+    counter = Counter(industries)
+    parts = []
+    for industry, count in counter.most_common():
+        if count >= 2:
+            parts.append(f"{Fore.CYAN}{industry}{Style.RESET_ALL}({count})")
+
+    other = sum(c for _, c in counter.most_common() if c < 2)
+    other_industries = [ind for ind, c in counter.most_common() if c < 2]
+    if other_industries:
+        other_names = "·".join(other_industries[:3])
+        if len(other_industries) > 3:
+            other_names += f"等{len(other_industries)}个"
+        parts.append(f"{Fore.WHITE}{other_names}{Style.RESET_ALL}")
+
+    if not parts:
+        return ""
+
+    return f"  🔥 行业聚焦: {' '.join(parts)}"
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -511,6 +581,11 @@ def run_top_picks(
             parts.append(f"{Fore.GREEN}连续+{bonus_val:.2f}{Style.RESET_ALL}")
 
         signal_str = " ".join(parts) if parts else f"{Fore.WHITE}中性{Style.RESET_ALL}"
+
+        # R10: Multi-strategy confluence
+        bullish, total = _compute_confluence(item)
+        confluence_str = _render_confluence(bullish, total)
+
         t30 = (item.get("expected_returns") or {}).get("t30")
         t30_wr = (item.get("win_rates") or {}).get("t30")
         sample_count = int(item.get("bucket_sample_count", 0) or 0)
@@ -535,7 +610,7 @@ def run_top_picks(
             f"{Fore.CYAN}{str(item.get('ticker', '')):<8}{Style.RESET_ALL} "
             f"{name:<14} "
             f"{score_color}{composite_score:>+.3f}{Style.RESET_ALL} "
-            f"{grade}{consec_str}  "
+            f"{grade}{consec_str} {confluence_str}  "
             f"(base={base_score:.3f} {signal_str})"
         )
         print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}  市场门控={verdict['market_regime']}")
@@ -569,6 +644,11 @@ def run_top_picks(
     dist = _render_verdict_distribution(representative_picks, market_regime)
     if dist:
         print(dist)
+
+    # R11: Sector focus summary
+    sector_focus = _render_sector_focus(representative_picks)
+    if sector_focus:
+        print(sector_focus)
 
     # Quick tips
     strong_picks = [i for i in representative_picks if float(i.get("composite_score", 0.0) or 0.0) >= 0.5]
