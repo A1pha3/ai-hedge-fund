@@ -24,7 +24,10 @@ from src.screening.composite_score import (
     compute_composite_scores,
     _composite_grade,
 )
-from src.screening.consecutive_recommendation import resolve_report_dir
+from src.screening.consecutive_recommendation import (
+    enrich_recommendations_with_history,
+    resolve_report_dir,
+)
 from src.screening.data_quality_audit import _find_latest_report
 from src.screening.expected_return import compute_expected_returns
 from src.screening.investability import (
@@ -32,6 +35,7 @@ from src.screening.investability import (
     rank_recommendations_by_investability,
     select_representative_candidates,
 )
+from src.screening.verify_recommendations import compute_verify_recommendations
 from src.utils.display import Fore, Style
 
 
@@ -90,6 +94,96 @@ def _render_market_gate(trade_date: str) -> str:
     return regime_lower or "unknown"
 
 
+# ---------------------------------------------------------------------------
+# R4: Consecutive recommendation bonus
+# ---------------------------------------------------------------------------
+
+_CONSECUTIVE_BONUS: dict[int, float] = {
+    3: 0.03,
+    4: 0.04,
+    5: 0.05,
+}
+_CONSECUTIVE_BONUS_DEFAULT = 0.08  # for 6+ days
+
+
+def _consecutive_bonus(days: int) -> float:
+    """Compute a small ranking bonus for consecutive recommendations."""
+    if days < 3:
+        return 0.0
+    if days in _CONSECUTIVE_BONUS:
+        return _CONSECUTIVE_BONUS[days]
+    return _CONSECUTIVE_BONUS_DEFAULT
+
+
+def _status_icon(status: str) -> str:
+    """Map consecutive status to a compact icon."""
+    if "reentry" in status:
+        return "🔄"
+    if "3plus" in status:
+        return "🔁"
+    if "2days" in status:
+        return "🔁"
+    if "broken" in status:
+        return "⬇️"
+    return "🆕"
+
+
+# ---------------------------------------------------------------------------
+# R5: Historical hit-rate summary
+# ---------------------------------------------------------------------------
+
+
+def _render_hit_rate_summary(verify_summary: object) -> str:
+    """Render a compact historical hit-rate summary for the front door."""
+    lines = [f"\n  {Fore.CYAN}📊 历史命中率速览{Style.RESET_ALL}"]
+
+    total = getattr(verify_summary, "total_recommendations", 0)
+    days = getattr(verify_summary, "total_days", 0)
+    if not total or not days:
+        return ""
+
+    unique = getattr(verify_summary, "unique_tickers", 0)
+    lookback = getattr(verify_summary, "lookback_days", 30)
+    lines.append(
+        f"  近 {lookback} 天: {days} 个交易日, "
+        f"{total} 次推荐 ({unique} 只不重复标的)"
+    )
+
+    # Win rates
+    wr_parts: list[str] = []
+    for horizon, label in [("t5", "T+5"), ("t10", "T+10"), ("t30", "T+30")]:
+        wr = getattr(verify_summary, f"overall_{horizon}_win_rate", None)
+        if wr is not None:
+            color = Fore.GREEN if wr >= 0.55 else Fore.YELLOW if wr >= 0.50 else Fore.RED
+            wr_parts.append(f"{label} 胜率={color}{wr:.0%}{Style.RESET_ALL}")
+    if wr_parts:
+        lines.append("  " + " | ".join(wr_parts))
+
+    # Average returns
+    ret_parts: list[str] = []
+    for horizon, label in [("t5", "T+5"), ("t30", "T+30")]:
+        ret = getattr(verify_summary, f"avg_{horizon}_return", None)
+        if ret is not None:
+            color = Fore.GREEN if ret > 0 else Fore.RED
+            ret_parts.append(f"{label} 均收={color}{ret:+.2f}%{Style.RESET_ALL}")
+    if ret_parts:
+        lines.append("  " + " | ".join(ret_parts))
+
+    # Excess return
+    excess = getattr(verify_summary, "excess_return", None)
+    if excess is not None:
+        color = Fore.GREEN if excess > 0 else Fore.RED
+        lines.append(f"  超额收益(vs 沪深300): {color}{excess:+.2f}%{Style.RESET_ALL}")
+
+    lines.append(f"  {Fore.WHITE}💡 历史表现不代表未来收益{Style.RESET_ALL}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
 def run_top_picks(
     *,
     count: int = 5,
@@ -139,12 +233,39 @@ def run_top_picks(
         print(f"{Fore.YELLOW}Unable to compute composite scores.{Style.RESET_ALL}")
         return 0
 
-    ranked = rank_recommendations_by_investability(recs, composite, expected)
+    # R4: Enrich with consecutive recommendation data
+    try:
+        enriched = enrich_recommendations_with_history(
+            recommendations=list(recs),
+            lookback_days=10,
+            report_dir=search_dir,
+        )
+        # Apply consecutive bonus to composite scores
+        for rec in enriched:
+            days = int(rec.get("consecutive_days", 0) or 0)
+            rec["consecutive_bonus"] = _consecutive_bonus(days)
+    except Exception:
+        enriched = recs
+
+    ranked = rank_recommendations_by_investability(enriched, composite, expected)
+
+    # Apply consecutive bonus to ranking (re-sort with bonus)
+    for rec in ranked:
+        bonus = float(rec.get("consecutive_bonus", 0.0) or 0.0)
+        if bonus:
+            original_score = float(rec.get("composite_score", 0.0) or 0.0)
+            rec["composite_score"] = round(original_score + bonus, 4)
+
+    ranked.sort(
+        key=lambda r: float(r.get("composite_score", 0.0) or 0.0),
+        reverse=True,
+    )
+
     representative_picks = select_representative_candidates(ranked, count=count)
 
     # Step 3: Render compact output
     print(f"\n{Fore.CYAN}{Style.BRIGHT}🎯 Today's Top Picks{Style.RESET_ALL}")
-    print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+30 posterior edge + 代表票去重")
+    print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+30 posterior edge + 代表票去重 + 连续推荐加权")
     print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
 
     for idx, item in enumerate(representative_picks, 1):
@@ -152,6 +273,12 @@ def run_top_picks(
         grade = _composite_grade(composite_score)
         name = str(item.get("name", "") or item.get("ticker", ""))[:14]
         verdict = build_front_door_verdict(item, market_regime=market_regime)
+
+        # R4: Consecutive recommendation display
+        consec_days = int(item.get("consecutive_days", 0) or 0)
+        consec_status = str(item.get("consecutive_status", "") or "")
+        consec_icon = _status_icon(consec_status) if consec_days > 0 else ""
+        consec_str = f" {consec_icon}{consec_days}d" if consec_days > 0 else ""
 
         # Signal breakdown
         parts = []
@@ -175,6 +302,9 @@ def run_top_picks(
             parts.append(f"{Fore.GREEN}共振↑{Style.RESET_ALL}")
         elif float(item.get("trend_resonance_factor", 0.0) or 0.0) < -0.02:
             parts.append(f"{Fore.RED}冲突{Style.RESET_ALL}")
+        bonus_val = float(item.get("consecutive_bonus", 0.0) or 0.0)
+        if bonus_val > 0:
+            parts.append(f"{Fore.GREEN}连续+{bonus_val:.2f}{Style.RESET_ALL}")
 
         signal_str = " ".join(parts) if parts else f"{Fore.WHITE}中性{Style.RESET_ALL}"
         t30 = (item.get("expected_returns") or {}).get("t30")
@@ -201,7 +331,7 @@ def run_top_picks(
             f"{Fore.CYAN}{str(item.get('ticker', '')):<8}{Style.RESET_ALL} "
             f"{name:<14} "
             f"{score_color}{composite_score:>+.3f}{Style.RESET_ALL} "
-            f"{grade}  "
+            f"{grade}{consec_str}  "
             f"(base={base_score:.3f} {signal_str})"
         )
         print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}  市场门控={verdict['market_regime']}")
@@ -218,6 +348,18 @@ def run_top_picks(
         print(f"  💡 High confidence picks: {tickers}")
     else:
         print("  ⚠ No high-confidence picks today. Consider waiting for better signals.")
+
+    # R5: Historical hit-rate summary
+    try:
+        verify = compute_verify_recommendations(
+            lookback_days=30,
+            reports_dir=search_dir,
+        )
+        summary = _render_hit_rate_summary(verify)
+        if summary:
+            print(summary)
+    except Exception:
+        pass  # Non-critical: hit-rate summary is best-effort
 
     print()
     return 0

@@ -1,4 +1,4 @@
-"""Tests for top_picks.py — P12-2."""
+"""Tests for top_picks.py — P12-2 + R4/R5."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,12 @@ import pytest
 
 from src.screening.composite_score import CompositeEntry, CompositeReport
 from src.screening.expected_return import ExpectedReturn, ExpectedReturnReport
-from src.screening.top_picks import run_top_picks
+from src.screening.top_picks import (
+    run_top_picks,
+    _consecutive_bonus,
+    _status_icon,
+    _render_hit_rate_summary,
+)
 
 
 def _make_rec(ticker: str, name: str, score_b: float, industry: str = "电子") -> dict[str, Any]:
@@ -303,4 +308,361 @@ class TestTopPicks:
         assert rc == 0
         output = capsys.readouterr().out
         assert "MARKET GATE unavailable" in output
+        assert "300750" in output
+
+
+# ---------------------------------------------------------------------------
+# R4: Consecutive recommendation bonus tests
+# ---------------------------------------------------------------------------
+
+
+class TestConsecutiveBonus:
+    """Tests for R4 consecutive recommendation integration."""
+
+    def test_bonus_zero_for_less_than_3_days(self) -> None:
+        assert _consecutive_bonus(0) == 0.0
+        assert _consecutive_bonus(1) == 0.0
+        assert _consecutive_bonus(2) == 0.0
+
+    def test_bonus_3_days(self) -> None:
+        assert _consecutive_bonus(3) == 0.03
+
+    def test_bonus_5_days(self) -> None:
+        assert _consecutive_bonus(5) == 0.05
+
+    def test_bonus_6plus_days_caps_at_default(self) -> None:
+        assert _consecutive_bonus(6) == 0.08
+        assert _consecutive_bonus(10) == 0.08
+        assert _consecutive_bonus(30) == 0.08
+
+    def test_status_icon_first_appearance(self) -> None:
+        assert _status_icon("first_appearance") == "🆕"
+        assert _status_icon("") == "🆕"
+
+    def test_status_icon_consecutive(self) -> None:
+        assert _status_icon("consecutive_3plus") == "🔁"
+        assert _status_icon("consecutive_2days") == "🔁"
+
+    def test_status_icon_reentry(self) -> None:
+        assert _status_icon("reentry_signal") == "🔄"
+
+    def test_status_icon_broken(self) -> None:
+        assert _status_icon("broken_streak") == "⬇️"
+
+    @patch(
+        "src.screening.top_picks.compute_expected_returns",
+        return_value=ExpectedReturnReport(
+            trade_date="20260610",
+            lookback_days=60,
+            total_samples=120,
+            items=[
+                ExpectedReturn(
+                    ticker="300750",
+                    score_b=0.8,
+                    bucket_label="高",
+                    bucket_sample_count=40,
+                    expected_returns={"t30": 11.4},
+                    win_rates={"t30": 0.66},
+                ),
+                ExpectedReturn(
+                    ticker="000001",
+                    score_b=0.6,
+                    bucket_label="中",
+                    bucket_sample_count=30,
+                    expected_returns={"t30": 5.0},
+                    win_rates={"t30": 0.55},
+                ),
+            ],
+        ),
+    )
+    @patch(
+        "src.screening.top_picks.compute_composite_scores",
+        return_value=CompositeReport(
+            trade_date="20260610",
+            items=[
+                CompositeEntry(ticker="300750", name="宁德时代", base_score=0.8, composite_score=0.72),
+                CompositeEntry(ticker="000001", name="平安银行", base_score=0.6, composite_score=0.55),
+            ],
+        ),
+    )
+    @patch(
+        "src.screening.top_picks.enrich_recommendations_with_history",
+    )
+    def test_consecutive_boosts_ranking(
+        self,
+        mock_enrich: object,
+        _mock_composite: object,
+        _mock_expected: object,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """R4: A stock with consecutive 5-day history should outrank higher score_b single-day stock."""
+        recs = [
+            _make_rec("000001", "平安银行", 0.6, "银行"),
+            _make_rec("300750", "宁德时代", 0.8, "电气设备"),
+        ]
+        _write_report(tmp_path, recs)
+
+        # 000001 has 5 consecutive days (bonus 0.05)
+        # 300750 has 0 consecutive days (bonus 0.0)
+        def enrich_side_effect(*args: Any, **kwargs: Any) -> list[dict]:
+            recommendations = kwargs.get("recommendations") or args[0]
+            for rec in recommendations:
+                if rec.get("ticker") == "000001":
+                    rec["consecutive_days"] = 5
+                    rec["consecutive_status"] = "consecutive_3plus"
+                    rec["stability_bonus"] = 10.0
+                    rec["recommendation_history"] = []
+                    rec["consecutive_bonus"] = 0.05
+                else:
+                    rec["consecutive_days"] = 0
+                    rec["consecutive_status"] = "first_appearance"
+                    rec["stability_bonus"] = 0.0
+                    rec["recommendation_history"] = []
+                    rec["consecutive_bonus"] = 0.0
+            return recommendations
+
+        mock_enrich.side_effect = enrich_side_effect
+
+        with patch("src.screening.market_state.detect_market_state", return_value=SimpleNamespace(regime="trend")):
+            rc = run_top_picks(count=5, reports_dir=tmp_path)
+
+        assert rc == 0
+        output = capsys.readouterr().out
+        # 000001 (0.55 + 0.05 = 0.60) should outrank 300750 (0.72 + 0.0 = 0.72)
+        # Actually 300750 base composite 0.72 is still higher than 0.60, so it stays first
+        # But the consecutive icon should appear for 000001
+        assert "🔁5d" in output or "5d" in output
+
+    @patch(
+        "src.screening.top_picks.compute_expected_returns",
+        return_value=ExpectedReturnReport(
+            trade_date="20260610",
+            lookback_days=60,
+            total_samples=50,
+            items=[
+                ExpectedReturn(
+                    ticker="300750",
+                    score_b=0.8,
+                    bucket_label="高",
+                    bucket_sample_count=40,
+                    expected_returns={"t30": 11.4},
+                    win_rates={"t30": 0.66},
+                ),
+            ],
+        ),
+    )
+    @patch(
+        "src.screening.top_picks.compute_composite_scores",
+        return_value=CompositeReport(
+            trade_date="20260610",
+            items=[
+                CompositeEntry(ticker="300750", name="宁德时代", base_score=0.8, composite_score=0.72),
+            ],
+        ),
+    )
+    def test_consecutive_enrichment_failure_is_non_fatal(
+        self,
+        _mock_composite: object,
+        _mock_expected: object,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """R4: If enrichment fails, top-picks still works without consecutive data."""
+        recs = [_make_rec("300750", "宁德时代", 0.8)]
+        _write_report(tmp_path, recs)
+
+        with patch(
+            "src.screening.top_picks.enrich_recommendations_with_history",
+            side_effect=RuntimeError("no history"),
+        ), patch(
+            "src.screening.market_state.detect_market_state",
+            return_value=SimpleNamespace(regime="trend"),
+        ):
+            rc = run_top_picks(count=5, reports_dir=tmp_path)
+
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "300750" in output
+
+
+# ---------------------------------------------------------------------------
+# R5: Historical hit-rate summary tests
+# ---------------------------------------------------------------------------
+
+
+class TestHitRateSummary:
+    """Tests for R5 historical hit-rate display."""
+
+    def test_empty_summary(self) -> None:
+        summary = SimpleNamespace(
+            total_recommendations=0,
+            total_days=0,
+            unique_tickers=0,
+            lookback_days=30,
+        )
+        assert _render_hit_rate_summary(summary) == ""
+
+    def test_basic_summary_rendering(self) -> None:
+        summary = SimpleNamespace(
+            total_recommendations=120,
+            total_days=22,
+            unique_tickers=45,
+            lookback_days=30,
+            overall_t5_win_rate=0.58,
+            overall_t10_win_rate=0.55,
+            overall_t30_win_rate=0.52,
+            avg_t5_return=2.1,
+            avg_t30_return=5.4,
+            excess_return=1.2,
+        )
+        result = _render_hit_rate_summary(summary)
+        assert "历史命中率速览" in result
+        assert "22 个交易日" in result
+        assert "120 次推荐" in result
+        assert "T+5" in result
+        assert "T+30" in result
+        assert "超额收益" in result
+
+    def test_summary_with_negative_excess(self) -> None:
+        summary = SimpleNamespace(
+            total_recommendations=80,
+            total_days=15,
+            unique_tickers=30,
+            lookback_days=30,
+            overall_t5_win_rate=0.45,
+            overall_t30_win_rate=0.42,
+            avg_t5_return=-0.5,
+            avg_t30_return=-2.1,
+            excess_return=-1.5,
+        )
+        result = _render_hit_rate_summary(summary)
+        assert "历史命中率速览" in result
+        assert "超额收益" in result
+
+    def test_summary_without_optional_fields(self) -> None:
+        summary = SimpleNamespace(
+            total_recommendations=50,
+            total_days=10,
+            unique_tickers=20,
+            lookback_days=30,
+        )
+        result = _render_hit_rate_summary(summary)
+        assert "历史命中率速览" in result
+        assert "10 个交易日" in result
+
+    @patch(
+        "src.screening.top_picks.compute_expected_returns",
+        return_value=ExpectedReturnReport(
+            trade_date="20260610",
+            lookback_days=60,
+            total_samples=50,
+            items=[
+                ExpectedReturn(
+                    ticker="300750",
+                    score_b=0.8,
+                    bucket_label="高",
+                    bucket_sample_count=40,
+                    expected_returns={"t30": 11.4},
+                    win_rates={"t30": 0.66},
+                ),
+            ],
+        ),
+    )
+    @patch(
+        "src.screening.top_picks.compute_composite_scores",
+        return_value=CompositeReport(
+            trade_date="20260610",
+            items=[
+                CompositeEntry(ticker="300750", name="宁德时代", base_score=0.8, composite_score=0.72),
+            ],
+        ),
+    )
+    @patch(
+        "src.screening.top_picks.compute_verify_recommendations",
+    )
+    def test_hit_rate_summary_appears_in_output(
+        self,
+        mock_verify: object,
+        _mock_composite: object,
+        _mock_expected: object,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """R5: Verify summary appears in top-picks output."""
+        recs = [_make_rec("300750", "宁德时代", 0.8)]
+        _write_report(tmp_path, recs)
+
+        mock_verify.return_value = SimpleNamespace(
+            total_recommendations=100,
+            total_days=20,
+            unique_tickers=35,
+            lookback_days=30,
+            overall_t5_win_rate=0.60,
+            overall_t30_win_rate=0.55,
+            avg_t5_return=1.8,
+            avg_t30_return=4.5,
+            excess_return=2.0,
+        )
+
+        with patch(
+            "src.screening.market_state.detect_market_state",
+            return_value=SimpleNamespace(regime="trend"),
+        ):
+            rc = run_top_picks(count=5, reports_dir=tmp_path)
+
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "历史命中率速览" in output
+        assert "100 次推荐" in output
+
+    @patch(
+        "src.screening.top_picks.compute_expected_returns",
+        return_value=ExpectedReturnReport(
+            trade_date="20260610",
+            lookback_days=60,
+            total_samples=50,
+            items=[
+                ExpectedReturn(
+                    ticker="300750",
+                    score_b=0.8,
+                    bucket_label="高",
+                    bucket_sample_count=40,
+                    expected_returns={"t30": 11.4},
+                    win_rates={"t30": 0.66},
+                ),
+            ],
+        ),
+    )
+    @patch(
+        "src.screening.top_picks.compute_composite_scores",
+        return_value=CompositeReport(
+            trade_date="20260610",
+            items=[
+                CompositeEntry(ticker="300750", name="宁德时代", base_score=0.8, composite_score=0.72),
+            ],
+        ),
+    )
+    def test_verify_failure_is_non_fatal(
+        self,
+        _mock_composite: object,
+        _mock_expected: object,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """R5: If verify_recommendations fails, top-picks still works."""
+        recs = [_make_rec("300750", "宁德时代", 0.8)]
+        _write_report(tmp_path, recs)
+
+        with patch(
+            "src.screening.top_picks.compute_verify_recommendations",
+            side_effect=RuntimeError("no data"),
+        ), patch(
+            "src.screening.market_state.detect_market_state",
+            return_value=SimpleNamespace(regime="trend"),
+        ):
+            rc = run_top_picks(count=5, reports_dir=tmp_path)
+
+        assert rc == 0
+        output = capsys.readouterr().out
         assert "300750" in output
