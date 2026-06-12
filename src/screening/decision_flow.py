@@ -57,7 +57,7 @@ def run_decision_flow(
     """
     start_time = time.time()
     search_dir = reports_dir or resolve_report_dir()
-    total_steps = 7
+    total_steps = 10
     flow_result: dict[str, Any] = {
         "generated_at": date.today().isoformat(),
         "top_n": top_n,
@@ -143,6 +143,32 @@ def run_decision_flow(
     print(render_daily_delta(delta))
     flow_result["daily_delta"] = delta
 
+    # Step 8: Signal momentum (P10-1)
+    print(f"\n{Fore.WHITE}Step 8/{total_steps}: Analyzing signal momentum...{Style.RESET_ALL}")
+    from src.screening.signal_momentum import compute_signal_momentum, render_signal_momentum
+
+    momentum = compute_signal_momentum(top_n=top_n, lookback_days=lookback_days, reports_dir=search_dir)
+    print(render_signal_momentum(momentum))
+    flow_result["signal_momentum"] = momentum.to_dict()
+    improving_count = sum(1 for i in momentum.items if i.momentum_bonus > 0)
+    declining_count = sum(1 for i in momentum.items if i.momentum_bonus < 0)
+
+    # Step 9: Sector strength (P10-2)
+    print(f"\n{Fore.WHITE}Step 9/{total_steps}: Evaluating sector strength...{Style.RESET_ALL}")
+    from src.screening.sector_strength import compute_sector_strength, render_sector_strength
+
+    sector = compute_sector_strength(top_n=top_n, lookback_days=lookback_days, reports_dir=search_dir)
+    print(render_sector_strength(sector))
+    flow_result["sector_strength"] = sector.to_dict()
+
+    # Step 10: Composite confidence score (P11-1)
+    print(f"\n{Fore.WHITE}Step 10/{total_steps}: Computing composite confidence scores...{Style.RESET_ALL}")
+    from src.screening.composite_score import compute_composite_scores, render_composite_scores
+
+    composite = compute_composite_scores(top_n=top_n, lookback_days=lookback_days, reports_dir=search_dir)
+    print(render_composite_scores(composite))
+    flow_result["composite_scores"] = composite.to_dict()
+
     # Summary
     elapsed = time.time() - start_time
     print(f"\n{Fore.CYAN}═══ Decision Summary ═══{Style.RESET_ALL}")
@@ -152,7 +178,11 @@ def run_decision_flow(
     print(f"  Signal consistency: {high_consistency_count}/{len(consistency)} high")
     print(f"  Dynamic threshold: {threshold_result['threshold']:.4f}")
     print(f"  Outliers: {outlier_count}")
-    if expected.items:
+    print(f"  Momentum: {Fore.GREEN}{improving_count} improving{Style.RESET_ALL} / {Fore.RED}{declining_count} declining{Style.RESET_ALL}")
+    if composite.items:
+        best = composite.items[0]
+        print(f"  Top composite: {best.ticker} (composite={best.composite_score:+.3f}, base={best.base_score:.3f})")
+    elif expected.items:
         best = max(expected.items, key=lambda x: x.score_b)
         er = best.expected_returns
         t5_str = f"{er.get('t5', 0.0) or 0.0:+.2f}%" if er.get("t5") is not None else "—"

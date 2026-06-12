@@ -751,6 +751,24 @@ def _resolve_sector_strength(argv: list[str]) -> int | None:
     return run_sector_strength(argv)
 
 
+def _resolve_composite_score(argv: list[str]) -> int | None:
+    """P11-1 composite confidence score. Unified score combining all signals."""
+    if "--composite-score" not in argv:
+        return None
+    from src.screening.composite_score import run_composite_score
+
+    return run_composite_score(argv)
+
+
+def _resolve_volume_confirm(argv: list[str]) -> int | None:
+    """P11-2 volume-price confirmation. Checks if volume supports price moves."""
+    if "--volume-confirm" not in argv:
+        return None
+    from src.screening.volume_confirmation import run_volume_confirm
+
+    return run_volume_confirm(argv)
+
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -797,6 +815,8 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--expected-returns", _resolve_expected_returns),
     ("--signal-momentum", _resolve_signal_momentum),
     ("--sector-strength", _resolve_sector_strength),
+    ("--composite-score", _resolve_composite_score),
+    ("--volume-confirm", _resolve_volume_confirm),
 ]
 
 
