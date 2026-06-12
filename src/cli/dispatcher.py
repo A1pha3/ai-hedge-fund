@@ -732,6 +732,25 @@ def _resolve_expected_returns(argv: list[str]) -> int | None:
     print(render_expected_returns(report))
     return 0
 
+
+def _resolve_signal_momentum(argv: list[str]) -> int | None:
+    """P10-1 signal momentum scoring. Tracks score_b trajectory over time."""
+    if "--signal-momentum" not in argv:
+        return None
+    from src.screening.signal_momentum import run_signal_momentum
+
+    return run_signal_momentum(argv)
+
+
+def _resolve_sector_strength(argv: list[str]) -> int | None:
+    """P10-2 sector rotation weighting. Shows sector momentum for recommendations."""
+    if "--sector-strength" not in argv:
+        return None
+    from src.screening.sector_strength import run_sector_strength
+
+    return run_sector_strength(argv)
+
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -776,6 +795,8 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--decision-flow", _resolve_decision_flow),
     ("--outlier-detect", _resolve_outlier_detect),
     ("--expected-returns", _resolve_expected_returns),
+    ("--signal-momentum", _resolve_signal_momentum),
+    ("--sector-strength", _resolve_sector_strength),
 ]
 
 
