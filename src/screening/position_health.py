@@ -156,7 +156,6 @@ def compute_position_health(
 
     latest = history[0]
     trade_date = latest.get("date", "")
-    all_recs = (latest.get("payload", {}).get("recommendations")) or []
 
     # Filter recommendations for the held tickers
     held_recs: list[dict[str, Any]] = []
