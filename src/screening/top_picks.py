@@ -24,6 +24,11 @@ from src.screening.composite_score import (
     compute_composite_scores,
     _composite_grade,
 )
+from src.screening.conditional_order_advisor import (
+    DEFAULT_ATR_PERIOD,
+    DEFAULT_LOOKBACK_SESSIONS,
+    compute_conditional_advice,
+)
 from src.screening.consecutive_recommendation import (
     enrich_recommendations_with_history,
     resolve_report_dir,
@@ -35,6 +40,7 @@ from src.screening.investability import (
     rank_recommendations_by_investability,
     select_representative_candidates,
 )
+from src.screening.signal_decay_detector import detect_signal_decay
 from src.screening.verify_recommendations import compute_verify_recommendations
 from src.utils.display import Fore, Style
 
@@ -261,6 +267,121 @@ def _render_market_opportunity_index(
     return f"  机会指数: {label}  BUY {buy_count}/{total}  HQ {high_quality}  | {hint}"
 
 # ---------------------------------------------------------------------------
+# R8: Stop-loss / take-profit from conditional order advisor
+# ---------------------------------------------------------------------------
+
+
+def _render_stop_loss_take_profit(
+    ticker: str,
+    name: str,
+    *,
+    trade_date: str,
+) -> str:
+    """R8: Compute and render ATR-based stop-loss/take-profit for a single ticker.
+
+    Fetches price history via tushare, computes ATR, and returns a compact
+    one-line summary.  Returns empty string on any failure (best-effort).
+    """
+    try:
+        from datetime import datetime, timedelta
+
+        from src.tools.tushare_api import get_ashare_prices_with_tushare
+
+        end_dt = datetime.strptime(trade_date, "%Y%m%d") if len(trade_date) == 8 else datetime.now()
+        start_dt = (end_dt - timedelta(days=90)).strftime("%Y%m%d")
+        end_str = end_dt.strftime("%Y%m%d")
+
+        prices = get_ashare_prices_with_tushare(ticker, start_dt, end_str)
+        if not prices:
+            return ""
+
+        close_series = [float(p.close) for p in prices if p.close and p.close > 0]
+        if not close_series:
+            return ""
+
+        current_price = close_series[-1]
+        advice = compute_conditional_advice(
+            ticker=ticker,
+            current_price=current_price,
+            price_history=close_series,
+            name=name,
+            atr_period=DEFAULT_ATR_PERIOD,
+            lookback_sessions=DEFAULT_LOOKBACK_SESSIONS,
+        )
+
+        if advice.degraded or advice.current_price <= 0:
+            return ""
+
+        sl_pct = ((advice.suggested_stop_loss - advice.current_price) / advice.current_price) * 100
+        tp_pct = ((advice.suggested_take_profit - advice.current_price) / advice.current_price) * 100
+        sl_color = Fore.RED
+        tp_color = Fore.GREEN
+        rr_color = Fore.YELLOW if advice.risk_reward_ratio < 1.5 else Fore.GREEN
+
+        return (
+            f"     {Fore.WHITE}止损止盈:{Style.RESET_ALL} "
+            f"买入={advice.suggested_buy_zone[0]:.2f}-{advice.suggested_buy_zone[1]:.2f}  "
+            f"{sl_color}止损={advice.suggested_stop_loss:.2f}({sl_pct:+.1f}%){Style.RESET_ALL}  "
+            f"{tp_color}止盈={advice.suggested_take_profit:.2f}({tp_pct:+.1f}%){Style.RESET_ALL}  "
+            f"{rr_color}盈亏比={advice.risk_reward_ratio:.1f}{Style.RESET_ALL}"
+        )
+    except Exception:
+        return ""  # Best-effort: failure is non-critical
+
+
+# ---------------------------------------------------------------------------
+# R9: Score trend from signal decay data
+# ---------------------------------------------------------------------------
+
+
+def _render_score_trend(
+    ticker: str,
+    *,
+    report_dir: Path,
+    lookback_days: int = 10,
+) -> str:
+    """R9: Render score trend direction for a consecutively-recommended ticker.
+
+    Uses signal_decay_detector to compare current vs historical score_b.
+    Returns a compact trend indicator: ↑↑ / → / ↓↓.
+    Returns empty string if no decay data or first-time recommendation.
+    """
+    try:
+        # Load the most recent report for current score
+        latest_path = _find_latest_report(report_dir)
+        if latest_path is None:
+            return ""
+        latest_data = json.loads(latest_path.read_text(encoding="utf-8"))
+        current_recs = latest_data.get("recommendations") or []
+        current_score = 0.0
+        for rec in current_recs:
+            if str(rec.get("ticker", "")) == ticker:
+                current_score = float(rec.get("score_b", 0.0) or 0.0)
+                break
+
+        # Load previous reports to find historical score
+        decay_map = detect_signal_decay(
+            current_recommendations=[{"ticker": ticker, "score_b": current_score}],
+            report_dir=report_dir,
+            lookback_days=lookback_days,
+        )
+        decay_info = decay_map.get(ticker)
+        if decay_info is None or decay_info.previous_score is None:
+            return ""
+
+        change_pct = float(decay_info.change_pct or 0.0)
+
+        if change_pct > 5:
+            return f" {Fore.GREEN}↑↑{Style.RESET_ALL}"
+        elif change_pct > -5:
+            return f" {Fore.WHITE}→{Style.RESET_ALL}"
+        else:
+            return f" {Fore.RED}↓↓{Style.RESET_ALL}"
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -420,6 +541,26 @@ def run_top_picks(
         )
         print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}  市场门控={verdict['market_regime']}")
         print(f"     失效条件: {verdict['invalidation_reason']}")
+
+        # R8: Stop-loss/take-profit for BUY picks
+        if verdict["action"] == "BUY":
+            sl_tp = _render_stop_loss_take_profit(
+                str(item.get("ticker", "")),
+                str(item.get("name", "") or ""),
+                trade_date=trade_date,
+            )
+            if sl_tp:
+                print(sl_tp)
+
+        # R9: Score trend for consecutive recommendations
+        if consec_days >= 2:
+            trend = _render_score_trend(
+                str(item.get("ticker", "")),
+                report_dir=search_dir,
+            )
+            if trend:
+                print(f"     趋势:{trend}")
+
         if cluster_size > 1 and alternatives and bool(item.get("is_cluster_representative")):
             print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
 

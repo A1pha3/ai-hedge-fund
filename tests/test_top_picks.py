@@ -769,3 +769,130 @@ class TestMarketOpportunityIndex:
         result = _render_market_opportunity_index([], market_regime="trend")
         assert "无候选" in result or "CAUTION" in result
 
+
+# ---------------------------------------------------------------------------
+# R8: Stop-loss / take-profit
+# ---------------------------------------------------------------------------
+
+
+class TestStopLossTakeProfit:
+    """R8: _render_stop_loss_take_profit — best-effort ATR stop-loss/take-profit."""
+
+    def test_no_prices_returns_empty(self) -> None:
+        from src.screening.top_picks import _render_stop_loss_take_profit
+
+        with patch("src.tools.tushare_api.get_ashare_prices_with_tushare", return_value=[]):
+            result = _render_stop_loss_take_profit("300750", "宁德时代", trade_date="20260610")
+            assert result == ""
+
+    def test_valid_prices_renders_output(self) -> None:
+        from src.screening.top_picks import _render_stop_loss_take_profit
+        from src.data.models import Price
+
+        # Create mock price data with enough history for ATR
+        prices = [
+            Price(open=100.0 + i * 0.5, close=100.0 + i * 0.5, high=101.0 + i * 0.5, low=99.0 + i * 0.5, volume=1000, time=f"2026-05-{i+1:02d}")
+            for i in range(20)
+        ]
+        with patch("src.tools.tushare_api.get_ashare_prices_with_tushare", return_value=prices):
+            result = _render_stop_loss_take_profit("300750", "宁德时代", trade_date="20260610")
+            assert "止损止盈" in result
+            assert "止损=" in result
+            assert "止盈=" in result
+            assert "盈亏比=" in result
+
+    def test_exception_returns_empty(self) -> None:
+        from src.screening.top_picks import _render_stop_loss_take_profit
+
+        with patch("src.tools.tushare_api.get_ashare_prices_with_tushare", side_effect=Exception("boom")):
+            result = _render_stop_loss_take_profit("300750", "宁德时代", trade_date="20260610")
+            assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# R9: Score trend
+# ---------------------------------------------------------------------------
+
+
+class TestScoreTrend:
+    """R9: _render_score_trend — score trend direction from signal decay."""
+
+    def test_no_report_returns_empty(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _render_score_trend
+
+        result = _render_score_trend("300750", report_dir=tmp_path)
+        assert result == ""
+
+    def test_rising_score_shows_up_arrow(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _render_score_trend
+        from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+
+        decay_info = DecayInfo(
+            ticker="300750",
+            level=DecayLevel.NONE,
+            current_score=0.8,
+            previous_score=0.6,
+            change_pct=33.0,
+            days_since_peak=0,
+        )
+        with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
+            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+                (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
+                result = _render_score_trend("300750", report_dir=tmp_path)
+                assert "↑↑" in result
+
+    def test_falling_score_shows_down_arrow(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _render_score_trend
+        from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+
+        decay_info = DecayInfo(
+            ticker="300750",
+            level=DecayLevel.MODERATE,
+            current_score=0.3,
+            previous_score=0.6,
+            change_pct=-50.0,
+            days_since_peak=3,
+        )
+        with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
+            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+                (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
+                result = _render_score_trend("300750", report_dir=tmp_path)
+                assert "↓↓" in result
+
+    def test_stable_score_shows_arrow(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _render_score_trend
+        from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+
+        decay_info = DecayInfo(
+            ticker="300750",
+            level=DecayLevel.NONE,
+            current_score=0.6,
+            previous_score=0.59,
+            change_pct=1.7,
+            days_since_peak=0,
+        )
+        with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
+            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+                (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
+                result = _render_score_trend("300750", report_dir=tmp_path)
+                assert "→" in result
+
+    def test_no_previous_score_returns_empty(self, tmp_path: Path) -> None:
+        from src.screening.top_picks import _render_score_trend
+        from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+
+        decay_info = DecayInfo(
+            ticker="300750",
+            level=DecayLevel.NONE,
+            current_score=0.6,
+            previous_score=None,
+            change_pct=None,
+            days_since_peak=0,
+        )
+        with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
+            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+                (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
+                result = _render_score_trend("300750", report_dir=tmp_path)
+                assert result == ""
+
+
