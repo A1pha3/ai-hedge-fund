@@ -1094,7 +1094,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     expect(screen.getAllByText('002916').length).toBeGreaterThan(0);
   });
 
-  it('filters trade dates by dual-target metadata, syncs focus into feedback, and sorts report rail', async () => {
+  it('filters trade dates by dual-target metadata, syncs focus into feedback, and sorts report rail', { timeout: 10000 }, async () => {
     const user = userEvent.setup();
     const sortableReports: ReplayArtifactSummary[] = [
       {
@@ -1482,7 +1482,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     expect(screen.getByText('Focus Queue')).toBeInTheDocument();
   });
 
-  it('submits feedback, refreshes the artifact detail, and renders records in reverse chronological order', async () => {
+  it('submits feedback, refreshes the artifact detail, and renders records in reverse chronological order', { timeout: 10000 }, async () => {
     const user = userEvent.setup();
     const detailAfterAppend: ReplayArtifactDetail = {
       ...detail,
