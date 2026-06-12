@@ -35,7 +35,7 @@ export function useComponentGroups(componentGroups: ComponentGroup[]) {
       // Only reset groups when exiting search mode
       setIsSearching(false);
     }
-  }, [searchQuery, filteredGroups]);
+  }, [searchQuery, filteredGroups, isSearching]);
 
   // Handle accordion value changes
   const handleAccordionChange = (value: string[]) => {

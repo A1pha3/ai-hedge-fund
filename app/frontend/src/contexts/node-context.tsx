@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- context provider and hook intentionally share one module for node runtime state */
 import { LanguageModel } from '@/data/models';
 import { createContext, ReactNode, useCallback, useContext, useState } from 'react';
 
@@ -20,7 +21,7 @@ export interface AgentNodeData {
   messages: MessageItem[];
   timestamp?: string;
   analysis: string | null;
-  backtestResults?: any[];
+  backtestResults?: unknown[];
 }
 
 // Edge / risk data for P0 1.1 — 30D edge card on the investment report.
@@ -35,10 +36,26 @@ export interface EdgeCardData {
   edge_summary: string | null;
 }
 
+export interface TradingDecision {
+  action?: string;
+  quantity?: number;
+  confidence?: number;
+  reasoning?: string;
+  [key: string]: unknown;
+}
+
+export interface PortfolioPositionData {
+  long?: number;
+  short?: number;
+  long_cost_basis?: number;
+  short_cost_basis?: number;
+  [key: string]: unknown;
+}
+
 // Data structure for the output node data (from complete event)
 export interface OutputNodeData {
-  decisions: Record<string, any>;
-  analyst_signals: Record<string, any>;
+  decisions: Record<string, TradingDecision>;
+  analyst_signals: Record<string, Record<string, unknown>>;
   // Per-ticker edge / risk data (P0 1.1)
   edge_data?: Record<string, EdgeCardData>;
   // P1 1.5: Portfolio-level risk metrics for RiskMonitorPanel
@@ -56,7 +73,7 @@ export interface OutputNodeData {
   final_portfolio?: {
     cash: number;
     margin_used: number;
-    positions: Record<string, any>;
+    positions: Record<string, PortfolioPositionData>;
   };
   total_days?: number;
 }
@@ -224,7 +241,8 @@ export function NodeProvider({ children }: { children: ReactNode }) {
     setAgentModels(prev => {
       if (model === null) {
         // Remove the agent model if setting to null
-        const { [compositeKey]: removed, ...rest } = prev;
+        const rest = { ...prev };
+        delete rest[compositeKey];
         return rest;
       } else {
         // Set the agent model
@@ -293,7 +311,8 @@ export function NodeProvider({ children }: { children: ReactNode }) {
       
       // Clear output data for specified flow
       setOutputNodeData(prev => {
-        const { [flowId]: removed, ...rest } = prev;
+        const rest = { ...prev };
+        delete rest[flowId];
         return rest;
       });
     }

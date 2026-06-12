@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- context provider and hook intentionally share one module for the flow runtime contract */
 import { getMultiNodeDefinition, isMultiNodeComponent } from '@/data/multi-node-mappings';
 import { getNodeTypeDefinition } from '@/data/node-mappings';
 import { flowConnectionManager } from '@/hooks/use-flow-connection';
@@ -147,7 +148,7 @@ export function FlowProvider({ children }: FlowProviderProps) {
         
         if (dataToRestore) {
           Object.entries(dataToRestore).forEach(([nodeId, nodeState]) => {
-            setNodeInternalState(nodeId, nodeState as Record<string, any>);
+            setNodeInternalState(nodeId, nodeState as Record<string, unknown>);
           });
         }
         

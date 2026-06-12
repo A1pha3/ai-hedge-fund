@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- context provider and hook intentionally live together to preserve a stable auth API */
 /**
  * AuthContext — Frontend authentication state management.
  *

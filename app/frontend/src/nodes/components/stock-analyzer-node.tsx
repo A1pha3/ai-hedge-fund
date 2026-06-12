@@ -26,6 +26,7 @@ import { useFlowConnection } from '@/hooks/use-flow-connection';
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
 import { useNodeState } from '@/hooks/use-node-state';
 import { cn, formatKeyboardShortcut, parseTickers } from '@/lib/utils';
+import { ModelProvider } from '@/services/types';
 import { type StockAnalyzerNode } from '../types';
 import { NodeShell } from './node-shell';
 
@@ -182,7 +183,7 @@ export function StockAnalyzerNode({
         agentModels.push({
           agent_id: node.id,
           model_name: model.model_name,
-          model_provider: model.provider as any
+          model_provider: model.provider as ModelProvider
         });
       }
     }

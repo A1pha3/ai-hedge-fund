@@ -183,7 +183,7 @@ export function RiskMonitorPanel({ riskMetrics, riskSnapshot }: RiskMonitorPanel
               </div>
             </div>
             <div className="flex items-center justify-center gap-1">
-              <Badge variant={hhiInfo.badge as any} data-testid="hhi-badge">
+              <Badge variant={hhiInfo.badge} data-testid="hhi-badge">
                 {hhiInfo.label}
               </Badge>
             </div>
@@ -209,7 +209,7 @@ export function RiskMonitorPanel({ riskMetrics, riskSnapshot }: RiskMonitorPanel
               />
             </div>
             <div className="flex items-center justify-center gap-1">
-              <Badge variant={cvarInfo.badge as any} data-testid="cvar-badge">
+              <Badge variant={cvarInfo.badge} data-testid="cvar-badge">
                 {cvar_95 < 0.05 ? 'Low' : cvar_95 < 0.12 ? 'Moderate' : 'High'} Tail Risk
               </Badge>
             </div>
@@ -227,7 +227,7 @@ export function RiskMonitorPanel({ riskMetrics, riskSnapshot }: RiskMonitorPanel
               </span>
             </div>
             <div className="flex items-center justify-center gap-1">
-              <Badge variant={shortInfo.badge as any} data-testid="short-ratio-badge">
+              <Badge variant={shortInfo.badge} data-testid="short-ratio-badge">
                 {shortInfo.label}
               </Badge>
             </div>
@@ -398,7 +398,7 @@ function LiveRiskSnapshotSection({ snapshot }: { snapshot: RiskSnapshot }) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={ddInfo.badge as any} data-testid="drawdown-badge">{ddInfo.label}</Badge>
+          <Badge variant={ddInfo.badge} data-testid="drawdown-badge">{ddInfo.label}</Badge>
           <span className="text-xs text-muted-foreground">
             {position_count} live position{position_count !== 1 ? 's' : ''} · portfolio {fmtUSD(portfolio_value)}
           </span>

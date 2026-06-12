@@ -1167,7 +1167,10 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
       return String(right.window.end_date || '').localeCompare(String(left.window.end_date || ''));
     });
   }, [reportRailDualTargetFilter.deltaClass, reportRailDualTargetFilter.shortTradeProfile, reportRailDualTargetFilter.targetMode, reportRailSortMode, reports]);
-  const tradeDateTargetIndex = detail?.selection_artifact_overview?.trade_date_target_index || [];
+  const tradeDateTargetIndex = useMemo(
+    () => detail?.selection_artifact_overview?.trade_date_target_index || [],
+    [detail],
+  );
   const tradeDateTargetModeOptions = useMemo(() => {
     const optionSet = new Set<string>();
     tradeDateTargetIndex.forEach((item) => {

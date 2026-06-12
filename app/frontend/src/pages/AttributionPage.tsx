@@ -79,8 +79,8 @@ const AttributionPage: React.FC = () => {
       };
       const data = await fetchAttribution(payload);
       setResult(data);
-    } catch (e: any) {
-      setError(e.message || "Failed to fetch attribution");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to fetch attribution");
     } finally {
       setLoading(false);
     }

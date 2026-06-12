@@ -38,11 +38,13 @@ function consumeHedgeFundStream(
 
   const processStream = async () => {
     try {
-      while (true) {
+      let isReading = true;
+      while (isReading) {
         const { done, value } = await reader.read();
 
         if (done) {
-          break;
+          isReading = false;
+          continue;
         }
 
         const chunk = decoder.decode(value, { stream: true });
@@ -219,7 +221,7 @@ export const api = {
    * @param data The JSON data to save
    * @returns Promise that resolves when the file is saved
    */
-  saveJsonFile: async (filename: string, data: any): Promise<void> => {
+  saveJsonFile: async (filename: string, data: unknown): Promise<void> => {
     try {
       const response = await authFetch(`${API_BASE_URL}/storage/save-json`, {
         method: 'POST',

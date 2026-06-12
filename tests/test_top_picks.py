@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
+from src.screening.expected_return import ExpectedReturn, ExpectedReturnReport
 from src.screening.top_picks import run_top_picks
 
 
@@ -91,3 +93,30 @@ class TestTopPicks:
         output = capsys.readouterr().out
         # Should show signal breakdown (动量/行业/一致/量价)
         assert "base=" in output
+
+    @patch(
+        "src.screening.expected_return.compute_expected_returns",
+        return_value=ExpectedReturnReport(
+            trade_date="20260610",
+            lookback_days=60,
+            total_samples=120,
+            items=[
+                ExpectedReturn(
+                    ticker="300750",
+                    score_b=0.8,
+                    bucket_label="高 (>0.8)",
+                    bucket_sample_count=40,
+                    expected_returns={"t1": 1.0, "t5": 3.5, "t10": 5.2, "t20": 8.1, "t30": 11.4},
+                    win_rates={"t1": 0.55, "t5": 0.60, "t10": 0.61, "t20": 0.63, "t30": 0.66},
+                ),
+            ],
+        ),
+    )
+    def test_output_includes_t30_investability_evidence(self, _mock_expected: object, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        recs = [_make_rec("300750", "宁德时代", 0.8)]
+        _write_report(tmp_path, recs)
+        rc = run_top_picks(count=5, reports_dir=tmp_path)
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "T+30" in output
+        assert "样本" in output

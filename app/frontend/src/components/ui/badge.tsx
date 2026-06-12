@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- shadcn UI file intentionally exports component props and variant helper together */
 import { cva, type VariantProps } from "class-variance-authority"
 import * as React from "react"
 

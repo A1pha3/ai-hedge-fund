@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- context provider and hook intentionally share one module for tab lifecycle state */
 import { Flow } from '@/types/flow';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
@@ -12,7 +13,7 @@ export interface Tab {
   // For flow tabs
   flow?: Flow;
   // For other tabs (settings, etc.)
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 // Serializable version of Tab for localStorage (without content)
@@ -21,7 +22,7 @@ interface SerializableTab {
   type: TabType;
   title: string;
   flow?: Flow;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 interface TabsContextType {

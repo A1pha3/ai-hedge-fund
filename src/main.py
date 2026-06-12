@@ -25,6 +25,7 @@ from src.screening.consecutive_recommendation import (
     resolve_report_dir as _resolve_consecutive_report_dir,
 )
 from src.screening.market_state import detect_market_state
+from src.screening.investability import rank_recommendations_by_investability
 from src.screening.industry_rotation import (
     IndustrySignal,
     calculate_industry_rotation,
@@ -431,6 +432,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
 
     # Step 4: 排序输出 Top N
     progress.update_status("auto_screening", None, f"Step 4/4: 输出 Top {top_n} 推荐")
+    ranking_pool_size = max(top_n * 3, top_n)
     if selected_strategies:
         from src.screening.custom_weights import reweight_recommendations
 
@@ -439,14 +441,37 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
             [item.model_dump(mode="json") for item in fused],
             selected_weights,
         )
-        top_results_serializable = reweighted_results[:top_n]
-        fused_by_ticker = {str(item.ticker): item for item in fused}
-        top_results_for_sector = [fused_by_ticker.get(str(rec.get("ticker", "")), rec) for rec in top_results_serializable]
+        ranking_pool = reweighted_results[:ranking_pool_size]
     else:
         sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
-        top_results = sorted_results[:top_n]
-        top_results_for_sector = top_results
-        top_results_serializable = [item.model_dump(mode="json") for item in top_results]
+        ranking_pool = [item.model_dump(mode="json") for item in sorted_results[:ranking_pool_size]]
+
+    try:
+        from src.screening.composite_score import compute_composite_scores_for_recommendations
+        from src.screening.expected_return import compute_expected_returns
+
+        composite_report = compute_composite_scores_for_recommendations(
+            recommendations=ranking_pool,
+            trade_date=trade_date,
+            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            reports_dir=_resolve_consecutive_report_dir(),
+        )
+        expected_report = compute_expected_returns(
+            recommendations=ranking_pool,
+            lookback_days=60,
+            reports_dir=_resolve_consecutive_report_dir(),
+        )
+        ranked_pool = rank_recommendations_by_investability(
+            ranking_pool,
+            composite_report,
+            expected_report,
+        )
+    except Exception:
+        ranked_pool = ranking_pool
+
+    top_results_serializable = ranked_pool[:top_n]
+    fused_by_ticker = {str(item.ticker): item for item in fused}
+    top_results_for_sector = [fused_by_ticker.get(str(rec.get("ticker", "")), rec) for rec in top_results_serializable]
 
     # Sector concentration guard
     sector_warnings = _check_sector_concentration(top_results_for_sector)

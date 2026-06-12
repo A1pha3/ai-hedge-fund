@@ -46,7 +46,8 @@ export function useFlowHistory({ maxHistorySize = 50, flowId }: UseFlowHistoryOp
   const createSnapshot = useCallback((): FlowSnapshot => {
     // Strip UI-only properties from nodes (like selection state)
     const cleanNodes = getNodes().map(node => {
-      const { selected, ...cleanNode } = node;
+      const cleanNode = { ...node };
+      delete cleanNode.selected;
       return cleanNode;
     });
 

@@ -5,7 +5,7 @@ import { setNodeInternalState, setCurrentFlowId as setNodeStateFlowId } from '@/
 import { cn } from '@/lib/utils';
 import { flowService } from '@/services/flow-service';
 import { Flow as FlowType } from '@/types/flow';
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 
 // Import the flow connection manager to check if flow is actively running
 
@@ -19,7 +19,7 @@ export function FlowTabContent({ flow, className }: FlowTabContentProps) {
   const { activeTabId } = useTabsContext();
 
   // Enhanced load function that restores both use-node-state and node context data
-  const loadFlowWithCompleteState = async (flowToLoad: FlowType) => {
+  const loadFlowWithCompleteState = useCallback(async (flowToLoad: FlowType) => {
     try {
       const flowId = flowToLoad.id.toString();
       
@@ -36,9 +36,9 @@ export function FlowTabContent({ flow, className }: FlowTabContentProps) {
 
       // Then restore internal states for each node (use-node-state data)
       if (flowToLoad.nodes) {
-        flowToLoad.nodes.forEach((node: any) => {
+        flowToLoad.nodes.forEach((node: FlowType['nodes'][number]) => {
           if (node.data?.internal_state) {
-            setNodeInternalState(node.id, node.data.internal_state);
+            setNodeInternalState(node.id, node.data.internal_state as Record<string, unknown>);
           }
         });
       }
@@ -50,7 +50,7 @@ export function FlowTabContent({ flow, className }: FlowTabContentProps) {
       console.error('Failed to load flow with complete state:', error);
       throw error;
     }
-  };
+  }, [loadFlow]);
 
   // Fetch the latest flow state when this tab becomes active
   useEffect(() => {
@@ -72,7 +72,7 @@ export function FlowTabContent({ flow, className }: FlowTabContentProps) {
 
       fetchAndLoadFlow();
     }
-  }, [activeTabId, flow.id, flow, loadFlow]);
+  }, [activeTabId, flow.id, flow, loadFlowWithCompleteState]);
 
   return (
     <div className={cn("h-full w-full", className)}>

@@ -140,10 +140,29 @@ def compute_composite_scores(
     recs = (report_data.get("recommendations") or [])[:top_n]
     trade_date = report_data.get("trade_date", "")
 
+    return compute_composite_scores_for_recommendations(
+        recommendations=recs,
+        trade_date=trade_date,
+        lookback_days=lookback_days,
+        reports_dir=search_dir,
+    )
+
+
+def compute_composite_scores_for_recommendations(
+    *,
+    recommendations: list[dict[str, Any]],
+    trade_date: str = "",
+    lookback_days: int = 5,
+    reports_dir: Path | None = None,
+) -> CompositeReport:
+    """Compute composite scores for an explicit recommendation list."""
+    recs = list(recommendations)
     if not recs:
         return CompositeReport(trade_date=trade_date)
 
     # Compute momentum (P10-1)
+    top_n = len(recs)
+    search_dir = reports_dir or resolve_report_dir()
     try:
         momentum_report = compute_signal_momentum(
             top_n=top_n,

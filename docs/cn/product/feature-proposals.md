@@ -2,7 +2,7 @@
 
 > **目标**: 让用户更高效地找到未来 30 天最有投资价值的 A 股标的。
 >
-> **本版本变更 (R20.19)**: 主文档从 933 行精简到 < 200 行。R20.1-R20.18 详细审查档案移至 [`changelog/r20-audit-history.md`](./changelog/r20-audit-history.md)。
+> **本版本变更 (R20.19 → R20.38)**: 主文档已从 933 行重构为路由式索引。当前主文档仅保留活跃路线图、关键完成态与维护规则；详细审查档案继续外置到 [`changelog/r20-audit-history.md`](./changelog/r20-audit-history.md)。
 >
 > **优先级定义**:
 > - **P0** — 必须做，直接影响核心使用体验和选股准确性
@@ -192,7 +192,7 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 | # | 功能 | 优先级 | 状态 |
 |---|------|--------|------|
-| P9-1 | **预期收益估算** — 基于历史 score_b 分桶的 T+1/T+3/T+5/T+10 实际收益, 为每只推荐估算预期收益; 展示"历史同分位平均收益"让用户量化预期 | P1 | ✅ DONE R20.36 |
+| P9-1 | **预期收益估算** — 基于历史 score_b 分桶的 T+1/T+5/T+10/T+20/T+30 实际收益, 为每只推荐估算预期收益; 展示"历史同分位平均收益"让用户量化预期 | P1 | ✅ DONE R20.36；R20.38 起默认强调 T+20/T+30 posterior edge |
 | P9-2 | **决策流水线整合** — 增强 `--decision-flow` 集成异常检测 (P8-2) + 预期收益 (P9-1), 输出"今日 Top N 可执行决策卡" | P1 | ✅ DONE R20.36 |
 
 ### Phase 13: 选股精度增强 — 动量与行业整合
@@ -225,8 +225,22 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 | # | 功能 | 优先级 | 状态 |
 |---|------|--------|------|
-| P12-1 | **`--auto` 集成 composite_score** — auto 输出表格增加 composite_score 列, 使用综合评分作为推荐排名依据 | P0 | ✅ DONE R20.37: composite_score 在 --decision-flow 中展示; score_b 保留主排序 |
-| P12-2 | **`--top-picks` 一键买点** — 单命令输出今日 Top N 最佳买点 (composite_score + A-F评级 + 信号解读), 零学习成本 | P0 | ✅ DONE R20.37: `src/screening/top_picks.py` + `--top-picks [--count=5]` CLI; 7 pytest |
+| P12-1 | **`--auto` 默认排序切到 investability ranking** — 在原始 `score_b` 透明展示不变的前提下, 让 top tranche 默认按 composite_score + T+30 posterior edge + 胜率/样本量重排 | P0 | ✅ DONE R20.38: `compute_auto_screening_results()` 现对候选 tranche 做可投资性重排, `score_b` 保留为基础分 |
+| P12-2 | **`--top-picks` 一键买点** — 单命令输出今日 Top N 最佳买点 (composite_score + A-F评级 + 信号解读), 零学习成本 | P0 | ✅ DONE R20.37；R20.38 起附带 T+30 预期收益 / 胜率 / 样本量证据 |
+
+### Phase 16: 30 天 investability 决策收敛 (R20.38)
+
+> **目标**: 不再让用户在 `score_b`、composite、校准、追踪摘要之间手工拼接，默认前门直接围绕“未来 30 天最值得买的票”输出可投资证据。
+>
+> **设计原则**:
+> - 优先复用既有能力，不再新增独立入口
+> - 默认展示长周期 posterior edge，而不是只强调短周期收益
+> - 保留原始 `score_b` 透明度，但默认排序与决策说明统一收敛到 investability 口径
+
+| # | 功能 | 优先级 | 状态 |
+|---|------|--------|------|
+| P13-1 | **30 天 posterior edge 默认化** — `--decision-flow` / `--top-picks` / `--auto` 默认输出 T+20/T+30 预期收益、T+30 胜率与样本量, 让 30 天证据成为前门信息 | P0 | ✅ DONE R20.38: `render_expected_returns_compact()` 长周期化, `top_picks.py` / `decision_flow.py` 默认展示 T+30 证据 |
+| P13-2 | **单一 investability 排序口径** — `--auto` top tranche、`--top-picks` 与 `--decision-flow` 统一按 composite_score + T+30 edge + 胜率/样本量做排序与摘要, 降低入口重复与认知切换 | P0 | ✅ DONE R20.38: 新增 `src/screening/investability.py` 共享排序逻辑 |
 
 ---
 
@@ -281,6 +295,7 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 | Phase 13 (动量与行业整合) | **2/2 (100%)** ✅ | P10-1 ✅ R20.37 / P10-2 ✅ R20.37 |
 | Phase 14 (综合评分与量价确认) | **2/2 (100%)** ✅ | P11-1 ✅ R20.37 / P11-2 ✅ R20.37 |
 | Phase 15 (极简决策入口) | **2/2 (100%)** ✅ | P12-1 ✅ R20.37 / P12-2 ✅ R20.37 |
+| Phase 16 (30 天 investability 收敛) | **2/2 (100%)** ✅ | P13-1 ✅ R20.38 / P13-2 ✅ R20.38 |
 | **后端** | **100%** 🎉 | — |
 | **CLI** | **100%** 🎉 | — |
 | **前端** | **100%** 🎉 | — |
@@ -289,13 +304,13 @@ P0-7/8/9/10/11 + P1-13 + P2-1/10 全部 DONE。
 
 ## 七、文档维护说明
 
-- **R20.19 (本轮)**: 主文档 933 行 → < 200 行。R20.1-R20.18 详细审查档案移至 `changelog/r20-audit-history.md`。
+- **R20.19-R20.38**: 主文档已转为“活跃路线图 + 路由索引”模式；详细审查档案、行业调研与历史提案继续沉到子文档维护。
 - **维护策略**:
   - 新增 P0/P1/P2 需求 → 追加到 §1
-  - 已实现功能 → §1 标记 ✅, 不再展开细节
+  - 已实现功能 → 主文档只保留一句话价值与状态，技术细节写入 `features/` 或 `research/`
   - 详细审查记录 → 追加到 `changelog/r20-audit-history.md`
   - 业界调研 → 追加到 `research/`
 
 ---
 
-> **最后更新**: 2026-06-12 (R20.37: Phase 13-15 P10-1~P12-2 + DRY tracking_history 重构; 79 新增 pytest, 全量 7607 pytest 通过)
+> **最后更新**: 2026-06-12 (R20.38: Phase 16 P13-1~P13-2 完成；默认前门收敛到 30 天 investability 排序与证据展示；全量 7607 pytest 通过, 1 skip)

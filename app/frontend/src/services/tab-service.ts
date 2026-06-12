@@ -9,7 +9,7 @@ export interface TabData {
   type: 'flow' | 'settings' | 'replay-artifacts' | 'screening';
   title: string;
   flow?: Flow;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export class TabService {

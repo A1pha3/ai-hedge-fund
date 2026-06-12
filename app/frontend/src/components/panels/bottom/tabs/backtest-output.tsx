@@ -1,13 +1,125 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import type { AgentNodeData, OutputNodeData, PortfolioPositionData } from '@/contexts/node-context';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import type { BacktestPerformanceMetrics } from '@/services/types';
 import { MoreHorizontal } from 'lucide-react';
 import { BacktestEquityCurve } from '@/components/backtest-equity-curve';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { getActionColor } from './output-tab-utils';
 
+type AgentDataMap = Record<string, AgentNodeData>;
+
+interface BacktestTickerDetail {
+  ticker: string;
+  action?: string;
+  quantity?: number;
+  price?: number;
+  shares_owned?: number;
+  long_shares?: number;
+  short_shares?: number;
+  position_value?: number;
+  bullish_count?: number;
+  bearish_count?: number;
+  neutral_count?: number;
+}
+
+interface BacktestPeriod {
+  date: string;
+  portfolio_value: number;
+  cash: number;
+  portfolio_return?: number;
+  performance_metrics?: BacktestPerformanceMetrics;
+  ticker_details?: BacktestTickerDetail[];
+  long_short_ratio?: number | null;
+}
+
+type ActivityRow =
+  | {
+      type: 'ticker';
+      date: string;
+      ticker: string;
+      action?: string;
+      quantity?: number;
+      price?: number;
+      shares_owned?: number;
+      long_shares?: number;
+      short_shares?: number;
+      position_value?: number;
+      bullish_count?: number;
+      bearish_count?: number;
+      neutral_count?: number;
+    }
+  | {
+      type: 'summary';
+      date: string;
+      portfolio_value: number;
+      cash: number;
+      portfolio_return?: number;
+      total_position_value: number;
+      performance_metrics?: BacktestPerformanceMetrics;
+    };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function asBacktestTickerDetail(value: unknown): BacktestTickerDetail | null {
+  const record = asRecord(value);
+  if (!record || typeof record.ticker !== 'string') {
+    return null;
+  }
+  return {
+    ticker: record.ticker,
+    action: typeof record.action === 'string' ? record.action : undefined,
+    quantity: typeof record.quantity === 'number' ? record.quantity : undefined,
+    price: typeof record.price === 'number' ? record.price : undefined,
+    shares_owned: typeof record.shares_owned === 'number' ? record.shares_owned : undefined,
+    long_shares: typeof record.long_shares === 'number' ? record.long_shares : undefined,
+    short_shares: typeof record.short_shares === 'number' ? record.short_shares : undefined,
+    position_value: typeof record.position_value === 'number' ? record.position_value : undefined,
+    bullish_count: typeof record.bullish_count === 'number' ? record.bullish_count : undefined,
+    bearish_count: typeof record.bearish_count === 'number' ? record.bearish_count : undefined,
+    neutral_count: typeof record.neutral_count === 'number' ? record.neutral_count : undefined,
+  };
+}
+
+function asBacktestPeriod(value: unknown): BacktestPeriod | null {
+  const record = asRecord(value);
+  if (!record || typeof record.date !== 'string' || typeof record.portfolio_value !== 'number') {
+    return null;
+  }
+
+  const tickerDetails = Array.isArray(record.ticker_details)
+    ? record.ticker_details
+        .map(asBacktestTickerDetail)
+        .filter((detail): detail is BacktestTickerDetail => detail !== null)
+    : undefined;
+
+  return {
+    date: record.date,
+    portfolio_value: record.portfolio_value,
+    cash: typeof record.cash === 'number' ? record.cash : 0,
+    portfolio_return: typeof record.portfolio_return === 'number' ? record.portfolio_return : undefined,
+    performance_metrics: asRecord(record.performance_metrics) as BacktestPerformanceMetrics | undefined,
+    ticker_details: tickerDetails,
+    long_short_ratio: typeof record.long_short_ratio === 'number' || record.long_short_ratio === null ? record.long_short_ratio : undefined,
+  };
+}
+
+function getBacktestPeriods(agentData: AgentDataMap): BacktestPeriod[] {
+  const rawResults = agentData['backtest']?.backtestResults;
+  if (!Array.isArray(rawResults)) {
+    return [];
+  }
+
+  return rawResults
+    .map(asBacktestPeriod)
+    .filter((period): period is BacktestPeriod => period !== null);
+}
+
 // Component for displaying backtest progress
-function BacktestProgress({ agentData }: { agentData: Record<string, any> }) {
+function BacktestProgress({ agentData }: { agentData: AgentDataMap }) {
   const backtestAgent = agentData['backtest'];
   
   if (!backtestAgent) return null;
@@ -32,29 +144,19 @@ function BacktestProgress({ agentData }: { agentData: Record<string, any> }) {
 }
 
 // Component for displaying backtest trading table (similar to CLI)
-function BacktestTradingTable({ agentData }: { agentData: Record<string, any> }) {
-  const backtestAgent = agentData['backtest'];
-
-  // console.log("backtestAgent", backtestAgent);
-  
-  if (!backtestAgent || !backtestAgent.backtestResults) {
-    return null;
-  }
-    
-  // Get the backtest results directly from the agent data
-  const backtestResults = backtestAgent.backtestResults || [];
-  
+function BacktestTradingTable({ agentData }: { agentData: AgentDataMap }) {
+  const backtestResults = getBacktestPeriods(agentData);
   if (backtestResults.length === 0) {
     return null;
   }
   
   // Build table rows similar to CLI format
-  const tableRows: any[] = [];
+  const tableRows: ActivityRow[] = [];
   
-  backtestResults.forEach((backtestResult: any) => {    
+  backtestResults.forEach((backtestResult) => {
     // Add ticker rows for this period
     if (backtestResult.ticker_details) {
-      backtestResult.ticker_details.forEach((ticker: any) => {
+      backtestResult.ticker_details.forEach((ticker) => {
         tableRows.push({
           type: 'ticker',
           date: backtestResult.date,
@@ -114,7 +216,7 @@ function BacktestTradingTable({ agentData }: { agentData: Record<string, any> })
               </TableRow>
             </TableHeader>
             <TableBody>
-              {recentRows.map((row: any, idx: number) => {
+              {recentRows.map((row, idx: number) => {
                 if (row.type === 'ticker') {
                   return (
                     <TableRow key={idx}>
@@ -149,12 +251,10 @@ function BacktestTradingTable({ agentData }: { agentData: Record<string, any> })
 }
 
 // Component for displaying backtest results
-function BacktestResults({ outputData }: { outputData: any }) {
+function BacktestResults({ outputData }: { outputData: OutputNodeData | null }) {
   if (!outputData) {
     return null;
   }
-
-  console.log("outputData", outputData);
   
   if (!outputData.performance_metrics) {
     return (
@@ -221,11 +321,11 @@ function BacktestResults({ outputData }: { outputData: any }) {
               </div>
               <div className="flex justify-between">
                 <span>Final Cash:</span>
-                <span className="font-medium">${final_portfolio.cash.toLocaleString()}</span>
+                <span className="font-medium">${(final_portfolio?.cash ?? 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
                 <span>Margin Used:</span>
-                <span className="font-medium">${final_portfolio.margin_used.toLocaleString()}</span>
+                <span className="font-medium">${(final_portfolio?.margin_used ?? 0).toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -259,7 +359,7 @@ function BacktestResults({ outputData }: { outputData: any }) {
         </div>
         
         {/* Final Positions */}
-        {final_portfolio.positions && (
+        {final_portfolio?.positions && (
           <div>
             <h4 className="font-medium mb-2">Final Positions</h4>
             <Table>
@@ -273,19 +373,25 @@ function BacktestResults({ outputData }: { outputData: any }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {Object.entries(final_portfolio.positions).map(([ticker, position]: [string, any]) => (
-                  <TableRow key={ticker}>
-                    <TableCell className="font-medium">{ticker}</TableCell>
-                    <TableCell className={cn(position.long > 0 ? "text-green-500" : "text-muted-foreground")}>
-                      {position.long}
-                    </TableCell>
-                    <TableCell className={cn(position.short > 0 ? "text-red-500" : "text-muted-foreground")}>
-                      {position.short}
-                    </TableCell>
-                    <TableCell>${position.long_cost_basis.toFixed(2)}</TableCell>
-                    <TableCell>${position.short_cost_basis.toFixed(2)}</TableCell>
-                  </TableRow>
-                ))}
+                {Object.entries(final_portfolio.positions).map(([ticker, position]: [string, PortfolioPositionData]) => {
+                  const longShares = typeof position.long === 'number' ? position.long : 0;
+                  const shortShares = typeof position.short === 'number' ? position.short : 0;
+                  const longCostBasis = typeof position.long_cost_basis === 'number' ? position.long_cost_basis : 0;
+                  const shortCostBasis = typeof position.short_cost_basis === 'number' ? position.short_cost_basis : 0;
+                  return (
+                    <TableRow key={ticker}>
+                      <TableCell className="font-medium">{ticker}</TableCell>
+                      <TableCell className={cn(longShares > 0 ? "text-green-500" : "text-muted-foreground")}>
+                        {longShares}
+                      </TableCell>
+                      <TableCell className={cn(shortShares > 0 ? "text-red-500" : "text-muted-foreground")}>
+                        {shortShares}
+                      </TableCell>
+                      <TableCell>${longCostBasis.toFixed(2)}</TableCell>
+                      <TableCell>${shortCostBasis.toFixed(2)}</TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -296,14 +402,8 @@ function BacktestResults({ outputData }: { outputData: any }) {
 }
 
 // Component for displaying real-time backtest performance
-function BacktestPerformanceMetrics({ agentData }: { agentData: Record<string, any> }) {
-  const backtestAgent = agentData['backtest'];
-  
-  if (!backtestAgent || !backtestAgent.backtestResults) return null;
-  
-  // Get the backtest results directly from the agent data
-  const backtestResults = backtestAgent.backtestResults || [];
-  
+function BacktestPerformanceMetrics({ agentData }: { agentData: AgentDataMap }) {
+  const backtestResults = getBacktestPeriods(agentData);
   if (backtestResults.length === 0) return null;
   
   const firstPeriod = backtestResults[0];
@@ -315,7 +415,7 @@ function BacktestPerformanceMetrics({ agentData }: { agentData: Record<string, a
   const totalReturn = ((currentValue - initialValue) / initialValue) * 100;
   
   // Calculate win rate (periods with positive returns)
-  const periodReturns = backtestResults.slice(1).map((period: any, idx: number) => {
+  const periodReturns = backtestResults.slice(1).map((period, idx: number) => {
     const prevPeriod = backtestResults[idx];
     return ((period.portfolio_value - prevPeriod.portfolio_value) / prevPeriod.portfolio_value) * 100;
   });
@@ -327,7 +427,7 @@ function BacktestPerformanceMetrics({ agentData }: { agentData: Record<string, a
   let maxDrawdown = 0;
   let peak = initialValue;
   
-  backtestResults.forEach((period: any) => {
+  backtestResults.forEach((period) => {
     if (period.portfolio_value > peak) {
       peak = period.portfolio_value;
     }
@@ -396,7 +496,7 @@ function BacktestPerformanceMetrics({ agentData }: { agentData: Record<string, a
 // Detects IDLE / LOADING / STREAMING / COMPLETE / ERROR based on agentData
 // and outputData, so the user always sees meaningful content instead of
 // blank space during a backtest run.
-function detectBacktestState(agentData: Record<string, any>, outputData: any): 'idle' | 'loading' | 'streaming' | 'complete' {
+function detectBacktestState(agentData: AgentDataMap, outputData: OutputNodeData | null): 'idle' | 'loading' | 'streaming' | 'complete' {
   const backtestAgent = agentData?.['backtest'];
   if (outputData?.performance_metrics) {
     return 'complete';
@@ -441,8 +541,8 @@ export function BacktestOutput({
   agentData,
   outputData
 }: {
-  agentData: Record<string, any>;
-  outputData: any;
+  agentData: AgentDataMap;
+  outputData: OutputNodeData | null;
 }) {
   return (
     <ErrorBoundary>
@@ -458,8 +558,8 @@ function BacktestOutputInner({
   agentData,
   outputData
 }: {
-  agentData: Record<string, any>;
-  outputData: any;
+  agentData: AgentDataMap;
+  outputData: OutputNodeData | null;
 }) {
   const state = detectBacktestState(agentData, outputData);
 

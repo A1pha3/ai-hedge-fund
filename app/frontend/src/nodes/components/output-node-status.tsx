@@ -17,7 +17,6 @@ export function OutputNodeStatus({
   isProcessing,
   isAnyAgentRunning,
   isOutputAvailable,
-  isConnected: _isConnected,
   onViewOutput,
   processingText = "In Progress",
   completingText = "Completing",

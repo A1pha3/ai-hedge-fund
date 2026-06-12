@@ -24,8 +24,12 @@ def _make_bucket(
     n: int = 50,
     t5_ret: float | None = 2.5,
     t10_ret: float | None = 4.0,
+    t20_ret: float | None = 6.0,
+    t30_ret: float | None = 8.0,
     t5_wr: float | None = 0.60,
     t10_wr: float | None = 0.58,
+    t20_wr: float | None = 0.57,
+    t30_wr: float | None = 0.56,
 ) -> ScoreBucketStats:
     return ScoreBucketStats(
         label=label,
@@ -35,9 +39,13 @@ def _make_bucket(
         t1_win_rate=0.55,
         t5_win_rate=t5_wr,
         t10_win_rate=t10_wr,
+        t20_win_rate=t20_wr,
+        t30_win_rate=t30_wr,
         t1_avg_return=1.0,
         t5_avg_return=t5_ret,
         t10_avg_return=t10_ret,
+        t20_avg_return=t20_ret,
+        t30_avg_return=t30_ret,
     )
 
 
@@ -205,5 +213,6 @@ class TestRenderCompact:
         report = compute_expected_returns(recommendations=recs)
         text = render_expected_returns_compact(report)
         assert "000001" in text
-        assert "T+5" in text
-        assert "T+10" in text
+        assert "T+20" in text
+        assert "T+30" in text
+        assert "样本" in text

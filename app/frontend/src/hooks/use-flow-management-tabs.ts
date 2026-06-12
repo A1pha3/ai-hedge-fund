@@ -67,7 +67,7 @@ export function useFlowManagementTabs(): UseFlowManagementTabsReturn {
       const nodeContextData = exportNodeContextData(flowId);
       
       // Enhance nodes with internal states
-      const nodesWithStates = currentNodes.map((node: any) => {
+      const nodesWithStates = currentNodes.map((node: Flow['nodes'][number]) => {
         const internalState = getNodeInternalState(node.id);
         return {
           ...node,
@@ -228,9 +228,9 @@ export function useFlowManagementTabs(): UseFlowManagementTabsReturn {
             
             // Restore internal states for each node (use-node-state data - configuration only)
             if (flowData.nodes) {
-              flowData.nodes.forEach((node: any) => {
+              flowData.nodes.forEach((node: Flow['nodes'][number]) => {
                 if (node.data?.internal_state) {
-                  setNodeInternalState(node.id, node.data.internal_state);
+                  setNodeInternalState(node.id, node.data.internal_state as Record<string, unknown>);
                 }
               });
             }

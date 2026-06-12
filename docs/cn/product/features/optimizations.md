@@ -5,6 +5,7 @@
 > **R20.34 状态纠偏**:
 > - `P5-1 30 天闭环验证扩展` 已真正闭环: `verify_recommendations` 现在读取 `tracking_history.json.records`, `--tracking-summary` 与 `--confidence-calibration` 已补齐 T+10/T+20/T+30 输出。
 > - 本文中保留的旧优先级建议仅作审查历史参考；当前正式路线图状态以 [`../feature-proposals.md`](../feature-proposals.md) 为准。
+> - **R20.38 补充**: 本文现视为“历史提案归档 + 合并决策记录”，不再承担当前开放 backlog 角色。当前活跃缺口、最新优先级和完成态只看 `feature-proposals.md`。
 
 ## 10. 待优化功能 (已有功能的改进)
 
@@ -338,17 +339,15 @@
 | 移动端 App | Web + CLI 已满足, 投入产出比低 |
 | 独立回测场景回放模块 (P2-7 原始版本) | 与回测 dashboard 重叠, 合并即可 |
 
-### 12.3 R20.25 后端剩余工作 (scripts/ 测试债)
+### 12.3 R20.25 后端剩余工作 (scripts/ 测试债, 历史注记)
 
-scripts/ 仍有 6 个行为变更测试失败 (R20.25-G), 需重构作者或产品负责人确认意图
-后修复 (详情见 `changelog/r20-audit-history.md` R20.25 节)。**不建议在产品功能迭代中
-绕过这些测试债**, 应在 R20.26 专项处理。
+这是 R20.25 当时的历史注记。当前基线已变为 **全量 `7607 passed, 1 skipped`**，因此这里不应再被视为开放 backlog；如需追溯，请看 `changelog/r20-audit-history.md` 对应轮次。
 
 ### 12.4 后续建议 (R20.34 更新)
 
 - **下一轮两项最高优先候选**:
   - **回测 dashboard 交互增强**: 在现有 `backtest-equity-curve.tsx` 上补 benchmark overlay、hover tooltip、时间范围缩放、rolling returns；不新增独立模块,只增强现有工作面。
-  - **30 天验证结果默认化**: 把已完成的 `--verify-recommendations` / `--tracking-summary` / `--confidence-calibration` 结果提升到默认 Web 工作面,减少用户在多个 CLI / 面板之间切换。
+  - **30 天验证结果默认化**: ✅ **DONE R20.38** — 已把 T+20/T+30 posterior edge、T+30 胜率与样本量提升到默认 CLI 决策前门，并用统一 investability 排序收敛 `--auto` / `--decision-flow` / `--top-picks` 的口径。
 
 ---
 

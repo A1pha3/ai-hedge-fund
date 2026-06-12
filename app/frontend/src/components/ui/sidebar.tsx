@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- sidebar exports provider, hook, and related UI primitives by design */
 import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
 import { PanelLeft } from "lucide-react"
@@ -768,4 +769,3 @@ export {
   SidebarTrigger,
   useSidebar
 }
-

@@ -72,22 +72,32 @@ export interface BtstPanelData {
   one_pager: BtstOnePagerData | null | undefined;
 }
 
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return value as UnknownRecord;
+}
+
 /** 把后端字段映射成统一 view-model。容错：字段缺失则回退到 fallback。 */
-export function buildBtstPanelData(outputNodeData: any): BtstPanelData {
-  if (!outputNodeData || typeof outputNodeData !== 'object') {
+export function buildBtstPanelData(outputNodeData: unknown): BtstPanelData {
+  const root = asRecord(outputNodeData);
+  if (!root) {
     return { decision_card: null, one_pager: null };
   }
 
   // 决策卡优先读 `btst_decision_card`，缺失则从 `operator_summary` 推断
   const rawCard =
-    outputNodeData.btst_decision_card ||
-    outputNodeData.btst?.decision_card ||
+    root.btst_decision_card ||
+    asRecord(root.btst)?.decision_card ||
     null;
 
   // ONE-PAGER 优先读 `btst_one_pager`，缺失则从 `btst.premarket_questions` 等回退
   const rawOnePager =
-    outputNodeData.btst_one_pager ||
-    outputNodeData.btst?.one_pager ||
+    root.btst_one_pager ||
+    asRecord(root.btst)?.one_pager ||
     null;
 
   return {
@@ -96,35 +106,37 @@ export function buildBtstPanelData(outputNodeData: any): BtstPanelData {
   };
 }
 
-function normalizeDecisionCard(raw: any): BtstDecisionCardData | null {
-  if (!raw || typeof raw !== 'object') return null;
+function normalizeDecisionCard(raw: unknown): BtstDecisionCardData | null {
+  const record = asRecord(raw);
+  if (!record) return null;
   return {
-    signal_date: pickStr(raw.signal_date),
-    next_trade_date: pickStr(raw.next_trade_date),
-    primary_ticker: pickStr(raw.primary_ticker),
-    primary_name: pickStr(raw.primary_name),
-    trade_bias: pickStr(raw.trade_bias) ?? 'skip',
-    evidence_grade: pickStr(raw.evidence_grade),
-    data_quality: pickStr(raw.data_quality),
-    risk_posture: pickStr(raw.risk_posture),
-    position_scale: pickNum(raw.position_scale),
-    must_confirm: pickStr(raw.must_confirm),
-    invalidate_if: pickStr(raw.invalidate_if),
-    early_runner_status: pickStr(raw.early_runner_status),
+    signal_date: pickStr(record.signal_date),
+    next_trade_date: pickStr(record.next_trade_date),
+    primary_ticker: pickStr(record.primary_ticker),
+    primary_name: pickStr(record.primary_name),
+    trade_bias: pickStr(record.trade_bias) ?? 'skip',
+    evidence_grade: pickStr(record.evidence_grade),
+    data_quality: pickStr(record.data_quality),
+    risk_posture: pickStr(record.risk_posture),
+    position_scale: pickNum(record.position_scale),
+    must_confirm: pickStr(record.must_confirm),
+    invalidate_if: pickStr(record.invalidate_if),
+    early_runner_status: pickStr(record.early_runner_status),
   };
 }
 
-function normalizeOnePager(raw: any): BtstOnePagerData | null {
-  if (!raw || typeof raw !== 'object') return null;
+function normalizeOnePager(raw: unknown): BtstOnePagerData | null {
+  const record = asRecord(raw);
+  if (!record) return null;
 
-  const rawQuestions = Array.isArray(raw.questions) ? raw.questions : [];
-  if (rawQuestions.length === 0 && Array.isArray(raw.lines)) {
+  const rawQuestions = Array.isArray(record.questions) ? record.questions : [];
+  if (rawQuestions.length === 0 && Array.isArray(record.lines)) {
     // 兼容形态: { lines: ["Q1: ...", "Q2: ..."] }
     return {
-      signal_date: pickStr(raw.signal_date),
-      next_trade_date: pickStr(raw.next_trade_date),
-      headline: pickStr(raw.headline),
-      questions: raw.lines
+      signal_date: pickStr(record.signal_date),
+      next_trade_date: pickStr(record.next_trade_date),
+      headline: pickStr(record.headline),
+      questions: record.lines
         .filter((line: unknown) => typeof line === 'string' && line.trim())
         .map((line: string) => {
           const [titlePart, ...rest] = line.split('：');
@@ -139,18 +151,19 @@ function normalizeOnePager(raw: any): BtstOnePagerData | null {
   }
 
   return {
-    signal_date: pickStr(raw.signal_date),
-    next_trade_date: pickStr(raw.next_trade_date),
-    headline: pickStr(raw.headline),
+    signal_date: pickStr(record.signal_date),
+    next_trade_date: pickStr(record.next_trade_date),
+    headline: pickStr(record.headline),
     questions: rawQuestions
-      .map((q: any) => {
-        if (!q || typeof q !== 'object') return null;
+      .map((question: unknown) => {
+        const questionRecord = asRecord(question);
+        if (!questionRecord) return null;
         return {
-          title: pickStr(q.title) || pickStr(q.question) || '未命名',
-          answer: pickStr(q.answer) || pickStr(q.value) || '',
-          detail: pickStr(q.detail) ?? null,
-          status: pickStr(q.status) ?? 'info',
-          source_doc: pickStr(q.source_doc) ?? null,
+          title: pickStr(questionRecord.title) || pickStr(questionRecord.question) || '未命名',
+          answer: pickStr(questionRecord.answer) || pickStr(questionRecord.value) || '',
+          detail: pickStr(questionRecord.detail) ?? null,
+          status: pickStr(questionRecord.status) ?? 'info',
+          source_doc: pickStr(questionRecord.source_doc) ?? null,
         } as BtstOnePagerQuestion;
       })
       .filter((q: BtstOnePagerQuestion | null): q is BtstOnePagerQuestion => q !== null),

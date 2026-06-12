@@ -73,7 +73,7 @@ const SIM_RESPONSE = {
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-function mockFetchResponse(data: any, ok = true, status = 200) {
+function mockFetchResponse(data: unknown, ok = true, status = 200) {
   return Promise.resolve({
     ok,
     status,

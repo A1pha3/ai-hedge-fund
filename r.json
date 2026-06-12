@@ -3,7 +3,7 @@
     "search_stage": "full",
     "guardrails": {},
     "focus_source": null,
-    "checkpoint_path": "data/reports/param_search_ignition_breakout_b9ce48664cb3_checkpoint.json"
+    "checkpoint_path": "data/reports/param_search_ignition_breakout_af11ef362fc7_checkpoint.json"
   },
   "comparison_summary": {
     "ignition_breakout": {

@@ -269,6 +269,34 @@ def test_e2e_report_payload_contains_all_new_fields(tmp_path, monkeypatch) -> No
     assert "stability_bonus" in rec
 
 
+def test_e2e_compute_pipeline_uses_investability_ranking(tmp_path, monkeypatch) -> None:
+    """auto payload 应通过可投资性排序器对候选 tranche 重排。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USE_BATCH_FETCHER", "true")
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token")
+    report_dir = tmp_path / "data" / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("src.main._save_json_report", lambda *_a, **_kw: report_dir / "stub.json")
+
+    candidates = _make_candidates(3)
+    market_state = _make_market_state()
+    fused = _make_fused(candidates, market_state)
+    patches = _patch_pipeline_layers(candidates, fused=fused)
+
+    from src.main import compute_auto_screening_results
+
+    monkeypatch.setattr(
+        "src.main.rank_recommendations_by_investability",
+        lambda recs, *_args, **_kwargs: list(reversed(recs)),
+        raising=False,
+    )
+
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+        payload = compute_auto_screening_results("20260607", top_n=2)
+
+    assert [rec["ticker"] for rec in payload["recommendations"]] == [fused[2].ticker, fused[1].ticker]
+
+
 def test_e2e_compute_pipeline_respects_selected_strategies_before_top_n_slice(tmp_path, monkeypatch) -> None:
     """selected_strategies 应在 Top N 截断前重排推荐。"""
     monkeypatch.chdir(tmp_path)

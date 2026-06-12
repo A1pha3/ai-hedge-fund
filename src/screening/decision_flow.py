@@ -126,6 +126,7 @@ def run_decision_flow(
         compute_expected_returns,
         render_expected_returns_compact,
     )
+    from src.screening.investability import rank_recommendations_by_investability
 
     expected = compute_expected_returns(
         recommendations=recs,
@@ -168,6 +169,8 @@ def run_decision_flow(
     composite = compute_composite_scores(top_n=top_n, lookback_days=lookback_days, reports_dir=search_dir)
     print(render_composite_scores(composite))
     flow_result["composite_scores"] = composite.to_dict()
+    investability = rank_recommendations_by_investability(recs, composite, expected)
+    flow_result["investability_ranking"] = investability
 
     # Summary
     elapsed = time.time() - start_time
@@ -179,14 +182,15 @@ def run_decision_flow(
     print(f"  Dynamic threshold: {threshold_result['threshold']:.4f}")
     print(f"  Outliers: {outlier_count}")
     print(f"  Momentum: {Fore.GREEN}{improving_count} improving{Style.RESET_ALL} / {Fore.RED}{declining_count} declining{Style.RESET_ALL}")
-    if composite.items:
-        best = composite.items[0]
-        print(f"  Top composite: {best.ticker} (composite={best.composite_score:+.3f}, base={best.base_score:.3f})")
-    elif expected.items:
-        best = max(expected.items, key=lambda x: x.score_b)
-        er = best.expected_returns
-        t5_str = f"{er.get('t5', 0.0) or 0.0:+.2f}%" if er.get("t5") is not None else "—"
-        print(f"  Top pick: {best.ticker} (score={best.score_b:.3f}, T+5 exp={t5_str})")
+    if investability:
+        best = investability[0]
+        t30 = (best.get("expected_returns") or {}).get("t30")
+        t30_str = f"{float(t30):+.2f}%" if isinstance(t30, (int, float)) else "—"
+        t30_wr = (best.get("win_rates") or {}).get("t30")
+        t30_wr_str = f"{float(t30_wr):.0%}" if isinstance(t30_wr, (int, float)) else "—"
+        print(
+            f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}, T+30={t30_str}, 胜率={t30_wr_str}, 样本={int(best.get('bucket_sample_count', 0) or 0)})"
+        )
     print(f"  Completed in {elapsed:.1f}s")
 
     return flow_result

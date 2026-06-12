@@ -53,7 +53,7 @@ export function AgentOutputDialog({
       if (msg.analysis && Object.keys(msg.analysis).length > 0) {
         // Filter out null values before adding to our accumulated decisions
         const validDecisions = Object.entries(msg.analysis)
-          .filter(([_, value]) => value !== null && value !== undefined)
+          .filter(([, value]) => value !== null && value !== undefined)
           .reduce((obj, [key, value]) => {
             obj[key] = value;
             return obj;

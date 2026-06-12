@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- context provider and hook intentionally share one module for panel layout state */
 import { SidebarStorageService } from '@/services/sidebar-storage';
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 

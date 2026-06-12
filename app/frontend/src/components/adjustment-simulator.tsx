@@ -200,8 +200,8 @@ export function AdjustmentSimulator({
 
       const data: SimResponse = await resp.json();
       setSimResult(data);
-    } catch (err: any) {
-      setError(err.message || 'Simulation failed');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Simulation failed');
     } finally {
       setLoading(false);
     }

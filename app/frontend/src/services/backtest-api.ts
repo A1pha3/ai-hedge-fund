@@ -53,16 +53,18 @@ export const backtestApi = {
       let buffer = '';
       
       // Local array to accumulate backtest results
-      let backtestResults: any[] = [];
+      let backtestResults: unknown[] = [];
       
       // Function to process the stream
       const processStream = async () => {
         try {
-          while (true) {
+          let isReading = true;
+          while (isReading) {
             const { done, value } = await reader.read();
             
             if (done) {
-              break;
+              isReading = false;
+              continue;
             }
             
             // Decode the chunk and add to buffer

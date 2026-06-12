@@ -5,6 +5,7 @@ import {
   AccordionTrigger,
 } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
+import type { BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -35,6 +36,7 @@ import {
 } from '@/components/expectation-card';
 import { RiskMonitorPanel } from '@/components/risk-monitor-panel';
 import { AdjustmentSimulator } from '@/components/adjustment-simulator';
+import type { OutputNodeData } from '@/contexts/node-context';
 import { BtstDecisionCardOnePagerTabs } from '@/nodes/components/btst/btst-decision-card-one-pager-tabs';
 import { buildBtstPanelData } from '@/nodes/components/btst/types';
 import { FactorContributionChart, type FactorContribution } from '@/nodes/components/factor-contribution-chart';
@@ -53,13 +55,35 @@ import { useMemo, useState } from 'react';
 interface InvestmentReportDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  outputNodeData: any;
+  outputNodeData: InvestmentReportOutputData | null;
   connectedAgentIds: Set<string>;
 }
 
 type ActionType = 'long' | 'short' | 'hold';
 type SortKey = 'ticker' | 'edge';
 type SortDir = 'asc' | 'desc';
+type BadgeVariant = BadgeProps['variant'];
+type InvestmentReportOutputData = OutputNodeData & {
+  expectation_data?: Record<string, StockHistoryExpectationData>;
+  current_prices?: Record<string, number | string>;
+  btst_decision_card?: unknown;
+  btst_one_pager?: unknown;
+  btst?: Record<string, unknown>;
+  factor_contributions?: Record<string, FactorContribution[]>;
+  layer_b_summaries?: Record<string, { top_factors?: FactorContribution[] }>;
+};
+type SimulatorDecision = {
+  action: string;
+  quantity: number;
+  confidence?: number;
+  reasoning?: string;
+};
+type SimulatorPosition = {
+  long: number;
+  short: number;
+  long_cost_basis?: number;
+  short_cost_basis?: number;
+};
 
 export function InvestmentReportDialog({
   isOpen,
@@ -117,6 +141,56 @@ export function InvestmentReportDialog({
     }
     return null;
   }, [primaryTicker, outputNodeData]);
+
+  const numericCurrentPrices = useMemo(() => {
+    const prices = outputNodeData?.current_prices || {};
+    return Object.fromEntries(
+      Object.entries(prices).flatMap(([ticker, raw]) => {
+        if (typeof raw === 'number' && Number.isFinite(raw)) {
+          return [[ticker, raw] as const];
+        }
+        if (typeof raw === 'string') {
+          const parsed = Number(raw);
+          if (Number.isFinite(parsed)) {
+            return [[ticker, parsed] as const];
+          }
+        }
+        return [];
+      }),
+    );
+  }, [outputNodeData]);
+
+  const normalizedDecisions = useMemo<Record<string, SimulatorDecision>>(
+    () =>
+      Object.fromEntries(
+        Object.entries(outputNodeData?.decisions || {}).map(([ticker, decision]) => [
+          ticker,
+          {
+            action: typeof decision.action === 'string' ? decision.action : 'hold',
+            quantity: typeof decision.quantity === 'number' ? decision.quantity : 0,
+            confidence: typeof decision.confidence === 'number' ? decision.confidence : undefined,
+            reasoning: typeof decision.reasoning === 'string' ? decision.reasoning : undefined,
+          },
+        ]),
+      ),
+    [outputNodeData],
+  );
+
+  const normalizedPositions = useMemo<Record<string, SimulatorPosition>>(
+    () =>
+      Object.fromEntries(
+        Object.entries(outputNodeData?.final_portfolio?.positions || {}).map(([ticker, position]) => [
+          ticker,
+          {
+            long: typeof position.long === 'number' ? position.long : 0,
+            short: typeof position.short === 'number' ? position.short : 0,
+            long_cost_basis: typeof position.long_cost_basis === 'number' ? position.long_cost_basis : undefined,
+            short_cost_basis: typeof position.short_cost_basis === 'number' ? position.short_cost_basis : undefined,
+          },
+        ]),
+      ),
+    [outputNodeData],
+  );
 
   // Sort tickers based on selected sort key + direction.
   // Default: descending by expected 30d edge (highest edge first).
@@ -205,24 +279,24 @@ export function InvestmentReportDialog({
   };
 
   const getSignalBadge = (signal: string) => {
-    const variant = signal === 'bullish' ? 'success' :
-                   signal === 'bearish' ? 'destructive' : 'outline';
+    const variant: BadgeVariant = signal === 'bullish' ? 'success' :
+      signal === 'bearish' ? 'destructive' : 'outline';
 
     return (
-      <Badge variant={variant as any}>
+      <Badge variant={variant}>
         {signal}
       </Badge>
     );
   };
 
   const getConfidenceBadge = (confidence: number) => {
-    let variant = 'outline';
+    let variant: BadgeVariant = 'outline';
     if (confidence >= 50) variant = 'success';
     else if (confidence >= 0) variant = 'warning';
     else variant = 'outline';
     const rounded = Number(confidence.toFixed(1));
     return (
-      <Badge variant={variant as any}>
+      <Badge variant={variant}>
         {rounded}%
       </Badge>
     );
@@ -315,9 +389,9 @@ export function InvestmentReportDialog({
                 模拟取消 / 减仓对组合风险的影响 — 仅模拟, 不实际下单。
               </p>
               <AdjustmentSimulator
-                decisions={outputNodeData?.decisions || {}}
-                positions={outputNodeData?.final_portfolio?.positions || {}}
-                currentPrices={outputNodeData?.current_prices || {}}
+                decisions={normalizedDecisions}
+                positions={normalizedPositions}
+                currentPrices={numericCurrentPrices}
                 cash={outputNodeData?.final_portfolio?.cash || 0}
               />
             </section>
@@ -366,7 +440,7 @@ export function InvestmentReportDialog({
                   </TableHeader>
                   <TableBody>
                     {sortedTickers.map(ticker => {
-                      const decision = outputNodeData.decisions[ticker];
+                      const decision = normalizedDecisions[ticker];
                       const currentPrice = outputNodeData.current_prices?.[ticker] || 'N/A';
                       const edge = edgeData[ticker]?.expected_30d_edge;
                       return (
@@ -380,7 +454,7 @@ export function InvestmentReportDialog({
                             </div>
                           </TableCell>
                           <TableCell>{decision.quantity}</TableCell>
-                          <TableCell>{getConfidenceBadge(decision.confidence)}</TableCell>
+                          <TableCell>{getConfidenceBadge(decision.confidence ?? 0)}</TableCell>
                           <TableCell>
                             {edge !== null && edge !== undefined ? (
                               <span className={edge > 0 ? 'text-green-500 font-semibold' : edge < 0 ? 'text-red-500 font-semibold' : ''}>
@@ -567,7 +641,7 @@ export function InvestmentReportDialog({
                           <div className="flex items-center gap-1">
                             {getActionIcon(outputNodeData.decisions[ticker].action as ActionType)}
                             <span className="text-sm font-normal text-muted-foreground">
-                              {outputNodeData.decisions[ticker].action} {outputNodeData.decisions[ticker].quantity} shares
+                              {normalizedDecisions[ticker]?.action} {normalizedDecisions[ticker]?.quantity} shares
                             </span>
                           </div>
                         </div>
@@ -656,7 +730,11 @@ export function InvestmentReportDialog({
                         {/* Agent Signals — P1 5.4: 用排序后的 entries 替代原 agents 列表; 矛盾高亮用 amber ring。 */}
                         <div className="grid grid-cols-1 gap-4">
                           {sortedEntries.map(entry => {
-                            const signal = outputNodeData.analyst_signals[entry.agentId]?.[ticker];
+                            const rawSignal = outputNodeData.analyst_signals[entry.agentId]?.[ticker];
+                            const signal =
+                              rawSignal && typeof rawSignal === 'object'
+                                ? (rawSignal as { reasoning?: unknown })
+                                : null;
                             const isHighlighted = contradiction?.highlightedAgentIds.has(entry.agentId);
                             return (
                               <Card

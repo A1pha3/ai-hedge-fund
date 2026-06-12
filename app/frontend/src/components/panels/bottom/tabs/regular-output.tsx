@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import type { AgentNodeData, OutputNodeData } from '@/contexts/node-context';
 import { cn } from '@/lib/utils';
 import { buildAgentSignalsForTicker } from '@/nodes/components/agent-signal-helpers';
 import { getAgents } from '@/data/agents';
@@ -9,8 +10,19 @@ import { AgentSignalDashboard } from './agent-signal-dashboard';
 import { getActionColor, getDisplayName, getSignalColor, getStatusIcon } from './output-tab-utils';
 import { ReasoningContent } from './reasoning-content';
 
+type SortedAgentTuple = [string, AgentNodeData];
+type AnalystSignalRow = {
+  signal?: string;
+  confidence?: number;
+  reasoning?: unknown;
+};
+
+function asAnalystSignalRow(value: unknown): AnalystSignalRow | null {
+  return value && typeof value === 'object' ? (value as AnalystSignalRow) : null;
+}
+
 // Progress Section Component
-function ProgressSection({ sortedAgents }: { sortedAgents: [string, any][] }) {
+function ProgressSection({ sortedAgents }: { sortedAgents: SortedAgentTuple[] }) {
   if (sortedAgents.length === 0) return null;
 
   return (
@@ -49,7 +61,7 @@ function ProgressSection({ sortedAgents }: { sortedAgents: [string, any][] }) {
 }
 
 // Summary Section Component
-function SummarySection({ outputData }: { outputData: any }) {
+function SummarySection({ outputData }: { outputData: OutputNodeData | null }) {
   if (!outputData) return null;
 
   return (
@@ -68,18 +80,22 @@ function SummarySection({ outputData }: { outputData: any }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {Object.entries(outputData.decisions).map(([ticker, decision]: [string, any]) => (
-              <TableRow key={ticker}>
-                <TableCell className="font-medium">{ticker}</TableCell>
-                <TableCell>
-                  <span className={cn("font-medium", getActionColor(decision.action || ''))}>
-                    {decision.action?.toUpperCase() || 'UNKNOWN'}
-                  </span>
-                </TableCell>
-                <TableCell>{decision.quantity || 0}</TableCell>
-                <TableCell>{decision.confidence?.toFixed(1) || 0}%</TableCell>
-              </TableRow>
-            ))}
+            {Object.entries(outputData.decisions).map(([ticker, decision]) => {
+              const action = typeof decision.action === 'string' ? decision.action : '';
+              const confidence = typeof decision.confidence === 'number' ? decision.confidence : 0;
+              return (
+                <TableRow key={ticker}>
+                  <TableCell className="font-medium">{ticker}</TableCell>
+                  <TableCell>
+                    <span className={cn("font-medium", getActionColor(action))}>
+                      {action.toUpperCase() || 'UNKNOWN'}
+                    </span>
+                  </TableCell>
+                  <TableCell>{decision.quantity || 0}</TableCell>
+                  <TableCell>{confidence.toFixed(1)}%</TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </CardContent>
@@ -88,14 +104,17 @@ function SummarySection({ outputData }: { outputData: any }) {
 }
 
 // Analysis Results Section Component — P2-1 enhanced with Agent Signal Dashboard
-function AnalysisResultsSection({ outputData }: { outputData: any }) {
+function AnalysisResultsSection({ outputData }: { outputData: OutputNodeData | null }) {
   // Always call hooks at the top of the function
   const [selectedTicker, setSelectedTicker] = useState<string>('');
   const [displayMode, setDisplayMode] = useState<'dashboard' | 'table'>('dashboard');
   const [agentDisplayNames, setAgentDisplayNames] = useState<Map<string, string>>(new Map());
 
   // Calculate tickers (safe to do even if outputData is null)
-  const tickers = outputData?.decisions ? Object.keys(outputData.decisions) : [];
+  const tickers = useMemo(
+    () => (outputData?.decisions ? Object.keys(outputData.decisions) : []),
+    [outputData],
+  );
 
   // Load agent display names from API (one-time)
   useEffect(() => {
@@ -202,33 +221,34 @@ function AnalysisResultsSection({ outputData }: { outputData: any }) {
                         <TableHead>Reasoning</TableHead>
                       </TableRow>
                     </TableHeader>
-                                       <TableBody>
+                    <TableBody>
                        {Object.entries(outputData.analyst_signals || {})
-                         .filter(([agent, signals]: [string, any]) =>
+                         .filter(([agent, signals]) =>
                            ticker in signals && !agent.includes("risk_management")
                          )
                          .sort(([agentA], [agentB]) => agentA.localeCompare(agentB))
-                         .map(([agent, signals]: [string, any]) => {
-                           const signal = signals[ticker];
+                         .map(([agent, signals]) => {
+                           const signal = asAnalystSignalRow(signals[ticker]);
+                           if (!signal) return null;
                            const signalType = signal.signal?.toUpperCase() || 'UNKNOWN';
                            const signalColor = getSignalColor(signalType);
 
-                          return (
-                            <TableRow key={agent}>
-                              <TableCell className="font-medium">
-                                {getDisplayName(agent)}
-                              </TableCell>
-                              <TableCell>
-                                <span className={cn("font-medium", signalColor)}>
-                                  {signalType}
-                                </span>
-                              </TableCell>
-                              <TableCell>{signal.confidence || 0}%</TableCell>
-                              <TableCell className="max-w-md">
-                                <ReasoningContent content={signal.reasoning} />
-                              </TableCell>
-                            </TableRow>
-                          );
+                           return (
+                             <TableRow key={agent}>
+                               <TableCell className="font-medium">
+                                 {getDisplayName(agent)}
+                               </TableCell>
+                               <TableCell>
+                                 <span className={cn("font-medium", signalColor)}>
+                                   {signalType}
+                                 </span>
+                               </TableCell>
+                               <TableCell>{signal.confidence || 0}%</TableCell>
+                               <TableCell className="max-w-md">
+                                 <ReasoningContent content={signal.reasoning} />
+                               </TableCell>
+                             </TableRow>
+                           );
                         })}
                     </TableBody>
                   </Table>
@@ -283,8 +303,8 @@ export function RegularOutput({
   sortedAgents, 
   outputData 
 }: { 
-  sortedAgents: [string, any][]; 
-  outputData: any; 
+  sortedAgents: SortedAgentTuple[];
+  outputData: OutputNodeData | null;
 }) {
   return (
     <>

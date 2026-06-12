@@ -2,7 +2,7 @@
 
 > 本文档对应主文档 §1-§9,作为已实现功能的「全景索引」。每个章节均包含到细分 `features/*.md` 子文档的链接,供深入阅读。
 >
-> **状态**: 全部 ✅ 已实现(R20.7 之后总体 34/34 路由完成度 100%, 6 项需前端集成)
+> **状态**: 全部 ✅ 已实现；默认前门现已收敛到 30 天 investability 排序与证据展示（见主文档 Phase 16）。
 >
 > **主文档**: [feature-proposals.md](../feature-proposals.md) | **本节路由**: [§1](./core-pipeline.md) | [§2](./execution-system.md) | [§3](./backtesting.md) | [§4](./paper-trading.md) | [§5](./web-app.md) | [§6](./data-infrastructure.md) | [§7](./llm-system.md) | [§8](./agents.md) | [§9](./cli-reference.md)
 

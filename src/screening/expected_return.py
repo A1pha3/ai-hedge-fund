@@ -265,14 +265,15 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
     if not report.items:
         return "无预期收益数据"
 
-    # Show top 5 with T+5 and T+10 only
-    lines = [f"  预期收益 (基于 {report.total_samples} 条历史):"]
+    # Long-horizon emphasis for 30-day stock selection
+    lines = [f"  30天 edge (基于 {report.total_samples} 条历史):"]
     for item in report.items[:5]:
         er = item.expected_returns
-        t5 = _fmt_return(er.get("t5"))
-        t10 = _fmt_return(er.get("t10"))
-        wr = item.win_rates.get("t5")
-        wr_str = _fmt_winrate(wr)
-        lines.append(f"    {item.ticker:<8} score={item.score_b:.3f}  T+5={t5}  T+10={t10}  T+5胜率={wr_str}")
+        t20 = _fmt_return(er.get("t20"))
+        t30 = _fmt_return(er.get("t30"))
+        wr_str = _fmt_winrate(item.win_rates.get("t30"))
+        lines.append(
+            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}  T+20={t20}  T+30={t30}  T+30胜率={wr_str}"
+        )
 
     return "\n".join(lines)

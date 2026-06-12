@@ -2,6 +2,7 @@ import { Copy, Download } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import type { OutputNodeData } from '@/contexts/node-context';
 import {
     Dialog,
     DialogContent,
@@ -13,7 +14,7 @@ import { createHighlightedJson } from '@/utils/text-utils';
 interface JsonOutputDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  outputNodeData: any;
+  outputNodeData: OutputNodeData | null;
   connectedAgentIds: Set<string>;
 }
 
