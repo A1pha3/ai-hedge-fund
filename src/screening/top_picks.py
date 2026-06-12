@@ -18,7 +18,7 @@ Design principle:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from src.screening.composite_score import (
@@ -437,7 +437,6 @@ def _render_sector_focus(picks: list[dict]) -> str:
         if count >= 2:
             parts.append(f"{Fore.CYAN}{industry}{Style.RESET_ALL}({count})")
 
-    other = sum(c for _, c in counter.most_common() if c < 2)
     other_industries = [ind for ind, c in counter.most_common() if c < 2]
     if other_industries:
         other_names = "·".join(other_industries[:3])
