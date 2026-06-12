@@ -146,19 +146,15 @@ def _format_date_short(date_str: str) -> str:
 
 
 def _load_tracking_history(path: Path) -> list[dict[str, Any]]:
-    """读取 tracking_history.json; 缺失/损坏返回空列表。"""
-    if not path.exists():
-        return []
-    try:
-        with open(path, encoding="utf-8") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("[WinRateDashboard] history 解析失败 %s: %s", path, exc)
-        return []
-    records = payload.get("records") if isinstance(payload, dict) else None
-    if not isinstance(records, list):
-        return []
-    return records
+    """读取 tracking_history.json; 缺失/损坏返回空列表。
+
+    Delegates to :func:`src.screening.consecutive_recommendation.load_tracking_history`.
+    Note: *path* is the full file path (e.g. ``data/reports/tracking_history.json``),
+    so we pass its parent directory to the shared loader.
+    """
+    from src.screening.consecutive_recommendation import load_tracking_history
+
+    return load_tracking_history(path.parent)
 
 
 def _compute_horizon_stats(records: list[dict[str, Any]], return_field: str) -> tuple[float | None, float | None, int]:

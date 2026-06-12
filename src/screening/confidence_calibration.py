@@ -21,7 +21,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from src.screening.consecutive_recommendation import resolve_report_dir
+from src.screening.consecutive_recommendation import (
+    load_tracking_history,
+    resolve_report_dir,
+)
 from src.screening.data_quality_audit import load_latest_recommendations
 from src.utils.display import Fore, Style
 
@@ -126,18 +129,12 @@ class CalibrationSummary:
 
 
 def _load_tracking_records(report_dir: Path | None = None) -> list[dict[str, Any]]:
-    """读取 ``tracking_history.json`` 的 records 列表; 缺失返回 []。"""
+    """读取 ``tracking_history.json`` 的 records 列表; 缺失返回 []。
+
+    Delegates to :func:`src.screening.consecutive_recommendation.load_tracking_history`.
+    """
     search_dir = report_dir or resolve_report_dir()
-    path = search_dir / "tracking_history.json"
-    if not path.exists():
-        return []
-    try:
-        with path.open(encoding="utf-8") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return []
-    records = payload.get("records") if isinstance(payload, dict) else payload
-    return list(records) if isinstance(records, list) else []
+    return load_tracking_history(search_dir)
 
 
 def _optional_float(value: Any) -> float | None:

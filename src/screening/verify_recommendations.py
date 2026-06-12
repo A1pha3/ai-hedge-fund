@@ -140,20 +140,13 @@ class VerifySummary:
 
 
 def _load_tracking_history(reports_dir: Path) -> list[dict[str, Any]]:
-    """Load tracking_history.json from reports_dir."""
-    path = reports_dir / "tracking_history.json"
-    if not path.exists():
-        return []
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        records = data.get("records") if isinstance(data, dict) else data
-        if isinstance(records, list):
-            return records
-        return []
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.debug("verify: tracking_history load failed: %s", exc)
-        return []
+    """Load tracking_history.json from reports_dir.
+
+    Delegates to :func:`src.screening.consecutive_recommendation.load_tracking_history`.
+    """
+    from src.screening.consecutive_recommendation import load_tracking_history
+
+    return load_tracking_history(reports_dir)
 
 
 def _load_auto_screening_reports(reports_dir: Path, lookback_days: int) -> list[dict[str, Any]]:

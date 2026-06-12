@@ -67,17 +67,13 @@ def _load_report(report_path: Path) -> dict[str, Any]:
 
 
 def _load_tracking_history(report_dir: Path) -> list[dict[str, Any]]:
-    """读取 ``tracking_history.json``, 不存在时返回空列表 (优雅降级)。"""
-    history_path = report_dir / _TRACKING_HISTORY_FILENAME
-    if not history_path.exists():
-        return []
-    try:
-        with open(history_path, encoding="utf-8") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError):  # pragma: no cover — 损坏文件兜底
-        return []
-    records = payload.get("records", [])
-    return records if isinstance(records, list) else []
+    """读取 ``tracking_history.json``, 不存在时返回空列表 (优雅降级)。
+
+    Delegates to :func:`src.screening.consecutive_recommendation.load_tracking_history`.
+    """
+    from src.screening.consecutive_recommendation import load_tracking_history
+
+    return load_tracking_history(report_dir)
 
 
 def _compute_consecutive_days_from_history(records: list[dict[str, Any]]) -> dict[str, int]:

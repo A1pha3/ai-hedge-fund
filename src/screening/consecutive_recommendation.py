@@ -98,6 +98,24 @@ def resolve_report_dir(start: Path | None = None) -> Path:
     return Path("data/reports")
 
 
+def load_tracking_history(report_dir: Path) -> list[dict[str, Any]]:
+    """读取 ``tracking_history.json`` 的 records 列表; 缺失/损坏返回 []。
+
+    集中化实现, 供 confidence_calibration / verify_recommendations /
+    daily_brief / winrate_dashboard 共享, 消除 4 处重复代码。
+    """
+    path = report_dir / "tracking_history.json"
+    if not path.exists():
+        return []
+    try:
+        with path.open(encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    records = payload.get("records") if isinstance(payload, dict) else payload
+    return list(records) if isinstance(records, list) else []
+
+
 def _parse_date(date_str: str) -> datetime:
     """将 YYYYMMDD 或 YYYY-MM-DD 解析为 ``datetime``。"""
     cleaned = date_str.replace("-", "").strip()
