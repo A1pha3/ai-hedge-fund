@@ -81,9 +81,9 @@ class PipelineModeDayState:
     prepared_plan: ExecutionPlan | None = None
 
 
-from .trader import TradeExecutor, TradingConstraints
-from .types import AgentOutput, BacktestMode, PerformanceMetrics, PortfolioValuePoint
-from .valuation import calculate_portfolio_value, compute_exposures
+from .trader import TradeExecutor, TradingConstraints  # noqa: E402 — after BacktestConfig dataclass
+from .types import AgentOutput, BacktestMode, PerformanceMetrics, PortfolioValuePoint  # noqa: E402 — after BacktestConfig dataclass
+from .valuation import calculate_portfolio_value, compute_exposures  # noqa: E402 — after BacktestConfig dataclass
 
 
 class BacktestEngine:

@@ -362,7 +362,7 @@ def _append_btst_recommendation_line_groups(
     )
 
 
-from src.paper_trading._btst_reporting.brief_builder import (
+from src.paper_trading._btst_reporting.brief_builder import (  # noqa: E402 — late import, avoids load-order coupling
     analyze_btst_next_day_trade_brief,
 )
 

@@ -74,7 +74,7 @@ def _summarize_upstream_shadow_release_historical_support(historical_prior: dict
     )
 
 
-from src.execution.daily_pipeline_prior_utils import historical_prior_float as _historical_prior_float, historical_prior_int as _historical_prior_int
+from src.execution.daily_pipeline_prior_utils import historical_prior_float as _historical_prior_float, historical_prior_int as _historical_prior_int  # noqa: E402 — late import, used by functions defined above
 
 
 def _supports_upstream_shadow_catalyst_relief_history(historical_prior: dict[str, Any] | None) -> bool:
