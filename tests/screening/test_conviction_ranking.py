@@ -9,15 +9,19 @@ from src.screening.conviction_ranking import (
     CONSECUTIVE_FULL_STREAK,
     DEFAULT_WEIGHTS,
     ConvictionSummary,
+    _component_str,
+    _conviction_color,
     _normalize_calibration,
     _normalize_completeness,
     _normalize_consecutive,
     _normalize_score,
+    _rank_delta_str,
     compute_conviction_ranking,
     compute_conviction_row,
     render_conviction_ranking,
 )
 from src.screening.data_quality_audit import STRATEGY_ORDER
+from src.utils.display import Fore, Style
 
 
 # ---------------------------------------------------------------------------
@@ -349,3 +353,100 @@ def test_run_conviction_ranking_uses_custom_weights():
     rows = _compute_cr(recs, calibration=calib, weights=custom)
     # 100% score → conviction_score 应等于 score_b (0.8) × 100 = 80
     assert rows[0].conviction_score == pytest.approx(80.0, abs=0.1)
+
+
+# ---------------------------------------------------------------------------
+# Direct unit tests for rendering helpers (was 0 direct coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestComponentStr:
+    """_component_str — 0-1 value → 5-cell mini bar with color."""
+
+    def test_full_bar_at_value_1(self) -> None:
+        result = _component_str(1.0)
+        assert "▌" * 5 in result
+        assert "·" not in result
+
+    def test_empty_bar_at_value_0(self) -> None:
+        result = _component_str(0.0)
+        assert "·" * 5 in result
+        assert "▌" not in result
+
+    def test_half_bar(self) -> None:
+        result = _component_str(0.5)
+        assert "▌" * 2 in result  # round(0.5*5) = round(2.5) = 2
+        assert "·" * 3 in result
+
+    def test_high_value_uses_green(self) -> None:
+        result = _component_str(0.8)
+        assert result.startswith(Fore.GREEN)
+
+    def test_mid_value_uses_yellow(self) -> None:
+        result = _component_str(0.5)
+        assert result.startswith(Fore.YELLOW)
+
+    def test_low_value_uses_red(self) -> None:
+        result = _component_str(0.1)
+        assert result.startswith(Fore.RED)
+
+    def test_ends_with_reset(self) -> None:
+        assert _component_str(0.5).endswith(Style.RESET_ALL)
+
+    def test_clamps_above_range(self) -> None:
+        # value > 1 should clamp to 5 filled cells
+        result = _component_str(2.0)
+        assert "▌" * 5 in result
+
+    def test_clamps_below_range(self) -> None:
+        # negative value should clamp to 0 filled cells
+        result = _component_str(-0.5)
+        assert "·" * 5 in result
+
+
+class TestConvictionColor:
+    """_conviction_color — score → color constant."""
+
+    def test_high_score_green(self) -> None:
+        assert _conviction_color(80) == Fore.GREEN
+
+    def test_boundary_75_green(self) -> None:
+        assert _conviction_color(75) == Fore.GREEN
+
+    def test_mid_score_yellow(self) -> None:
+        assert _conviction_color(65) == Fore.YELLOW
+
+    def test_boundary_60_yellow(self) -> None:
+        assert _conviction_color(60) == Fore.YELLOW
+
+    def test_low_score_red(self) -> None:
+        assert _conviction_color(50) == Fore.RED
+
+    def test_zero_red(self) -> None:
+        assert _conviction_color(0) == Fore.RED
+
+
+class TestRankDeltaStr:
+    """_rank_delta_str — rank delta → colored arrow string."""
+
+    def test_negative_delta_green_up_arrow(self) -> None:
+        # delta < 0 means rank improved (e.g. 5→3)
+        result = _rank_delta_str(-2)
+        assert Fore.GREEN in result
+        assert "↑2" in result
+
+    def test_positive_delta_red_down_arrow(self) -> None:
+        # delta > 0 means rank worsened (e.g. 3→5)
+        result = _rank_delta_str(3)
+        assert Fore.RED in result
+        assert "↓3" in result
+
+    def test_zero_delta_yellow_dash(self) -> None:
+        result = _rank_delta_str(0)
+        assert Fore.YELLOW in result
+        assert "—" in result
+
+    def test_all_end_with_reset(self) -> None:
+        assert _rank_delta_str(-1).endswith(Style.RESET_ALL)
+        assert _rank_delta_str(1).endswith(Style.RESET_ALL)
+        assert _rank_delta_str(0).endswith(Style.RESET_ALL)
