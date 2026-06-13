@@ -666,6 +666,27 @@ def _enrich_with_consecutive_bonus(recommendations: list[dict], report_dir: Path
     return enriched
 
 
+def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
+    """Fold the consecutive-recommendation bonus into composite_score and re-sort.
+
+    Extracted from :func:`_build_ranked_candidates`. The ranker produces an
+    initial ordering; consecutive-day bonus (R4) is then added on top of each
+    item's composite_score and the list re-sorted descending so bonus-boosted
+    picks bubble up. Mutates ``ranked`` in place and returns it.
+    """
+    for recommendation in ranked:
+        bonus = float(recommendation.get("consecutive_bonus", 0.0) or 0.0)
+        if not bonus:
+            continue
+        original_score = float(recommendation.get("composite_score", 0.0) or 0.0)
+        recommendation["composite_score"] = round(original_score + bonus, 4)
+    ranked.sort(
+        key=lambda recommendation: float(recommendation.get("composite_score", 0.0) or 0.0),
+        reverse=True,
+    )
+    return ranked
+
+
 def _build_ranked_candidates(
     recommendations: list[dict],
     report_dir: Path,
@@ -690,17 +711,7 @@ def _build_ranked_candidates(
         composite,
         expected,
     )
-    for recommendation in ranked:
-        bonus = float(recommendation.get("consecutive_bonus", 0.0) or 0.0)
-        if not bonus:
-            continue
-        original_score = float(recommendation.get("composite_score", 0.0) or 0.0)
-        recommendation["composite_score"] = round(original_score + bonus, 4)
-    ranked.sort(
-        key=lambda recommendation: float(recommendation.get("composite_score", 0.0) or 0.0),
-        reverse=True,
-    )
-    return ranked
+    return _apply_consecutive_bonus_and_resort(ranked)
 
 
 def _load_recommendation_context(
