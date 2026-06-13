@@ -649,6 +649,48 @@ def run_preheat(
     return 0 if stats.tasks_failed == 0 else 1
 
 
+def _rebuild_cli_objects(report_payload: dict):
+    """重建 CLI 展示所需的强类型对象。
+
+    从 ``compute_auto_screening_results`` 返回的 JSON payload 反序列化为
+    ``_print_table_block`` 所需的 ``FusedScore`` / ``MarketState`` /
+    ``IndustrySignal`` / ``DecayInfo`` 映射，返回
+    ``(top_results, market_state, industry_signals, decay_map)``。
+    """
+    from src.screening.signal_fusion import FusedScore
+    from src.screening.market_state import MarketState
+    from src.screening.signal_decay_detector import DecayInfo
+
+    top_results = [FusedScore.model_validate(item) for item in report_payload["recommendations"]]
+
+    market_state = MarketState.model_validate(report_payload["market_state"])
+
+    industry_signals = [
+        IndustrySignal(
+            industry_name=item.get("industry_name", ""),
+            industry_code=item.get("industry_code", ""),
+            momentum_score=item.get("momentum_score", 0.0),
+            avg_score_b=item.get("avg_score_b", 0.0),
+            candidate_count=item.get("candidate_count", 0),
+            north_money_flow=item.get("north_money_flow", 0.0),
+            rank=item.get("rank", 0),
+            tickers=list(item.get("tickers", []) or []),
+        )
+        for item in report_payload.get("industry_rotation", [])
+    ]
+
+    decay_map: dict = {}
+    for rec in report_payload["recommendations"]:
+        decay_payload = rec.get("decay") or {}
+        if decay_payload.get("level") and decay_payload.get("level") != "none":
+            try:
+                decay_map[rec["ticker"]] = DecayInfo.from_dict(decay_payload)
+            except Exception:
+                pass
+
+    return top_results, market_state, industry_signals, decay_map
+
+
 def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
     """一键跑全流程：全市场筛选 -> 因子评分 -> 信号融合 -> Top N 推荐。
 
@@ -688,43 +730,8 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         # 调用纯函数 — 复用 Web 端点的核心逻辑
         report_payload = compute_auto_screening_results(trade_date, top_n)
 
-        # 重建 top_results 对象 (供 CLI 表格打印)
-        from src.screening.signal_fusion import FusedScore  # noqa: F401
-
-        top_results = [FusedScore.model_validate(item) for item in report_payload["recommendations"]]
-
-        # 反查 market_state (供 _print_auto_screening_table 使用)
-        market_state_payload = report_payload["market_state"]
-        from src.screening.market_state import MarketState
-
-        market_state = MarketState.model_validate(market_state_payload)
-
-        # 反查行业轮动信号 (供 CLI 打印)
-        industry_signals = [
-            IndustrySignal(
-                industry_name=item.get("industry_name", ""),
-                industry_code=item.get("industry_code", ""),
-                momentum_score=item.get("momentum_score", 0.0),
-                avg_score_b=item.get("avg_score_b", 0.0),
-                candidate_count=item.get("candidate_count", 0),
-                north_money_flow=item.get("north_money_flow", 0.0),
-                rank=item.get("rank", 0),
-                tickers=list(item.get("tickers", []) or []),
-            )
-            for item in report_payload.get("industry_rotation", [])
-        ]
-
-        # 反查信号衰减映射 (供 CLI 打印)
-        from src.screening.signal_decay_detector import DecayInfo
-
-        decay_map: dict = {}
-        for rec in report_payload["recommendations"]:
-            decay_payload = rec.get("decay") or {}
-            if decay_payload.get("level") and decay_payload.get("level") != "none":
-                try:
-                    decay_map[rec["ticker"]] = DecayInfo.from_dict(decay_payload)
-                except Exception:
-                    pass
+        # 重建 CLI 展示所需的强类型对象 (top_results / market_state / industry_signals / decay_map)
+        top_results, market_state, industry_signals, decay_map = _rebuild_cli_objects(report_payload)
 
         # Save full report — 报告已由 compute_auto_screening_results 写入,
         # 这里复用同一路径返回给 _print_auto_screening_table 用于 UI 提示。
