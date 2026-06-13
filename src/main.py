@@ -74,6 +74,12 @@ setup_logging()
 logger = get_logger(__name__)
 
 
+# score_b 决策阈值 — 用于表格颜色编码 (绿/黄/红) 与 high_pool 过滤。
+# 同一阈值在多处使用, 集中定义避免分叉; 修改时仅需调整此处。
+SCORE_B_GREEN_FLOOR = 0.35   # >= 此值 → 绿色 (看多) / high_pool 候选
+SCORE_B_YELLOW_FLOOR = 0.0   # >= 此值 (但 < 绿色) → 黄色 (中性); 低于此值 → 红色 (看空)
+
+
 def parse_hedge_fund_response(response):
     """Parses a JSON string and returns a dictionary."""
     try:
@@ -336,7 +342,7 @@ def run_screen_only_mode(trade_date: str) -> int:
     market_state = detect_market_state(trade_date)
     scored = score_batch(candidates, trade_date)
     fused = fuse_batch(scored, market_state, trade_date, candidates=candidates)
-    high_pool = [item for item in fused if item.score_b >= 0.35]
+    high_pool = [item for item in fused if item.score_b >= SCORE_B_GREEN_FLOOR]
     output = {
         "date": trade_date,
         "market_state": market_state.model_dump(),
@@ -402,7 +408,7 @@ def _build_auto_screening_payload(
         "market_state": market_state.model_dump(),
         "layer_a_count": len(candidates),
         "total_scored": len(fused),
-        "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
+        "high_pool_count": sum(1 for item in fused if item.score_b >= SCORE_B_GREEN_FLOOR),
         "top_n": top_n,
         "recommendations": top_results_serializable,
         "sector_concentration_warnings": sector_warnings,
@@ -1093,10 +1099,10 @@ def _build_top_table_row(*, idx: int, rec: dict) -> list:
     score_b = float(rec.get("score_b", 0.0))
     decision = rec.get("decision", "neutral")
 
-    if score_b >= 0.35:
+    if score_b >= SCORE_B_GREEN_FLOOR:
         score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
         decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
-    elif score_b >= 0.0:
+    elif score_b >= SCORE_B_YELLOW_FLOOR:
         score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
         decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
     else:
@@ -1312,9 +1318,9 @@ def _print_score_decomposition(
         consensus = "★" if "consensus_bonus" in (item.arbitration_applied or []) else " "
 
         # Color by score
-        if score_b >= 0.35:
+        if score_b >= SCORE_B_GREEN_FLOOR:
             score_color = Fore.GREEN
-        elif score_b >= 0.0:
+        elif score_b >= SCORE_B_YELLOW_FLOOR:
             score_color = Fore.YELLOW
         else:
             score_color = Fore.RED
@@ -1390,9 +1396,9 @@ def _print_score_waterfall(
 
         # Total
         total = decomp["total"]
-        if total >= 0.35:
+        if total >= SCORE_B_GREEN_FLOOR:
             total_color = Fore.GREEN + Style.BRIGHT
-        elif total >= 0.0:
+        elif total >= SCORE_B_YELLOW_FLOOR:
             total_color = Fore.YELLOW
         else:
             total_color = Fore.RED
@@ -1453,10 +1459,10 @@ def _build_auto_screening_table_row(
     score_b = item.score_b
 
     # Color-code the decision
-    if score_b >= 0.35:
+    if score_b >= SCORE_B_GREEN_FLOOR:
         decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
         score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
-    elif score_b >= 0.0:
+    elif score_b >= SCORE_B_YELLOW_FLOOR:
         decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
         score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
     else:
