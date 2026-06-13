@@ -1365,6 +1365,94 @@ def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
     )
 
 
+def _build_auto_screening_table_row(
+    *,
+    idx: int,
+    item,
+    consecutive_lookup: dict[str, dict],
+    decay_map: dict | None,
+) -> list[str]:
+    """Build one row of the ``--auto`` screening table.
+
+    Extracted from :func:`_print_auto_screening_table` to keep the per-row
+    formatting (decision/score color, signal summary, consecutive highlight,
+    P0-3 decay tag) in one place — the caller only assembles the headers and
+    invokes ``tabulate``.
+    """
+    from colorama import Fore, Style
+
+    from src.screening.signal_decay_detector import DecayLevel
+
+    decision = item.decision
+    score_b = item.score_b
+
+    # Color-code the decision
+    if score_b >= 0.35:
+        decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
+        score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
+    elif score_b >= 0.0:
+        decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
+        score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
+    else:
+        decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
+        score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
+
+    # Signal summary: direction + confidence per strategy
+    signals = item.strategy_signals
+    signal_parts = []
+    for strategy_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+        sig = signals.get(strategy_name)
+        if sig is None:
+            signal_parts.append("—")
+            continue
+        arrow = "↑" if sig.direction > 0 else "↓" if sig.direction < 0 else "—"
+        signal_parts.append(f"{arrow}{sig.confidence:.0f}")
+    signal_summary = " ".join(signal_parts)
+
+    # Arbitration flags
+    arbitration = ", ".join(item.arbitration_applied) if item.arbitration_applied else ""
+
+    # P0-6 连续推荐标记
+    consecutive_info = consecutive_lookup.get(item.ticker, {})
+    consecutive_days = int(consecutive_info.get("consecutive_days", 0) or 0)
+    if consecutive_days >= 3:
+        consecutive_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}d{Style.RESET_ALL}"
+    elif consecutive_days == 2:
+        consecutive_str = f"{Fore.YELLOW}{consecutive_days}d{Style.RESET_ALL}"
+    elif consecutive_days == 1:
+        consecutive_str = f"{Fore.WHITE}{consecutive_days}d{Style.RESET_ALL}"
+    else:
+        consecutive_str = f"{Fore.RED}—{Style.RESET_ALL}"
+
+    # 高亮连续 3+ 天的 ticker
+    ticker_label = f"{item.ticker} {item.name}" if item.name else item.ticker
+    if consecutive_days >= 3:
+        ticker_label = f"{Fore.GREEN}{Style.BRIGHT}{ticker_label}{Style.RESET_ALL}"
+
+    # P0-3 信号衰减标记
+    decay_info = decay_map.get(item.ticker) if decay_map else None
+    if decay_info is None or decay_info.level == DecayLevel.NONE:
+        decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
+    elif decay_info.level == DecayLevel.MILD:
+        decay_str = f"{Fore.YELLOW}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
+    elif decay_info.level == DecayLevel.MODERATE:
+        decay_str = f"{Fore.YELLOW}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
+    else:  # SEVERE
+        decay_str = f"{Fore.RED}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
+
+    return [
+        f"{idx}",
+        ticker_label,
+        item.industry_sw or "—",
+        score_colored,
+        decision_colored,
+        signal_summary,
+        consecutive_str,
+        decay_str,
+        arbitration,
+    ]
+
+
 def _print_auto_screening_table(
     trade_date: str,
     top_results: list,
@@ -1388,8 +1476,6 @@ def _print_auto_screening_table(
     from colorama import Fore, Style
     from tabulate import tabulate
 
-    from src.screening.signal_decay_detector import DecayLevel
-
     state_type = getattr(market_state, "state_type", "mixed")
     position_scale = getattr(market_state, "position_scale", 1.0)
 
@@ -1412,75 +1498,13 @@ def _print_auto_screening_table(
 
     table_data = []
     for idx, item in enumerate(top_results, 1):
-        decision = item.decision
-        score_b = item.score_b
-
-        # Color-code the decision
-        if score_b >= 0.35:
-            decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
-            score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
-        elif score_b >= 0.0:
-            decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
-            score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
-        else:
-            decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
-            score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
-
-        # Signal summary: direction + confidence per strategy
-        signals = item.strategy_signals
-        signal_parts = []
-        for strategy_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
-            sig = signals.get(strategy_name)
-            if sig is None:
-                signal_parts.append("—")
-                continue
-            arrow = "↑" if sig.direction > 0 else "↓" if sig.direction < 0 else "—"
-            signal_parts.append(f"{arrow}{sig.confidence:.0f}")
-        signal_summary = " ".join(signal_parts)
-
-        # Arbitration flags
-        arbitration = ", ".join(item.arbitration_applied) if item.arbitration_applied else ""
-
-        # P0-6 连续推荐标记
-        consecutive_info = consecutive_lookup.get(item.ticker, {})
-        consecutive_days = int(consecutive_info.get("consecutive_days", 0) or 0)
-        if consecutive_days >= 3:
-            consecutive_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}d{Style.RESET_ALL}"
-        elif consecutive_days == 2:
-            consecutive_str = f"{Fore.YELLOW}{consecutive_days}d{Style.RESET_ALL}"
-        elif consecutive_days == 1:
-            consecutive_str = f"{Fore.WHITE}{consecutive_days}d{Style.RESET_ALL}"
-        else:
-            consecutive_str = f"{Fore.RED}—{Style.RESET_ALL}"
-
-        # 高亮连续 3+ 天的 ticker
-        ticker_label = f"{item.ticker} {item.name}" if item.name else item.ticker
-        if consecutive_days >= 3:
-            ticker_label = f"{Fore.GREEN}{Style.BRIGHT}{ticker_label}{Style.RESET_ALL}"
-
-        # P0-3 信号衰减标记
-        decay_info = decay_map.get(item.ticker) if decay_map else None
-        if decay_info is None or decay_info.level == DecayLevel.NONE:
-            decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
-        elif decay_info.level == DecayLevel.MILD:
-            decay_str = f"{Fore.YELLOW}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
-        elif decay_info.level == DecayLevel.MODERATE:
-            decay_str = f"{Fore.YELLOW}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
-        else:  # SEVERE
-            decay_str = f"{Fore.RED}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
-
         table_data.append(
-            [
-                f"{idx}",
-                ticker_label,
-                item.industry_sw or "—",
-                score_colored,
-                decision_colored,
-                signal_summary,
-                consecutive_str,
-                decay_str,
-                arbitration,
-            ]
+            _build_auto_screening_table_row(
+                idx=idx,
+                item=item,
+                consecutive_lookup=consecutive_lookup,
+                decay_map=decay_map,
+            )
         )
 
     headers = [
