@@ -3,7 +3,7 @@
 ## Search Metadata
 
 Search Stage: **full**
-Checkpoint: `data/reports/param_search_ignition_breakout_0be422dad397_checkpoint.json`
+Checkpoint: `data/reports/param_search_ignition_breakout_1989509c5cbf_checkpoint.json`
 
 ## Baseline Comparison
 
