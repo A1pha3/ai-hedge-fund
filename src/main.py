@@ -1406,8 +1406,9 @@ def _print_score_waterfall(
 def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
     """O-1: 在 --auto 表格后打印一行缓存命中率摘要，让用户感知缓存提速效果。
 
-    命中率 = (batch_calls 节省 + single_ticker_cache_hits) / 总请求，
-    其中总请求 ≈ batch_calls + single_ticker_calls（简化模型）。
+    有效命中率 = single_ticker_cache_hits / (batch_calls + single_ticker_calls) * 100。
+    batch_calls 是批量拉取（一次请求服务全部 ticker），计入分母 total_requests，
+    但不计入命中分子；因此此比率为 single-ticker 缓存命中的保守下界。
     """
     from colorama import Fore, Style
 
@@ -1416,7 +1417,7 @@ def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
     single_calls = int(fetcher_stats.get("single_ticker_calls", 0))
     cache_hits = int(fetcher_stats.get("single_ticker_cache_hits", 0))
     total_requests = batch_calls + single_calls
-    total_served_from_cache = cache_hits  # batch_calls 本身也是"一次请求服务全部 ticker"
+    total_served_from_cache = cache_hits  # batch_calls 批量拉取不计入命中分子（保守下界）
     if total_requests > 0:
         effective_hit_rate = total_served_from_cache / total_requests * 100
     else:
