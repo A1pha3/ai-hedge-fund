@@ -6,6 +6,7 @@ that can remove or resize buy orders before intraday confirmation.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from src.execution.models import ExecutionPlan
@@ -21,6 +22,14 @@ BTST_0422_P7_GAP_WARN_SIZE_DISCOUNT_ENV = "BTST_0422_P7_GAP_WARN_SIZE_DISCOUNT"
 DEFAULT_P7_GAP_WARN_THRESHOLD = 0.005
 DEFAULT_P7_GAP_HALT_THRESHOLD = 0.01
 DEFAULT_P7_GAP_WARN_SIZE_DISCOUNT = 0.5
+
+
+@dataclass(frozen=True)
+class P7GapOverlayConfig:
+    mode: str
+    warn_threshold: float
+    halt_threshold: float
+    warn_size_discount: float
 
 
 def _resolve_p7_gap_overlay_mode() -> str:
@@ -41,6 +50,16 @@ def _resolve_p7_warn_size_discount() -> float:
     return min(discount, 1.0)
 
 
+def _resolve_p7_gap_overlay_config() -> P7GapOverlayConfig:
+    warn_threshold, halt_threshold = _resolve_p7_gap_thresholds()
+    return P7GapOverlayConfig(
+        mode=_resolve_p7_gap_overlay_mode(),
+        warn_threshold=warn_threshold,
+        halt_threshold=halt_threshold,
+        warn_size_discount=_resolve_p7_warn_size_discount(),
+    )
+
+
 def apply_signal_decay(
     plan: ExecutionPlan,
     trade_date_t1: str,
@@ -54,9 +73,7 @@ def apply_signal_decay(
     open_gap_pct = open_gap_pct or {}
     negative_news_tickers = negative_news_tickers or set()
 
-    p7_mode = _resolve_p7_gap_overlay_mode()
-    p7_warn_threshold, p7_halt_threshold = _resolve_p7_gap_thresholds()
-    p7_warn_size_discount = _resolve_p7_warn_size_discount()
+    p7_overlay = _resolve_p7_gap_overlay_config()
 
     filtered_buy_orders = []
     risk_alerts = list(plan.risk_alerts)
@@ -89,20 +106,20 @@ def apply_signal_decay(
             continue
 
         # BTST 0422 P7: gap-down overlay enforcement / reporting.
-        if gap_pct is not None and p7_mode in {"enforce", "report"}:
-            if gap_pct <= -p7_halt_threshold:
-                if p7_mode == "report":
+        if gap_pct is not None and p7_overlay.mode in {"enforce", "report"}:
+            if gap_pct <= -p7_overlay.halt_threshold:
+                if p7_overlay.mode == "report":
                     p7_report_halted.append(ticker)
                 else:
                     p7_halted.append(ticker)
                     risk_alerts.append(f"cancel_buy_gap_overlay_halt:{ticker}")
                     continue
-            elif gap_pct <= -p7_warn_threshold:
-                if p7_mode == "report":
+            elif gap_pct <= -p7_overlay.warn_threshold:
+                if p7_overlay.mode == "report":
                     p7_report_warned.append(ticker)
                 else:
-                    new_shares = int(order.shares * p7_warn_size_discount)
-                    new_amount = float(order.amount) * p7_warn_size_discount
+                    new_shares = int(order.shares * p7_overlay.warn_size_discount)
+                    new_amount = float(order.amount) * p7_overlay.warn_size_discount
                     if new_shares <= 0 or new_amount <= 0:
                         p7_halted.append(ticker)
                         risk_alerts.append(f"cancel_buy_gap_overlay_warn_zeroed:{ticker}")
@@ -114,9 +131,9 @@ def apply_signal_decay(
                             update={
                                 "shares": new_shares,
                                 "amount": new_amount,
-                                "execution_ratio": float(order.execution_ratio or 0.0) * p7_warn_size_discount,
+                                "execution_ratio": float(order.execution_ratio or 0.0) * p7_overlay.warn_size_discount,
                                 # NOTE: 0.0 是合法 risk_budget_ratio (无风险预算), 不能用 `or 1.0` 静默覆盖为满仓。
-                                "risk_budget_ratio": float(order.risk_budget_ratio if order.risk_budget_ratio is not None else 1.0) * p7_warn_size_discount,
+                                "risk_budget_ratio": float(order.risk_budget_ratio if order.risk_budget_ratio is not None else 1.0) * p7_overlay.warn_size_discount,
                             }
                         )
                     )
@@ -131,15 +148,15 @@ def apply_signal_decay(
     plan.buy_orders = filtered_buy_orders
     plan.risk_alerts = risk_alerts
 
-    if p7_mode == "enforce":
+    if p7_overlay.mode == "enforce":
         risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
         funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
         enforcement_payload: dict[str, Any] = {
             "mode": "enforce",
             "trade_date_t1": str(trade_date_t1),
-            "warn_threshold": p7_warn_threshold,
-            "halt_threshold": p7_halt_threshold,
-            "warn_size_discount": p7_warn_size_discount,
+            "warn_threshold": p7_overlay.warn_threshold,
+            "halt_threshold": p7_overlay.halt_threshold,
+            "warn_size_discount": p7_overlay.warn_size_discount,
             "buy_orders_original_count": original_buy_count,
             "buy_orders_retained_count": len(plan.buy_orders),
             "warned_count": len(p7_warned),
@@ -155,15 +172,15 @@ def apply_signal_decay(
         risk_metrics["counts"] = counts
         plan.risk_metrics = risk_metrics
 
-    elif p7_mode == "report":
+    elif p7_overlay.mode == "report":
         risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
         funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
         report_payload: dict[str, Any] = {
             "mode": "report",
             "trade_date_t1": str(trade_date_t1),
-            "warn_threshold": p7_warn_threshold,
-            "halt_threshold": p7_halt_threshold,
-            "warn_size_discount": p7_warn_size_discount,
+            "warn_threshold": p7_overlay.warn_threshold,
+            "halt_threshold": p7_overlay.halt_threshold,
+            "warn_size_discount": p7_overlay.warn_size_discount,
             "buy_orders_original_count": original_buy_count,
             "buy_orders_retained_count": len(plan.buy_orders),
             "warned_count": len(p7_report_warned),
