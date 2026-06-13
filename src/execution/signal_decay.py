@@ -32,6 +32,20 @@ class P7GapOverlayConfig:
     warn_size_discount: float
 
 
+@dataclass
+class SignalDecayLoopContext:
+    refreshed_scores: dict[str, float]
+    atr_values: dict[str, float]
+    open_gap_pct: dict[str, float]
+    negative_news_tickers: set[str]
+    overlay: P7GapOverlayConfig
+    risk_alerts: list[str]
+    p7_warned: list[str]
+    p7_halted: list[str]
+    p7_report_warned: list[str]
+    p7_report_halted: list[str]
+
+
 def _resolve_p7_gap_overlay_mode() -> str:
     normalized = get_env_mode(BTST_0422_P7_GAP_OVERLAY_MODE_ENV, "off").strip().lower()
     return normalized if normalized in BTST_0422_P7_GAP_OVERLAY_MODES else "off"
@@ -149,6 +163,50 @@ def _apply_gap_overlay(
     return "warn_reduce", adjusted_order
 
 
+def _process_signal_decay_order(order: Any, context: SignalDecayLoopContext) -> Any | None:
+    ticker = order.ticker
+    if ticker in context.negative_news_tickers:
+        context.risk_alerts.append(f"cancel_buy_negative_news:{ticker}")
+        return None
+
+    gap_value = context.open_gap_pct.get(ticker)
+    gap_pct = float(gap_value) if isinstance(gap_value, (int, float)) else None
+    if _should_cancel_gap_open(
+        atr_value=context.atr_values.get(ticker),
+        gap_value=context.open_gap_pct.get(ticker, 0.0),
+    ):
+        context.risk_alerts.append(f"cancel_buy_gap_open:{ticker}")
+        return None
+
+    gap_action, adjusted_order = _apply_gap_overlay(
+        order=order,
+        gap_pct=gap_pct,
+        overlay=context.overlay,
+    )
+    if gap_action == "halt":
+        context.p7_halted.append(ticker)
+        context.risk_alerts.append(f"cancel_buy_gap_overlay_halt:{ticker}")
+        return None
+    if gap_action == "report_halt":
+        context.p7_report_halted.append(ticker)
+    elif gap_action == "report_warn":
+        context.p7_report_warned.append(ticker)
+    elif gap_action == "warn_zeroed":
+        context.p7_halted.append(ticker)
+        context.risk_alerts.append(f"cancel_buy_gap_overlay_warn_zeroed:{ticker}")
+        return None
+    elif gap_action == "warn_reduce":
+        context.p7_warned.append(ticker)
+        context.risk_alerts.append(f"reduce_buy_gap_overlay_warn:{ticker}")
+        return adjusted_order
+
+    refreshed_score = context.refreshed_scores.get(ticker)
+    if refreshed_score is not None and refreshed_score < (order.score_final * 0.8):
+        context.risk_alerts.append(f"cancel_buy_signal_decay:{ticker}")
+        return None
+    return order
+
+
 def apply_signal_decay(
     plan: ExecutionPlan,
     trade_date_t1: str,
@@ -168,63 +226,23 @@ def apply_signal_decay(
     risk_alerts = list(plan.risk_alerts)
 
     original_buy_count = len(list(plan.buy_orders or []))
-    p7_warned: list[str] = []
-    p7_halted: list[str] = []
-    p7_report_warned: list[str] = []
-    p7_report_halted: list[str] = []
+    loop_context = SignalDecayLoopContext(
+        refreshed_scores=refreshed_scores,
+        atr_values=atr_values,
+        open_gap_pct=open_gap_pct,
+        negative_news_tickers=negative_news_tickers,
+        overlay=p7_overlay,
+        risk_alerts=risk_alerts,
+        p7_warned=[],
+        p7_halted=[],
+        p7_report_warned=[],
+        p7_report_halted=[],
+    )
 
     for order in plan.buy_orders:
-        ticker = order.ticker
-        if ticker in negative_news_tickers:
-            risk_alerts.append(f"cancel_buy_negative_news:{ticker}")
-            continue
-
-        gap_value = open_gap_pct.get(ticker)
-        gap_pct = float(gap_value) if isinstance(gap_value, (int, float)) else None
-
-        # Existing gap-up cancellation (requires open_gap_pct to be supplied by the runtime/backtester).
-        # R20.26-B BETA-007: require a *positive, finite* ATR. With atr=0.0
-        # (missing ATR data — e.g. a fresh IPO, or a corrupted feed) the
-        # threshold ``1.5 * 0.0 = 0.0`` and ANY positive open gap cancelled
-        # the buy order, turning a volatility-relative safety gate into a
-        # "cancel everything that gaps up" tripwire. Skip the check when ATR
-        # is unknown / non-positive so the order survives normal opens.
-        atr_value = atr_values.get(ticker)
-        if _should_cancel_gap_open(
-            atr_value=atr_value,
-            gap_value=open_gap_pct.get(ticker, 0.0),
-        ):
-            risk_alerts.append(f"cancel_buy_gap_open:{ticker}")
-            continue
-
-        gap_action, adjusted_order = _apply_gap_overlay(
-            order=order,
-            gap_pct=gap_pct,
-            overlay=p7_overlay,
-        )
-        if gap_action == "halt":
-            p7_halted.append(ticker)
-            risk_alerts.append(f"cancel_buy_gap_overlay_halt:{ticker}")
-            continue
-        if gap_action == "report_halt":
-            p7_report_halted.append(ticker)
-        elif gap_action == "report_warn":
-            p7_report_warned.append(ticker)
-        elif gap_action == "warn_zeroed":
-            p7_halted.append(ticker)
-            risk_alerts.append(f"cancel_buy_gap_overlay_warn_zeroed:{ticker}")
-            continue
-        elif gap_action == "warn_reduce":
-            p7_warned.append(ticker)
-            risk_alerts.append(f"reduce_buy_gap_overlay_warn:{ticker}")
-            filtered_buy_orders.append(adjusted_order)
-            continue
-
-        refreshed_score = refreshed_scores.get(ticker)
-        if refreshed_score is not None and refreshed_score < (order.score_final * 0.8):
-            risk_alerts.append(f"cancel_buy_signal_decay:{ticker}")
-            continue
-        filtered_buy_orders.append(order)
+        processed_order = _process_signal_decay_order(order, loop_context)
+        if processed_order is not None:
+            filtered_buy_orders.append(processed_order)
 
     plan.buy_orders = filtered_buy_orders
     plan.risk_alerts = risk_alerts
@@ -239,8 +257,8 @@ def apply_signal_decay(
                 overlay=p7_overlay,
                 original_buy_count=original_buy_count,
                 retained_buy_count=len(plan.buy_orders),
-                warned_tickers=p7_warned,
-                halted_tickers=p7_halted,
+                warned_tickers=loop_context.p7_warned,
+                halted_tickers=loop_context.p7_halted,
             ),
             update_buy_order_count=True,
         )
@@ -255,8 +273,8 @@ def apply_signal_decay(
                 overlay=p7_overlay,
                 original_buy_count=original_buy_count,
                 retained_buy_count=len(plan.buy_orders),
-                warned_tickers=p7_report_warned,
-                halted_tickers=p7_report_halted,
+                warned_tickers=loop_context.p7_report_warned,
+                halted_tickers=loop_context.p7_report_halted,
             ),
             update_buy_order_count=False,
         )
