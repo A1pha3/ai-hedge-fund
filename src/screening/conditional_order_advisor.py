@@ -117,10 +117,6 @@ class ConditionalOrderAdvice:
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
 def _clean_price_series(values: Iterable[object]) -> list[float]:
     """过滤 NaN/Inf/None, 保留有限 float 序列。"""
     out: list[float] = []

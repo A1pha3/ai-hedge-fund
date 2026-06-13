@@ -75,8 +75,6 @@ from src.targets.short_trade_target_evaluation_reasons_helpers import (  # noqa:
 )
 
 
-
-
 def build_short_trade_evaluation_context(
     *,
     snapshot: dict[str, Any],

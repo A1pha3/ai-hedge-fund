@@ -102,8 +102,6 @@ def _safe_float(value: Any, default: float | None = None) -> float | None:
     return fv
 
 
-
-
 def _determine_macd_signal(metrics: dict[str, Any]) -> str:
     """根据 strategy_signals 中趋势因子的 MACD 子因子判定信号方向。
 

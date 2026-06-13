@@ -137,8 +137,6 @@ class CompareReport:
 # ---------------------------------------------------------------------------
 
 
-
-
 def _extract_raw_metric(recommendation: dict[str, Any], metric_name: str) -> float:
     """从单条 recommendation dict 中提取 ``metric_name`` 对应的原始分数。
 

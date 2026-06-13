@@ -87,8 +87,6 @@ def _parse_date(date_str: str) -> datetime:
     return datetime.strptime(cleaned, "%Y%m%d")
 
 
-
-
 def _classify_decay(change_pct: float | None) -> DecayLevel:
     """根据 change_pct 判定 DecayLevel。
 

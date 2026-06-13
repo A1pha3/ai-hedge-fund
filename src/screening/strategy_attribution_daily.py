@@ -110,8 +110,6 @@ class StrategyDailyAttribution:
 # ---------------------------------------------------------------------------
 
 
-
-
 def _position_daily_pnl(position: Mapping[str, Any]) -> float:
     """从单条持仓中提取当日 PnL。
 

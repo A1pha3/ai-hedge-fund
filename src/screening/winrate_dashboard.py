@@ -119,10 +119,6 @@ class WinRateSummary:
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
 def _parse_date(date_str: str) -> datetime | None:
     """YYYYMMDD / YYYY-MM-DD -> datetime; 失败返回 None。"""
     if not date_str:

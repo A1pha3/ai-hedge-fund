@@ -6,7 +6,6 @@ import pandas as pd
 from src.portfolio.correlation_cluster_helpers import build_cluster_groups, build_union_find_parent, merge_correlated_pairs
 
 
-
 def correlation_threshold_for_market(market_median_correlation: float) -> float:
     return 0.7 if market_median_correlation > 0.6 else 0.8
 

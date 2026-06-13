@@ -82,7 +82,6 @@ class DigestResult:
 # ---------------------------------------------------------------------------
 
 
-
 def _read_selection_snapshot(artifact_root: Path, trade_date: str) -> dict[str, Any] | None:
     """Read a selection_snapshot.json. Returns None if not found."""
     formatted = _format_date(trade_date)

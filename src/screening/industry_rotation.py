@@ -100,8 +100,6 @@ class IndustrySignal:
 # ---------------------------------------------------------------------------
 
 
-
-
 def _extract_momentum_from_signal(signal: object) -> float:
     """从单个 ``strategy_signals`` 字典条目中提取动量贡献 (direction * confidence)。
 
