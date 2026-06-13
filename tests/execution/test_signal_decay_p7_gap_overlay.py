@@ -2,7 +2,13 @@ from __future__ import annotations
 import pytest
 
 from src.execution.models import ExecutionPlan
-from src.execution.signal_decay import apply_signal_decay
+from src.execution.signal_decay import (
+    P7GapOverlayConfig,
+    _apply_gap_overlay,
+    _build_warn_adjusted_order,
+    _should_cancel_gap_open,
+    apply_signal_decay,
+)
 from src.portfolio.models import PositionPlan
 
 
@@ -193,3 +199,57 @@ def test_apply_signal_decay_zero_atr_does_not_cancel_normal_gap_up(monkeypatch):
     )
     assert not any("cancel_buy_gap_open" in alert for alert in plan.risk_alerts)
 
+
+def test_should_cancel_gap_open_requires_positive_atr() -> None:
+    assert _should_cancel_gap_open(atr_value=0.0, gap_value=0.02) is False
+    assert _should_cancel_gap_open(atr_value=None, gap_value=0.02) is False
+    assert _should_cancel_gap_open(atr_value=0.01, gap_value=0.02) is True
+
+
+def test_build_warn_adjusted_order_preserves_zero_risk_budget_ratio() -> None:
+    order = _make_plan(shares=100, amount=20_000.0, risk_budget_ratio=0.0).buy_orders[0]
+
+    adjusted = _build_warn_adjusted_order(order, warn_size_discount=0.5)
+
+    assert adjusted is not None
+    assert adjusted.shares == 50
+    assert adjusted.amount == 10_000.0
+    assert adjusted.risk_budget_ratio == 0.0
+
+
+def test_build_warn_adjusted_order_returns_none_when_discount_zeroes_position() -> None:
+    order = _make_plan(shares=1, amount=1.0).buy_orders[0]
+
+    adjusted = _build_warn_adjusted_order(order, warn_size_discount=0.1)
+
+    assert adjusted is None
+
+
+def test_apply_gap_overlay_report_warn_keeps_order_and_records_report_action() -> None:
+    order = _make_plan(shares=100, amount=20_000.0).buy_orders[0]
+    overlay = P7GapOverlayConfig(
+        mode="report",
+        warn_threshold=0.005,
+        halt_threshold=0.01,
+        warn_size_discount=0.5,
+    )
+
+    action, adjusted = _apply_gap_overlay(order=order, gap_pct=-0.006, overlay=overlay)
+
+    assert action == "report_warn"
+    assert adjusted is None
+
+
+def test_apply_gap_overlay_warn_zeroed_returns_halt_style_action() -> None:
+    order = _make_plan(shares=1, amount=1.0).buy_orders[0]
+    overlay = P7GapOverlayConfig(
+        mode="enforce",
+        warn_threshold=0.005,
+        halt_threshold=0.01,
+        warn_size_discount=0.1,
+    )
+
+    action, adjusted = _apply_gap_overlay(order=order, gap_pct=-0.006, overlay=overlay)
+
+    assert action == "warn_zeroed"
+    assert adjusted is None
