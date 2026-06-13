@@ -687,7 +687,6 @@ COMPARISON_METRIC_LABELS: dict[str, str] = {
     "win_rate_window_trend": "WR Window Trend",
     # Task 2 (Round 26, Gamma): benchmark-adjusted Alpha vs HS300
     "alpha_avg_return": "Alpha vs HS300",
-    "information_ratio": "Info Ratio",
     # Task 3 (Round 26, Beta): dynamic stop-loss suggestion
     "suggested_stop_loss_pct": "Suggested SL%",
     # Task 1 (Round 27, Alpha): return distribution shape
@@ -6252,7 +6251,7 @@ def _build_replay_evaluator(
             "quality_score_trend_min": _cqt.get("quality_score_trend_min"),
             "quality_score_trend_max": _cqt.get("quality_score_trend_max"),
             "quality_above_floor_pct": _cqt.get("quality_above_floor_pct"),
-            "quality_trend_grade": _cqt.get("quality_trend_grade"),
+            "composite_quality_trend_grade": _cqt.get("quality_trend_grade"),
             "quality_trend_valid": _cqt.get("quality_trend_valid"),
             # Task 1 (Round 61, Alpha): concentration_risk averaged across windows.
             "concentration_risk": avg_concentration_risk,
