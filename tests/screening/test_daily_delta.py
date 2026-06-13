@@ -7,7 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from src.screening.daily_delta import compute_daily_delta, render_daily_delta
+from src.screening.daily_delta import (
+    _empty_delta,
+    _extract_top_n,
+    _find_adjacent_reports,
+    _format_date,
+    _format_delta_entry,
+    _load_sorted_reports,
+    compute_daily_delta,
+    render_daily_delta,
+)
 
 
 def _make_report(date_str: str, recs: list[dict]) -> dict:
@@ -210,3 +219,208 @@ class TestEdgeCases:
             {"ticker": "000001", "name": "A", "score_b": None},
         )
         assert result == {}
+
+
+class TestFormatDate:
+    """Direct unit tests for _format_date (was 0 direct coverage)."""
+
+    def test_compact_8_digits_to_iso(self) -> None:
+        assert _format_date("20260610") == "2026-06-10"
+
+    def test_leading_zeros_preserved(self) -> None:
+        assert _format_date("20260105") == "2026-01-05"
+
+    def test_non_digit_8_chars_returned_unchanged(self) -> None:
+        assert _format_date("abcdefgh") == "abcdefgh"
+
+    def test_short_string_returned_unchanged(self) -> None:
+        assert _format_date("2026061") == "2026061"
+
+    def test_long_string_returned_unchanged(self) -> None:
+        assert _format_date("202606100") == "202606100"
+
+    def test_empty_string_returned_unchanged(self) -> None:
+        assert _format_date("") == ""
+
+
+class TestFormatDeltaEntry:
+    """Direct unit tests for _format_delta_entry (was 0 direct coverage)."""
+
+    def test_normal_record(self) -> None:
+        rec = {"ticker": "000001", "name": "StockA", "score_b": 0.7}
+        result = _format_delta_entry(rec, rank=3)
+        assert result == {"ticker": "000001", "name": "StockA", "score_b": 0.7, "rank": 3}
+
+    def test_rank_defaults_to_zero(self) -> None:
+        result = _format_delta_entry({"ticker": "T", "name": "N", "score_b": 0.5})
+        assert result["rank"] == 0
+
+    def test_missing_ticker_defaults_to_empty(self) -> None:
+        result = _format_delta_entry({"name": "N", "score_b": 0.5}, rank=1)
+        assert result["ticker"] == ""
+
+    def test_missing_name_defaults_to_empty(self) -> None:
+        result = _format_delta_entry({"ticker": "T", "score_b": 0.5}, rank=1)
+        assert result["name"] == ""
+
+    def test_missing_score_b_defaults_to_zero(self) -> None:
+        result = _format_delta_entry({"ticker": "T", "name": "N"}, rank=1)
+        assert result["score_b"] == 0.0
+
+    def test_none_score_b_defaults_to_zero(self) -> None:
+        result = _format_delta_entry({"ticker": "T", "name": "N", "score_b": None}, rank=1)
+        assert result["score_b"] == 0.0
+
+    def test_score_b_rounded_to_4_decimals(self) -> None:
+        result = _format_delta_entry({"ticker": "T", "name": "N", "score_b": 0.123456}, rank=1)
+        assert result["score_b"] == 0.1235
+
+    def test_ticker_coerced_to_str(self) -> None:
+        result = _format_delta_entry({"ticker": 12345, "name": "N", "score_b": 0.5}, rank=1)
+        assert result["ticker"] == "12345"
+
+
+class TestEmptyDelta:
+    """Direct unit tests for _empty_delta (was 0 direct coverage)."""
+
+    def test_error_message_propagated(self) -> None:
+        result = _empty_delta("something went wrong")
+        assert result["error"] == "something went wrong"
+
+    def test_all_counts_zero(self) -> None:
+        result = _empty_delta("err")
+        assert result["added_count"] == 0
+        assert result["removed_count"] == 0
+        assert result["changed_count"] == 0
+        assert result["unchanged_count"] == 0
+
+    def test_lists_empty_and_dates_blank(self) -> None:
+        result = _empty_delta("err")
+        assert result["added"] == []
+        assert result["removed"] == []
+        assert result["changed"] == []
+        assert result["today_date"] == ""
+        assert result["yesterday_date"] == ""
+        assert result["today_total"] == 0
+        assert result["yesterday_total"] == 0
+
+
+class TestExtractTopN:
+    """Direct unit tests for _extract_top_n (was 0 direct coverage)."""
+
+    def test_returns_first_n(self) -> None:
+        recs = [{"ticker": str(i)} for i in range(10)]
+        result = _extract_top_n({"recommendations": recs}, 3)
+        assert len(result) == 3
+        assert result[0]["ticker"] == "0"
+
+    def test_top_n_larger_than_list_returns_all(self) -> None:
+        recs = [{"ticker": "a"}, {"ticker": "b"}]
+        result = _extract_top_n({"recommendations": recs}, 100)
+        assert len(result) == 2
+
+    def test_missing_recommendations_key_returns_empty(self) -> None:
+        result = _extract_top_n({}, 5)
+        assert result == []
+
+    def test_none_recommendations_returns_empty(self) -> None:
+        result = _extract_top_n({"recommendations": None}, 5)
+        assert result == []
+
+    def test_top_n_zero_returns_empty(self) -> None:
+        recs = [{"ticker": "a"}, {"ticker": "b"}]
+        result = _extract_top_n({"recommendations": recs}, 0)
+        assert result == []
+
+
+class TestLoadSortedReports:
+    """Direct unit tests for _load_sorted_reports (was 0 direct coverage)."""
+
+    def test_nonexistent_dir_returns_empty(self, tmp_path: Path) -> None:
+        result = _load_sorted_reports(tmp_path / "missing")
+        assert result == []
+
+    def test_empty_dir_returns_empty(self, tmp_path: Path) -> None:
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        assert _load_sorted_reports(reports_dir) == []
+
+    def test_loads_and_sorts_newest_first(self, tmp_path: Path) -> None:
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        older = _make_report("20260609", [_make_rec("000001", "A", 0.5)])
+        newer = _make_report("20260611", [_make_rec("000002", "B", 0.6)])
+        (reports_dir / "auto_screening_20260609.json").write_text(json.dumps(older), encoding="utf-8")
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(newer), encoding="utf-8")
+
+        result = _load_sorted_reports(reports_dir)
+        assert len(result) == 2
+        assert result[0]["date"] == "2026-06-11"
+        assert result[1]["date"] == "2026-06-09"
+
+    def test_date_formatted_to_iso(self, tmp_path: Path) -> None:
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        report = _make_report("20260610", [_make_rec("000001", "A", 0.5)])
+        (reports_dir / "auto_screening_20260610.json").write_text(json.dumps(report), encoding="utf-8")
+
+        result = _load_sorted_reports(reports_dir)
+        assert result[0]["date"] == "2026-06-10"
+
+    def test_invalid_json_skipped(self, tmp_path: Path) -> None:
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260610.json").write_text("not json", encoding="utf-8")
+        valid = _make_report("20260611", [_make_rec("000001", "A", 0.5)])
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(valid), encoding="utf-8")
+
+        result = _load_sorted_reports(reports_dir)
+        assert len(result) == 1
+        assert result[0]["date"] == "2026-06-11"
+
+    def test_non_matching_glob_ignored(self, tmp_path: Path) -> None:
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        other = _make_report("20260610", [_make_rec("000001", "A", 0.5)])
+        (reports_dir / "other_file.json").write_text(json.dumps(other), encoding="utf-8")
+
+        result = _load_sorted_reports(reports_dir)
+        assert result == []
+
+
+class TestFindAdjacentReports:
+    """Direct unit tests for _find_adjacent_reports (was 0 direct coverage)."""
+
+    def test_fewer_than_two_returns_none_pair(self) -> None:
+        assert _find_adjacent_reports([], 5) == (None, None)
+        single = [{"date": "2026-06-10", "data": {}}]
+        assert _find_adjacent_reports(single, 5) == (None, None)
+
+    def test_returns_today_and_first_different(self) -> None:
+        reports = [
+            {"date": "2026-06-11", "data": {}},
+            {"date": "2026-06-10", "data": {}},
+            {"date": "2026-06-09", "data": {}},
+        ]
+        today, yesterday = _find_adjacent_reports(reports, 5)
+        assert today["date"] == "2026-06-11"
+        assert yesterday["date"] == "2026-06-10"
+
+    def test_all_same_date_returns_today_and_none(self) -> None:
+        reports = [
+            {"date": "2026-06-11", "data": {}},
+            {"date": "2026-06-11", "data": {}},
+        ]
+        today, yesterday = _find_adjacent_reports(reports, 5)
+        assert today["date"] == "2026-06-11"
+        assert yesterday is None
+
+    def test_skips_duplicate_dates_to_find_adjacent(self) -> None:
+        reports = [
+            {"date": "2026-06-11", "data": {}},
+            {"date": "2026-06-11", "data": {}},
+            {"date": "2026-06-10", "data": {}},
+        ]
+        today, yesterday = _find_adjacent_reports(reports, 5)
+        assert today["date"] == "2026-06-11"
+        assert yesterday["date"] == "2026-06-10"
