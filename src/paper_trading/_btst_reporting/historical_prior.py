@@ -207,9 +207,8 @@ def _build_watch_candidate_historical_prior(
     *,
     family: str,
 ) -> dict[str, Any]:
-    from src.paper_trading._btst_reporting.historical_prior_collection import (
-        _decorate_watch_candidate_history_entry,
-    )
+    # Local import re-resolves at call time — needed for monkeypatch-based tests (see F811).
+    from src.paper_trading._btst_reporting.historical_prior_collection import _decorate_watch_candidate_history_entry  # noqa: F811
 
     decorated_entry = _decorate_watch_candidate_history_entry(entry, family)
     row_buckets = _build_watch_candidate_historical_row_buckets(
