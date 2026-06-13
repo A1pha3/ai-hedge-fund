@@ -10,6 +10,10 @@ from src.utils.numeric import clamp_unit_interval
 
 _BTST_REGIME_GATES = frozenset({"normal_trade", "aggressive_trade", "shadow_only", "halt"})
 
+# 市场宽度弱势阈值 — breadth_ratio <= 此值表示市场宽度偏弱 (涨跌家数比低),
+# 用于市场状态判定与 risk-off 触发。在 market_state_helpers + signal_fusion 共享。
+BREADTH_RATIO_WEAK_FLOOR = 0.42
+
 
 @dataclass(frozen=True)
 class MarketStateMetrics:
@@ -39,7 +43,7 @@ def _compute_style_dispersion(*, breadth_ratio: float, daily_return: float, limi
 def _compute_regime_flip_risk(*, breadth_ratio: float, daily_return: float, northbound_flow_days: int, style_dispersion: float) -> float:
     breadth_deterioration = clamp_unit_interval((0.46 - breadth_ratio) / 0.14)
     dispersion_pressure = clamp_unit_interval((style_dispersion - 0.35) / 0.45)
-    index_mismatch = clamp_unit_interval((daily_return + 0.0015) / 0.0080) if breadth_ratio <= 0.42 else 0.0
+    index_mismatch = clamp_unit_interval((daily_return + 0.0015) / 0.0080) if breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR else 0.0
     if northbound_flow_days <= -3:
         flow_headwind = 1.0
     elif northbound_flow_days <= -1:
@@ -59,7 +63,7 @@ def _compute_regime_flip_risk(*, breadth_ratio: float, daily_return: float, nort
 
 def _resolve_regime_gate(*, metrics: MarketStateMetrics, position_scale: float) -> tuple[str, list[str]]:
     reasons: list[str] = []
-    if metrics.breadth_ratio <= 0.42:
+    if metrics.breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR:
         reasons.append("breadth_weak")
     if metrics.style_dispersion >= 0.45:
         reasons.append("style_dispersion")
@@ -71,7 +75,7 @@ def _resolve_regime_gate(*, metrics: MarketStateMetrics, position_scale: float) 
         reasons.append("low_volume")
 
     crisis = metrics.breadth_ratio <= 0.35 or position_scale <= 0.55 or (metrics.regime_flip_risk >= 0.82 and metrics.style_dispersion >= 0.55)
-    risk_off = crisis or metrics.breadth_ratio <= 0.42 or position_scale <= 0.75 or metrics.regime_flip_risk >= 0.58
+    risk_off = crisis or metrics.breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR or position_scale <= 0.75 or metrics.regime_flip_risk >= 0.58
     if crisis:
         return "crisis", reasons
     if risk_off:
@@ -132,7 +136,7 @@ def calculate_market_state_metrics(
         total_volume=total_volume,
         northbound_flow_days=northbound_flow_days,
         is_low_volume=total_volume < 5000.0,  # GAMMA-010: total_volume==0 means API failure, treat as low-volume (conservative)
-        breadth_is_weak=breadth_ratio <= 0.42,
+        breadth_is_weak=breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR,
         breadth_is_strong=breadth_ratio >= 0.58,
         style_dispersion=style_dispersion,
         regime_flip_risk=regime_flip_risk,
@@ -197,7 +201,7 @@ def classify_btst_regime_gate(
         reason_codes.append(f"regime_gate_level_{normalized_regime_gate_level}")
     if profile_hint == "conservative":
         reason_codes.append("profile_conservative")
-    if breadth_ratio <= 0.42:
+    if breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR:
         reason_codes.append("breadth_weak")
     if breadth_ratio >= 0.60:
         reason_codes.append("breadth_strong")
