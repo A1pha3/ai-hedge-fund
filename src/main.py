@@ -5,6 +5,7 @@ import sys
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
@@ -60,6 +61,10 @@ from src.cli.market_status_helpers import (
     _extract_market_status,
     _format_market_status_table,
 )
+
+if TYPE_CHECKING:
+    # 仅用于 _build_selected_strategy_weights 的字符串注解; 运行时由函数体内 import 提供。
+    from src.screening.custom_weights import StrategyWeights
 
 # Load environment variables from .env file and override stale inherited values.
 load_dotenv(override=True)
@@ -225,7 +230,6 @@ def _order_selected_analysts(selected_analysts: list[str]) -> list[str]:
 
 def _build_analyst_batches(selected_analysts: list[str], concurrency_limit: int) -> list[list[str]]:
     return [selected_analysts[index : index + concurrency_limit] for index in range(0, len(selected_analysts), concurrency_limit)]
-
 
 
 def run_market_status(trade_date: str) -> int:
@@ -2862,6 +2866,7 @@ def run_explain(ticker: str) -> int:
 
     print()
     return 0
+
 
 if __name__ == "__main__":
     # 早期分发: 集中处理 --preheat / --macro / --market-status / --pipeline /
