@@ -421,6 +421,38 @@ def _build_auto_screening_payload(
     }
 
 
+def _attach_signal_decay(
+    top_results_serializable: list[dict],
+    consecutive_report_dir: Path | None,
+    trade_date: str,
+):
+    """P0-3 信号衰减检测 — 对比当前与历史 score_b。
+
+    返回 ``decay_summary`` 并给 ``top_results_serializable`` 每条 rec 注入 ``decay`` 字段
+    (有衰减信息时取 ``decay_info.to_dict()``, 否则填充 level=none 的默认结构)。
+    """
+    from src.screening.signal_decay_detector import (
+        build_decay_summary,
+        detect_signal_decay,
+    )
+
+    decay_map = detect_signal_decay(
+        current_recommendations=top_results_serializable,
+        report_dir=consecutive_report_dir,
+        lookback_days=DEFAULT_LOOKBACK_DAYS,
+        end_date=trade_date,
+    )
+    decay_summary = build_decay_summary(decay_map)
+    for rec in top_results_serializable:
+        ticker = rec.get("ticker", "")
+        decay_info = decay_map.get(ticker)
+        if decay_info is not None:
+            rec["decay"] = decay_info.to_dict()
+        else:
+            rec["decay"] = {"level": "none", "current_score": rec.get("score_b", 0), "previous_score": None, "change_pct": None, "days_since_peak": 0}
+    return decay_summary
+
+
 def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_strategies: list[str] | None = None) -> dict:
     """Run the full --auto pipeline and return a JSON-serializable payload (no IO side effects).
 
@@ -447,10 +479,6 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     # P0-1: 创建批量数据获取器 (默认开启, 可通过 USE_BATCH_FETCHER=false 关闭)
     from src.screening.batch_data_fetcher import (
         get_global_batch_data_fetcher,
-    )
-    from src.screening.signal_decay_detector import (
-        build_decay_summary,
-        detect_signal_decay,
     )
 
     batch_fetcher = get_global_batch_data_fetcher()
@@ -537,21 +565,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     consecutive_highlight = sum(1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3)
 
     # P0-3 信号衰减检测 — 对比当前与历史 score_b
-    decay_map = detect_signal_decay(
-        current_recommendations=top_results_serializable,
-        report_dir=consecutive_report_dir,
-        lookback_days=DEFAULT_LOOKBACK_DAYS,
-        end_date=trade_date,
-    )
-    decay_summary = build_decay_summary(decay_map)
-    # Attach decay info to each recommendation in the serializable list
-    for rec in top_results_serializable:
-        ticker = rec.get("ticker", "")
-        decay_info = decay_map.get(ticker)
-        if decay_info is not None:
-            rec["decay"] = decay_info.to_dict()
-        else:
-            rec["decay"] = {"level": "none", "current_score": rec.get("score_b", 0), "previous_score": None, "change_pct": None, "days_since_peak": 0}
+    decay_summary = _attach_signal_decay(top_results_serializable, consecutive_report_dir, trade_date)
 
     # P1-2 行业轮动信号 — 申万一级行业动量 + 强度排名
     industry_signals = calculate_industry_rotation(
