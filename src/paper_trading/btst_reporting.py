@@ -143,22 +143,14 @@ load_project_dotenv()
 CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES = 3
 
 
-
-
 def _extract_upstream_shadow_entry(
     selection_entry: dict[str, Any], supplemental_entry: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
     return _extract_upstream_shadow_entry_eb(selection_entry, supplemental_entry)
 
 
-
-
-
 def _build_upstream_shadow_summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
     return _build_upstream_shadow_summary_eb(entries)
-
-
-
 
 
 def _load_catalyst_theme_frontier_summary(
@@ -167,12 +159,10 @@ def _load_catalyst_theme_frontier_summary(
     return _load_catalyst_theme_frontier_summary_eb(report_dir)
 
 
-
 def _build_catalyst_theme_frontier_priority(
     frontier_summary: dict[str, Any], shadow_entries: list[dict[str, Any]]
 ) -> dict[str, Any]:
     return _build_catalyst_theme_frontier_priority_eb(frontier_summary, shadow_entries)
-
 
 
 def _resolve_snapshot_path(
@@ -181,17 +171,8 @@ def _resolve_snapshot_path(
     return _resolve_snapshot_path_eb(input_path, trade_date)
 
 
-
-
-
-
-
-
-
-
 def _iter_selection_snapshot_paths(report_dir: Path) -> list[Path]:
     return _iter_selection_snapshot_paths_eb(report_dir)
-
 
 
 def _discover_recent_historical_report_dirs(
@@ -202,14 +183,10 @@ def _discover_recent_historical_report_dirs(
     return _discover_recent_historical_report_dirs_eb(report_dir, trade_date, max_reports)
 
 
-
 def _extract_short_trade_entry(
     selection_entry: dict[str, Any],
 ) -> dict[str, Any] | None:
     return _extract_short_trade_entry_eb(selection_entry)
-
-
-
 
 
 def _apply_execution_quality_entry_mode(entry: dict[str, Any]) -> dict[str, Any]:
@@ -222,7 +199,6 @@ def _merge_entry_historical_prior(
     return _merge_entry_historical_prior_eb(entry, historical_prior)
 
 
-
 def _reclassify_selected_execution_quality_entries(
     selected_entries: list[dict[str, Any]],
     near_miss_entries: list[dict[str, Any]],
@@ -231,18 +207,10 @@ def _reclassify_selected_execution_quality_entries(
     return _reclassify_selected_execution_quality_entries_eb(selected_entries, near_miss_entries, opportunity_pool_entries)
 
 
-
 def _extract_short_trade_opportunity_entry(
     selection_entry: dict[str, Any],
 ) -> dict[str, Any] | None:
     return _extract_short_trade_opportunity_entry_eb(selection_entry)
-
-
-
-
-
-
-
 
 
 def _extract_research_upside_radar_entry(
@@ -251,10 +219,8 @@ def _extract_research_upside_radar_entry(
     return _extract_research_upside_radar_entry_eb(selection_entry)
 
 
-
 def _extract_catalyst_theme_entry(candidate: dict[str, Any]) -> dict[str, Any] | None:
     return _extract_catalyst_theme_entry_eb(candidate)
-
 
 
 def _extract_catalyst_theme_shadow_entry(
@@ -263,15 +229,12 @@ def _extract_catalyst_theme_shadow_entry(
     return _extract_catalyst_theme_shadow_entry_eb(candidate)
 
 
-
 def _build_catalyst_theme_shadow_watch_rows(
     entries: list[dict[str, Any]],
     *,
     limit: int = _CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES,
 ) -> list[dict[str, Any]]:
     return _build_catalyst_theme_shadow_watch_rows_impl(entries, limit=limit)
-
-
 
 
 def _append_primary_and_near_miss_recommendations(
@@ -305,16 +268,6 @@ def _append_pool_and_observer_recommendations(
     )
 
 
-
-
-
-
-
-
-
-
-
-
 def _append_research_and_shadow_recommendations(
     recommendation_lines: list[str],
     *,
@@ -334,10 +287,6 @@ def _append_research_and_shadow_recommendations(
         excluded_research_entries=excluded_research_entries,
         upstream_shadow_entries=upstream_shadow_entries,
     )
-
-
-
-
 
 
 def _build_btst_recommendation_lines(
@@ -411,7 +360,6 @@ def _append_btst_recommendation_line_groups(
         excluded_research_entries=excluded_research_entries,
         upstream_shadow_entries=upstream_shadow_entries,
     )
-
 
 
 from src.paper_trading._btst_reporting.brief_builder import (
@@ -607,7 +555,6 @@ def _append_brief_source_paths_markdown(
 ) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import _append_brief_source_paths_markdown as _impl
     _impl(lines, analysis)
-
 
 
 def _resolve_brief_analysis(
@@ -918,7 +865,6 @@ def analyze_btst_opening_watch_card(
     )
 
 
-
 def render_btst_opening_watch_card_markdown(card: dict[str, Any]) -> str:
     lines: list[str] = []
     _append_opening_watch_overview_markdown(lines, card)
@@ -1094,7 +1040,6 @@ def analyze_btst_next_day_priority_board(
     return _analyze_btst_next_day_priority_board_impl(
         input_path, trade_date=trade_date, next_trade_date=next_trade_date
     )
-
 
 
 def render_btst_next_day_priority_board_markdown(board: dict[str, Any]) -> str:
