@@ -15,6 +15,12 @@ _BTST_REGIME_GATES = frozenset({"normal_trade", "aggressive_trade", "shadow_only
 BREADTH_RATIO_WEAK_FLOOR = 0.42
 # 持仓规模弱势阈值 — position_scale <= 此值表示仓位缩减 (risk-off 触发条件之一)。
 POSITION_SCALE_WEAK_FLOOR = 0.75
+# 危机阈值 — breadth_ratio <= 此值或 position_scale <= 危机阈值时触发 crisis 市场状态。
+# (regime_flip_risk >= REGIME_FLIP_RISK_FLOOR 单独触发 risk-off reason, 非 crisis。)
+CRISIS_BREADTH_FLOOR = 0.35
+CRISIS_POSITION_SCALE_FLOOR = 0.55
+# regime 翻转风险升高阈值 — 超过此值追加 regime_flip_risk reason (risk-off 触发条件之一)。
+REGIME_FLIP_RISK_FLOOR = 0.58
 
 
 @dataclass(frozen=True)
@@ -69,15 +75,15 @@ def _resolve_regime_gate(*, metrics: MarketStateMetrics, position_scale: float) 
         reasons.append("breadth_weak")
     if metrics.style_dispersion >= 0.45:
         reasons.append("style_dispersion")
-    if metrics.regime_flip_risk >= 0.58:
+    if metrics.regime_flip_risk >= REGIME_FLIP_RISK_FLOOR:
         reasons.append("regime_flip_risk")
     if position_scale <= POSITION_SCALE_WEAK_FLOOR:
         reasons.append("position_scale_reduced")
     if metrics.is_low_volume:
         reasons.append("low_volume")
 
-    crisis = metrics.breadth_ratio <= 0.35 or position_scale <= 0.55 or (metrics.regime_flip_risk >= 0.82 and metrics.style_dispersion >= 0.55)
-    risk_off = crisis or metrics.breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR or position_scale <= POSITION_SCALE_WEAK_FLOOR or metrics.regime_flip_risk >= 0.58
+    crisis = metrics.breadth_ratio <= CRISIS_BREADTH_FLOOR or position_scale <= CRISIS_POSITION_SCALE_FLOOR or (metrics.regime_flip_risk >= 0.82 and metrics.style_dispersion >= 0.55)
+    risk_off = crisis or metrics.breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR or position_scale <= POSITION_SCALE_WEAK_FLOOR or metrics.regime_flip_risk >= REGIME_FLIP_RISK_FLOOR
     if crisis:
         return "crisis", reasons
     if risk_off:
@@ -209,7 +215,7 @@ def classify_btst_regime_gate(
         reason_codes.append("breadth_strong")
     if style_dispersion >= 0.45:
         reason_codes.append("style_dispersion_elevated")
-    if regime_flip_risk >= 0.58:
+    if regime_flip_risk >= REGIME_FLIP_RISK_FLOOR:
         reason_codes.append("regime_flip_risk_elevated")
 
     if normalized_regime_gate_level in {"risk_off", "crisis"}:
