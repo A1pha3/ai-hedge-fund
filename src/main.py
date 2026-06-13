@@ -2030,6 +2030,42 @@ def run_push_test(
     return 0 if success_count == total else 1
 
 
+def _print_custom_weights_results(top: list[dict], w: dict) -> bool:
+    """打印自定义权重推荐表头与 Top N 明细。
+
+    Extracted from :func:`run_custom_weights` — 将表头渲染 (含权重摘要) 与
+    Top N 逐条明细集中到独立 helper; 空列表时打印提示并返回 False。
+
+    Returns:
+        True 表示有结果已打印 (调用方继续落盘); False 表示无可用推荐 (调用方 return 0)。
+    """
+    from colorama import Fore, Style
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}[CustomWeights] 自定义权重推荐 · {today}{Style.RESET_ALL}")
+    print(
+        f"权重: 趋势 {w['trend']:.2f} / 均值回归 {w['mean_reversion']:.2f} / "
+        f"基本面 {w['fundamental']:.2f} / 事件情绪 {w['event_sentiment']:.2f}"
+    )
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+    if not top:
+        print(f"{Fore.YELLOW}无可用推荐{Style.RESET_ALL}")
+        return False
+
+    print(f"Top {len(top)}:")
+    for idx, rec in enumerate(top, start=1):
+        ticker = str(rec.get("ticker", ""))
+        name = str(rec.get("name", "") or "")
+        score_b = float(rec.get("score_b", 0.0) or 0.0)
+        original = float(rec.get("original_score_b", 0.0) or 0.0)
+        diff = score_b - original
+        diff_str = f"{diff:+.3f}"
+        label = f"{ticker} {name}".strip()
+        print(f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  (原 {original:+.3f}  Δ {diff_str})")
+    return True
+
+
 def run_custom_weights(
     trend: float,
     mean_reversion: float,
@@ -2088,29 +2124,9 @@ def run_custom_weights(
     top = reweighted[: max(1, top_n)]
 
     # 4. 渲染
-    today = datetime.now().strftime("%Y-%m-%d")
     w = weights.to_dict()
-    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}{Style.BRIGHT}[CustomWeights] 自定义权重推荐 · {today}{Style.RESET_ALL}")
-    print(
-        f"权重: 趋势 {w['trend']:.2f} / 均值回归 {w['mean_reversion']:.2f} / "
-        f"基本面 {w['fundamental']:.2f} / 事件情绪 {w['event_sentiment']:.2f}"
-    )
-    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
-    if not top:
-        print(f"{Fore.YELLOW}无可用推荐{Style.RESET_ALL}")
+    if not _print_custom_weights_results(top, w):
         return 0
-
-    print(f"Top {len(top)}:")
-    for idx, rec in enumerate(top, start=1):
-        ticker = str(rec.get("ticker", ""))
-        name = str(rec.get("name", "") or "")
-        score_b = float(rec.get("score_b", 0.0) or 0.0)
-        original = float(rec.get("original_score_b", 0.0) or 0.0)
-        diff = score_b - original
-        diff_str = f"{diff:+.3f}"
-        label = f"{ticker} {name}".strip()
-        print(f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  (原 {original:+.3f}  Δ {diff_str})")
 
     # 5. 落盘 JSON
     payload = {
