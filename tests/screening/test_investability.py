@@ -129,3 +129,117 @@ def test_build_front_door_verdict_respects_risk_off_gate() -> None:
     )
 
     assert verdict["action"] == "HOLD"
+
+
+# ---------------------------------------------------------------------------
+# _grade_code / _safe_metric / _decorate_cluster_candidate
+# ---------------------------------------------------------------------------
+
+
+class TestGradeCode:
+    def test_grade_a_boundary(self):
+        from src.screening.investability import _grade_code
+
+        assert _grade_code(0.7) == "A"
+        assert _grade_code(0.95) == "A"
+        assert _grade_code(1.0) == "A"
+
+    def test_grade_b(self):
+        from src.screening.investability import _grade_code
+
+        assert _grade_code(0.5) == "B"
+        assert _grade_code(0.69) == "B"
+
+    def test_grade_c(self):
+        from src.screening.investability import _grade_code
+
+        assert _grade_code(0.3) == "C"
+        assert _grade_code(0.49) == "C"
+
+    def test_grade_d(self):
+        from src.screening.investability import _grade_code
+
+        assert _grade_code(0.1) == "D"
+        assert _grade_code(0.29) == "D"
+
+    def test_grade_f(self):
+        from src.screening.investability import _grade_code
+
+        assert _grade_code(0.09) == "F"
+        assert _grade_code(0.0) == "F"
+        assert _grade_code(-0.5) == "F"
+
+
+class TestSafeMetric:
+    def test_none_returns_default(self):
+        from src.screening.investability import _safe_metric
+
+        assert _safe_metric(None, 0.5) == 0.5
+
+    def test_valid_float(self):
+        from src.screening.investability import _safe_metric
+
+        assert _safe_metric(0.8, 0.0) == 0.8
+
+    def test_int_coerced(self):
+        from src.screening.investability import _safe_metric
+
+        assert _safe_metric(5, 0.0) == 5.0
+
+    def test_numeric_string_coerced(self):
+        from src.screening.investability import _safe_metric
+
+        assert _safe_metric("0.42", 0.0) == 0.42
+
+    def test_invalid_string_returns_default(self):
+        from src.screening.investability import _safe_metric
+
+        assert _safe_metric("abc", 1.0) == 1.0
+
+    def test_uncoercible_type_returns_default(self):
+        from src.screening.investability import _safe_metric
+
+        assert _safe_metric([1, 2, 3], 2.0) == 2.0
+
+
+class TestDecorateClusterCandidate:
+    def test_decorates_with_cluster_metadata(self):
+        from src.screening.investability import _decorate_cluster_candidate
+
+        rec = {"ticker": "000001", "score_b": 0.7}
+        members = [{"ticker": "000001"}, {"ticker": "000002"}, {"ticker": "000003"}]
+        result = _decorate_cluster_candidate(rec, cluster_kind="industry", cluster_label="电子", cluster_members=members)
+
+        assert result["cluster_kind"] == "industry"
+        assert result["cluster_label"] == "电子"
+        assert result["cluster_size"] == 3
+        assert result["cluster_members"] == ["000001", "000002", "000003"]
+        assert result["cluster_alternatives"] == ["000002", "000003"]
+        assert result["is_cluster_representative"] is True
+
+    def test_non_first_member_not_representative(self):
+        from src.screening.investability import _decorate_cluster_candidate
+
+        rec = {"ticker": "000002"}
+        members = [{"ticker": "000001"}, {"ticker": "000002"}]
+        result = _decorate_cluster_candidate(rec, cluster_kind="concept", cluster_label="AI", cluster_members=members)
+
+        assert result["is_cluster_representative"] is False
+        assert result["cluster_alternatives"] == ["000001"]
+
+    def test_empty_members(self):
+        from src.screening.investability import _decorate_cluster_candidate
+
+        rec = {"ticker": "000001"}
+        result = _decorate_cluster_candidate(rec, cluster_kind="industry", cluster_label="电子", cluster_members=[])
+
+        assert result["cluster_size"] == 0
+        assert result["cluster_alternatives"] == []
+        assert result["is_cluster_representative"] is False
+
+    def test_does_not_mutate_original(self):
+        from src.screening.investability import _decorate_cluster_candidate
+
+        rec = {"ticker": "000001"}
+        _decorate_cluster_candidate(rec, cluster_kind="industry", cluster_label="电子", cluster_members=[{"ticker": "000001"}])
+        assert "cluster_kind" not in rec
