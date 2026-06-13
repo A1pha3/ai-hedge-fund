@@ -392,3 +392,153 @@ def test_classify_btst_regime_gate_preserves_zero_breadth_ratio() -> None:
     # Should trigger conservative profile hint (not aggressive)
     assert result["profile_hint"] == "conservative"
     assert "breadth_weak" in result["reason_codes"]
+
+
+# ---------------------------------------------------------------------------
+# compute_score_b tests
+# ---------------------------------------------------------------------------
+
+
+def test_compute_score_b_all_bullish() -> None:
+    """All strategies bullish → positive score."""
+    from src.screening.signal_fusion import compute_score_b
+
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        "fundamental": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
+        "event_sentiment": StrategySignal(direction=1, confidence=50.0, completeness=1.0),
+    }
+    weights = {"trend": 0.30, "mean_reversion": 0.20, "fundamental": 0.30, "event_sentiment": 0.20}
+    score = compute_score_b(signals, weights, [])
+    assert score > 0.0
+
+
+def test_compute_score_b_all_bearish() -> None:
+    """All strategies bearish → negative score."""
+    from src.screening.signal_fusion import compute_score_b
+
+    signals = {
+        "trend": StrategySignal(direction=-1, confidence=80.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=-1, confidence=70.0, completeness=1.0),
+        "fundamental": StrategySignal(direction=-1, confidence=60.0, completeness=1.0),
+        "event_sentiment": StrategySignal(direction=-1, confidence=50.0, completeness=1.0),
+    }
+    weights = {"trend": 0.30, "mean_reversion": 0.20, "fundamental": 0.30, "event_sentiment": 0.20}
+    score = compute_score_b(signals, weights, [])
+    assert score < 0.0
+
+
+def test_compute_score_b_mixed_signals() -> None:
+    """Mixed signals (some bullish, some bearish) → score near zero."""
+    from src.screening.signal_fusion import compute_score_b
+
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=-1, confidence=60.0, completeness=1.0),
+    }
+    weights = {"trend": 0.50, "mean_reversion": 0.50}
+    score = compute_score_b(signals, weights, [])
+    assert abs(score) < 0.01
+
+
+def test_compute_score_b_clamps_to_positive_one() -> None:
+    """Score cannot exceed +1.0 even with extreme confidence."""
+    from src.screening.signal_fusion import compute_score_b
+
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=100.0, completeness=1.0),
+    }
+    weights = {"trend": 1.0}
+    score = compute_score_b(signals, weights, [])
+    assert score == 1.0
+
+
+def test_compute_score_b_clamps_to_negative_one() -> None:
+    """Score cannot go below -1.0 even with extreme bearish confidence."""
+    from src.screening.signal_fusion import compute_score_b
+
+    signals = {
+        "trend": StrategySignal(direction=-1, confidence=100.0, completeness=1.0),
+    }
+    weights = {"trend": 1.0}
+    score = compute_score_b(signals, weights, [])
+    assert score == -1.0
+
+
+def test_compute_score_b_consensus_bonus_bullish() -> None:
+    """Bullish consensus bonus makes positive score more positive."""
+    from src.screening.models import ArbitrationAction
+    from src.screening.signal_fusion import compute_score_b
+
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+    }
+    weights = {"trend": 1.0}
+    without_bonus = compute_score_b(signals, weights, [])
+    with_bonus = compute_score_b(signals, weights, [ArbitrationAction.CONSENSUS_BONUS.value])
+    assert with_bonus > without_bonus
+    assert with_bonus == without_bonus + 0.05
+
+
+def test_compute_score_b_consensus_bonus_bearish() -> None:
+    """Bearish consensus bonus makes negative score MORE negative (GAMMA-016)."""
+    from src.screening.models import ArbitrationAction
+    from src.screening.signal_fusion import compute_score_b
+
+    signals = {
+        "trend": StrategySignal(direction=-1, confidence=80.0, completeness=1.0),
+    }
+    weights = {"trend": 1.0}
+    without_bonus = compute_score_b(signals, weights, [])
+    with_bonus = compute_score_b(signals, weights, [ArbitrationAction.CONSENSUS_BONUS.value])
+    # Bearish bonus should make score MORE bearish (lower)
+    assert with_bonus < without_bonus
+    assert with_bonus == without_bonus - 0.05
+
+
+def test_compute_score_b_consensus_bonus_zero_score_is_noop() -> None:
+    """When score is exactly 0, consensus bonus should NOT be applied (GAMMA-017b)."""
+    from src.screening.models import ArbitrationAction
+    from src.screening.signal_fusion import compute_score_b
+
+    # Equal bullish and bearish signals → score ≈ 0
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=-1, confidence=60.0, completeness=1.0),
+    }
+    weights = {"trend": 0.50, "mean_reversion": 0.50}
+    without_bonus = compute_score_b(signals, weights, [])
+    with_bonus = compute_score_b(signals, weights, [ArbitrationAction.CONSENSUS_BONUS.value])
+    assert without_bonus == 0.0
+    assert with_bonus == 0.0
+
+
+def test_compute_score_b_low_completeness_reduces_score() -> None:
+    """Low completeness should reduce the effective score contribution."""
+    from src.screening.signal_fusion import compute_score_b
+
+    full = StrategySignal(direction=1, confidence=80.0, completeness=1.0)
+    partial = StrategySignal(direction=1, confidence=80.0, completeness=0.3)
+    weights = {"trend": 1.0}
+    score_full = compute_score_b({"trend": full}, weights, [])
+    score_partial = compute_score_b({"trend": partial}, weights, [])
+    assert score_full > score_partial
+    assert abs(score_partial - score_full * 0.3) < 0.01
+
+
+def test_compute_score_b_empty_signals() -> None:
+    """Empty signals dict → score 0.0."""
+    from src.screening.signal_fusion import compute_score_b
+
+    score = compute_score_b({}, {"trend": 0.3}, [])
+    assert score == 0.0
+
+
+def test_compute_score_b_zero_confidence() -> None:
+    """Zero confidence → zero contribution regardless of direction."""
+    from src.screening.signal_fusion import compute_score_b
+
+    signals = {"trend": StrategySignal(direction=1, confidence=0.0, completeness=1.0)}
+    score = compute_score_b(signals, {"trend": 1.0}, [])
+    assert score == 0.0
