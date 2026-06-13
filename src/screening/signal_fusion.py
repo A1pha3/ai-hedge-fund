@@ -8,6 +8,7 @@ import os
 
 from src.screening.market_state_helpers import BREADTH_RATIO_WEAK_FLOOR, POSITION_SCALE_WEAK_FLOOR
 from src.screening.candidate_pool import add_cooldown, get_cooled_tickers, load_cooldown_registry, save_cooldown_registry
+from src.screening.custom_weights import STRATEGY_KEYS
 from src.screening.models import ArbitrationAction, DEFAULT_STRATEGY_WEIGHTS, FusedScore, MarketState, StrategySignal
 from src.screening.signal_fusion_arbitration_helpers import (
     apply_hold_hint,
@@ -583,7 +584,7 @@ def compute_score_decomposition(fused: FusedScore, consecutive_info: dict | None
     signals = fused.strategy_signals or {}
 
     base_contributions: dict[str, float] = {}
-    for sname in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+    for sname in STRATEGY_KEYS:
         w = float(weights.get(sname, 0.0) or 0.0)
         sig = signals.get(sname)
         if sig is None or w == 0.0:
