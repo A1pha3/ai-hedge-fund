@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 _EVENT_DECAY_LAMBDA = float(os.environ.get("EVENT_DECAY_LAMBDA", "0.35"))
 
+
 def _safe_date(date_str: str) -> datetime | None:
     if not date_str:
         return None

@@ -14,7 +14,6 @@ from typing import Any
 
 import pandas as pd
 
-
 SINA_QUOTE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://finance.sina.com.cn",
@@ -126,6 +125,7 @@ def create_session():
         session.trust_env = False
         # 配 HTTPAdapter：pool_connections=连接池数, pool_maxsize=每池最多 keep-alive 连接
         pool_size = int(os.environ.get("AKSHARE_SESSION_POOL_SIZE", "10"))
+
         # R20.10 BETA: pool_block=True + 自定义 Adapter 传入 pool_timeout=30，
         # 防止池耗尽时无上限新建 transient 连接。
         class _BoundedHTTPAdapter(HTTPAdapter):

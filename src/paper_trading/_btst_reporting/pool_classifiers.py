@@ -126,6 +126,7 @@ def _resolve_pool_rebucket_thresholds() -> dict[str, float | int]:
         ),
     }
 
+
 def _should_demote_weak_near_miss(historical_prior: dict[str, Any] | None) -> bool:
     prior = dict(historical_prior or {})
     thresholds = _resolve_pool_rebucket_thresholds()
