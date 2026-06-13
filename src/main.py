@@ -1883,6 +1883,30 @@ def run_rebalance(positions_path: Path | None = None, drift_threshold: float = 0
     return 0
 
 
+def _build_push_test_payload() -> dict:
+    """构造 P2-3 推送连通性测试用的最小 payload (含当日日期与单条示例推荐)。
+
+    Extracted from :func:`run_push_test` — 纯数据构造, 无副作用, 便于后续复用与测试。
+    """
+    return {
+        "date": datetime.now().strftime("%Y%m%d"),
+        "market_state": {"state_type": "mixed", "position_scale": 0.5},
+        "recommendations": [
+            {
+                "ticker": "300750",
+                "decision": "buy",
+                "score_b": 0.42,
+                "strategy_signals": {
+                    "trend": {"direction": 1, "confidence": 80.0},
+                    "mean_reversion": {"direction": 0, "confidence": 30.0},
+                    "fundamental": {"direction": 1, "confidence": 65.0},
+                    "event_sentiment": {"direction": 1, "confidence": 50.0},
+                },
+            }
+        ],
+    }
+
+
 def run_push_test(
     channel: str | None = None,
     config_path: Path | str | None = None,
@@ -1951,23 +1975,7 @@ def run_push_test(
             print(f"{Fore.RED}[PushTest] 配置中无 channel={target!r} 的 enabled 通道{Style.RESET_ALL}")
             return 1
 
-    test_payload = {
-        "date": datetime.now().strftime("%Y%m%d"),
-        "market_state": {"state_type": "mixed", "position_scale": 0.5},
-        "recommendations": [
-            {
-                "ticker": "300750",
-                "decision": "buy",
-                "score_b": 0.42,
-                "strategy_signals": {
-                    "trend": {"direction": 1, "confidence": 80.0},
-                    "mean_reversion": {"direction": 0, "confidence": 30.0},
-                    "fundamental": {"direction": 1, "confidence": 65.0},
-                    "event_sentiment": {"direction": 1, "confidence": 50.0},
-                },
-            }
-        ],
-    }
+    test_payload = _build_push_test_payload()
     # 预先打印一次 (供 CLI 输出)
     print("\n[PushTest] 测试 payload Markdown 预览 (前 10 行):")
     preview = format_report_markdown(test_payload).splitlines()[:10]
