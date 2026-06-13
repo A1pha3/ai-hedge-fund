@@ -1,7 +1,13 @@
 """Tests for R14 (sector rotation direction) and R15 (factor attribution) in top_picks."""
 from __future__ import annotations
 
-from src.screening.top_picks import _momentum_arrow, _render_sector_rotation, _render_factor_attribution
+from src.screening.top_picks import (
+    _build_industry_momentum_map,
+    _collect_pick_industries,
+    _momentum_arrow,
+    _render_sector_rotation,
+    _render_factor_attribution,
+)
 from src.utils.display import Fore, Style
 
 
@@ -165,3 +171,50 @@ class TestMomentumArrow:
     def test_boundary_negative(self) -> None:
         """score == -20 is NOT < -20, so neutral →."""
         assert "→" in _momentum_arrow(-20.0)
+
+
+class TestCollectPickIndustries:
+    """R14 helper: extract valid industries from picks."""
+
+    def test_normal_picks(self) -> None:
+        picks = [{"industry_sw": "电子"}, {"industry_sw": "医药"}]
+        assert _collect_pick_industries(picks) == ["电子", "医药"]
+
+    def test_empty_and_unknown_excluded(self) -> None:
+        picks = [{"industry_sw": "电子"}, {"industry_sw": ""}, {"industry_sw": "未知"}]
+        assert _collect_pick_industries(picks) == ["电子"]
+
+    def test_missing_key_treated_as_unknown(self) -> None:
+        picks = [{"industry_sw": "电子"}, {}]
+        assert _collect_pick_industries(picks) == ["电子"]
+
+    def test_empty_picks(self) -> None:
+        assert _collect_pick_industries([]) == []
+
+
+class TestBuildIndustryMomentumMap:
+    """R14 helper: normalize rotation payload to {industry: momentum}."""
+
+    def test_normal_list(self) -> None:
+        signals = [
+            {"industry_name": "电子", "momentum_score": 0.85},
+            {"industry_name": "医药", "momentum_score": -0.3},
+        ]
+        result = _build_industry_momentum_map(signals)
+        assert result == {"电子": 0.85, "医药": -0.3}
+
+    def test_non_list_returns_empty(self) -> None:
+        assert _build_industry_momentum_map(None) == {}
+        assert _build_industry_momentum_map({}) == {}
+
+    def test_non_dict_signal_skipped(self) -> None:
+        signals = [{"industry_name": "电子", "momentum_score": 0.5}, "bad", 42]
+        assert _build_industry_momentum_map(signals) == {"电子": 0.5}
+
+    def test_empty_name_skipped(self) -> None:
+        signals = [{"industry_name": "", "momentum_score": 0.5}, {"industry_name": "  ", "momentum_score": 0.3}]
+        assert _build_industry_momentum_map(signals) == {}
+
+    def test_missing_score_defaults_zero(self) -> None:
+        signals = [{"industry_name": "电子"}]
+        assert _build_industry_momentum_map(signals) == {"电子": 0.0}
