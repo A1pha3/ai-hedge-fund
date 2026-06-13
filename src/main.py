@@ -2869,16 +2869,10 @@ def run_explain(ticker: str) -> int:
         print(f"{Fore.CYAN}市场状态:{Style.RESET_ALL} {ms.get('state_type', '?')}  |  " f"仓位系数: {ms.get('position_scale', 1.0):.2f}  |  " f"regime: {ms.get('regime_gate_level', 'normal')}")
 
     # Per-strategy breakdown
-    _STRATEGY_CN_LABELS = {
-        "trend": "趋势策略",
-        "mean_reversion": "均值回归",
-        "fundamental": "基本面",
-        "event_sentiment": "事件情绪",
-    }
     _print_strategy_breakdown(signals)
 
     # ── Block A: 因子贡献度明细 ──
-    _print_factor_detail_block(signals, _STRATEGY_CN_LABELS)
+    _print_factor_detail_block(signals)
 
     # ── Block B: 近 5 日关键事件 ──
     _print_recent_events_block(data, match)

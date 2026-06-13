@@ -10,6 +10,15 @@ from __future__ import annotations
 # 应统一为单一 canonical 常量; 本轮先消除本文件内 2 处 inline。
 _STRATEGY_ORDER: tuple[str, ...] = ("trend", "mean_reversion", "fundamental", "event_sentiment")
 
+# 4 策略的中文展示标签 (长形式) — run_explain Block A 因子明细使用。
+# 注意: strategy_report._STRATEGY_NAMES 用短形式 ("趋势" 而非 "趋势策略"), 语义不同, 不可合并。
+_STRATEGY_CN_LABELS: dict[str, str] = {
+    "trend": "趋势策略",
+    "mean_reversion": "均值回归",
+    "fundamental": "基本面",
+    "event_sentiment": "事件情绪",
+}
+
 
 def _build_factor_bar(confidence: float, max_bar_width: int = 10) -> str:
     """Build a 10-cell ASCII bar chart proportional to confidence (0-100)."""
@@ -44,7 +53,7 @@ def _print_strategy_breakdown(signals: dict) -> None:
         print(f"  {strat_name:18s}  {color}{arrow} {conf:5.1f}{Style.RESET_ALL}")
 
 
-def _print_factor_detail_block(signals: dict, strategy_labels: dict) -> None:
+def _print_factor_detail_block(signals: dict) -> None:
     """Block A: Print top-3 sub-factor detail per strategy, grouped and bar-charted."""
     from colorama import Fore, Style
 
@@ -70,7 +79,7 @@ def _print_factor_detail_block(signals: dict, strategy_labels: dict) -> None:
             continue
         # Sort by |confidence| descending, take top 3
         factor_items.sort(key=lambda x: abs(x[2]), reverse=True)
-        label = strategy_labels.get(strat_name, strat_name)
+        label = _STRATEGY_CN_LABELS.get(strat_name, strat_name)
         print(f"  {label}:")
         for fname, fdir, fconf in factor_items[:3]:
             arrow = "↑" if fdir > 0 else "↓" if fdir < 0 else "—"
