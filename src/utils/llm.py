@@ -399,7 +399,6 @@ def _strip_reasoning_blocks(content: str) -> str:
     return cleaned.strip()
 
 
-
 def _try_json_loads(payload: str) -> dict | None:
     """Attempts strict JSON parsing with a couple of bounded cleanups."""
     if not payload:

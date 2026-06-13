@@ -136,9 +136,9 @@ def _collect_selected_only_shrink_top_reasons(
     return [
         reason
         for reason in [
-        "watchlist_filter_diagnostics_selected_only_shrink_applied" if watchlist_filter_diagnostics_selected_only_shrink_guard.get("applied") else None,
-        "layer_c_watchlist_selected_only_shrink_applied" if layer_c_watchlist_selected_only_shrink_guard.get("applied") else None,
-        "short_trade_boundary_selected_only_shrink_applied" if short_trade_boundary_selected_only_shrink_guard.get("applied") else None,
+            "watchlist_filter_diagnostics_selected_only_shrink_applied" if watchlist_filter_diagnostics_selected_only_shrink_guard.get("applied") else None,
+            "layer_c_watchlist_selected_only_shrink_applied" if layer_c_watchlist_selected_only_shrink_guard.get("applied") else None,
+            "short_trade_boundary_selected_only_shrink_applied" if short_trade_boundary_selected_only_shrink_guard.get("applied") else None,
         ]
         if reason is not None
     ]

@@ -104,7 +104,6 @@ class AShareDataError(Exception):
     """A股数据获取错误"""
 
 
-
 def _resolve_akshare_cache_ttl(api_name: str, **kwargs) -> int:
     return _resolve_akshare_cache_ttl_impl(api_name, **kwargs)
 
@@ -290,19 +289,19 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
                 end_date=end_date,
                 period=period,
                 use_mock=use_mock,
-            cache_key=cache_key,
-            cache=_cache,
-            hydrate_cached_fn=hydrate_cached_prices,
-            get_mock_prices_fn=get_mock_prices,
-            get_akshare_fn=_get_akshare,
-            load_prices_fn=lambda **kwargs: load_prices_with_fallback(
-                fetch_prices_from_akshare_fn=_fetch_prices_from_akshare,
-                fetch_prices_from_tencent_fn=_get_prices_from_tencent,
-                cache_prices_fn=_cache_prices,
                 cache_key=cache_key,
-                error_factory=AShareDataError,
-                **kwargs,
-            ),
+                cache=_cache,
+                hydrate_cached_fn=hydrate_cached_prices,
+                get_mock_prices_fn=get_mock_prices,
+                get_akshare_fn=_get_akshare,
+                load_prices_fn=lambda **kwargs: load_prices_with_fallback(
+                    fetch_prices_from_akshare_fn=_fetch_prices_from_akshare,
+                    fetch_prices_from_tencent_fn=_get_prices_from_tencent,
+                    cache_prices_fn=_cache_prices,
+                    cache_key=cache_key,
+                    error_factory=AShareDataError,
+                    **kwargs,
+                ),
                 error_factory=AShareDataError,
             ),
             error_factory=AShareDataError,
@@ -445,6 +444,7 @@ def get_mock_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
         List[Price]: 模拟价格数据
     """
     import random
+
     return build_mock_prices(start_date, end_date, random)
 
 
@@ -453,6 +453,7 @@ def get_mock_financial_metrics(ticker: str, end_date: str, limit: int = 10) -> l
     获取模拟财务指标数据（用于测试或网络不可用的情况）
     """
     import random
+
     return build_mock_financial_metrics(ticker, end_date, limit, random)
 
 
@@ -551,6 +552,7 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str | None =
         try:
             from src.tools.tushare_api import get_stock_name
         except ImportError:
+
             def get_stock_name(_ticker):
                 return ""
 

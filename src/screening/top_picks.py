@@ -221,8 +221,6 @@ def _render_verdict_distribution(picks: list[dict], market_regime: str) -> str:
     return "  分布: " + " | ".join(parts) if parts else ""
 
 
-
-
 # ---------------------------------------------------------------------------
 # Market opportunity index
 # ---------------------------------------------------------------------------
