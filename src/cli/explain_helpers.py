@@ -5,6 +5,11 @@ Round 20.14 抽取: 五个 ``run_explain`` 的私有辅助函数, 约 200 行。
 """
 from __future__ import annotations
 
+# 4 策略的标准展示顺序 — 与 why_not._STRATEGY_ORDER / signal_consistency.strategy_names 一致。
+# TODO(large-refactor): 全仓有 10+ 处重复此 tuple (5 个命名常量 + 5 处 inline),
+# 应统一为单一 canonical 常量; 本轮先消除本文件内 2 处 inline。
+_STRATEGY_ORDER: tuple[str, ...] = ("trend", "mean_reversion", "fundamental", "event_sentiment")
+
 
 def _build_factor_bar(confidence: float, max_bar_width: int = 10) -> str:
     """Build a 10-cell ASCII bar chart proportional to confidence (0-100)."""
@@ -27,7 +32,7 @@ def _print_strategy_breakdown(signals: dict) -> None:
     from colorama import Fore, Style
 
     print(f"\n{Fore.CYAN}策略贡献:{Style.RESET_ALL}")
-    for strat_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+    for strat_name in _STRATEGY_ORDER:
         sig = signals.get(strat_name)
         if not sig:
             print(f"  {strat_name:18s}  —  数据缺失")
@@ -45,7 +50,7 @@ def _print_factor_detail_block(signals: dict, strategy_labels: dict) -> None:
 
     print(f"\n{Fore.CYAN}因子明细:{Style.RESET_ALL}")
     has_any_factor = False
-    for strat_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+    for strat_name in _STRATEGY_ORDER:
         sig = signals.get(strat_name)
         if not sig or not isinstance(sig, dict):
             continue
