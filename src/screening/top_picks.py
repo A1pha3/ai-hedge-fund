@@ -18,6 +18,7 @@ Design principle:
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -747,6 +748,154 @@ def _score_color(composite_score: float) -> str:
     return Fore.RED
 
 
+@dataclass(frozen=True)
+class TopPicksRenderContext:
+    market_regime: str
+    new_tickers: set[str]
+    report_dir: Path
+    trade_date: str
+
+
+def _print_pick_entry(
+    idx: int,
+    item: dict,
+    context: TopPicksRenderContext,
+) -> None:
+    """Render a single representative pick and its optional detail lines."""
+    composite_score = float(item.get("composite_score", item.get("score_b", 0.0)) or 0.0)
+    grade = _composite_grade(composite_score)
+    name = str(item.get("name", "") or item.get("ticker", ""))[:14]
+    verdict = build_front_door_verdict(item, market_regime=context.market_regime)
+
+    is_new = str(item.get("ticker", "")) in context.new_tickers
+    new_badge = f" {Fore.GREEN}🆕{Style.RESET_ALL}" if is_new else ""
+
+    consec_days = int(item.get("consecutive_days", 0) or 0)
+    consec_status = str(item.get("consecutive_status", "") or "")
+    consec_icon = _status_icon(consec_status) if consec_days > 0 else ""
+    consec_str = f" {consec_icon}{consec_days}d" if consec_days > 0 else ""
+
+    factor_attr = _render_factor_attribution(item)
+    signal_str = _build_signal_breakdown(item)
+    bullish, total = _compute_confluence(item)
+    confluence_str = _render_confluence(bullish, total)
+
+    t30 = (item.get("expected_returns") or {}).get("t30")
+    t30_wr = (item.get("win_rates") or {}).get("t30")
+    sample_count = int(item.get("bucket_sample_count", 0) or 0)
+    cluster_label = str(item.get("cluster_label", "") or "")
+    cluster_size = int(item.get("cluster_size", 1) or 1)
+    alternatives = [str(ticker) for ticker in (item.get("cluster_alternatives") or []) if str(ticker)]
+
+    t30_str = f"{t30:+.2f}%" if isinstance(t30, (int, float)) else "—"
+    t30_wr_str = f"{t30_wr:.0%}" if isinstance(t30_wr, (int, float)) else "—"
+    base_score = float(item.get("base_score", item.get("score_b", 0.0)) or 0.0)
+    score_color = _score_color(composite_score)
+
+    print(
+        f"  {Fore.WHITE}{idx}.{Style.RESET_ALL} "
+        f"{Fore.CYAN}{str(item.get('ticker', '')):<8}{Style.RESET_ALL} "
+        f"{name:<14}{new_badge} "
+        f"{score_color}{composite_score:>+.3f}{Style.RESET_ALL} "
+        f"{grade}{consec_str} {confluence_str}  "
+        f"(base={base_score:.3f} {signal_str}{factor_attr})"
+    )
+    print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}  市场门控={verdict['market_regime']}")
+    print(f"     失效条件: {verdict['invalidation_reason']}")
+
+    if verdict["action"] == "BUY":
+        sl_tp = _render_stop_loss_take_profit(
+            str(item.get("ticker", "")),
+            str(item.get("name", "") or ""),
+            trade_date=context.trade_date,
+        )
+        if sl_tp:
+            print(sl_tp)
+
+    if consec_days >= 2:
+        trend = _render_score_trend(
+            str(item.get("ticker", "")),
+            report_dir=context.report_dir,
+        )
+        if trend:
+            print(f"     趋势:{trend}")
+
+    if cluster_size > 1 and alternatives and bool(item.get("is_cluster_representative")):
+        print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
+
+
+def _print_top_picks_header(
+    trade_date: str,
+    freshness_warning: str,
+    representative_picks: list[dict],
+    market_regime: str,
+) -> None:
+    """Render the static header block above the representative picks."""
+    print(f"\n{Fore.CYAN}{Style.BRIGHT}🎯 Today's Top Picks{Style.RESET_ALL}")
+    print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+30 posterior edge + 代表票去重 + 连续推荐加权")
+    if freshness_warning:
+        print(freshness_warning)
+    print(_render_market_opportunity_index(representative_picks, market_regime))
+    print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
+
+
+def _print_high_confidence_summary(representative_picks: list[dict]) -> None:
+    """Render the quick high-confidence summary line."""
+    strong_picks = [item for item in representative_picks if float(item.get("composite_score", 0.0) or 0.0) >= 0.5]
+    if strong_picks:
+        tickers = ", ".join(f"{Fore.CYAN}{str(pick.get('ticker', ''))}{Style.RESET_ALL}" for pick in strong_picks[:3])
+        print(f"  💡 High confidence picks: {tickers}")
+        return
+    print("  ⚠ No high-confidence picks today. Consider waiting for better signals.")
+
+
+def _print_hit_rate_block(report_dir: Path) -> None:
+    """Render the historical hit-rate summary when verification data is available."""
+    try:
+        verify = compute_verify_recommendations(
+            lookback_days=30,
+            reports_dir=report_dir,
+        )
+        summary = _render_hit_rate_summary(verify)
+        if summary:
+            print(summary)
+    except Exception:
+        pass  # Non-critical: hit-rate summary is best-effort
+
+
+def _print_top_picks_footer(
+    report_data: dict,
+    representative_picks: list[dict],
+    market_regime: str,
+    new_tickers: set[str],
+    dropped_tickers: set[str],
+    ranked: list[dict],
+    report_dir: Path,
+) -> None:
+    """Render the footer summaries below the representative pick list."""
+    print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
+
+    dist = _render_verdict_distribution(representative_picks, market_regime)
+    if dist:
+        print(dist)
+
+    sector_focus = _render_sector_focus(representative_picks)
+    if sector_focus:
+        print(sector_focus)
+
+    sector_rotation = _render_sector_rotation(report_data, representative_picks)
+    if sector_rotation:
+        print(sector_rotation)
+
+    if new_tickers or dropped_tickers:
+        changes = _render_pick_changes(new_tickers, dropped_tickers, ranked)
+        if changes:
+            print(changes)
+
+    _print_high_confidence_summary(representative_picks)
+    _print_hit_rate_block(report_dir)
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -799,129 +948,31 @@ def run_top_picks(
     # R13: Detect new/dropped picks vs previous report
     new_tickers, dropped_tickers = _detect_pick_changes(report_path, ranked)
 
-    # Step 3: Render compact output
-    print(f"\n{Fore.CYAN}{Style.BRIGHT}🎯 Today's Top Picks{Style.RESET_ALL}")
-    print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+30 posterior edge + 代表票去重 + 连续推荐加权")
-    # R12: Data freshness warning
-    if freshness_warning:
-        print(freshness_warning)
-    # Market opportunity traffic light
-    opp = _render_market_opportunity_index(representative_picks, market_regime)
-    print(opp)
-    print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
+    _print_top_picks_header(
+        trade_date,
+        freshness_warning,
+        representative_picks,
+        market_regime,
+    )
 
+    render_context = TopPicksRenderContext(
+        market_regime=market_regime,
+        new_tickers=new_tickers,
+        report_dir=search_dir,
+        trade_date=trade_date,
+    )
     for idx, item in enumerate(representative_picks, 1):
-        composite_score = float(item.get("composite_score", item.get("score_b", 0.0)) or 0.0)
-        grade = _composite_grade(composite_score)
-        name = str(item.get("name", "") or item.get("ticker", ""))[:14]
-        verdict = build_front_door_verdict(item, market_regime=market_regime)
+        _print_pick_entry(idx, item, render_context)
 
-        # R13: New pick badge
-        is_new = str(item.get("ticker", "")) in new_tickers
-        new_badge = f" {Fore.GREEN}🆕{Style.RESET_ALL}" if is_new else ""
-
-        # R4: Consecutive recommendation display
-        consec_days = int(item.get("consecutive_days", 0) or 0)
-        consec_status = str(item.get("consecutive_status", "") or "")
-        consec_icon = _status_icon(consec_status) if consec_days > 0 else ""
-        consec_str = f" {consec_icon}{consec_days}d" if consec_days > 0 else ""
-
-        # R15: Factor attribution
-        factor_attr = _render_factor_attribution(item)
-
-        signal_str = _build_signal_breakdown(item)
-
-        # R10: Multi-strategy confluence
-        bullish, total = _compute_confluence(item)
-        confluence_str = _render_confluence(bullish, total)
-
-        t30 = (item.get("expected_returns") or {}).get("t30")
-        t30_wr = (item.get("win_rates") or {}).get("t30")
-        sample_count = int(item.get("bucket_sample_count", 0) or 0)
-        cluster_label = str(item.get("cluster_label", "") or "")
-        cluster_size = int(item.get("cluster_size", 1) or 1)
-        alternatives = [str(ticker) for ticker in (item.get("cluster_alternatives") or []) if str(ticker)]
-
-        t30_str = f"{t30:+.2f}%" if isinstance(t30, (int, float)) else "—"
-        t30_wr_str = f"{t30_wr:.0%}" if isinstance(t30_wr, (int, float)) else "—"
-        base_score = float(item.get("base_score", item.get("score_b", 0.0)) or 0.0)
-        score_color = _score_color(composite_score)
-
-        print(
-            f"  {Fore.WHITE}{idx}.{Style.RESET_ALL} "
-            f"{Fore.CYAN}{str(item.get('ticker', '')):<8}{Style.RESET_ALL} "
-            f"{name:<14}{new_badge} "
-            f"{score_color}{composite_score:>+.3f}{Style.RESET_ALL} "
-            f"{grade}{consec_str} {confluence_str}  "
-            f"(base={base_score:.3f} {signal_str}{factor_attr})"
-        )
-        print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}  市场门控={verdict['market_regime']}")
-        print(f"     失效条件: {verdict['invalidation_reason']}")
-
-        # R8: Stop-loss/take-profit for BUY picks
-        if verdict["action"] == "BUY":
-            sl_tp = _render_stop_loss_take_profit(
-                str(item.get("ticker", "")),
-                str(item.get("name", "") or ""),
-                trade_date=trade_date,
-            )
-            if sl_tp:
-                print(sl_tp)
-
-        # R9: Score trend for consecutive recommendations
-        if consec_days >= 2:
-            trend = _render_score_trend(
-                str(item.get("ticker", "")),
-                report_dir=search_dir,
-            )
-            if trend:
-                print(f"     趋势:{trend}")
-
-        if cluster_size > 1 and alternatives and bool(item.get("is_cluster_representative")):
-            print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
-
-    print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
-
-    # Verdict distribution summary
-    dist = _render_verdict_distribution(representative_picks, market_regime)
-    if dist:
-        print(dist)
-
-    # R11: Sector focus summary
-    sector_focus = _render_sector_focus(representative_picks)
-    if sector_focus:
-        print(sector_focus)
-
-    # R14: Sector rotation direction
-    sector_rotation = _render_sector_rotation(report_data, representative_picks)
-    if sector_rotation:
-        print(sector_rotation)
-
-    # R13: New/dropped pick summary
-    if new_tickers or dropped_tickers:
-        changes = _render_pick_changes(new_tickers, dropped_tickers, ranked)
-        if changes:
-            print(changes)
-
-    # Quick tips
-    strong_picks = [i for i in representative_picks if float(i.get("composite_score", 0.0) or 0.0) >= 0.5]
-    if strong_picks:
-        tickers = ", ".join(f"{Fore.CYAN}{str(p.get('ticker', ''))}{Style.RESET_ALL}" for p in strong_picks[:3])
-        print(f"  💡 High confidence picks: {tickers}")
-    else:
-        print("  ⚠ No high-confidence picks today. Consider waiting for better signals.")
-
-    # R5: Historical hit-rate summary
-    try:
-        verify = compute_verify_recommendations(
-            lookback_days=30,
-            reports_dir=search_dir,
-        )
-        summary = _render_hit_rate_summary(verify)
-        if summary:
-            print(summary)
-    except Exception:
-        pass  # Non-critical: hit-rate summary is best-effort
+    _print_top_picks_footer(
+        report_data,
+        representative_picks,
+        market_regime,
+        new_tickers,
+        dropped_tickers,
+        ranked,
+        search_dir,
+    )
 
     print()
     return 0
