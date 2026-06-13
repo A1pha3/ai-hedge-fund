@@ -371,6 +371,56 @@ def _build_selected_strategy_weights(selected_strategies: list[str] | None) -> "
     )
 
 
+def _build_auto_screening_payload(
+    *,
+    trade_date: str,
+    top_n: int,
+    market_state,
+    candidates,
+    fused,
+    top_results_serializable: list[dict],
+    sector_warnings: list,
+    consecutive_highlight: int,
+    decay_summary: dict,
+    industry_rotation_payload: list[dict],
+    batch_fetcher_use_batch: bool,
+    batch_fetcher_stats: dict,
+) -> dict:
+    """Build the canonical ``--auto`` screening payload.
+
+    Single source of truth shared by the on-disk report (``_save_json_report``)
+    and the in-memory return value of :func:`compute_auto_screening_results`,
+    so the two cannot drift on field shape, ordering, or P*-tag annotations.
+    """
+    return {
+        "mode": "auto_screening",
+        "date": trade_date,
+        "market_state": market_state.model_dump(),
+        "layer_a_count": len(candidates),
+        "total_scored": len(fused),
+        "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
+        "top_n": top_n,
+        "recommendations": top_results_serializable,
+        "sector_concentration_warnings": sector_warnings,
+        "consecutive_recommendation": {
+            "lookback_days": DEFAULT_LOOKBACK_DAYS,
+            "high_streak_count": consecutive_highlight,
+        },
+        # P0-3: 信号衰减汇总
+        "signal_decay_summary": decay_summary,
+        # P0-1: 批量获取层统计
+        "batch_data_fetcher": {
+            "use_batch": batch_fetcher_use_batch,
+            **batch_fetcher_stats,
+        },
+        # P1-2: 行业轮动信号
+        "industry_rotation": industry_rotation_payload,
+        # P1-10: 条件单建议 (基于 ATR 波动率) — 默认注入空数组,
+        # 真实价格 provider 由调用方在 Web 端 / CLI 端注入
+        "conditional_orders": [],
+    }
+
+
 def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_strategies: list[str] | None = None) -> dict:
     """Run the full --auto pipeline and return a JSON-serializable payload (no IO side effects).
 
@@ -514,60 +564,37 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     # 等跨日模块能读到最新文件。
     _save_json_report(
         f"auto_screening_{trade_date}.json",
-        {
-            "mode": "auto_screening",
-            "date": trade_date,
-            "market_state": market_state.model_dump(),
-            "layer_a_count": len(candidates),
-            "total_scored": len(fused),
-            "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
-            "top_n": top_n,
-            "recommendations": top_results_serializable,
-            "sector_concentration_warnings": sector_warnings,
-            "consecutive_recommendation": {
-                "lookback_days": DEFAULT_LOOKBACK_DAYS,
-                "high_streak_count": consecutive_highlight,
-            },
-            "signal_decay_summary": decay_summary,
-            "batch_data_fetcher": {
-                "use_batch": batch_fetcher.use_batch,
-                **batch_fetcher.stats(),
-            },
-            "industry_rotation": industry_rotation_payload,
-            # P1-10: 条件单建议 (空数组 — 真实价格 provider 由调用方注入)
-            "conditional_orders": [],
-        },
+        _build_auto_screening_payload(
+            trade_date=trade_date,
+            top_n=top_n,
+            market_state=market_state,
+            candidates=candidates,
+            fused=fused,
+            top_results_serializable=top_results_serializable,
+            sector_warnings=sector_warnings,
+            consecutive_highlight=consecutive_highlight,
+            decay_summary=decay_summary,
+            industry_rotation_payload=industry_rotation_payload,
+            batch_fetcher_use_batch=batch_fetcher.use_batch,
+            batch_fetcher_stats=batch_fetcher.stats(),
+        ),
     )
 
     # 构建 payload (不再包含 market_state.model_dump() 自身 — caller 单独获取)
-    fetcher_stats = batch_fetcher.stats()
-    return {
-        "mode": "auto_screening",
-        "date": trade_date,
-        "market_state": market_state.model_dump(),
-        "layer_a_count": len(candidates),
-        "total_scored": len(fused),
-        "high_pool_count": sum(1 for item in fused if item.score_b >= 0.35),
-        "top_n": top_n,
-        "recommendations": top_results_serializable,
-        "sector_concentration_warnings": sector_warnings,
-        "consecutive_recommendation": {
-            "lookback_days": DEFAULT_LOOKBACK_DAYS,
-            "high_streak_count": consecutive_highlight,
-        },
-        # P0-3: 信号衰减汇总
-        "signal_decay_summary": decay_summary,
-        # P0-1: 批量获取层统计
-        "batch_data_fetcher": {
-            "use_batch": batch_fetcher.use_batch,
-            **fetcher_stats,
-        },
-        # P1-2: 行业轮动信号
-        "industry_rotation": industry_rotation_payload,
-        # P1-10: 条件单建议 (基于 ATR 波动率) — 默认注入空数组,
-        # 真实价格 provider 由调用方在 Web 端 / CLI 端注入
-        "conditional_orders": [],
-    }
+    return _build_auto_screening_payload(
+        trade_date=trade_date,
+        top_n=top_n,
+        market_state=market_state,
+        candidates=candidates,
+        fused=fused,
+        top_results_serializable=top_results_serializable,
+        sector_warnings=sector_warnings,
+        consecutive_highlight=consecutive_highlight,
+        decay_summary=decay_summary,
+        industry_rotation_payload=industry_rotation_payload,
+        batch_fetcher_use_batch=batch_fetcher.use_batch,
+        batch_fetcher_stats=batch_fetcher.stats(),
+    )
 
 
 def run_preheat(
