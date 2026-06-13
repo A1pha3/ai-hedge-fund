@@ -44,7 +44,7 @@ def test_metrics_summary_aggregates_agents(tmp_path, monkeypatch):
 
     entries = [
         {
-            "timestamp": "2026-06-06T12:00:00",
+            "timestamp": "2026-06-13T12:00:00",
             "agent_name": "warren_buffett_agent",
             "model_provider": "OpenAI",
             "model_name": "gpt-4o",
@@ -54,7 +54,7 @@ def test_metrics_summary_aggregates_agents(tmp_path, monkeypatch):
             "response_chars": 500,
         },
         {
-            "timestamp": "2026-06-06T12:01:00",
+            "timestamp": "2026-06-13T12:01:00",
             "agent_name": "warren_buffett_agent",
             "model_provider": "OpenAI",
             "model_name": "gpt-4o",
@@ -64,7 +64,7 @@ def test_metrics_summary_aggregates_agents(tmp_path, monkeypatch):
             "response_chars": 600,
         },
         {
-            "timestamp": "2026-06-06T12:02:00",
+            "timestamp": "2026-06-13T12:02:00",
             "agent_name": "cathie_wood_agent",
             "model_provider": "Anthropic",
             "model_name": "claude-sonnet",
@@ -76,7 +76,7 @@ def test_metrics_summary_aggregates_agents(tmp_path, monkeypatch):
     ]
 
     # Use a filename pattern that matches the recent date
-    jsonl = tmp_path / "llm_metrics_20260606_120000.jsonl"
+    jsonl = tmp_path / "llm_metrics_20260613_120000.jsonl"
     _write_jsonl(jsonl, entries)
 
     client = TestClient(_make_app())
@@ -106,7 +106,7 @@ def test_metrics_summary_respects_lookback_days(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
 
     # Recent file
-    recent = tmp_path / "llm_metrics_20260606_000000.jsonl"
+    recent = tmp_path / "llm_metrics_20260613_000000.jsonl"
     _write_jsonl(
         recent,
         [
@@ -124,7 +124,7 @@ def test_metrics_summary_respects_lookback_days(tmp_path, monkeypatch):
     )
 
     # Old file (more than 7 days ago)
-    old = tmp_path / "llm_metrics_20260520_000000.jsonl"
+    old = tmp_path / "llm_metrics_20250520_000000.jsonl"
     _write_jsonl(
         old,
         [
