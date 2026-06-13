@@ -683,3 +683,85 @@ def test_consensus_bonus_bullish_withdrawn_in_risk_off_without_fundamental() -> 
     # Risk-off: low breadth + low position_scale, no strong fundamental
     result = _should_apply_consensus_bonus(signals, MarketState(breadth_ratio=0.30, position_scale=0.50))
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# fuse_signals_for_ticker integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_fuse_signals_for_ticker_bullish_produces_positive_score() -> None:
+    """Strong bullish signals → positive score_b, buy-ish decision."""
+    fused = fuse_signals_for_ticker(
+        "000001",
+        signals={
+            "trend": StrategySignal(direction=1, confidence=85.0, completeness=1.0),
+            "mean_reversion": StrategySignal(direction=1, confidence=75.0, completeness=1.0),
+            "fundamental": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+            "event_sentiment": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        },
+        market_state=MarketState(),
+    )
+    assert fused.score_b > 0.0
+    assert fused.ticker == "000001"
+    assert fused.decision in ("strong_buy", "watch")
+
+
+def test_fuse_signals_for_ticker_bearish_produces_negative_score() -> None:
+    """Strong bearish signals → negative score_b, sell-ish decision."""
+    fused = fuse_signals_for_ticker(
+        "000002",
+        signals={
+            "trend": StrategySignal(direction=-1, confidence=85.0, completeness=1.0),
+            "mean_reversion": StrategySignal(direction=-1, confidence=75.0, completeness=1.0),
+            "fundamental": StrategySignal(direction=-1, confidence=80.0, completeness=1.0),
+            "event_sentiment": StrategySignal(direction=-1, confidence=70.0, completeness=1.0),
+        },
+        market_state=MarketState(),
+    )
+    assert fused.score_b < 0.0
+    assert fused.decision in ("sell", "strong_sell")
+
+
+def test_fuse_signals_for_ticker_returns_fused_score_with_weights() -> None:
+    """Returns FusedScore with weights_used populated."""
+    fused = fuse_signals_for_ticker(
+        "000003",
+        signals={"trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0)},
+        market_state=MarketState(),
+    )
+    assert fused.score_b is not None
+    assert len(fused.weights_used) > 0
+    assert "trend" in fused.weights_used
+
+
+def test_fuse_signals_for_ticker_uses_market_state_weights() -> None:
+    """Custom market_state.adjusted_weights override defaults."""
+    fused_default = fuse_signals_for_ticker(
+        "000004",
+        signals={"trend": StrategySignal(direction=1, confidence=80.0, completeness=1.0)},
+        market_state=MarketState(),
+    )
+    fused_custom = fuse_signals_for_ticker(
+        "000004",
+        signals={"trend": StrategySignal(direction=1, confidence=80.0, completeness=1.0)},
+        market_state=MarketState(adjusted_weights={"trend": 1.0, "mean_reversion": 0.0, "fundamental": 0.0, "event_sentiment": 0.0}),
+    )
+    # With all weight on trend, score should be higher (no dilution)
+    assert fused_custom.score_b >= fused_default.score_b
+
+
+def test_fuse_signals_for_ticker_arbitration_applied_populated() -> None:
+    """Arbitration list is populated when consensus bonus triggers."""
+    fused = fuse_signals_for_ticker(
+        "000005",
+        signals={
+            "trend": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+            "mean_reversion": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+            "fundamental": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+            "event_sentiment": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+        },
+        market_state=MarketState(),
+    )
+    # 4 bullish with high confidence → should trigger consensus bonus
+    assert "consensus_bonus" in fused.arbitration_applied
