@@ -423,3 +423,44 @@ class TestHelperFunctions:
         _print_strategy_breakdown({})
         output = capsys.readouterr().out
         assert output.count("数据缺失") == 4
+
+    # --- _print_factor_detail_block (Block A) ---
+
+    def test_print_factor_detail_block_top3_sorted(self, capsys):
+        """Top 3 factors shown per strategy, sorted by |confidence| descending."""
+        from src.cli.explain_helpers import _print_factor_detail_block
+        signals = {
+            "trend": {
+                "sub_factors": {
+                    "momentum": {"name": "momentum", "direction": 1, "confidence": 72.0},
+                    "supply_pressure": {"name": "supply_pressure", "direction": -1, "confidence": 45.0},
+                    "volatility": {"name": "volatility", "direction": 1, "confidence": 30.0},
+                    "macd_signal": {"name": "macd_signal", "direction": 0, "confidence": 10.0},
+                }
+            }
+        }
+        _print_factor_detail_block(signals)
+        output = capsys.readouterr().out
+        assert "因子明细" in output
+        assert "趋势策略" in output  # Chinese label for trend
+        # Top 3 by |confidence|: momentum(72), supply_pressure(45), volatility(30)
+        assert "momentum" in output
+        assert "supply_pressure" in output
+        assert "volatility" in output
+        assert "macd_signal" not in output  # 4th, excluded
+        assert "█" in output  # bar chart rendered
+
+    def test_print_factor_detail_block_empty_shows_fallback(self, capsys):
+        """Empty signals → 暂无因子明细数据 fallback."""
+        from src.cli.explain_helpers import _print_factor_detail_block
+        _print_factor_detail_block({})
+        output = capsys.readouterr().out
+        assert "暂无因子明细数据" in output
+
+    def test_print_factor_detail_block_no_subfactors_shows_fallback(self, capsys):
+        """Strategy without sub_factors → skipped; fallback shown if none have factors."""
+        from src.cli.explain_helpers import _print_factor_detail_block
+        signals = {"trend": {"direction": 1, "confidence": 65.0}}  # no sub_factors key
+        _print_factor_detail_block(signals)
+        output = capsys.readouterr().out
+        assert "暂无因子明细数据" in output
