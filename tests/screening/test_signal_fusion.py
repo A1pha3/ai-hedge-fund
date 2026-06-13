@@ -542,3 +542,144 @@ def test_compute_score_b_zero_confidence() -> None:
     signals = {"trend": StrategySignal(direction=1, confidence=0.0, completeness=1.0)}
     score = compute_score_b(signals, {"trend": 1.0}, [])
     assert score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# _apply_risk_off_short_term_demotion tests
+# ---------------------------------------------------------------------------
+
+
+def test_risk_off_demotion_applies_when_low_breadth() -> None:
+    """Low breadth_ratio + bullish trend → trend confidence demoted by 0.80."""
+    from src.screening.signal_fusion import _apply_risk_off_short_term_demotion
+
+    trend = StrategySignal(direction=1, confidence=80.0, completeness=1.0)
+    event = StrategySignal(direction=1, confidence=70.0, completeness=1.0)
+    signals = {"trend": trend, "event_sentiment": event}
+    arbitration: list[str] = []
+
+    _apply_risk_off_short_term_demotion(
+        signals, MarketState(breadth_ratio=0.30, position_scale=0.80), arbitration,
+    )
+
+    assert trend.confidence == pytest.approx(64.0)  # 80 * 0.80
+    assert event.confidence == pytest.approx(49.0)  # 70 * 0.70
+    assert "risk_off" in arbitration
+
+
+def test_risk_off_demotion_skips_when_good_breadth() -> None:
+    """Good breadth_ratio (>0.42) and position_scale (>0.75) → no demotion."""
+    from src.screening.signal_fusion import _apply_risk_off_short_term_demotion
+
+    trend = StrategySignal(direction=1, confidence=80.0, completeness=1.0)
+    signals = {"trend": trend}
+    arbitration: list[str] = []
+
+    _apply_risk_off_short_term_demotion(
+        signals, MarketState(breadth_ratio=0.50, position_scale=0.90), arbitration,
+    )
+
+    assert trend.confidence == 80.0  # unchanged
+    assert arbitration == []
+
+
+def test_risk_off_demotion_skips_when_no_bullish_signals() -> None:
+    """Bearish signals are not demoted by risk-off logic."""
+    from src.screening.signal_fusion import _apply_risk_off_short_term_demotion
+
+    trend = StrategySignal(direction=-1, confidence=80.0, completeness=1.0)
+    signals = {"trend": trend}
+    arbitration: list[str] = []
+
+    _apply_risk_off_short_term_demotion(
+        signals, MarketState(breadth_ratio=0.30, position_scale=0.50), arbitration,
+    )
+
+    assert trend.confidence == 80.0  # unchanged
+    assert arbitration == []
+
+
+def test_risk_off_demotion_skips_with_strong_fundamental() -> None:
+    """Strong fundamental support (direction>0, confidence>=65) prevents demotion."""
+    from src.screening.signal_fusion import _apply_risk_off_short_term_demotion
+
+    trend = StrategySignal(direction=1, confidence=80.0, completeness=1.0)
+    fundamental = StrategySignal(direction=1, confidence=70.0, completeness=1.0)
+    signals = {"trend": trend, "fundamental": fundamental}
+    arbitration: list[str] = []
+
+    _apply_risk_off_short_term_demotion(
+        signals, MarketState(breadth_ratio=0.30, position_scale=0.50), arbitration,
+    )
+
+    assert trend.confidence == 80.0  # unchanged — fundamental protects
+    assert arbitration == []
+
+
+# ---------------------------------------------------------------------------
+# _should_apply_consensus_bonus tests
+# ---------------------------------------------------------------------------
+
+
+def test_consensus_bonus_applies_with_3_plus_bullish() -> None:
+    """3+ bullish strategies with confidence > 60 → consensus bonus."""
+    from src.screening.signal_fusion import _should_apply_consensus_bonus
+
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        "fundamental": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        "event_sentiment": StrategySignal(direction=0, confidence=50.0, completeness=1.0),
+    }
+    assert _should_apply_consensus_bonus(signals, MarketState()) is True
+
+
+def test_consensus_bonus_applies_with_3_plus_bearish() -> None:
+    """3+ bearish strategies with confidence > 60 → consensus bonus."""
+    from src.screening.signal_fusion import _should_apply_consensus_bonus
+
+    signals = {
+        "trend": StrategySignal(direction=-1, confidence=70.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=-1, confidence=70.0, completeness=1.0),
+        "fundamental": StrategySignal(direction=-1, confidence=70.0, completeness=1.0),
+    }
+    assert _should_apply_consensus_bonus(signals, MarketState()) is True
+
+
+def test_consensus_bonus_skips_with_fewer_than_3() -> None:
+    """Only 2 bullish strategies → no consensus bonus."""
+    from src.screening.signal_fusion import _should_apply_consensus_bonus
+
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        "fundamental": StrategySignal(direction=-1, confidence=70.0, completeness=1.0),
+    }
+    assert _should_apply_consensus_bonus(signals, MarketState()) is False
+
+
+def test_consensus_bonus_skips_low_confidence() -> None:
+    """3 bullish but confidence ≤ 60 → no consensus bonus."""
+    from src.screening.signal_fusion import _should_apply_consensus_bonus
+
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
+        "fundamental": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
+    }
+    assert _should_apply_consensus_bonus(signals, MarketState()) is False
+
+
+def test_consensus_bonus_bullish_withdrawn_in_risk_off_without_fundamental() -> None:
+    """Bullish consensus bonus WITHHELD in risk-off mode without strong fundamental (R20.17)."""
+    from src.screening.signal_fusion import _should_apply_consensus_bonus
+
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        "fundamental": StrategySignal(direction=0, confidence=50.0, completeness=0.5),
+        "event_sentiment": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+    }
+    # Risk-off: low breadth + low position_scale, no strong fundamental
+    result = _should_apply_consensus_bonus(signals, MarketState(breadth_ratio=0.30, position_scale=0.50))
+    assert result is False
