@@ -224,3 +224,52 @@ class TestDetectSignalDecay:
     def test_empty_recommendations(self, tmp_path) -> None:
         result = detect_signal_decay([], report_dir=tmp_path, end_date="20260110")
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# _infer_end_date
+# ---------------------------------------------------------------------------
+
+
+class TestInferEndDate:
+    """Infer the latest report date from auto_screening_*.json filenames."""
+
+    def test_nonexistent_dir_returns_none(self, tmp_path):
+        from src.screening.signal_decay_detector import _infer_end_date
+
+        assert _infer_end_date(tmp_path / "does_not_exist") is None
+
+    def test_empty_dir_returns_none(self, tmp_path):
+        from src.screening.signal_decay_detector import _infer_end_date
+
+        assert _infer_end_date(tmp_path) is None
+
+    def test_single_matching_file(self, tmp_path):
+        from src.screening.signal_decay_detector import _infer_end_date
+
+        (tmp_path / "auto_screening_20260610.json").write_text("{}")
+        assert _infer_end_date(tmp_path) == "20260610"
+
+    def test_multiple_files_returns_latest(self, tmp_path):
+        from src.screening.signal_decay_detector import _infer_end_date
+
+        (tmp_path / "auto_screening_20260601.json").write_text("{}")
+        (tmp_path / "auto_screening_20260615.json").write_text("{}")
+        (tmp_path / "auto_screening_20260608.json").write_text("{}")
+        assert _infer_end_date(tmp_path) == "20260615"
+
+    def test_non_matching_files_ignored(self, tmp_path):
+        from src.screening.signal_decay_detector import _infer_end_date
+
+        (tmp_path / "report_20260610.json").write_text("{}")
+        (tmp_path / "auto_screening_20260612.csv").write_text("x")
+        (tmp_path / "auto_screening_20260610.json").write_text("{}")
+        assert _infer_end_date(tmp_path) == "20260610"
+
+    def test_returns_yyyymmdd_string_format(self, tmp_path):
+        from src.screening.signal_decay_detector import _infer_end_date
+
+        (tmp_path / "auto_screening_20260101.json").write_text("{}")
+        result = _infer_end_date(tmp_path)
+        assert isinstance(result, str)
+        assert len(result) == 8
