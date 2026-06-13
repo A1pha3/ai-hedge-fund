@@ -450,33 +450,50 @@ def _render_sector_focus(picks: list[dict]) -> str:
     return f"  🔥 行业聚焦: {' '.join(parts)}"
 
 
+def _build_industry_momentum_map(rotation_signals: object) -> dict[str, float]:
+    """Normalize the report rotation payload into an industry -> momentum map."""
+    if not isinstance(rotation_signals, list):
+        return {}
+
+    momentum_map: dict[str, float] = {}
+    for signal in rotation_signals:
+        if not isinstance(signal, dict):
+            continue
+        name = str(signal.get("industry_name", "")).strip()
+        score = float(signal.get("momentum_score", 0.0) or 0.0)
+        if name:
+            momentum_map[name] = score
+    return momentum_map
+
+
+def _collect_pick_industries(picks: list[dict]) -> list[str]:
+    """Collect valid industries from the current representative picks."""
+    industries = [str(p.get("industry_sw", "") or "未知").strip() for p in picks]
+    return [industry for industry in industries if industry and industry != "未知"]
+
+
+def _momentum_arrow(score: float) -> str:
+    """Map a momentum score to the display arrow used by R14."""
+    if score > 20:
+        return f"{Fore.GREEN}↗{Style.RESET_ALL}"
+    if score < -20:
+        return f"{Fore.RED}↘{Style.RESET_ALL}"
+    return f"{Fore.WHITE}→{Style.RESET_ALL}"
+
+
 def _render_sector_rotation(report_data: dict, picks: list[dict]) -> str:
     """R14: Render sector rotation direction from industry_rotation data.
 
     Shows direction arrows for each industry in the current picks,
     using momentum_score from the report's industry_rotation payload.
     """
-    rotation_signals = report_data.get("industry_rotation") or []
-    if not rotation_signals:
-        return ""
-
-    # Build momentum map: industry_name -> momentum_score
-    momentum_map: dict[str, float] = {}
-    for sig in rotation_signals:
-        if isinstance(sig, dict):
-            name = str(sig.get("industry_name", "")).strip()
-            score = float(sig.get("momentum_score", 0.0) or 0.0)
-            if name:
-                momentum_map[name] = score
-
+    momentum_map = _build_industry_momentum_map(report_data.get("industry_rotation") or [])
     if not momentum_map:
         return ""
 
-    # Get industries in current picks
     from collections import Counter
 
-    industries = [str(p.get("industry_sw", "") or "未知").strip() for p in picks]
-    industries = [i for i in industries if i and i != "未知"]
+    industries = _collect_pick_industries(picks)
     if not industries:
         return ""
 
@@ -486,13 +503,7 @@ def _render_sector_rotation(report_data: dict, picks: list[dict]) -> str:
         mom = momentum_map.get(industry)
         if mom is None:
             continue
-        if mom > 20:
-            arrow = f"{Fore.GREEN}↗{Style.RESET_ALL}"
-        elif mom < -20:
-            arrow = f"{Fore.RED}↘{Style.RESET_ALL}"
-        else:
-            arrow = f"{Fore.WHITE}→{Style.RESET_ALL}"
-        parts.append(f"{industry}{arrow}")
+        parts.append(f"{industry}{_momentum_arrow(mom)}")
 
     if not parts:
         return ""
