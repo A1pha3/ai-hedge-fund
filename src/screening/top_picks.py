@@ -638,6 +638,60 @@ def _render_pick_changes(new: set[str], dropped: set[str], current_items: list[d
     return "  📊 " + " | ".join(parts)
 
 
+def _enrich_with_consecutive_bonus(recommendations: list[dict], report_dir: Path) -> list[dict]:
+    """Best-effort enrichment for consecutive recommendation metadata."""
+    try:
+        enriched = enrich_recommendations_with_history(
+            recommendations=list(recommendations),
+            lookback_days=10,
+            report_dir=report_dir,
+        )
+    except Exception:
+        return recommendations
+
+    for recommendation in enriched:
+        days = int(recommendation.get("consecutive_days", 0) or 0)
+        recommendation["consecutive_bonus"] = _consecutive_bonus(days)
+    return enriched
+
+
+def _build_ranked_candidates(
+    recommendations: list[dict],
+    report_dir: Path,
+    lookback_days: int,
+) -> list[dict]:
+    """Compute ranked candidates with expected returns and consecutive bonus."""
+    composite = compute_composite_scores(
+        top_n=len(recommendations),
+        lookback_days=lookback_days,
+        reports_dir=report_dir,
+    )
+    expected = compute_expected_returns(
+        recommendations=recommendations,
+        lookback_days=max(60, lookback_days),
+        reports_dir=report_dir,
+    )
+    if not composite.items:
+        return []
+
+    ranked = rank_recommendations_by_investability(
+        _enrich_with_consecutive_bonus(recommendations, report_dir),
+        composite,
+        expected,
+    )
+    for recommendation in ranked:
+        bonus = float(recommendation.get("consecutive_bonus", 0.0) or 0.0)
+        if not bonus:
+            continue
+        original_score = float(recommendation.get("composite_score", 0.0) or 0.0)
+        recommendation["composite_score"] = round(original_score + bonus, 4)
+    ranked.sort(
+        key=lambda recommendation: float(recommendation.get("composite_score", 0.0) or 0.0),
+        reverse=True,
+    )
+    return ranked
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -679,49 +733,14 @@ def run_top_picks(
         print(f"{Fore.YELLOW}No recommendations in latest report.{Style.RESET_ALL}")
         return 0
 
-    # Step 2: Compute composite scores
-    composite = compute_composite_scores(
-        top_n=count * 3,
-        lookback_days=lookback_days,
-        reports_dir=search_dir,
+    ranked = _build_ranked_candidates(
+        recs,
+        search_dir,
+        lookback_days,
     )
-    expected = compute_expected_returns(
-        recommendations=recs,
-        lookback_days=max(60, lookback_days),
-        reports_dir=search_dir,
-    )
-
-    if not composite.items:
+    if not ranked:
         print(f"{Fore.YELLOW}Unable to compute composite scores.{Style.RESET_ALL}")
         return 0
-
-    # R4: Enrich with consecutive recommendation data
-    try:
-        enriched = enrich_recommendations_with_history(
-            recommendations=list(recs),
-            lookback_days=10,
-            report_dir=search_dir,
-        )
-        # Apply consecutive bonus to composite scores
-        for rec in enriched:
-            days = int(rec.get("consecutive_days", 0) or 0)
-            rec["consecutive_bonus"] = _consecutive_bonus(days)
-    except Exception:
-        enriched = recs
-
-    ranked = rank_recommendations_by_investability(enriched, composite, expected)
-
-    # Apply consecutive bonus to ranking (re-sort with bonus)
-    for rec in ranked:
-        bonus = float(rec.get("consecutive_bonus", 0.0) or 0.0)
-        if bonus:
-            original_score = float(rec.get("composite_score", 0.0) or 0.0)
-            rec["composite_score"] = round(original_score + bonus, 4)
-
-    ranked.sort(
-        key=lambda r: float(r.get("composite_score", 0.0) or 0.0),
-        reverse=True,
-    )
 
     representative_picks = select_representative_candidates(ranked, count=count)
 
