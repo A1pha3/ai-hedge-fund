@@ -110,6 +110,22 @@ def _should_cancel_gap_open(*, atr_value: Any, gap_value: Any) -> bool:
     return bool(gap_value > (1.5 * float(atr_value)))
 
 
+def _build_warn_adjusted_order(order: Any, *, warn_size_discount: float) -> Any:
+    new_shares = int(order.shares * warn_size_discount)
+    new_amount = float(order.amount) * warn_size_discount
+    if new_shares <= 0 or new_amount <= 0:
+        return None
+    return order.model_copy(
+        update={
+            "shares": new_shares,
+            "amount": new_amount,
+            "execution_ratio": float(order.execution_ratio or 0.0) * warn_size_discount,
+            # NOTE: 0.0 是合法 risk_budget_ratio (无风险预算), 不能用 `or 1.0` 静默覆盖为满仓。
+            "risk_budget_ratio": float(order.risk_budget_ratio if order.risk_budget_ratio is not None else 1.0) * warn_size_discount,
+        }
+    )
+
+
 def apply_signal_decay(
     plan: ExecutionPlan,
     trade_date_t1: str,
@@ -171,25 +187,17 @@ def apply_signal_decay(
                 if p7_overlay.mode == "report":
                     p7_report_warned.append(ticker)
                 else:
-                    new_shares = int(order.shares * p7_overlay.warn_size_discount)
-                    new_amount = float(order.amount) * p7_overlay.warn_size_discount
-                    if new_shares <= 0 or new_amount <= 0:
+                    adjusted_order = _build_warn_adjusted_order(
+                        order,
+                        warn_size_discount=p7_overlay.warn_size_discount,
+                    )
+                    if adjusted_order is None:
                         p7_halted.append(ticker)
                         risk_alerts.append(f"cancel_buy_gap_overlay_warn_zeroed:{ticker}")
                         continue
                     p7_warned.append(ticker)
                     risk_alerts.append(f"reduce_buy_gap_overlay_warn:{ticker}")
-                    filtered_buy_orders.append(
-                        order.model_copy(
-                            update={
-                                "shares": new_shares,
-                                "amount": new_amount,
-                                "execution_ratio": float(order.execution_ratio or 0.0) * p7_overlay.warn_size_discount,
-                                # NOTE: 0.0 是合法 risk_budget_ratio (无风险预算), 不能用 `or 1.0` 静默覆盖为满仓。
-                                "risk_budget_ratio": float(order.risk_budget_ratio if order.risk_budget_ratio is not None else 1.0) * p7_overlay.warn_size_discount,
-                            }
-                        )
-                    )
+                    filtered_buy_orders.append(adjusted_order)
                     continue
 
         refreshed_score = refreshed_scores.get(ticker)
