@@ -464,3 +464,93 @@ class TestHelperFunctions:
         _print_factor_detail_block(signals)
         output = capsys.readouterr().out
         assert "暂无因子明细数据" in output
+
+    # --- _print_recent_events_block (extracted helper, Block B) ---
+
+    def test_print_recent_events_from_report_dicts(self, capsys):
+        """Priority 1: report-level recent_events list of dicts → date + description."""
+        from src.cli.explain_helpers import _print_recent_events_block
+        report = {"recent_events": [{"date": "20260610", "description": "财报超预期"}]}
+        _print_recent_events_block(report, {})
+        output = capsys.readouterr().out
+        assert "20260610" in output
+        assert "财报超预期" in output
+
+    def test_print_recent_events_from_report_strings(self, capsys):
+        """Priority 1: recent_events list of plain strings → printed as-is."""
+        from src.cli.explain_helpers import _print_recent_events_block
+        report = {"recent_events": ["限售解禁", "大宗交易"]}
+        _print_recent_events_block(report, {})
+        output = capsys.readouterr().out
+        assert "限售解禁" in output
+        assert "大宗交易" in output
+
+    def test_print_recent_events_from_subfactors(self, capsys):
+        """Priority 2: no report events, extract from event_sentiment sub_factors."""
+        from src.cli.explain_helpers import _print_recent_events_block
+        report = {}
+        match = {
+            "strategy_signals": {
+                "event_sentiment": {
+                    "sub_factors": {
+                        "news_sentiment": {
+                            "metrics": {
+                                "articles": [{"days_old": "3", "title": "利好消息"}]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _print_recent_events_block(report, match)
+        output = capsys.readouterr().out
+        assert "3天前" in output
+        assert "利好消息" in output
+
+    def test_print_recent_events_no_data_fallback(self, capsys):
+        """No report events and no articles → fallback message."""
+        from src.cli.explain_helpers import _print_recent_events_block
+        _print_recent_events_block({}, {})
+        output = capsys.readouterr().out
+        assert "暂无近期事件数据" in output
+
+    # --- _print_industry_ranking_block (extracted helper, Block C) ---
+
+    def test_print_industry_ranking_no_industry(self, capsys):
+        """Match has no industry_sw → shows 无行业信息."""
+        from src.cli.explain_helpers import _print_industry_ranking_block
+        _print_industry_ranking_block([], {"ticker": "000001"})
+        output = capsys.readouterr().out
+        assert "无行业信息" in output
+
+    def test_print_industry_ranking_no_peers(self, capsys):
+        """Industry present but no same-industry recs → 无同行业数据."""
+        from src.cli.explain_helpers import _print_industry_ranking_block
+        recs = [{"ticker": "000002", "industry_sw": "银行", "score_b": 0.5}]
+        _print_industry_ranking_block(recs, {"ticker": "000001", "industry_sw": "电子"})
+        output = capsys.readouterr().out
+        assert "无同行业数据" in output
+
+    def test_print_industry_ranking_normal(self, capsys):
+        """Same-industry recs → prints rank/total/percentile."""
+        from src.cli.explain_helpers import _print_industry_ranking_block
+        recs = [
+            {"ticker": "000001", "industry_sw": "电子", "score_b": 0.8},
+            {"ticker": "000002", "industry_sw": "电子", "score_b": 0.5},
+            {"ticker": "000003", "industry_sw": "电子", "score_b": 0.3},
+        ]
+        _print_industry_ranking_block(recs, {"ticker": "000002", "industry_sw": "电子"})
+        output = capsys.readouterr().out
+        assert "第 2/3 名" in output
+
+    def test_print_industry_ranking_none_score_b_coerced(self, capsys):
+        """GAMMA-008: None score_b coerced to 0.0 without crash."""
+        from src.cli.explain_helpers import _print_industry_ranking_block
+        recs = [
+            {"ticker": "000001", "industry_sw": "电子", "score_b": None},
+            {"ticker": "000002", "industry_sw": "电子", "score_b": 0.5},
+        ]
+        _print_industry_ranking_block(recs, {"ticker": "000001", "industry_sw": "电子"})
+        output = capsys.readouterr().out
+        # None coerced to 0.0 → ranked last → rank 2/2
+        assert "第 2/2 名" in output
