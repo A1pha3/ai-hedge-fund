@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.screening.market_state_helpers import BREADTH_RATIO_WEAK_FLOOR, POSITION_SCALE_WEAK_FLOOR
+
 from src.targets.short_trade_event_catalyst_helpers import build_event_catalyst_assessment
 from src.targets.short_trade_target_snapshot_relief_models import (
     SnapshotSignalState,
@@ -77,7 +79,7 @@ def _resolve_market_state_regime_context(market_state: dict[str, Any]) -> tuple[
     regime_gate_reasons = _safe_reason_codes(payload.get("regime_gate_reasons"))
     if regime_gate_level not in {"normal", "risk_off", "crisis"}:
         crisis = (breadth_ratio is not None and breadth_ratio <= 0.35) or (position_scale is not None and position_scale <= 0.55)
-        risk_off = crisis or (breadth_ratio is not None and breadth_ratio <= 0.42) or (position_scale is not None and position_scale <= 0.75) or regime_flip_risk >= 0.58
+        risk_off = crisis or (breadth_ratio is not None and breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR) or (position_scale is not None and position_scale <= POSITION_SCALE_WEAK_FLOOR) or regime_flip_risk >= 0.58
         regime_gate_level = "crisis" if crisis else "risk_off" if risk_off else "normal"
     return regime_gate_level, style_dispersion, regime_flip_risk, regime_gate_reasons
 

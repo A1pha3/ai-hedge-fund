@@ -13,6 +13,8 @@ _BTST_REGIME_GATES = frozenset({"normal_trade", "aggressive_trade", "shadow_only
 # 市场宽度弱势阈值 — breadth_ratio <= 此值表示市场宽度偏弱 (涨跌家数比低),
 # 用于市场状态判定与 risk-off 触发。在 market_state_helpers + signal_fusion 共享。
 BREADTH_RATIO_WEAK_FLOOR = 0.42
+# 持仓规模弱势阈值 — position_scale <= 此值表示仓位缩减 (risk-off 触发条件之一)。
+POSITION_SCALE_WEAK_FLOOR = 0.75
 
 
 @dataclass(frozen=True)
@@ -69,13 +71,13 @@ def _resolve_regime_gate(*, metrics: MarketStateMetrics, position_scale: float) 
         reasons.append("style_dispersion")
     if metrics.regime_flip_risk >= 0.58:
         reasons.append("regime_flip_risk")
-    if position_scale <= 0.75:
+    if position_scale <= POSITION_SCALE_WEAK_FLOOR:
         reasons.append("position_scale_reduced")
     if metrics.is_low_volume:
         reasons.append("low_volume")
 
     crisis = metrics.breadth_ratio <= 0.35 or position_scale <= 0.55 or (metrics.regime_flip_risk >= 0.82 and metrics.style_dispersion >= 0.55)
-    risk_off = crisis or metrics.breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR or position_scale <= 0.75 or metrics.regime_flip_risk >= 0.58
+    risk_off = crisis or metrics.breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR or position_scale <= POSITION_SCALE_WEAK_FLOOR or metrics.regime_flip_risk >= 0.58
     if crisis:
         return "crisis", reasons
     if risk_off:

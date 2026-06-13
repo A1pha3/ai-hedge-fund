@@ -6,7 +6,7 @@ import math
 from datetime import datetime, timedelta
 import os
 
-from src.screening.market_state_helpers import BREADTH_RATIO_WEAK_FLOOR
+from src.screening.market_state_helpers import BREADTH_RATIO_WEAK_FLOOR, POSITION_SCALE_WEAK_FLOOR
 from src.screening.candidate_pool import add_cooldown, get_cooled_tickers, load_cooldown_registry, save_cooldown_registry
 from src.screening.models import ArbitrationAction, DEFAULT_STRATEGY_WEIGHTS, FusedScore, MarketState, StrategySignal
 from src.screening.signal_fusion_arbitration_helpers import (
@@ -255,7 +255,7 @@ def _apply_risk_off_short_term_demotion(
 ) -> None:
     breadth_ratio = float(getattr(market_state, "breadth_ratio", 0.5))
     position_scale = float(getattr(market_state, "position_scale", 1.0))
-    if breadth_ratio > BREADTH_RATIO_WEAK_FLOOR and position_scale > 0.75:
+    if breadth_ratio > BREADTH_RATIO_WEAK_FLOOR and position_scale > POSITION_SCALE_WEAK_FLOOR:
         return
 
     trend_signal = signals.get("trend")
@@ -310,7 +310,7 @@ def _should_apply_consensus_bonus(
         and fundamental_signal.direction > 0
         and fundamental_signal.confidence >= 65
     )
-    return not ((breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR or position_scale <= 0.75) and not strong_fundamental_support)
+    return not ((breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR or position_scale <= POSITION_SCALE_WEAK_FLOOR) and not strong_fundamental_support)
 
 
 def maybe_release_cooldown_early(ticker: str, trade_date: str, fundamental_signal: StrategySignal, min_hold_days: int = 5) -> bool:
