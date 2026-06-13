@@ -716,6 +716,37 @@ def _detect_pick_changes(report_path: Path, ranked: list[dict]) -> tuple[set[str
     return _compute_pick_changes(all_current_tickers, prev_report)
 
 
+def _build_signal_breakdown(item: dict) -> str:
+    """Render the compact signal breakdown shown next to the base score."""
+    signal_specs = (
+        ("momentum_bonus", f"{Fore.GREEN}动量↑{Style.RESET_ALL}", f"{Fore.RED}动量↓{Style.RESET_ALL}", 0.0),
+        ("sector_bonus", f"{Fore.GREEN}行业强{Style.RESET_ALL}", f"{Fore.RED}行业弱{Style.RESET_ALL}", 0.0),
+        ("consistency_adj", f"{Fore.GREEN}一致{Style.RESET_ALL}", f"{Fore.RED}分歧{Style.RESET_ALL}", 0.0),
+        ("volume_factor", f"{Fore.GREEN}放量{Style.RESET_ALL}", f"{Fore.RED}缩量{Style.RESET_ALL}", 0.0),
+        ("trend_resonance_factor", f"{Fore.GREEN}共振↑{Style.RESET_ALL}", f"{Fore.RED}冲突{Style.RESET_ALL}", 0.02),
+    )
+    parts: list[str] = []
+    for key, positive_label, negative_label, threshold in signal_specs:
+        value = float(item.get(key, 0.0) or 0.0)
+        if value > threshold:
+            parts.append(positive_label)
+        elif value < -threshold:
+            parts.append(negative_label)
+    bonus_val = float(item.get("consecutive_bonus", 0.0) or 0.0)
+    if bonus_val > 0:
+        parts.append(f"{Fore.GREEN}连续+{bonus_val:.2f}{Style.RESET_ALL}")
+    return " ".join(parts) if parts else f"{Fore.WHITE}中性{Style.RESET_ALL}"
+
+
+def _score_color(composite_score: float) -> str:
+    """Choose the color used for the composite score display."""
+    if composite_score >= 0.5:
+        return Fore.GREEN + Style.BRIGHT
+    if composite_score >= 0.3:
+        return Fore.YELLOW
+    return Fore.RED
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -798,33 +829,7 @@ def run_top_picks(
         # R15: Factor attribution
         factor_attr = _render_factor_attribution(item)
 
-        # Signal breakdown
-        parts = []
-        if float(item.get("momentum_bonus", 0.0) or 0.0) > 0:
-            parts.append(f"{Fore.GREEN}动量↑{Style.RESET_ALL}")
-        elif float(item.get("momentum_bonus", 0.0) or 0.0) < 0:
-            parts.append(f"{Fore.RED}动量↓{Style.RESET_ALL}")
-        if float(item.get("sector_bonus", 0.0) or 0.0) > 0:
-            parts.append(f"{Fore.GREEN}行业强{Style.RESET_ALL}")
-        elif float(item.get("sector_bonus", 0.0) or 0.0) < 0:
-            parts.append(f"{Fore.RED}行业弱{Style.RESET_ALL}")
-        if float(item.get("consistency_adj", 0.0) or 0.0) > 0:
-            parts.append(f"{Fore.GREEN}一致{Style.RESET_ALL}")
-        elif float(item.get("consistency_adj", 0.0) or 0.0) < 0:
-            parts.append(f"{Fore.RED}分歧{Style.RESET_ALL}")
-        if float(item.get("volume_factor", 0.0) or 0.0) > 0:
-            parts.append(f"{Fore.GREEN}放量{Style.RESET_ALL}")
-        elif float(item.get("volume_factor", 0.0) or 0.0) < 0:
-            parts.append(f"{Fore.RED}缩量{Style.RESET_ALL}")
-        if float(item.get("trend_resonance_factor", 0.0) or 0.0) > 0.02:
-            parts.append(f"{Fore.GREEN}共振↑{Style.RESET_ALL}")
-        elif float(item.get("trend_resonance_factor", 0.0) or 0.0) < -0.02:
-            parts.append(f"{Fore.RED}冲突{Style.RESET_ALL}")
-        bonus_val = float(item.get("consecutive_bonus", 0.0) or 0.0)
-        if bonus_val > 0:
-            parts.append(f"{Fore.GREEN}连续+{bonus_val:.2f}{Style.RESET_ALL}")
-
-        signal_str = " ".join(parts) if parts else f"{Fore.WHITE}中性{Style.RESET_ALL}"
+        signal_str = _build_signal_breakdown(item)
 
         # R10: Multi-strategy confluence
         bullish, total = _compute_confluence(item)
@@ -837,17 +842,10 @@ def run_top_picks(
         cluster_size = int(item.get("cluster_size", 1) or 1)
         alternatives = [str(ticker) for ticker in (item.get("cluster_alternatives") or []) if str(ticker)]
 
-        # Color by composite score
-        if composite_score >= 0.5:
-            score_color = Fore.GREEN + Style.BRIGHT
-        elif composite_score >= 0.3:
-            score_color = Fore.YELLOW
-        else:
-            score_color = Fore.RED
-
         t30_str = f"{t30:+.2f}%" if isinstance(t30, (int, float)) else "—"
         t30_wr_str = f"{t30_wr:.0%}" if isinstance(t30_wr, (int, float)) else "—"
         base_score = float(item.get("base_score", item.get("score_b", 0.0)) or 0.0)
+        score_color = _score_color(composite_score)
 
         print(
             f"  {Fore.WHITE}{idx}.{Style.RESET_ALL} "
