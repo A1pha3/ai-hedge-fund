@@ -387,3 +387,39 @@ class TestHelperFunctions:
         import math
         result = _build_factor_bar(float("nan"))
         assert result == "░░░░░░░░░░"
+
+    # --- _print_strategy_breakdown (extracted from run_explain R20.45) ---
+
+    def test_print_strategy_breakdown_all_directions(self, capsys):
+        """Bullish/bearish/neutral directions render correct arrows + confidence."""
+        from src.cli.explain_helpers import _print_strategy_breakdown
+        signals = {
+            "trend": {"direction": 1, "confidence": 72.5},
+            "mean_reversion": {"direction": -1, "confidence": 45.0},
+            "fundamental": {"direction": 0, "confidence": 30.0},
+            "event_sentiment": {"direction": 1, "confidence": 55.0},
+        }
+        _print_strategy_breakdown(signals)
+        output = capsys.readouterr().out
+        assert "策略贡献" in output
+        assert "↑" in output  # trend (bullish)
+        assert "↓" in output  # mean_reversion (bearish)
+        assert "—" in output  # fundamental (neutral)
+        assert "72.5" in output
+        assert "45.0" in output
+
+    def test_print_strategy_breakdown_missing_strategy(self, capsys):
+        """Missing strategy shows 数据缺失 fallback."""
+        from src.cli.explain_helpers import _print_strategy_breakdown
+        signals = {"trend": {"direction": 1, "confidence": 65.0}}
+        _print_strategy_breakdown(signals)
+        output = capsys.readouterr().out
+        assert "数据缺失" in output
+        assert "trend" in output  # present strategy still rendered
+
+    def test_print_strategy_breakdown_empty_signals(self, capsys):
+        """Empty signals dict → all 4 strategies show 数据缺失."""
+        from src.cli.explain_helpers import _print_strategy_breakdown
+        _print_strategy_breakdown({})
+        output = capsys.readouterr().out
+        assert output.count("数据缺失") == 4
