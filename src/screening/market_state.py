@@ -43,7 +43,10 @@ def _market_breadth_ratio(price_df: pd.DataFrame | None) -> float:
     if price_df is None or price_df.empty:
         return 0.5
 
-    pct_chg = pd.to_numeric(price_df.get("pct_chg"), errors="coerce").dropna()
+    pct_chg = price_df.get("pct_chg")
+    if pct_chg is None:
+        return 0.5
+    pct_chg = pd.to_numeric(pct_chg, errors="coerce").dropna()
     if pct_chg.empty:
         return 0.5
 
