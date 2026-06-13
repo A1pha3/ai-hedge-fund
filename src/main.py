@@ -56,6 +56,7 @@ from src.cli.explain_helpers import (
     _print_factor_detail_block,
     _print_industry_ranking_block,
     _print_recent_events_block,
+    _print_strategy_breakdown,
 )
 from src.cli.market_status_helpers import (
     _extract_market_status,
@@ -2874,17 +2875,7 @@ def run_explain(ticker: str) -> int:
         "fundamental": "基本面",
         "event_sentiment": "事件情绪",
     }
-    print(f"\n{Fore.CYAN}策略贡献:{Style.RESET_ALL}")
-    for strat_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
-        sig = signals.get(strat_name)
-        if not sig:
-            print(f"  {strat_name:18s}  —  数据缺失")
-            continue
-        direction = sig.get("direction", 0)
-        conf = sig.get("confidence", 0.0)
-        arrow = "↑" if direction > 0 else "↓" if direction < 0 else "—"
-        color = Fore.GREEN if direction > 0 else Fore.RED if direction < 0 else Fore.YELLOW
-        print(f"  {strat_name:18s}  {color}{arrow} {conf:5.1f}{Style.RESET_ALL}")
+    _print_strategy_breakdown(signals)
 
     # ── Block A: 因子贡献度明细 ──
     _print_factor_detail_block(signals, _STRATEGY_CN_LABELS)

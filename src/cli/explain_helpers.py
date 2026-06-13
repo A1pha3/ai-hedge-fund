@@ -17,6 +17,28 @@ def _build_factor_bar(confidence: float, max_bar_width: int = 10) -> str:
     return "█" * filled + "░" * (max_bar_width - filled)
 
 
+def _print_strategy_breakdown(signals: dict) -> None:
+    """Print per-strategy direction/confidence contribution lines for --explain.
+
+    Each of the 4 strategies (trend/mean_reversion/fundamental/event_sentiment)
+    shows an arrow (↑/↓/—) + confidence value, color-coded by direction.
+    Extracted from ``run_explain`` to keep the per-strategy formatting in one place.
+    """
+    from colorama import Fore, Style
+
+    print(f"\n{Fore.CYAN}策略贡献:{Style.RESET_ALL}")
+    for strat_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+        sig = signals.get(strat_name)
+        if not sig:
+            print(f"  {strat_name:18s}  —  数据缺失")
+            continue
+        direction = sig.get("direction", 0)
+        conf = sig.get("confidence", 0.0)
+        arrow = "↑" if direction > 0 else "↓" if direction < 0 else "—"
+        color = Fore.GREEN if direction > 0 else Fore.RED if direction < 0 else Fore.YELLOW
+        print(f"  {strat_name:18s}  {color}{arrow} {conf:5.1f}{Style.RESET_ALL}")
+
+
 def _print_factor_detail_block(signals: dict, strategy_labels: dict) -> None:
     """Block A: Print top-3 sub-factor detail per strategy, grouped and bar-charted."""
     from colorama import Fore, Style
