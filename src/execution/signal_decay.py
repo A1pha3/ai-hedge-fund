@@ -60,6 +60,56 @@ def _resolve_p7_gap_overlay_config() -> P7GapOverlayConfig:
     )
 
 
+def _build_gap_overlay_payload(
+    *,
+    mode: str,
+    trade_date_t1: str,
+    overlay: P7GapOverlayConfig,
+    original_buy_count: int,
+    retained_buy_count: int,
+    warned_tickers: list[str],
+    halted_tickers: list[str],
+) -> dict[str, Any]:
+    return {
+        "mode": mode,
+        "trade_date_t1": str(trade_date_t1),
+        "warn_threshold": overlay.warn_threshold,
+        "halt_threshold": overlay.halt_threshold,
+        "warn_size_discount": overlay.warn_size_discount,
+        "buy_orders_original_count": original_buy_count,
+        "buy_orders_retained_count": retained_buy_count,
+        "warned_count": len(warned_tickers),
+        "halted_count": len(halted_tickers),
+        "warned_tickers": sorted(set(warned_tickers)),
+        "halted_tickers": sorted(set(halted_tickers)),
+    }
+
+
+def _attach_gap_overlay_payload(
+    plan: ExecutionPlan,
+    *,
+    metrics_key: str,
+    payload: dict[str, Any],
+    update_buy_order_count: bool,
+) -> None:
+    risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+    risk_metrics[metrics_key] = payload
+    funnel_diagnostics[metrics_key] = payload
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    if update_buy_order_count:
+        counts = dict(risk_metrics.get("counts", {}) or {})
+        counts["buy_order_count"] = len(plan.buy_orders)
+        risk_metrics["counts"] = counts
+    plan.risk_metrics = risk_metrics
+
+
+def _should_cancel_gap_open(*, atr_value: Any, gap_value: Any) -> bool:
+    if not isinstance(atr_value, (int, float)) or atr_value <= 0:
+        return False
+    return bool(gap_value > (1.5 * float(atr_value)))
+
+
 def apply_signal_decay(
     plan: ExecutionPlan,
     trade_date_t1: str,
@@ -101,7 +151,10 @@ def apply_signal_decay(
         # "cancel everything that gaps up" tripwire. Skip the check when ATR
         # is unknown / non-positive so the order survives normal opens.
         atr_value = atr_values.get(ticker)
-        if isinstance(atr_value, (int, float)) and atr_value > 0 and open_gap_pct.get(ticker, 0.0) > (1.5 * float(atr_value)):
+        if _should_cancel_gap_open(
+            atr_value=atr_value,
+            gap_value=open_gap_pct.get(ticker, 0.0),
+        ):
             risk_alerts.append(f"cancel_buy_gap_open:{ticker}")
             continue
 
@@ -149,48 +202,35 @@ def apply_signal_decay(
     plan.risk_alerts = risk_alerts
 
     if p7_overlay.mode == "enforce":
-        risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
-        funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
-        enforcement_payload: dict[str, Any] = {
-            "mode": "enforce",
-            "trade_date_t1": str(trade_date_t1),
-            "warn_threshold": p7_overlay.warn_threshold,
-            "halt_threshold": p7_overlay.halt_threshold,
-            "warn_size_discount": p7_overlay.warn_size_discount,
-            "buy_orders_original_count": original_buy_count,
-            "buy_orders_retained_count": len(plan.buy_orders),
-            "warned_count": len(p7_warned),
-            "halted_count": len(p7_halted),
-            "warned_tickers": sorted(set(p7_warned)),
-            "halted_tickers": sorted(set(p7_halted)),
-        }
-        risk_metrics["btst_gap_overlay_p7_enforcement"] = enforcement_payload
-        funnel_diagnostics["btst_gap_overlay_p7_enforcement"] = enforcement_payload
-        risk_metrics["funnel_diagnostics"] = funnel_diagnostics
-        counts = dict(risk_metrics.get("counts", {}) or {})
-        counts["buy_order_count"] = len(plan.buy_orders)
-        risk_metrics["counts"] = counts
-        plan.risk_metrics = risk_metrics
+        _attach_gap_overlay_payload(
+            plan,
+            metrics_key="btst_gap_overlay_p7_enforcement",
+            payload=_build_gap_overlay_payload(
+                mode="enforce",
+                trade_date_t1=trade_date_t1,
+                overlay=p7_overlay,
+                original_buy_count=original_buy_count,
+                retained_buy_count=len(plan.buy_orders),
+                warned_tickers=p7_warned,
+                halted_tickers=p7_halted,
+            ),
+            update_buy_order_count=True,
+        )
 
     elif p7_overlay.mode == "report":
-        risk_metrics = dict(getattr(plan, "risk_metrics", {}) or {})
-        funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
-        report_payload: dict[str, Any] = {
-            "mode": "report",
-            "trade_date_t1": str(trade_date_t1),
-            "warn_threshold": p7_overlay.warn_threshold,
-            "halt_threshold": p7_overlay.halt_threshold,
-            "warn_size_discount": p7_overlay.warn_size_discount,
-            "buy_orders_original_count": original_buy_count,
-            "buy_orders_retained_count": len(plan.buy_orders),
-            "warned_count": len(p7_report_warned),
-            "halted_count": len(p7_report_halted),
-            "warned_tickers": sorted(set(p7_report_warned)),
-            "halted_tickers": sorted(set(p7_report_halted)),
-        }
-        risk_metrics["btst_gap_overlay_p7_report"] = report_payload
-        funnel_diagnostics["btst_gap_overlay_p7_report"] = report_payload
-        risk_metrics["funnel_diagnostics"] = funnel_diagnostics
-        plan.risk_metrics = risk_metrics
+        _attach_gap_overlay_payload(
+            plan,
+            metrics_key="btst_gap_overlay_p7_report",
+            payload=_build_gap_overlay_payload(
+                mode="report",
+                trade_date_t1=trade_date_t1,
+                overlay=p7_overlay,
+                original_buy_count=original_buy_count,
+                retained_buy_count=len(plan.buy_orders),
+                warned_tickers=p7_report_warned,
+                halted_tickers=p7_report_halted,
+            ),
+            update_buy_order_count=False,
+        )
 
     return plan
