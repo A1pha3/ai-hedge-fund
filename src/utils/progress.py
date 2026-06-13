@@ -71,10 +71,6 @@ class AgentProgress:
 
         self._refresh_display()
 
-    def get_all_status(self):
-        """Get the current status of all agents as a dictionary."""
-        return {agent_name: {"ticker": info["ticker"], "status": info["status"], "display_name": self._get_display_name(agent_name)} for agent_name, info in self.agent_status.items()}
-
     def _get_display_name(self, agent_name: str) -> str:
         """Convert agent_name to a display-friendly format."""
         return agent_name.replace("_agent", "").replace("_", " ").title()

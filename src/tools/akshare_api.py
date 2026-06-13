@@ -77,8 +77,6 @@ from src.tools.akshare_runtime_helpers import (
     disable_system_proxies as _disable_system_proxies_impl,
     execute_sina_realtime_quote_request,
     execute_wrapped_ashare_request,
-    make_akshare_df_cache_key as _make_akshare_df_cache_key_impl,
-    normalize_akshare_cache_value as _normalize_akshare_cache_value_impl,
     parse_sina_realtime_quote_text,
     resolve_akshare_cache_ttl as _resolve_akshare_cache_ttl_impl,
     restore_proxies as _restore_proxies_impl,
@@ -105,14 +103,6 @@ except ImportError:
 class AShareDataError(Exception):
     """A股数据获取错误"""
 
-
-
-def _normalize_akshare_cache_value(value: Any) -> Any:
-    return _normalize_akshare_cache_value_impl(value)
-
-
-def _make_akshare_df_cache_key(api_name: str, **kwargs) -> str:
-    return _make_akshare_df_cache_key_impl(api_name, **kwargs)
 
 
 def _resolve_akshare_cache_ttl(api_name: str, **kwargs) -> int:
@@ -236,13 +226,6 @@ def _get_prices_from_tencent(ticker: str, start_date: str, end_date: str) -> lis
         create_session_fn=_create_session,
         error_factory=AShareDataError,
     )
-
-
-def _get_cached_prices(cache_key: str) -> list[Price] | None:
-    cached_data = _cache.get_prices(cache_key)
-    if not cached_data:
-        return None
-    return hydrate_cached_prices(cached_data)
 
 
 def _fetch_prices_from_akshare(ak_module, ticker: str, start_date: str, end_date: str, period: str) -> list[Price] | None:

@@ -445,17 +445,6 @@ def _get_latest_daily_basic(pro, ts_code: str, anchor_date: str, lookback_days: 
     return select_latest_daily_basic_row(df_batch, anchor_date)
 
 
-def _get_latest_total_mv(pro, ts_code: str, anchor_date: str, lookback_days: int = 30) -> float | None:
-    """获取指定日期（含）之前最近一个交易日的总市值（元）。"""
-    row = _get_latest_daily_basic(pro, ts_code, anchor_date, lookback_days)
-    if row is None:
-        return None
-    value = row.get("total_mv", None)
-    if value is not None and not pd.isna(value):
-        return float(value) * 10000
-    return None
-
-
 def _load_tushare_financial_metric_frames(pro, ts_code: str, *, limit: int, period: str) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
     fetch_limit = resolve_financial_metrics_fetch_limit(limit, period)
     financial_fetch_limit = limit * 4
@@ -886,12 +875,6 @@ def get_daily_price_batch(trade_date: str) -> pd.DataFrame | None:
     except Exception as e:
         print(f"[Tushare] get_daily_price_batch({trade_date}) 失败: {e}")
         return None
-
-
-def _cache_stock_basic_frame(df: pd.DataFrame) -> None:
-    global _stock_basic_cache
-    with _stock_basic_cache_lock:
-        _stock_basic_cache = df
 
 
 def get_open_trade_dates(start_date: str, end_date: str) -> list[str]:

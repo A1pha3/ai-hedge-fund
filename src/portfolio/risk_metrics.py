@@ -183,16 +183,6 @@ def _portfolio_equity_curve(
     return equity
 
 
-def _per_ticker_returns(
-    lookback_returns: Iterable[Mapping[str, object]],
-) -> list[float]:
-    """Flatten lookback returns to a list of per-ticker per-day returns."""
-    out: list[float] = []
-    for row in lookback_returns:
-        out.append(_safe_float(row.get("return_pct", 0.0)))
-    return out
-
-
 def _weighted_portfolio_daily_returns(
     portfolio_positions: Sequence[Mapping[str, object]],
     lookback_returns: Sequence[Mapping[str, object]],

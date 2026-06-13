@@ -45,43 +45,6 @@ def _resolve_single_name_limit(*, allow_extended_limit: bool, avg_volume_20d: fl
     return base_limit
 
 
-def _compute_beta(portfolio_returns: list[float], benchmark_returns: list[float]) -> float | None:
-    """Compute portfolio beta against a benchmark.
-
-    **Precondition**: both lists must be aligned by date (same trading
-    days in the same order). If lengths differ, a warning is emitted
-    and only the overlapping prefix is used (ALPHA-007 / GAMMA-005).
-
-    This is an intentional near-duplicate of
-    :func:`src.backtesting.metrics.compute_beta` — they are kept as
-    separate implementations to avoid a circular import between
-    ``src.portfolio`` and ``src.backtesting`` (engine → execution →
-    position_calculator → metrics → ...). If a third caller ever needs
-    beta, extract to a leaf module.
-    """
-    import warnings
-
-    import numpy as np
-
-    if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
-        return None
-    n = min(len(portfolio_returns), len(benchmark_returns))
-    if len(portfolio_returns) != len(benchmark_returns):
-        warnings.warn(
-            f"_compute_beta: portfolio_returns ({len(portfolio_returns)}) and "
-            f"benchmark_returns ({len(benchmark_returns)}) differ in length. "
-            f"Using first {n} — may be wrong if not date-aligned (ALPHA-007).",
-            stacklevel=2,
-        )
-    portfolio_array = np.array(portfolio_returns[:n])
-    benchmark_array = np.array(benchmark_returns[:n])
-    benchmark_variance = np.var(benchmark_array, ddof=1)
-    if benchmark_variance < 1e-12:
-        return None
-    covariance = np.cov(portfolio_array, benchmark_array)[0][1]
-    return float(covariance / benchmark_variance)
-
-
 def calculate_position(
     ticker: str,
     current_price: float,

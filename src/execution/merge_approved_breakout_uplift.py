@@ -392,28 +392,3 @@ def apply_merge_approved_sector_resonance_uplift(
     }
     diagnostics["delta"] = {"investor_contribution": round(updated_investor_contribution - investor_contribution, 4)}
     return updated, diagnostics
-
-
-def summarize_merge_approved_breakout_uplift_config() -> dict[str, Any]:
-    return {
-        "score_b_min": round(MERGE_APPROVED_BREAKOUT_UPLIFT_SCORE_B_MIN, 4),
-        "trend_confidence_min": round(MERGE_APPROVED_BREAKOUT_UPLIFT_TREND_CONFIDENCE_MIN, 4),
-        "event_confidence_min": round(MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_CONFIDENCE_MIN, 4),
-        "momentum_confidence_min": round(MERGE_APPROVED_BREAKOUT_UPLIFT_MOMENTUM_CONFIDENCE_MIN, 4),
-        "event_freshness_confidence_min": round(MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_FRESHNESS_CONFIDENCE_MIN, 4),
-        "trend_confidence_floor": round(MERGE_APPROVED_BREAKOUT_UPLIFT_TREND_CONFIDENCE_FLOOR, 4),
-        "event_confidence_floor": round(MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_CONFIDENCE_FLOOR, 4),
-        "momentum_confidence_floor": round(MERGE_APPROVED_BREAKOUT_UPLIFT_MOMENTUM_CONFIDENCE_FLOOR, 4),
-        "event_freshness_confidence_floor": round(MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_FRESHNESS_CONFIDENCE_FLOOR, 4),
-        "volatility_confidence_min": round(MERGE_APPROVED_VOLUME_UPLIFT_VOLATILITY_CONFIDENCE_MIN, 4),
-        "volatility_confidence_floor": round(MERGE_APPROVED_VOLUME_UPLIFT_VOLATILITY_CONFIDENCE_FLOOR, 4),
-        "volatility_regime_min": round(MERGE_APPROVED_VOLUME_UPLIFT_VOLATILITY_REGIME_MIN, 4),
-        "atr_ratio_min": round(MERGE_APPROVED_VOLUME_UPLIFT_ATR_RATIO_MIN, 4),
-        "alignment_score_c_min": round(MERGE_APPROVED_ALIGNMENT_UPLIFT_SCORE_C_MIN, 4),
-        "alignment_score_c_max": round(MERGE_APPROVED_ALIGNMENT_UPLIFT_SCORE_C_MAX, 4),
-        "alignment_score_c_floor": round(MERGE_APPROVED_ALIGNMENT_UPLIFT_SCORE_C_FLOOR, 4),
-        "alignment_analyst_contribution_max": round(MERGE_APPROVED_ALIGNMENT_UPLIFT_ANALYST_CONTRIBUTION_MAX, 4),
-        "alignment_analyst_contribution_floor": round(MERGE_APPROVED_ALIGNMENT_UPLIFT_ANALYST_CONTRIBUTION_FLOOR, 4),
-        "sector_investor_contribution_max": round(MERGE_APPROVED_SECTOR_UPLIFT_INVESTOR_CONTRIBUTION_MAX, 4),
-        "sector_investor_contribution_floor": round(MERGE_APPROVED_SECTOR_UPLIFT_INVESTOR_CONTRIBUTION_FLOOR, 4),
-    }

@@ -231,12 +231,6 @@ def _get_neutral_mean_reversion_partial_weight(weights: dict[str, float], signal
     return max(weights.get("mean_reversion", 0.0), 0.0) * float(config["multiplier"])
 
 
-def _is_active_for_normalization(name: str, signal: StrategySignal) -> bool:
-    if signal.completeness <= 0:
-        return False
-    return not (name == "mean_reversion" and signal.direction == 0 and _get_neutral_mean_reversion_mode() == "full_exclude")
-
-
 def _normalize_for_available_signals(weights: dict[str, float], signals: dict[str, StrategySignal]) -> dict[str, float]:
     excluded_names: set[str] = set()
     weight_overrides: dict[str, float] = {}

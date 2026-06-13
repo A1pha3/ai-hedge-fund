@@ -333,41 +333,6 @@ def _build_short_trade_metrics_payload(
     }
 
 
-def build_short_trade_metrics_payload(
-    *,
-    context: ShortTradeEvaluationContext,
-    thresholds: ShortTradeThresholdState,
-    input_data: TargetEvaluationInput,
-) -> dict[str, Any]:
-    snapshot = context.snapshot
-    positive_score_weights = dict(snapshot["positive_score_weights"])
-    return {
-        **_build_short_trade_core_metrics_payload(
-            input_data=input_data,
-            snapshot=snapshot,
-            positive_score_weights=positive_score_weights,
-            breakout_freshness=thresholds.breakout_freshness,
-            trend_acceleration=thresholds.trend_acceleration,
-            breakout_stage=thresholds.breakout_stage,
-            selected_breakout_gate_pass=thresholds.selected_breakout_gate_pass,
-            near_miss_breakout_gate_pass=thresholds.near_miss_breakout_gate_pass,
-        ),
-        **_build_short_trade_context_metrics_payload(
-            carryover_evidence_deficiency=context.carryover_evidence_deficiency,
-            selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
-        ),
-        "thresholds": {
-            "profile_name": snapshot["profile"].name,
-            "effective_select_threshold": round(thresholds.effective_select_threshold, 4),
-            "selected_score_tolerance": round(thresholds.selected_score_tolerance, 4),
-            "near_miss_threshold": round(thresholds.effective_near_miss_threshold, 4),
-            "rank_threshold_tightening": dict(snapshot.get("rank_threshold_tightening") or {}),
-            "rank_decision_cap": dict(snapshot.get("rank_decision_cap") or {}),
-            "market_state_threshold_adjustment": dict(snapshot.get("market_state_threshold_adjustment") or {}),
-        },
-    }
-
-
 def build_short_trade_explainability_payload(
     *,
     context: ShortTradeEvaluationContext,

@@ -19,7 +19,6 @@ from .engine_market_data import (
     MarketDataLoader,
     normalize_ticker,
     resolve_benchmark_ticker,
-    shift_business_days,
 )
 from .engine_pipeline_helpers import (
     PipelineDayContext,
@@ -350,10 +349,6 @@ class BacktestEngine:
     @staticmethod
     def _normalize_ticker(ticker: str) -> str:
         return normalize_ticker(ticker)
-
-    @staticmethod
-    def _shift_business_days(trade_date_compact: str, business_days: int) -> str:
-        return shift_business_days(trade_date_compact, business_days)
 
     def _register_exit_reentry_cooldown(self, ticker: str, trade_date_compact: str, trigger_reason: str) -> None:
         self._market_loader.register_exit_reentry_cooldown(ticker, trade_date_compact, trigger_reason)

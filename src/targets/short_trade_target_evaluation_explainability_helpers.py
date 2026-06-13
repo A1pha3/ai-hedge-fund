@@ -30,7 +30,6 @@ from src.targets.short_trade_metrics_payload_builders import (
 from src.targets.short_trade_target_evaluation_models import (
     ShortTradeEvaluationContext,
     ShortTradeExplainabilityState,
-    ShortTradeMutableVerdictState,
     ShortTradeThresholdState,
     ShortTradeTopReasonsState,
 )
@@ -276,17 +275,6 @@ def _build_short_trade_explainability_payload(
         }
 
     return payload
-
-
-def _build_short_trade_mutable_verdict_state(snapshot: dict[str, Any]) -> ShortTradeMutableVerdictState:
-    return ShortTradeMutableVerdictState(
-        gate_status=dict(snapshot["gate_status"]),
-        positive_tags=list(snapshot["positive_tags"]),
-        negative_tags=[
-            tag for tag in list(snapshot["negative_tags"]) if tag != "watchlist_filter_diagnostics_selected_only_shrink_applied"
-        ],
-        blockers=list(snapshot["blockers"]),
-    )
 
 
 def _build_short_trade_committee_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
