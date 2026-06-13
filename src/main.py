@@ -453,6 +453,32 @@ def _attach_signal_decay(
     return decay_summary
 
 
+def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> list[dict]:
+    """Composite-score + expected-return 投资性排名; 任何异常时回退到原 ``ranking_pool``。
+
+    Extracted from :func:`compute_auto_screening_results` — 将 composite / expected-return
+    报告构建与 ``rank_recommendations_by_investability`` 调用集中在容错 helper 中。
+    """
+    try:
+        from src.screening.composite_score import compute_composite_scores_for_recommendations
+        from src.screening.expected_return import compute_expected_returns
+
+        composite_report = compute_composite_scores_for_recommendations(
+            recommendations=ranking_pool,
+            trade_date=trade_date,
+            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            reports_dir=_resolve_consecutive_report_dir(),
+        )
+        expected_report = compute_expected_returns(
+            recommendations=ranking_pool,
+            lookback_days=60,
+            reports_dir=_resolve_consecutive_report_dir(),
+        )
+        return rank_recommendations_by_investability(ranking_pool, composite_report, expected_report)
+    except Exception:
+        return ranking_pool
+
+
 def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_strategies: list[str] | None = None) -> dict:
     """Run the full --auto pipeline and return a JSON-serializable payload (no IO side effects).
 
@@ -524,28 +550,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
         ranking_pool = [item.model_dump(mode="json") for item in sorted_results[:ranking_pool_size]]
 
-    try:
-        from src.screening.composite_score import compute_composite_scores_for_recommendations
-        from src.screening.expected_return import compute_expected_returns
-
-        composite_report = compute_composite_scores_for_recommendations(
-            recommendations=ranking_pool,
-            trade_date=trade_date,
-            lookback_days=DEFAULT_LOOKBACK_DAYS,
-            reports_dir=_resolve_consecutive_report_dir(),
-        )
-        expected_report = compute_expected_returns(
-            recommendations=ranking_pool,
-            lookback_days=60,
-            reports_dir=_resolve_consecutive_report_dir(),
-        )
-        ranked_pool = rank_recommendations_by_investability(
-            ranking_pool,
-            composite_report,
-            expected_report,
-        )
-    except Exception:
-        ranked_pool = ranking_pool
+    ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
 
     top_results_serializable = ranked_pool[:top_n]
     fused_by_ticker = {str(item.ticker): item for item in fused}
