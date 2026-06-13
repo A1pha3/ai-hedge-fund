@@ -757,3 +757,54 @@ def test_run_conditional_orders_cli_with_mock_provider() -> None:
     rc = run_conditional_orders_cli(top_n=5, price_provider=_provider)
     assert rc in (0, 1, 2)
     # 关键: 函数接受 price_provider kwarg 不抛 TypeError
+
+
+# ---------------------------------------------------------------------------
+# _clean_price_series
+# ---------------------------------------------------------------------------
+
+
+class TestCleanPriceSeries:
+    """Filter NaN/Inf/None, keep finite floats."""
+
+    def test_clean_valid_floats(self):
+        from src.screening.conditional_order_advisor import _clean_price_series
+
+        assert _clean_price_series([1.0, 2.5, 3.0]) == [1.0, 2.5, 3.0]
+
+    def test_filters_none(self):
+        from src.screening.conditional_order_advisor import _clean_price_series
+        import math
+
+        assert _clean_price_series([1.0, None, 2.0]) == [1.0, 2.0]
+
+    def test_filters_nan_and_inf(self):
+        from src.screening.conditional_order_advisor import _clean_price_series
+        import math
+
+        result = _clean_price_series([1.0, math.nan, math.inf, -math.inf, 2.0])
+        assert result == [1.0, 2.0]
+
+    def test_coerces_ints_to_float(self):
+        from src.screening.conditional_order_advisor import _clean_price_series
+
+        result = _clean_price_series([1, 2, 3])
+        assert result == [1.0, 2.0, 3.0]
+        assert all(isinstance(x, float) for x in result)
+
+    def test_empty_input_returns_empty(self):
+        from src.screening.conditional_order_advisor import _clean_price_series
+
+        assert _clean_price_series([]) == []
+
+    def test_all_invalid_returns_empty(self):
+        from src.screening.conditional_order_advisor import _clean_price_series
+        import math
+
+        assert _clean_price_series([None, math.nan, math.inf]) == []
+
+    def test_numeric_string_coerced(self):
+        from src.screening.conditional_order_advisor import _clean_price_series
+
+        result = _clean_price_series(["1.5", 2.0])
+        assert result == [1.5, 2.0]
