@@ -633,6 +633,40 @@ def _build_filter_summary(entries: list[dict]) -> dict:
     return _build_filter_summary_impl(entries)
 
 
+def _attach_buy_order_funnel_update(
+    plan: ExecutionPlan,
+    *,
+    retained_orders: list[Any],
+    filtered_entries: list[dict[str, Any]],
+    blocked_buy_tickers: dict[str, dict] | None = None,
+) -> None:
+    """Mutate ``plan.risk_metrics`` with the canonical buy-order funnel update.
+
+    Shared by :meth:`DailyPipeline._apply_frozen_buy_order_filters` and
+    :meth:`DailyPipeline._apply_frozen_p6_risk_budget_overlay`. Both built the
+    same ``counts`` / ``funnel_diagnostics.filters.buy_orders`` update inline,
+    differing only in an optional ``blocked_buy_tickers`` write — unified here
+    so the funnel shape cannot drift between the two code paths.
+    """
+    risk_metrics = dict(plan.risk_metrics or {})
+    counts = dict(risk_metrics.get("counts", {}) or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
+    filters = dict(funnel_diagnostics.get("filters", {}) or {})
+    existing_buy_order_summary = dict(filters.get("buy_orders", {}) or {})
+    existing_entries = list(existing_buy_order_summary.get("tickers", []) or [])
+    existing_entries.extend(filtered_entries)
+    buy_order_summary = _build_filter_summary(existing_entries)
+    buy_order_summary["selected_tickers"] = [order.ticker for order in retained_orders]
+    filters["buy_orders"] = buy_order_summary
+    funnel_diagnostics["filters"] = filters
+    if blocked_buy_tickers is not None:
+        funnel_diagnostics["blocked_buy_tickers"] = blocked_buy_tickers
+    counts["buy_order_count"] = len(retained_orders)
+    risk_metrics["counts"] = counts
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    plan.risk_metrics = risk_metrics
+
+
 def _load_latest_btst_historical_prior_by_ticker() -> dict[str, dict[str, Any]]:
     return _load_latest_historical_prior_by_ticker_impl(
         reports_root=BTST_REPORTS_ROOT,
@@ -1114,22 +1148,12 @@ class DailyPipeline:
             return plan
 
         plan.buy_orders = retained_orders
-        risk_metrics = dict(plan.risk_metrics or {})
-        counts = dict(risk_metrics.get("counts", {}))
-        funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}))
-        filters = dict(funnel_diagnostics.get("filters", {}))
-        existing_buy_order_summary = dict(filters.get("buy_orders", {}))
-        existing_entries = list(existing_buy_order_summary.get("tickers", []))
-        existing_entries.extend(filtered_entries)
-        buy_order_summary = _build_filter_summary(existing_entries)
-        buy_order_summary["selected_tickers"] = [order.ticker for order in retained_orders]
-        filters["buy_orders"] = buy_order_summary
-        funnel_diagnostics["filters"] = filters
-        funnel_diagnostics["blocked_buy_tickers"] = blocked_buy_tickers
-        counts["buy_order_count"] = len(retained_orders)
-        risk_metrics["counts"] = counts
-        risk_metrics["funnel_diagnostics"] = funnel_diagnostics
-        plan.risk_metrics = risk_metrics
+        _attach_buy_order_funnel_update(
+            plan,
+            retained_orders=retained_orders,
+            filtered_entries=filtered_entries,
+            blocked_buy_tickers=blocked_buy_tickers,
+        )
         return plan
 
     def _apply_frozen_p6_risk_budget_overlay(self, plan: ExecutionPlan) -> ExecutionPlan:
@@ -1194,21 +1218,11 @@ class DailyPipeline:
 
         if filtered_entries or any_overlay_change:
             plan.buy_orders = updated_orders
-            risk_metrics = dict(plan.risk_metrics or {})
-            counts = dict(risk_metrics.get("counts", {}))
-            funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}) or {})
-            filters = dict(funnel_diagnostics.get("filters", {}) or {})
-            existing_buy_order_summary = dict(filters.get("buy_orders", {}) or {})
-            existing_entries = list(existing_buy_order_summary.get("tickers", []))
-            existing_entries.extend(filtered_entries)
-            buy_order_summary = _build_filter_summary(existing_entries)
-            buy_order_summary["selected_tickers"] = [order.ticker for order in updated_orders]
-            filters["buy_orders"] = buy_order_summary
-            funnel_diagnostics["filters"] = filters
-            counts["buy_order_count"] = len(updated_orders)
-            risk_metrics["counts"] = counts
-            risk_metrics["funnel_diagnostics"] = funnel_diagnostics
-            plan.risk_metrics = risk_metrics
+            _attach_buy_order_funnel_update(
+                plan,
+                retained_orders=updated_orders,
+                filtered_entries=filtered_entries,
+            )
 
         return _attach_btst_risk_budget_p6(plan)
 
