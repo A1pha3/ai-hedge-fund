@@ -188,4 +188,3 @@ def get_agents_list():
         }
         for key, config in sorted(ANALYST_CONFIG.items(), key=lambda x: x[1]["order"])
     ]
-

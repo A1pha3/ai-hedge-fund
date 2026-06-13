@@ -145,4 +145,3 @@ def _build_fallback_reasoning(signal: str, weighted_gap: float, market_cap: floa
             "details": f"Weighted valuation gap: {weighted_gap:.1%}. Market Cap: {currency_symbol}{market_cap:,.2f}. All valuation methods returned zero or negative values.",
         }
     }
-

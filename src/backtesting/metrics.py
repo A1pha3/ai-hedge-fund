@@ -151,4 +151,3 @@ class PerformanceMetricsCalculator:
             return None
         cov_pb = np.cov(pr, br)[0][1]
         return float(cov_pb / var_b)
-

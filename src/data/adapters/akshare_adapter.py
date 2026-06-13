@@ -103,4 +103,3 @@ def _derive_debt_to_equity_from_debt_to_assets(debt_to_assets: float | None) -> 
     if equity_ratio <= 0:
         return None  # 资不抵债
     return round(debt_to_assets / equity_ratio, 4)
-

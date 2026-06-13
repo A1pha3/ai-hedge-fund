@@ -395,4 +395,3 @@ def _assemble_event_sentiment_sub_factors(
     news_sentiment: SubFactor, insider_conviction: SubFactor, event_freshness: SubFactor
 ) -> list[SubFactor]:
     return [news_sentiment, insider_conviction, event_freshness]
-

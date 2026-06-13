@@ -181,4 +181,3 @@ def enforce_daily_trade_limit(plans: list[PositionPlan], portfolio_nav: float, l
 # buy-order prep path, the function should be re-introduced at that
 # boundary, not resurrected here. See docs/bugs/2026-06-05 for the
 # historical triage.
-
