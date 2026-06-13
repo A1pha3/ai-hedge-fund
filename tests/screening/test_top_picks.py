@@ -256,3 +256,120 @@ class TestRenderMarketOpportunityIndex:
         picks = [{"composite_score": 0.6}]
         result = _render_market_opportunity_index(picks, "crisis")
         assert "WAIT" in result
+
+
+# ---------------------------------------------------------------------------
+# _apply_consecutive_bonus_and_resort
+# ---------------------------------------------------------------------------
+
+
+class TestApplyConsecutiveBonusAndResort:
+    """R4: fold consecutive_bonus into composite_score and re-sort descending."""
+
+    def test_empty_list_returns_empty(self) -> None:
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        assert _apply_consecutive_bonus_and_resort([]) == []
+
+    def test_zero_bonus_preserves_order(self) -> None:
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        ranked = [
+            {"ticker": "a", "composite_score": 0.5, "consecutive_bonus": 0.0},
+            {"ticker": "b", "composite_score": 0.3, "consecutive_bonus": 0.0},
+        ]
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        assert [r["ticker"] for r in result] == ["a", "b"]
+
+    def test_bonus_boosted_pick_bubbles_up(self) -> None:
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        ranked = [
+            {"ticker": "a", "composite_score": 0.50, "consecutive_bonus": 0.0},
+            {"ticker": "b", "composite_score": 0.47, "consecutive_bonus": 0.05},
+        ]
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        assert [r["ticker"] for r in result] == ["b", "a"]
+        assert result[0]["composite_score"] == pytest.approx(0.52)
+
+    def test_score_rounded_to_four_decimals(self) -> None:
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        ranked = [{"ticker": "a", "composite_score": 0.123456, "consecutive_bonus": 0.03}]
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        assert result[0]["composite_score"] == round(0.123456 + 0.03, 4)
+
+    def test_missing_bonus_key_treated_as_zero(self) -> None:
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        ranked = [{"ticker": "a", "composite_score": 0.5}]  # no consecutive_bonus key
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        assert result[0]["composite_score"] == pytest.approx(0.5)
+
+    def test_mutates_in_place_and_returns_same_list(self) -> None:
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        ranked = [{"ticker": "a", "composite_score": 0.5, "consecutive_bonus": 0.04}]
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        assert result is ranked
+
+
+# ---------------------------------------------------------------------------
+# _enrich_with_consecutive_bonus
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichWithConsecutiveBonus:
+    """Best-effort enrichment wrapper: exception-safe + assigns consecutive_bonus."""
+
+    def test_exception_returns_original_unchanged(self, tmp_path) -> None:
+        from src.screening import top_picks
+
+        recs = [{"ticker": "a", "composite_score": 0.5}]
+        original_recs = list(recs)
+
+        def boom(**kwargs):
+            raise RuntimeError("disk read failed")
+
+        import unittest.mock as mock
+
+        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=boom):
+            result = top_picks._enrich_with_consecutive_bonus(recs, tmp_path)
+
+        assert result is recs or result == original_recs
+
+    def test_assigns_bonus_from_consecutive_days(self, tmp_path) -> None:
+        from src.screening import top_picks
+
+        enriched_data = [
+            {"ticker": "a", "consecutive_days": 5},
+            {"ticker": "b", "consecutive_days": 2},
+        ]
+
+        def fake_enrich(**kwargs):
+            return list(enriched_data)
+
+        import unittest.mock as mock
+
+        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich):
+            result = top_picks._enrich_with_consecutive_bonus([], tmp_path)
+
+        assert result[0]["consecutive_bonus"] == _consecutive_bonus(5)
+        assert result[1]["consecutive_bonus"] == _consecutive_bonus(2)
+        assert result[0]["consecutive_bonus"] == 0.05
+        assert result[1]["consecutive_bonus"] == 0.0
+
+    def test_missing_consecutive_days_defaults_to_zero(self, tmp_path) -> None:
+        from src.screening import top_picks
+
+        enriched_data = [{"ticker": "a"}]  # no consecutive_days key
+
+        def fake_enrich(**kwargs):
+            return list(enriched_data)
+
+        import unittest.mock as mock
+
+        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich):
+            result = top_picks._enrich_with_consecutive_bonus([], tmp_path)
+
+        assert result[0]["consecutive_bonus"] == 0.0
