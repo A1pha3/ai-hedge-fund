@@ -846,15 +846,11 @@ def _enrich_recommendations_with_history(
     return pdf_path
 
 
-def _handle_post_screening_tasks(
-    report_payload: dict,
-    trade_date: str,
-    report_path: Path,
-    pdf_path: Path | None,
-) -> None:
-    """P1-11 + P1-12 + P2-3: 筛选后处理 (归因、再平衡、推送)。所有失败容错。"""
-    from colorama import Fore, Style
+def _attach_strategy_attribution(report_payload: dict, trade_date: str) -> None:
+    """P1-11: 策略归因日报 — 若当前有持仓则附加归因摘要到 JSON 报告并二次落盘。
 
+    所有失败容错 (归因计算 / 落盘异常均不影响主流程)。
+    """
     # P1-11: 策略归因日报 — 若当前有持仓 (data/positions.json) 则附加归因摘要到 JSON 报告。
     try:
         from src.screening.strategy_attribution_daily import (
@@ -899,6 +895,19 @@ def _handle_post_screening_tasks(
                     logger.debug("[Auto] strategy_attribution_daily 二次落盘失败: %s", exc)
     except Exception as exc:  # pragma: no cover - 归因失败不影响主流程
         logger.warning("[Auto] P1-11 策略归因日报附加失败: %s", exc)
+
+
+def _handle_post_screening_tasks(
+    report_payload: dict,
+    trade_date: str,
+    report_path: Path,
+    pdf_path: Path | None,
+) -> None:
+    """P1-11 + P1-12 + P2-3: 筛选后处理 (归因、再平衡、推送)。所有失败容错。"""
+    from colorama import Fore, Style
+
+    # P1-11: 策略归因日报 — 若当前有持仓则附加归因摘要到 JSON 报告并二次落盘。
+    _attach_strategy_attribution(report_payload, trade_date)
 
     # P1-12: 组合再平衡建议 — 若当前有持仓则附加到 report payload (rebalance_actions 顶层字段)。
     try:
