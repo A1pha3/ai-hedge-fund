@@ -20,6 +20,7 @@ from src.llm.defaults import get_default_model_config
 from src.execution.daily_pipeline import DailyPipeline
 from src.graph.state import AgentState
 from src.screening.candidate_pool import build_candidate_pool
+from src.screening.custom_weights import STRATEGY_KEYS
 from src.screening.consecutive_recommendation import (
     DEFAULT_LOOKBACK_DAYS,
     enrich_recommendations_with_history,
@@ -1294,9 +1295,8 @@ def _print_score_decomposition(
 
         # 各策略贡献值 = weight * direction * (confidence/100) * completeness
         parts: list[str] = []
-        strategy_names = ("trend", "mean_reversion", "fundamental", "event_sentiment")
         strategy_labels = ("T", "MR", "F", "E")
-        for sname, slabel in zip(strategy_names, strategy_labels):
+        for sname, slabel in zip(STRATEGY_KEYS, strategy_labels):
             w = weights.get(sname, 0.0)
             sig = signals.get(sname)
             if sig is None or w == 0.0:
@@ -1473,7 +1473,7 @@ def _build_auto_screening_table_row(
     # Signal summary: direction + confidence per strategy
     signals = item.strategy_signals
     signal_parts = []
-    for strategy_name in ("trend", "mean_reversion", "fundamental", "event_sentiment"):
+    for strategy_name in STRATEGY_KEYS:
         sig = signals.get(strategy_name)
         if sig is None:
             signal_parts.append("—")
