@@ -765,3 +765,76 @@ def test_fuse_signals_for_ticker_arbitration_applied_populated() -> None:
     )
     # 4 bullish with high confidence → should trigger consensus bonus
     assert "consensus_bonus" in fused.arbitration_applied
+
+
+class TestAnalysisExcludesNeutralMeanReversion:
+    """Env-var parser for LAYER_B_ANALYSIS_EXCLUDE_NEUTRAL_MEAN_REVERSION."""
+
+    ENV = "LAYER_B_ANALYSIS_EXCLUDE_NEUTRAL_MEAN_REVERSION"
+
+    def test_unset_returns_false(self, monkeypatch):
+        monkeypatch.delenv(self.ENV, raising=False)
+        from src.screening.signal_fusion import _analysis_excludes_neutral_mean_reversion
+
+        assert _analysis_excludes_neutral_mean_reversion() is False
+
+    def test_truthy_values(self, monkeypatch):
+        from src.screening.signal_fusion import _analysis_excludes_neutral_mean_reversion
+
+        for val in ("1", "true", "yes", "on"):
+            monkeypatch.setenv(self.ENV, val)
+            assert _analysis_excludes_neutral_mean_reversion() is True
+
+    def test_falsy_values(self, monkeypatch):
+        from src.screening.signal_fusion import _analysis_excludes_neutral_mean_reversion
+
+        for val in ("0", "false", "random"):
+            monkeypatch.setenv(self.ENV, val)
+            assert _analysis_excludes_neutral_mean_reversion() is False
+
+    def test_whitespace_and_case_normalized(self, monkeypatch):
+        monkeypatch.setenv(self.ENV, "  TRUE  ")
+        from src.screening.signal_fusion import _analysis_excludes_neutral_mean_reversion
+
+        assert _analysis_excludes_neutral_mean_reversion() is True
+
+
+class TestGetNeutralMeanReversionMode:
+    """Mode resolver: MODE env takes precedence; falls back to EXCLUDE flag."""
+
+    MODE_ENV = "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE"
+    EXCLUDE_ENV = "LAYER_B_ANALYSIS_EXCLUDE_NEUTRAL_MEAN_REVERSION"
+
+    def test_mode_set_takes_precedence(self, monkeypatch):
+        monkeypatch.setenv(self.MODE_ENV, "full_exclude")
+        monkeypatch.setenv(self.EXCLUDE_ENV, "1")  # should be ignored
+        from src.screening.signal_fusion import _get_neutral_mean_reversion_mode
+
+        assert _get_neutral_mean_reversion_mode() == "full_exclude"
+
+    def test_mode_empty_falls_back_to_off(self, monkeypatch):
+        monkeypatch.setenv(self.MODE_ENV, "")
+        monkeypatch.delenv(self.EXCLUDE_ENV, raising=False)
+        from src.screening.signal_fusion import _get_neutral_mean_reversion_mode
+
+        assert _get_neutral_mean_reversion_mode() == "off"
+
+    def test_mode_normalized(self, monkeypatch):
+        monkeypatch.setenv(self.MODE_ENV, "  PARTIAL  ")
+        from src.screening.signal_fusion import _get_neutral_mean_reversion_mode
+
+        assert _get_neutral_mean_reversion_mode() == "partial"
+
+    def test_neither_set_returns_off(self, monkeypatch):
+        monkeypatch.delenv(self.MODE_ENV, raising=False)
+        monkeypatch.delenv(self.EXCLUDE_ENV, raising=False)
+        from src.screening.signal_fusion import _get_neutral_mean_reversion_mode
+
+        assert _get_neutral_mean_reversion_mode() == "off"
+
+    def test_exclude_flag_fallback_when_mode_unset(self, monkeypatch):
+        monkeypatch.delenv(self.MODE_ENV, raising=False)
+        monkeypatch.setenv(self.EXCLUDE_ENV, "true")
+        from src.screening.signal_fusion import _get_neutral_mean_reversion_mode
+
+        assert _get_neutral_mean_reversion_mode() == "full_exclude"
