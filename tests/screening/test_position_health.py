@@ -1,0 +1,153 @@
+"""Tests for src/screening/position_health.py — P15-1 持仓健康检查."""
+
+from __future__ import annotations
+
+import pytest
+
+from src.screening.position_health import (
+    PositionHealth,
+    PositionHealthReport,
+    _determine_action,
+    _find_ticker_in_history,
+    render_position_health,
+)
+
+
+# ---------------------------------------------------------------------------
+# _determine_action
+# ---------------------------------------------------------------------------
+
+
+class TestDetermineAction:
+    def test_sell(self) -> None:
+        action, reason = _determine_action(0.10, 0.0, 0.0, sell_threshold=0.15, watch_threshold=0.30)
+        assert action == "SELL"
+        assert "sell_threshold" in reason
+
+    def test_watch(self) -> None:
+        action, reason = _determine_action(0.20, 0.0, 0.0, sell_threshold=0.15, watch_threshold=0.30)
+        assert action == "WATCH"
+        assert "watch zone" in reason
+
+    def test_hold(self) -> None:
+        action, reason = _determine_action(0.50, 0.0, 0.0, sell_threshold=0.15, watch_threshold=0.30)
+        assert action == "HOLD"
+
+    def test_hold_deteriorating_signals(self) -> None:
+        """Negative momentum + negative trend → WATCH even with good composite."""
+        action, reason = _determine_action(0.50, -0.10, -0.05, sell_threshold=0.15, watch_threshold=0.30)
+        assert action == "WATCH"
+        assert "衰减" in reason
+
+    def test_boundary_sell(self) -> None:
+        """Exactly at sell_threshold → not SELL (must be < threshold)."""
+        action, _ = _determine_action(0.15, 0.0, 0.0, sell_threshold=0.15, watch_threshold=0.30)
+        assert action == "WATCH"  # 0.15 >= 0.15 but < 0.30
+
+    def test_boundary_watch(self) -> None:
+        """Exactly at watch_threshold → HOLD (must be < threshold for WATCH)."""
+        action, _ = _determine_action(0.30, 0.0, 0.0, sell_threshold=0.15, watch_threshold=0.30)
+        assert action == "HOLD"
+
+    def test_momentum_only_not_enough(self) -> None:
+        """Negative momentum alone (with good trend) → still HOLD."""
+        action, _ = _determine_action(0.50, -0.10, 0.05, sell_threshold=0.15, watch_threshold=0.30)
+        assert action == "HOLD"
+
+
+# ---------------------------------------------------------------------------
+# _find_ticker_in_history
+# ---------------------------------------------------------------------------
+
+
+class TestFindTickerInHistory:
+    def test_found(self) -> None:
+        history = [
+            {"payload": {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}},
+        ]
+        result = _find_ticker_in_history("000001", history)
+        assert result is not None
+        assert result["ticker"] == "000001"
+
+    def test_not_found(self) -> None:
+        history = [
+            {"payload": {"recommendations": [{"ticker": "000002", "score_b": 0.5}]}},
+        ]
+        assert _find_ticker_in_history("000001", history) is None
+
+    def test_empty_history(self) -> None:
+        assert _find_ticker_in_history("000001", []) is None
+
+    def test_first_match_wins(self) -> None:
+        history = [
+            {"payload": {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}},
+            {"payload": {"recommendations": [{"ticker": "000001", "score_b": 0.3}]}},
+        ]
+        result = _find_ticker_in_history("000001", history)
+        assert result["score_b"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# PositionHealth / PositionHealthReport
+# ---------------------------------------------------------------------------
+
+
+class TestPositionHealth:
+    def test_defaults(self) -> None:
+        ph = PositionHealth(ticker="000001")
+        assert ph.action == "HOLD"
+        assert ph.composite_score == 0.0
+
+
+class TestPositionHealthReport:
+    def test_empty(self) -> None:
+        report = PositionHealthReport()
+        assert report.items == []
+
+    def test_to_dict(self) -> None:
+        report = PositionHealthReport(
+            trade_date="2026-01-01",
+            items=[
+                PositionHealth(ticker="000001", name="平安", composite_score=0.5, action="HOLD", reason="OK"),
+            ],
+        )
+        d = report.to_dict()
+        assert d["trade_date"] == "2026-01-01"
+        assert d["items"][0]["action"] == "HOLD"
+
+
+# ---------------------------------------------------------------------------
+# render_position_health
+# ---------------------------------------------------------------------------
+
+
+class TestRenderPositionHealth:
+    def test_empty(self) -> None:
+        result = render_position_health(PositionHealthReport())
+        assert "无持仓数据" in result
+
+    def test_with_items(self) -> None:
+        report = PositionHealthReport(
+            trade_date="2026-01-01",
+            items=[
+                PositionHealth(ticker="000001", name="平安", composite_score=0.5, action="HOLD", reason="健康"),
+                PositionHealth(ticker="000002", name="万科", composite_score=0.1, action="SELL", reason="低分"),
+            ],
+        )
+        result = render_position_health(report)
+        assert "000001" in result
+        assert "SELL" in result
+        assert "HOLD" in result
+
+
+# ---------------------------------------------------------------------------
+# compute_position_health (end-to-end, no reports → empty)
+# ---------------------------------------------------------------------------
+
+
+class TestComputePositionHealth:
+    def test_no_reports_returns_empty(self, tmp_path) -> None:
+        from src.screening.position_health import compute_position_health
+
+        report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
+        assert report.items == []
