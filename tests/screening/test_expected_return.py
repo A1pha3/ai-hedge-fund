@@ -216,3 +216,121 @@ class TestRenderCompact:
         assert "T+20" in text
         assert "T+30" in text
         assert "样本" in text
+
+
+# ---------------------------------------------------------------------------
+# _build_bucket_return_map / _build_bucket_winrate_map / _build_bucket_sample_map
+# ---------------------------------------------------------------------------
+
+
+class TestBuildBucketMaps:
+    """Direct tests for bucket-map helpers extracted from render_expected_returns."""
+
+    def test_return_map_builds_all_horizons(self):
+        from src.screening.expected_return import _build_bucket_return_map
+
+        cal = _make_calibration()
+        result = _build_bucket_return_map(cal)
+        assert "高 (>0.8)" in result
+        high = result["高 (>0.8)"]
+        assert set(high.keys()) == {"t1", "t5", "t10", "t20", "t30"}
+        assert high["t5"] == 3.5
+        assert high["t10"] == 5.2
+
+    def test_return_map_preserves_none(self):
+        from src.screening.expected_return import _build_bucket_return_map
+
+        cal = CalibrationSummary(
+            lookback_days=60,
+            buckets=[ScoreBucketStats(label="x", score_low=0.0, score_high=1.0, t5_avg_return=None)],
+        )
+        result = _build_bucket_return_map(cal)
+        assert result["x"]["t5"] is None
+        assert result["x"]["t1"] is None
+
+    def test_winrate_map_builds_all_horizons(self):
+        from src.screening.expected_return import _build_bucket_winrate_map
+
+        cal = _make_calibration()
+        result = _build_bucket_winrate_map(cal)
+        high = result["高 (>0.8)"]
+        assert set(high.keys()) == {"t1", "t5", "t10", "t20", "t30"}
+        assert high["t5"] == 0.60
+
+    def test_sample_map(self):
+        from src.screening.expected_return import _build_bucket_sample_map
+
+        cal = _make_calibration()
+        result = _build_bucket_sample_map(cal)
+        assert result["高 (>0.8)"] == 40
+        assert result["中高 (0.7-0.8)"] == 50
+
+    def test_empty_calibration_returns_empty_maps(self):
+        from src.screening.expected_return import (
+            _build_bucket_return_map,
+            _build_bucket_sample_map,
+            _build_bucket_winrate_map,
+        )
+
+        cal = CalibrationSummary(lookback_days=60)
+        assert _build_bucket_return_map(cal) == {}
+        assert _build_bucket_winrate_map(cal) == {}
+        assert _build_bucket_sample_map(cal) == {}
+
+
+# ---------------------------------------------------------------------------
+# _fmt_return / _fmt_winrate
+# ---------------------------------------------------------------------------
+
+
+class TestFmtReturn:
+    def test_none_returns_dash(self):
+        from src.screening.expected_return import _fmt_return
+
+        out = _fmt_return(None)
+        assert "—" in out
+
+    def test_positive_has_plus_sign(self):
+        from src.screening.expected_return import _fmt_return
+
+        out = _fmt_return(2.5)
+        assert "+2.50%" in out
+
+    def test_negative_no_plus_sign(self):
+        from src.screening.expected_return import _fmt_return
+
+        out = _fmt_return(-1.3)
+        assert "-1.30%" in out
+        assert "+" not in out
+
+    def test_zero_shows_zero(self):
+        from src.screening.expected_return import _fmt_return
+
+        out = _fmt_return(0.0)
+        assert "0.00%" in out
+
+
+class TestFmtWinrate:
+    def test_none_returns_dash(self):
+        from src.screening.expected_return import _fmt_winrate
+
+        out = _fmt_winrate(None)
+        assert "—" in out
+
+    def test_high_winrate_formats_as_percent(self):
+        from src.screening.expected_return import _fmt_winrate
+
+        out = _fmt_winrate(0.62)
+        assert "62%" in out
+
+    def test_mid_winrate(self):
+        from src.screening.expected_return import _fmt_winrate
+
+        out = _fmt_winrate(0.50)
+        assert "50%" in out
+
+    def test_low_winrate(self):
+        from src.screening.expected_return import _fmt_winrate
+
+        out = _fmt_winrate(0.30)
+        assert "30%" in out
