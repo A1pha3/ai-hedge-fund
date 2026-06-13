@@ -32,6 +32,12 @@ from src.screening.strategy_attribution_daily import (
     KNOWN_STRATEGIES,
     STRATEGY_DISPLAY_NAMES,
     StrategyDailyAttribution,
+    _build_diagnosis,
+    _coerce_strategy,
+    _format_currency,
+    _position_daily_pnl,
+    _status_symbol,
+    _summary_line,
     compute_strategy_daily_attribution,
     render_attribution_report,
 )
@@ -389,3 +395,184 @@ def test_dataclass_frozen() -> None:
     )
     with pytest.raises(Exception):
         attr.daily_pnl = 999  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Direct unit tests for private helpers (was 0 direct coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestPositionDailyPnl:
+    """_position_daily_pnl — extract daily PnL from a single position."""
+
+    def test_explicit_daily_pnl_field_takes_precedence(self) -> None:
+        pos = {"daily_pnl": 42.0, "current_value": 999, "prev_value": 100}
+        assert _position_daily_pnl(pos) == 42.0
+
+    def test_current_minus_prev_when_no_daily_pnl(self) -> None:
+        assert _position_daily_pnl({"current_value": 110, "prev_value": 100}) == 10.0
+
+    def test_negative_pnl_via_diff(self) -> None:
+        assert _position_daily_pnl({"current_value": 90, "prev_value": 100}) == -10.0
+
+    def test_missing_current_returns_zero(self) -> None:
+        assert _position_daily_pnl({"prev_value": 100}) == 0.0
+
+    def test_missing_prev_returns_zero(self) -> None:
+        assert _position_daily_pnl({"current_value": 100}) == 0.0
+
+    def test_empty_position_returns_zero(self) -> None:
+        assert _position_daily_pnl({}) == 0.0
+
+    def test_nan_current_returns_zero(self) -> None:
+        assert _position_daily_pnl({"current_value": float("nan"), "prev_value": 100}) == 0.0
+
+    def test_inf_prev_returns_zero(self) -> None:
+        assert _position_daily_pnl({"current_value": 100, "prev_value": float("inf")}) == 0.0
+
+    def test_non_numeric_values_return_zero(self) -> None:
+        assert _position_daily_pnl({"current_value": "abc", "prev_value": 100}) == 0.0
+
+
+class TestCoerceStrategy:
+    """_coerce_strategy — normalize strategy name."""
+
+    def test_none_returns_unknown(self) -> None:
+        assert _coerce_strategy(None) == "unknown"
+
+    def test_strips_whitespace_and_lowercases(self) -> None:
+        assert _coerce_strategy("  Trend  ") == "trend"
+
+    def test_uppercase_lowered(self) -> None:
+        assert _coerce_strategy("MEAN_REVERSION") == "mean_reversion"
+
+    def test_empty_string_returns_unknown(self) -> None:
+        assert _coerce_strategy("") == "unknown"
+
+    def test_whitespace_only_returns_unknown(self) -> None:
+        assert _coerce_strategy("   ") == "unknown"
+
+    def test_non_string_coerced_to_str(self) -> None:
+        assert _coerce_strategy(123) == "123"
+
+
+class TestBuildDiagnosis:
+    """_build_diagnosis — generate Chinese diagnosis from template."""
+
+    def test_known_template_returned_verbatim(self) -> None:
+        result = _build_diagnosis("trend", "winning", 0.8, "A", "B")
+        assert result == DIAGNOSIS_TEMPLATES[("trend", "winning")]
+
+    def test_known_mean_reversion_failing(self) -> None:
+        result = _build_diagnosis("mean_reversion", "failing", 0.2, None, "X")
+        assert result == DIAGNOSIS_TEMPLATES[("mean_reversion", "failing")]
+
+    def test_unknown_strategy_winning_fallback(self) -> None:
+        result = _build_diagnosis("unknown", "winning", 0.75, "A", None)
+        assert "表现亮眼" in result
+        assert "75%" in result
+
+    def test_unknown_strategy_failing_fallback(self) -> None:
+        result = _build_diagnosis("unknown", "failing", 0.20, None, "B")
+        assert "短期承压" in result
+        assert "20%" in result
+
+    def test_unknown_strategy_neutral_fallback(self) -> None:
+        result = _build_diagnosis("unknown", "neutral", 0.5, None, None)
+        assert "中性" in result
+
+    def test_uses_display_name_when_strategy_not_in_template(self) -> None:
+        # "fundamental" exists in templates, but "custom_xyz" does not
+        result = _build_diagnosis("custom_xyz", "winning", 0.9, None, None)
+        assert "custom_xyz" in result
+
+
+class TestFormatCurrency:
+    """_format_currency — ¥ formatting with thousands separator."""
+
+    def test_positive_has_plus_sign(self) -> None:
+        assert _format_currency(1234.0) == "+¥1,234"
+
+    def test_zero_no_plus_sign(self) -> None:
+        assert _format_currency(0.0) == "¥0"
+
+    def test_negative_no_plus_sign(self) -> None:
+        assert _format_currency(-500.0) == "¥-500"
+
+    def test_thousands_separator(self) -> None:
+        assert _format_currency(1234567.0) == "+¥1,234,567"
+
+    def test_truncates_decimals(self) -> None:
+        assert _format_currency(1234.99) == "+¥1,235"
+
+
+class TestStatusSymbol:
+    """_status_symbol — map status to visual symbol."""
+
+    def test_winning(self) -> None:
+        assert _status_symbol("winning") == "✓"
+
+    def test_failing(self) -> None:
+        assert _status_symbol("failing") == "✗"
+
+    def test_neutral(self) -> None:
+        assert _status_symbol("neutral") == "○"
+
+    def test_unknown_status_defaults_to_dot(self) -> None:
+        assert _status_symbol("bogus") == "·"
+
+
+def _make_attr(strategy_name: str, status: str, attribution_pct: float) -> StrategyDailyAttribution:
+    """Helper: build a minimal StrategyDailyAttribution for _summary_line tests."""
+    return StrategyDailyAttribution(
+        strategy_name=strategy_name,
+        daily_pnl=0.0,
+        attribution_pct=attribution_pct,
+        hit_rate=0.5,
+        top_winner=None,
+        top_winner_pnl=0.0,
+        top_loser=None,
+        top_loser_pnl=0.0,
+        n_positions=1,
+        status=status,
+        diagnosis="",
+    )
+
+
+class TestSummaryLine:
+    """_summary_line — generate summary sentence from attributions."""
+
+    def test_winners_and_failers(self) -> None:
+        attrs = {
+            "trend": _make_attr("trend", "winning", 60.0),
+            "mean_reversion": _make_attr("mean_reversion", "failing", -10.0),
+        }
+        line = _summary_line(attrs)
+        assert "双驱动" in line
+        assert "短期承压" in line
+        assert "趋势策略" in line
+        assert "均值回归" in line
+
+    def test_only_winners(self) -> None:
+        attrs = {"trend": _make_attr("trend", "winning", 50.0)}
+        line = _summary_line(attrs)
+        assert "主导今日组合收益" in line
+
+    def test_only_failers(self) -> None:
+        attrs = {"fundamental": _make_attr("fundamental", "failing", -8.0)}
+        line = _summary_line(attrs)
+        assert "整体承压" in line
+
+    def test_all_neutral(self) -> None:
+        attrs = {"trend": _make_attr("trend", "neutral", 0.0)}
+        line = _summary_line(attrs)
+        assert "中性" in line
+
+    def test_winners_sorted_by_attribution_desc(self) -> None:
+        attrs = {
+            "trend": _make_attr("trend", "winning", 30.0),
+            "fundamental": _make_attr("fundamental", "winning", 60.0),
+        }
+        line = _summary_line(attrs)
+        # fundamental (60%) should appear before trend (30%)
+        assert line.index("基本面策略") < line.index("趋势策略")
