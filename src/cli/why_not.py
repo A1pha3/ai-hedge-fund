@@ -356,7 +356,7 @@ def run_why_not(
 
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}小结:{Style.RESET_ALL} {ticker} 未进 Top {top_n} 的最可能原因:")
-    print(f"  1. Score B < { _compute_top_score_stats(recs)['min']:+.4f} (末位门槛)")
+    print(f"  1. Score B < {_compute_top_score_stats(recs)['min']:+.4f} (末位门槛)")
     print(f"  2. 至少 1 个策略方向与 Top {top_n} 主流方向冲突")
     print("  3. 详细反事实: 对该票单独跑 score_batch (src/screening/strategy_scorer_*.py)")
     print()

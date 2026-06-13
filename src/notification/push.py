@@ -202,8 +202,6 @@ def _safe_str(value: Any, default: str = "") -> str:
         return default
 
 
-
-
 def format_report_markdown(report_data: Mapping[str, Any], *, max_rows: int = 10) -> str:
     """把 auto_screening 报告渲染成 Markdown 摘要 (供邮件/企微/钉钉正文)。
 
@@ -262,10 +260,7 @@ def format_report_markdown(report_data: Mapping[str, Any], *, max_rows: int = 10
             arrow = "↑" if direction > 0 else "↓" if direction < 0 else "—"
             return f"{arrow}{confidence:.0f}"
 
-        lines.append(
-            f"| {idx} | {ticker} | {decision} | {score_b:+.4f} | "
-            f"{_sig('trend')} | {_sig('mean_reversion')} | {_sig('fundamental')} | {_sig('event_sentiment')} |"
-        )
+        lines.append(f"| {idx} | {ticker} | {decision} | {score_b:+.4f} | " f"{_sig('trend')} | {_sig('mean_reversion')} | {_sig('fundamental')} | {_sig('event_sentiment')} |")
     lines.append("")
     if len(recs_raw) > max_rows:
         lines.append(f"_仅展示 Top {max_rows} / 共 {len(recs_raw)} 条。完整内容请查看 JSON 报告。_")

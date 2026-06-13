@@ -206,6 +206,7 @@ def analyze_lynch_growth(financial_line_items: list) -> dict:
     final_score = min(10, (raw_score / 6) * 10)
     return {"score": final_score, "details": "; ".join(details)}
 
+
 def analyze_lynch_fundamentals(financial_line_items: list) -> dict:
     """
     Evaluate basic fundamentals:
@@ -349,8 +350,7 @@ def generate_lynch_output(
         [
             (
                 "system",
-                with_fact_grounding_rules(
-                    """You are a Peter Lynch AI agent. You make investment decisions based on Peter Lynch's well-known principles:
+                with_fact_grounding_rules("""You are a Peter Lynch AI agent. You make investment decisions based on Peter Lynch's well-known principles:
                 
                 1. Invest in What You Know: Emphasize understandable businesses, possibly discovered in everyday life.
                 2. Growth at a Reasonable Price (GARP): Rely on the PEG ratio as a prime metric.
@@ -374,8 +374,7 @@ def generate_lynch_output(
                   "reasoning": "string in English",
                   "reasoning_cn": "same analysis in Chinese/中文"
                 }}
-                """
-                ),
+                """),
             ),
             (
                 "human",

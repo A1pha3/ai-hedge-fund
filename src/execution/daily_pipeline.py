@@ -291,6 +291,8 @@ def _load_early_runner_runtime_entries(trade_date: str) -> list[dict[str, Any]]:
     except Exception:
         return []
     return build_runtime_supplemental_entries(analysis, trade_date=trade_date, require_tradeable_gate=True)
+
+
 _ORIGINAL_BUILD_CANDIDATE_POOL_WITH_SHADOW = build_candidate_pool_with_shadow
 WEAK_CONFIRMATION_REENTRY_NEGATIVE_TAGS = frozenset(
     {

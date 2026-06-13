@@ -149,7 +149,7 @@ def calculate_volatility_adjusted_limit(annualized_volatility: float) -> float:
         (0.15, 1.00),  # 20%
         (0.30, 0.75),  # 15%
         (0.50, 0.50),  # 10%
-        (1.00, 0.25),  #  5%
+        (1.00, 0.25),  # 5%
     ]
 
     # Clamp to the first anchor

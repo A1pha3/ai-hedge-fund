@@ -134,7 +134,6 @@ class SmartDataCleaner:
         metrics = self._fix_unit_errors(metrics, ticker)
         return metrics
 
-
     def _fix_unit_errors(self, metrics: list[FinancialMetrics], ticker: str) -> list[FinancialMetrics]:
         """自动修正单位错误
 

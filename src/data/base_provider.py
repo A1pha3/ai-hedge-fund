@@ -78,20 +78,16 @@ class DataProviderError(Exception):
     """数据提供商错误基类"""
 
 
-
 class RateLimitError(DataProviderError):
     """速率限制错误"""
-
 
 
 class APIError(DataProviderError):
     """API 调用错误"""
 
 
-
 class ValidationError(DataProviderError):
     """数据验证错误"""
-
 
 
 class BaseDataProvider(ABC):
