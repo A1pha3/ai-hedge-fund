@@ -13,10 +13,14 @@ from src.screening.composite_score import CompositeEntry, CompositeReport
 from src.screening.expected_return import ExpectedReturn, ExpectedReturnReport
 from src.screening.top_picks import (
     run_top_picks,
+    _build_signal_breakdown,
     _consecutive_bonus,
+    _load_recommendation_context,
     _status_icon,
     _render_hit_rate_summary,
+    _score_color,
 )
+from src.utils.display import Fore, Style
 
 
 def _make_rec(ticker: str, name: str, score_b: float, industry: str = "电子") -> dict[str, Any]:
@@ -100,6 +104,63 @@ class TestTopPicks:
         output = capsys.readouterr().out
         # Should show signal breakdown (动量/行业/一致/量价)
         assert "base=" in output
+
+
+class TestExtractedTopPicksHelpers:
+    def test_build_signal_breakdown_renders_positive_negative_and_consecutive(self) -> None:
+        item = {
+            "momentum_bonus": 0.1,
+            "sector_bonus": -0.2,
+            "consistency_adj": 0.3,
+            "volume_factor": -0.1,
+            "trend_resonance_factor": 0.03,
+            "consecutive_bonus": 0.04,
+        }
+
+        result = _build_signal_breakdown(item)
+
+        assert "动量↑" in result
+        assert "行业弱" in result
+        assert "一致" in result
+        assert "缩量" in result
+        assert "共振↑" in result
+        assert "连续+0.04" in result
+
+    def test_build_signal_breakdown_returns_neutral_when_no_threshold_crossed(self) -> None:
+        result = _build_signal_breakdown(
+            {
+                "momentum_bonus": 0.0,
+                "sector_bonus": 0.0,
+                "consistency_adj": 0.0,
+                "volume_factor": 0.0,
+                "trend_resonance_factor": 0.01,
+                "consecutive_bonus": 0.0,
+            }
+        )
+
+        assert "中性" in result
+        assert "共振" not in result
+
+    def test_score_color_thresholds(self) -> None:
+        assert _score_color(0.6) == Fore.GREEN + Style.BRIGHT
+        assert _score_color(0.4) == Fore.YELLOW
+        assert _score_color(0.2) == Fore.RED
+
+    def test_load_recommendation_context_slices_to_count_times_three(self, tmp_path: Path) -> None:
+        recs = [_make_rec(f"{index:06d}", f"Stock{index}", 0.5) for index in range(10)]
+        _write_report(tmp_path, recs, date="20260611")
+
+        context = _load_recommendation_context(tmp_path, count=2)
+
+        assert context is not None
+        report_path, report_data, loaded_recs, trade_date = context
+        assert report_path.name == "auto_screening_20260611.json"
+        assert report_data["date"] == "20260611"
+        assert trade_date == "20260611"
+        assert len(loaded_recs) == 6
+
+    def test_load_recommendation_context_returns_none_without_reports(self, tmp_path: Path) -> None:
+        assert _load_recommendation_context(tmp_path, count=2) is None
 
     @patch(
         "src.screening.expected_return.compute_expected_returns",
