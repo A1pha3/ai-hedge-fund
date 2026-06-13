@@ -413,12 +413,14 @@ def format_audit_table(result: LookbackAuditResult) -> str:
     lines.append("-" * 80)
     s = result.summary
     if s.get("avg_return_pct") is not None:
-        lines.append(f"Summary: avg_return={s['avg_return_pct']:+.2f}%  "
-                      f"median={s.get('median_return_pct', 'N/A')}%  "
-                      f"hit_rate={s.get('hit_rate', 'N/A')}  "
-                      f"best={s.get('best_return_pct', 'N/A')}%  "
-                      f"worst={s.get('worst_return_pct', 'N/A')}%  "
-                      f"avg_maxDD={s.get('avg_max_drawdown_pct', 'N/A')}%")
+        lines.append(
+            f"Summary: avg_return={s['avg_return_pct']:+.2f}%  "
+            f"median={s.get('median_return_pct', 'N/A')}%  "
+            f"hit_rate={s.get('hit_rate', 'N/A')}  "
+            f"best={s.get('best_return_pct', 'N/A')}%  "
+            f"worst={s.get('worst_return_pct', 'N/A')}%  "
+            f"avg_maxDD={s.get('avg_max_drawdown_pct', 'N/A')}%"
+        )
     lines.append(f"Audited: {result.audited_count}/{result.selected_count} tickers with data")
     return "\n".join(lines)
 
