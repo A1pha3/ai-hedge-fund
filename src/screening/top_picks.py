@@ -756,6 +756,43 @@ class TopPicksRenderContext:
     trade_date: str
 
 
+def _print_pick_entry_details(
+    *,
+    item: dict,
+    verdict: dict,
+    consec_days: int,
+    context: TopPicksRenderContext,
+) -> None:
+    """Render the optional detail lines below a representative pick.
+
+    Extracted from :func:`_print_pick_entry`: BUY stop-loss/take-profit,
+    consecutive-day score trend, and cluster-representative alternatives.
+    Each line is independent and only prints when its data is present.
+    """
+    if verdict["action"] == "BUY":
+        sl_tp = _render_stop_loss_take_profit(
+            str(item.get("ticker", "")),
+            str(item.get("name", "") or ""),
+            trade_date=context.trade_date,
+        )
+        if sl_tp:
+            print(sl_tp)
+
+    if consec_days >= 2:
+        trend = _render_score_trend(
+            str(item.get("ticker", "")),
+            report_dir=context.report_dir,
+        )
+        if trend:
+            print(f"     趋势:{trend}")
+
+    cluster_size = int(item.get("cluster_size", 1) or 1)
+    alternatives = [str(ticker) for ticker in (item.get("cluster_alternatives") or []) if str(ticker)]
+    if cluster_size > 1 and alternatives and bool(item.get("is_cluster_representative")):
+        cluster_label = str(item.get("cluster_label", "") or "")
+        print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
+
+
 def _print_pick_entry(
     idx: int,
     item: dict,
@@ -783,9 +820,6 @@ def _print_pick_entry(
     t30 = (item.get("expected_returns") or {}).get("t30")
     t30_wr = (item.get("win_rates") or {}).get("t30")
     sample_count = int(item.get("bucket_sample_count", 0) or 0)
-    cluster_label = str(item.get("cluster_label", "") or "")
-    cluster_size = int(item.get("cluster_size", 1) or 1)
-    alternatives = [str(ticker) for ticker in (item.get("cluster_alternatives") or []) if str(ticker)]
 
     t30_str = f"{t30:+.2f}%" if isinstance(t30, (int, float)) else "—"
     t30_wr_str = f"{t30_wr:.0%}" if isinstance(t30_wr, (int, float)) else "—"
@@ -803,25 +837,12 @@ def _print_pick_entry(
     print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}  市场门控={verdict['market_regime']}")
     print(f"     失效条件: {verdict['invalidation_reason']}")
 
-    if verdict["action"] == "BUY":
-        sl_tp = _render_stop_loss_take_profit(
-            str(item.get("ticker", "")),
-            str(item.get("name", "") or ""),
-            trade_date=context.trade_date,
-        )
-        if sl_tp:
-            print(sl_tp)
-
-    if consec_days >= 2:
-        trend = _render_score_trend(
-            str(item.get("ticker", "")),
-            report_dir=context.report_dir,
-        )
-        if trend:
-            print(f"     趋势:{trend}")
-
-    if cluster_size > 1 and alternatives and bool(item.get("is_cluster_representative")):
-        print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
+    _print_pick_entry_details(
+        item=item,
+        verdict=verdict,
+        consec_days=consec_days,
+        context=context,
+    )
 
 
 def _print_top_picks_header(
