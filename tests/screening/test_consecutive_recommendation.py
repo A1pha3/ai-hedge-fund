@@ -295,3 +295,46 @@ class TestResolveReportDir:
     def test_returns_path(self) -> None:
         result = resolve_report_dir()
         assert isinstance(result, Path)
+
+
+# ---------------------------------------------------------------------------
+# _latest_report_date
+# ---------------------------------------------------------------------------
+
+
+class TestLatestReportDate:
+    """Return the latest auto_screening_*.json report date as datetime."""
+
+    def test_empty_dir_returns_none(self, tmp_path):
+        from src.screening.consecutive_recommendation import _latest_report_date
+
+        assert _latest_report_date(tmp_path) is None
+
+    def test_single_file(self, tmp_path):
+        from src.screening.consecutive_recommendation import _latest_report_date
+
+        (tmp_path / "auto_screening_20260610.json").write_text("{}")
+        result = _latest_report_date(tmp_path)
+        assert result == datetime(2026, 6, 10)
+
+    def test_multiple_files_returns_latest(self, tmp_path):
+        from src.screening.consecutive_recommendation import _latest_report_date
+
+        (tmp_path / "auto_screening_20260601.json").write_text("{}")
+        (tmp_path / "auto_screening_20260620.json").write_text("{}")
+        (tmp_path / "auto_screening_20260615.json").write_text("{}")
+        assert _latest_report_date(tmp_path) == datetime(2026, 6, 20)
+
+    def test_non_matching_files_ignored(self, tmp_path):
+        from src.screening.consecutive_recommendation import _latest_report_date
+
+        (tmp_path / "report_20260610.json").write_text("{}")
+        (tmp_path / "auto_screening_20260610.json").write_text("{}")
+        assert _latest_report_date(tmp_path) == datetime(2026, 6, 10)
+
+    def test_returns_datetime_type(self, tmp_path):
+        from src.screening.consecutive_recommendation import _latest_report_date
+
+        (tmp_path / "auto_screening_20260101.json").write_text("{}")
+        result = _latest_report_date(tmp_path)
+        assert isinstance(result, datetime)
