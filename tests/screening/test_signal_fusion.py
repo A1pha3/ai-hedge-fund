@@ -838,3 +838,183 @@ class TestGetNeutralMeanReversionMode:
         from src.screening.signal_fusion import _get_neutral_mean_reversion_mode
 
         assert _get_neutral_mean_reversion_mode() == "full_exclude"
+
+
+class TestQualityFirstGuardEnabled:
+    """Env-var parser for LAYER_B_ANALYSIS_QUALITY_FIRST_GUARD (defaults to True)."""
+
+    ENV = "LAYER_B_ANALYSIS_QUALITY_FIRST_GUARD"
+
+    def test_unset_returns_true_default(self, monkeypatch):
+        monkeypatch.delenv(self.ENV, raising=False)
+        from src.screening.signal_fusion import _quality_first_guard_enabled
+
+        assert _quality_first_guard_enabled() is True
+
+    def test_truthy_values(self, monkeypatch):
+        from src.screening.signal_fusion import _quality_first_guard_enabled
+
+        for val in ("1", "true", "yes", "on"):
+            monkeypatch.setenv(self.ENV, val)
+            assert _quality_first_guard_enabled() is True
+
+    def test_falsy_values(self, monkeypatch):
+        from src.screening.signal_fusion import _quality_first_guard_enabled
+
+        for val in ("0", "false", "random", ""):
+            monkeypatch.setenv(self.ENV, val)
+            assert _quality_first_guard_enabled() is False
+
+    def test_whitespace_and_case_normalized(self, monkeypatch):
+        monkeypatch.setenv(self.ENV, "  TRUE  ")
+        from src.screening.signal_fusion import _quality_first_guard_enabled
+
+        assert _quality_first_guard_enabled() is True
+
+
+class TestComputeRawScore:
+    """_compute_raw_score: weighted sum of direction * confidence * completeness."""
+
+    def test_single_bullish_signal(self):
+        from src.screening.signal_fusion import _compute_raw_score
+
+        signals = {"trend": StrategySignal(direction=1, confidence=80.0, completeness=1.0, sub_factors={})}
+        result = _compute_raw_score({"trend": 0.5}, signals)
+        assert result == pytest.approx(0.5 * 1 * 0.80 * 1.0)
+
+    def test_single_bearish_signal_negative(self):
+        from src.screening.signal_fusion import _compute_raw_score
+
+        signals = {"trend": StrategySignal(direction=-1, confidence=60.0, completeness=1.0, sub_factors={})}
+        result = _compute_raw_score({"trend": 0.5}, signals)
+        assert result == pytest.approx(-0.3)
+
+    def test_missing_weight_contributes_zero(self):
+        from src.screening.signal_fusion import _compute_raw_score
+
+        signals = {"trend": StrategySignal(direction=1, confidence=90.0, completeness=1.0, sub_factors={})}
+        result = _compute_raw_score({}, signals)
+        assert result == 0.0
+
+    def test_zero_completeness_contributes_zero(self):
+        from src.screening.signal_fusion import _compute_raw_score
+
+        signals = {"trend": StrategySignal(direction=1, confidence=90.0, completeness=0.0, sub_factors={})}
+        result = _compute_raw_score({"trend": 0.5}, signals)
+        assert result == 0.0
+
+    def test_multiple_signals_sum(self):
+        from src.screening.signal_fusion import _compute_raw_score
+
+        signals = {
+            "trend": StrategySignal(direction=1, confidence=80.0, completeness=1.0, sub_factors={}),
+            "mean_reversion": StrategySignal(direction=-1, confidence=40.0, completeness=0.5, sub_factors={}),
+        }
+        result = _compute_raw_score({"trend": 0.4, "mean_reversion": 0.6}, signals)
+        expected = 0.4 * 1 * 0.80 * 1.0 + 0.6 * (-1) * 0.40 * 0.5
+        assert result == pytest.approx(expected)
+
+
+class TestSignalContribution:
+    """_signal_contribution: absolute value of weight * direction * confidence * completeness."""
+
+    def test_bullish_positive(self):
+        from src.screening.signal_fusion import _signal_contribution
+
+        signal = StrategySignal(direction=1, confidence=80.0, completeness=1.0, sub_factors={})
+        assert _signal_contribution(0.5, signal) == pytest.approx(0.4)
+
+    def test_bearish_always_positive(self):
+        from src.screening.signal_fusion import _signal_contribution
+
+        signal = StrategySignal(direction=-1, confidence=60.0, completeness=1.0, sub_factors={})
+        assert _signal_contribution(0.5, signal) == pytest.approx(0.3)
+
+    def test_zero_completeness_returns_zero(self):
+        from src.screening.signal_fusion import _signal_contribution
+
+        signal = StrategySignal(direction=1, confidence=90.0, completeness=0.0, sub_factors={})
+        assert _signal_contribution(0.5, signal) == 0.0
+
+    def test_zero_weight_returns_zero(self):
+        from src.screening.signal_fusion import _signal_contribution
+
+        signal = StrategySignal(direction=1, confidence=90.0, completeness=1.0, sub_factors={})
+        assert _signal_contribution(0.0, signal) == 0.0
+
+
+class TestBuildPercentileRankMap:
+    """_build_percentile_rank_map: average-rank percentiles with tie handling."""
+
+    def test_empty_returns_empty(self):
+        from src.screening.signal_fusion import _build_percentile_rank_map
+
+        assert _build_percentile_rank_map({}) == {}
+
+    def test_single_value_returns_empty(self):
+        from src.screening.signal_fusion import _build_percentile_rank_map
+
+        assert _build_percentile_rank_map({"a": 1.0}) == {}
+
+    def test_two_distinct_values(self):
+        from src.screening.signal_fusion import _build_percentile_rank_map
+
+        result = _build_percentile_rank_map({"a": 0.1, "b": 0.5})
+        assert result == {"a": 0.5, "b": 1.0}
+
+    def test_tied_values_get_average_rank(self):
+        from src.screening.signal_fusion import _build_percentile_rank_map
+
+        # Both tied at rank 1.5 / 2 = 0.75
+        result = _build_percentile_rank_map({"a": 0.5, "b": 0.5})
+        assert result == {"a": 0.75, "b": 0.75}
+
+    def test_three_values_with_partial_tie(self):
+        from src.screening.signal_fusion import _build_percentile_rank_map
+
+        # sorted: a=0.1 (rank1), b=0.3 (rank2), c=0.3 (rank3)
+        # b,c tie at avg rank (2+3)/2=2.5 -> 2.5/3
+        result = _build_percentile_rank_map({"a": 0.1, "b": 0.3, "c": 0.3})
+        assert result["a"] == pytest.approx(1 / 3)
+        assert result["b"] == pytest.approx(2.5 / 3)
+        assert result["c"] == pytest.approx(2.5 / 3)
+
+
+class TestExtractAttentionComponentValues:
+    """_extract_attention_component_values: extract metric with NaN/Inf/non-numeric guard."""
+
+    def _fused(self, ticker: str, metrics: dict) -> FusedScore:
+        return FusedScore(ticker=ticker, score_b=0.0, metrics=metrics)
+
+    def test_normal_values_extracted(self):
+        from src.screening.signal_fusion import _extract_attention_component_values
+
+        results = [self._fused("a", {"ret_5d": 0.02}), self._fused("b", {"ret_5d": 0.05})]
+        assert _extract_attention_component_values(results, "ret_5d") == {"a": 0.02, "b": 0.05}
+
+    def test_missing_metric_skipped(self):
+        from src.screening.signal_fusion import _extract_attention_component_values
+
+        results = [self._fused("a", {"ret_5d": 0.02}), self._fused("b", {})]
+        assert _extract_attention_component_values(results, "ret_5d") == {"a": 0.02}
+
+    def test_nan_skipped(self):
+        from src.screening.signal_fusion import _extract_attention_component_values
+        import math
+
+        results = [self._fused("a", {"v": math.nan}), self._fused("b", {"v": 0.05})]
+        assert _extract_attention_component_values(results, "v") == {"b": 0.05}
+
+    def test_inf_skipped(self):
+        from src.screening.signal_fusion import _extract_attention_component_values
+        import math
+
+        results = [self._fused("a", {"v": math.inf}), self._fused("b", {"v": 0.05})]
+        assert _extract_attention_component_values(results, "v") == {"b": 0.05}
+
+    def test_absolute_flag_returns_abs(self):
+        from src.screening.signal_fusion import _extract_attention_component_values
+
+        results = [self._fused("a", {"v": -0.05})]
+        assert _extract_attention_component_values(results, "v", absolute=True) == {"a": 0.05}
+        assert _extract_attention_component_values(results, "v", absolute=False) == {"a": -0.05}
