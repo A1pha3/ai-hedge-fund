@@ -1136,6 +1136,51 @@ def _build_top_table_row(*, idx: int, rec: dict) -> list:
     return [idx, ticker_label, industry, score_colored, decision_colored, cons_str, decay_str]
 
 
+def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> None:
+    """打印 Top N 的评分构成、因子瀑布和预期收益增强信息。
+
+    Extracted from :func:`run_top` — 将 score decomposition / waterfall /
+    expected-returns 增强块集中到独立 helper, 容错处理旧报告格式与预期收益计算失败。
+    """
+    from colorama import Fore, Style
+
+    from src.screening.signal_fusion import FusedScore
+
+    consecutive_lookup = {r.get("ticker", ""): r for r in recs}
+    top_results: list = []
+    for r in recs[:5]:
+        try:
+            top_results.append(FusedScore.model_validate(r))
+        except Exception:
+            # Older report format — skip decomposition rather than crash
+            continue
+    if not top_results:
+        return
+
+    _print_score_decomposition(top_results, consecutive_lookup)
+    # R20.5 P1-3 扩展: 因子瀑布显示完整调整项
+    _print_score_waterfall(top_results, consecutive_lookup)
+
+    # R20.36 P9-1: Show expected returns if tracking history exists
+    try:
+        from pathlib import Path as _Path
+
+        from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
+
+        _reports_dir = _Path(report_path).parent if report_path else None
+        if _reports_dir:
+            er_report = compute_expected_returns(
+                recommendations=recs[:top_n],
+                lookback_days=60,
+                reports_dir=_reports_dir,
+            )
+            if er_report.total_samples > 0:
+                print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 22} 预期收益 (P9-1) {'━' * 22}{Style.RESET_ALL}")
+                print(render_expected_returns_compact(er_report))
+    except Exception:
+        pass  # Non-critical enhancement — never crash auto output
+
+
 def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     """``--top [N] [--filter ...]`` — 显示最近一次 ``--auto`` 的 Top N 推荐，无需重跑流水线。
 
@@ -1207,37 +1252,8 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     headers = [f"{Fore.WHITE}#", "Ticker", "Industry", "Score B", "Decision", "Consec", "Decay"]
     print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center")))
 
-    # Score decomposition for top 5 (skip on validation failure — preserve backward compat with older reports)
-    consecutive_lookup = {r.get("ticker", ""): r for r in recs}
-    from src.screening.signal_fusion import FusedScore
-    top_results: list = []
-    for r in recs[:5]:
-        try:
-            top_results.append(FusedScore.model_validate(r))
-        except Exception:
-            # Older report format — skip decomposition rather than crash
-            continue
-    if top_results:
-        _print_score_decomposition(top_results, consecutive_lookup)
-        # R20.5 P1-3 扩展: 因子瀑布显示完整调整项
-        _print_score_waterfall(top_results, consecutive_lookup)
-
-        # R20.36 P9-1: Show expected returns if tracking history exists
-        try:
-            from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
-            from pathlib import Path as _Path
-            _reports_dir = _Path(report_path).parent if report_path else None
-            if _reports_dir:
-                er_report = compute_expected_returns(
-                    recommendations=recs[:top_n],
-                    lookback_days=60,
-                    reports_dir=_reports_dir,
-                )
-                if er_report.total_samples > 0:
-                    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 22} 预期收益 (P9-1) {'━' * 22}{Style.RESET_ALL}")
-                    print(render_expected_returns_compact(er_report))
-        except Exception:
-            pass  # Non-critical enhancement — never crash auto output
+    # Score decomposition + waterfall + expected returns for top 5 (skip on validation failure)
+    _print_top_score_enhancements(recs, top_n, report_path)
 
     # Cache stats if available
     fetcher_stats = payload.get("batch_data_fetcher", {})
