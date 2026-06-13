@@ -224,3 +224,95 @@ def test_render_audit_report_threshold_default():
     ]
     out = render_audit_report(audits, date_str="20260609", threshold=DEFAULT_QUALITY_THRESHOLD)
     assert "⚠️ 低质量" in out
+
+
+# ---------------------------------------------------------------------------
+# _strategy_completeness / _completeness_bar
+# ---------------------------------------------------------------------------
+
+
+class TestStrategyCompleteness:
+    """Safe completeness reader — 0.0 for missing/None (R20.17 bug-pattern guard)."""
+
+    def test_present_value(self):
+        from src.screening.data_quality_audit import _strategy_completeness
+
+        signals = {"trend": {"completeness": 0.85}}
+        assert _strategy_completeness(signals, "trend") == 0.85
+
+    def test_missing_strategy_returns_zero(self):
+        from src.screening.data_quality_audit import _strategy_completeness
+
+        assert _strategy_completeness({}, "trend") == 0.0
+        assert _strategy_completeness({"fundamental": {"completeness": 0.9}}, "trend") == 0.0
+
+    def test_none_value_returns_zero(self):
+        from src.screening.data_quality_audit import _strategy_completeness
+
+        signals = {"trend": {"completeness": None}}
+        assert _strategy_completeness(signals, "trend") == 0.0
+
+    def test_empty_block_returns_zero(self):
+        from src.screening.data_quality_audit import _strategy_completeness
+
+        signals = {"trend": {}}
+        assert _strategy_completeness(signals, "trend") == 0.0
+
+    def test_zero_value_preserved_not_overridden(self):
+        """R20.17 guard: 0.0 is valid 'no data', not silently overridden."""
+        from src.screening.data_quality_audit import _strategy_completeness
+
+        signals = {"trend": {"completeness": 0.0}}
+        assert _strategy_completeness(signals, "trend") == 0.0
+
+    def test_int_value_coerced_to_float(self):
+        from src.screening.data_quality_audit import _strategy_completeness
+
+        signals = {"trend": {"completeness": 1}}
+        result = _strategy_completeness(signals, "trend")
+        assert result == 1.0
+        assert isinstance(result, float)
+
+
+class TestCompletenessBar:
+    """ASCII progress bar with three-state color coding."""
+
+    def test_full_bar(self):
+        from src.screening.data_quality_audit import _completeness_bar
+
+        out = _completeness_bar(1.0)
+        assert out.count("█") == 10
+        assert "░" not in out
+
+    def test_empty_bar(self):
+        from src.screening.data_quality_audit import _completeness_bar
+
+        out = _completeness_bar(0.0)
+        assert out.count("░") == 10
+        assert "█" not in out
+
+    def test_half_bar(self):
+        from src.screening.data_quality_audit import _completeness_bar
+
+        out = _completeness_bar(0.5)
+        assert out.count("█") == 5
+        assert out.count("░") == 5
+
+    def test_custom_width(self):
+        from src.screening.data_quality_audit import _completeness_bar
+
+        out = _completeness_bar(0.5, width=20)
+        assert out.count("█") == 10
+        assert out.count("░") == 10
+
+    def test_clamps_above_one(self):
+        from src.screening.data_quality_audit import _completeness_bar
+
+        out = _completeness_bar(1.5)
+        assert out.count("█") == 10
+
+    def test_clamps_below_zero(self):
+        from src.screening.data_quality_audit import _completeness_bar
+
+        out = _completeness_bar(-0.5)
+        assert out.count("░") == 10
