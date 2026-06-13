@@ -1056,6 +1056,61 @@ def _apply_top_filters(recs: list[dict], filters: dict) -> tuple[list[dict], str
     return recs, summary
 
 
+def _build_top_table_row(*, idx: int, rec: dict) -> list:
+    """Build one row of the ``--top`` recommendations table.
+
+    Extracted from :func:`run_top` — per-row formatting (score/decision color,
+    consecutive-day + re-entry signal, P0-3 decay tag) lives here; the caller
+    only assembles headers and invokes ``tabulate``.
+    """
+    from colorama import Fore, Style
+
+    score_b = float(rec.get("score_b", 0.0))
+    decision = rec.get("decision", "neutral")
+
+    if score_b >= 0.35:
+        score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
+        decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
+    elif score_b >= 0.0:
+        score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
+        decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
+    else:
+        score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
+        decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
+
+    ticker = rec.get("ticker", "—")
+    name = rec.get("name", "")
+    industry = rec.get("industry_sw", "—")
+    ticker_label = f"{ticker} {name}" if name else ticker
+
+    # Consecutive days / re-entry signal (P4-2)
+    consecutive_days = int(rec.get("consecutive_days", 0) or 0)
+    # P4-2: REENTRY_SIGNAL — 曾被推荐后消失又重返, 标记为 "↻" 提示用户
+    rec_status = str(rec.get("consecutive_status", "") or "")
+    is_reentry = rec_status == "reentry_signal"
+    if is_reentry:
+        cons_str = f"{Fore.MAGENTA}{Style.BRIGHT}↻{consecutive_days}d{Style.RESET_ALL}"
+    elif consecutive_days >= 3:
+        cons_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}d{Style.RESET_ALL}"
+    elif consecutive_days == 2:
+        cons_str = f"{Fore.YELLOW}{consecutive_days}d{Style.RESET_ALL}"
+    elif consecutive_days == 1:
+        cons_str = f"{Fore.WHITE}{consecutive_days}d{Style.RESET_ALL}"
+    else:
+        cons_str = f"{Fore.RED}—{Style.RESET_ALL}"
+
+    # Decay
+    decay = rec.get("decay", {})
+    decay_level = decay.get("level", "none")
+    if decay_level == "none" or not decay_level:
+        decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
+    else:
+        decay_pct = abs(float(decay.get("change_pct", 0) or 0))
+        decay_str = f"{Fore.YELLOW}↓{decay_pct:.0f}%{Style.RESET_ALL}"
+
+    return [idx, ticker_label, industry, score_colored, decision_colored, cons_str, decay_str]
+
+
 def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     """``--top [N] [--filter ...]`` — 显示最近一次 ``--auto`` 的 Top N 推荐，无需重跑流水线。
 
@@ -1122,52 +1177,7 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     print(f"  报告路径: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
-    table_data = []
-    for idx, rec in enumerate(recs, 1):
-        score_b = float(rec.get("score_b", 0.0))
-        decision = rec.get("decision", "neutral")
-
-        if score_b >= 0.35:
-            score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
-            decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
-        elif score_b >= 0.0:
-            score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
-            decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
-        else:
-            score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
-            decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
-
-        ticker = rec.get("ticker", "—")
-        name = rec.get("name", "")
-        industry = rec.get("industry_sw", "—")
-        ticker_label = f"{ticker} {name}" if name else ticker
-
-        # Consecutive days / re-entry signal (P4-2)
-        consecutive_days = int(rec.get("consecutive_days", 0) or 0)
-        # P4-2: REENTRY_SIGNAL — 曾被推荐后消失又重返, 标记为 "↻" 提示用户
-        rec_status = str(rec.get("consecutive_status", "") or "")
-        is_reentry = rec_status == "reentry_signal"
-        if is_reentry:
-            cons_str = f"{Fore.MAGENTA}{Style.BRIGHT}↻{consecutive_days}d{Style.RESET_ALL}"
-        elif consecutive_days >= 3:
-            cons_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}d{Style.RESET_ALL}"
-        elif consecutive_days == 2:
-            cons_str = f"{Fore.YELLOW}{consecutive_days}d{Style.RESET_ALL}"
-        elif consecutive_days == 1:
-            cons_str = f"{Fore.WHITE}{consecutive_days}d{Style.RESET_ALL}"
-        else:
-            cons_str = f"{Fore.RED}—{Style.RESET_ALL}"
-
-        # Decay
-        decay = rec.get("decay", {})
-        decay_level = decay.get("level", "none")
-        if decay_level == "none" or not decay_level:
-            decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
-        else:
-            decay_pct = abs(float(decay.get("change_pct", 0) or 0))
-            decay_str = f"{Fore.YELLOW}↓{decay_pct:.0f}%{Style.RESET_ALL}"
-
-        table_data.append([idx, ticker_label, industry, score_colored, decision_colored, cons_str, decay_str])
+    table_data = [_build_top_table_row(idx=idx, rec=rec) for idx, rec in enumerate(recs, 1)]
 
     headers = [f"{Fore.WHITE}#", "Ticker", "Industry", "Score B", "Decision", "Consec", "Decay"]
     print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center")))
