@@ -692,6 +692,30 @@ def _build_ranked_candidates(
     return ranked
 
 
+def _load_recommendation_context(
+    report_dir: Path,
+    count: int,
+) -> tuple[Path, dict, list[dict], str] | None:
+    """Load the latest screening report and its candidate recommendations."""
+    report_path = _find_latest_report(report_dir)
+    if report_path is None:
+        return None
+
+    report_data = json.loads(report_path.read_text(encoding="utf-8"))
+    recommendations = (report_data.get("recommendations") or [])[:count * 3]
+    trade_date = str(report_data.get("date", "") or "")
+    return report_path, report_data, recommendations, trade_date
+
+
+def _detect_pick_changes(report_path: Path, ranked: list[dict]) -> tuple[set[str], set[str]]:
+    """Compare the current ranked candidates against the previous report."""
+    all_current_tickers = {str(item.get("ticker", "")) for item in ranked if str(item.get("ticker", ""))}
+    prev_report = _find_previous_report(report_path)
+    if prev_report is None:
+        return set(), set()
+    return _compute_pick_changes(all_current_tickers, prev_report)
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -715,15 +739,12 @@ def run_top_picks(
     """
     search_dir = reports_dir or resolve_report_dir()
 
-    # Step 1: Load latest report
-    report_path = _find_latest_report(search_dir)
-    if report_path is None:
+    context = _load_recommendation_context(search_dir, count)
+    if context is None:
         print(f"{Fore.RED}No auto_screening report found. Run --auto first.{Style.RESET_ALL}")
         return 1
 
-    report_data = json.loads(report_path.read_text(encoding="utf-8"))
-    recs = (report_data.get("recommendations") or [])[:count * 3]  # Load more for filtering
-    trade_date = report_data.get("date", "")
+    report_path, report_data, recs, trade_date = context
     market_regime = _render_market_gate(trade_date)
 
     # R12: Data freshness guard
@@ -745,12 +766,7 @@ def run_top_picks(
     representative_picks = select_representative_candidates(ranked, count=count)
 
     # R13: Detect new/dropped picks vs previous report
-    all_current_tickers = {str(r.get("ticker", "")) for r in ranked if str(r.get("ticker", ""))}
-    prev_report = _find_previous_report(report_path)
-    new_tickers: set[str] = set()
-    dropped_tickers: set[str] = set()
-    if prev_report is not None:
-        new_tickers, dropped_tickers = _compute_pick_changes(all_current_tickers, prev_report)
+    new_tickers, dropped_tickers = _detect_pick_changes(report_path, ranked)
 
     # Step 3: Render compact output
     print(f"\n{Fore.CYAN}{Style.BRIGHT}🎯 Today's Top Picks{Style.RESET_ALL}")
