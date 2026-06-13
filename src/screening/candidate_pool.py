@@ -20,7 +20,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import time
 
@@ -74,6 +74,9 @@ from src.tools.tushare_api import (
     get_suspend_list,
     get_sw_industry_classification,
 )
+
+if TYPE_CHECKING:
+    from src.screening.batch_data_fetcher import BatchDataFetcher
 
 # 项目根目录
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
