@@ -69,7 +69,6 @@ def append_premarket_overview_markdown(lines: list[str], card: dict[str, Any]) -
     lines.append("")
 
 
-
 def append_premarket_action_block(
     lines: list[str], entry: dict[str, Any], *, indexed: int | None = None
 ) -> None:
@@ -135,7 +134,6 @@ def append_candidate_watch_scoring_fields(
     lines.append(f"- preferred_entry_mode: {item.get('preferred_entry_mode')}")
 
 
-
 def append_candidate_watch_reason_tags(
     lines: list[str], item: dict[str, Any], *, reasons_label: str
 ) -> None:
@@ -186,28 +184,29 @@ def append_premarket_rollout_validation_markdown(
     lines.append(f"- buy_order_delta: {_format_rollout_value(rollout_validation.get('buy_order_delta'))}")
     lines.append("")
 
-def _append_titled_indexed_section(
- lines: list[str],
- *,
- title: str,
- items: list[dict[str, Any]],
- render_item: Callable[[list[str], dict[str, Any], int], None],
-) -> None:
- from src.paper_trading.btst_shared_markdown_helpers import (
- append_none_block as _none_impl,
- append_titled_indexed_section as _impl,
- )
 
- _impl(
- lines,
- title=title,
- items=items,
- render_item=render_item,
- append_none_block_fn=_none_impl,
- )
+def _append_titled_indexed_section(
+    lines: list[str],
+    *,
+    title: str,
+    items: list[dict[str, Any]],
+    render_item: Callable[[list[str], dict[str, Any], int], None],
+) -> None:
+    from src.paper_trading.btst_shared_markdown_helpers import (
+        append_none_block as _none_impl,
+        append_titled_indexed_section as _impl,
+    )
+
+    _impl(
+        lines,
+        title=title,
+        items=items,
+        render_item=render_item,
+        append_none_block_fn=_none_impl,
+    )
 
 
 def _append_none_block(lines: list[str]) -> None:
- from src.paper_trading.btst_shared_markdown_helpers import append_none_block as _impl
+    from src.paper_trading.btst_shared_markdown_helpers import append_none_block as _impl
 
- _impl(lines)
+    _impl(lines)
