@@ -6,10 +6,10 @@ from src.screening.signal_fusion import fuse_batch, fuse_signals_for_ticker
 from src.screening.strategy_scorer import score_batch, score_candidate
 
 __all__ = [
-	"build_candidate_pool",
-	"detect_market_state",
-	"fuse_batch",
-	"fuse_signals_for_ticker",
-	"score_batch",
-	"score_candidate",
+    "build_candidate_pool",
+    "detect_market_state",
+    "fuse_batch",
+    "fuse_signals_for_ticker",
+    "score_batch",
+    "score_candidate",
 ]

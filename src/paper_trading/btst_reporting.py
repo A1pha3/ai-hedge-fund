@@ -645,22 +645,22 @@ def analyze_btst_premarket_execution_card(
 
 
 def _append_premarket_overview_markdown(lines: list[str], card: dict[str, Any]) -> None:
- from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_overview_markdown as _extracted_mod
- return _extracted_mod(lines=lines, card=card)
+    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_overview_markdown as _extracted_mod
+    return _extracted_mod(lines=lines, card=card)
 
 
 def _append_premarket_action_block(
     lines: list[str], entry: dict[str, Any], *, indexed: int | None = None
 ) -> None:
- from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_action_block as _extracted_mod
- return _extracted_mod(lines=lines, entry=entry, indexed=indexed)
+    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_action_block as _extracted_mod
+    return _extracted_mod(lines=lines, entry=entry, indexed=indexed)
 
 
 def _append_premarket_action_section(
     lines: list[str], title: str, entries: list[dict[str, Any]]
 ) -> None:
- from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_action_section as _extracted_mod
- return _extracted_mod(lines=lines, title=title, entries=entries)
+    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_action_section as _extracted_mod
+    return _extracted_mod(lines=lines, title=title, entries=entries)
 
 
 def _append_premarket_frontier_watch_markdown(
@@ -697,15 +697,15 @@ def _append_premarket_shadow_watch_markdown(
 def _append_candidate_watch_scoring_fields(
     lines: list[str], item: dict[str, Any]
 ) -> None:
- from src.paper_trading._btst_reporting.premarket_rendering import append_candidate_watch_scoring_fields as _extracted_mod
- return _extracted_mod(lines=lines, item=item)
+    from src.paper_trading._btst_reporting.premarket_rendering import append_candidate_watch_scoring_fields as _extracted_mod
+    return _extracted_mod(lines=lines, item=item)
 
 
 def _append_candidate_watch_reason_tags(
     lines: list[str], item: dict[str, Any], *, reasons_label: str
 ) -> None:
- from src.paper_trading._btst_reporting.premarket_rendering import append_candidate_watch_reason_tags as _extracted_mod
- return _extracted_mod(lines=lines, item=item, reasons_label=reasons_label)
+    from src.paper_trading._btst_reporting.premarket_rendering import append_candidate_watch_reason_tags as _extracted_mod
+    return _extracted_mod(lines=lines, item=item, reasons_label=reasons_label)
 
 
 def _append_threshold_shortfalls_line(
@@ -721,8 +721,8 @@ def _append_catalyst_watch_metrics(lines: list[str], metrics: dict[str, Any]) ->
 def _append_premarket_excluded_entries_markdown(
     lines: list[str], excluded_entries: list[dict[str, Any]]
 ) -> None:
- from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_excluded_entries_markdown as _extracted_mod
- return _extracted_mod(lines=lines, excluded_entries=excluded_entries)
+    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_excluded_entries_markdown as _extracted_mod
+    return _extracted_mod(lines=lines, excluded_entries=excluded_entries)
 
 
 def _append_upstream_shadow_summary_header(
@@ -874,8 +874,8 @@ def render_btst_premarket_execution_card_markdown(card: dict[str, Any]) -> str:
 def _append_premarket_primary_action_markdown(
     lines: list[str], primary_action: Any
 ) -> None:
- from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_primary_action_markdown as _extracted_mod
- return _extracted_mod(lines=lines, primary_action=primary_action)
+    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_primary_action_markdown as _extracted_mod
+    return _extracted_mod(lines=lines, primary_action=primary_action)
 
 
 def _append_guardrail_section(
@@ -893,8 +893,8 @@ def _append_premarket_guardrails_markdown(
 def _append_premarket_rollout_validation_markdown(
     lines: list[str], rollout_validation: dict[str, Any]
 ) -> None:
- from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_rollout_validation_markdown as _extracted_mod
- return _extracted_mod(lines=lines, rollout_validation=rollout_validation)
+    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_rollout_validation_markdown as _extracted_mod
+    return _extracted_mod(lines=lines, rollout_validation=rollout_validation)
 
 
 def _append_premarket_source_paths_markdown(
@@ -953,8 +953,8 @@ def render_btst_opening_watch_card_markdown(card: dict[str, Any]) -> str:
 def _append_opening_watch_overview_markdown(
     lines: list[str], card: dict[str, Any]
 ) -> None:
- from src.paper_trading._btst_reporting.opening_watch_rendering import append_opening_watch_overview_markdown as _extracted_mod
- return _extracted_mod(lines=lines, card=card)
+    from src.paper_trading._btst_reporting.opening_watch_rendering import append_opening_watch_overview_markdown as _extracted_mod
+    return _extracted_mod(lines=lines, card=card)
 
 
 def _append_opening_watch_frontier_markdown(
@@ -968,8 +968,8 @@ def _append_opening_watch_frontier_markdown(
 def _append_opening_frontier_entries(
     lines: list[str], items: list[dict[str, Any]]
 ) -> None:
- from src.paper_trading._btst_reporting.opening_watch_rendering import append_opening_frontier_entries as _extracted_mod
- return _extracted_mod(lines=lines, items=items)
+    from src.paper_trading._btst_reporting.opening_watch_rendering import append_opening_frontier_entries as _extracted_mod
+    return _extracted_mod(lines=lines, items=items)
 
 
 def _append_opening_watch_guardrails_markdown(
