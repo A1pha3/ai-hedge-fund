@@ -14,8 +14,6 @@ from time import perf_counter
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
-
 from src.screening.strategy_scorer_utils import (
     aggregate_sub_factors,
     derive_completeness,
@@ -32,6 +30,8 @@ from src.screening.strategy_scorer_fundamental import (
 from src.screening.models import CandidateStock, StrategySignal
 from src.tools.akshare_api import get_intraday_bars, get_intraday_ticks, get_lhb_detail, get_lhb_institutional_stats, get_money_flow
 from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_sw_industry_classification
+
+logger = logging.getLogger(__name__)
 
 # Re-export for backward compatibility
 __all__ = [
