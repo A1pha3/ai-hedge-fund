@@ -126,6 +126,29 @@ def _build_warn_adjusted_order(order: Any, *, warn_size_discount: float) -> Any:
     )
 
 
+def _apply_gap_overlay(
+    *,
+    order: Any,
+    gap_pct: float | None,
+    overlay: P7GapOverlayConfig,
+) -> tuple[str, Any | None]:
+    if gap_pct is None or overlay.mode not in {"enforce", "report"}:
+        return "none", None
+    if gap_pct <= -overlay.halt_threshold:
+        return ("report_halt", None) if overlay.mode == "report" else ("halt", None)
+    if gap_pct > -overlay.warn_threshold:
+        return "none", None
+    if overlay.mode == "report":
+        return "report_warn", None
+    adjusted_order = _build_warn_adjusted_order(
+        order,
+        warn_size_discount=overlay.warn_size_discount,
+    )
+    if adjusted_order is None:
+        return "warn_zeroed", None
+    return "warn_reduce", adjusted_order
+
+
 def apply_signal_decay(
     plan: ExecutionPlan,
     trade_date_t1: str,
@@ -174,31 +197,28 @@ def apply_signal_decay(
             risk_alerts.append(f"cancel_buy_gap_open:{ticker}")
             continue
 
-        # BTST 0422 P7: gap-down overlay enforcement / reporting.
-        if gap_pct is not None and p7_overlay.mode in {"enforce", "report"}:
-            if gap_pct <= -p7_overlay.halt_threshold:
-                if p7_overlay.mode == "report":
-                    p7_report_halted.append(ticker)
-                else:
-                    p7_halted.append(ticker)
-                    risk_alerts.append(f"cancel_buy_gap_overlay_halt:{ticker}")
-                    continue
-            elif gap_pct <= -p7_overlay.warn_threshold:
-                if p7_overlay.mode == "report":
-                    p7_report_warned.append(ticker)
-                else:
-                    adjusted_order = _build_warn_adjusted_order(
-                        order,
-                        warn_size_discount=p7_overlay.warn_size_discount,
-                    )
-                    if adjusted_order is None:
-                        p7_halted.append(ticker)
-                        risk_alerts.append(f"cancel_buy_gap_overlay_warn_zeroed:{ticker}")
-                        continue
-                    p7_warned.append(ticker)
-                    risk_alerts.append(f"reduce_buy_gap_overlay_warn:{ticker}")
-                    filtered_buy_orders.append(adjusted_order)
-                    continue
+        gap_action, adjusted_order = _apply_gap_overlay(
+            order=order,
+            gap_pct=gap_pct,
+            overlay=p7_overlay,
+        )
+        if gap_action == "halt":
+            p7_halted.append(ticker)
+            risk_alerts.append(f"cancel_buy_gap_overlay_halt:{ticker}")
+            continue
+        if gap_action == "report_halt":
+            p7_report_halted.append(ticker)
+        elif gap_action == "report_warn":
+            p7_report_warned.append(ticker)
+        elif gap_action == "warn_zeroed":
+            p7_halted.append(ticker)
+            risk_alerts.append(f"cancel_buy_gap_overlay_warn_zeroed:{ticker}")
+            continue
+        elif gap_action == "warn_reduce":
+            p7_warned.append(ticker)
+            risk_alerts.append(f"reduce_buy_gap_overlay_warn:{ticker}")
+            filtered_buy_orders.append(adjusted_order)
+            continue
 
         refreshed_score = refreshed_scores.get(ticker)
         if refreshed_score is not None and refreshed_score < (order.score_final * 0.8):
