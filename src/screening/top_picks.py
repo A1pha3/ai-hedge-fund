@@ -52,28 +52,15 @@ from src.utils.display import Fore, Style
 # ---------------------------------------------------------------------------
 
 
-def _render_market_gate(trade_date: str) -> str:
-    """Render market-gate guidance and return the normalized regime label."""
+def _print_market_gate_regime_advice(regime: str) -> None:
+    """Print the regime-specific MARKET GATE guidance block.
 
-    if not trade_date or len(trade_date) != 8 or not trade_date.isdigit():
-        return "unknown"
-
-    from src.screening.market_state import detect_market_state
-
-    try:
-        state = detect_market_state(trade_date)
-    except Exception as exc:
-        print(
-            f"\n{Fore.YELLOW}⚠ MARKET GATE unavailable: {exc}{Style.RESET_ALL}"
-        )
-        print(
-            f"  {Fore.YELLOW}已跳过市场门控增强，继续输出默认前门结果。{Style.RESET_ALL}\n"
-        )
-        return "unknown"
-
-    regime = str(getattr(state, "regime", "") or "")
+    Extracted from :func:`_render_market_gate`: three regime branches
+    (crisis/risk_off, cautious/range, normal) each print a header line
+    plus an action hint. Kept together so the tone and copy stay
+    consistent across branches.
+    """
     regime_lower = regime.lower()
-
     if "crisis" in regime_lower or "risk_off" in regime_lower:
         print(
             f"\n{Fore.RED}{Style.BRIGHT}⚠ MARKET GATE: {regime}{Style.RESET_ALL}"
@@ -99,7 +86,30 @@ def _render_market_gate(trade_date: str) -> str:
             f"  {Fore.GREEN}市场门控允许正常筛选, 重点关注 BUY / HOLD 级别代表票。{Style.RESET_ALL}\n"
         )
 
-    return regime_lower or "unknown"
+
+def _render_market_gate(trade_date: str) -> str:
+    """Render market-gate guidance and return the normalized regime label."""
+
+    if not trade_date or len(trade_date) != 8 or not trade_date.isdigit():
+        return "unknown"
+
+    from src.screening.market_state import detect_market_state
+
+    try:
+        state = detect_market_state(trade_date)
+    except Exception as exc:
+        print(
+            f"\n{Fore.YELLOW}⚠ MARKET GATE unavailable: {exc}{Style.RESET_ALL}"
+        )
+        print(
+            f"  {Fore.YELLOW}已跳过市场门控增强，继续输出默认前门结果。{Style.RESET_ALL}\n"
+        )
+        return "unknown"
+
+    regime = str(getattr(state, "regime", "") or "")
+    _print_market_gate_regime_advice(regime)
+
+    return regime.lower() or "unknown"
 
 
 # ---------------------------------------------------------------------------
