@@ -450,6 +450,95 @@ def _render_sector_focus(picks: list[dict]) -> str:
     return f"  🔥 行业聚焦: {' '.join(parts)}"
 
 
+def _render_sector_rotation(report_data: dict, picks: list[dict]) -> str:
+    """R14: Render sector rotation direction from industry_rotation data.
+
+    Shows direction arrows for each industry in the current picks,
+    using momentum_score from the report's industry_rotation payload.
+    """
+    rotation_signals = report_data.get("industry_rotation") or []
+    if not rotation_signals:
+        return ""
+
+    # Build momentum map: industry_name -> momentum_score
+    momentum_map: dict[str, float] = {}
+    for sig in rotation_signals:
+        if isinstance(sig, dict):
+            name = str(sig.get("industry_name", "")).strip()
+            score = float(sig.get("momentum_score", 0.0) or 0.0)
+            if name:
+                momentum_map[name] = score
+
+    if not momentum_map:
+        return ""
+
+    # Get industries in current picks
+    from collections import Counter
+
+    industries = [str(p.get("industry_sw", "") or "未知").strip() for p in picks]
+    industries = [i for i in industries if i and i != "未知"]
+    if not industries:
+        return ""
+
+    counter = Counter(industries)
+    parts = []
+    for industry, count in counter.most_common():
+        mom = momentum_map.get(industry)
+        if mom is None:
+            continue
+        if mom > 20:
+            arrow = f"{Fore.GREEN}↗{Style.RESET_ALL}"
+        elif mom < -20:
+            arrow = f"{Fore.RED}↘{Style.RESET_ALL}"
+        else:
+            arrow = f"{Fore.WHITE}→{Style.RESET_ALL}"
+        parts.append(f"{industry}{arrow}")
+
+    if not parts:
+        return ""
+
+    return f"  🔄 行业轮动: {' '.join(parts)}"
+
+
+def _render_factor_attribution(item: dict) -> str:
+    """R15: Render top-2 contributing factors for a recommendation.
+
+    Shows which factors contribute most to the score, making the
+    recommendation explainable. Uses existing strategy_signals data.
+    """
+    signals = item.get("strategy_signals") or {}
+    if not signals:
+        return ""
+
+    # Collect (factor_name, direction * confidence) pairs
+    contributions: list[tuple[str, float]] = []
+    label_map = {
+        "trend": "趋势",
+        "mean_reversion": "反转",
+        "fundamental": "基本面",
+        "event_sentiment": "情绪",
+    }
+    for key, signal in signals.items():
+        if not isinstance(signal, dict):
+            continue
+        direction = float(signal.get("direction", 0) or 0)
+        confidence = float(signal.get("confidence", 0) or 0)
+        strength = abs(direction * confidence)
+        label = label_map.get(key, key)
+        if direction > 0:
+            contributions.append((f"{label}↑", strength))
+        elif direction < 0:
+            contributions.append((f"{label}↓", strength))
+
+    if not contributions:
+        return ""
+
+    # Sort by strength, take top 2
+    contributions.sort(key=lambda x: x[1], reverse=True)
+    top = [c[0] for c in contributions[:2]]
+    return f" {Fore.WHITE}主因:{Style.RESET_ALL} {' + '.join(top)}"
+
+
 # ---------------------------------------------------------------------------
 # R12: Data freshness guard
 # ---------------------------------------------------------------------------
@@ -660,6 +749,9 @@ def run_top_picks(
         consec_icon = _status_icon(consec_status) if consec_days > 0 else ""
         consec_str = f" {consec_icon}{consec_days}d" if consec_days > 0 else ""
 
+        # R15: Factor attribution
+        factor_attr = _render_factor_attribution(item)
+
         # Signal breakdown
         parts = []
         if float(item.get("momentum_bonus", 0.0) or 0.0) > 0:
@@ -717,7 +809,7 @@ def run_top_picks(
             f"{name:<14}{new_badge} "
             f"{score_color}{composite_score:>+.3f}{Style.RESET_ALL} "
             f"{grade}{consec_str} {confluence_str}  "
-            f"(base={base_score:.3f} {signal_str})"
+            f"(base={base_score:.3f} {signal_str}{factor_attr})"
         )
         print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}  市场门控={verdict['market_regime']}")
         print(f"     失效条件: {verdict['invalidation_reason']}")
@@ -755,6 +847,11 @@ def run_top_picks(
     sector_focus = _render_sector_focus(representative_picks)
     if sector_focus:
         print(sector_focus)
+
+    # R14: Sector rotation direction
+    sector_rotation = _render_sector_rotation(report_data, representative_picks)
+    if sector_rotation:
+        print(sector_rotation)
 
     # R13: New/dropped pick summary
     if new_tickers or dropped_tickers:
