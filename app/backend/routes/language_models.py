@@ -24,6 +24,7 @@ def _build_default_model_entry(models: list[dict[str, Any]]) -> dict[str, Any]:
         "provider": default_model_provider,
     }
 
+
 @router.get(
     path="/",
     responses={
@@ -62,6 +63,7 @@ async def get_default_language_model():
     """Get the configured default model resolved from the backend environment."""
     models = get_models_list()
     return {"model": _build_default_model_entry(models)}
+
 
 @router.get(
     path="/providers",

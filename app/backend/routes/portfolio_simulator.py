@@ -217,6 +217,7 @@ def apply_adjustments(
         t: {"long": int(_pos_val(p, "long")), "short": int(_pos_val(p, "short")), "long_cost_basis": float(_pos_val(p, "long_cost_basis")), "short_cost_basis": float(_pos_val(p, "short_cost_basis"))}
         for t, p in positions.items()
     }
+
     # Normalize decisions into DecisionInput objects
     def _norm_decision(d: DecisionInput | dict[str, Any]) -> DecisionInput:
         if isinstance(d, DecisionInput):

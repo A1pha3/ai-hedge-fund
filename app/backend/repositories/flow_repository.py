@@ -9,8 +9,10 @@ class FlowRepository:
     def __init__(self, db: Session):
         self.db = db
     
-    def create_flow(self, name: str, nodes: dict, edges: dict, description: str = None, 
-                   viewport: dict = None, data: dict = None, is_template: bool = False, tags: List[str] = None) -> HedgeFundFlow:
+    def create_flow(
+        self, name: str, nodes: dict, edges: dict, description: str = None,
+        viewport: dict = None, data: dict = None, is_template: bool = False, tags: List[str] = None,
+    ) -> HedgeFundFlow:
         """Create a new hedge fund flow"""
         flow = HedgeFundFlow(
             name=name,
@@ -35,7 +37,7 @@ class FlowRepository:
         """Get all flows, optionally excluding templates"""
         query = self.db.query(HedgeFundFlow)
         if not include_templates:
-            query = query.filter(HedgeFundFlow.is_template == False)
+            query = query.filter(HedgeFundFlow.is_template == False)  # noqa: E712 — SQLAlchemy boolean filter
         return query.order_by(HedgeFundFlow.updated_at.desc()).all()
     
     def get_flows_by_name(self, name: str) -> List[HedgeFundFlow]:
@@ -46,9 +48,11 @@ class FlowRepository:
             HedgeFundFlow.name.ilike(f"%{escaped}%", escape="\\")
         ).order_by(HedgeFundFlow.updated_at.desc()).all()
     
-    def update_flow(self, flow_id: int, name: str = None, description: str = None,
-                   nodes: dict = None, edges: dict = None, viewport: dict = None, data: dict = None,
-                   is_template: bool = None, tags: List[str] = None) -> Optional[HedgeFundFlow]:
+    def update_flow(
+        self, flow_id: int, name: str = None, description: str = None,
+        nodes: dict = None, edges: dict = None, viewport: dict = None, data: dict = None,
+        is_template: bool = None, tags: List[str] = None,
+    ) -> Optional[HedgeFundFlow]:
         """Update an existing flow"""
         flow = self.get_flow_by_id(flow_id)
         if not flow:

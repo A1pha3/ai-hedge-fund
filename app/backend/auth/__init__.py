@@ -15,7 +15,7 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 # Load environment variables
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402 — after sys.path.insert so dotenv resolves from project root
 
 env_path = project_root / ".env"
 load_dotenv(dotenv_path=env_path)

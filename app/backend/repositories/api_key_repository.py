@@ -53,14 +53,14 @@ class ApiKeyRepository:
         """Get API key by provider name"""
         return self.db.query(ApiKey).filter(
             ApiKey.provider == provider,
-            ApiKey.is_active == True
+            ApiKey.is_active == True  # noqa: E712 — SQLAlchemy boolean filter (== True → SQL predicate)
         ).first()
 
     def get_all_api_keys(self, include_inactive: bool = False) -> List[ApiKey]:
         """Get all API keys"""
         query = self.db.query(ApiKey)
         if not include_inactive:
-            query = query.filter(ApiKey.is_active == True)
+            query = query.filter(ApiKey.is_active == True)  # noqa: E712 — SQLAlchemy boolean filter
         return query.order_by(ApiKey.provider).all()
 
     def update_api_key(
@@ -113,7 +113,7 @@ class ApiKeyRepository:
         """Update the last_used timestamp for an API key"""
         api_key = self.db.query(ApiKey).filter(
             ApiKey.provider == provider,
-            ApiKey.is_active == True
+            ApiKey.is_active == True  # noqa: E712 — SQLAlchemy boolean filter
         ).first()
         if not api_key:
             return False

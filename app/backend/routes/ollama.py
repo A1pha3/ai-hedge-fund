@@ -12,8 +12,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ollama")
 
+
 class ModelRequest(BaseModel):
     model_name: str
+
 
 class OllamaStatusResponse(BaseModel):
     installed: bool
@@ -22,14 +24,17 @@ class OllamaStatusResponse(BaseModel):
     server_url: str
     error: str | None = None
 
+
 class ActionResponse(BaseModel):
     success: bool
     message: str
+
 
 class RecommendedModel(BaseModel):
     display_name: str
     model_name: str
     provider: str
+
 
 class ProgressResponse(BaseModel):
     status: str
@@ -38,6 +43,7 @@ class ProgressResponse(BaseModel):
     phase: str | None = None
     bytes_downloaded: int | None = None
     total_bytes: int | None = None
+
 
 @router.get(
     "/status",
@@ -51,6 +57,7 @@ async def get_ollama_status():
     """Get Ollama installation and server status."""
     status = await ollama_service.check_ollama_status()
     return OllamaStatusResponse(**status)
+
 
 @router.post(
     "/start",
@@ -78,6 +85,7 @@ async def start_ollama_server():
 
     return ActionResponse(**result)
 
+
 @router.post(
     "/stop",
     response_model=ActionResponse,
@@ -103,6 +111,7 @@ async def stop_ollama_server():
         raise HTTPException(status_code=500, detail=result["message"])
 
     return ActionResponse(**result)
+
 
 @router.post(
     "/models/download",
@@ -134,6 +143,7 @@ async def download_model(request: ModelRequest):
 
     logger.info(f"Successfully downloaded model: {request.model_name}")
     return ActionResponse(**result)
+
 
 @router.post(
     "/models/download/progress",
@@ -169,6 +179,7 @@ async def download_model_with_progress(request: ModelRequest):
         }
     )
 
+
 @router.get(
     "/models/download/progress/{model_name}",
     response_model=ProgressResponse,
@@ -185,6 +196,7 @@ async def get_download_progress(model_name: str):
         raise HTTPException(status_code=404, detail=f"No active download found for model: {model_name}")
 
     return ProgressResponse(**progress)
+
 
 @router.get(
     "/models/downloads/active",
@@ -205,6 +217,7 @@ async def get_active_downloads():
             active_downloads[model_name] = ProgressResponse(**progress)
 
     return active_downloads
+
 
 @router.delete(
     "/models/{model_name}",
@@ -237,6 +250,7 @@ async def delete_model(model_name: str):
     logger.info(f"Successfully deleted model: {model_name}")
     return ActionResponse(**result)
 
+
 @router.get(
     "/models/recommended",
     response_model=List[RecommendedModel],
@@ -249,6 +263,7 @@ async def get_recommended_models():
     """Get list of recommended Ollama models."""
     models = await ollama_service.get_recommended_models()
     return [RecommendedModel(**model) for model in models]
+
 
 @router.delete(
     "/models/download/{model_name}",

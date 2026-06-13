@@ -12,6 +12,7 @@ import ollama
 
 logger = logging.getLogger(__name__)
 
+
 class OllamaService:
     """Service for managing Ollama integration in the backend."""
     
@@ -170,7 +171,6 @@ class OllamaService:
     # =============================================================================
     # PRIVATE HELPER METHODS
     # =============================================================================
-    
 
     def _create_error_status(self, error: str) -> Dict[str, any]:
         """Create error status response."""
@@ -447,8 +447,7 @@ class OllamaService:
         }
         
         # Add completed/total info if available
-        if (hasattr(progress, 'completed') and hasattr(progress, 'total') and 
-            progress.total is not None and progress.completed is not None and progress.total > 0):
+        if (hasattr(progress, 'completed') and hasattr(progress, 'total') and progress.total is not None and progress.completed is not None and progress.total > 0):
             percentage = (progress.completed / progress.total) * 100
             progress_data.update({
                 "percentage": percentage,
@@ -511,5 +510,6 @@ class OllamaService:
         
         return api_models
 
+
 # Global service instance
-ollama_service = OllamaService() 
+ollama_service = OllamaService()

@@ -21,7 +21,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # Create API keys table
-    op.create_table('api_keys',
+    op.create_table(
+        'api_keys',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
@@ -31,7 +32,7 @@ def upgrade() -> None:
         sa.Column('description', sa.Text(), nullable=True),
         sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('provider')
+        sa.UniqueConstraint('provider'),
     )
     op.create_index(op.f('ix_api_keys_id'), 'api_keys', ['id'], unique=False)
     op.create_index(op.f('ix_api_keys_provider'), 'api_keys', ['provider'], unique=False)

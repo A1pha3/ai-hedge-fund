@@ -7,9 +7,11 @@ from app.backend.models.schemas import ErrorResponse
 
 router = APIRouter(prefix="/storage")
 
+
 class SaveJsonRequest(BaseModel):
     filename: str
     data: dict
+
 
 @router.post(
     path="/save-json",
