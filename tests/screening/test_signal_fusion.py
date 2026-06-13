@@ -1018,3 +1018,79 @@ class TestExtractAttentionComponentValues:
         results = [self._fused("a", {"v": -0.05})]
         assert _extract_attention_component_values(results, "v", absolute=True) == {"a": 0.05}
         assert _extract_attention_component_values(results, "v", absolute=False) == {"a": -0.05}
+
+
+class TestNormalizeActiveWeights:
+    """_normalize_active_weights: normalize active signal weights to sum=1 with fallback."""
+
+    def test_two_active_signals_normalized(self):
+        from src.screening.signal_fusion import _normalize_active_weights
+
+        signals = {
+            "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={}),
+            "fundamental": StrategySignal(direction=1, confidence=60.0, completeness=1.0, sub_factors={}),
+        }
+        weights = {"trend": 0.3, "fundamental": 0.3}
+        result = _normalize_active_weights(weights, signals)
+        assert sum(result.values()) == pytest.approx(1.0)
+        assert result["trend"] == pytest.approx(0.5)
+        assert result["fundamental"] == pytest.approx(0.5)
+
+    def test_excluded_name_skipped(self):
+        from src.screening.signal_fusion import _normalize_active_weights
+
+        signals = {
+            "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={}),
+            "mean_reversion": StrategySignal(direction=0, confidence=50.0, completeness=1.0, sub_factors={}),
+        }
+        weights = {"trend": 0.3, "mean_reversion": 0.2}
+        result = _normalize_active_weights(weights, signals, excluded_names={"mean_reversion"})
+        assert "mean_reversion" not in result
+        assert result == {"trend": 1.0}
+
+    def test_zero_completeness_skipped(self):
+        from src.screening.signal_fusion import _normalize_active_weights
+
+        signals = {
+            "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={}),
+            "mean_reversion": StrategySignal(direction=0, confidence=50.0, completeness=0.0, sub_factors={}),
+        }
+        weights = {"trend": 0.3, "mean_reversion": 0.2}
+        result = _normalize_active_weights(weights, signals)
+        assert "mean_reversion" not in result
+        assert result == {"trend": 1.0}
+
+    def test_weight_override_applied_when_higher(self):
+        from src.screening.signal_fusion import _normalize_active_weights
+
+        signals = {
+            "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={}),
+            "mean_reversion": StrategySignal(direction=0, confidence=50.0, completeness=1.0, sub_factors={}),
+        }
+        weights = {"trend": 0.3, "mean_reversion": 0.2}
+        # override 0.5 > existing 0.2 → uses 0.5; 0.3 + 0.5 = 0.8 → trend=0.375, mr=0.625
+        result = _normalize_active_weights(weights, signals, weight_overrides={"mean_reversion": 0.5})
+        assert result["mean_reversion"] == pytest.approx(0.5 / 0.8)
+
+    def test_all_weights_zero_falls_back_to_defaults(self):
+        from src.screening.signal_fusion import _normalize_active_weights
+
+        signals = {
+            "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={}),
+            "fundamental": StrategySignal(direction=1, confidence=60.0, completeness=1.0, sub_factors={}),
+        }
+        weights = {"trend": 0.0, "fundamental": 0.0}
+        result = _normalize_active_weights(weights, signals)
+        # falls back to DEFAULT_STRATEGY_WEIGHTS: trend=0.30, fundamental=0.30 → each 0.5
+        assert result["trend"] == pytest.approx(0.5)
+        assert result["fundamental"] == pytest.approx(0.5)
+
+    def test_all_signals_excluded_returns_empty(self):
+        from src.screening.signal_fusion import _normalize_active_weights
+
+        signals = {
+            "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={}),
+        }
+        weights = {"trend": 0.3}
+        result = _normalize_active_weights(weights, signals, excluded_names={"trend"})
+        assert result == {}
