@@ -1,7 +1,7 @@
 """Tests for R14 (sector rotation direction) and R15 (factor attribution) in top_picks."""
 from __future__ import annotations
 
-from src.screening.top_picks import _render_sector_rotation, _render_factor_attribution
+from src.screening.top_picks import _momentum_arrow, _render_sector_rotation, _render_factor_attribution
 from src.utils.display import Fore, Style
 
 
@@ -135,3 +135,33 @@ class TestR15FactorAttribution:
         }
         result = _render_factor_attribution(item)
         assert result == ""
+
+
+class TestMomentumArrow:
+    """R14 helper: map momentum score to display arrow."""
+
+    def test_positive_above_threshold(self) -> None:
+        """score > 20 → green ↗."""
+        result = _momentum_arrow(25.0)
+        assert "↗" in result
+        assert Fore.GREEN in result
+
+    def test_negative_below_threshold(self) -> None:
+        """score < -20 → red ↘."""
+        result = _momentum_arrow(-25.0)
+        assert "↘" in result
+        assert Fore.RED in result
+
+    def test_neutral_middle(self) -> None:
+        """-20 <= score <= 20 → white →."""
+        result = _momentum_arrow(0.0)
+        assert "→" in result
+        assert Fore.WHITE in result
+
+    def test_boundary_positive(self) -> None:
+        """score == 20 is NOT > 20, so neutral →."""
+        assert "→" in _momentum_arrow(20.0)
+
+    def test_boundary_negative(self) -> None:
+        """score == -20 is NOT < -20, so neutral →."""
+        assert "→" in _momentum_arrow(-20.0)
