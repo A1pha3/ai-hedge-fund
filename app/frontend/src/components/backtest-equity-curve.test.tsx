@@ -109,6 +109,16 @@ describe('BacktestEquityCurve — KPI cards', () => {
     expect(screen.getByText(/回测净值曲线/)).toBeDefined();
   });
 
+  it('KPI grid is single-column on smallest screens then scales up (R-3)', () => {
+    render(<BacktestEquityCurve agentData={UPTREND} />);
+    // R20-S7 GAMMA R-3: 6 KPI cards must not stay grid-cols-2 on 320px phones
+    const grid = screen.getByTestId('kpi-grid');
+    expect(grid.className).toContain('grid-cols-1');
+    expect(grid.className).toContain('sm:grid-cols-2');
+    expect(grid.className).toContain('md:grid-cols-4');
+    expect(grid.className).toContain('lg:grid-cols-6');
+  });
+
   it('computes max drawdown correctly for peak-to-trough decline', () => {
     render(<BacktestEquityCurve agentData={DRAWDOWN} />);
     // 100 → 120 → 90: 峰 120, 谷 90, 回撤 = (120-90)/120 = 25%

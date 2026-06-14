@@ -321,7 +321,9 @@ export function BacktestEquityCurve({ agentData }: EquityCurveProps) {
       </CardHeader>
       <CardContent>
         {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
+        {/* R20-S7 GAMMA R-3: single column on <640px (was grid-cols-2, ~150px cards too
+            cramped on 320px phones); scale 1 → 2 → 4 → 6 across breakpoints. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4" data-testid="kpi-grid">
           <KpiCard
             label="总收益"
             value={`${totalReturn >= 0 ? '+' : ''}${(totalReturn * 100).toFixed(2)}%`}
