@@ -12,7 +12,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import { AdjustmentSimulator } from './adjustment-simulator';
+import { AdjustmentSimulator, actionBadgeVariant, fmtPct, fmtUSD } from './adjustment-simulator';
 
 // ---------- Fixtures ----------
 
@@ -256,5 +256,84 @@ describe('AdjustmentSimulator — P2 2.3', () => {
     expect(screen.getByTestId('result-row-AAPL')).toBeDefined();
     expect(screen.getByTestId('result-row-MSFT')).toBeDefined();
     expect(screen.getByTestId('result-row-NVDA')).toBeDefined();
+  });
+});
+
+// ---------- pure helper characterization (R20-S10) ----------
+
+describe('fmtPct', () => {
+  it('multiplies by 100 and appends %', () => {
+    expect(fmtPct(0.08)).toBe('8.0%');
+    expect(fmtPct(1)).toBe('100.0%');
+  });
+
+  it('handles negative ratios', () => {
+    expect(fmtPct(-0.15)).toBe('-15.0%');
+  });
+
+  it('does NOT add + sign for positive (unlike edge-card formatPct)', () => {
+    expect(fmtPct(0.5)).toBe('50.0%');
+  });
+
+  it('respects custom digits', () => {
+    expect(fmtPct(0.123456, 2)).toBe('12.35%');
+    expect(fmtPct(0.123456, 3)).toBe('12.346%');
+  });
+
+  it('zero stays zero', () => {
+    expect(fmtPct(0)).toBe('0.0%');
+  });
+});
+
+describe('fmtUSD', () => {
+  it('formats millions with M suffix', () => {
+    expect(fmtUSD(1_500_000)).toBe('$1.50M');
+    expect(fmtUSD(2_000_000)).toBe('$2.00M');
+  });
+
+  it('formats thousands with K suffix', () => {
+    expect(fmtUSD(1_500)).toBe('$1.5K');
+    expect(fmtUSD(50_000)).toBe('$50.0K');
+  });
+
+  it('formats small values with no suffix', () => {
+    expect(fmtUSD(999)).toBe('$999');
+    expect(fmtUSD(0)).toBe('$0');
+  });
+
+  it('uses absolute value for magnitude threshold (handles negatives)', () => {
+    // -1.5M → magnitude >= 1e6 → M suffix; division happens before toFixed so sign preserved
+    expect(fmtUSD(-1_500_000)).toBe('$-1.50M');
+    expect(fmtUSD(-50_000)).toBe('$-50.0K');
+    expect(fmtUSD(-500)).toBe('$-500');
+  });
+
+  it('boundary: exactly 1000 uses K, exactly 1e6 uses M', () => {
+    expect(fmtUSD(1000)).toBe('$1.0K');
+    expect(fmtUSD(1_000_000)).toBe('$1.00M');
+  });
+});
+
+describe('actionBadgeVariant', () => {
+  it('buy → success', () => {
+    expect(actionBadgeVariant('buy')).toBe('success');
+  });
+
+  it('sell → destructive', () => {
+    expect(actionBadgeVariant('sell')).toBe('destructive');
+  });
+
+  it('short → destructive', () => {
+    expect(actionBadgeVariant('short')).toBe('destructive');
+  });
+
+  it('cover → secondary', () => {
+    expect(actionBadgeVariant('cover')).toBe('secondary');
+  });
+
+  it('unknown / hold / empty → outline', () => {
+    expect(actionBadgeVariant('hold')).toBe('outline');
+    expect(actionBadgeVariant('')).toBe('outline');
+    expect(actionBadgeVariant('totally-unknown')).toBe('outline');
   });
 });

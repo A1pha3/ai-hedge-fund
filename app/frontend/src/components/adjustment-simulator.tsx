@@ -101,17 +101,17 @@ interface TickerResult {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-function fmtPct(value: number, digits = 1): string {
+export function fmtPct(value: number, digits = 1): string {
   return `${(value * 100).toFixed(digits)}%`;
 }
 
-function fmtUSD(value: number): string {
+export function fmtUSD(value: number): string {
   if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
   if (Math.abs(value) >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
   return `$${value.toFixed(0)}`;
 }
 
-function actionBadgeVariant(action: string): 'secondary' | 'destructive' | 'outline' | 'success' {
+export function actionBadgeVariant(action: string): 'secondary' | 'destructive' | 'outline' | 'success' {
   switch (action) {
     case 'buy': return 'success';
     case 'sell': return 'destructive';
