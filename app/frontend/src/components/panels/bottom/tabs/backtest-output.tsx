@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { AgentNodeData, OutputNodeData, PortfolioPositionData } from '@/contexts/node-context';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { cn, currencySymbolForTicker } from '@/lib/utils';
+import { cn, currencySymbolForMarket, currencySymbolForTicker } from '@/lib/utils';
 import type { BacktestPerformanceMetrics } from '@/services/types';
 import { MoreHorizontal } from 'lucide-react';
 import { BacktestEquityCurve } from '@/components/backtest-equity-curve';
@@ -256,7 +256,10 @@ function BacktestTradingTable({ agentData }: { agentData: AgentDataMap }) {
 }
 
 // Component for displaying backtest results
-function BacktestResults({ outputData }: { outputData: OutputNodeData | null }) {
+function BacktestResults({ outputData, market = 'cn' }: { outputData: OutputNodeData | null; market?: 'cn' | 'us' }) {
+  // R20-S8 GAMMA A-7/V-4 (continuation of R21): portfolio-level aggregates use
+  // a market-scoped currency symbol rather than per-ticker detection.
+  const currency = currencySymbolForMarket(market);
   if (!outputData) {
     return null;
   }
@@ -326,11 +329,11 @@ function BacktestResults({ outputData }: { outputData: OutputNodeData | null }) 
               </div>
               <div className="flex justify-between">
                 <span>Final Cash:</span>
-                <span className="font-medium">${(final_portfolio?.cash ?? 0).toLocaleString()}</span>
+                <span className="font-medium">{currency}{(final_portfolio?.cash ?? 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
                 <span>Margin Used:</span>
-                <span className="font-medium">${(final_portfolio?.margin_used ?? 0).toLocaleString()}</span>
+                <span className="font-medium">{currency}{(final_portfolio?.margin_used ?? 0).toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -342,13 +345,13 @@ function BacktestResults({ outputData }: { outputData: OutputNodeData | null }) 
               {performance_metrics.gross_exposure !== null && performance_metrics.gross_exposure !== undefined && (
                 <div className="flex justify-between">
                   <span>Gross Exposure:</span>
-                  <span className="font-medium">${performance_metrics.gross_exposure.toLocaleString()}</span>
+                  <span className="font-medium">{currency}{performance_metrics.gross_exposure.toLocaleString()}</span>
                 </div>
               )}
               {performance_metrics.net_exposure !== null && performance_metrics.net_exposure !== undefined && (
                 <div className="flex justify-between">
                   <span>Net Exposure:</span>
-                  <span className="font-medium">${performance_metrics.net_exposure.toLocaleString()}</span>
+                  <span className="font-medium">{currency}{performance_metrics.net_exposure.toLocaleString()}</span>
                 </div>
               )}
               {performance_metrics.long_short_ratio !== null && performance_metrics.long_short_ratio !== undefined && (
@@ -392,8 +395,8 @@ function BacktestResults({ outputData }: { outputData: OutputNodeData | null }) 
                       <TableCell className={cn(shortShares > 0 ? "text-red-500" : "text-muted-foreground")}>
                         {shortShares}
                       </TableCell>
-                      <TableCell>${longCostBasis.toFixed(2)}</TableCell>
-                      <TableCell>${shortCostBasis.toFixed(2)}</TableCell>
+                      <TableCell>{currencySymbolForTicker(ticker)}{longCostBasis.toFixed(2)}</TableCell>
+                      <TableCell>{currencySymbolForTicker(ticker)}{shortCostBasis.toFixed(2)}</TableCell>
                     </TableRow>
                   );
                 })}
@@ -407,9 +410,11 @@ function BacktestResults({ outputData }: { outputData: OutputNodeData | null }) 
 }
 
 // Component for displaying real-time backtest performance
-function BacktestPerformanceMetrics({ agentData }: { agentData: AgentDataMap }) {
+function BacktestPerformanceMetrics({ agentData, market = 'cn' }: { agentData: AgentDataMap; market?: 'cn' | 'us' }) {
   const backtestResults = getBacktestPeriods(agentData);
   if (backtestResults.length === 0) return null;
+  // R20-S8 GAMMA A-7/V-4: portfolio-level metrics use market-scoped symbol
+  const currency = currencySymbolForMarket(market);
   
   const firstPeriod = backtestResults[0];
   const latestPeriod = backtestResults[backtestResults.length - 1];
@@ -473,16 +478,16 @@ function BacktestPerformanceMetrics({ agentData }: { agentData: AgentDataMap }) 
         <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="text-center">
             <div className="text-xs text-muted-foreground">Current Value</div>
-            <div className="font-sm">${currentValue?.toLocaleString()}</div>
+            <div className="font-sm">{currency}{currentValue?.toLocaleString()}</div>
           </div>
           <div className="text-center">
             <div className="text-xs text-muted-foreground">Initial Value</div>
-            <div className="font-sm">${initialValue?.toLocaleString()}</div>
+            <div className="font-sm">{currency}{initialValue?.toLocaleString()}</div>
           </div>
           <div className="text-center">
             <div className="text-xs text-muted-foreground">P&L</div>
             <div className={cn("font-sm", totalReturn >= 0 ? "text-green-500" : "text-red-500")}>
-              ${(currentValue - initialValue).toLocaleString()}
+              {currency}{(currentValue - initialValue).toLocaleString()}
             </div>
           </div>
           <div className="text-center">

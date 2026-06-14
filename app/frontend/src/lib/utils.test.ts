@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { currencySymbolForTicker, parseTickers } from './utils';
+import { currencySymbolForMarket, currencySymbolForTicker, parseTickers } from './utils';
 
 describe('currencySymbolForTicker', () => {
   it('returns ¥ for 6-digit A-share tickers', () => {
@@ -33,6 +33,17 @@ describe('currencySymbolForTicker', () => {
   it('returns $ for alphanumeric codes that contain digits but are not pure 6-digit', () => {
     expect(currencySymbolForTicker('00000A')).toBe('$');
     expect(currencySymbolForTicker('SH600519')).toBe('$');
+  });
+});
+
+describe('currencySymbolForMarket', () => {
+  it('returns ¥ for cn market (default, A-share-first project)', () => {
+    expect(currencySymbolForMarket('cn')).toBe('¥');
+    expect(currencySymbolForMarket()).toBe('¥');
+  });
+
+  it('returns $ for us market', () => {
+    expect(currencySymbolForMarket('us')).toBe('$');
   });
 });
 

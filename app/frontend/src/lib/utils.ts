@@ -70,3 +70,17 @@ export function currencySymbolForTicker(ticker: string | null | undefined): stri
   return '$';
 }
 
+/**
+ * Return the currency symbol for a market.
+ *
+ * Use this for portfolio-level aggregates that span multiple tickers (e.g. total
+ * cash, gross exposure) where a per-ticker symbol is not meaningful.
+ *
+ * R20-S8 GAMMA A-7/V-4: continuation of R21 — covers BacktestResults /
+ * BacktestPerformanceMetrics aggregate cells that the per-ticker helper
+ * cannot reach.
+ */
+export function currencySymbolForMarket(market: 'cn' | 'us' = 'cn'): string {
+  return market === 'cn' ? '¥' : '$';
+}
+
