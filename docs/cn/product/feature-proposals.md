@@ -90,6 +90,7 @@
 | R24 | P3 | ✅ | **StockDetailCard 关闭按钮可访问名** | `StockDetailCard` 的 2 个 `✕` 图标按钮（loading + loaded 状态）补 `aria-label="关闭"`，让屏幕阅读器能识别关闭动作（WCAG 2.1: 图标按钮必须有 accessible name）；新增 a11y 测试断言 `aria-label`。 |
 | R25 | P1 | ✅ | **QUICKSTART 失效文档链接修复** | 全仓 doc-link audit 发现 `docs/cn/product/QUICKSTART.md`（新用户前门）有 7 处失效 markdown 链接（`../` 应为 `./`，`./cli-reference.md` 应为 `./features/cli-reference.md` 等）— 修复后 `docs/cn/**/*.md` 失效链接 = 0。新用户 onboarding 路径不再 404。 |
 | R26 | P2 | ✅ | **过时文件引用修复** | stale-file-reference-audit 发现 3 处文档引用已移动/删除的文件：① 功能矩阵 `MATRIX.md`/`data-infrastructure.md` 仍把已删除的 `src/data/quality_monitor.py` 标 ✅（与 `data-layer.md` 的删除说明矛盾）→ 改标 ⛔ 已移除；② `user-manual.md` 把 `strategy_attribution_daily.py` 误指向 `src/portfolio/`（实际在 `src/screening/`）；③ `README.md` 指向已归档的 `docs/zh-cn/manual/`（实际在 `docs/old-zh-cn/manual/`）。消除"幻影文件"困惑。 |
+| R27 | P2 | ✅ | **`.env.example` 失效环境变量修复** | config-env-drift audit 发现 `.env.example` 文档化的 `ARK_FALLBACK_MODEL` 在代码中从未被读取 — Volcengine ARK provider 实际读的是 `ARK_MODEL`（见 `provider_registry_defaults.py:100` `model_env_var`）。用户照 `.env.example` 设置 `ARK_FALLBACK_MODEL` 会静默无效。改为正确的 `ARK_MODEL` + 注释说明。dead-env-var audit 1 → 0。 |
 
 ### R8 设计细节
 
@@ -232,4 +233,4 @@
 
 ---
 
-> **最后更新**：2026-06-14（R20-S12：R26 过时文件引用修复 — quality_monitor 幻影 ✅ / strategy_attribution 路径 / README 归档路径）
+> **最后更新**：2026-06-14（R20-S12：R26 过时文件引用 + R27 `.env.example` 失效 ARK_FALLBACK_MODEL → ARK_MODEL）
