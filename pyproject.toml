@@ -37,6 +37,7 @@ dependencies = [
     "scipy",
     "redis>=7.4.0",
     "fpdf2>=2.8.7",
+    "aiohttp>=3.11.0",
 ]
 
 [tool.poetry]
@@ -79,6 +80,8 @@ langchain-gigachat = "^0.3.12"
 langchain-xai = "^0.2.5"
 # PDF report export (src/reporting/pdf_exporter.py — top-level import; R28 packaging fix)
 fpdf2 = "^2.8.7"
+# Async HTTP client (src/data/base_provider.py — top-level import + instantiation; R32 packaging fix)
+aiohttp = "^3.11.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
