@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { BrandLogo, SuccessIcon, ErrorIcon } from '@/components/auth-icons';
 
 /** Evaluate password strength: 0-4 score */
-function getPasswordStrength(pw: string): { score: number; label: string; cls: string } {
+export function getPasswordStrength(pw: string): { score: number; label: string; cls: string } {
   if (!pw) return { score: 0, label: '', cls: '' };
   let score = 0;
   if (pw.length >= 8) score++;
