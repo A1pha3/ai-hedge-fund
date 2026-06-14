@@ -228,7 +228,7 @@ type Meta<TBadge extends string> = {
   hint?: string;
 };
 
-function resolveActionMeta(action: string): Meta<'destructive' | 'success' | 'warning' | 'outline'> {
+export function resolveActionMeta(action: string): Meta<'destructive' | 'success' | 'warning' | 'outline'> {
   switch (action) {
     case 'buy':
     case 'trade_allowed':
@@ -274,7 +274,7 @@ function resolveActionMeta(action: string): Meta<'destructive' | 'success' | 'wa
   }
 }
 
-function resolveGradeMeta(grade: string | null | undefined) {
+export function resolveGradeMeta(grade: string | null | undefined) {
   switch ((grade || '').toUpperCase()) {
     case 'A':
       return { label: 'A', textClass: 'text-green-600 dark:text-green-400', hint: '高质量证据' };
@@ -288,7 +288,7 @@ function resolveGradeMeta(grade: string | null | undefined) {
   }
 }
 
-function resolveDataQualityMeta(q: string | null | undefined) {
+export function resolveDataQualityMeta(q: string | null | undefined) {
   switch ((q || '').toLowerCase()) {
     case 'sufficient':
     case 'high':
@@ -303,7 +303,7 @@ function resolveDataQualityMeta(q: string | null | undefined) {
   }
 }
 
-function resolveRiskPostureMeta(p: string | null | undefined) {
+export function resolveRiskPostureMeta(p: string | null | undefined) {
   switch ((p || '').toLowerCase()) {
     case 'aggressive':
       return { label: '激进', textClass: 'text-red-600 dark:text-red-400', hint: '允许放仓位' };
