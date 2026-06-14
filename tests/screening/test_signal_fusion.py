@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 
 from src.screening.models import FusedScore, MarketState, StrategySignal
-from src.screening.signal_fusion import compute_score_decomposition, fuse_batch, fuse_signals_for_ticker
+from src.screening.signal_fusion import (
+    _get_sub_factor_snapshot,
+    _is_hard_cliff_profitability,
+    compute_score_decomposition,
+    fuse_batch,
+    fuse_signals_for_ticker,
+)
 
 
 def test_fuse_signals_for_ticker_preserves_sub_factor_raw_metrics() -> None:
@@ -1094,3 +1100,87 @@ class TestNormalizeActiveWeights:
         weights = {"trend": 0.3}
         result = _normalize_active_weights(weights, signals, excluded_names={"trend"})
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# _is_hard_cliff_profitability / _get_sub_factor_snapshot (was 0 direct coverage)
+# ---------------------------------------------------------------------------
+
+
+def _make_signal_with_profitability(
+    *,
+    completeness: float = 1.0,
+    prof_direction: int | None = None,
+    prof_metrics: dict | None = None,
+) -> StrategySignal:
+    """Helper: build a fundamental StrategySignal with a profitability sub-factor."""
+    profitability: dict = {}
+    if prof_direction is not None:
+        profitability["direction"] = prof_direction
+    if prof_metrics is not None:
+        profitability["metrics"] = prof_metrics
+    return StrategySignal(
+        direction=1,
+        confidence=70.0,
+        completeness=completeness,
+        sub_factors={"profitability": profitability},
+    )
+
+
+class TestIsHardCliffProfitability:
+    """_is_hard_cliff_profitability — detect hard profitability cliff."""
+
+    def test_no_fundamental_signal_returns_false(self) -> None:
+        assert _is_hard_cliff_profitability({}) is False
+        assert _is_hard_cliff_profitability({"trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0)}) is False
+
+    def test_profitability_direction_not_negative_returns_false(self) -> None:
+        signal = _make_signal_with_profitability(prof_direction=1, prof_metrics={"positive_count": 0})
+        assert _is_hard_cliff_profitability({"fundamental": signal}) is False
+
+    def test_negative_direction_but_positive_count_nonzero_returns_false(self) -> None:
+        signal = _make_signal_with_profitability(prof_direction=-1, prof_metrics={"positive_count": 3})
+        assert _is_hard_cliff_profitability({"fundamental": signal}) is False
+
+    def test_hard_cliff_direction_neg1_and_zero_positive_count(self) -> None:
+        signal = _make_signal_with_profitability(prof_direction=-1, prof_metrics={"positive_count": 0})
+        assert _is_hard_cliff_profitability({"fundamental": signal}) is True
+
+    def test_no_metrics_returns_false(self) -> None:
+        # direction == -1 but no metrics key → positive_count is None != 0
+        signal = _make_signal_with_profitability(prof_direction=-1)
+        assert _is_hard_cliff_profitability({"fundamental": signal}) is False
+
+    def test_no_profitability_sub_factor_returns_false(self) -> None:
+        signal = StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={})
+        assert _is_hard_cliff_profitability({"fundamental": signal}) is False
+
+
+class TestGetSubFactorSnapshot:
+    """_get_sub_factor_snapshot — safely extract a sub-factor dict."""
+
+    def test_returns_sub_factor_when_present(self) -> None:
+        signal = StrategySignal(
+            direction=1, confidence=70.0, completeness=1.0,
+            sub_factors={"growth": {"direction": 1, "confidence": 80.0}},
+        )
+        result = _get_sub_factor_snapshot(signal, "growth")
+        assert result == {"direction": 1, "confidence": 80.0}
+
+    def test_returns_empty_when_absent(self) -> None:
+        signal = StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={})
+        assert _get_sub_factor_snapshot(signal, "growth") == {}
+
+    def test_returns_empty_when_not_a_dict(self) -> None:
+        signal = StrategySignal(
+            direction=1, confidence=70.0, completeness=1.0,
+            sub_factors={"growth": "not a dict"},
+        )
+        assert _get_sub_factor_snapshot(signal, "growth") == {}
+
+    def test_returns_empty_when_none(self) -> None:
+        signal = StrategySignal(
+            direction=1, confidence=70.0, completeness=1.0,
+            sub_factors={"growth": None},
+        )
+        assert _get_sub_factor_snapshot(signal, "growth") == {}
