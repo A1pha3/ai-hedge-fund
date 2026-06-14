@@ -83,6 +83,7 @@
 | R18 | P3 | ✅ | **回测交易表稳定 key** | `BacktestTradingTable` 的 `<TableRow>` 改用复合 key `${date}-${ticker}-${idx}`，替代纯 `idx`，避免列表更新时 React diff 误复用 DOM 节点导致的 stale state（来自 ux-best-practices-2025-2026.md A-4 行）。 |
 | R19 | P3 | ✅ | **回测交易表 WCAG caption** | `BacktestTradingTable` 补 `<TableCaption className="sr-only">`，让屏幕阅读器识别表格用途（WCAG 2.1 要求），sighted 用户不可见（来自 ux-best-practices-2025-2026.md A-3 行）。注：A-3 同清单的 R-2 横向滚动经核查为误报 — shadcn `<Table>` 自带 `overflow-auto` wrapper。 |
 | R20 | P3 | ✅ | **回测 KPI 卡片移动端响应式** | `BacktestEquityCurve` KPI 网格从 `grid-cols-2` 改为 `grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6`，避免 6 张卡片在 320px 手机上每张仅 ~150px 过度拥挤（来自 ux-best-practices-2025-2026.md R-3 行）。 |
+| R21 | P2 | ✅ | **回测交易表 A股货币符号** | 新增 `currencySymbolForTicker()` helper（6 位数字 ticker → ¥，否则 $），应用到 `BacktestTradingTable` 价格/持仓市值单元格，修正 A 股数据显示 `$` 的错误（来自 ux-best-practices-2025-2026.md A-7/V-4 行）。剩余 `$` 硬编码点（final_portfolio/exposure 等）为大型切片待后续。 |
 
 ### R8 设计细节
 
@@ -225,4 +226,4 @@
 
 ---
 
-> **最后更新**：2026-06-14（R20-S7：R19 WCAG caption + R20 KPI 响应式 — 来自 UX 研究 A-3/R-3；R-2 经核查误报）
+> **最后更新**：2026-06-14（R20-S7：R19 WCAG caption + R20 KPI 响应式 + R21 A股货币符号 — 来自 UX 研究 A-3/R-3/A-7；R-2 经核查误报）

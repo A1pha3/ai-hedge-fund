@@ -53,3 +53,20 @@ export function parseTickers(tickerString: string): string[] {
     .map(t => t.trim())
     .filter(t => t.length > 0);
 }
+
+/**
+ * Return the currency symbol for a ticker.
+ *
+ * A-share tickers are 6-digit numeric codes (e.g. 000001, 300118, 600519) and
+ * trade in CNY (¥). Everything else (US equities like AAPL, NVDA) defaults to USD ($).
+ *
+ * R20-S7 GAMMA A-7/V-4: backtest UI previously hardcoded `$` even for A-share
+ * data, which is wrong for this project's primary (A-share) market.
+ */
+export function currencySymbolForTicker(ticker: string | null | undefined): string {
+  if (typeof ticker === 'string' && /^\d{6}$/.test(ticker.trim())) {
+    return '¥';
+  }
+  return '$';
+}
+

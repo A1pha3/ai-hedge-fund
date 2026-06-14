@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { AgentNodeData, OutputNodeData, PortfolioPositionData } from '@/contexts/node-context';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { cn } from '@/lib/utils';
+import { cn, currencySymbolForTicker } from '@/lib/utils';
 import type { BacktestPerformanceMetrics } from '@/services/types';
 import { MoreHorizontal } from 'lucide-react';
 import { BacktestEquityCurve } from '@/components/backtest-equity-curve';
@@ -235,10 +235,10 @@ function BacktestTradingTable({ agentData }: { agentData: AgentDataMap }) {
                       <TableCell className={cn("font-medium", getActionColor(row.action || ''))}>
                         {row.quantity?.toLocaleString() || 0}
                       </TableCell>
-                      <TableCell>${row.price?.toFixed(2) || '0.00'}</TableCell>
+                      <TableCell>{currencySymbolForTicker(row.ticker)}{row.price?.toFixed(2) || '0.00'}</TableCell>
                       <TableCell>{row.shares_owned?.toLocaleString() || 0}</TableCell>
                       <TableCell className="text-primary">
-                        ${row.position_value?.toLocaleString() || '0'}
+                        {currencySymbolForTicker(row.ticker)}{row.position_value?.toLocaleString() || '0'}
                       </TableCell>
                       <TableCell className="text-green-500">{row.bullish_count || 0}</TableCell>
                       <TableCell className="text-red-500">{row.bearish_count || 0}</TableCell>
