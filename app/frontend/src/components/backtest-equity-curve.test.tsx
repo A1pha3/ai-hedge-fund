@@ -167,6 +167,24 @@ describe('BacktestEquityCurve — monthly returns heatmap', () => {
     expect(screen.getByText('10.0%')).toBeDefined();
   });
 
+  it('exposes monthly cell aria-label for screen readers and keyboard tooltips (A-5)', () => {
+    const crossMonth = makeAgentData([
+      ['2026-01-30', 100],
+      ['2026-01-31', 110, 0.10],
+      ['2026-02-02', 121, 0.10],
+      ['2026-02-03', 133.1, 0.10],
+    ]);
+    const { container } = render(<BacktestEquityCurve agentData={crossMonth} />);
+    // R20-S6 GAMMA A-5: aria-label complements title so keyboard / a11y users get tooltip text
+    const cells = Array.from(container.querySelectorAll('[aria-label*="月度收益"]')) as HTMLElement[];
+    expect(cells.length).toBe(2);
+    const labels = cells.map((c) => c.getAttribute('aria-label'));
+    expect(labels).toContain('2026-01 月度收益 10.00%');
+    expect(labels).toContain('2026-02 月度收益 21.00%');
+    // title is preserved for native mouse-hover fallback
+    cells.forEach((c) => expect(c).toHaveAttribute('title'));
+  });
+
   it('applies green color classes for positive months and red for negative', () => {
     const mixed = makeAgentData([
       ['2026-01-02', 100],

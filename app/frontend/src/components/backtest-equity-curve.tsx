@@ -248,6 +248,9 @@ function MonthlyReturnsHeatmap({ dailyResults }: { dailyResults: BacktestDayResu
               "px-2 py-1 rounded text-xs font-mono min-w-[80px] text-center",
               getColor(return_pct)
             )}
+            // R20-S6 GAMMA A-5: aria-label for screen readers + keyboard tooltip access;
+            // keep title for mouse hover (HTML-native fallback).
+            aria-label={`${ym} 月度收益 ${(return_pct * 100).toFixed(2)}%`}
             title={`${ym}: ${(return_pct * 100).toFixed(2)}%`}
           >
             <div className="text-[10px] opacity-70">{ym}</div>

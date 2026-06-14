@@ -79,6 +79,7 @@
 | R14 | P1 | ✅ | **行业轮动方向** | `--top-picks` 底部展示行业动量方向（↗ 进入聚焦 / ↘ 离开聚焦），复用已有 `industry_rotation` 数据，帮助用户把握板块轮动节奏。 |
 | R15 | P2 | ✅ | **因子贡献归因** | `--top-picks` 对每个候选展示主要贡献因子（如"动量+行业强"），复用已有 `compute_score_decomposition`，让用户理解推荐来源而非只看总分。 |
 | R16 | P2 | ✅ | **回测净值曲线 数据不足占位** | `BacktestEquityCurve` 在 `dailyResults.length < 2` 时显示 `数据点不足（需至少 2 天），等待回测数据...` 占位提示而非静默 `return null`，消除 1-day 回测的"白屏"困惑（来自 ux-best-practices-2025-2026.md L-2 行）。 |
+| R17 | P3 | ✅ | **月度热力图键盘可访问性** | `BacktestEquityCurve` 月度热力图单元格补 `aria-label`（`title` 仅鼠标悬停可触发），让键盘 / 屏幕阅读器用户也能读到月度收益数值（来自 ux-best-practices-2025-2026.md A-5 行）。 |
 
 ### R8 设计细节
 
@@ -221,4 +222,4 @@
 
 ---
 
-> **最后更新**：2026-06-14（R20-S6：R16 BacktestEquityCurve 数据不足占位 — 来自 UX 研究 L-2）
+> **最后更新**：2026-06-14（R20-S6：R16/R17 BacktestEquityCurve UX/A11y 修复 — 来自 UX 研究 L-2/A-5）
