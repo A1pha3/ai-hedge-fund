@@ -9,10 +9,13 @@ from src.screening.trend_resonance import (
     TrendResonanceReport,
     _classify_direction,
     _classify_resonance,
+    _direction_icon,
     _extract_score_history,
+    _resonance_colored,
     _simple_slope,
     render_trend_resonance,
 )
+from src.utils.display import Fore, Style
 
 
 # ---------------------------------------------------------------------------
@@ -245,3 +248,87 @@ class TestComputeTrendResonance:
 
         report = compute_trend_resonance(reports_dir=tmp_path)
         assert report.items == []
+
+
+# ---------------------------------------------------------------------------
+# _direction_icon / _resonance_colored (was 0 direct coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestDirectionIcon:
+    """_direction_icon — direction string → colored arrow."""
+
+    def test_up_green_arrow(self) -> None:
+        result = _direction_icon("up")
+        assert Fore.GREEN in result
+        assert "↑" in result
+
+    def test_down_red_arrow(self) -> None:
+        result = _direction_icon("down")
+        assert Fore.RED in result
+        assert "↓" in result
+
+    def test_unknown_white_dash(self) -> None:
+        result = _direction_icon("flat")
+        assert Fore.WHITE in result
+        assert "→" in result
+
+    def test_empty_string_white_dash(self) -> None:
+        result = _direction_icon("")
+        assert Fore.WHITE in result
+        assert "→" in result
+
+    def test_all_end_with_reset(self) -> None:
+        assert _direction_icon("up").endswith(Style.RESET_ALL)
+        assert _direction_icon("down").endswith(Style.RESET_ALL)
+        assert _direction_icon("other").endswith(Style.RESET_ALL)
+
+
+class TestResonanceColored:
+    """_resonance_colored — label + factor → colored resonance text."""
+
+    def test_resonance_positive_green(self) -> None:
+        result = _resonance_colored("strong_resonance", 0.8)
+        assert Fore.GREEN in result
+        assert "共振↑" in result
+
+    def test_resonance_negative_red(self) -> None:
+        result = _resonance_colored("weak_resonance", -0.5)
+        assert Fore.RED in result
+        assert "共振↓" in result
+
+    def test_resonance_zero_factor_red(self) -> None:
+        # factor == 0 → not > 0 → RED branch
+        result = _resonance_colored("resonance", 0.0)
+        assert Fore.RED in result
+        assert "共振↓" in result
+
+    def test_partial_positive_green(self) -> None:
+        result = _resonance_colored("partial_up", 0.3)
+        assert Fore.GREEN in result
+        assert "偏多" in result
+
+    def test_partial_negative_red(self) -> None:
+        result = _resonance_colored("partial", -0.2)
+        assert Fore.RED in result
+        assert "偏空" in result
+
+    def test_mixed_yellow_conflict(self) -> None:
+        result = _resonance_colored("mixed", 0.5)
+        assert Fore.YELLOW in result
+        assert "冲突" in result
+
+    def test_unknown_label_white_neutral(self) -> None:
+        result = _resonance_colored("something_else", 0.5)
+        assert Fore.WHITE in result
+        assert "中性" in result
+
+    def test_resonance_takes_precedence_over_partial(self) -> None:
+        # label containing both "resonance" and "partial" → resonance branch wins
+        result = _resonance_colored("resonance_partial", 0.5)
+        assert "共振" in result
+
+    def test_all_end_with_reset(self) -> None:
+        assert _resonance_colored("resonance", 0.5).endswith(Style.RESET_ALL)
+        assert _resonance_colored("mixed", 0.0).endswith(Style.RESET_ALL)
+        assert _resonance_colored("other", 0.0).endswith(Style.RESET_ALL)
