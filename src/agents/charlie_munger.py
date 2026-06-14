@@ -6,25 +6,25 @@ brilliance.
 """
 
 import json
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Any, Literal
 
 from src.agents.charlie_munger_helpers import (
     _calculate_munger_intrinsic_value_range,
+    _score_munger_capital_intensity,
     _score_munger_cash_conversion,
     _score_munger_cash_generation_predictability,
     _score_munger_cash_management,
-    _score_munger_capital_intensity,
     _score_munger_debt_management,
     _score_munger_fcf_trend,
     _score_munger_fcf_yield,
     _score_munger_insider_activity,
     _score_munger_intangibles,
-    _score_munger_margin_predictability,
     _score_munger_margin_of_safety,
+    _score_munger_margin_predictability,
     _score_munger_operating_predictability,
     _score_munger_pricing_power,
     _score_munger_revenue_predictability,

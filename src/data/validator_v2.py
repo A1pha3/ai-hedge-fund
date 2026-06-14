@@ -5,9 +5,9 @@ from typing import Any, Union
 from src.data.models import FinancialMetrics, Price
 from src.data.validation_rules import (
     FINANCIAL_METRICS_RULES,
+    get_rules_for_data_type,
     PRICE_RULES,
     ValidationRule,
-    get_rules_for_data_type,
 )
 from src.data.validator_v2_helpers import evaluate_metric_rule
 

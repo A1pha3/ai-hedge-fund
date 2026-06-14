@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
 import json
 import os
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
-from collections.abc import Callable, Sequence
 
 import pandas as pd
 from dateutil.relativedelta import relativedelta
@@ -15,23 +15,16 @@ from dateutil.relativedelta import relativedelta
 from src.execution.daily_pipeline import DailyPipeline
 from src.execution.models import ExecutionPlan, PendingOrder
 from src.research.artifacts import SelectionArtifactWriter
-from .engine_market_data import (
-    MarketDataLoader,
-    normalize_ticker,
-    resolve_benchmark_ticker,
-)
-from .engine_pipeline_helpers import (
-    PipelineDayContext,
-    build_pipeline_active_tickers,
-    build_pipeline_day_context,
-    build_pipeline_event_payload,
-    build_pipeline_timing_payload,
-    collect_execution_plan_observations,
-    initialize_pipeline_day_state,
-)
 
 from .benchmarks import BenchmarkCalculator
 from .controller import AgentController
+from .engine_agent_mode import (
+    build_confirmation_inputs,
+    build_pipeline_agent_output,
+    execute_agent_mode_trades,
+    resolve_agent_mode_day_window,
+    run_agent_mode_agent,
+)
 from .engine_checkpoint_helpers import (
     build_checkpoint_payload,
     deserialize_portfolio_values,
@@ -42,6 +35,11 @@ from .engine_checkpoint_helpers import (
     serialize_portfolio_values,
     write_checkpoint,
 )
+from .engine_market_data import (
+    MarketDataLoader,
+    normalize_ticker,
+    resolve_benchmark_ticker,
+)
 from .engine_pending_helpers import (
     apply_pending_buy_result,
     apply_pending_sell_result,
@@ -50,15 +48,17 @@ from .engine_pending_helpers import (
     evaluate_pending_sell_order,
     process_pending_queues,
 )
-from .engine_agent_mode import (
-    build_confirmation_inputs,
-    build_pipeline_agent_output,
-    execute_agent_mode_trades,
-    resolve_agent_mode_day_window,
-    run_agent_mode_agent,
-)
 from .engine_pending_plan_runner import PendingPlanRunner
 from .engine_pipeline_decisions import PipelineDecisionExecutor
+from .engine_pipeline_helpers import (
+    build_pipeline_active_tickers,
+    build_pipeline_day_context,
+    build_pipeline_event_payload,
+    build_pipeline_timing_payload,
+    collect_execution_plan_observations,
+    initialize_pipeline_day_state,
+    PipelineDayContext,
+)
 from .engine_telemetry_helpers import (
     build_pipeline_day_record_payloads as build_pipeline_day_record_payloads_helper,
 )
@@ -81,9 +81,20 @@ class PipelineModeDayState:
     prepared_plan: ExecutionPlan | None = None
 
 
-from .trader import TradeExecutor, TradingConstraints  # noqa: E402 — after BacktestConfig dataclass
-from .types import AgentOutput, BacktestMode, PerformanceMetrics, PortfolioValuePoint  # noqa: E402 — after BacktestConfig dataclass
-from .valuation import calculate_portfolio_value, compute_exposures  # noqa: E402 — after BacktestConfig dataclass
+from .trader import (  # noqa: E402 — after BacktestConfig dataclass
+    TradeExecutor,
+    TradingConstraints,
+)
+from .types import (  # noqa: E402 — after BacktestConfig dataclass
+    AgentOutput,
+    BacktestMode,
+    PerformanceMetrics,
+    PortfolioValuePoint,
+)
+from .valuation import (  # noqa: E402 — after BacktestConfig dataclass
+    calculate_portfolio_value,
+    compute_exposures,
+)
 
 
 class BacktestEngine:

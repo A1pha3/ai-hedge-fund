@@ -17,12 +17,12 @@ from src.agents.growth_agent import (
 from src.data.models import FinancialMetrics
 from src.screening.models import StrategySignal, SubFactor
 from src.screening.strategy_scorer_utils import (
-    FUNDAMENTAL_SUBFACTOR_WEIGHTS,
-    aggregate_sub_factors,
     _make_sub_factor,
+    aggregate_sub_factors,
+    FUNDAMENTAL_SUBFACTOR_WEIGHTS,
 )
-from src.utils.env_helpers import get_env_mode as _get_env_mode
 from src.tools.api import get_financial_metrics
+from src.utils.env_helpers import get_env_mode as _get_env_mode
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from src.utils.numeric import clamp_unit_interval  # noqa: F401 — re-exported for backward compatibility
+from src.utils.numeric import (  # noqa: F401 — re-exported for backward compatibility
+    clamp_unit_interval,
+)
 
 
 def derive_confidence(*components: float) -> float:

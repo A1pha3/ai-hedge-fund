@@ -396,7 +396,12 @@ def _resolve_compare(argv: list[str]) -> int | None:
 
 
 def _resolve_watchlist(argv: list[str]) -> int | None:
-    from src.main import run_watchlist_add, run_watchlist_list, run_watchlist_remove, run_watchlist_status
+    from src.main import (
+        run_watchlist_add,
+        run_watchlist_list,
+        run_watchlist_remove,
+        run_watchlist_status,
+    )
 
     flags = ("--watchlist-add", "--watchlist-remove", "--watchlist-list", "--watchlist-status")
     if not any(f in argv for f in flags):
@@ -649,7 +654,10 @@ def _resolve_check_freshness(argv: list[str]) -> int | None:
     if not trade_date:
         from datetime import date
         trade_date = date.today().strftime("%Y%m%d")
-    from src.screening.data_freshness_guard import check_data_freshness, _render_freshness_summary
+    from src.screening.data_freshness_guard import (
+        _render_freshness_summary,
+        check_data_freshness,
+    )
     reports_dir = None
     try:
         from src.screening.consecutive_recommendation import resolve_report_dir
@@ -715,9 +723,15 @@ def _resolve_expected_returns(argv: list[str]) -> int | None:
         return None
     top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
     lookback = _parse_int(_get_kv(argv, "--lookback"), 60)
-    from src.screening.data_quality_audit import _find_latest_report, load_latest_recommendations
-    from src.screening.expected_return import compute_expected_returns, render_expected_returns
     from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.screening.data_quality_audit import (
+        _find_latest_report,
+        load_latest_recommendations,
+    )
+    from src.screening.expected_return import (
+        compute_expected_returns,
+        render_expected_returns,
+    )
     from src.utils.display import Fore, Style
     reports_dir = resolve_report_dir()
     report_path = _find_latest_report(reports_dir)

@@ -12,7 +12,6 @@ from src.paper_trading.btst_reporting_utils import (
     _round_or_none,
 )
 
-
 CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES = 3
 
 

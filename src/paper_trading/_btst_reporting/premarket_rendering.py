@@ -9,9 +9,9 @@ from collections.abc import Callable
 from typing import Any
 
 from src.paper_trading.btst_reporting_utils import (
- _format_float,
- _format_historical_payoff_note,
- _format_rollout_value,
+    _format_float,
+    _format_historical_payoff_note,
+    _format_rollout_value,
 )
 
 
@@ -194,6 +194,8 @@ def _append_titled_indexed_section(
 ) -> None:
     from src.paper_trading.btst_shared_markdown_helpers import (
         append_none_block as _none_impl,
+    )
+    from src.paper_trading.btst_shared_markdown_helpers import (
         append_titled_indexed_section as _impl,
     )
 
@@ -207,6 +209,8 @@ def _append_titled_indexed_section(
 
 
 def _append_none_block(lines: list[str]) -> None:
-    from src.paper_trading.btst_shared_markdown_helpers import append_none_block as _impl
+    from src.paper_trading.btst_shared_markdown_helpers import (
+        append_none_block as _impl,
+    )
 
     _impl(lines)

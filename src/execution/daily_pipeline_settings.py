@@ -5,7 +5,12 @@ from pathlib import Path
 
 from src.execution.daily_pipeline_watchlist_helpers import WatchlistDiagnosticsConfig
 from src.portfolio.position_calculator import STANDARD_EXECUTION_SCORE
-from src.utils.env_helpers import get_env_csv_list, get_env_csv_set, get_env_float, get_env_int
+from src.utils.env_helpers import (
+    get_env_csv_list,
+    get_env_csv_set,
+    get_env_float,
+    get_env_int,
+)
 
 FAST_AGENT_SCORE_THRESHOLD = get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD", 0.20)
 FAST_AGENT_MAX_TICKERS = get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)

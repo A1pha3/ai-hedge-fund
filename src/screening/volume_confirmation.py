@@ -32,7 +32,6 @@ from src.screening.consecutive_recommendation import (
 )
 from src.utils.display import Fore, Style
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

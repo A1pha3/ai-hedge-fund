@@ -28,7 +28,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

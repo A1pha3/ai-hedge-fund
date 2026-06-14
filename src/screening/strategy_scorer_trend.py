@@ -20,18 +20,18 @@ from src.agents.technicals import (
 )
 from src.screening.models import StrategySignal, SubFactor
 from src.screening.strategy_scorer_utils import (
-    aggregate_sub_factors,
     _get_trend_subfactor_weights,
     _make_sub_factor,
     _signal_to_direction,
+    aggregate_sub_factors,
 )
 from src.tools.ashare_board_utils import get_ashare_symbol
 from src.utils.numeric import clip as _clip
 
-
 # ---------------------------------------------------------------------------
 # EMA alignment
 # ---------------------------------------------------------------------------
+
 
 def _score_ema_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
     if prices_df.empty or len(prices_df) < 60:

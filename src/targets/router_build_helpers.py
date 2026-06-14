@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 from src.execution.models import LayerCResult
 from src.targets.models import (
@@ -10,7 +10,6 @@ from src.targets.models import (
     TargetEvaluationResult,
     TargetMode,
 )
-
 
 FORMAL_EXECUTION_BLOCK_FLAGS = (
     "p2_execution_blocked",

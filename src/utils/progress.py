@@ -1,5 +1,5 @@
-from datetime import datetime, UTC
 from collections.abc import Callable
+from datetime import datetime, UTC
 from threading import Lock
 
 from rich.console import Console

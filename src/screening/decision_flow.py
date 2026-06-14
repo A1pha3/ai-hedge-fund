@@ -23,7 +23,6 @@ from typing import Any
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.utils.display import Fore, Style
 
-
 # ---------------------------------------------------------------------------
 # Core decision flow
 # ---------------------------------------------------------------------------
@@ -83,7 +82,10 @@ def run_decision_flow(
 
     # Step 2: Data freshness
     print(f"\n{Fore.WHITE}Step 2/{total_steps}: Checking data freshness...{Style.RESET_ALL}")
-    from src.screening.data_freshness_guard import check_data_freshness, _render_freshness_summary
+    from src.screening.data_freshness_guard import (
+        _render_freshness_summary,
+        check_data_freshness,
+    )
 
     freshness = check_data_freshness(trade_date=trade_date, reports_dir=search_dir)
     print(f"  {_render_freshness_summary(freshness['fresh'], freshness['warnings'])}")
@@ -91,7 +93,10 @@ def run_decision_flow(
 
     # Step 3: Signal consistency
     print(f"\n{Fore.WHITE}Step 3/{total_steps}: Cross-checking signal consistency...{Style.RESET_ALL}")
-    from src.screening.signal_consistency import check_signal_consistency, render_consistency_report
+    from src.screening.signal_consistency import (
+        check_signal_consistency,
+        render_consistency_report,
+    )
 
     consistency = check_signal_consistency(recs)
     print(render_consistency_report(consistency))
@@ -101,7 +106,10 @@ def run_decision_flow(
 
     # Step 4: Dynamic threshold
     print(f"\n{Fore.WHITE}Step 4/{total_steps}: Computing dynamic threshold...{Style.RESET_ALL}")
-    from src.screening.dynamic_threshold import compute_dynamic_threshold, render_dynamic_threshold
+    from src.screening.dynamic_threshold import (
+        compute_dynamic_threshold,
+        render_dynamic_threshold,
+    )
 
     threshold_result = compute_dynamic_threshold(
         lookback_days=lookback_days,
@@ -146,7 +154,10 @@ def run_decision_flow(
 
     # Step 8: Signal momentum (P10-1)
     print(f"\n{Fore.WHITE}Step 8/{total_steps}: Analyzing signal momentum...{Style.RESET_ALL}")
-    from src.screening.signal_momentum import compute_signal_momentum, render_signal_momentum
+    from src.screening.signal_momentum import (
+        compute_signal_momentum,
+        render_signal_momentum,
+    )
 
     momentum = compute_signal_momentum(top_n=top_n, lookback_days=lookback_days, reports_dir=search_dir)
     print(render_signal_momentum(momentum))
@@ -156,7 +167,10 @@ def run_decision_flow(
 
     # Step 9: Sector strength (P10-2)
     print(f"\n{Fore.WHITE}Step 9/{total_steps}: Evaluating sector strength...{Style.RESET_ALL}")
-    from src.screening.sector_strength import compute_sector_strength, render_sector_strength
+    from src.screening.sector_strength import (
+        compute_sector_strength,
+        render_sector_strength,
+    )
 
     sector = compute_sector_strength(top_n=top_n, lookback_days=lookback_days, reports_dir=search_dir)
     print(render_sector_strength(sector))
@@ -164,7 +178,10 @@ def run_decision_flow(
 
     # Step 10: Composite confidence score (P11-1)
     print(f"\n{Fore.WHITE}Step 10/{total_steps}: Computing composite confidence scores...{Style.RESET_ALL}")
-    from src.screening.composite_score import compute_composite_scores, render_composite_scores
+    from src.screening.composite_score import (
+        compute_composite_scores,
+        render_composite_scores,
+    )
 
     composite = compute_composite_scores(top_n=top_n, lookback_days=lookback_days, reports_dir=search_dir)
     print(render_composite_scores(composite))

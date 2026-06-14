@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from .portfolio import Portfolio
 from .types import Action, AgentDecisions, AgentOutput, PortfolioSnapshot

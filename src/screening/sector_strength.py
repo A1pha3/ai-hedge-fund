@@ -28,13 +28,12 @@ from src.screening.consecutive_recommendation import (
     resolve_report_dir,
 )
 from src.screening.industry_rotation import (
-    IndustrySignal,
-    calculate_industry_rotation,
-    top_strong_industries,
     bottom_weak_industries,
+    calculate_industry_rotation,
+    IndustrySignal,
+    top_strong_industries,
 )
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # Constants

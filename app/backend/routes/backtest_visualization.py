@@ -24,6 +24,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
 from app.backend.auth.dependencies import require_write_access
 from app.backend.models.user import User
 

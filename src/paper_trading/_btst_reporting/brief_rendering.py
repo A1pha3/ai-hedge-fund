@@ -7,52 +7,74 @@ injecting local callback functions for shared sub-renderers.
 
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
+from src.paper_trading._btst_reporting.catalyst_render_helpers import (
+    _append_catalyst_watch_metrics,
+    _append_threshold_shortfalls_line,
+)
 from src.paper_trading.btst_reporting_utils import (
     _format_float,
     _format_historical_payoff_note,
     _format_rollout_value,
 )
-from src.paper_trading._btst_reporting.catalyst_render_helpers import (
-    _append_threshold_shortfalls_line,
-    _append_catalyst_watch_metrics,
+from src.paper_trading.btst_shared_markdown_helpers import (
+    append_frontier_priority_summary as _append_frontier_priority_summary_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
+    append_frontier_promoted_shadow_none_block as _append_frontier_promoted_shadow_none_block_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
+    append_frontier_section as _append_frontier_section_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
+    append_none_block as _append_none_block_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
+    append_source_paths_section as _append_source_paths_section_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
+    append_upstream_shadow_summary as _append_upstream_shadow_summary,
+)
+from src.paper_trading.btst_trade_brief_catalyst_markdown_helpers import (
+    append_brief_catalyst_theme_markdown as _append_brief_catalyst_theme_markdown_impl,
+)
+from src.paper_trading.btst_trade_brief_catalyst_markdown_helpers import (
+    append_brief_excluded_research_markdown as _append_brief_excluded_research_markdown_impl,
 )
 from src.paper_trading.btst_trade_brief_core_markdown_helpers import (
     append_brief_observer_lane_markdown as _append_brief_observer_lane_markdown_impl,
-    append_brief_scored_entries_markdown as _append_brief_scored_entries_markdown_impl,
 )
-from src.paper_trading.btst_trade_brief_pool_markdown_helpers import (
-    append_brief_opportunity_pool_markdown as _append_brief_opportunity_pool_markdown_impl,
-    append_brief_pruned_entries_markdown as _append_brief_pruned_entries_markdown_impl,
-    append_brief_research_radar_markdown as _append_brief_research_radar_markdown_impl,
+from src.paper_trading.btst_trade_brief_core_markdown_helpers import (
+    append_brief_scored_entries_markdown as _append_brief_scored_entries_markdown_impl,
 )
 from src.paper_trading.btst_trade_brief_payoff_markdown_helpers import (
     append_brief_payoff_review_lane_markdown as _append_brief_payoff_review_lane_markdown_impl,
 )
-from src.paper_trading.btst_trade_brief_catalyst_markdown_helpers import (
-    append_brief_catalyst_theme_markdown as _append_brief_catalyst_theme_markdown_impl,
-    append_brief_excluded_research_markdown as _append_brief_excluded_research_markdown_impl,
+from src.paper_trading.btst_trade_brief_pool_markdown_helpers import (
+    append_brief_opportunity_pool_markdown as _append_brief_opportunity_pool_markdown_impl,
+)
+from src.paper_trading.btst_trade_brief_pool_markdown_helpers import (
+    append_brief_pruned_entries_markdown as _append_brief_pruned_entries_markdown_impl,
+)
+from src.paper_trading.btst_trade_brief_pool_markdown_helpers import (
+    append_brief_research_radar_markdown as _append_brief_research_radar_markdown_impl,
 )
 from src.paper_trading.btst_trade_brief_shadow_markdown_helpers import (
     append_brief_catalyst_frontier_markdown as _append_brief_catalyst_frontier_markdown_impl,
+)
+from src.paper_trading.btst_trade_brief_shadow_markdown_helpers import (
     append_brief_catalyst_shadow_markdown as _append_brief_catalyst_shadow_markdown_impl,
+)
+from src.paper_trading.btst_trade_brief_shadow_markdown_helpers import (
     append_brief_upstream_shadow_markdown as _append_brief_upstream_shadow_markdown_impl,
 )
-from src.paper_trading.btst_shared_markdown_helpers import (
-    append_frontier_priority_summary as _append_frontier_priority_summary_impl,
-    append_frontier_promoted_shadow_none_block as _append_frontier_promoted_shadow_none_block_impl,
-    append_frontier_section as _append_frontier_section_impl,
-    append_none_block as _append_none_block_impl,
-    append_source_paths_section as _append_source_paths_section_impl,
-    append_upstream_shadow_summary as _append_upstream_shadow_summary,
-)
-
 
 # ---------------------------------------------------------------------------
 # Sub-renderers (local callbacks injected into _impl functions)
 # ---------------------------------------------------------------------------
+
 
 def _append_none_block(lines: list[str]) -> None:
     _append_none_block_impl(lines)

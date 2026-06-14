@@ -3,38 +3,49 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.paper_trading.btst_reporting_utils import (
-    OPPORTUNITY_POOL_MAX_ENTRIES,
-    OPPORTUNITY_POOL_MIN_SCORE_TARGET,
-    _as_float,
-    _load_json,
-    _load_btst_rollout_validation_context,
-    _monitor_priority_rank,
-    _load_selection_replay_input,
-    _normalize_trade_date,
-    _resolve_replay_input_path,
-    _shadow_decision_rank,
-    _summary_value,
+from src.paper_trading._btst_reporting.entry_builders import (
+    _build_catalyst_theme_frontier_priority as _build_catalyst_theme_frontier_priority_eb,
 )
-from src.paper_trading._btst_reporting.extractors import (
-    _extract_upstream_shadow_replay_only_entry,
-    RESEARCH_UPSIDE_RADAR_MAX_ENTRIES,
+from src.paper_trading._btst_reporting.entry_builders import (
+    _build_upstream_shadow_summary as _build_upstream_shadow_summary_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _collect_formal_execution_block_flags as _collect_formal_execution_block_flags_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_catalyst_theme_entry as _extract_catalyst_theme_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_catalyst_theme_shadow_entry as _extract_catalyst_theme_shadow_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_research_upside_radar_entry as _extract_research_upside_radar_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_short_trade_entry as _extract_short_trade_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_short_trade_opportunity_entry as _extract_short_trade_opportunity_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_upstream_shadow_entry as _extract_upstream_shadow_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _filter_execution_ready_entries as _filter_execution_ready_entries_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _load_catalyst_theme_frontier_summary as _load_catalyst_theme_frontier_summary_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _resolve_snapshot_path as _resolve_snapshot_path_eb,
 )
 from src.paper_trading._btst_reporting.entry_builders import (
     CATALYST_THEME_MAX_ENTRIES,
     CATALYST_THEME_SHADOW_MAX_ENTRIES,
-    _collect_formal_execution_block_flags as _collect_formal_execution_block_flags_eb,
-    _extract_catalyst_theme_entry as _extract_catalyst_theme_entry_eb,
-    _extract_catalyst_theme_shadow_entry as _extract_catalyst_theme_shadow_entry_eb,
-    _extract_research_upside_radar_entry as _extract_research_upside_radar_entry_eb,
-    _extract_short_trade_entry as _extract_short_trade_entry_eb,
-    _extract_short_trade_opportunity_entry as _extract_short_trade_opportunity_entry_eb,
-    _filter_execution_ready_entries as _filter_execution_ready_entries_eb,
-    _extract_upstream_shadow_entry as _extract_upstream_shadow_entry_eb,
-    _build_upstream_shadow_summary as _build_upstream_shadow_summary_eb,
-    _build_catalyst_theme_frontier_priority as _build_catalyst_theme_frontier_priority_eb,
-    _load_catalyst_theme_frontier_summary as _load_catalyst_theme_frontier_summary_eb,
-    _resolve_snapshot_path as _resolve_snapshot_path_eb,
+)
+from src.paper_trading._btst_reporting.extractors import (
+    _extract_upstream_shadow_replay_only_entry,
+    RESEARCH_UPSIDE_RADAR_MAX_ENTRIES,
 )
 from src.paper_trading._btst_reporting.historical_prior import (
     _build_empty_btst_candidate_historical_context,
@@ -45,7 +56,19 @@ from src.paper_trading._btst_reporting.historical_prior import (
 from src.paper_trading._btst_reporting.payoff_review_lane import (
     build_payoff_review_entries,
 )
-
+from src.paper_trading.btst_reporting_utils import (
+    _as_float,
+    _load_btst_rollout_validation_context,
+    _load_json,
+    _load_selection_replay_input,
+    _monitor_priority_rank,
+    _normalize_trade_date,
+    _resolve_replay_input_path,
+    _shadow_decision_rank,
+    _summary_value,
+    OPPORTUNITY_POOL_MAX_ENTRIES,
+    OPPORTUNITY_POOL_MIN_SCORE_TARGET,
+)
 
 RUNNER_RECALL_REVIEW_MAX_ENTRIES = 5
 RUNNER_RECALL_REVIEW_SOURCE = "watchlist_filter_diagnostics"

@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+
 from src.research.factor_ic_analysis import (
-    FactorICResult,
     compute_factor_ic,
+    FactorICResult,
 )
 from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
 

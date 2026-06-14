@@ -16,9 +16,9 @@ def _adx_level(value: float) -> tuple[str, str]:
         else  : 弱势 (red)
         NaN   : 无数据 (white)
     """
-    from src.utils.numeric import is_finite_number as _is_finite_number
-
     from colorama import Fore
+
+    from src.utils.numeric import is_finite_number as _is_finite_number
 
     if not _is_finite_number(value):
         return ("无数据", Fore.WHITE)
@@ -41,9 +41,9 @@ def _atr_level(value: float) -> tuple[str, str]:
         else    : 低波   (cyan)
         NaN     : 无数据 (white)
     """
-    from src.utils.numeric import is_finite_number as _is_finite_number
-
     from colorama import Fore
+
+    from src.utils.numeric import is_finite_number as _is_finite_number
 
     if not _is_finite_number(value):
         return ("无数据", Fore.WHITE)
@@ -66,9 +66,9 @@ def _breadth_level(value: float) -> tuple[str, str]:
         else    : 弱势 (red)
         NaN     : 无数据 (white)
     """
-    from src.utils.numeric import is_finite_number as _is_finite_number
-
     from colorama import Fore
+
+    from src.utils.numeric import is_finite_number as _is_finite_number
 
     if not _is_finite_number(value):
         return ("无数据", Fore.WHITE)
@@ -118,7 +118,8 @@ def _extract_market_status(market_state: object) -> dict:
 
     所有数值字段均经过 ``_safe_float`` / ``_safe_int`` 处理, 杜绝 NaN 污染。
     """
-    from src.utils.numeric import safe_float as _safe_float, safe_int as _safe_int
+    from src.utils.numeric import safe_float as _safe_float
+    from src.utils.numeric import safe_int as _safe_int
 
     return {
         "adx": _safe_float(getattr(market_state, "adx", 0.0), 0.0),
@@ -136,9 +137,9 @@ def _extract_market_status(market_state: object) -> dict:
 
 def _format_market_status_table(data: dict) -> str:
     """根据提取的字段生成温度计文本 (彩色 ANSI 序列)。"""
-    from src.utils.numeric import is_finite_number as _is_finite_number
-
     from colorama import Fore, Style
+
+    from src.utils.numeric import is_finite_number as _is_finite_number
 
     adx = data["adx"]
     atr = data["atr_ratio"]

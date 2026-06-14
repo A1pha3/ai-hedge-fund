@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
 import json
 from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.backend.models.schemas import ErrorResponse

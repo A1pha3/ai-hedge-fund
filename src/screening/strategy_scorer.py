@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 import concurrent.futures
 import logging
 import math
@@ -11,25 +10,36 @@ from collections import defaultdict
 from datetime import datetime
 from statistics import median
 from time import perf_counter
+from typing import Any
 
 import pandas as pd
 
-from src.screening.strategy_scorer_utils import (
-    aggregate_sub_factors,
-    derive_completeness,
-)
-from src.screening.strategy_scorer_trend import (
-    score_trend_strategy,
+from src.screening.models import CandidateStock, StrategySignal
+from src.screening.strategy_scorer_fundamental import (
+    score_fundamental_strategy,
 )
 from src.screening.strategy_scorer_mean_reversion import (
     score_mean_reversion_strategy,
 )
-from src.screening.strategy_scorer_fundamental import (
-    score_fundamental_strategy,
+from src.screening.strategy_scorer_trend import (
+    score_trend_strategy,
 )
-from src.screening.models import CandidateStock, StrategySignal
-from src.tools.akshare_api import get_intraday_bars, get_intraday_ticks, get_lhb_detail, get_lhb_institutional_stats, get_money_flow
-from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_sw_industry_classification
+from src.screening.strategy_scorer_utils import (
+    aggregate_sub_factors,
+    derive_completeness,
+)
+from src.tools.akshare_api import (
+    get_intraday_bars,
+    get_intraday_ticks,
+    get_lhb_detail,
+    get_lhb_institutional_stats,
+    get_money_flow,
+)
+from src.tools.tushare_api import (
+    get_all_stock_basic,
+    get_daily_basic_batch,
+    get_sw_industry_classification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +89,9 @@ SCORE_BATCH_CONCURRENCY = int(os.getenv("SCORE_BATCH_CONCURRENCY", "4"))
 
 # R20.2: Event sentiment helpers extracted for readability
 from src.screening.strategy_scorer_event_sentiment_helpers import (  # noqa: E402
-    score_event_sentiment_strategy,
     _empty_signal,
     _load_price_frame,
+    score_event_sentiment_strategy,
 )
 
 

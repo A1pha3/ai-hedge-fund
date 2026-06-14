@@ -22,10 +22,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+
 
 class OutcomeCategory(str, Enum):
     FORMAL_SELECTED = "formal_selected"

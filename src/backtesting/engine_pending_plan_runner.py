@@ -8,16 +8,16 @@ portfolio via PipelineDecisionExecutor.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
-from collections.abc import Callable
 
 from src.execution.daily_pipeline import DailyPipeline
 from src.execution.models import ExecutionPlan, PendingOrder
 
 from .engine_pipeline_decisions import PipelineDecisionExecutor
-from .engine_pipeline_helpers import PipelineDayContext, extract_plan_risk_metrics
+from .engine_pipeline_helpers import extract_plan_risk_metrics, PipelineDayContext
 from .portfolio import Portfolio
 
 

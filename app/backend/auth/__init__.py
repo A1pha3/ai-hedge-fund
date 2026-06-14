@@ -6,8 +6,8 @@ Usage: uv run python -m app.backend.auth <command>
 
 import argparse
 import getpass
-import sys
 import os
+import sys
 from pathlib import Path
 
 # Ensure project root is in path
@@ -15,7 +15,9 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 # Load environment variables
-from dotenv import load_dotenv  # noqa: E402 — after sys.path.insert so dotenv resolves from project root
+from dotenv import (  # noqa: E402 — after sys.path.insert so dotenv resolves from project root
+    load_dotenv,
+)
 
 env_path = project_root / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -49,7 +51,7 @@ def main():
         sys.exit(1)
 
     # Late imports to avoid circular dependencies
-    from app.backend.database.connection import SessionLocal, engine
+    from app.backend.database.connection import engine, SessionLocal
     from app.backend.database.models import Base
 
     # Ensure tables exist
@@ -74,9 +76,9 @@ def main():
 
 def _cmd_init(db):
     """Initialize auth system and create admin user."""
-    from app.backend.models.user import User
-    from app.backend.auth.utils import hash_password
     from app.backend.auth.constants import ADMIN_USERNAME
+    from app.backend.auth.utils import hash_password
+    from app.backend.models.user import User
 
     # Check if admin already exists
     existing = db.query(User).filter(User.username == ADMIN_USERNAME).first()
@@ -102,10 +104,11 @@ def _cmd_init(db):
 
 def _cmd_gen_invite(db, expires_in: str, count: int):
     """Generate invitation codes."""
-    from app.backend.models.user import User, InvitationCode
-    from app.backend.auth.utils import generate_invitation_code
-    from app.backend.auth.constants import ADMIN_USERNAME
     from datetime import datetime, timedelta, timezone
+
+    from app.backend.auth.constants import ADMIN_USERNAME
+    from app.backend.auth.utils import generate_invitation_code
+    from app.backend.models.user import InvitationCode, User
 
     admin = db.query(User).filter(User.username == ADMIN_USERNAME).first()
     if not admin:
@@ -138,9 +141,13 @@ def _cmd_gen_invite(db, expires_in: str, count: int):
 
 def _cmd_reset_admin_password(db):
     """Reset admin password interactively."""
-    from app.backend.models.user import User
+    from app.backend.auth.constants import (
+        ADMIN_USERNAME,
+        PASSWORD_PATTERN,
+        PASSWORD_RULES,
+    )
     from app.backend.auth.utils import hash_password
-    from app.backend.auth.constants import ADMIN_USERNAME, PASSWORD_PATTERN, PASSWORD_RULES
+    from app.backend.models.user import User
 
     admin = db.query(User).filter(User.username == ADMIN_USERNAME).first()
     if not admin:

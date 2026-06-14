@@ -6,12 +6,25 @@ from colorama import Fore, Style
 from tabulate import tabulate
 
 from src.tools.akshare_api import is_ashare
-from src.tools.tushare_api import get_stock_name, get_stock_details
+from src.tools.tushare_api import get_stock_details, get_stock_name
 
 from .analysts import ANALYST_ORDER
-from .display_print_helpers import build_agent_signal_table_rows, build_decision_table_rows, build_portfolio_summary_rows, find_portfolio_manager_reasoning, wrap_output_text
-from .display_report_helpers import build_trading_report_lines, build_trading_report_path
-from .display_reasoning_helpers import build_reasoning_dict_section, build_reasoning_fallback_table, build_reasoning_signal_section
+from .display_print_helpers import (
+    build_agent_signal_table_rows,
+    build_decision_table_rows,
+    build_portfolio_summary_rows,
+    find_portfolio_manager_reasoning,
+    wrap_output_text,
+)
+from .display_reasoning_helpers import (
+    build_reasoning_dict_section,
+    build_reasoning_fallback_table,
+    build_reasoning_signal_section,
+)
+from .display_report_helpers import (
+    build_trading_report_lines,
+    build_trading_report_path,
+)
 from .logging import get_logger
 
 logger = get_logger(__name__)

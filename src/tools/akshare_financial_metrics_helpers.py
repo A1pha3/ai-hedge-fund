@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import pandas as pd
 
 from src.data.adapters.akshare_adapter import _derive_debt_to_equity_from_debt_to_assets

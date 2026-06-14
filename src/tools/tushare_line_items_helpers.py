@@ -3,7 +3,6 @@ import pandas as pd
 
 from src.data.models import LineItem
 
-
 TTM_FLOW_FIELDS = {
     "revenue",
     "net_income",

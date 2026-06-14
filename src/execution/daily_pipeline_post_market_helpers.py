@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable
 
 from src.execution.models import LayerCResult
 from src.screening.models import CandidateStock

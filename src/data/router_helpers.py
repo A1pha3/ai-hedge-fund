@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from src.data.base_provider import DataResponse
 from src.data.health import get_health_monitor

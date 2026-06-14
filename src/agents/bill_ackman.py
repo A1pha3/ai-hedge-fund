@@ -6,11 +6,11 @@ identifies catalysts (operational, structural, regulatory) for value unlock.
 """
 
 import json
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Any, Literal
 
 from src.agents.bill_ackman_helpers import (
     _score_ackman_buybacks,
@@ -20,8 +20,8 @@ from src.agents.bill_ackman_helpers import (
     _score_ackman_revenue_growth,
     _score_ackman_roe,
 )
-from src.graph.state import AgentState, show_agent_reasoning
 from src.agents.prompt_rules import with_fact_grounding_rules
+from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items

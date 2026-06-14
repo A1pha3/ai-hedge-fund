@@ -4,7 +4,6 @@ from typing import Any
 
 import pandas as pd
 
-
 SHANGHAI_EXCHANGE_SYMBOL_PREFIXES: tuple[str, ...] = ("6", "68", "51", "56", "58", "60")
 SHENZHEN_EXCHANGE_SYMBOL_PREFIXES: tuple[str, ...] = ("0", "3", "15", "16", "18", "20")
 BEIJING_EXCHANGE_SYMBOL_PREFIXES: tuple[str, ...] = ("4", "8", "92")

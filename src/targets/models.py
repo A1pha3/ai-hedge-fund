@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 SelectionTargetType = Literal["research", "short_trade"]
 TargetDecision = Literal["selected", "near_miss", "rejected", "blocked"]
 TargetMode = Literal["research_only", "short_trade_only", "dual_target"]

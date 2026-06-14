@@ -7,19 +7,19 @@ side effects (exit reentry cooldowns, long entry/exit tracking).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable
 
 from src.execution.models import ExecutionPlan, PendingOrder
 
-from .evaluation_bundle import build_canonical_btst_evaluation_bundle
 from .engine_pending_helpers import (
     dedupe_pending_orders,
     queue_limit_blocked_pipeline_decision,
     queue_limit_down_sell_decision,
     queue_limit_up_buy_decision,
 )
+from .evaluation_bundle import build_canonical_btst_evaluation_bundle
 from .portfolio import Portfolio
 from .trader import TradeExecutor
 from .trading_constraints import TradeExecutionInputs

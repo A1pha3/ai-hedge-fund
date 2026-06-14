@@ -20,61 +20,60 @@ from typing import Any
 
 import pandas as pd
 
-from src.paper_trading.btst_reporting_utils import (
-    OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
-    OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES,
-    _format_float,
-)
 from src.paper_trading._btst_reporting.classifiers import (
-    _classify_historical_prior,
     _classify_execution_quality_prior,
+    _classify_historical_prior,
 )
 from src.paper_trading._btst_reporting.entry_builders import (
     _extract_research_upside_radar_entry,
 )
-
-# Re-export from extracted sub-modules (backward compat)
-from src.paper_trading._btst_reporting.historical_prior_price import (  # noqa: F401
-    _normalize_price_frame,
-    _extract_next_day_outcome,
+from src.paper_trading._btst_reporting.historical_prior_brief_enrichment import (  # noqa: F401
+    _apply_and_reclassify_brief_history_groups,
+    _apply_execution_quality_modes_to_brief_groups,
+    _apply_historical_prior_to_brief_entry_groups,
+    _build_empty_brief_history_enrichment_result,
+    _build_empty_brief_history_observer_groups,
+    _build_empty_btst_candidate_historical_context,
+    _demote_and_partition_brief_history_groups,
+    _enrich_btst_brief_entries_with_history,
+    _enrich_upstream_shadow_entries_with_history,
+    _postprocess_brief_history_enriched_groups,
+    _sort_brief_history_enriched_groups,
+)
+from src.paper_trading._btst_reporting.historical_prior_collection import (  # noqa: F401
+    _append_watch_candidate_row,
+    _apply_historical_prior_to_entries,
+    _apply_historical_prior_to_entry,
+    _build_btst_candidate_historical_context,
+    _collect_historical_opportunity_rows,
+    _collect_historical_watch_candidate_rows,
+    _collect_watch_candidate_rows_from_catalyst_entries,
+    _collect_watch_candidate_rows_from_selection_targets,
+    _decorate_watch_candidate_history_entry,
 )
 from src.paper_trading._btst_reporting.historical_prior_opportunity import (  # noqa: F401
-    _summarize_historical_opportunity_rows,
-    _build_empty_historical_opportunity_summary_state,
     _accumulate_historical_opportunity_summary,
-    _compute_historical_opportunity_rates,
-    _evaluate_historical_opportunity_row,
+    _build_empty_historical_opportunity_summary_state,
     _build_historical_opportunity_summary_payload,
-    _summarize_next_close_payoff,
+    _compute_historical_opportunity_rates,
     _compute_payoff_ratio,
     _compute_profit_factor,
     _detect_win_rate_payoff_divergence,
-)
-from src.paper_trading._btst_reporting.historical_prior_collection import (  # noqa: F401
-    _collect_historical_opportunity_rows,
-    _collect_historical_watch_candidate_rows,
-    _collect_watch_candidate_rows_from_selection_targets,
-    _collect_watch_candidate_rows_from_catalyst_entries,
-    _append_watch_candidate_row,
-    _decorate_watch_candidate_history_entry,
-    _build_btst_candidate_historical_context,
-    _apply_historical_prior_to_entries,
-    _apply_historical_prior_to_entry,
-)
-from src.paper_trading._btst_reporting.historical_prior_brief_enrichment import (  # noqa: F401
-    _enrich_btst_brief_entries_with_history,
-    _enrich_upstream_shadow_entries_with_history,
-    _build_empty_btst_candidate_historical_context,
-    _build_empty_brief_history_observer_groups,
-    _build_empty_brief_history_enrichment_result,
-    _postprocess_brief_history_enriched_groups,
-    _apply_and_reclassify_brief_history_groups,
-    _demote_and_partition_brief_history_groups,
-    _sort_brief_history_enriched_groups,
-    _apply_historical_prior_to_brief_entry_groups,
-    _apply_execution_quality_modes_to_brief_groups,
+    _evaluate_historical_opportunity_row,
+    _summarize_historical_opportunity_rows,
+    _summarize_next_close_payoff,
 )
 
+# Re-export from extracted sub-modules (backward compat)
+from src.paper_trading._btst_reporting.historical_prior_price import (  # noqa: F401
+    _extract_next_day_outcome,
+    _normalize_price_frame,
+)
+from src.paper_trading.btst_reporting_utils import (
+    _format_float,
+    OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
+    OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES,
+)
 
 # ---------------------------------------------------------------------------
 # Historical prior summary builder
@@ -208,7 +207,9 @@ def _build_watch_candidate_historical_prior(
     family: str,
 ) -> dict[str, Any]:
     # Local import re-resolves at call time — needed for monkeypatch-based tests (see F811).
-    from src.paper_trading._btst_reporting.historical_prior_collection import _decorate_watch_candidate_history_entry  # noqa: F811
+    from src.paper_trading._btst_reporting.historical_prior_collection import (  # noqa: F811
+        _decorate_watch_candidate_history_entry,
+    )
 
     decorated_entry = _decorate_watch_candidate_history_entry(entry, family)
     row_buckets = _build_watch_candidate_historical_row_buckets(

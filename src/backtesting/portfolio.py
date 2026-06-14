@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
-from types import MappingProxyType
 from collections.abc import Mapping
+from types import MappingProxyType
 
 from .types import PortfolioSnapshot, PositionState, TickerRealizedGains
 

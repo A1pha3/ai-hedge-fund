@@ -19,10 +19,10 @@ from src.agents.technicals import (
 )
 from src.screening.models import StrategySignal, SubFactor
 from src.screening.strategy_scorer_utils import (
-    MEAN_REVERSION_SUBFACTOR_WEIGHTS,
-    aggregate_sub_factors,
     _make_sub_factor,
     _signal_to_direction,
+    aggregate_sub_factors,
+    MEAN_REVERSION_SUBFACTOR_WEIGHTS,
 )
 
 

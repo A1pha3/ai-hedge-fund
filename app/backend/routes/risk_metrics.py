@@ -21,20 +21,20 @@ from typing import Any
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from src.portfolio.risk_metrics import (
-    DRAWDOWN_WARNING_THRESHOLD,
-    INDUSTRY_CONCENTRATION_WARNING_THRESHOLD,
-    SINGLE_POSITION_WARNING_THRESHOLD,
-    RiskSnapshot,
-    compute_risk_snapshot,
-)
 from src.portfolio.rebalance_advisor import (
+    compute_rebalance_actions,
     DEFAULT_DRIFT_THRESHOLD,
     DEFAULT_MIN_TRADE_AMOUNT,
     INDUSTRY_HARD_LIMIT,
     SINGLE_NAME_HARD_LIMIT,
     STRONG_DRIFT_THRESHOLD,
-    compute_rebalance_actions,
+)
+from src.portfolio.risk_metrics import (
+    compute_risk_snapshot,
+    DRAWDOWN_WARNING_THRESHOLD,
+    INDUSTRY_CONCENTRATION_WARNING_THRESHOLD,
+    RiskSnapshot,
+    SINGLE_POSITION_WARNING_THRESHOLD,
 )
 
 router = APIRouter(prefix="/portfolio")
@@ -268,8 +268,10 @@ def post_rebalance_actions(req: RebalanceRequest) -> RebalanceResponse:
 # ---------------------------------------------------------------------------
 
 from src.portfolio.performance_report import (  # noqa: E402
-    PerformanceReport as PerformanceReportData,
     generate_performance_report,
+)
+from src.portfolio.performance_report import (  # noqa: E402
+    PerformanceReport as PerformanceReportData,
 )
 
 

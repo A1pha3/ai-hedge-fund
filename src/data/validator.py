@@ -5,12 +5,15 @@
 """
 
 import logging
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 from src.data.models import CompanyNews, FinancialMetrics, Price
-from src.data.validator_metric_helpers import collect_metric_warning_messages, validate_metric_required_fields
 from src.data.validator_helpers import validate_price_row
+from src.data.validator_metric_helpers import (
+    collect_metric_warning_messages,
+    validate_metric_required_fields,
+)
 
 logger = logging.getLogger(__name__)
 

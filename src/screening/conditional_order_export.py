@@ -40,7 +40,6 @@ from typing import Any, Sequence
 
 from src.screening.conditional_order_advisor import ConditionalOrderAdvice
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -410,6 +409,7 @@ def run_export_conditional_orders_cli(
         退出码 (0=成功, 1=无报告/无条件单, 2=broker 不支持)
     """
     import glob
+
     from colorama import Fore, Style
 
     if broker not in SUPPORTED_BROKERS:
@@ -448,7 +448,9 @@ def run_export_conditional_orders_cli(
     if not conditional_orders:
         recs = payload.get("recommendations") or []
         if recs:
-            from src.screening.conditional_order_advisor import attach_conditional_orders_to_payload
+            from src.screening.conditional_order_advisor import (
+                attach_conditional_orders_to_payload,
+            )
 
             conditional_orders = attach_conditional_orders_to_payload(payload, top_n=20)
 

@@ -27,7 +27,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Sequence
 
-from src.utils.numeric import safe_float as _safe_float, is_finite_number as _is_finite
+from src.utils.numeric import is_finite_number as _is_finite
+from src.utils.numeric import safe_float as _safe_float
 
 # ---------------------------------------------------------------------------
 # Constants & defaults

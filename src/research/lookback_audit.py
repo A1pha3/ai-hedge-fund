@@ -24,12 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from src.data.models import Price
-from src.utils.date_utils import format_date as _format_date, parse_date as _parse_date
-
+from src.utils.date_utils import format_date as _format_date
+from src.utils.date_utils import parse_date as _parse_date
 
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class TickerAuditResult:

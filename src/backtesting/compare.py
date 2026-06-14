@@ -19,7 +19,12 @@ from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
 
 from .engine import BacktestEngine
 from .types import PerformanceMetrics
-from .walk_forward import WALK_FORWARD_PRESETS, WindowMode, build_walk_forward_windows, WalkForwardWindow
+from .walk_forward import (
+    build_walk_forward_windows,
+    WALK_FORWARD_PRESETS,
+    WalkForwardWindow,
+    WindowMode,
+)
 
 
 def _slice_agent_results(agent_results: dict[str, dict[str, dict]], tickers: list[str]) -> dict[str, dict[str, dict]]:

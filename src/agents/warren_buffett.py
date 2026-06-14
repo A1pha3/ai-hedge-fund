@@ -7,11 +7,11 @@ Sub-scoring helpers live in ``warren_buffett_helpers``.
 
 import json
 import math
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
-from typing import Any, Literal
 
 from src.agents.warren_buffett_helpers import (
     _analyze_buffett_earnings_consistency,

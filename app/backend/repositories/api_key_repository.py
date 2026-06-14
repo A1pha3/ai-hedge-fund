@@ -1,6 +1,7 @@
-from sqlalchemy.orm import Session
-from typing import List, Optional
 from datetime import datetime, timezone
+from typing import List, Optional
+
+from sqlalchemy.orm import Session
 
 from app.backend.database.models import ApiKey
 

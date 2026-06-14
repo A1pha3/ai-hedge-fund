@@ -1,11 +1,8 @@
 from __future__ import annotations
+
 from typing import Any
+
 from src.paper_trading.btst_reporting_utils import (
-    WEAK_BALANCED_OPPORTUNITY_POOL_MAX_NEXT_CLOSE_POSITIVE_RATE,
-    WEAK_BALANCED_OPPORTUNITY_POOL_MAX_NEXT_HIGH_HIT_RATE,
-    WEAK_BALANCED_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT,
-    WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT,
-    WEAK_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT,
     _as_float,
     _build_execution_quality_balanced_confirmation_result,
     _build_execution_quality_close_continuation_result,
@@ -14,6 +11,11 @@ from src.paper_trading.btst_reporting_utils import (
     _build_execution_quality_payoff_divergence_risk_result,
     _build_execution_quality_unknown_result,
     _build_execution_quality_zero_follow_through_result,
+    WEAK_BALANCED_OPPORTUNITY_POOL_MAX_NEXT_CLOSE_POSITIVE_RATE,
+    WEAK_BALANCED_OPPORTUNITY_POOL_MAX_NEXT_HIGH_HIT_RATE,
+    WEAK_BALANCED_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT,
+    WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT,
+    WEAK_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT,
 )
 
 

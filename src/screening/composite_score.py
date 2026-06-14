@@ -31,12 +31,11 @@ from typing import Any
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.screening.data_quality_audit import _find_latest_report
 from src.screening.sector_strength import compute_sector_strength
-from src.screening.signal_momentum import compute_signal_momentum
 from src.screening.signal_consistency import check_signal_consistency
+from src.screening.signal_momentum import compute_signal_momentum
 from src.screening.trend_resonance import compute_trend_resonance
 from src.screening.volume_confirmation import compute_volume_confirmation
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # Constants

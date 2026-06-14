@@ -15,15 +15,19 @@ from scripts.btst_latest_followup_utils import (
     load_latest_btst_historical_prior_by_ticker,
     load_recent_btst_buy_order_cooldowns,
 )
+from src.execution.btst_shadow_promotion_helpers import (
+    resolve_btst_shadow_promotion_payload,
+)
 from src.execution.crisis_handler import evaluate_crisis_response
-from src.execution.btst_shadow_promotion_helpers import resolve_btst_shadow_promotion_payload
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
+    _apply_btst_risk_budget_overlay_to_plan,
     _enforce_btst_daily_trade_limit,
+    _resolve_btst_position_budget,
+)
+from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     build_buy_orders_with_diagnostics as build_buy_orders_with_diagnostics_impl,
 )
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
-    _apply_btst_risk_budget_overlay_to_plan,
-    _resolve_btst_position_budget,
     build_reentry_filter_payload,
 )
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
@@ -40,6 +44,37 @@ from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_upstream_catalyst_theme_candidates,
     collect_catalyst_theme_diagnostic_rankings,
     finalize_catalyst_theme_candidate_diagnostics,
+)
+
+# ── Extracted helper modules (R20.14 Beta refactor) ──────────────────────────
+from src.execution.daily_pipeline_enforcement_helpers import (
+    attach_btst_risk_budget_p6 as _attach_btst_risk_budget_p6_impl,
+)
+from src.execution.daily_pipeline_enforcement_helpers import (  # noqa: F401 — re-exported for tests
+    BTST_0422_P3_PRIOR_QUALITY_MODE_ENV,
+    BTST_0422_P3_PRIOR_QUALITY_MODES,
+    BTST_0422_P4_PRIOR_SHRINKAGE_MODE_ENV,
+    BTST_0422_P4_PRIOR_SHRINKAGE_MODES,
+    BTST_0422_P5_EXECUTION_CONTRACT_MODE_ENV,
+    BTST_0422_P5_EXECUTION_CONTRACT_MODES,
+    BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV,
+    BTST_0422_P6_RISK_BUDGET_MODE_ENV,
+    BTST_0422_P6_RISK_BUDGET_MODES,
+)
+from src.execution.daily_pipeline_enforcement_helpers import (
+    enforce_btst_execution_contract_p5 as _enforce_btst_execution_contract_p5_impl,
+)
+from src.execution.daily_pipeline_enforcement_helpers import (
+    enforce_btst_prior_quality_p3 as _enforce_btst_prior_quality_p3_impl,
+)
+from src.execution.daily_pipeline_enforcement_helpers import (
+    extract_frozen_prior_by_ticker as _extract_frozen_prior_by_ticker_impl,
+)
+from src.execution.daily_pipeline_enforcement_helpers import (  # noqa: F401 — re-exported for tests
+    resolve_btst_execution_contract_p5_mode,
+    resolve_btst_prior_quality_p3_mode,
+    resolve_btst_risk_budget_p6_mode,
+    resolve_btst_win_rate_first_precision_mode,
 )
 from src.execution.daily_pipeline_historical_prior_attachment import (
     attach_historical_prior_to_entries as _attach_historical_prior_to_entries_impl,
@@ -88,6 +123,32 @@ from src.execution.daily_pipeline_post_market_helpers import (
     PostMarketWatchlistContext,
     resolve_post_market_selection_targets,
 )
+from src.execution.daily_pipeline_regime_gate_helpers import (
+    attach_btst_regime_gate_shadow as _attach_btst_regime_gate_shadow_impl,
+)
+from src.execution.daily_pipeline_regime_gate_helpers import (
+    attach_downstream_target_market_state_payload as _attach_downstream_target_market_state_payload_impl,
+)
+from src.execution.daily_pipeline_regime_gate_helpers import (  # noqa: F401 — re-exported for tests
+    BTST_0422_P1_REGIME_GATE_MODE_ENV,
+    BTST_0422_P1_REGIME_GATE_MODES,
+    BTST_0422_P2_REGIME_GATE_MODE_ENV,
+    BTST_0422_P2_REGIME_GATE_MODES,
+)
+from src.execution.daily_pipeline_regime_gate_helpers import (
+    build_btst_regime_gate_payload as _build_btst_regime_gate_payload_impl,
+)
+from src.execution.daily_pipeline_regime_gate_helpers import (
+    build_downstream_target_market_state_payload as _build_downstream_target_market_state_payload_impl,
+)
+from src.execution.daily_pipeline_regime_gate_helpers import (
+    enforce_btst_regime_gate_p2 as _enforce_btst_regime_gate_p2_impl,
+)
+from src.execution.daily_pipeline_regime_gate_helpers import (  # noqa: F401 — re-exported for tests
+    get_or_classify_gate,
+    resolve_btst_regime_gate_mode,
+    resolve_btst_regime_gate_p2_mode,
+)
 from src.execution.daily_pipeline_runtime_helpers import (
     build_filter_summary as _build_filter_summary_impl,
 )
@@ -104,24 +165,6 @@ from src.execution.daily_pipeline_runtime_helpers import (
     resolve_historical_prior_for_ticker as _resolve_historical_prior_for_ticker_impl,
 )
 from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
-)
-from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
-)
-from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
-)
-from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
-)
-from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_LANES,
-)
-from src.execution.daily_pipeline_settings import (  # noqa: F401 — re-exported for tests
-    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_MAX_TICKERS,
-)
-from src.execution.daily_pipeline_settings import (
     BTST_REPORTS_ROOT,
     CATALYST_THEME_BREAKOUT_MIN,
     CATALYST_THEME_CANDIDATE_SCORE_MIN,
@@ -153,6 +196,12 @@ from src.execution.daily_pipeline_settings import (
     MERGE_APPROVED_TICKERS,
     MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION,
     PRECISE_AGENT_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
+    UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
+    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_LANES,
+    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_MAX_TICKERS,
     WATCHLIST_SCORE_THRESHOLD,
 )
 from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
@@ -160,45 +209,6 @@ from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
 )
 from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
     build_short_trade_candidate_diagnostics_with_defaults as _build_short_trade_candidate_diagnostics_impl,
-)
-
-# ── Extracted helper modules (R20.14 Beta refactor) ──────────────────────────
-from src.execution.daily_pipeline_enforcement_helpers import (  # noqa: F401 — re-exported for tests
-    BTST_0422_P3_PRIOR_QUALITY_MODE_ENV,
-    BTST_0422_P3_PRIOR_QUALITY_MODES,
-    BTST_0422_P4_PRIOR_SHRINKAGE_MODE_ENV,
-    BTST_0422_P4_PRIOR_SHRINKAGE_MODES,
-    BTST_0422_P5_EXECUTION_CONTRACT_MODE_ENV,
-    BTST_0422_P5_EXECUTION_CONTRACT_MODES,
-    BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV,
-    BTST_0422_P6_RISK_BUDGET_MODE_ENV,
-    BTST_0422_P6_RISK_BUDGET_MODES,
-)
-from src.execution.daily_pipeline_enforcement_helpers import (
-    attach_btst_risk_budget_p6 as _attach_btst_risk_budget_p6_impl,
-    enforce_btst_execution_contract_p5 as _enforce_btst_execution_contract_p5_impl,
-    enforce_btst_prior_quality_p3 as _enforce_btst_prior_quality_p3_impl,
-    extract_frozen_prior_by_ticker as _extract_frozen_prior_by_ticker_impl,
-    resolve_btst_prior_quality_p3_mode,
-    resolve_btst_execution_contract_p5_mode,
-    resolve_btst_win_rate_first_precision_mode,
-    resolve_btst_risk_budget_p6_mode,
-)
-from src.execution.daily_pipeline_regime_gate_helpers import (  # noqa: F401 — re-exported for tests
-    BTST_0422_P1_REGIME_GATE_MODE_ENV,
-    BTST_0422_P1_REGIME_GATE_MODES,
-    BTST_0422_P2_REGIME_GATE_MODE_ENV,
-    BTST_0422_P2_REGIME_GATE_MODES,
-)
-from src.execution.daily_pipeline_regime_gate_helpers import (
-    attach_btst_regime_gate_shadow as _attach_btst_regime_gate_shadow_impl,
-    attach_downstream_target_market_state_payload as _attach_downstream_target_market_state_payload_impl,
-    build_downstream_target_market_state_payload as _build_downstream_target_market_state_payload_impl,
-    build_btst_regime_gate_payload as _build_btst_regime_gate_payload_impl,
-    enforce_btst_regime_gate_p2 as _enforce_btst_regime_gate_p2_impl,
-    get_or_classify_gate,
-    resolve_btst_regime_gate_mode,
-    resolve_btst_regime_gate_p2_mode,
 )
 
 # Re-exported for test access (tests/execution/test_phase4_execution.py)
@@ -255,10 +265,12 @@ from src.screening.candidate_pool import (
 from src.screening.market_state import detect_market_state
 from src.screening.models import CandidateStock
 from src.screening.signal_fusion import fuse_batch
-from src.screening.strategy_scorer import _build_intraday_short_trade_metrics
-from src.screening.strategy_scorer import score_batch
-from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
+from src.screening.strategy_scorer import (
+    _build_intraday_short_trade_metrics,
+    score_batch,
+)
 from src.targets.early_runner_runtime_adapter import build_runtime_supplemental_entries
+from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
 from src.targets.profiles import (
     build_short_trade_target_profile,
     use_short_trade_target_profile,

@@ -65,7 +65,7 @@ def append_opening_frontier_entries(
     lines: list[str], items: list[dict[str, Any]]
 ) -> None:
     from src.paper_trading.btst_reporting import (
-     _append_catalyst_theme_watch_markdown as _impl,
+        _append_catalyst_theme_watch_markdown as _impl,
     )
 
     _impl(

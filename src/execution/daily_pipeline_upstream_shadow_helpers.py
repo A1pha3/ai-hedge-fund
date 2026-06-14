@@ -10,16 +10,26 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.execution.daily_pipeline_candidate_helpers import rank_scored_entries
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_catalyst_theme_short_trade_carryover_relief_config as build_catalyst_theme_short_trade_carryover_relief_config_impl,
 )
-from src.execution.daily_pipeline_candidate_helpers import rank_scored_entries
 from src.execution.daily_pipeline_hotspot_helpers import (
     build_upstream_shadow_catalyst_relief_config as build_upstream_shadow_catalyst_relief_config_impl,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     build_upstream_shadow_release_entry as build_upstream_shadow_release_entry_impl,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     resolve_selected_threshold,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     select_upstream_shadow_release_entries as select_upstream_shadow_release_entries_impl,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     summarize_shadow_release_historical_support,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     summarize_upstream_shadow_release_historical_support as summarize_upstream_shadow_release_historical_support_impl,
 )
 from src.execution.daily_pipeline_settings import (
@@ -74,7 +84,12 @@ def _summarize_upstream_shadow_release_historical_support(historical_prior: dict
     )
 
 
-from src.execution.daily_pipeline_prior_utils import historical_prior_float as _historical_prior_float, historical_prior_int as _historical_prior_int  # noqa: E402 — late import, used by functions defined above
+from src.execution.daily_pipeline_prior_utils import (  # noqa: E402 — late import, used by functions defined above
+    historical_prior_float as _historical_prior_float,
+)
+from src.execution.daily_pipeline_prior_utils import (  # noqa: E402 — late import, used by functions defined above
+    historical_prior_int as _historical_prior_int,
+)
 
 
 def _supports_upstream_shadow_catalyst_relief_history(historical_prior: dict[str, Any] | None) -> bool:

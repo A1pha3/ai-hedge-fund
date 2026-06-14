@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from src.execution.models import ExecutionPlan, PendingOrder
-from src.portfolio.limit_handler import process_pending_buy, process_pending_sell, queue_pending_buy, queue_pending_sell
+from src.portfolio.limit_handler import (
+    process_pending_buy,
+    process_pending_sell,
+    queue_pending_buy,
+    queue_pending_sell,
+)
 
 
 def dedupe_pending_orders(orders: Sequence[PendingOrder]) -> list[PendingOrder]:

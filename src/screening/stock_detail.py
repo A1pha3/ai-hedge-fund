@@ -20,14 +20,13 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.consecutive_recommendation import (
-    DEFAULT_LOOKBACK_DAYS,
     compute_consecutive_recommendations,
+    DEFAULT_LOOKBACK_DAYS,
     resolve_report_dir,
 )
 from src.screening.recommendation_tracker import HISTORY_FILENAME
 from src.screening.signal_decay_detector import detect_signal_decay
 from src.utils.numeric import safe_int as _safe_int
-
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -381,7 +380,9 @@ def compute_stock_detail(
     # 推断 trade_date (若未传入)
     if trade_date is None:
         # 尝试从 tracking_history 或最新报告推断
-        from src.screening.consecutive_recommendation import _latest_report_date as _get_latest
+        from src.screening.consecutive_recommendation import (
+            _latest_report_date as _get_latest,
+        )
 
         latest_dt = _get_latest(report_dir)
         if latest_dt is not None:

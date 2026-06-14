@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from functools import lru_cache
 import importlib.util
 import os
 import sys
+from functools import lru_cache
 from typing import Any
 
-from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state_metrics
-from src.targets.short_trade_target_kill_switch_helpers import resolve_btst_kill_switch
+from src.screening.market_state_helpers import (
+    classify_btst_regime_gate_from_market_state_metrics,
+)
 from src.targets.explainability import clamp_unit_interval
+from src.targets.short_trade_target_kill_switch_helpers import resolve_btst_kill_switch
 from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
 
 SHADOW_ONLY_GATES = frozenset({"shadow_only", "halt"})

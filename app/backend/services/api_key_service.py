@@ -1,5 +1,7 @@
-from sqlalchemy.orm import Session
 from typing import Dict, Optional
+
+from sqlalchemy.orm import Session
+
 from app.backend.repositories.api_key_repository import ApiKeyRepository
 
 

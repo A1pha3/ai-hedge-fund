@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.targets.models import TargetEvaluationInput
 from src.targets.explainability import clamp_unit_interval
+from src.targets.models import TargetEvaluationInput
 
 
 def resolve_prepared_breakout_penalty_relief(

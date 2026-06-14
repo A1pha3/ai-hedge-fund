@@ -23,13 +23,13 @@ from datetime import datetime
 from pathlib import Path
 
 from src.screening.composite_score import (
-    compute_composite_scores,
     _composite_grade,
+    compute_composite_scores,
 )
 from src.screening.conditional_order_advisor import (
+    compute_conditional_advice,
     DEFAULT_ATR_PERIOD,
     DEFAULT_LOOKBACK_SESSIONS,
-    compute_conditional_advice,
 )
 from src.screening.consecutive_recommendation import (
     enrich_recommendations_with_history,
@@ -45,7 +45,6 @@ from src.screening.investability import (
 from src.screening.signal_decay_detector import detect_signal_decay
 from src.screening.verify_recommendations import compute_verify_recommendations
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # P16-1: Market gate warning

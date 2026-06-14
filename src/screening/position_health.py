@@ -31,7 +31,6 @@ from src.screening.trend_resonance import compute_trend_resonance
 from src.screening.volume_confirmation import compute_volume_confirmation
 from src.utils.display import Fore, Style
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

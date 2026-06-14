@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import pandas as pd
-from src.portfolio.correlation_cluster_helpers import build_cluster_groups, build_union_find_parent, merge_correlated_pairs
+
+from src.portfolio.correlation_cluster_helpers import (
+    build_cluster_groups,
+    build_union_find_parent,
+    merge_correlated_pairs,
+)
 
 
 def correlation_threshold_for_market(market_median_correlation: float) -> float:

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.backtesting.engine import BacktestEngine
     from src.execution.daily_pipeline import DailyPipeline
-    from src.paper_trading.runtime import JsonlPaperTradingRecorder, SessionRuntimeContext
+    from src.paper_trading.runtime import (
+        JsonlPaperTradingRecorder,
+        SessionRuntimeContext,
+    )
 
 
 def prepare_session_runtime_context(

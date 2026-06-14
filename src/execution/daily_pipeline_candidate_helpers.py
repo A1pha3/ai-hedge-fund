@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.targets.short_trade_boundary_contract_helpers import build_boundary_contract_core_payload
+from src.targets.short_trade_boundary_contract_helpers import (
+    build_boundary_contract_core_payload,
+)
 
 
 def resolve_short_trade_candidate_context(shadow_candidate: Any) -> tuple[str, str, str, list[str]]:

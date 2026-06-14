@@ -8,13 +8,16 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
-from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle, coerce_numeric_metric_value
+from src.backtesting.evaluation_bundle import (
+    build_canonical_btst_evaluation_bundle,
+    coerce_numeric_metric_value,
+)
 from src.utils.numeric import clip
 
 _logger = logging.getLogger(__name__)

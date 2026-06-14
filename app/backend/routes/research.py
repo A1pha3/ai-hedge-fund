@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src.research.lookback_audit import LookbackAuditResult, run_lookback_audit
-
 
 router = APIRouter(prefix="/research", tags=["research"])
 

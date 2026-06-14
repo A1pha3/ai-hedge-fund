@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from typing import Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Literal
 
-from src.graph.state import AgentState, show_agent_reasoning
 from src.agents.prompt_rules import with_fact_grounding_rules
+from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
     get_company_news,
     get_financial_metrics,

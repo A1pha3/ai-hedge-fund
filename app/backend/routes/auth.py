@@ -1,20 +1,25 @@
 """Authentication API routes — login, register, password management."""
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
 from typing import Optional
 
-from app.backend.database.connection import get_db
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.backend.auth.constants import (
+    AccountLockedError,
+    AuthError,
+    ForbiddenError,
+    InvalidCredentialsError,
+    InvalidTokenError,
+    PASSWORD_MIN_LENGTH,
+    WeakPasswordError,
+)
 from app.backend.auth.dependencies import get_current_user
 from app.backend.auth.service import AuthService
-from app.backend.auth.constants import (
-    AuthError, InvalidCredentialsError, AccountLockedError,
-    ForbiddenError, InvalidTokenError, WeakPasswordError,
-    PASSWORD_MIN_LENGTH,
-)
 from app.backend.auth.utils import should_show_reset_token
+from app.backend.database.connection import get_db
 from app.backend.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])

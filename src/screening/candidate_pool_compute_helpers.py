@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from time import perf_counter
 from collections.abc import Callable
+from time import perf_counter
 
 import pandas as pd
 

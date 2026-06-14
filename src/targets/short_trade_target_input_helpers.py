@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 from src.execution.models import LayerCResult
-from src.targets.short_trade_target_kill_switch_helpers import extract_btst_kill_switch_metrics
 from src.targets.models import TargetEvaluationInput
+from src.targets.short_trade_target_kill_switch_helpers import (
+    extract_btst_kill_switch_metrics,
+)
 
 _logger = logging.getLogger(__name__)
 

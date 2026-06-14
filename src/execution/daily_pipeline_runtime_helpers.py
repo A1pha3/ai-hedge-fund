@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 EXACT_UPSTREAM_SOURCE = "upstream_liquidity_corridor_shadow"
 EXACT_UPSTREAM_SOURCE_SCOPES = {"candidate_source", "same_source_score", "source_score"}

@@ -2,7 +2,7 @@
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed, ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -185,7 +185,10 @@ def _fetch_financial_metrics(trade_date: str, force: bool) -> pd.DataFrame | Non
     调用 get_ashare_financial_metrics_with_tushare() 走 tushare 持久层缓存
     (tushare_df:fina_indicator 等)；preheat:financial_metrics:{date} 仅作为"已预热"标记。
     """
-    from src.tools.tushare_api import get_all_stock_basic, get_ashare_financial_metrics_with_tushare
+    from src.tools.tushare_api import (
+        get_all_stock_basic,
+        get_ashare_financial_metrics_with_tushare,
+    )
 
     cache_key = f"preheat:financial_metrics:{trade_date}"
     if not force and _is_cached(cache_key):

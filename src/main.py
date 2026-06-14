@@ -13,26 +13,40 @@ from langgraph.graph import END, StateGraph
 
 from src.agents.portfolio_manager import portfolio_management_agent
 from src.agents.risk_manager import risk_management_agent
+
+# Round 20.14: 从 main.py 抽取到独立模块的 UI 辅助函数 (纯重构, 行为不变)
+from src.cli.explain_helpers import (
+    _print_factor_detail_block,
+    _print_industry_ranking_block,
+    _print_recent_events_block,
+    _print_strategy_breakdown,
+)
 from src.cli.input import (
     parse_cli_inputs,
 )
-from src.llm.defaults import get_default_model_config
+from src.cli.market_status_helpers import (
+    _extract_market_status,
+    _format_market_status_table,
+)
 from src.execution.daily_pipeline import DailyPipeline
 from src.graph.state import AgentState
+from src.llm.defaults import get_default_model_config
 from src.screening.candidate_pool import build_candidate_pool
-from src.screening.custom_weights import STRATEGY_KEYS
 from src.screening.consecutive_recommendation import (
     DEFAULT_LOOKBACK_DAYS,
     enrich_recommendations_with_history,
+)
+from src.screening.consecutive_recommendation import (
     resolve_report_dir as _resolve_consecutive_report_dir,
 )
-from src.screening.market_state import detect_market_state
-from src.screening.investability import rank_recommendations_by_investability
+from src.screening.custom_weights import STRATEGY_KEYS
 from src.screening.industry_rotation import (
-    IndustrySignal,
     calculate_industry_rotation,
     format_rotation_block,
+    IndustrySignal,
 )
+from src.screening.investability import rank_recommendations_by_investability
+from src.screening.market_state import detect_market_state
 from src.screening.recommendation_tracker import (
     get_tracking_summary,
     render_tracking_summary,
@@ -49,20 +63,10 @@ from src.utils.display import (
 )
 from src.utils.llm import build_parallel_provider_execution_plan
 from src.utils.logging import get_logger, setup_logging
+from src.utils.numeric import is_finite_number as _is_finite_number
+from src.utils.numeric import safe_float as _safe_float
+from src.utils.numeric import safe_int as _safe_int
 from src.utils.progress import progress
-from src.utils.numeric import safe_float as _safe_float, safe_int as _safe_int, is_finite_number as _is_finite_number
-
-# Round 20.14: 从 main.py 抽取到独立模块的 UI 辅助函数 (纯重构, 行为不变)
-from src.cli.explain_helpers import (
-    _print_factor_detail_block,
-    _print_industry_ranking_block,
-    _print_recent_events_block,
-    _print_strategy_breakdown,
-)
-from src.cli.market_status_helpers import (
-    _extract_market_status,
-    _format_market_status_table,
-)
 
 if TYPE_CHECKING:
     # 仅用于 _build_selected_strategy_weights 的字符串注解; 运行时由函数体内 import 提供。
@@ -472,7 +476,9 @@ def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> li
     报告构建与 ``rank_recommendations_by_investability`` 调用集中在容错 helper 中。
     """
     try:
-        from src.screening.composite_score import compute_composite_scores_for_recommendations
+        from src.screening.composite_score import (
+            compute_composite_scores_for_recommendations,
+        )
         from src.screening.expected_return import compute_expected_returns
 
         composite_report = compute_composite_scores_for_recommendations(
@@ -647,7 +653,11 @@ def run_preheat(
     """
     from colorama import Fore, Style
 
-    from src.data.cache_preheater import format_preheat_report, get_preheat_tasks, preheat_cache
+    from src.data.cache_preheater import (
+        format_preheat_report,
+        get_preheat_tasks,
+        preheat_cache,
+    )
 
     if list_tasks:
         available = get_preheat_tasks()
@@ -674,9 +684,9 @@ def _rebuild_cli_objects(report_payload: dict):
     ``IndustrySignal`` / ``DecayInfo`` 映射，返回
     ``(top_results, market_state, industry_signals, decay_map)``。
     """
-    from src.screening.signal_fusion import FusedScore
     from src.screening.market_state import MarketState
     from src.screening.signal_decay_detector import DecayInfo
+    from src.screening.signal_fusion import FusedScore
 
     top_results = [FusedScore.model_validate(item) for item in report_payload["recommendations"]]
 
@@ -847,8 +857,8 @@ def _enrich_recommendations_with_history(
     if os.environ.get("AUTO_EXPORT_PDF", "").strip().lower() in ("1", "true", "yes", "on"):
         try:
             from src.reporting.pdf_exporter import (
-                PDFReportConfig,
                 generate_screening_pdf,
+                PDFReportConfig,
             )
 
             pdf_dir = tracking_dir
@@ -1173,7 +1183,10 @@ def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> 
     try:
         from pathlib import Path as _Path
 
-        from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
+        from src.screening.expected_return import (
+            compute_expected_returns,
+            render_expected_returns_compact,
+        )
 
         _reports_dir = _Path(report_path).parent if report_path else None
         if _reports_dir:
@@ -1214,8 +1227,8 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     from colorama import Fore, Style
     from tabulate import tabulate
 
-    from src.screening.consecutive_recommendation import resolve_report_dir
     from src.reporting.pdf_exporter import find_latest_report, load_report
+    from src.screening.consecutive_recommendation import resolve_report_dir
 
     report_dir = resolve_report_dir()
     report_path = find_latest_report(report_dir)
@@ -1675,10 +1688,10 @@ def run_export_pdf(trade_date: str | None = None, output_path: str | None = None
     from colorama import Fore, Style
 
     from src.reporting.pdf_exporter import (
-        PDFReportConfig,
         find_latest_report,
         generate_screening_pdf,
         load_report,
+        PDFReportConfig,
     )
     from src.screening.consecutive_recommendation import resolve_report_dir
 
@@ -1967,8 +1980,8 @@ def run_push_test(
     from colorama import Fore, Style
 
     from src.notification.push import (
-        DEFAULT_PUSH_CONFIG_PATH,
         build_default_config,
+        DEFAULT_PUSH_CONFIG_PATH,
         format_report_markdown,
         load_push_config,
         send_push,
@@ -2101,9 +2114,9 @@ def run_custom_weights(
     from colorama import Fore, Style
 
     from src.screening.custom_weights import (
-        StrategyWeights,
         load_latest_recommendations,
         reweight_recommendations,
+        StrategyWeights,
     )
 
     # 1. 构造权重 (StrategyWeights.__post_init__ 会做 NaN/求和校验)
@@ -2353,11 +2366,11 @@ def run_watchlist_status() -> int:
     from colorama import Fore, Style
 
     from src.screening.consecutive_recommendation import (
-        DEFAULT_LOOKBACK_DAYS,
         compute_consecutive_recommendations,
+        DEFAULT_LOOKBACK_DAYS,
         resolve_report_dir,
     )
-    from src.screening.watchlist import Watchlist, format_watchlist_status
+    from src.screening.watchlist import format_watchlist_status, Watchlist
 
     wl = Watchlist()
     if len(wl) == 0:
@@ -2541,8 +2554,9 @@ def run_industry_cross_picks(trade_date: str | None = None, top_industries: int 
     Returns:
         退出码 (0=成功, 1=错误)
     """
-    from colorama import Fore, Style
     import json
+
+    from colorama import Fore, Style
 
     from src.screening.consecutive_recommendation import resolve_report_dir
     from src.screening.industry_cross_picks import (
@@ -2611,14 +2625,15 @@ def run_portfolio_builder(trade_date: str | None = None, top_n: int = 10, positi
     Returns:
         退出码 (0=成功, 1=错误)
     """
-    from colorama import Fore, Style
     import json
 
-    from src.screening.consecutive_recommendation import resolve_report_dir
+    from colorama import Fore, Style
+
     from src.portfolio.builder import (
         compute_portfolio,
         render_portfolio,
     )
+    from src.screening.consecutive_recommendation import resolve_report_dir
 
     report_dir = resolve_report_dir()
     if not report_dir.exists():
@@ -2679,12 +2694,12 @@ def run_weight_calibration(lookback_days: int = 30) -> int:
     """
     from colorama import Fore, Style
 
-    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.research.factor_ic_analysis import extract_factor_panel_from_history
     from src.research.weight_calibration import (
         compute_weight_calibration,
         render_weight_calibration,
     )
-    from src.research.factor_ic_analysis import extract_factor_panel_from_history
+    from src.screening.consecutive_recommendation import resolve_report_dir
 
     report_dir = resolve_report_dir()
     if not report_dir.exists():

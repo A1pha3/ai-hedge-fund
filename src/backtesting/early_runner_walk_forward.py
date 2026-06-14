@@ -8,7 +8,11 @@ from math import floor
 from statistics import mean
 from typing import Any
 
-from src.backtesting.walk_forward import WALK_FORWARD_PRESETS, WindowMode, build_walk_forward_windows
+from src.backtesting.walk_forward import (
+    build_walk_forward_windows,
+    WALK_FORWARD_PRESETS,
+    WindowMode,
+)
 
 
 def _safe_float(value: Any) -> float | None:

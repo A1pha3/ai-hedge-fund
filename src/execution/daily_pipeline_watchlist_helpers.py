@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable
 
 from src.execution.models import LayerCResult
-
 
 WatchlistFilterClassifier = Callable[[LayerCResult], tuple[str, list[str]]]
 FilterSummaryBuilder = Callable[[list[dict[str, Any]]], dict[str, Any]]

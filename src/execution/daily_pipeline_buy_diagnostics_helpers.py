@@ -4,7 +4,10 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from src.execution.btst_shadow_promotion_helpers import resolve_btst_shadow_five_day_quality_signal, resolve_btst_shadow_promotion_payload
+from src.execution.btst_shadow_promotion_helpers import (
+    resolve_btst_shadow_five_day_quality_signal,
+    resolve_btst_shadow_promotion_payload,
+)
 from src.portfolio.position_calculator import enforce_daily_trade_limit
 
 BTST_0422_P6_RISK_BUDGET_MODE_ENV = "BTST_0422_P6_RISK_BUDGET_MODE"

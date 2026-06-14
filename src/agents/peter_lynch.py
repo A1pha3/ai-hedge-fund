@@ -6,11 +6,11 @@ emphasises PEG ratio, simple-to-understand businesses, and consistent earnings.
 """
 
 import json
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Any, Literal
 
 from src.agents.peter_lynch_helpers import (
     _describe_lynch_pe_and_growth,
@@ -21,8 +21,8 @@ from src.agents.peter_lynch_helpers import (
     _score_lynch_pe_and_peg,
     _score_lynch_revenue_growth,
 )
-from src.graph.state import AgentState, show_agent_reasoning
 from src.agents.prompt_rules import with_fact_grounding_rules
+from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
     get_company_news,
     get_insider_trades,

@@ -27,10 +27,10 @@ from src.paper_trading.btst_reporting_utils import (
     _monitor_priority_rank,
 )
 
-
 # ---------------------------------------------------------------------------
 # Row building
 # ---------------------------------------------------------------------------
+
 
 def _build_priority_board_row(
     entry: dict[str, Any],

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Mapping
+from typing import Any
 
 from src.screening.models import StrategySignal
 from src.utils.env_helpers import get_env_float

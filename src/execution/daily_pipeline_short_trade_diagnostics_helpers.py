@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 from src.execution.daily_pipeline_candidate_helpers import (
     qualify_short_trade_boundary_candidate_from_snapshot,

@@ -23,14 +23,13 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.confidence_calibration import (
-    CalibrationSummary,
     _find_bucket,
     _load_tracking_records,
+    CalibrationSummary,
     compute_calibration,
 )
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # Data types

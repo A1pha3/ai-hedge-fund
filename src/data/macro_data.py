@@ -18,7 +18,7 @@ from typing import Any
 
 import pandas as pd
 
-from src.tools.tushare_api import _get_pro, _cached_tushare_dataframe_call
+from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
 logger = logging.getLogger(__name__)
 

@@ -6,12 +6,13 @@ high-conviction, concentrated bets.
 """
 
 import json
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Any, Literal
 
+from src.agents.prompt_rules import with_fact_grounding_rules
 from src.agents.stanley_druckenmiller_helpers import (
     _collect_druckenmiller_valuation_inputs,
     _resolve_druckenmiller_de_ratio,
@@ -24,7 +25,6 @@ from src.agents.stanley_druckenmiller_helpers import (
     _score_druckenmiller_price_momentum,
     _score_druckenmiller_volatility,
 )
-from src.agents.prompt_rules import with_fact_grounding_rules
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
     get_company_news,
@@ -34,7 +34,10 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_pe_from_line_items
+from src.utils.financial_calcs import (
+    calculate_cagr_from_line_items,
+    calculate_pe_from_line_items,
+)
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context

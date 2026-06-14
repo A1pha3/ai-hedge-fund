@@ -1,13 +1,191 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
+from src.paper_trading._btst_reporting.brief_rendering import (
+    _append_brief_catalyst_frontier_markdown as _append_brief_catalyst_frontier_markdown_br,
+)
+from src.paper_trading._btst_reporting.brief_rendering import (
+    _append_brief_catalyst_shadow_markdown as _append_brief_catalyst_shadow_markdown_br,
+)
+from src.paper_trading._btst_reporting.brief_rendering import (
+    _append_brief_catalyst_theme_markdown as _append_brief_catalyst_theme_markdown_br,
+)
+from src.paper_trading._btst_reporting.brief_rendering import (
+    _append_brief_excluded_research_markdown as _append_brief_excluded_research_markdown_br,
+)
+from src.paper_trading._btst_reporting.brief_rendering import (
+    _append_brief_observer_lane_markdown as _append_brief_observer_lane_markdown_br,
+)
+from src.paper_trading._btst_reporting.brief_rendering import (
+    _append_brief_opportunity_pool_markdown as _append_brief_opportunity_pool_markdown_br,
+)
+from src.paper_trading._btst_reporting.brief_rendering import (
+    _append_brief_scored_entries_markdown as _append_brief_scored_entries_markdown_br,
+)
+from src.paper_trading._btst_reporting.brief_rendering import (
+    _append_brief_upstream_shadow_markdown as _append_brief_upstream_shadow_markdown_br,
+)
+from src.paper_trading._btst_reporting.brief_rendering import (
+    render_btst_next_day_trade_brief_markdown as render_btst_next_day_trade_brief_br,
+)
+from src.paper_trading._btst_reporting.brief_resolver import (
+    _resolve_brief_analysis as _resolve_brief_analysis_impl,
+)
+from src.paper_trading._btst_reporting.catalyst_render_helpers import (
+    _append_catalyst_watch_metrics as _append_catalyst_watch_metrics_impl,
+)
+from src.paper_trading._btst_reporting.catalyst_render_helpers import (
+    _append_threshold_shortfalls_line as _append_threshold_shortfalls_line_impl,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _build_catalyst_theme_frontier_priority as _build_catalyst_theme_frontier_priority_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _build_upstream_shadow_summary as _build_upstream_shadow_summary_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _discover_recent_historical_report_dirs as _discover_recent_historical_report_dirs_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_catalyst_theme_entry as _extract_catalyst_theme_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_catalyst_theme_shadow_entry as _extract_catalyst_theme_shadow_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_research_upside_radar_entry as _extract_research_upside_radar_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_short_trade_entry as _extract_short_trade_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_short_trade_opportunity_entry as _extract_short_trade_opportunity_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _extract_upstream_shadow_entry as _extract_upstream_shadow_entry_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _iter_selection_snapshot_paths as _iter_selection_snapshot_paths_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _load_catalyst_theme_frontier_summary as _load_catalyst_theme_frontier_summary_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _merge_entry_historical_prior as _merge_entry_historical_prior_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _reclassify_selected_execution_quality_entries as _reclassify_selected_execution_quality_entries_eb,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _resolve_snapshot_path as _resolve_snapshot_path_eb,
+)
+from src.paper_trading._btst_reporting.entry_mode_utils import (
+    _augment_execution_note as _augment_execution_note_impl,
+)
+from src.paper_trading._btst_reporting.entry_mode_utils import (
+    _selected_action_posture as _selected_action_posture_impl,
+)
+from src.paper_trading._btst_reporting.entry_mode_utils import (
+    _selected_holding_contract_note as _selected_holding_contract_note_impl,
+)
+from src.paper_trading._btst_reporting.entry_transforms import (
+    _apply_execution_quality_entry_mode as _apply_execution_quality_entry_mode_impl,
+)
+from src.paper_trading._btst_reporting.entry_transforms import (
+    _build_catalyst_theme_shadow_watch_rows as _build_catalyst_theme_shadow_watch_rows_impl,
+)
+from src.paper_trading._btst_reporting.entry_transforms import (
+    CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES as _CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES,
+)
 
+# Re-exported for test/script attribute access (module._name pattern)
+from src.paper_trading._btst_reporting.historical_prior import (  # noqa: F401
+    _build_watch_candidate_historical_prior,
+)
+from src.paper_trading._btst_reporting.historical_prior_brief_enrichment import (  # noqa: F401
+    _enrich_btst_brief_entries_with_history,
+)
+from src.paper_trading._btst_reporting.historical_prior_collection import (  # noqa: F401
+    _apply_historical_prior_to_entries,
+    _collect_historical_watch_candidate_rows,
+)
+from src.paper_trading._btst_reporting.historical_prior_opportunity import (  # noqa: F401
+    _summarize_historical_opportunity_rows,
+)
+from src.paper_trading._btst_reporting.historical_prior_price import (  # noqa: F401
+    _extract_next_day_outcome,
+)
+from src.paper_trading._btst_reporting.opening_watch import (
+    analyze_btst_opening_watch_card as _analyze_btst_opening_watch_card_impl,
+)
+from src.paper_trading._btst_reporting.pool_classifiers import (  # noqa: F401
+    _partition_opportunity_pool_entries,
+)
+from src.paper_trading._btst_reporting.premarket_card import (
+    analyze_btst_premarket_execution_card as _analyze_btst_premarket_execution_card_impl,
+)
+from src.paper_trading._btst_reporting.priority_board import (
+    analyze_btst_next_day_priority_board as _analyze_btst_next_day_priority_board_impl,
+)
+from src.paper_trading.btst_opening_watch_markdown_helpers import (
+    append_catalyst_theme_watch_markdown as _append_catalyst_theme_watch_markdown_impl,
+)
+from src.paper_trading.btst_opening_watch_markdown_helpers import (
+    append_opening_watch_focus_items_markdown as _append_opening_watch_focus_items_markdown_impl,
+)
+from src.paper_trading.btst_premarket_markdown_helpers import (
+    append_premarket_frontier_watch_markdown as _append_premarket_frontier_watch_markdown_impl,
+)
+from src.paper_trading.btst_premarket_markdown_helpers import (
+    append_premarket_shadow_watch_markdown as _append_premarket_shadow_watch_markdown_impl,
+)
+from src.paper_trading.btst_priority_board_markdown_helpers import (
+    append_priority_board_frontier_markdown as _append_priority_board_frontier_markdown_impl,
+)
+from src.paper_trading.btst_priority_board_markdown_helpers import (
+    append_priority_board_overview_markdown as _append_priority_board_overview_markdown_impl,
+)
+from src.paper_trading.btst_priority_board_markdown_helpers import (
+    append_priority_board_rows_markdown as _append_priority_board_rows_markdown_impl,
+)
+from src.paper_trading.btst_priority_board_markdown_helpers import (
+    append_priority_board_shadow_watch_markdown as _append_priority_board_shadow_watch_markdown_impl,
+)
+from src.paper_trading.btst_recommendation_helpers import (
+    append_pool_and_observer_recommendations as _append_pool_and_observer_recommendations_impl,
+)
+from src.paper_trading.btst_recommendation_helpers import (
+    append_primary_and_near_miss_recommendations as _append_primary_and_near_miss_recommendations_impl,
+)
+from src.paper_trading.btst_recommendation_helpers import (
+    append_research_and_shadow_recommendations as _append_research_and_shadow_recommendations_impl,
+)
+from src.paper_trading.btst_report_artifact_helpers import (
+    generate_and_register_btst_followup_artifacts as _generate_and_register_btst_followup_artifacts_impl,
+)
+from src.paper_trading.btst_report_artifact_helpers import (
+    generate_btst_next_day_priority_board_artifacts as _generate_btst_next_day_priority_board_artifacts_impl,
+)
+from src.paper_trading.btst_report_artifact_helpers import (
+    generate_btst_next_day_trade_brief_artifacts as _generate_btst_next_day_trade_brief_artifacts_impl,
+)
+from src.paper_trading.btst_report_artifact_helpers import (
+    generate_btst_opening_watch_card_artifacts as _generate_btst_opening_watch_card_artifacts_impl,
+)
+from src.paper_trading.btst_report_artifact_helpers import (
+    generate_btst_premarket_execution_card_artifacts as _generate_btst_premarket_execution_card_artifacts_impl,
+)
+from src.paper_trading.btst_report_artifact_helpers import (
+    register_btst_followup_artifacts as _register_btst_followup_artifacts_impl,
+)
+from src.paper_trading.btst_report_artifact_helpers import (
+    resolve_followup_artifact_context as _resolve_followup_artifact_context_impl,
+)
 from src.paper_trading.btst_reporting_utils import (
-    OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
     _compact_trade_date,
     _format_float,
     _load_json,
@@ -16,126 +194,40 @@ from src.paper_trading.btst_reporting_utils import (
     _sync_text_artifact_alias,
     _write_json,
     infer_next_trade_date,
-)
-
-from src.paper_trading.btst_opening_watch_markdown_helpers import (
-    append_catalyst_theme_watch_markdown as _append_catalyst_theme_watch_markdown_impl,
-    append_opening_watch_focus_items_markdown as _append_opening_watch_focus_items_markdown_impl,
-)
-from src.paper_trading.btst_priority_board_markdown_helpers import (
-    append_priority_board_frontier_markdown as _append_priority_board_frontier_markdown_impl,
-    append_priority_board_overview_markdown as _append_priority_board_overview_markdown_impl,
-    append_priority_board_rows_markdown as _append_priority_board_rows_markdown_impl,
-    append_priority_board_shadow_watch_markdown as _append_priority_board_shadow_watch_markdown_impl,
+    OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
 )
 from src.paper_trading.btst_shared_markdown_helpers import (
     append_guardrail_section as _append_guardrail_section_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
     append_indexed_ticker_block as _append_indexed_ticker_block_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
     append_indexed_ticker_blocks as _append_indexed_ticker_blocks_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
     append_titled_indexed_section as _append_titled_indexed_section_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
     append_titled_indexed_ticker_section as _append_titled_indexed_ticker_section_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
     append_upstream_shadow_core_fields as _append_upstream_shadow_core_fields_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
     append_upstream_shadow_section as _append_upstream_shadow_section_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
     append_upstream_shadow_summary as _append_upstream_shadow_summary_impl,
+)
+from src.paper_trading.btst_shared_markdown_helpers import (
     append_upstream_shadow_summary_header as _append_upstream_shadow_summary_header_impl,
 )
-from src.paper_trading.btst_recommendation_helpers import (
-    append_pool_and_observer_recommendations as _append_pool_and_observer_recommendations_impl,
-    append_primary_and_near_miss_recommendations as _append_primary_and_near_miss_recommendations_impl,
-    append_research_and_shadow_recommendations as _append_research_and_shadow_recommendations_impl,
-)
-from src.paper_trading.btst_premarket_markdown_helpers import (
-    append_premarket_frontier_watch_markdown as _append_premarket_frontier_watch_markdown_impl,
-    append_premarket_shadow_watch_markdown as _append_premarket_shadow_watch_markdown_impl,
-)
-from src.paper_trading.btst_report_artifact_helpers import (
-    generate_and_register_btst_followup_artifacts as _generate_and_register_btst_followup_artifacts_impl,
-    generate_btst_next_day_priority_board_artifacts as _generate_btst_next_day_priority_board_artifacts_impl,
-    generate_btst_next_day_trade_brief_artifacts as _generate_btst_next_day_trade_brief_artifacts_impl,
-    generate_btst_opening_watch_card_artifacts as _generate_btst_opening_watch_card_artifacts_impl,
-    generate_btst_premarket_execution_card_artifacts as _generate_btst_premarket_execution_card_artifacts_impl,
-    register_btst_followup_artifacts as _register_btst_followup_artifacts_impl,
-    resolve_followup_artifact_context as _resolve_followup_artifact_context_impl,
-)
 from src.project_env import load_project_dotenv
-from src.paper_trading._btst_reporting.entry_mode_utils import (
-    _augment_execution_note as _augment_execution_note_impl,
-    _selected_action_posture as _selected_action_posture_impl,
-    _selected_holding_contract_note as _selected_holding_contract_note_impl,
-)
-from src.paper_trading._btst_reporting.catalyst_render_helpers import (
-    _append_threshold_shortfalls_line as _append_threshold_shortfalls_line_impl,
-    _append_catalyst_watch_metrics as _append_catalyst_watch_metrics_impl,
-)
-from src.paper_trading._btst_reporting.entry_transforms import (
-    _apply_execution_quality_entry_mode as _apply_execution_quality_entry_mode_impl,
-    _build_catalyst_theme_shadow_watch_rows as _build_catalyst_theme_shadow_watch_rows_impl,
-    CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES as _CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES,
-)
-from src.paper_trading._btst_reporting.priority_board import (
-    analyze_btst_next_day_priority_board as _analyze_btst_next_day_priority_board_impl,
-)
-from src.paper_trading._btst_reporting.premarket_card import (
-    analyze_btst_premarket_execution_card as _analyze_btst_premarket_execution_card_impl,
-)
-from src.paper_trading._btst_reporting.opening_watch import (
-    analyze_btst_opening_watch_card as _analyze_btst_opening_watch_card_impl,
-)
-from src.paper_trading._btst_reporting.entry_builders import (
-    _build_catalyst_theme_frontier_priority as _build_catalyst_theme_frontier_priority_eb,
-    _build_upstream_shadow_summary as _build_upstream_shadow_summary_eb,
-    _discover_recent_historical_report_dirs as _discover_recent_historical_report_dirs_eb,
-    _extract_catalyst_theme_entry as _extract_catalyst_theme_entry_eb,
-    _extract_catalyst_theme_shadow_entry as _extract_catalyst_theme_shadow_entry_eb,
 
-    _extract_research_upside_radar_entry as _extract_research_upside_radar_entry_eb,
-    _extract_short_trade_entry as _extract_short_trade_entry_eb,
-    _extract_short_trade_opportunity_entry as _extract_short_trade_opportunity_entry_eb,
-    _extract_upstream_shadow_entry as _extract_upstream_shadow_entry_eb,
-    _iter_selection_snapshot_paths as _iter_selection_snapshot_paths_eb,
-    _load_catalyst_theme_frontier_summary as _load_catalyst_theme_frontier_summary_eb,
-    _merge_entry_historical_prior as _merge_entry_historical_prior_eb,
-    _reclassify_selected_execution_quality_entries as _reclassify_selected_execution_quality_entries_eb,
-    _resolve_snapshot_path as _resolve_snapshot_path_eb,
-)
-from src.paper_trading._btst_reporting.brief_resolver import (
-    _resolve_brief_analysis as _resolve_brief_analysis_impl,
-)
-# Re-exported for test/script attribute access (module._name pattern)
-from src.paper_trading._btst_reporting.historical_prior import (  # noqa: F401
-    _build_watch_candidate_historical_prior,
-)
-from src.paper_trading._btst_reporting.historical_prior_collection import (  # noqa: F401
-    _collect_historical_watch_candidate_rows,
-    _apply_historical_prior_to_entries,
-)
-from src.paper_trading._btst_reporting.historical_prior_opportunity import (  # noqa: F401
-    _summarize_historical_opportunity_rows,
-)
-from src.paper_trading._btst_reporting.historical_prior_brief_enrichment import (  # noqa: F401
-    _enrich_btst_brief_entries_with_history,
-)
-from src.paper_trading._btst_reporting.historical_prior_price import (  # noqa: F401
-    _extract_next_day_outcome,
-)
-from src.paper_trading._btst_reporting.pool_classifiers import (  # noqa: F401
-    _partition_opportunity_pool_entries,
-)
 # API re-exports for test monkeypatching (test sets btst_reporting.get_price_data etc.)
 from src.tools.akshare_api import get_prices_robust  # noqa: F401
 from src.tools.api import get_price_data  # noqa: F401
-from src.paper_trading._btst_reporting.brief_rendering import (
-    _append_brief_catalyst_frontier_markdown as _append_brief_catalyst_frontier_markdown_br,
-    _append_brief_catalyst_shadow_markdown as _append_brief_catalyst_shadow_markdown_br,
-    _append_brief_catalyst_theme_markdown as _append_brief_catalyst_theme_markdown_br,
-    _append_brief_excluded_research_markdown as _append_brief_excluded_research_markdown_br,
-    _append_brief_observer_lane_markdown as _append_brief_observer_lane_markdown_br,
-    _append_brief_opportunity_pool_markdown as _append_brief_opportunity_pool_markdown_br,
-    _append_brief_scored_entries_markdown as _append_brief_scored_entries_markdown_br,
-    _append_brief_upstream_shadow_markdown as _append_brief_upstream_shadow_markdown_br,
-    render_btst_next_day_trade_brief_markdown as render_btst_next_day_trade_brief_br,
-)
-
 
 load_project_dotenv()
 
@@ -368,7 +460,9 @@ from src.paper_trading._btst_reporting.brief_builder import (  # noqa: E402 — 
 
 
 def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_overview_markdown as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_overview_markdown as _impl,
+    )
     _impl(lines, analysis)
 
 
@@ -385,7 +479,9 @@ def _append_brief_ticker_section(
     entries: list[dict[str, Any]],
     render_entry: Callable[[list[str], dict[str, Any]], None],
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_ticker_section as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_ticker_section as _impl,
+    )
     _impl(lines, title=title, entries=entries, render_entry=render_entry)
 
 
@@ -398,28 +494,36 @@ def _append_brief_historical_prior_fields(
     include_execution_quality: bool = False,
     include_execution_note: bool = False,
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_historical_prior_fields as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_historical_prior_fields as _impl,
+    )
     _impl(lines, historical_prior, include_summary=include_summary, include_monitor_priority=include_monitor_priority, include_execution_quality=include_execution_quality, include_execution_note=include_execution_note)
 
 
 def _append_brief_scored_entry_metrics(
     lines: list[str], metrics: dict[str, Any]
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_scored_entry_metrics as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_scored_entry_metrics as _impl,
+    )
     _impl(lines, metrics)
 
 
 def _append_brief_short_trade_metrics(
     lines: list[str], metrics: dict[str, Any]
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_short_trade_metrics as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_short_trade_metrics as _impl,
+    )
     _impl(lines, metrics)
 
 
 def _append_brief_historical_recent_examples(
     lines: list[str], historical_prior: dict[str, Any]
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_historical_recent_examples as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_historical_recent_examples as _impl,
+    )
     _impl(lines, historical_prior)
 
 
@@ -430,7 +534,9 @@ def _append_brief_opportunity_pool_markdown(
 
 
 def _append_gate_status_line(lines: list[str], gate_status: dict[str, Any]) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_gate_status_line as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_gate_status_line as _impl,
+    )
     _impl(lines, gate_status)
 
 
@@ -446,14 +552,18 @@ def _append_brief_observer_lane_markdown(
 def _append_brief_pruned_entries_markdown(
     lines: list[str], entries: list[dict[str, Any]]
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_pruned_entries_markdown as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_pruned_entries_markdown as _impl,
+    )
     _impl(lines, entries)
 
 
 def _append_brief_research_radar_markdown(
     lines: list[str], entries: list[dict[str, Any]]
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_research_radar_markdown as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_research_radar_markdown as _impl,
+    )
     _impl(lines, entries)
 
 
@@ -466,7 +576,9 @@ def _append_brief_catalyst_theme_markdown(
 def _append_frontier_priority_summary(
     lines: list[str], frontier_priority: dict[str, Any]
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_frontier_priority_summary as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_frontier_priority_summary as _impl,
+    )
     _impl(lines, frontier_priority)
 
 
@@ -475,7 +587,9 @@ def _append_frontier_section(
     frontier_priority: dict[str, Any],
     render_entries: Callable[[list[str], list[dict[str, Any]]], None],
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_frontier_section as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_frontier_section as _impl,
+    )
     _impl(lines, frontier_priority, render_entries)
 
 
@@ -505,14 +619,18 @@ def _append_brief_summary_ticker_section(
     append_summary: Callable[[list[str]], None],
     render_entry: Callable[[list[str], dict[str, Any]], None],
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_summary_ticker_section as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_summary_ticker_section as _impl,
+    )
     _impl(lines, title=title, entries=entries, append_summary=append_summary, render_entry=render_entry)
 
 
 def _append_brief_upstream_shadow_summary(
     lines: list[str], upstream_shadow_summary: dict[str, Any]
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_upstream_shadow_summary as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_upstream_shadow_summary as _impl,
+    )
     _impl(lines, upstream_shadow_summary)
 
 
@@ -536,24 +654,32 @@ def _append_source_paths_section(
     session_summary_path: Any,
     replay_input_path: Any | None = None,
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_source_paths_section as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_source_paths_section as _impl,
+    )
     _impl(lines, report_dir=report_dir, snapshot_path=snapshot_path, session_summary_path=session_summary_path, replay_input_path=replay_input_path)
 
 
 def _append_none_block(lines: list[str]) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_none_block as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_none_block as _impl,
+    )
     _impl(lines)
 
 
 def _append_frontier_promoted_shadow_none_block(lines: list[str]) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_frontier_promoted_shadow_none_block as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_frontier_promoted_shadow_none_block as _impl,
+    )
     _impl(lines)
 
 
 def _append_brief_source_paths_markdown(
     lines: list[str], analysis: dict[str, Any]
 ) -> None:
-    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_source_paths_markdown as _impl
+    from src.paper_trading._btst_reporting.brief_rendering import (
+        _append_brief_source_paths_markdown as _impl,
+    )
     _impl(lines, analysis)
 
 
@@ -592,21 +718,27 @@ def analyze_btst_premarket_execution_card(
 
 
 def _append_premarket_overview_markdown(lines: list[str], card: dict[str, Any]) -> None:
-    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_overview_markdown as _extracted_mod
+    from src.paper_trading._btst_reporting.premarket_rendering import (
+        append_premarket_overview_markdown as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, card=card)
 
 
 def _append_premarket_action_block(
     lines: list[str], entry: dict[str, Any], *, indexed: int | None = None
 ) -> None:
-    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_action_block as _extracted_mod
+    from src.paper_trading._btst_reporting.premarket_rendering import (
+        append_premarket_action_block as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, entry=entry, indexed=indexed)
 
 
 def _append_premarket_action_section(
     lines: list[str], title: str, entries: list[dict[str, Any]]
 ) -> None:
-    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_action_section as _extracted_mod
+    from src.paper_trading._btst_reporting.premarket_rendering import (
+        append_premarket_action_section as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, title=title, entries=entries)
 
 
@@ -644,14 +776,18 @@ def _append_premarket_shadow_watch_markdown(
 def _append_candidate_watch_scoring_fields(
     lines: list[str], item: dict[str, Any]
 ) -> None:
-    from src.paper_trading._btst_reporting.premarket_rendering import append_candidate_watch_scoring_fields as _extracted_mod
+    from src.paper_trading._btst_reporting.premarket_rendering import (
+        append_candidate_watch_scoring_fields as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, item=item)
 
 
 def _append_candidate_watch_reason_tags(
     lines: list[str], item: dict[str, Any], *, reasons_label: str
 ) -> None:
-    from src.paper_trading._btst_reporting.premarket_rendering import append_candidate_watch_reason_tags as _extracted_mod
+    from src.paper_trading._btst_reporting.premarket_rendering import (
+        append_candidate_watch_reason_tags as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, item=item, reasons_label=reasons_label)
 
 
@@ -668,7 +804,9 @@ def _append_catalyst_watch_metrics(lines: list[str], metrics: dict[str, Any]) ->
 def _append_premarket_excluded_entries_markdown(
     lines: list[str], excluded_entries: list[dict[str, Any]]
 ) -> None:
-    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_excluded_entries_markdown as _extracted_mod
+    from src.paper_trading._btst_reporting.premarket_rendering import (
+        append_premarket_excluded_entries_markdown as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, excluded_entries=excluded_entries)
 
 
@@ -821,7 +959,9 @@ def render_btst_premarket_execution_card_markdown(card: dict[str, Any]) -> str:
 def _append_premarket_primary_action_markdown(
     lines: list[str], primary_action: Any
 ) -> None:
-    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_primary_action_markdown as _extracted_mod
+    from src.paper_trading._btst_reporting.premarket_rendering import (
+        append_premarket_primary_action_markdown as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, primary_action=primary_action)
 
 
@@ -840,7 +980,9 @@ def _append_premarket_guardrails_markdown(
 def _append_premarket_rollout_validation_markdown(
     lines: list[str], rollout_validation: dict[str, Any]
 ) -> None:
-    from src.paper_trading._btst_reporting.premarket_rendering import append_premarket_rollout_validation_markdown as _extracted_mod
+    from src.paper_trading._btst_reporting.premarket_rendering import (
+        append_premarket_rollout_validation_markdown as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, rollout_validation=rollout_validation)
 
 
@@ -899,7 +1041,9 @@ def render_btst_opening_watch_card_markdown(card: dict[str, Any]) -> str:
 def _append_opening_watch_overview_markdown(
     lines: list[str], card: dict[str, Any]
 ) -> None:
-    from src.paper_trading._btst_reporting.opening_watch_rendering import append_opening_watch_overview_markdown as _extracted_mod
+    from src.paper_trading._btst_reporting.opening_watch_rendering import (
+        append_opening_watch_overview_markdown as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, card=card)
 
 
@@ -914,7 +1058,9 @@ def _append_opening_watch_frontier_markdown(
 def _append_opening_frontier_entries(
     lines: list[str], items: list[dict[str, Any]]
 ) -> None:
-    from src.paper_trading._btst_reporting.opening_watch_rendering import append_opening_frontier_entries as _extracted_mod
+    from src.paper_trading._btst_reporting.opening_watch_rendering import (
+        append_opening_frontier_entries as _extracted_mod,
+    )
     return _extracted_mod(lines=lines, items=items)
 
 

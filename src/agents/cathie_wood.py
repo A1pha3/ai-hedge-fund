@@ -7,11 +7,11 @@ Sub-scoring helpers live in ``cathie_wood_helpers``.
 """
 
 import json
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Any, Literal
 
 from src.agents.cathie_wood_helpers import (
     _calculate_yoy_growth_rates,
@@ -20,10 +20,10 @@ from src.agents.cathie_wood_helpers import (
     _score_cathie_gross_margin_profile,
     _score_cathie_operating_efficiency,
     _score_cathie_operating_leverage,
-    _score_cathie_rnd_trends,
-    _score_cathie_revenue_disruption,
     _score_cathie_reinvestment_focus,
+    _score_cathie_revenue_disruption,
     _score_cathie_rnd_intensity,
+    _score_cathie_rnd_trends,
 )
 from src.agents.prompt_rules import with_fact_grounding_rules
 from src.graph.state import AgentState, show_agent_reasoning

@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 from typing import Any
 
-
 _REPORT_MODE_FORMAL_EXECUTION = "formal_execution"
 _REPORT_MODE_CONFIRMATION_REVIEW_ONLY = "confirmation_review_only"
 _VALID_REPORT_MODES = {

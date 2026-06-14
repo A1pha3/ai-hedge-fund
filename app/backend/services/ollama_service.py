@@ -1,13 +1,14 @@
 import asyncio
+import json
+import logging
 import os
 import platform
+import signal
 import subprocess
 import time
-import json
 from pathlib import Path
-from typing import Dict, List, Optional, AsyncGenerator
-import logging
-import signal
+from typing import AsyncGenerator, Dict, List, Optional
+
 import ollama
 
 logger = logging.getLogger(__name__)

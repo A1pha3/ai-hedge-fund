@@ -7,11 +7,11 @@ and the top-level ``score_event_sentiment_strategy`` orchestrator.
 
 from __future__ import annotations
 
+import logging
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import math
-import logging
 
 import pandas as pd
 
@@ -21,11 +21,11 @@ from src.agents.growth_agent import (
 from src.data.models import CompanyNews, InsiderTrade
 from src.screening.models import StrategySignal, SubFactor
 from src.screening.strategy_scorer_utils import (
-    EVENT_SUBFACTOR_WEIGHTS,
-    POSITIVE_NEWS_KEYWORDS,
-    NEGATIVE_NEWS_KEYWORDS,
-    aggregate_sub_factors,
     _make_sub_factor,
+    aggregate_sub_factors,
+    EVENT_SUBFACTOR_WEIGHTS,
+    NEGATIVE_NEWS_KEYWORDS,
+    POSITIVE_NEWS_KEYWORDS,
 )
 from src.tools.api import (
     get_company_news,

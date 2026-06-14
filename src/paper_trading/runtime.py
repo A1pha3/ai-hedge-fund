@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 from typing import Any
-from collections.abc import Callable, Sequence
 
 from src.backtesting.engine import BacktestEngine
 from src.backtesting.types import PerformanceMetrics
 from src.data.cache_benchmark import run_cache_reuse_benchmark
-from src.data.enhanced_cache import diff_cache_stats, get_cache_runtime_info, snapshot_cache_stats
+from src.data.enhanced_cache import (
+    diff_cache_stats,
+    get_cache_runtime_info,
+    snapshot_cache_stats,
+)
 from src.execution.daily_pipeline import DailyPipeline
 from src.llm.defaults import get_default_model_config
 from src.main import run_hedge_fund
@@ -17,50 +21,103 @@ from src.monitoring.llm_metrics import get_llm_metrics_paths
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 from src.paper_trading.runtime_context_helpers import (
     build_paper_trading_engine as build_paper_trading_engine_helper,
+)
+from src.paper_trading.runtime_context_helpers import (
     build_runtime_engine_inputs as build_runtime_engine_inputs_helper,
+)
+from src.paper_trading.runtime_context_helpers import (
     build_runtime_recorder as build_runtime_recorder_helper,
+)
+from src.paper_trading.runtime_context_helpers import (
     build_runtime_recorder_and_engine as build_runtime_recorder_and_engine_helper,
+)
+from src.paper_trading.runtime_context_helpers import (
     build_session_runtime_context as build_session_runtime_context_helper,
+)
+from src.paper_trading.runtime_context_helpers import (
     prepare_session_runtime_context as prepare_session_runtime_context_helper,
+)
+from src.paper_trading.runtime_context_helpers import (
     reset_runtime_outputs as reset_runtime_outputs_helper,
+)
+from src.paper_trading.runtime_context_helpers import (
     resolve_runtime_model_config as resolve_runtime_model_config_helper,
+)
+from src.paper_trading.runtime_context_helpers import (
     resolve_runtime_session_dependencies as resolve_runtime_session_dependencies_helper,
 )
 from src.paper_trading.runtime_finalization_helpers import (
     build_runtime_artifacts as build_runtime_artifacts_helper,
+)
+from src.paper_trading.runtime_finalization_helpers import (
     build_runtime_finalization_inputs as build_runtime_finalization_inputs_helper,
+)
+from src.paper_trading.runtime_finalization_helpers import (
     build_runtime_session_summary_inputs as build_runtime_session_summary_inputs_helper,
 )
-from src.paper_trading.runtime_observability_helpers import (
-    build_dual_target_session_summary as build_dual_target_session_summary_helper,
-    build_reporting_target_session_summary as build_reporting_target_session_summary_helper,
-    build_execution_plan_provenance_summary as build_execution_plan_provenance_summary_helper,
-    build_llm_error_digest as build_llm_error_digest_helper,
-    build_llm_observability_summary as build_llm_observability_summary_helper,
-    build_llm_route_provenance as build_llm_route_provenance_helper,
-)
-from src.paper_trading.runtime_io_helpers import (
-    promote_runtime_timing_log as promote_runtime_timing_log_helper,
-    reset_output_artifacts_for_fresh_run as reset_output_artifacts_for_fresh_run_helper,
-    write_research_feedback_summary as write_research_feedback_summary_helper,
-    write_runtime_summary as write_runtime_summary_helper,
+from src.paper_trading.runtime_infra_helpers import (
+    build_selection_artifact_writer as build_selection_artifact_writer_helper,
 )
 from src.paper_trading.runtime_infra_helpers import (
     JsonlPaperTradingRecorder,
-    build_selection_artifact_writer as build_selection_artifact_writer_helper,
+)
+from src.paper_trading.runtime_infra_helpers import (
     serialize_portfolio_values as serialize_portfolio_values_helper,
+)
+from src.paper_trading.runtime_io_helpers import (
+    promote_runtime_timing_log as promote_runtime_timing_log_helper,
+)
+from src.paper_trading.runtime_io_helpers import (
+    reset_output_artifacts_for_fresh_run as reset_output_artifacts_for_fresh_run_helper,
+)
+from src.paper_trading.runtime_io_helpers import (
+    write_research_feedback_summary as write_research_feedback_summary_helper,
+)
+from src.paper_trading.runtime_io_helpers import (
+    write_runtime_summary as write_runtime_summary_helper,
 )
 from src.paper_trading.runtime_monitoring_helpers import (
     build_runtime_data_cache_summary as build_runtime_data_cache_summary_helper,
+)
+from src.paper_trading.runtime_monitoring_helpers import (
     build_runtime_monitoring_summary as build_runtime_monitoring_summary_helper,
+)
+from src.paper_trading.runtime_monitoring_helpers import (
     resolve_runtime_pipeline as resolve_runtime_pipeline_helper,
+)
+from src.paper_trading.runtime_monitoring_helpers import (
     run_runtime_cache_benchmark as run_runtime_cache_benchmark_helper,
+)
+from src.paper_trading.runtime_observability_helpers import (
+    build_dual_target_session_summary as build_dual_target_session_summary_helper,
+)
+from src.paper_trading.runtime_observability_helpers import (
+    build_execution_plan_provenance_summary as build_execution_plan_provenance_summary_helper,
+)
+from src.paper_trading.runtime_observability_helpers import (
+    build_llm_error_digest as build_llm_error_digest_helper,
+)
+from src.paper_trading.runtime_observability_helpers import (
+    build_llm_observability_summary as build_llm_observability_summary_helper,
+)
+from src.paper_trading.runtime_observability_helpers import (
+    build_llm_route_provenance as build_llm_route_provenance_helper,
+)
+from src.paper_trading.runtime_observability_helpers import (
+    build_reporting_target_session_summary as build_reporting_target_session_summary_helper,
 )
 from src.paper_trading.runtime_run_helpers import (
     finalize_runtime_run as finalize_runtime_run_helper,
+)
+from src.paper_trading.runtime_run_helpers import (
     run_paper_trading_session as run_paper_trading_session_helper,
 )
-from src.paper_trading.runtime_session_helpers import build_session_summary, resolve_pipeline, resolve_session_paths, run_optional_cache_benchmark
+from src.paper_trading.runtime_session_helpers import (
+    build_session_summary,
+    resolve_pipeline,
+    resolve_session_paths,
+    run_optional_cache_benchmark,
+)
 from src.research.artifacts import FileSelectionArtifactWriter
 from src.research.feedback import summarize_research_feedback_directory
 

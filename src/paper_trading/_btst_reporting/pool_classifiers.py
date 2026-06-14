@@ -13,6 +13,7 @@ from typing import Any
 
 from scripts.btst_strategy_thresholds import resolve_strategy_thresholds
 from src.paper_trading.btst_reporting_utils import (
+    _as_float,
     LOW_SCORE_NO_HISTORY_UPSTREAM_MAX_SCORE_TARGET,
     MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_BREAKOUT_FRESHNESS,
     MIXED_BOUNDARY_OPPORTUNITY_POOL_MAX_NEXT_CLOSE_POSITIVE_RATE,
@@ -25,9 +26,7 @@ from src.paper_trading.btst_reporting_utils import (
     WEAK_BALANCED_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT,
     WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT,
     WEAK_OPPORTUNITY_POOL_PRUNE_MIN_EVALUABLE_COUNT,
-    _as_float,
 )
-
 
 # ---------------------------------------------------------------------------
 # Near-miss demotion

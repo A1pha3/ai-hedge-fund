@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
 _LOCK = threading.Lock()
 _SESSION_ID = os.getenv("LLM_METRICS_SESSION_ID") or datetime.now().strftime("%Y%m%d_%H%M%S")
 _REPO_ROOT = Path(__file__).resolve().parents[2]

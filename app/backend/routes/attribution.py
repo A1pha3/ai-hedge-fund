@@ -11,8 +11,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
-
 from pydantic import BaseModel
+
 from app.backend.routes._common import safe_route
 from src.portfolio.return_attribution import (
     AttributionResult,

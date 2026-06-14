@@ -1,9 +1,9 @@
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
 from langchain_anthropic import ChatAnthropic
 from langchain_deepseek import ChatDeepSeek
@@ -15,6 +15,10 @@ from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langchain_xai import ChatXAI
 from pydantic import BaseModel
 
+from src.llm.model_builder_helpers import (
+    build_openai_family_model_impl,
+    build_registered_route_model_impl,
+)
 from src.llm.model_catalog_helpers import (
     build_fallback_model_info,
     build_llm_models,
@@ -22,7 +26,6 @@ from src.llm.model_catalog_helpers import (
     find_model_in_catalog,
     load_model_records_from_json,
 )
-from src.llm.model_builder_helpers import build_openai_family_model_impl, build_registered_route_model_impl
 from src.llm.provider_registry_defaults import build_default_provider_profile_specs
 from src.llm.provider_route_helpers import (
     collect_provider_routes,
@@ -30,7 +33,10 @@ from src.llm.provider_route_helpers import (
     resolve_api_key,
     resolve_provider_route_impl,
 )
-from src.llm.zhipu_model_helpers import resolve_zhipu_route_inputs, should_route_zhipu_to_coding_plan
+from src.llm.zhipu_model_helpers import (
+    resolve_zhipu_route_inputs,
+    should_route_zhipu_to_coding_plan,
+)
 
 
 class ModelProvider(StrEnum):

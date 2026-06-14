@@ -10,7 +10,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from src.execution.btst_shadow_promotion_helpers import resolve_btst_shadow_promotion_payload
+from src.execution.btst_shadow_promotion_helpers import (
+    resolve_btst_shadow_promotion_payload,
+)
 from src.execution.models import ExecutionPlan
 from src.targets.router import (
     _P2_BLOCKED_GATES,

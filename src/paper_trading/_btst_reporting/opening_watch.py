@@ -8,9 +8,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.paper_trading._btst_reporting.execution_contract import (
-    build_brief_execution_contract,
-)
 from src.paper_trading._btst_reporting.entry_mode_utils import (
     _augment_execution_note,
     _selected_action_posture,
@@ -18,6 +15,9 @@ from src.paper_trading._btst_reporting.entry_mode_utils import (
 from src.paper_trading._btst_reporting.entry_transforms import (
     _apply_execution_quality_entry_mode,
     _build_catalyst_theme_shadow_watch_rows,
+)
+from src.paper_trading._btst_reporting.execution_contract import (
+    build_brief_execution_contract,
 )
 from src.paper_trading.btst_reporting_utils import (
     _as_float,
@@ -27,10 +27,10 @@ from src.paper_trading.btst_reporting_utils import (
     _monitor_priority_rank,
 )
 
-
 # ---------------------------------------------------------------------------
 # Focus item building
 # ---------------------------------------------------------------------------
+
 
 def _build_opening_primary_focus_item(
     primary_entry: dict[str, Any] | None,

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.screening.models import CandidateStock

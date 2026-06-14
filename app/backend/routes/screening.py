@@ -416,12 +416,12 @@ async def compare_endpoint(
     """
     # 延迟导入 — 避免循环依赖 + 测试时可单独 patch
     from src.screening.compare_tool import (
+        compare_tickers,
+        CompareReport,
         DEFAULT_METRIC_KEYS,
+        load_latest_recommendations,
         MAX_COMPARE_TICKERS,
         MIN_COMPARE_TICKERS,
-        CompareReport,
-        compare_tickers,
-        load_latest_recommendations,
     )
 
     # 1. 解析 + 校验 tickers
@@ -576,11 +576,11 @@ async def conditional_orders_endpoint(
         :class:`ConditionalOrdersResponse` 含 ``items`` (Top N 建议) /
         ``trade_date`` / ``meta`` 字段。
     """
-    from src.screening.conditional_order_advisor import (
-        DEFAULT_LOOKBACK_SESSIONS,
-        attach_conditional_orders_to_payload,
-    )
     from src.screening.compare_tool import load_latest_recommendations
+    from src.screening.conditional_order_advisor import (
+        attach_conditional_orders_to_payload,
+        DEFAULT_LOOKBACK_SESSIONS,
+    )
 
     # 1. trade_date 校验
     resolved_date: str | None = None
@@ -699,9 +699,9 @@ async def apply_custom_weights(req: CustomWeightsRequest) -> ScreeningResponse:
 
     # 3. 加载 + 重算
     from src.screening.custom_weights import (
-        StrategyWeights,
         load_latest_recommendations,
         reweight_recommendations,
+        StrategyWeights,
     )
 
     recs = load_latest_recommendations(trade_date=resolved_date)

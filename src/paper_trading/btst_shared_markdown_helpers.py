@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-
 RenderTickerItem = Callable[[list[str], dict[str, Any]], None]
 RenderIndexedItem = Callable[[list[str], dict[str, Any], int], None]
 RenderEntryList = Callable[[list[str], list[dict[str, Any]]], None]

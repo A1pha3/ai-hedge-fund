@@ -14,13 +14,22 @@ from pydantic import BaseModel
 
 from src.graph.state import AgentState
 from src.llm.defaults import get_default_model_config
-from src.llm.models import get_model, get_model_info, get_provider_concurrency_limit_env_var, get_provider_profile, get_provider_routes
+from src.llm.models import (
+    get_model,
+    get_model_info,
+    get_provider_concurrency_limit_env_var,
+    get_provider_profile,
+    get_provider_routes,
+)
 from src.monitoring.llm_metrics import record_llm_attempt
-from src.utils.llm_call_helpers import handle_llm_failure, resolve_llm_call_context, return_success_result
-from src.utils.llm_json_helpers import extract_json_payload_from_content
 from src.utils import llm_provider_routing
+from src.utils.llm_call_helpers import (
+    handle_llm_failure,
+    resolve_llm_call_context,
+    return_success_result,
+)
+from src.utils.llm_json_helpers import extract_json_payload_from_content
 from src.utils.progress import progress
-
 
 logger = logging.getLogger(__name__)
 

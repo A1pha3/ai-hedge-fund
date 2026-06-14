@@ -1,20 +1,20 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.backend.database import get_db
 from app.backend.database.models import ApiKey
-from app.backend.repositories.api_key_repository import ApiKeyRepository
 from app.backend.models.schemas import (
+    ApiKeyBulkUpdateRequest,
     ApiKeyCreateRequest,
-    ApiKeyUpdateRequest,
     ApiKeyResponse,
     ApiKeySummaryResponse,
-    ApiKeyBulkUpdateRequest,
-    ErrorResponse
+    ApiKeyUpdateRequest,
+    ErrorResponse,
 )
+from app.backend.repositories.api_key_repository import ApiKeyRepository
 from app.backend.routes._common import safe_route
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])

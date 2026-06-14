@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import math
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 try:  # numpy is a hard dependency of the project (see pyproject.toml),
     # but we still guard the import so this helper degrades gracefully

@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 
 from src.llm.models import ModelProvider
 
-
 DEFAULT_MODEL_NAME = "gpt-4.1"
 DEFAULT_MODEL_PROVIDER = ModelProvider.OPENAI.value
 

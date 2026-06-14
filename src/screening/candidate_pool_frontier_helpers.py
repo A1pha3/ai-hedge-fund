@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 SUPPORTED_FRONTIER_FAMILIES = frozenset(
     {
         "upstream_liquidity_corridor_shadow",

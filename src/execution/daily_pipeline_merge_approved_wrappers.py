@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.execution.daily_pipeline_candidate_helpers import rank_scored_entries
 from src.execution.daily_pipeline_hotspot_helpers import (
     apply_merge_approved_breakout_signal_uplift_batch,
     apply_merge_approved_fused_boost,
@@ -16,15 +17,14 @@ from src.execution.daily_pipeline_hotspot_helpers import (
     apply_merge_approved_sector_resonance_uplift_batch,
     select_upstream_shadow_release_entries,
 )
-from src.execution.daily_pipeline_candidate_helpers import rank_scored_entries
+from src.execution.daily_pipeline_settings import (
+    WATCHLIST_DIAGNOSTICS_CONFIG,
+    WATCHLIST_SCORE_THRESHOLD,
+)
 from src.execution.daily_pipeline_watchlist_helpers import (
     build_merge_approved_watchlist,
     build_watchlist_filter_diagnostics,
     tag_merge_approved_layer_c_results,
-)
-from src.execution.daily_pipeline_settings import (
-    WATCHLIST_DIAGNOSTICS_CONFIG,
-    WATCHLIST_SCORE_THRESHOLD,
 )
 from src.execution.merge_approved_breakout_uplift import (
     apply_merge_approved_breakout_uplift_to_signal_map,

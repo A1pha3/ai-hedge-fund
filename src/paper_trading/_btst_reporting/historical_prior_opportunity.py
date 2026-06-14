@@ -9,13 +9,13 @@ from typing import Any
 
 import pandas as pd
 
-from src.paper_trading.btst_reporting_utils import (
-    OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
-    _mean_or_none,
-    _round_or_none,
-)
 from src.paper_trading._btst_reporting.historical_prior_price import (
     _extract_next_day_outcome,
+)
+from src.paper_trading.btst_reporting_utils import (
+    _mean_or_none,
+    _round_or_none,
+    OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
 )
 
 

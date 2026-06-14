@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 BTST_KILL_SWITCH_CHECKS: tuple[tuple[str, Any], ...] = (
     ("rolling_8_trade_close_win_rate", lambda value: value < 0.375),
     ("rolling_8_trade_payoff_ratio", lambda value: value < 0.85),

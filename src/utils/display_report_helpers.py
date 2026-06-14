@@ -1,6 +1,6 @@
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Callable
 
 
 def build_trading_report_path(report_dir: Path, tickers: list[str], generated_at: datetime) -> Path:

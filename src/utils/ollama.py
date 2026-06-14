@@ -10,8 +10,8 @@ import requests
 from colorama import Fore, Style
 
 from . import docker
-from .ollama_download_helpers import stream_download_progress
 from .logging import get_logger
+from .ollama_download_helpers import stream_download_progress
 
 logger = get_logger(__name__)
 

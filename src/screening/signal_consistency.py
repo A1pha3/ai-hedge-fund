@@ -21,7 +21,6 @@ from typing import Any
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.utils.display import Fore, Style
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

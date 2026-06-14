@@ -20,12 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from src.notification.push import (
+    load_push_config,
     MAX_WECOM_CONTENT,
     PushChannel,
     PushConfig,
     PushPayload,
     PushResult,
-    load_push_config,
     send_push,
 )
 
@@ -483,10 +483,10 @@ def push_weekly_report(
 def _send_chunk(config: PushConfig, payload: PushPayload) -> PushResult:
     """发送单个 chunk — 复用 push 的重试逻辑。"""
     from src.notification.push import (
-        MAX_RETRIES,
-        RETRY_BACKOFF_BASE,
         _default_http_post,
         _send_wecom,
+        MAX_RETRIES,
+        RETRY_BACKOFF_BASE,
     )
 
     start_time = __import__("time").monotonic()

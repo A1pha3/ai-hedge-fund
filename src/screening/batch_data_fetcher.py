@@ -264,7 +264,7 @@ class BatchDataFetcher:
            计数 (这不算 cache miss, 而是数据集确定性结果)。
         """
         # 延迟导入避免循环引用
-        from src.tools.tushare_api import _get_pro, _cached_tushare_dataframe_call
+        from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
         # R20 + R20.8: 尝试命中批量缓存 (单 ticker 共享)
         # 约定: end_date 形如 "20260601" -> 批量 key = "daily_price_batch:20260601"

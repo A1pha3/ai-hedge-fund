@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.screening.models import CandidateStock

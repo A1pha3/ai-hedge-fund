@@ -27,7 +27,6 @@ from .trader import TradeExecutor
 from .trading_constraints import TradeExecutionInputs
 from .types import AgentOutput
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers (used by both agent-mode and pipeline-mode)
 # ---------------------------------------------------------------------------

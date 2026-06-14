@@ -13,12 +13,15 @@ import numpy as np
 import pandas as pd
 from langchain_core.messages import HumanMessage
 
-from src.agents.technicals_reasoning_helpers import _build_overall_signal_lines, _build_strategy_section_lines, _build_summary_lines
+from src.agents.technicals_reasoning_helpers import (
+    _build_overall_signal_lines,
+    _build_strategy_section_lines,
+    _build_summary_lines,
+)
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_prices, prices_to_df
 from src.utils.api_key import get_api_key_from_state
 from src.utils.progress import progress
-
 
 # ---------------------------------------------------------------------------
 # Technical analysis constants (extracted from magic numbers in R20.8)

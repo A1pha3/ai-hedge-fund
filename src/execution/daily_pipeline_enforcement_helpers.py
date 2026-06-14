@@ -11,14 +11,18 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from src.execution.btst_shadow_promotion_helpers import resolve_btst_shadow_promotion_payload
+from src.execution.btst_shadow_promotion_helpers import (
+    resolve_btst_shadow_promotion_payload,
+)
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     _resolve_btst_position_budget,
 )
-from src.execution.models import ExecutionPlan
 
 # Re-exported from daily_pipeline_regime_gate_helpers for use in P5
-from src.execution.daily_pipeline_regime_gate_helpers import get_or_classify_gate as _get_or_classify_gate
+from src.execution.daily_pipeline_regime_gate_helpers import (
+    get_or_classify_gate as _get_or_classify_gate,
+)
+from src.execution.models import ExecutionPlan
 
 BTST_0422_P3_PRIOR_QUALITY_MODE_ENV = "BTST_0422_P3_PRIOR_QUALITY_MODE"
 BTST_0422_P3_PRIOR_QUALITY_MODES = frozenset({"off", "enforce"})
@@ -141,8 +145,10 @@ def resolve_btst_win_rate_first_precision_mode() -> bool:
 
 
 def enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
-    from src.targets.router_build_helpers import build_dual_target_summary
-    from src.targets.router_build_helpers import collect_formal_execution_block_flags
+    from src.targets.router_build_helpers import (
+        build_dual_target_summary,
+        collect_formal_execution_block_flags,
+    )
 
     if resolve_btst_execution_contract_p5_mode() != "enforce":
         return plan

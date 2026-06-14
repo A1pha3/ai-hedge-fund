@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-
 RenderTickerEntry = Callable[[list[str], dict[str, Any]], None]
 RenderTickerSection = Callable[..., None]
 RenderSummarySection = Callable[..., None]

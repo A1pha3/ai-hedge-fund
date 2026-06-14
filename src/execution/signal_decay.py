@@ -12,7 +12,6 @@ from typing import Any
 from src.execution.models import ExecutionPlan
 from src.utils.env_helpers import get_env_float, get_env_mode
 
-
 BTST_0422_P7_GAP_OVERLAY_MODE_ENV = "BTST_0422_P7_GAP_OVERLAY_MODE"
 BTST_0422_P7_GAP_OVERLAY_MODES = frozenset({"off", "report", "enforce"})
 BTST_0422_P7_GAP_WARN_THRESHOLD_ENV = "BTST_0422_P7_GAP_WARN_THRESHOLD"

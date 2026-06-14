@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 from src.execution.daily_pipeline_candidate_helpers import (
     qualify_catalyst_theme_candidate_from_snapshot,
 )
-from src.execution.layer_c_aggregator import _derive_quality_score
 from src.execution.daily_pipeline_settings import (
     CATALYST_THEME_BREAKOUT_MIN,
     CATALYST_THEME_CANDIDATE_SCORE_MIN,
@@ -26,6 +25,7 @@ from src.execution.daily_pipeline_settings import (
     CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD,
     CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
 )
+from src.execution.layer_c_aggregator import _derive_quality_score
 from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
 
 

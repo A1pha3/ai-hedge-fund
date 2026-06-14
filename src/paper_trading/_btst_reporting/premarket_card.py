@@ -8,25 +8,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.utils.env_helpers import get_env_float, get_env_mode
-
-from src.paper_trading._btst_reporting.execution_contract import (
-    build_brief_execution_contract,
+from src.paper_trading._btst_reporting.entry_builders import (
+    _filter_execution_ready_entries,
 )
 from src.paper_trading._btst_reporting.entry_mode_utils import (
     _selected_action_posture,
     _selected_holding_contract_note,
 )
-from src.paper_trading._btst_reporting.entry_builders import (
-    _filter_execution_ready_entries,
-)
 from src.paper_trading._btst_reporting.entry_transforms import (
     _build_catalyst_theme_shadow_watch_rows,
+)
+from src.paper_trading._btst_reporting.execution_contract import (
+    build_brief_execution_contract,
 )
 from src.paper_trading.btst_reporting_utils import (
     _entry_mode_action_guidance,
 )
-
+from src.utils.env_helpers import get_env_float, get_env_mode
 
 # ---------------------------------------------------------------------------
 # Environment overlays

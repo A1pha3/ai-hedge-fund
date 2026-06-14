@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
-from src.screening.models import ArbitrationAction, DEFAULT_STRATEGY_WEIGHTS, MarketState, StrategySignal
+from src.screening.models import (
+    ArbitrationAction,
+    DEFAULT_STRATEGY_WEIGHTS,
+    MarketState,
+    StrategySignal,
+)
 
 SHORT_HOLD_STRATEGIES = {"trend", "event_sentiment"}
 LONG_HOLD_STRATEGIES = {"fundamental"}

@@ -5,7 +5,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from src.research.models import ResearchFeedbackDirectorySummary, ResearchFeedbackRecord, ResearchFeedbackSummary
+from src.research.models import (
+    ResearchFeedbackDirectorySummary,
+    ResearchFeedbackRecord,
+    ResearchFeedbackSummary,
+)
 
 
 def append_research_feedback(*, file_path: Path, record: ResearchFeedbackRecord) -> None:

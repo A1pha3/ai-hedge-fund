@@ -1,8 +1,9 @@
+import logging
+from typing import Dict, List
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict
-import logging
 
 from app.backend.models.schemas import ErrorResponse
 from app.backend.routes._common import safe_route

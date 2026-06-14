@@ -1,10 +1,15 @@
-from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationInput, TargetEvaluationResult
+from src.targets.models import (
+    DualTargetEvaluation,
+    DualTargetSummary,
+    TargetEvaluationInput,
+    TargetEvaluationResult,
+)
 from src.targets.profiles import (
-    SHORT_TRADE_TARGET_PROFILES,
-    ShortTradeTargetProfile,
     build_short_trade_target_profile,
     get_active_short_trade_target_profile,
     get_short_trade_target_profile,
+    SHORT_TRADE_TARGET_PROFILES,
+    ShortTradeTargetProfile,
     use_short_trade_target_profile,
 )
 

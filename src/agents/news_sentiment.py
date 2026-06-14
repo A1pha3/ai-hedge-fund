@@ -5,10 +5,10 @@ produce a sentiment signal. Sub-scoring helpers live in ``news_sentiment_helpers
 """
 
 import json
+from typing import Literal
 
 from langchain_core.messages import HumanMessage
 from pydantic import AliasChoices, BaseModel, Field
-from typing import Literal
 
 from src.agents.news_sentiment_helpers import (
     _aggregate_news_signals,

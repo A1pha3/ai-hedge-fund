@@ -13,22 +13,22 @@ from typing import Any
 
 import pandas as pd
 
+from src.paper_trading._btst_reporting.entry_builders import (
+    _discover_recent_historical_report_dirs,
+    _extract_catalyst_theme_entry,
+    _extract_research_upside_radar_entry,
+    _extract_short_trade_entry,
+    _extract_short_trade_opportunity_entry,
+    _iter_selection_snapshot_paths,
+    _merge_entry_historical_prior,
+)
 from src.paper_trading.btst_reporting_utils import (
-    OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
-    OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
     _catalyst_bucket_label,
     _load_json,
     _normalize_trade_date,
     _score_bucket_label,
-)
-from src.paper_trading._btst_reporting.entry_builders import (
-    _iter_selection_snapshot_paths,
-    _discover_recent_historical_report_dirs,
-    _extract_short_trade_entry,
-    _extract_short_trade_opportunity_entry,
-    _extract_research_upside_radar_entry,
-    _extract_catalyst_theme_entry,
-    _merge_entry_historical_prior,
+    OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
+    OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
 )
 
 
@@ -299,7 +299,9 @@ def _apply_historical_prior_to_entry(
     enriched_entry = dict(entry)
     # Deferred import to avoid circular dependency: this module is imported by
     # historical_prior.py, which defines the prior builders we need here.
-    from src.paper_trading._btst_reporting.historical_prior import _build_watch_candidate_historical_prior
+    from src.paper_trading._btst_reporting.historical_prior import (
+        _build_watch_candidate_historical_prior,
+    )
 
     enriched_entry.update(
         _merge_entry_historical_prior(

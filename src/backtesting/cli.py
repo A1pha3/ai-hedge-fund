@@ -15,9 +15,21 @@ from src.backtesting.cli_helpers import (
 from src.main import run_hedge_fund
 from src.utils.logging import get_logger
 
-from .compare import build_ab_comparison_payload, format_ab_comparison_report, run_ab_comparison_walk_forward, save_ab_comparison_payload, save_ab_comparison_report
+from .compare import (
+    build_ab_comparison_payload,
+    format_ab_comparison_report,
+    run_ab_comparison_walk_forward,
+    save_ab_comparison_payload,
+    save_ab_comparison_report,
+)
 from .engine import BacktestEngine
-from .walk_forward import WALK_FORWARD_PRESETS, WindowMode, build_walk_forward_windows, run_walk_forward, summarize_walk_forward
+from .walk_forward import (
+    build_walk_forward_windows,
+    run_walk_forward,
+    summarize_walk_forward,
+    WALK_FORWARD_PRESETS,
+    WindowMode,
+)
 
 logger = get_logger(__name__)
 

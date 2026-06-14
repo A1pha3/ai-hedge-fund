@@ -6,11 +6,11 @@ mirroring Pabrai's concentrated value-investing approach.
 """
 
 import json
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Any, Literal
 
 from src.agents.mohnish_pabrai_helpers import (
     _resolve_pabrai_normalized_fcf,
@@ -24,8 +24,8 @@ from src.agents.mohnish_pabrai_helpers import (
     _score_pabrai_net_cash,
     _score_pabrai_revenue_trajectory,
 )
-from src.graph.state import AgentState, show_agent_reasoning
 from src.agents.prompt_rules import with_fact_grounding_rules
+from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items

@@ -7,12 +7,11 @@ import threading
 import time
 
 from src.llm.models import (
-    ProviderRoute,
     get_provider_concurrency_limit_env_var,
     get_provider_profile,
     get_provider_routes,
+    ProviderRoute,
 )
-
 
 DEFAULT_ZHIPU_FALLBACK_MODEL = "glm-4.7"
 DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL = "glm-4.7"

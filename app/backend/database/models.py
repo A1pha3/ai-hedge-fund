@@ -1,5 +1,17 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey, Float, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import func
+
 from .connection import Base
 
 # NOTE: Auth models (User, InvitationCode) are imported lazily to avoid circular imports.

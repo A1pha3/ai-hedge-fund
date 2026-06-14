@@ -5,7 +5,6 @@ from typing import Any
 
 from src.paper_trading.btst_reporting_utils import _format_historical_payoff_note
 
-
 RenderTickerItem = Callable[[list[str], dict[str, Any]], None]
 RenderTickerSection = Callable[[list[str], list[dict[str, Any]], RenderTickerItem], None]
 

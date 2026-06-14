@@ -1,21 +1,30 @@
+import logging
+import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-import logging
-from dotenv import load_dotenv
-import os
 
 # Load environment variables from .env file
 env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
 load_dotenv(dotenv_path=env_path)
 
-from app.backend.routes import api_router  # noqa: E402 — after load_dotenv so imported modules read env
-from app.backend.auth.utils import get_cors_origins, resolve_admin_bootstrap_password, should_auto_init_admin  # noqa: E402
+from app.backend.auth.utils import (  # noqa: E402
+    get_cors_origins,
+    resolve_admin_bootstrap_password,
+    should_auto_init_admin,
+)
 from app.backend.database.connection import engine, SessionLocal  # noqa: E402
 from app.backend.database.models import Base  # noqa: E402
-from app.backend.models.user import User, InvitationCode  # noqa: E402, F401 — register auth models with Base
+from app.backend.models.user import (  # noqa: E402, F401 — register auth models with Base
+    InvitationCode,
+    User,
+)
+from app.backend.routes import (  # noqa: E402 — after load_dotenv so imported modules read env
+    api_router,
+)
 from app.backend.services.ollama_service import ollama_service  # noqa: E402
 
 # Configure logging
@@ -37,8 +46,8 @@ def _auto_init_admin():
 
     db = None
     try:
-        from app.backend.auth.utils import hash_password
         from app.backend.auth.constants import ADMIN_USERNAME
+        from app.backend.auth.utils import hash_password
         db = SessionLocal()
         existing = db.query(User).filter(User.username == ADMIN_USERNAME).first()
         if not existing:

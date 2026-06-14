@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MERGE_REVIEW_PATH = REPO_ROOT / "data/reports/btst_default_merge_review_latest.json"
 DEFAULT_MERGE_RANKING_PATH = REPO_ROOT / "data/reports/btst_continuation_merge_candidate_ranking_latest.json"

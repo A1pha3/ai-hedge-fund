@@ -1,17 +1,18 @@
 from __future__ import annotations
+
 from typing import Any
+
 import pandas as pd
 
 from src.paper_trading.btst_reporting_utils import (
-    UPSTREAM_SHADOW_CANDIDATE_SOURCES,
-    OPPORTUNITY_POOL_MIN_SCORE_TARGET,
-    OPPORTUNITY_POOL_STRONG_SIGNAL_MIN,
     _as_float,
     _round_or_none,
-    _source_lane_label,
     _source_lane_display,
+    _source_lane_label,
+    OPPORTUNITY_POOL_MIN_SCORE_TARGET,
+    OPPORTUNITY_POOL_STRONG_SIGNAL_MIN,
+    UPSTREAM_SHADOW_CANDIDATE_SOURCES,
 )
-
 from src.tools.akshare_api import get_prices_robust
 from src.tools.api import get_price_data, prices_to_df
 

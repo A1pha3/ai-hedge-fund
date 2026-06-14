@@ -9,13 +9,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.paper_trading.btst_reporting_utils import (
-    _load_json,
-    _normalize_trade_date,
+from src.paper_trading._btst_reporting.entry_builders import (
+    _build_catalyst_theme_frontier_priority as _build_catalyst_theme_frontier_priority_eb,
 )
 from src.paper_trading._btst_reporting.entry_builders import (
     _load_catalyst_theme_frontier_summary as _load_catalyst_theme_frontier_summary_eb,
-    _build_catalyst_theme_frontier_priority as _build_catalyst_theme_frontier_priority_eb,
+)
+from src.paper_trading.btst_reporting_utils import (
+    _load_json,
+    _normalize_trade_date,
 )
 
 

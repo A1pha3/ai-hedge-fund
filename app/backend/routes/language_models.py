@@ -1,5 +1,6 @@
-from fastapi import APIRouter
 from typing import Any
+
+from fastapi import APIRouter
 
 from app.backend.models.schemas import ErrorResponse
 from app.backend.routes._common import safe_route

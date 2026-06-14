@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
-from contextlib import contextmanager
-from collections.abc import Callable
 
 from src.execution.daily_pipeline import resolve_default_fast_selected_analysts
 

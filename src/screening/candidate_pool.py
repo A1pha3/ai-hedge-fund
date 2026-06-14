@@ -13,22 +13,21 @@ Layer A 候选池构建器 — 全市场快筛
   9. 排除被冲突仲裁规则一标记的"回避冷却期"标的（15 个交易日）
 """
 
+import hashlib
 import json
 import os
-import hashlib
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
-
-import time
+from typing import Any, TYPE_CHECKING
 
 import pandas as pd
 
 from src.screening.candidate_pool_compute_helpers import (
-    apply_estimated_liquidity_filter_with_logging,
     apply_cooldown_filter,
+    apply_estimated_liquidity_filter_with_logging,
     build_candidate_stocks,
     build_daily_basic_maps,
     filter_low_liquidity_candidates,
@@ -39,35 +38,54 @@ from src.screening.candidate_pool_compute_helpers import (
 from src.screening.candidate_pool_compute_pipeline_helpers import (
     compute_candidate_pool_candidates as compute_candidate_pool_candidates_helper,
 )
+from src.screening.candidate_pool_persistence_helpers import (
+    add_cooldown as add_cooldown_helper,
+)
+from src.screening.candidate_pool_persistence_helpers import (
+    get_cooled_tickers as get_cooled_tickers_helper,
+)
+from src.screening.candidate_pool_persistence_helpers import (
+    load_candidate_pool_shadow_snapshot as load_candidate_pool_shadow_snapshot_helper,
+)
+from src.screening.candidate_pool_persistence_helpers import (
+    load_candidate_pool_snapshot as load_candidate_pool_snapshot_helper,
+)
+from src.screening.candidate_pool_persistence_helpers import (
+    load_cooldown_registry as load_cooldown_registry_helper,
+)
+from src.screening.candidate_pool_persistence_helpers import (
+    normalize_shadow_summary as normalize_shadow_summary_helper,
+)
+from src.screening.candidate_pool_persistence_helpers import (
+    save_cooldown_registry as save_cooldown_registry_helper,
+)
+from src.screening.candidate_pool_persistence_helpers import (
+    write_candidate_pool_shadow_snapshot as write_candidate_pool_shadow_snapshot_helper,
+)
+from src.screening.candidate_pool_persistence_helpers import (
+    write_candidate_pool_snapshot as write_candidate_pool_snapshot_helper,
+)
+from src.screening.candidate_pool_run_helpers import (
+    build_candidate_pool_with_shadow as build_candidate_pool_with_shadow_helper,
+)
 from src.screening.candidate_pool_shadow_helpers import (
-    build_shadow_summary_payload,
     build_cooldown_review_shadow_payload,
     build_shadow_lane_payload,
+    build_shadow_summary_payload,
     classify_overflow_candidate,
     select_shadow_rows,
 )
 from src.screening.candidate_pool_shadow_payload_helpers import (
     build_shadow_candidate_pool_payload as build_shadow_candidate_pool_payload_helper,
 )
-from src.screening.candidate_pool_run_helpers import (
-    build_candidate_pool_with_shadow as build_candidate_pool_with_shadow_helper,
-)
-from src.screening.candidate_pool_persistence_helpers import (
-    add_cooldown as add_cooldown_helper,
-    get_cooled_tickers as get_cooled_tickers_helper,
-    load_candidate_pool_shadow_snapshot as load_candidate_pool_shadow_snapshot_helper,
-    load_candidate_pool_snapshot as load_candidate_pool_snapshot_helper,
-    load_cooldown_registry as load_cooldown_registry_helper,
-    normalize_shadow_summary as normalize_shadow_summary_helper,
-    save_cooldown_registry as save_cooldown_registry_helper,
-    write_candidate_pool_shadow_snapshot as write_candidate_pool_shadow_snapshot_helper,
-    write_candidate_pool_snapshot as write_candidate_pool_snapshot_helper,
-)
 from src.screening.models import CandidateStock
-from src.tools.ashare_board_utils import build_beijing_exchange_mask, is_beijing_exchange_stock  # noqa: F401 — re-export for scripts
+from src.tools.ashare_board_utils import (  # noqa: F401 — re-export for scripts
+    build_beijing_exchange_mask,
+    is_beijing_exchange_stock,
+)
 from src.tools.tushare_api import (
-    _get_pro,
     _cached_tushare_dataframe_call,
+    _get_pro,
     get_all_stock_basic,
     get_daily_basic_batch,
     get_limit_list,

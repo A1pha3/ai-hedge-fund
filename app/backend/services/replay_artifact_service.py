@@ -645,7 +645,10 @@ class ReplayArtifactService:
 
     def get_signal_trade_comparison(self, report_name: str, time_window_days: int = 1) -> dict[str, Any]:
         """Load daily events for a replay and run signal-vs-trade comparison."""
-        from src.backtesting.signal_trade_comparison import compare_from_events, comparison_result_to_dict
+        from src.backtesting.signal_trade_comparison import (
+            compare_from_events,
+            comparison_result_to_dict,
+        )
 
         report_dir = self._get_report_dir(report_name)
         daily_events_path = report_dir / "daily_events.jsonl"

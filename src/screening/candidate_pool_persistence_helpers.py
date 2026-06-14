@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
 
 def load_candidate_pool_snapshot(snapshot_path: Path, *, candidate_stock_cls: type) -> list[Any]:

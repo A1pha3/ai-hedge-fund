@@ -31,7 +31,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from src.utils.numeric import optional_float as _optional_float, safe_float as _safe_float
+from src.utils.numeric import optional_float as _optional_float
+from src.utils.numeric import safe_float as _safe_float
 
 logger = logging.getLogger(__name__)
 

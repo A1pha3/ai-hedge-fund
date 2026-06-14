@@ -6,11 +6,11 @@ strong management, scalability, and reasonable valuations.
 """
 
 import json
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import Any, Literal
 
 from src.agents.rakesh_jhunjhunwala_helpers import (
     _calculate_rakesh_projected_dcf_value,
@@ -19,18 +19,18 @@ from src.agents.rakesh_jhunjhunwala_helpers import (
     _resolve_rakesh_sustainable_growth,
     _score_rakesh_current_ratio,
     _score_rakesh_debt_ratio,
-    _score_rakesh_eps_cagr,
     _score_rakesh_dividends,
+    _score_rakesh_eps_cagr,
     _score_rakesh_free_cash_flow,
     _score_rakesh_growth_consistency,
     _score_rakesh_income_cagr,
-    _score_rakesh_share_issuance,
     _score_rakesh_operating_margin,
     _score_rakesh_quality_debt_factor,
     _score_rakesh_quality_growth_consistency,
     _score_rakesh_quality_roe_factor,
     _score_rakesh_revenue_cagr,
     _score_rakesh_roe,
+    _score_rakesh_share_issuance,
 )
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items

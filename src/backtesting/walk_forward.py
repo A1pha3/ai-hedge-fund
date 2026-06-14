@@ -3,14 +3,20 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
 from enum import StrEnum
+from typing import Any
 
 from dateutil.relativedelta import relativedelta
 
 from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
-from .evaluation_bundle import BTST_QUALITY_FLOORS, BTST_QUALITY_CAPS, build_btst_quality_floor_blockers, build_btst_quality_cap_blockers, build_canonical_btst_evaluation_bundle
+from .evaluation_bundle import (
+    BTST_QUALITY_CAPS,
+    BTST_QUALITY_FLOORS,
+    build_btst_quality_cap_blockers,
+    build_btst_quality_floor_blockers,
+    build_canonical_btst_evaluation_bundle,
+)
 from .promotion_gate import build_promotion_gate_summary
 from .types import PerformanceMetrics
 

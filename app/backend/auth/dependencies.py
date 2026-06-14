@@ -9,8 +9,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.backend.auth.constants import (
-    ADMIN_USERNAME,
     ADMIN_ROLES,
+    ADMIN_USERNAME,
     WRITE_ROLES,
 )
 from app.backend.auth.utils import decode_token, is_production_environment
