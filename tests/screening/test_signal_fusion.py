@@ -4,8 +4,10 @@ import pytest
 
 from src.screening.models import FusedScore, MarketState, StrategySignal
 from src.screening.signal_fusion import (
+    _get_neutral_mean_reversion_partial_weight,
     _get_sub_factor_snapshot,
     _is_hard_cliff_profitability,
+    _should_exclude_neutral_mean_reversion,
     compute_score_decomposition,
     fuse_batch,
     fuse_signals_for_ticker,
@@ -1184,3 +1186,104 @@ class TestGetSubFactorSnapshot:
             sub_factors={"growth": None},
         )
         assert _get_sub_factor_snapshot(signal, "growth") == {}
+
+
+# ---------------------------------------------------------------------------
+# _should_exclude_neutral_mean_reversion / _get_neutral_mean_reversion_partial_weight
+# (was 0 direct coverage — test tractable early-exit + mode-dispatch branches)
+# ---------------------------------------------------------------------------
+
+_MR_MODE_ENV = "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE"
+
+
+def _mr_signal(direction: int = 0, completeness: float = 1.0) -> StrategySignal:
+    return StrategySignal(direction=direction, confidence=50.0, completeness=completeness, sub_factors={})
+
+
+class TestShouldExcludeNeutralMeanReversion:
+    """_should_exclude_neutral_mean_reversion — early-exit + mode-dispatch branches."""
+
+    def test_no_mr_signal_returns_false(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "full_exclude")
+        assert _should_exclude_neutral_mean_reversion({}, {}) is False
+
+    def test_mr_direction_nonzero_returns_false(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "full_exclude")
+        signals = {"mean_reversion": _mr_signal(direction=1)}
+        assert _should_exclude_neutral_mean_reversion({}, signals) is False
+
+    def test_mr_zero_completeness_returns_false(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "full_exclude")
+        signals = {"mean_reversion": _mr_signal(completeness=0.0)}
+        assert _should_exclude_neutral_mean_reversion({}, signals) is False
+
+    def test_mode_off_returns_false(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "off")
+        signals = {"mean_reversion": _mr_signal()}
+        assert _should_exclude_neutral_mean_reversion({}, signals) is False
+
+    def test_mode_full_exclude_returns_true(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "full_exclude")
+        signals = {"mean_reversion": _mr_signal()}
+        assert _should_exclude_neutral_mean_reversion({}, signals) is True
+
+    def test_unknown_mode_returns_false(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "bogus_mode")
+        signals = {"mean_reversion": _mr_signal()}
+        assert _should_exclude_neutral_mean_reversion({}, signals) is False
+
+    def test_guarded_mode_non_positive_trend_returns_false(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "guarded_dual_leg_033")
+        signals = {
+            "mean_reversion": _mr_signal(),
+            "trend": StrategySignal(direction=0, confidence=70.0, completeness=1.0),
+            "fundamental": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        }
+        assert _should_exclude_neutral_mean_reversion({}, signals) is False
+
+    def test_guarded_mode_event_completeness_blocks(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "guarded_dual_leg_033")
+        signals = {
+            "mean_reversion": _mr_signal(),
+            "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+            "fundamental": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+            "event_sentiment": StrategySignal(direction=1, confidence=60.0, completeness=0.8),
+        }
+        assert _should_exclude_neutral_mean_reversion({}, signals) is False
+
+
+class TestGetNeutralMeanReversionPartialWeight:
+    """_get_neutral_mean_reversion_partial_weight — early-exit branches."""
+
+    def test_no_mr_signal_returns_none(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "partial_mr_half_dual_leg_033_no_hard_cliff")
+        assert _get_neutral_mean_reversion_partial_weight({}, {}) is None
+
+    def test_mr_direction_nonzero_returns_none(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "partial_mr_half_dual_leg_033_no_hard_cliff")
+        signals = {"mean_reversion": _mr_signal(direction=-1)}
+        assert _get_neutral_mean_reversion_partial_weight({}, signals) is None
+
+    def test_unknown_mode_returns_none(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "off")
+        signals = {"mean_reversion": _mr_signal()}
+        assert _get_neutral_mean_reversion_partial_weight({}, signals) is None
+
+    def test_partial_mode_non_positive_trend_returns_none(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "partial_mr_half_dual_leg_033_no_hard_cliff")
+        signals = {
+            "mean_reversion": _mr_signal(),
+            "trend": StrategySignal(direction=0, confidence=70.0, completeness=1.0),
+            "fundamental": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+        }
+        assert _get_neutral_mean_reversion_partial_weight({"mean_reversion": 0.25}, signals) is None
+
+    def test_partial_mode_negative_event_returns_none(self, monkeypatch) -> None:
+        monkeypatch.setenv(_MR_MODE_ENV, "partial_mr_half_dual_leg_033_no_hard_cliff")
+        signals = {
+            "mean_reversion": _mr_signal(),
+            "trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+            "fundamental": StrategySignal(direction=1, confidence=70.0, completeness=1.0),
+            "event_sentiment": StrategySignal(direction=-1, confidence=60.0, completeness=0.8),
+        }
+        assert _get_neutral_mean_reversion_partial_weight({"mean_reversion": 0.25}, signals) is None
