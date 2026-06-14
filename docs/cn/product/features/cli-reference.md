@@ -16,6 +16,7 @@
   - **R20.5 扩展**: `--top` 支持过滤参数（直接追加） — `--top 20 --industry=电子 --min-score=0.5 --exclude-st --min-consecutive=2 --ticker=000001 --name-contains=银行`
 - `--explain 000001` — 解释推荐原因(因子明细+事件线+行业排名)
 - `--screen-only` — 仅 Layer A+B 评分
+- `--composite-score` — 综合信心评分 (P11-1 将 score_b/动量/行业强度/一致性等多信号合成为单一排名分数)
 - `--daily-gainers` — 每日涨幅榜筛选(独立于 --auto 的简化筛选入口)
 
 ## 市场分析
@@ -26,6 +27,7 @@
 - `--sector-strength` — 行业强度排序 (P10-2 行业轮动加权, 展示推荐标的的板块动量)
 - `--signal-momentum` — 信号动量评分 (P10-1 跟踪 score_b 时间序列轨迹)
 - `--volume-confirm` — 量价确认 (P11-2 检查成交量是否支持价格变动)
+- `--trend-resonance` — 多周期趋势共振 (P14-1 5d/20d/60d 趋势同向共振信号更强)
 
 ## 推荐辅助
 - `--tracking-summary` — 历史推荐胜率
@@ -62,6 +64,8 @@
 - `--rebalance` — 组合再平衡建议
 - `--performance-report` — 组合绩效周报/月报
 - `--attribution-daily` — 策略归因日报
+- `--position-check` — 持仓健康检查 (P15-1 默认前门持仓监控, HOLD/WATCH/SELL)
+- `--strategy-report` — 策略绩效报告 (P15-2 各策略胜率+平均信心)
 
 ## 自选池
 - `--watchlist-add 000001 --name "平安银行" --tags 银行 高股息` — 添加
