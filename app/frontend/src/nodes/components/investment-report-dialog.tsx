@@ -30,6 +30,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { type EdgeCardData, EdgeCard } from '@/components/edge-card';
+import { currencySymbolForTicker } from '@/lib/utils';
 import {
   type StockHistoryExpectationData,
   ExpectationCard,
@@ -446,7 +447,7 @@ export function InvestmentReportDialog({
                       return (
                         <TableRow key={ticker}>
                           <TableCell className="font-medium">{ticker}</TableCell>
-                          <TableCell>${typeof currentPrice === 'number' ? currentPrice.toFixed(2) : currentPrice}</TableCell>
+                          <TableCell>{currencySymbolForTicker(ticker)}{typeof currentPrice === 'number' ? currentPrice.toFixed(2) : currentPrice}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               {getActionIcon(decision.action as ActionType)}

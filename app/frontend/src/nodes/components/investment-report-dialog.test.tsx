@@ -232,4 +232,38 @@ describe('InvestmentReportDialog — P1 5.4 contradiction highlighting + agent s
     // No contradiction banner — falls into the "无明显矛盾" empty state
     expect(screen.getByTestId('contradiction-banner-no-conflict')).toBeDefined();
   });
+
+  it('renders ¥ currency symbol for A-share (6-digit) ticker prices (R22+)', () => {
+    // R20-S8 GAMMA A-7: A-share tickers (6-digit) must show ¥ not $
+    const data = {
+      ...makeOutputNodeData({ tickerSignals: { '000001': {} } }),
+      current_prices: { '000001': 12.34 },
+    };
+    render(
+      <InvestmentReportDialog
+        isOpen={true}
+        onOpenChange={() => {}}
+        outputNodeData={data}
+        connectedAgentIds={new Set(AGENT_IDS)}
+      />,
+    );
+    // The price cell renders "¥12.34" — verify ¥ present near the ticker's price
+    expect(screen.getByText(/¥12\.34/)).toBeDefined();
+  });
+
+  it('renders $ currency symbol for US ticker prices (R22+ characterization)', () => {
+    // US equities keep $ — makeOutputNodeData fixture sets AAPL: 150
+    const data = makeOutputNodeData({
+      tickerSignals: { AAPL: { warren_buffett_abc123: { signal: 'bullish', confidence: 80 } } },
+    });
+    render(
+      <InvestmentReportDialog
+        isOpen={true}
+        onOpenChange={() => {}}
+        outputNodeData={data}
+        connectedAgentIds={new Set(AGENT_IDS)}
+      />,
+    );
+    expect(screen.getByText(/\$150\.00/)).toBeDefined();
+  });
 });
