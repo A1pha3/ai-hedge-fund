@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { StockDetailCard } from '@/components/stock-detail-card';
+import { StockDetailCard, _int, _num, _pct } from '@/components/stock-detail-card';
 import { ScreeningResultsPanel } from '@/components/screening-results-panel';
 import type { StockDetail } from '@/services/stock-detail-api';
 import type { ScreeningRecommendation } from '@/services/custom-weights-api';
@@ -208,5 +208,80 @@ describe('ScreeningResultsPanel click-to-select', () => {
     fireEvent.click(row);
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith('000001');
+  });
+});
+
+// ---------- pure helper characterization (R20-S11) ----------
+
+describe('_pct (stock-detail-card)', () => {
+  it('returns — for null / undefined / NaN / Infinity', () => {
+    expect(_pct(null)).toBe('—');
+    expect(_pct(undefined)).toBe('—');
+    expect(_pct(NaN)).toBe('—');
+    expect(_pct(Infinity)).toBe('—');
+    expect(_pct(-Infinity)).toBe('—');
+  });
+
+  it('multiplies by 100 and adds + sign for positive', () => {
+    expect(_pct(0.0215)).toBe('+2.15%');
+    expect(_pct(0.5)).toBe('+50.00%');
+  });
+
+  it('does NOT add + for zero or negative', () => {
+    expect(_pct(0)).toBe('0.00%');
+    expect(_pct(-0.05)).toBe('-5.00%');
+  });
+
+  it('respects custom digits', () => {
+    expect(_pct(0.123456, 1)).toBe('+12.3%');
+    expect(_pct(0.123456, 4)).toBe('+12.3456%');
+  });
+});
+
+describe('_num (stock-detail-card)', () => {
+  it('returns — for null / undefined / non-finite', () => {
+    expect(_num(null)).toBe('—');
+    expect(_num(undefined)).toBe('—');
+    expect(_num(NaN)).toBe('—');
+    expect(_num(Infinity)).toBe('—');
+  });
+
+  it('formats with default 2 digits', () => {
+    expect(_num(3.14159)).toBe('3.14');
+    expect(_num(0)).toBe('0.00');
+    expect(_num(-2.5)).toBe('-2.50');
+  });
+
+  it('respects custom digits', () => {
+    expect(_num(3.14159, 4)).toBe('3.1416');
+    expect(_num(3.14159, 0)).toBe('3');
+  });
+
+  it('does NOT add + for positive (unlike _pct)', () => {
+    expect(_num(5)).toBe('5.00');
+  });
+});
+
+describe('_int (stock-detail-card)', () => {
+  it('returns — for null / undefined / non-finite', () => {
+    expect(_int(null)).toBe('—');
+    expect(_int(undefined)).toBe('—');
+    expect(_int(NaN)).toBe('—');
+    expect(_int(Infinity)).toBe('—');
+  });
+
+  it('rounds to nearest integer', () => {
+    expect(_int(3.4)).toBe('3');
+    expect(_int(3.5)).toBe('4');
+    expect(_int(3.6)).toBe('4');
+    expect(_int(-2.5)).toBe('-2'); // JS rounds .5 toward +∞
+  });
+
+  it('zero stays zero', () => {
+    expect(_int(0)).toBe('0');
+  });
+
+  it('large integers preserved exactly', () => {
+    expect(_int(1234567)).toBe('1234567');
   });
 });

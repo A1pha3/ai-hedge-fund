@@ -24,20 +24,20 @@ import type { StockDetail } from '@/services/stock-detail-api';
 // ---------------------------------------------------------------------------
 
 /** 安全格式化百分比 (null → '—')。 */
-function _pct(v: number | null | undefined, digits = 2): string {
+export function _pct(v: number | null | undefined, digits = 2): string {
   if (v == null || !Number.isFinite(v)) return '—';
   const sign = v > 0 ? '+' : '';
   return `${sign}${(v * 100).toFixed(digits)}%`;
 }
 
 /** 安全格式化数值 (null → '—')。 */
-function _num(v: number | null | undefined, digits = 2): string {
+export function _num(v: number | null | undefined, digits = 2): string {
   if (v == null || !Number.isFinite(v)) return '—';
   return v.toFixed(digits);
 }
 
 /** 安全格式化整数 (null → '—')。 */
-function _int(v: number | null | undefined): string {
+export function _int(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
   return String(Math.round(v));
 }
