@@ -8,9 +8,11 @@ from src.screening.signal_momentum import (
     MomentumInfo,
     MomentumReport,
     _classify_momentum,
+    _momentum_label_colored,
     _simple_slope,
     render_signal_momentum,
 )
+from src.utils.display import Fore, Style
 
 
 # ---------------------------------------------------------------------------
@@ -174,3 +176,38 @@ class TestComputeSignalMomentum:
 
         report = compute_signal_momentum(reports_dir=tmp_path)
         assert report.items == []
+
+
+# ---------------------------------------------------------------------------
+# _momentum_label_colored (was 0 direct coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestMomentumLabelColored:
+    """_momentum_label_colored — color-code a momentum label."""
+
+    def test_strong_improving_green(self) -> None:
+        result = _momentum_label_colored("strong_improving")
+        assert result.startswith(Fore.GREEN)
+        assert "strong_improving" in result
+
+    def test_improving_green(self) -> None:
+        result = _momentum_label_colored("improving")
+        assert result.startswith(Fore.GREEN)
+
+    def test_strong_declining_red(self) -> None:
+        result = _momentum_label_colored("strong_declining")
+        assert result.startswith(Fore.RED)
+        assert "strong_declining" in result
+
+    def test_declining_red(self) -> None:
+        result = _momentum_label_colored("declining")
+        assert result.startswith(Fore.RED)
+
+    def test_unknown_label_white(self) -> None:
+        result = _momentum_label_colored("flat")
+        assert result.startswith(Fore.WHITE)
+        assert "flat" in result
+
+    def test_ends_with_reset(self) -> None:
+        assert _momentum_label_colored("improving").endswith(Style.RESET_ALL)

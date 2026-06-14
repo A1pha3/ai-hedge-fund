@@ -7,9 +7,11 @@ import pytest
 from src.screening.volume_confirmation import (
     VolumeEntry,
     VolumeReport,
+    _confirmation_colored,
     _extract_volume_from_rec,
     render_volume_confirmation,
 )
+from src.utils.display import Fore, Style
 
 
 # ---------------------------------------------------------------------------
@@ -128,3 +130,34 @@ class TestComputeVolumeConfirmation:
 
         report = compute_volume_confirmation(reports_dir=tmp_path)
         assert report.items == []
+
+
+# ---------------------------------------------------------------------------
+# _confirmation_colored (was 0 direct coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmationColored:
+    """_confirmation_colored — color-code a volume confirmation label."""
+
+    def test_confirmed_green(self) -> None:
+        result = _confirmation_colored("confirmed")
+        assert result.startswith(Fore.GREEN)
+        assert "放量确认" in result
+
+    def test_divergence_red(self) -> None:
+        result = _confirmation_colored("divergence")
+        assert result.startswith(Fore.RED)
+        assert "缩量背离" in result
+
+    def test_unknown_label_white_neutral(self) -> None:
+        result = _confirmation_colored("flat")
+        assert result.startswith(Fore.WHITE)
+        assert "中性" in result
+
+    def test_empty_string_white_neutral(self) -> None:
+        result = _confirmation_colored("")
+        assert result.startswith(Fore.WHITE)
+
+    def test_ends_with_reset(self) -> None:
+        assert _confirmation_colored("confirmed").endswith(Style.RESET_ALL)
