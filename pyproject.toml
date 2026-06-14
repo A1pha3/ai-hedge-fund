@@ -91,6 +91,18 @@ requests = "^2.31.0"
 python-dateutil = "^2.8.2"
 # A-share historical data source (src/tools/ashare_data_sources.py BaoStockDataSource — lazy import; R35 packaging fix)
 baostock = "^0.9.2"
+# A-share market data (src/tools/akshare_api.py + ashare_data_sources.py — top-level imports; R37 packaging parity fix)
+akshare = "^1.18.27"
+# A-share market data (src/tools/ashare_data_sources.py TushareDataSource — top-level import; R37 packaging parity fix)
+tushare = "^1.4.24"
+# Disk cache backend (src/data/enhanced_cache.py — top-level import; R37 packaging parity fix)
+redis = "^7.4.0"
+# JWT auth (app/backend/auth/utils.py — top-level import; R37 packaging parity fix)
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+# FastAPI form/file parsing runtime requirement (web app auth flows; R37 packaging parity fix)
+python-multipart = ">=0.0.6"
+# Password hashing (app/backend/auth/utils.py — top-level import; R37 packaging parity fix)
+bcrypt = "^5.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
