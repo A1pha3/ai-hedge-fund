@@ -16,12 +16,16 @@
   - **R20.5 扩展**: 支持 `--top --filter` 过滤 — `--industry=电子 --min-score=0.5 --exclude-st --min-consecutive=2 --ticker=000001 --name-contains=银行`
 - `--explain 000001` — 解释推荐原因(因子明细+事件线+行业排名)
 - `--screen-only` — 仅 Layer A+B 评分
+- `--daily-gainers` — 每日涨幅榜筛选(独立于 --auto 的简化筛选入口)
 
 ## 市场分析
 - `--market-status` — 市场温度计
 - `--industry-rotation` — 行业轮动信号
 - `--factor-ic` — 因子 IC 排行
 - `--macro` — 宏观经济面板
+- `--sector-strength` — 行业强度排序 (P10-2 行业轮动加权, 展示推荐标的的板块动量)
+- `--signal-momentum` — 信号动量评分 (P10-1 跟踪 score_b 时间序列轨迹)
+- `--volume-confirm` — 量价确认 (P11-2 检查成交量是否支持价格变动)
 
 ## 推荐辅助
 - `--tracking-summary` — 历史推荐胜率
@@ -67,7 +71,9 @@
 
 ## 报告导出与推送
 - `--export-pdf` — PDF 报告导出
+- `--export-conditional-orders [--broker=huatai|gtja|ths]` — 导出券商条件单格式 (P1-13)
 - `--push-test --channel=wecom` — 测试推送配置
+- `--weekly-report [--start-date --end-date --channel]` — 组合体检周报推送 (P2-10, 缺省本周一/五 + wecom)
 
 ## 单股分析
 - `--ticker 000001,300750` — 单票分析
