@@ -2,7 +2,7 @@
 
 > 本文档对应主文档 §16(CLI 速查表) + §18(快速开始), 包含新用户首次使用的完整步骤、进阶用法、Web 端访问与常用 API 端点。
 >
-> **主文档**: [feature-proposals.md](../feature-proposals.md) | **完整 CLI 参考**: [cli-reference.md](./cli-reference.md) | **辅助工具**: [cli-tools.md](./cli-tools.md)
+> **主文档**: [feature-proposals.md](./feature-proposals.md) | **完整 CLI 参考**: [cli-reference.md](./features/cli-reference.md) | **辅助工具**: [cli-tools.md](./features/cli-tools.md)
 
 ---
 
@@ -151,6 +151,6 @@ open http://localhost:5173
 
 ---
 
-**相关章节**: [主文档](../feature-proposals.md) | [cli-reference.md](./cli-reference.md) | [cli-tools.md](./cli-tools.md) | [changelog/](../changelog/v2.1.0-v2.1.7.md)
+**相关章节**: [主文档](./feature-proposals.md) | [cli-reference.md](./features/cli-reference.md) | [cli-tools.md](./features/cli-tools.md) | [changelog/](./changelog/v2.1.0-v2.1.7.md)
 
 **最后更新**: 2026-06-12 (R20.40：`--top-picks` 升级为默认前门，`--daily-brief` / `--position-check` 降为补充工作面)

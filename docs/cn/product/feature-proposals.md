@@ -87,6 +87,7 @@
 | R22 | P2 | ✅ | **回测聚合面板 A股货币符号（R21 续集）** | 新增 `currencySymbolForMarket()` helper（market 'cn' 默认 → ¥，'us' → $），应用到 `BacktestResults`（Final Cash / Margin Used / Gross Exposure / Net Exposure）+ `BacktestPerformanceMetrics`（Current Value / Initial Value / P&L）+ 持仓表 long/short cost basis（per-ticker helper）。至此 backtest UI 全部 `$` 硬编码点清零。 |
 | R23 | P3 | ✅ | **投资报告对话框 A股货币符号** | `InvestmentReportDialog` 价格单元格（line 449）从硬编码 `$` 改用 `currencySymbolForTicker(ticker)`，与 R21/R22 一致；扩展 `investment-report-dialog.test.tsx` 增加 A 股 (¥12.34) + 美股 ($150.00) 货币符号 characterization 测试。 |
 | R24 | P3 | ✅ | **StockDetailCard 关闭按钮可访问名** | `StockDetailCard` 的 2 个 `✕` 图标按钮（loading + loaded 状态）补 `aria-label="关闭"`，让屏幕阅读器能识别关闭动作（WCAG 2.1: 图标按钮必须有 accessible name）；新增 a11y 测试断言 `aria-label`。 |
+| R25 | P1 | ✅ | **QUICKSTART 失效文档链接修复** | 全仓 doc-link audit 发现 `docs/cn/product/QUICKSTART.md`（新用户前门）有 7 处失效 markdown 链接（`../` 应为 `./`，`./cli-reference.md` 应为 `./features/cli-reference.md` 等）— 修复后 `docs/cn/**/*.md` 失效链接 = 0。新用户 onboarding 路径不再 404。 |
 
 ### R8 设计细节
 
@@ -229,4 +230,4 @@
 
 ---
 
-> **最后更新**：2026-06-14（R20-S8：R22 + R23 + R24 — backtest 聚合货币符号 + 投资报告货币符号 + 关闭按钮 a11y）
+> **最后更新**：2026-06-14（R20-S11：R25 QUICKSTART 失效链接全部修复 — 7 处 404 → 0; docs/cn audit clean）
