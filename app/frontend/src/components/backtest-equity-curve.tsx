@@ -266,7 +266,19 @@ export function BacktestEquityCurve({ agentData }: EquityCurveProps) {
   if (!backtestAgent || !backtestAgent.backtestResults) return null;
 
   const dailyResults: BacktestDayResult[] = backtestAgent.backtestResults || [];
-  if (dailyResults.length < 2) return null;
+  // R20-S6 GAMMA L-2: insufficient-data placeholder instead of silent null,
+  // so users running a 1-day backtest see "why no chart" rather than blank space.
+  if (dailyResults.length < 2) {
+    return (
+      <div
+        className="text-xs text-muted-foreground italic px-3 py-4"
+        role="status"
+        aria-live="polite"
+      >
+        数据点不足（需至少 2 天），等待回测数据...
+      </div>
+    );
+  }
 
   // Compute derived data
   const initialValue = dailyResults[0].portfolio_value;

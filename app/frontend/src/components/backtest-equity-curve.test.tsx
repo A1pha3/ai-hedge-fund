@@ -61,11 +61,20 @@ describe('BacktestEquityCurve — empty / edge cases', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('renders null when fewer than 2 daily results', () => {
-    const { container } = render(
+  it('renders insufficient-data placeholder when fewer than 2 daily results (L-2)', () => {
+    render(
       <BacktestEquityCurve agentData={makeAgentData([['2026-01-02', 100]])} />,
     );
-    expect(container).toBeEmptyDOMElement();
+    // R20-S6 GAMMA L-2: silent null was bad UX — now shows a status hint
+    const status = screen.getByRole('status');
+    expect(status).toBeInTheDocument();
+    expect(status).toHaveTextContent('数据点不足');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('renders insufficient-data placeholder when daily results list is empty', () => {
+    render(<BacktestEquityCurve agentData={makeAgentData([])} />);
+    expect(screen.getByRole('status')).toHaveTextContent('数据点不足');
   });
 
   it('renders null when initial portfolio value is 0 (division guard)', () => {
