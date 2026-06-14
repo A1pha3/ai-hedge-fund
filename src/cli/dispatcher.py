@@ -570,9 +570,9 @@ def _resolve_conviction_ranking(argv: list[str]) -> int | None:
 
 
 def _resolve_top(argv: list[str]) -> int | None:
-    """``--top [N] [--filter KEY=VALUE ...]`` — 显示最近一次 ``--auto`` 运行的 Top N 推荐 (无需重跑)。
+    """``--top [N] [filter flags]`` — 显示最近一次 ``--auto`` 运行的 Top N 推荐 (无需重跑)。
 
-    支持的过滤参数:
+    过滤参数直接追加到 --top 之后:
       --industry=电子        申万行业 (子串匹配)
       --min-score=0.5        最低 score_b
       --max-score=0.8        最高 score_b

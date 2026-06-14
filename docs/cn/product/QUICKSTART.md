@@ -102,7 +102,7 @@ open http://localhost:5173
 - `--auto --top-n=20` — Top N 推荐
 - `--auto --trade-date=20260607` — 指定日期
 - `--top` / `--top 20` — **快速查看最近一次 --auto 的 Top N 推荐**（无需重跑，秒级返回）— R20.2 新增
-  - **R20.5 扩展**: 支持 `--top --filter` 过滤 — `--industry=电子 --min-score=0.5 --exclude-st --min-consecutive=2 --ticker=000001 --name-contains=银行`
+  - **R20.5 扩展**: `--top` 支持过滤参数（直接追加） — `--top 20 --industry=电子 --min-score=0.5 --exclude-st --min-consecutive=2 --ticker=000001 --name-contains=银行`
 - `--explain 000001` — 解释推荐原因（因子明细+事件线+行业排名）
 - `--screen-only` — 仅 Layer A+B 评分
 
