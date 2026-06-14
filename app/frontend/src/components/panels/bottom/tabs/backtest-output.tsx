@@ -219,7 +219,9 @@ function BacktestTradingTable({ agentData }: { agentData: AgentDataMap }) {
               {recentRows.map((row, idx: number) => {
                 if (row.type === 'ticker') {
                   return (
-                    <TableRow key={idx}>
+                    // R20-S6 GAMMA A-4: composite key (date+ticker+idx) instead of bare idx so React
+                    // can correctly diff rows when the recent-rows window scrolls / reorders.
+                    <TableRow key={`${row.date}-${row.ticker}-${idx}`}>
                       <TableCell className="font-medium">{row.date}</TableCell>
                       <TableCell className="font-medium text-cyan-500">{row.ticker}</TableCell>
                       <TableCell>
