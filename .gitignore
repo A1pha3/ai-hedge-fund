@@ -97,3 +97,10 @@ outputs/
 app/backend/alembic/versions/__pycache__/
 .claude/scheduled_tasks.lock
 uv.lock
+
+# Coverage data
+.coverage
+
+# Local report files
+r.json
+r.md
