@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { AgentNodeData, OutputNodeData, PortfolioPositionData } from '@/contexts/node-context';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import type { BacktestPerformanceMetrics } from '@/services/types';
 import { MoreHorizontal } from 'lucide-react';
@@ -201,6 +201,9 @@ function BacktestTradingTable({ agentData }: { agentData: AgentDataMap }) {
       <CardContent>
         <div className="max-h-96 overflow-y-auto">
           <Table>
+            {/* R20-S7 GAMMA A-3: WCAG 2.1 caption — sr-only so it's invisible to sighted users
+                but read by screen readers to announce the table's purpose. */}
+            <TableCaption className="sr-only">回测交易活动表（按日期 / 标的列出每笔买入卖出）</TableCaption>
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>

@@ -81,6 +81,7 @@
 | R16 | P2 | ✅ | **回测净值曲线 数据不足占位** | `BacktestEquityCurve` 在 `dailyResults.length < 2` 时显示 `数据点不足（需至少 2 天），等待回测数据...` 占位提示而非静默 `return null`，消除 1-day 回测的"白屏"困惑（来自 ux-best-practices-2025-2026.md L-2 行）。 |
 | R17 | P3 | ✅ | **月度热力图键盘可访问性** | `BacktestEquityCurve` 月度热力图单元格补 `aria-label`（`title` 仅鼠标悬停可触发），让键盘 / 屏幕阅读器用户也能读到月度收益数值（来自 ux-best-practices-2025-2026.md A-5 行）。 |
 | R18 | P3 | ✅ | **回测交易表稳定 key** | `BacktestTradingTable` 的 `<TableRow>` 改用复合 key `${date}-${ticker}-${idx}`，替代纯 `idx`，避免列表更新时 React diff 误复用 DOM 节点导致的 stale state（来自 ux-best-practices-2025-2026.md A-4 行）。 |
+| R19 | P3 | ✅ | **回测交易表 WCAG caption** | `BacktestTradingTable` 补 `<TableCaption className="sr-only">`，让屏幕阅读器识别表格用途（WCAG 2.1 要求），sighted 用户不可见（来自 ux-best-practices-2025-2026.md A-3 行）。注：A-3 同清单的 R-2 横向滚动经核查为误报 — shadcn `<Table>` 自带 `overflow-auto` wrapper。 |
 
 ### R8 设计细节
 
@@ -223,4 +224,4 @@
 
 ---
 
-> **最后更新**：2026-06-14（R20-S6：R16/R17/R18 BacktestUI UX/A11y/Correctness 修复 — 来自 UX 研究 L-2/A-5/A-4）
+> **最后更新**：2026-06-14（R20-S7：R19 BacktestTradingTable WCAG caption — 来自 UX 研究 A-3；R-2 经核查误报）
