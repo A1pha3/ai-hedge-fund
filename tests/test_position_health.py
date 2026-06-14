@@ -14,6 +14,7 @@ from src.screening.position_health import (
     PositionHealth,
     PositionHealthReport,
     render_position_health,
+    run_position_check,
 )
 
 # ---------------------------------------------------------------------------
@@ -225,3 +226,99 @@ class TestRenderPositionHealth:
         assert d["trade_date"] == "20260610"
         assert len(d["items"]) == 1
         assert d["items"][0]["action"] == "HOLD"
+
+
+# ---------------------------------------------------------------------------
+# run_position_check CLI wrapper (P15-1) — argument parsing + exit codes
+# ---------------------------------------------------------------------------
+
+
+class TestRunPositionCheck:
+    """Characterization tests for the --position-check CLI entry point.
+
+    The core compute_position_health logic is covered above; these tests
+    lock down the CLI argument parsing and exit-code contract that was
+    previously untested.
+    """
+
+    def test_no_tickers_returns_usage_error(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """No --tickers= → prints usage, returns 1."""
+        rc = run_position_check([])
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "Usage:" in captured.out
+        assert "--tickers=" in captured.out
+
+    def test_none_argv_returns_usage_error(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """argv=None → no tickers → returns 1."""
+        rc = run_position_check(None)
+        assert rc == 1
+
+    def test_valid_tickers_returns_success(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--tickers=000001 with report data → returns 0, renders report."""
+        _write_reports(tmp_path, {"20260610": [_make_rec("000001", "测试银行", 0.55)]})
+        monkeypatch.setattr(
+            "src.screening.position_health.resolve_report_dir",
+            lambda: tmp_path,
+        )
+        rc = run_position_check(["--tickers=000001"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "000001" in captured.out
+
+    def test_multiple_tickers_comma_separated(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--tickers=000001,000002 parses both, returns 0."""
+        _write_reports(
+            tmp_path,
+            {
+                "20260610": [
+                    _make_rec("000001", "甲银行", 0.6),
+                    _make_rec("000002", "乙银行", 0.4),
+                ]
+            },
+        )
+        monkeypatch.setattr(
+            "src.screening.position_health.resolve_report_dir",
+            lambda: tmp_path,
+        )
+        rc = run_position_check(["--tickers=000001,000002"])
+        assert rc == 0
+
+    def test_custom_thresholds_parsed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--sell-threshold and --watch-threshold parsed as floats, returns 0."""
+        _write_reports(tmp_path, {"20260610": [_make_rec("000001", "测试", 0.3)]})
+        monkeypatch.setattr(
+            "src.screening.position_health.resolve_report_dir",
+            lambda: tmp_path,
+        )
+        rc = run_position_check(
+            ["--tickers=000001", "--sell-threshold=0.2", "--watch-threshold=0.4"]
+        )
+        assert rc == 0
+
+    def test_invalid_threshold_falls_back_silently(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Non-numeric --sell-threshold=abc → no crash, returns 0 (uses default)."""
+        _write_reports(tmp_path, {"20260610": [_make_rec("000001", "测试", 0.5)]})
+        monkeypatch.setattr(
+            "src.screening.position_health.resolve_report_dir",
+            lambda: tmp_path,
+        )
+        rc = run_position_check(["--tickers=000001", "--sell-threshold=abc"])
+        assert rc == 0
